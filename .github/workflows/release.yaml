@@ -47,7 +47,6 @@ jobs:
       - name: Create GitHub Release (no files)
         uses: softprops/action-gh-release@v2.5.0
         with:
-          generate_release_notes: true
           body: |
             Published to OCI (ghcr.io) via PyOCI.
 
