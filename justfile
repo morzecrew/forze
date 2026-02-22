@@ -37,6 +37,7 @@ _uv_cmd name strict *command:
     fi
 
 # ----------------------- #
+# CI
 
 # Run tests
 test *args='':
@@ -58,6 +59,7 @@ quality strict="false":
 
 
 # ----------------------- #
+# Release
 
 # Publish
 publish username password:

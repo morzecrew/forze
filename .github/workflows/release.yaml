@@ -35,19 +35,21 @@ jobs:
         id: ver
         run: |
           tag="${GITHUB_REF_NAME}"
-          echo "version=v${tag#v}" >> $GITHUB_OUTPUT
+          echo "version=${tag#v}" >> $GITHUB_OUTPUT
+      
+      - name: Get Changelog Entry
+        id: changelog
+        uses: mindsers/changelog-reader-action@v2.2.3
+        with:
+          version: ${{ steps.ver.outputs.version }}
+          path: ./CHANGELOG.md
       
       - name: Create GitHub Release (no files)
         uses: softprops/action-gh-release@v2.5.0
         with:
           generate_release_notes: true
           body: |
-            Published to OCI via PyOCI:
-
-            - Registry: ghcr.io
-            - Namespace: morzecrew
-            - Package: forze
-            - Version: ${{ steps.ver.outputs.version }}
+            Published to OCI (ghcr.io) via PyOCI.
 
             Install (uv):
             ```bash
@@ -57,3 +59,7 @@ jobs:
             uv add forze==${{ steps.ver.outputs.version }} \
               --index pyoci=https://pyoci.com/ghcr.io/morzecrew/ 
             ```
+
+            ## Changelog
+
+            ${{ steps.changelog.outputs.changes }}
