@@ -1,0 +1,119 @@
+[project]
+name = "forze"
+dynamic = ["version"]
+classifiers = [
+  "PyOCI :: Label :: org.opencontainers.image.source :: https://github.com/morzecrew/forze",
+]
+requires-python = ">=3.13,<3.15"
+
+# ....................... #
+# Dependencies
+
+dependencies = ["pydantic>=2.12.5", "pydantic-extra-types>=2.11.0"]
+
+[dependency-groups]
+dev = [
+  "bandit>=1.9.3",
+  "deptry>=0.24.0",
+  "import-linter>=2.10",
+  "pytest>=9.0.2",
+  "pytest-cov>=7.0.0",
+  "pytest-mock>=3.15.1",
+  "pytest-xdist>=3.8.0",
+  "radon>=6.0.1",
+  "vulture>=2.14",
+]
+
+# ....................... #
+# Private index (PyOCI)
+
+[[tool.uv.index]]
+name = "pyoci"
+url = "https://pyoci.com/ghcr.io/morzecrew/"
+publish-url = "https://pyoci.com/ghcr.io/morzecrew/"
+explicit = true
+
+[project.urls]
+repository = "https://github.com/morzecrew/forze"
+documentation = "https://github.com/morzecrew/forze/README.md"
+
+# ....................... #
+# Build
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/forze"]
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/forze/_version.py"
+
+# ....................... #
+# Pytest
+
+[tool.pytest.ini_options]
+filterwarnings = [
+  "ignore:Deprecated call to `pkg_resources.declare_namespace`:DeprecationWarning",
+  "ignore::DeprecationWarning",
+  "ignore::FutureWarning",
+  "ignore::pytest.PytestCollectionWarning",
+]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+pythonpath = "src"
+addopts = ["--tb=short", "--strict-markers", "--strict-config", "--cov"]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# fail_under = 90 # disabled for time being
+precision = 1
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.",
+  "if TYPE_CHECKING:",
+]
+
+# ....................... #
+# Import contracts
+
+[tool.importlinter]
+root_packages = ["forze"]
+
+# ....................... #
+# Dead code
+
+[tool.vulture]
+paths = ["src/forze"]
+sort_by_size = true
+min_confidence = 80
+
+# ....................... #
+# Maintainability and complexity
+
+[tool.radon]
+exclude = ["tests/**"]
+cc_min = "C"
+mi_min = "B"
+
+# ....................... #
+# Dependency analysis
+
+[tool.deptry]
+known_first_party = ["forze"]
+ignore_notebooks = true
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["pydantic-extra-types"]

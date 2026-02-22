@@ -1,0 +1,59 @@
+name: Release a new package version
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      
+      - name: Install just
+        uses: extractions/setup-just@v3
+      
+      - name: Build and publish package to ghcr.io
+        env:
+          HATCH_METADATA_CLASSIFIERS_NO_VERIFY: 1
+        run: |
+          just publish ${{ github.actor}} ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version from tag
+        id: ver
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          echo "version=v${tag#v}" >> $GITHUB_OUTPUT
+      
+      - name: Create GitHub Release (no files)
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          generate_release_notes: true
+          body: |
+            Published to OCI via PyOCI:
+
+            - Registry: ghcr.io
+            - Namespace: morzecrew
+            - Package: forze
+            - Version: ${{ steps.ver.outputs.version }}
+
+            Install (uv):
+            ```bash
+            export UV_INDEX_PYOCI_USERNAME="..."
+            export UV_INDEX_PYOCI_PASSWORD="..."
+
+            uv add forze==${{ steps.ver.outputs.version }} \
+              --index pyoci=https://pyoci.com/ghcr.io/morzecrew/ 
+            ```
