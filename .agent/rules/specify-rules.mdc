@@ -1,0 +1,29 @@
+# forze Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2026-02-23
+
+## Active Technologies
+
+- Python 3.13+ + psycopg (sql composition), attrs for classes where they simplify construction (e.g. optional value objects); existing forze base (ValidationError, JsonDict, introspect types). (001-postgres-query-builder-refactor)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] pytest [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] ruff check .
+
+## Code Style
+
+Python 3.13+: Follow standard conventions
+
+## Recent Changes
+
+- 001-postgres-query-builder-refactor: Added Python 3.13+ + psycopg (sql composition), attrs for classes where they simplify construction (e.g. optional value objects); existing forze base (ValidationError, JsonDict, introspect types).
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->

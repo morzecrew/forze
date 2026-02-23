@@ -54,6 +54,8 @@ specs/[###-feature]/
 └── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
 ```
 
+**Later**: `/speckit.approve` (input: spec name) to verify acceptance criteria and DoD; `/speckit.publish` to get strategy (A/B/C) and exact commands—no push/merge until you confirm.
+
 ### Source Code (repository root)
 <!--
   ACTION REQUIRED: Replace the placeholder tree below with the concrete layout

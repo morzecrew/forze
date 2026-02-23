@@ -1,11 +1,11 @@
 <!--
 Sync Impact Report
 ==================
-Version change: (none) → 1.0.0
-Modified principles: N/A (initial creation)
-Added sections: Core Principles (4), Quality Gates & Compliance, Development Workflow, Governance
+Version change: 1.0.0 → 1.1.0
+Modified principles: none
+Added sections: Governance bullet for respecting existing agent rules and skills
 Removed sections: none
-Templates: plan-template.md ✅ updated (Constitution Check); spec-template.md ✅ aligned; tasks-template.md ✅ aligned; checklist-template.md — no changes; agent-file-template.md — no changes
+Templates: plan-template.md ✅ aligned; spec-template.md ✅ aligned; tasks-template.md ✅ aligned; checklist-template.md — no changes; agent-file-template.md — no changes
 Follow-up TODOs: none
 -->
 
@@ -63,10 +63,11 @@ Follow-up TODOs: none
 ## Governance
 
 - This constitution overrides conflicting local or ad-hoc practices. All PRs and reviews MUST verify compliance.
+- All automated agents and tools (including AI assistants) MUST respect and enforce the project’s existing agent rules and skills files (e.g. `.agent/`, `.cursor/`), and MUST treat them as binding guidance when proposing or applying changes.
 - Amendments require: documented proposal, impact on existing principles/sections, and version bump per semantic versioning:
   - **MAJOR**: Backward-incompatible change (principle removal or redefinition).
   - **MINOR**: New principle or section, or material expansion of guidance.
   - **PATCH**: Clarifications, wording, typo fixes, non-semantic refinements.
 - Ratification and last-amended dates MUST be kept in ISO format (YYYY-MM-DD). Compliance expectations (quality gates, review) apply from the ratified version onward.
 
-**Version**: 1.0.0 | **Ratified**: 2025-02-23 | **Last Amended**: 2025-02-23
+**Version**: 1.1.0 | **Ratified**: 2025-02-23 | **Last Amended**: 2026-02-23

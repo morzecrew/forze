@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Mapping, Optional, Sequence, TypeGuard, cast, get_args
+from typing import Any, Mapping, Optional, Sequence, TypeGuard, cast
 
 from psycopg import sql
 
@@ -22,33 +22,12 @@ SeqScalar = Sequence[Scalar]
 
 
 def _is_scalar(v: Any) -> TypeGuard[Scalar]:
-    return isinstance(v, get_args(Scalar))
+    return isinstance(v, (bool, int, float, str, datetime))
 
 
 def _is_seq_scalar(v: Any) -> TypeGuard[SeqScalar]:
     return isinstance(v, (list, tuple)) and all(_is_scalar(x) for x in v)  # type: ignore[reportUnknownVariableType]
 
-
-# ....................... #
-
-_EqOperator = Literal["eq", "==", "="]
-_NeqOperator = Literal["neq", "!=", "<>"]
-_GtOperator = Literal["gt", ">"]
-_GteOperator = Literal["gte", ">=", "ge", "geq"]
-_LtOperator = Literal["lt", "<"]
-_LteOperator = Literal["lte", "<=", "le", "leq"]
-_InOperator = Literal["in"]
-_NotInOperator = Literal["not_in", "not in"]
-_IsNullOperator = Literal["is_null", "is null"]
-_ContainsOperator = Literal["contains", "@>"]
-_ContainedByOperator = Literal["contained_by", "<@"]
-_OverlapsOperator = Literal["overlaps", "&&"]
-_EmptyOperator = Literal["empty"]
-_OrOperator = Literal["or", "|", "||"]
-_LtreeAncestorOperator = Literal["ancestor_of", "ancestor", "parent_of", "@>"]
-_LtreeDescendantOperator = Literal["descendant_of", "descendant", "child_of", "<@"]
-_LtreeMatchOperator = Literal["match", "matches", "~"]
-_LevelOperator = Literal["level", "nlevel"]
 
 # ....................... #
 
@@ -74,67 +53,32 @@ class Op(StrEnum):
     LEVEL = "level"
 
 
-# ....................... #
+def _public_op_name(o: Op) -> str:
+    """Public canonical name for input/documentation; 'in' and 'or' for membership/disjunction."""
+    if o is Op.IN:
+        return "in"
+    if o is Op.OR:
+        return "or"
+    return o.value
 
 
-def _canon_filter_op(op: str) -> Op:
+_CANONICAL_OP_NAMES = sorted(_public_op_name(o) for o in Op)
+
+
+def parse_op(op: str) -> Op:
+    """Parse a string to Op; accepts only canonical public names ('in', 'or', and enum values for rest)."""
     k = op.strip().lower()
-
-    if k in get_args(_EqOperator):
-        return Op.EQ
-
-    elif k in get_args(_NeqOperator):
-        return Op.NEQ
-
-    elif k in get_args(_GtOperator):
-        return Op.GT
-
-    elif k in get_args(_GteOperator):
-        return Op.GTE
-
-    elif k in get_args(_LtOperator):
-        return Op.LT
-
-    elif k in get_args(_LteOperator):
-        return Op.LTE
-
-    elif k in get_args(_InOperator):
+    if k == "in":
         return Op.IN
-
-    elif k in get_args(_NotInOperator):
-        return Op.NOT_IN
-
-    elif k in get_args(_IsNullOperator):
-        return Op.IS_NULL
-
-    elif k in get_args(_ContainsOperator):
-        return Op.CONTAINS
-
-    elif k in get_args(_ContainedByOperator):
-        return Op.CONTAINED_BY
-
-    elif k in get_args(_OverlapsOperator):
-        return Op.OVERLAPS
-
-    elif k in get_args(_OrOperator):
+    if k == "or":
         return Op.OR
-
-    elif k in get_args(_EmptyOperator):
-        return Op.EMPTY
-
-    elif k in get_args(_LtreeAncestorOperator):
-        return Op.ANCESTOR_OF
-
-    elif k in get_args(_LtreeDescendantOperator):
-        return Op.DESCENDANT_OF
-
-    elif k in get_args(_LtreeMatchOperator):
-        return Op.MATCH
-
-    elif k in get_args(_LevelOperator):
-        return Op.LEVEL
-
-    raise ValidationError(f"Неизвестный оператор: {op}")
+    for o in Op:
+        if o is Op.IN or o is Op.OR:
+            continue  # only "in" / "or" accepted, not enum values "in_" / "or_"
+        if o.value == k:
+            return o
+    names = ", ".join(_CANONICAL_OP_NAMES)
+    raise ValidationError(f"Unknown operator: {op!r}; expected one of: {names}")
 
 
 # ....................... #
@@ -149,97 +93,97 @@ def _is_norm_node(v: Any) -> TypeGuard[NormNode]:
 
 def _is_norm_node_seq(v: Any) -> TypeGuard[list["NormNode"]]:
     return (
-        isinstance(v, (list, tuple))
-        and v
-        and all(_is_norm_node(x) for x in v)  # type: ignore[reportUnknownVariableType]
+        isinstance(v, (list, tuple)) and v and all(_is_norm_node(x) for x in v)  # type: ignore[reportUnknownVariableType]
     )
+
+
+def _norm_or(raw_v: Any) -> NormNode | list[NormNode]:
+    if not isinstance(raw_v, (list, tuple, dict)) or not raw_v:
+        raise ValidationError("or must be a non-empty list or dict")
+    if isinstance(raw_v, dict):
+        return _normalize_field_expr(raw_v)
+    return [_normalize_field_expr(x) for x in raw_v]  # type: ignore[reportUnknownVariableType]
+
+
+def _norm_scalar_comparison(k: Op, raw_v: Any) -> Scalar:
+    if raw_v is None:
+        raise ValidationError(f"{k} does not accept null; use operator: is_null")
+    if isinstance(raw_v, (list, tuple, dict)):
+        raise ValidationError(
+            f"{k} expects scalar value, got: {type(raw_v)}"  # pyright: ignore[reportUnknownArgumentType]
+        )
+    return raw_v  # type: ignore[return-value]
+
+
+def _norm_list_op(k: Op, raw_v: Any) -> list[Any]:
+    if not isinstance(raw_v, (list, tuple)):
+        raise ValidationError(
+            f"{k} expects list value, got: {type(raw_v)}"  # pyright: ignore[reportUnknownArgumentType]
+        )
+    return list(raw_v)  # pyright: ignore[reportUnknownArgumentType]
+
+
+def _norm_bool_op(k: Op, raw_v: Any) -> bool:
+    if raw_v is not True and raw_v is not False:
+        raise ValidationError(f"{k} expects boolean, got: {type(raw_v)}")
+    return raw_v  # type: ignore[return-value]
+
+
+def _norm_ltree_op(k: Op, raw_v: Any) -> str | list[NormNode]:
+    if isinstance(raw_v, str):
+        return raw_v
+    if isinstance(raw_v, (list, tuple)):
+        if not raw_v:
+            return []
+        return [{k: str(x)} for x in raw_v]  # type: ignore[reportUnknownVariableType]
+    raise ValidationError(f"{k} expects string or list of strings")
+
+
+def _norm_level(raw_v: Any) -> Scalar:
+    if raw_v is None or isinstance(raw_v, (list, tuple, dict)):
+        raise ValidationError("level expects a number")
+    return raw_v  # type: ignore[return-value]
 
 
 def _normalize_field_expr(expr: Any) -> NormNode:
     if _is_seq_scalar(expr):
         return {Op.IN: sorted(list(expr))}
-
     if expr is None:
         return {Op.IS_NULL: True}
-
     if _is_scalar(expr):
         return {Op.EQ: expr}
-
     if not isinstance(expr, dict) or not expr:
-        raise ValidationError("Неверный формат выражения фильтра")
+        raise ValidationError("Invalid filter expression format")
 
     out: NormNode = {}
-
     for raw_k, raw_v in expr.items():  # type: ignore[reportUnknownVariableType]
         if not isinstance(raw_k, str) or not raw_k:
-            raise ValidationError(f"Неверный ключ оператора: {raw_k!r}")
-
-        k = _canon_filter_op(raw_k)
+            raise ValidationError(f"Invalid operator key: {raw_k!r}")
+        k = parse_op(raw_k)
 
         if k is Op.OR:
-            if not isinstance(raw_v, (list, tuple, dict)) or not raw_v:
-                raise ValidationError("OR должен быть непустым списком или словарем")
-
-            if isinstance(raw_v, dict):
-                out[k] = _normalize_field_expr(raw_v)
-
-            else:
-                out[k] = [_normalize_field_expr(x) for x in raw_v]  # type: ignore[reportUnknownVariableType]
-
+            out[k] = _norm_or(raw_v)
             continue
-
         if k in {Op.EQ, Op.NEQ, Op.GT, Op.GTE, Op.LT, Op.LTE}:
-            if raw_v is None:
-                raise ValidationError(
-                    f"{k} не принимает null, используйте операторы: {', '.join(get_args(_IsNullOperator))}"
-                )
-
-            if isinstance(raw_v, (list, tuple, dict)):
-                raise ValidationError(f"{k} ожидает скалярное значение, получено: {type(raw_v)}")  # type: ignore[reportUnknownVariableType]
-
-            out[k] = raw_v
+            out[k] = _norm_scalar_comparison(k, raw_v)
             continue
-
         if k in {Op.IN, Op.NOT_IN, Op.CONTAINS, Op.CONTAINED_BY, Op.OVERLAPS}:
-            if not isinstance(raw_v, (list, tuple)):
-                raise ValidationError(f"{k} ожидает список значений, получено: {type(raw_v)}")  # type: ignore[reportUnknownVariableType]
-
-            out[k] = list(raw_v)  # type: ignore[reportUnknownVariableType]
+            out[k] = _norm_list_op(k, raw_v)
             continue
-
         if k in {Op.IS_NULL, Op.EMPTY}:
-            if raw_v is True or raw_v is False:
-                out[k] = raw_v
-
-            else:
-                raise ValidationError(f"{k} ожидает булево значение, получено: {type(raw_v)}")  # type: ignore[reportUnknownVariableType]
-
+            out[k] = _norm_bool_op(k, raw_v)
             continue
-
         if k in {Op.ANCESTOR_OF, Op.DESCENDANT_OF, Op.MATCH}:
-            if isinstance(raw_v, str):
-                out[k] = raw_v
-                continue
-
-            if isinstance(raw_v, (list, tuple)):
-                if not raw_v:
-                    out[Op.OR] = []
-                    continue
-
-                out[Op.OR] = [{k: str(x)} for x in raw_v]  # type: ignore[reportUnknownVariableType]
-                continue
-
-            raise ValidationError(f"{k} ожидает строку или список строк")
-
-        if k is Op.LEVEL:
-            if raw_v is None or isinstance(raw_v, (list, tuple, dict)):
-                raise ValidationError("level ожидает число")
-
-            out[k] = raw_v
+            val = _norm_ltree_op(k, raw_v)
+            if isinstance(val, list):
+                out[Op.OR] = val
+            else:
+                out[k] = val
             continue
-
-        raise ValidationError(f"Неизвестный оператор: {raw_k!r}")
-
+        if k is Op.LEVEL:
+            out[k] = _norm_level(raw_v)
+            continue
+        raise ValidationError(f"Unknown operator: {raw_k!r}")
     return out
 
 
@@ -273,7 +217,7 @@ def _compile_norm_node(
             or_items = [{k: v} for k, v in or_items.items()]
 
         elif not isinstance(or_items, (list, tuple)):
-            raise ValidationError("OR должен быть непустым списком")
+            raise ValidationError("or must be a non-empty list")
 
         if not or_items:
             return sql.SQL("FALSE"), []
@@ -283,7 +227,7 @@ def _compile_norm_node(
 
         for it in or_items:
             if not _is_norm_node(it):
-                raise ValidationError("OR должен содержать только нормальные узлы")
+                raise ValidationError("or must contain only valid operator nodes")
 
             s, p = _compile_norm_node(col, it, t=t)
             or_parts.append(s)
@@ -297,7 +241,9 @@ def _compile_norm_node(
             continue
 
         if _is_norm_node_seq(v) or _is_norm_node(v):
-            raise ValidationError("OR должен содержать только скалярные значения")
+            raise ValidationError(
+                "or branches must contain only scalar values for each operator"
+            )
 
         v = cast(OpValue, v)
         _build_op_filter(col, op, v, and_parts, and_params, t=t)
@@ -330,6 +276,180 @@ def _normalize_op(op: Op, v: OpValue, t: Optional[PostgresType]) -> tuple[Op, Op
 # ....................... #
 
 
+def _need_type(t: Optional[PostgresType]) -> PostgresType:
+    if t is None:
+        raise ValidationError("Type required for this operator")
+    return t
+
+
+def _compile_scalar(
+    col: sql.Identifier,
+    k: Op,
+    v: OpValue,
+    parts: list[sql.Composable],
+    params: list[Any],
+    t: Optional[PostgresType],
+) -> None:
+    """Compile eq, neq, gt, gte, lt, lte."""
+    if t is None:
+        parts.append(sql.SQL("{} = {}").format(col, sql.Placeholder()))
+        params.append(v)
+        return
+    tt = _need_type(t)
+    if tt.is_array:
+        raise ValidationError("Use array operators for array columns")
+    templates = {
+        Op.EQ: "{} = {}",
+        Op.NEQ: "{} <> {}",
+        Op.GT: "{} > {}",
+        Op.GTE: "{} >= {}",
+        Op.LT: "{} < {}",
+        Op.LTE: "{} <= {}",
+    }
+    parts.append(sql.SQL(templates[k]).format(col, sql.Placeholder()))  # type: ignore[reportUnknownArgumentType]
+    params.append(coerce_value(v, tt))
+
+
+def _compile_is_null(
+    col: sql.Identifier, v: OpValue, parts: list[sql.Composable]
+) -> None:
+    if v is True:
+        parts.append(sql.SQL("{} IS NULL").format(col))
+    elif v is False:
+        parts.append(sql.SQL("{} IS NOT NULL").format(col))
+    else:
+        raise ValidationError(f"is_null expects True/False, got: {v}")
+
+
+def _compile_in(
+    col: sql.Identifier,
+    v: OpValue,
+    parts: list[sql.Composable],
+    params: list[Any],
+    t: Optional[PostgresType],
+) -> None:
+    if not isinstance(v, (list, tuple)):
+        raise ValidationError(f"in expects list, got: {type(v)}")
+    if not v:
+        parts.append(sql.SQL("FALSE"))
+        return
+    if t is None:
+        ph = sql.SQL(", ").join(sql.Placeholder() for _ in v)
+        parts.append(sql.SQL("{} IN ({})").format(col, ph))
+        params.extend(v)
+        return
+    tt = _need_type(t)
+    if tt.is_array:
+        raise ValidationError("in on array column not supported")
+    parts.append(sql.SQL("{} = ANY({})").format(col, sql.Placeholder()))
+    params.append(
+        coerce_seq(v, PostgresType(base=tt.base, is_array=True, not_null=True))
+    )
+
+
+def _compile_not_in(
+    col: sql.Identifier,
+    v: OpValue,
+    parts: list[sql.Composable],
+    params: list[Any],
+    t: Optional[PostgresType],
+) -> None:
+    if not isinstance(v, (list, tuple)):
+        raise ValidationError(f"not_in expects list, got: {type(v)}")
+    if not v:
+        parts.append(sql.SQL("TRUE"))
+        return
+    if t is None:
+        ph = sql.SQL(", ").join(sql.Placeholder() for _ in v)
+        parts.append(sql.SQL("{} NOT IN ({})").format(col, ph))
+        params.extend(v)
+        return
+    tt = _need_type(t)
+    if tt.is_array:
+        raise ValidationError("not_in on array column not supported")
+    parts.append(sql.SQL("NOT ({} = ANY({}))").format(col, sql.Placeholder()))
+    params.append(
+        coerce_seq(v, PostgresType(base=tt.base, is_array=True, not_null=True))
+    )
+
+
+def _compile_array_op(
+    col: sql.Identifier,
+    k: Op,
+    v: OpValue,
+    parts: list[sql.Composable],
+    params: list[Any],
+    t: Optional[PostgresType],
+) -> None:
+    """Compile contains, contained_by, overlaps."""
+    if not isinstance(v, (list, tuple)):
+        raise ValidationError(f"{_public_op_name(k)} expects list, got: {type(v)}")
+    tt = _need_type(t)
+    if not tt.is_array:
+        raise ValidationError(f"{_public_op_name(k)} only for array columns")
+    templates = {
+        Op.CONTAINS: "{} @> {}",
+        Op.CONTAINED_BY: "{} <@ {}",
+        Op.OVERLAPS: "{} && {}",
+    }
+    parts.append(sql.SQL(templates[k]).format(col, sql.Placeholder()))  # type: ignore[reportUnknownArgumentType]
+    params.append(list(v))
+
+
+def _compile_empty(
+    col: sql.Identifier,
+    v: OpValue,
+    parts: list[sql.Composable],
+    t: Optional[PostgresType],
+) -> None:
+    tt = _need_type(t)
+    if not tt.is_array:
+        raise ValidationError("empty only for array columns")
+    if v is True:
+        parts.append(sql.SQL("cardinality({}) = 0").format(col))
+    elif v is False:
+        parts.append(sql.SQL("cardinality({}) > 0").format(col))
+    else:
+        raise ValidationError(f"empty expects True/False, got: {v}")
+
+
+def _compile_ltree_op(
+    col: sql.Identifier,
+    k: Op,
+    v: OpValue,
+    parts: list[sql.Composable],
+    params: list[Any],
+    t: Optional[PostgresType],
+) -> None:
+    """Compile ancestor_of, descendant_of, match."""
+    tt = _need_type(t)
+    if tt.is_array or tt.base != "ltree":
+        raise ValidationError(f"{_public_op_name(k)} only for ltree columns")
+    if k is Op.MATCH:
+        parts.append(sql.SQL("{} ~ {}::lquery").format(col, sql.Placeholder()))
+        params.append(v)
+    else:
+        templates = {Op.ANCESTOR_OF: "{} @> {}", Op.DESCENDANT_OF: "{} <@ {}"}
+        parts.append(sql.SQL(templates[k]).format(col, sql.Placeholder()))  # type: ignore[reportUnknownArgumentType]
+        params.append(coerce_value(v, tt))
+
+
+def _compile_level(
+    col: sql.Identifier,
+    v: OpValue,
+    parts: list[sql.Composable],
+    params: list[Any],
+    t: Optional[PostgresType],
+) -> None:
+    tt = _need_type(t)
+    if tt.is_array or tt.base != "ltree":
+        raise ValidationError("level only for ltree columns")
+    parts.append(sql.SQL("nlevel({}) = {}").format(col, sql.Placeholder()))
+    params.append(
+        coerce_value(v, PostgresType(base="int4", is_array=False, not_null=True))
+    )
+
+
 def _build_op_filter(
     col: sql.Identifier,
     op: Op,
@@ -339,229 +459,33 @@ def _build_op_filter(
     *,
     t: Optional[PostgresType],
 ) -> None:
+    """Dispatch to operator-specific compile helpers. Add new Op in the appropriate helper."""
     k, v = _normalize_op(op, v, t)
-
-    def need_type() -> PostgresType:
-        if t is None:
-            raise ValidationError("Тип обязателен для оператора")
-
-        return t
-
-    match k:
-        case Op.EQ:
-            if t is None:
-                parts.append(sql.SQL("{} = {}").format(col, sql.Placeholder()))
-                params.append(v)
-                return
-
-            tt = need_type()
-
-            if tt.is_array:
-                raise ValidationError(
-                    "Используйте операторы массивов для массивных столбцов"
-                )
-
-            parts.append(sql.SQL("{} = {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.NEQ:
-            tt = need_type()
-            parts.append(sql.SQL("{} <> {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.GT:
-            tt = need_type()
-            parts.append(sql.SQL("{} > {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.GTE:
-            tt = need_type()
-            parts.append(sql.SQL("{} >= {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.LT:
-            tt = need_type()
-            parts.append(sql.SQL("{} < {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.LTE:
-            tt = need_type()
-            parts.append(sql.SQL("{} <= {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.IS_NULL:
-            if v is True:
-                parts.append(sql.SQL("{} IS NULL").format(col))
-
-            elif v is False:
-                parts.append(sql.SQL("{} IS NOT NULL").format(col))
-
-            else:
-                raise ValidationError(f"Неверное значение для IS NULL: {v}")
-
-            return
-
-        case Op.IN:
-            if not isinstance(v, (list, tuple)):
-                raise ValidationError(f"Неверное значение для IN: {v}")
-
-            if not v:
-                parts.append(sql.SQL("FALSE"))
-                return
-
-            if t is None:
-                ph = sql.SQL(", ").join(sql.Placeholder() for _ in v)
-                parts.append(sql.SQL("{} IN ({})").format(col, ph))
-                params.extend(v)
-                return
-
-            tt = need_type()
-
-            if tt.is_array:
-                raise ValidationError(
-                    "IN над массивным столбцом не поддерживается (вероятно, неверное поле)"
-                )
-
-            # col = ANY(%s)
-            parts.append(sql.SQL("{} = ANY({})").format(col, sql.Placeholder()))
-            params.append(
-                coerce_seq(v, PostgresType(base=tt.base, is_array=True, not_null=True))
-            )
-            return
-
-        case Op.NOT_IN:
-            if not isinstance(v, (list, tuple)):
-                raise ValidationError(f"Неверное значение для NOT IN: {v}")
-
-            if not v:
-                parts.append(sql.SQL("TRUE"))
-                return
-
-            if t is None:
-                ph = sql.SQL(", ").join(sql.Placeholder() for _ in v)
-                parts.append(sql.SQL("{} NOT IN ({})").format(col, ph))
-                params.extend(v)
-                return
-
-            tt = need_type()
-
-            if tt.is_array:
-                raise ValidationError(
-                    "NOT IN над массивным столбцом не поддерживается (вероятно, неверное поле)"
-                )
-
-            parts.append(sql.SQL("NOT ({} = ANY({}))").format(col, sql.Placeholder()))
-            params.append(
-                coerce_seq(v, PostgresType(base=tt.base, is_array=True, not_null=True))
-            )
-            return
-
-        case Op.CONTAINS:
-            if not isinstance(v, (list, tuple)):
-                raise ValidationError(f"Неверное значение для array contains: {v}")
-
-            tt = need_type()
-
-            if not tt.is_array:
-                raise ValidationError("Оператор @> используется на немассивном столбце")
-
-            parts.append(sql.SQL("{} @> {}").format(col, sql.Placeholder()))
-            params.append(list(v))
-            return
-
-        case Op.CONTAINED_BY:
-            if not isinstance(v, (list, tuple)):
-                raise ValidationError(f"Неверное значение для array contained_by: {v}")
-
-            tt = need_type()
-
-            if not tt.is_array:
-                raise ValidationError("Оператор <@ используется на немассивном столбце")
-
-            parts.append(sql.SQL("{} <@ {}").format(col, sql.Placeholder()))
-            params.append(list(v))
-            return
-
-        case Op.OVERLAPS:
-            if not isinstance(v, (list, tuple)):
-                raise ValidationError(f"Неверное значение для array overlaps: {v}")
-
-            tt = need_type()
-            if not tt.is_array:
-                raise ValidationError("Оператор && используется на немассивном столбце")
-
-            parts.append(sql.SQL("{} && {}").format(col, sql.Placeholder()))
-            params.append(list(v))
-            return
-
-        case Op.EMPTY:
-            tt = need_type()
-
-            if not tt.is_array:
-                raise ValidationError(
-                    "Оператор empty используется на немассивном столбце"
-                )
-
-            if v is True:
-                parts.append(sql.SQL("cardinality({}) = 0").format(col))
-                return
-
-            if v is False:
-                parts.append(sql.SQL("cardinality({}) > 0").format(col))
-                return
-
-            raise ValidationError(f"Неверное значение для empty: {v}")
-
-        case Op.ANCESTOR_OF:
-            tt = need_type()
-            if tt.is_array or tt.base != "ltree":
-                raise ValidationError("ancestor_of используется только для ltree")
-
-            parts.append(sql.SQL("{} @> {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.DESCENDANT_OF:
-            tt = need_type()
-            if tt.is_array or tt.base != "ltree":
-                raise ValidationError("descendant_of используется только для ltree")
-
-            parts.append(sql.SQL("{} <@ {}").format(col, sql.Placeholder()))
-            params.append(coerce_value(v, tt))
-            return
-
-        case Op.MATCH:
-            tt = need_type()
-            if tt.is_array or tt.base != "ltree":
-                raise ValidationError("match используется только для ltree")
-
-            # v — строка lquery, обычно безопасно кастануть на стороне SQL
-            parts.append(sql.SQL("{} ~ {}::lquery").format(col, sql.Placeholder()))
-            params.append(v)
-            return
-
-        case Op.LEVEL:  #! ???
-            tt = need_type()
-            if tt.is_array or tt.base != "ltree":
-                raise ValidationError("level используется только для ltree")
-
-            # level — это nlevel(col) = N (и можно расширить до gte/lte через отдельные op)
-            parts.append(sql.SQL("nlevel({}) = {}").format(col, sql.Placeholder()))
-            params.append(
-                coerce_value(
-                    v, PostgresType(base="int4", is_array=False, not_null=True)
-                )
-            )
-            return
-
-        case _:
-            raise ValidationError(f"Неверный оператор: {k}")
+    if k in {Op.EQ, Op.NEQ, Op.GT, Op.GTE, Op.LT, Op.LTE}:
+        _compile_scalar(col, k, v, parts, params, t)
+        return
+    if k is Op.IS_NULL:
+        _compile_is_null(col, v, parts)
+        return
+    if k is Op.IN:
+        _compile_in(col, v, parts, params, t)
+        return
+    if k is Op.NOT_IN:
+        _compile_not_in(col, v, parts, params, t)
+        return
+    if k in {Op.CONTAINS, Op.CONTAINED_BY, Op.OVERLAPS}:
+        _compile_array_op(col, k, v, parts, params, t)
+        return
+    if k is Op.EMPTY:
+        _compile_empty(col, v, parts, t)
+        return
+    if k in {Op.ANCESTOR_OF, Op.DESCENDANT_OF, Op.MATCH}:
+        _compile_ltree_op(col, k, v, parts, params, t)
+        return
+    if k is Op.LEVEL:
+        _compile_level(col, v, parts, params, t)
+        return
+    raise ValidationError(f"Unknown operator: {_public_op_name(k)}")
 
 
 # ....................... #
@@ -583,7 +507,7 @@ def build_filters(
             t = types.get(field)
 
             if t is None:
-                raise ValidationError(f"Неизвестное поле фильтра: {field}")
+                raise ValidationError(f"Unknown filter field: {field}")
         else:
             t = None
 
