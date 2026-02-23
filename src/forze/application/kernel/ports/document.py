@@ -236,7 +236,7 @@ class DocumentPort[
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
-](DocumentReadPort[R], DocumentWritePort[R, D, C, U]): ...
+](DocumentReadPort[R], DocumentWritePort[R, D, C, U], Protocol): ...
 
 
 # ....................... #
