@@ -1,0 +1,27 @@
+---
+description: The agent must never perform repository state changes automatically.
+alwaysApply: true
+---
+
+# Repository State Changes
+
+Before executing or suggesting execution of any command that modifies repository state - including:
+
+- `git commit`
+- `git tag`
+- `git push`
+- publishing packages
+- creating GitHub releases
+
+The agent MUST:
+
+1. Present the exact commands that would be executed.
+2. Clearly explain the consequences.
+3. Wait for explicit user confirmation in the form of:
+
+    - "Proceed"
+    - "Confirm"
+    - "Execute"
+    - or equivalent unambiguous approval.
+
+Without explicit confirmation, the agent MUST stop at preparation only.
