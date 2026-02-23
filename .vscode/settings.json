@@ -20,11 +20,12 @@
         "**/.mypy_cache": true,
         "**/__marimo__": true,
         "**/.coverage": true,
+        "dist/": true,
         // temporarily excluded (for readability)
+        // "**/.venv/": true,
         // ".specify": true,
         // ".agent": true,
         // ".cursor": true,
-        // ".github": true,
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",
     "cursorpyright.analysis.typeCheckingMode": "strict",
@@ -34,17 +35,11 @@
     "cursorpyright.analysis.inlayHints.variableTypes": true,
     "ty.diagnosticMode": "workspace",
     "cursorpyright.analysis.extraPaths": [
-        "app/src",
+        "src"
     ],
     "cursorpyright.analysis.ignore": [
-        "app/tests/**",
+        "tests/**"
     ],
-    "[terraform]": {
-        "editor.tabSize": 2,
-    },
-    "[hcl]": {
-        "editor.tabSize": 2,
-    },
     "[json]": {
         "editor.tabSize": 2,
     },
@@ -52,7 +47,7 @@
         "editor.tabSize": 2,
     },
     "[toml]": {
-        "editor.tabSize": 2,
+        "editor.tabSize": 4,
     },
     "[yaml]": {
         "editor.tabSize": 2,
