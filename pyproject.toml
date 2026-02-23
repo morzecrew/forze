@@ -2,7 +2,7 @@
 name = "forze"
 dynamic = ["version"]
 classifiers = [
-  "PyOCI :: Label :: org.opencontainers.image.source :: https://github.com/morzecrew/forze",
+    "PyOCI :: Label :: org.opencontainers.image.source :: https://github.com/morzecrew/forze",
 ]
 requires-python = ">=3.13,<3.15"
 
@@ -10,31 +10,37 @@ requires-python = ">=3.13,<3.15"
 # Dependencies
 
 dependencies = [
-  "attrs>=25.4.0",
-  "deepdiff>=8.6.1",
-  "mergedeep>=1.3.4",
-  "orjson>=3.11.7",
-  "psycopg-pool>=3.3.0",
-  "psycopg[binary]>=3.3.3",
-  "pydantic>=2.12.5",
-  "pydantic-extra-types>=2.11.0",
-  "python-dateutil>=2.9.0.post0",
-  "pyyaml>=6.0.3",
-  "redis>=7.2.0",
-  "temporalio>=1.23.0",
+    "aioboto3>=15.5.0",
+    "aiobotocore>=2.25.1",
+    "attrs>=25.4.0",
+    "botocore>=1.40.61",
+    "deepdiff>=8.6.1",
+    "mergedeep>=1.3.4",
+    "orjson>=3.11.7",
+    "psycopg-pool>=3.3.0",
+    "psycopg[binary]>=3.3.3",
+    "pydantic>=2.12.5",
+    "pydantic-extra-types>=2.11.0",
+    "python-dateutil>=2.9.0.post0",
+    "python-magic>=0.4.27",
+    "pyyaml>=6.0.3",
+    "redis>=7.2.0",
+    "temporalio>=1.23.0",
+    "types-aioboto3[s3]>=15.5.0",
+    "types-aiobotocore>=3.1.3",
 ]
 
 [dependency-groups]
 dev = [
-  "bandit>=1.9.3",
-  "deptry>=0.24.0",
-  "import-linter>=2.10",
-  "pytest>=9.0.2",
-  "pytest-cov>=7.0.0",
-  "pytest-mock>=3.15.1",
-  "pytest-xdist>=3.8.0",
-  "radon>=6.0.1",
-  "vulture>=2.14",
+    "bandit>=1.9.3",
+    "deptry>=0.24.0",
+    "import-linter>=2.10",
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-xdist>=3.8.0",
+    "radon>=6.0.1",
+    "vulture>=2.14",
 ]
 
 # ....................... #
@@ -71,10 +77,10 @@ version-file = "src/forze/_version.py"
 
 [tool.pytest.ini_options]
 filterwarnings = [
-  "ignore:Deprecated call to `pkg_resources.declare_namespace`:DeprecationWarning",
-  "ignore::DeprecationWarning",
-  "ignore::FutureWarning",
-  "ignore::pytest.PytestCollectionWarning",
+    "ignore:Deprecated call to `pkg_resources.declare_namespace`:DeprecationWarning",
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore::pytest.PytestCollectionWarning",
 ]
 testpaths = ["tests"]
 python_files = "test_*.py"
@@ -94,9 +100,9 @@ skip_covered = true
 # fail_under = 90 # disabled for time being
 precision = 1
 exclude_lines = [
-  "pragma: no cover",
-  "if __name__ == .__main__.",
-  "if TYPE_CHECKING:",
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
 ]
 
 # ....................... #
@@ -129,4 +135,10 @@ known_first_party = ["forze"]
 ignore_notebooks = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["pydantic-extra-types"]
+DEP002 = [
+    "pydantic-extra-types",
+    "types-aioboto3",
+    "types-aiobotocore",
+    "aiobotocore",
+]
+DEP003 = ["types_aiobotocore_s3"]
