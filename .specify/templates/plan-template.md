@@ -31,7 +31,14 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Verify alignment with `.specify/memory/constitution.md`:
+
+- **I. Code Quality**: Readable code, documented contracts, boundaries encapsulated, style enforced.
+- **II. Testing Standards**: Behavior-focused tests, deterministic and isolated, regression tests for fixes.
+- **III. User Experience Consistency**: Consistent patterns, clear feedback, actionable errors (if user-facing).
+- **IV. Performance Requirements**: Measured optimization, latency/throughput expectations, graceful degradation.
+
+Document any justified exception in Complexity Tracking.
 
 ## Project Structure
 
