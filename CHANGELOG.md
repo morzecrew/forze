@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- Infra layer (`forze.infra`) with Postgres, Redis, S3, and Temporal providers (gateways, platform clients, shared errors and codecs).
 
 ### Changed
 
