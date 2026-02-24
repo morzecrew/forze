@@ -4,13 +4,7 @@ import attrs
 
 from forze.application.kernel.ports import CounterPort, DocumentPort
 from forze.application.kernel.usecase import TxUsecase
-from forze.domain.models import (
-    BaseDTO,
-    CreateDocumentCmd,
-    CreateNumberedEntityCmd,
-    ReadDocument,
-    ReadNumberedEntity,
-)
+from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
 
@@ -35,11 +29,9 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class CreateNumberedEntity[  #! Document?
-    In: BaseDTO,
-    Cmd: CreateNumberedEntityCmd,
-    Out: ReadNumberedEntity,
-](TxUsecase[In, Out]):
+class CreateNumberedDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
+    TxUsecase[In, Out]
+):
     doc: DocumentPort[Out, Any, Cmd, Any]
     counter: CounterPort
     mapper: Callable[[In, int], Cmd]

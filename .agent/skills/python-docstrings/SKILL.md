@@ -27,7 +27,7 @@ IsolationLevel = Literal["repeatable read", "serializable"]
 
 ## 2. Classes
 
-First line: short noun phrase. Then: lifecycle, concurrency/transaction semantics, invariants. Don’t list every attribute. Use roles for references.
+First line: short noun phrase. Then: lifecycle, concurrency/transaction semantics, invariants. Don’t list every attribute. Use roles for references. Add exactly one blank line between the docstring and the class definition below the docstring.
 
 ```python
 @attrs.define(slots=True)
@@ -44,7 +44,7 @@ class PostgresClient:
 
 ## 3. Methods and functions
 
-Brief summary + behavioral details. Use **reST field lists** for params/returns/raises when needed. Explain what it does, what it returns, and edge cases. Document errors only when meaningful (e.g. ``:raises SomeError: When ...``).
+Brief summary + behavioral details. Use **reST field lists** for params/returns/raises when needed. Explain what it does, what it returns, and edge cases. Document errors only when meaningful (e.g. ``:raises SomeError: When ...``). Add exactly one blank line between the docstring and the function definition below the docstring.
 
 ```python
 async def fetch_one(self, query: str, *args: Any) -> Mapping[str, Any] | None:

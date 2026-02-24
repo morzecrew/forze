@@ -28,7 +28,7 @@ from forze.application.usecases.document import (
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..builders.numbered import CreateNumberedEntityBuilder
+from ..builders.numbered import CreateNumberedDocumentBuilder
 from ..plans import UsecasePlan
 from ..ports import (
     DocumentCounterProviderPort,
@@ -218,7 +218,7 @@ class NumberedDocumentUsecasesPlanBuilder(Generic[R]):
         plan = UsecasePlan()
         plan = plan.override(
             "create",
-            CreateNumberedEntityBuilder(counter=counter, doc=doc, spec=self.spec),
+            CreateNumberedDocumentBuilder(counter=counter, doc=doc, spec=self.spec),
         )
 
         return plan

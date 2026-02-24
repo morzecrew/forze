@@ -17,7 +17,7 @@ class DTOMapper[Out: BaseDTO]:
     def __call__(self, x: BaseModel) -> Out:
         data = pydantic_dump(x, exclude={"unset": True})
 
-        return pydantic_validate(self.dto, data)
+        return pydantic_validate(self.dto, data, forbid_extra=True)
 
 
 # ....................... #
@@ -33,4 +33,4 @@ class NumberedDTOMapper[Out: BaseDTO]:
         data = pydantic_dump(x, exclude={"unset": True})
         data[NUMBER_ID_FIELD] = number_id
 
-        return pydantic_validate(self.dto, data)
+        return pydantic_validate(self.dto, data, forbid_extra=True)
