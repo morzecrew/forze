@@ -1,6 +1,6 @@
 ---
 name: git-commits
-description: Write git commit messages using Conventional Commits with a required gitmoji prefix. Use when the user asks to commit changes or write a commit message.
+description: Format all git commit messages using Conventional Commits with a required gitmoji prefix. Automatically apply whenever generating or suggesting a commit message (including release, changelog, CI, and maintenance commits).
 ---
 
 # Git Commit Formatter (Gitmoji + Conventional Commits)
@@ -8,6 +8,17 @@ description: Write git commit messages using Conventional Commits with a require
 You MUST output a commit message that follows this format:
 
 `<gitmoji> <type>[optional scope][!]: <description>`
+
+## Automatic Application
+
+This skill MUST be applied whenever the assistant:
+
+- generates a git commit message
+- suggests a commit message
+- prepares a release plan that includes a commit message
+- responds to prompts like "commit this", "write a commit", "what should my commit be", or similar
+
+It must apply even if the user does not explicitly mention Conventional Commits or gitmoji.
 
 ## Allowed Types (only these)
 
