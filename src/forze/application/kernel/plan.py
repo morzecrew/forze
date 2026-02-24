@@ -1,58 +1,58 @@
-from typing import Any, Callable, Literal, Optional, Self, TypeVar, cast
+from typing import Any, Callable, Optional, Self, TypeVar, cast
 
 import attrs
 
 from forze.base.errors import CoreError
 
-from ..kernel.ports import AppRuntimePort
-from ..kernel.usecase import Effect as UcEffect
-from ..kernel.usecase import Guard as UcGuard
-from ..kernel.usecase import TxUsecase, Usecase
+from .dependencies import UsecaseContext
+from .usecase import Effect, Guard, TxUsecase, Usecase
 
 # ----------------------- #
 
-Uc = Usecase[Any, Any]
-Guard = UcGuard[Any]
-Effect = UcEffect[Any, Any]
-
-Phase = Literal["auth", "validate", "before_write", "after_write", "finalize"]
-Operation = Literal["create", "update", "delete", "restore", "kill"]
-
-_PHASE_ORDER: dict[Phase, int] = {
-    "auth": 0,
-    "validate": 1,
-    "before_write": 2,
-    "after_write": 3,
-    "finalize": 4,
-}
-
-#! How to extend list of supported operations ? should be default to crud only ?
-
 U = TypeVar("U", bound=Usecase[Any, Any])
-Builder = Callable[[AppRuntimePort], U]
+
+GuardFactory = Callable[[UsecaseContext], Guard[Any]]
+EffectFactory = Callable[[UsecaseContext], Effect[Any, Any]]
+UsecaseFactory = Callable[[UsecaseContext], U]
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GuardSpec:
-    phase: Phase
-    guard: Guard
+    priority: int = attrs.field(
+        validator=[
+            attrs.validators.gt(int(-1e5)),
+            attrs.validators.lt(int(1e5)),
+        ]
+    )
+    guard: GuardFactory
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class EffectSpec:
-    phase: Phase
-    effect: Effect
+    priority: int = attrs.field(
+        validator=[
+            attrs.validators.gt(int(-1e5)),
+            attrs.validators.lt(int(1e5)),
+        ]
+    )
+    effect: EffectFactory
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
-    builder: Optional[Builder[Any]] = None
-    guards: tuple[GuardSpec, ...] = ()
-    effects: tuple[EffectSpec, ...] = ()
-    side_guards: tuple[GuardSpec, ...] = ()
-    side_effects: tuple[EffectSpec, ...] = ()
+    override: Optional[UsecaseFactory[Any]] = None
+    guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
+    effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
+    side_guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
+    side_effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
 
 
 # ....................... #
@@ -60,14 +60,14 @@ class OperationPlan:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UsecasePlan:
-    ops: dict[Operation, OperationPlan] = attrs.field(factory=dict)
+    ops: dict[str, OperationPlan] = attrs.field(factory=dict)
 
     # ....................... #
 
-    def override(self, op: Operation, builder: Builder[U]) -> Self:
+    def override(self, op: str, factory: UsecaseFactory[U]) -> Self:
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
-        new_ops[op] = attrs.evolve(cur, builder=builder)
+        new_ops[op] = attrs.evolve(cur, override=factory)
 
         return attrs.evolve(self, ops=new_ops)
 
@@ -75,15 +75,15 @@ class UsecasePlan:
 
     def before(
         self,
-        op: Operation,
-        guard: Guard,
-        phase: Phase = "validate",
+        op: str,
+        guard: GuardFactory,
+        priority: int = 0,
         *,
         side: bool = False,
     ) -> Self:
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
-        guard_spec = GuardSpec(phase=phase, guard=guard)
+        guard_spec = GuardSpec(priority=priority, guard=guard)
 
         if side:
             new_ops[op] = attrs.evolve(cur, side_guards=(*cur.side_guards, guard_spec))
@@ -97,15 +97,15 @@ class UsecasePlan:
 
     def after(
         self,
-        op: Operation,
-        effect: Effect,
-        phase: Phase = "finalize",
+        op: str,
+        effect: EffectFactory,
+        priority: int = 0,
         *,
         side: bool = False,
     ) -> Self:
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
-        effect_spec = EffectSpec(phase=phase, effect=effect)
+        effect_spec = EffectSpec(priority=priority, effect=effect)
 
         if side:
             new_ops[op] = attrs.evolve(
@@ -120,29 +120,29 @@ class UsecasePlan:
 
     # ....................... #
 
-    def build(self, op: Operation, runtime: AppRuntimePort, default: U) -> U:
+    def resolve(self, op: str, ctx: UsecaseContext, default: UsecaseFactory[U]) -> U:
         plan = self.ops.get(op)
-        uc = default
+        factory = default
 
-        if plan and plan.builder:
-            builder = cast(Builder[U], plan.builder)
-            uc = builder(runtime)
+        if plan and plan.override:
+            factory = cast(UsecaseFactory[U], plan.override)
 
+        uc = factory(ctx)
+
+        if plan:
             guards = tuple(
-                gs.guard
-                for gs in sorted(plan.guards, key=lambda x: _PHASE_ORDER[x.phase])
+                gs.guard(ctx) for gs in sorted(plan.guards, key=lambda x: x.priority)
             )
             effects = tuple(
-                es.effect
-                for es in sorted(plan.effects, key=lambda x: _PHASE_ORDER[x.phase])
+                es.effect(ctx) for es in sorted(plan.effects, key=lambda x: x.priority)
             )
             side_guards = tuple(
-                gs.guard
-                for gs in sorted(plan.side_guards, key=lambda x: _PHASE_ORDER[x.phase])
+                gs.guard(ctx)
+                for gs in sorted(plan.side_guards, key=lambda x: x.priority)
             )
             side_effects = tuple(
-                es.effect
-                for es in sorted(plan.side_effects, key=lambda x: _PHASE_ORDER[x.phase])
+                es.effect(ctx)
+                for es in sorted(plan.side_effects, key=lambda x: x.priority)
             )
 
             if isinstance(uc, TxUsecase):
@@ -156,6 +156,9 @@ class UsecasePlan:
             else:
                 #! TODO: log warning that side guards and effects are not supported for non-tx usecases
                 #! and they will be translated into guards and effects
+
+                #! TODO: introduce explicit on_conflict or so with warn, error, ignore
+                #! so it's clear when side guards and effects treated as usual ones
                 uc = uc.with_effects(
                     *effects,
                     *side_effects,
@@ -170,20 +173,20 @@ class UsecasePlan:
 
     @classmethod
     def merge(cls, *plans: Self) -> Self:
-        acc: dict[Operation, OperationPlan] = {}
+        acc: dict[str, OperationPlan] = {}
 
         for p in plans:
             for op, pl in p.ops.items():
                 cur = acc.get(op, OperationPlan())
 
                 # prevent conflicting builders
-                if cur.builder and pl.builder and cur.builder is not pl.builder:
-                    raise CoreError(f"Conflicting builders for operation: {op}")
+                if cur.override and pl.override and cur.override is not pl.override:
+                    raise CoreError(f"Conflicting overrides for operation: {op}")
 
                 # override: last wins
-                builder = pl.builder if pl.builder is not None else cur.builder
+                override = pl.override if pl.override is not None else cur.override
                 acc[op] = OperationPlan(
-                    builder=builder,
+                    override=override,
                     guards=(*cur.guards, *pl.guards),
                     effects=(*cur.effects, *pl.effects),
                     side_guards=(*cur.side_guards, *pl.side_guards),

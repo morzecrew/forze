@@ -1,14 +1,21 @@
-from typing import Any
+from typing import Any, TypedDict
 from uuid import UUID
 
 import attrs
 
-from forze.application.dto.internal import SoftDeleteArgs
 from forze.application.kernel.ports import DocumentPort
 from forze.application.kernel.usecase import TxUsecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
+
+
+class SoftDeleteArgs(TypedDict):
+    pk: UUID
+    rev: int
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

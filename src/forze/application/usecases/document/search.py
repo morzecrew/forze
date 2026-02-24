@@ -1,14 +1,32 @@
-from typing import Any
+from typing import Any, TypedDict
 
 import attrs
 
-from forze.application.dto.internal import RawSearchArgs, SearchArgs
-from forze.application.dto.public import Paginated, RawPaginated
+from forze.application.dto.paginated import Paginated, RawPaginated
+from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
 from forze.application.kernel.ports import DocumentReadPort
 from forze.application.kernel.usecase import Usecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
+
+
+class SearchArgs(TypedDict):
+    body: SearchRequestDTO
+    page: int
+    size: int
+
+
+# ....................... #
+
+
+class RawSearchArgs(TypedDict):
+    body: RawSearchRequestDTO
+    page: int
+    size: int
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

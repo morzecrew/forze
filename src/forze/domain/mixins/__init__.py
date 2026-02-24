@@ -2,11 +2,7 @@
 
 from .name import NameCreateCmdMixin, NameMixin, NameUpdateCmdMixin
 from .number import NumberCreateCmdMixin, NumberMixin, NumberUpdateCmdMixin
-from .soft_deletion import (
-    SoftDeletionCreateCmdMixin,
-    SoftDeletionMixin,
-    SoftDeletionUpdateCmdMixin,
-)
+from .soft_deletion import SoftDeletionMixin
 
 # ----------------------- #
 
@@ -18,6 +14,4 @@ __all__ = [
     "NumberCreateCmdMixin",
     "NumberUpdateCmdMixin",
     "SoftDeletionMixin",
-    "SoftDeletionCreateCmdMixin",
-    "SoftDeletionUpdateCmdMixin",
 ]

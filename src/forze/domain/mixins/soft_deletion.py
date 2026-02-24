@@ -4,7 +4,7 @@ from forze.base.errors import ValidationError
 from forze.base.primitives import JsonDict
 
 from ..constants import SOFT_DELETE_FIELD
-from ..models import BaseDTO, CoreModel
+from ..models import CoreModel
 from ..validation import update_validator
 
 # ----------------------- #
@@ -27,17 +27,3 @@ class SoftDeletionMixin(CoreModel):
 
         if before.is_deleted and not soft_deletion:
             raise ValidationError("Cannot update a soft-deleted document.")
-
-
-# ....................... #
-
-
-class SoftDeletionCreateCmdMixin(SoftDeletionMixin, BaseDTO):
-    """Mixin for soft deletion create command."""
-
-
-# ....................... #
-
-
-class SoftDeletionUpdateCmdMixin(SoftDeletionCreateCmdMixin):
-    """Mixin for soft deletion update command."""

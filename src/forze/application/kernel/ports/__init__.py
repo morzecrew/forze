@@ -11,10 +11,12 @@ from .idempotency import IdempotencyPort, IdempotencySnapshot
 from .runtime import AppRuntimePort
 from .storage import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
 from .stream import StreamEvent, StreamPort
+from .workflow import WorkflowPort
 
 # ----------------------- #
 
 __all__ = [
+    "WorkflowPort",
     "DocumentPort",
     "DocumentReadPort",
     "DocumentWritePort",

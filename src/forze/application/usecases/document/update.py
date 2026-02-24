@@ -1,13 +1,22 @@
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
+from uuid import UUID
 
 import attrs
 
-from forze.application.dto.internal import UpdateArgs
 from forze.application.kernel.ports import DocumentPort
 from forze.application.kernel.usecase import TxUsecase
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
+
+
+class UpdateArgs[In: BaseDTO](TypedDict):
+    pk: UUID
+    dto: In
+    rev: int
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

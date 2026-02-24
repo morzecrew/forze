@@ -16,6 +16,9 @@ SOFT_DELETE_FIELD: Final[str] = "is_deleted"
 NUMBER_ID_FIELD: Final[str] = "number_id"
 """Number identifier field."""
 
+TENANT_ID_FIELD: Final[str] = "tenant_id"  #! Should it be here or in the infra layer ?
+"""Tenant identifier field."""
+
 # ....................... #
 
 HISTORY_SOURCE_FIELD: Final[str] = "source"

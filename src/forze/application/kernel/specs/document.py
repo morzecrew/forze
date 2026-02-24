@@ -2,14 +2,14 @@ from typing import Generic, NotRequired, Optional, TypedDict, TypeVar
 
 import attrs
 
-from forze.domain.constants import SOFT_DELETE_FIELD
+from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 # ----------------------- #
 
 DocumentSearchSpec = dict[str, tuple[str, ...] | dict[str, int]]
 
-R = TypeVar("R", bound=ReadDocument)
+R = TypeVar("R", bound=ReadDocument)  #! Arbitrary read model (CoreModel or so)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
@@ -45,8 +45,8 @@ class DocumentSpec(Generic[R, D, C, U]):
 
     # ....................... #
 
-    def supports_soft_delete(self) -> bool:  #! TODO: replace with subclass check
-        return SOFT_DELETE_FIELD in self.models["domain"].model_fields
+    def supports_soft_delete(self) -> bool:
+        return issubclass(self.models["domain"], SoftDeletionMixin)
 
     # ....................... #
 
