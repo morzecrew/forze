@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2026-02-23
 
 ## Active Technologies
+- Python 3.x (project currently targets modern CPython) + Pydantic, attrs, orjson, deepdiff, mergedeep (002-base-domain-tests)
+- N/A for this feature (pure unit tests over in-memory models and helpers) (002-base-domain-tests)
 
 - Python 3.13+ + psycopg (sql composition), attrs for classes where they simplify construction (e.g. optional value objects); existing forze base (ValidationError, JsonDict, introspect types). (001-postgres-query-builder-refactor)
 
@@ -22,6 +24,7 @@ cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLO
 Python 3.13+: Follow standard conventions
 
 ## Recent Changes
+- 002-base-domain-tests: Added Python 3.x (project currently targets modern CPython) + Pydantic, attrs, orjson, deepdiff, mergedeep
 
 - 001-postgres-query-builder-refactor: Added Python 3.13+ + psycopg (sql composition), attrs for classes where they simplify construction (e.g. optional value objects); existing forze base (ValidationError, JsonDict, introspect types).
 
