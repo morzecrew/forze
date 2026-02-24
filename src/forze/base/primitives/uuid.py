@@ -160,7 +160,11 @@ def datetime_to_uuid7(dt: datetime | str) -> UUID:
     if isinstance(dt, str):
         dt = dt_parse(dt)
 
-    return uuid7(timestamp_ms=dt.timestamp())
+    # ``uuid7`` expects milliseconds; ``datetime.timestamp()`` returns seconds.
+    # Convert seconds to integer milliseconds to preserve ordering semantics.
+    timestamp_ms = int(dt.timestamp() * 1_000)
+
+    return uuid7(timestamp_ms=timestamp_ms)
 
 
 # ....................... #

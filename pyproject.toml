@@ -140,5 +140,6 @@ DEP002 = [
     "types-aioboto3",
     "types-aiobotocore",
     "aiobotocore",
+    "temporalio",
 ]
 DEP003 = ["types_aiobotocore_s3"]

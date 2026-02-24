@@ -1,7 +1,19 @@
 {
     "markdownlint.config": {
-        "extends": ".vscode/.markdownlint.yaml"
+        "default": false,
+        "extends": ".vscode/.markdownlint.yaml",
     },
+    "markdownlint.lintWorkspaceGlobs": [
+        "**/*.{md,mkd,mdwn,mdown,markdown,markdn,mdtxt,mdtext,workbook}",
+        "!**/*.code-search",
+        "!**/bower_components",
+        "!**/node_modules",
+        "!**/.git",
+        "!**/vendor",
+        "!**/specs/**",
+        "!**/.agent/**",
+        "!**/.specify/**"
+    ],
     "editor.codeLens": true,
     "files.associations": {
         "*.env*": "env",
