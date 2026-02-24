@@ -111,6 +111,35 @@ exclude_lines = [
 [tool.importlinter]
 root_packages = ["forze"]
 
+[[tool.importlinter.contracts]]
+name = "Layered package architecture"
+type = "layers"
+layers = ["forze.infra", "forze.application", "forze.domain", "forze.base"]
+
+[[tool.importlinter.contracts]]
+name = "Layered `application` module architecture"
+type = "layers"
+layers = [
+    "forze.application.composition",
+    "forze.application.usecases",
+    "forze.application.dto",
+    "forze.application.kernel",
+]
+
+[[tool.importlinter.contracts]]
+name = "Layered `domain` module architecture"
+type = "layers"
+layers = [
+    "forze.domain.mixins",
+    "forze.domain.models",
+    "forze.domain.validation",
+]
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure providers independence"
+type = "independence"
+modules = ["forze.infra.providers.*"]
+
 # ....................... #
 # Dead code
 

@@ -45,7 +45,7 @@ class DocumentSpec(Generic[R, D, C, U]):
 
     # ....................... #
 
-    def supports_soft_delete(self) -> bool:
+    def supports_soft_delete(self) -> bool:  #! TODO: replace with subclass check
         return SOFT_DELETE_FIELD in self.models["domain"].model_fields
 
     # ....................... #
