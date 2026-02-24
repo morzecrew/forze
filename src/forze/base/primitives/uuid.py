@@ -13,7 +13,6 @@ Notes:
 """
 
 import hashlib
-import json
 import secrets
 import time
 from datetime import UTC, datetime, timezone
@@ -22,6 +21,7 @@ from uuid import UUID
 from uuid import uuid4 as uuid4_func
 from zoneinfo import ZoneInfo
 
+import orjson
 from dateutil.parser import parse as dt_parse
 
 # ----------------------- #
@@ -164,14 +164,16 @@ def datetime_to_uuid7(dt: datetime | str) -> UUID:
 
 
 # ....................... #
-#! not sure but maybe use orjson for uuid4?
 
 
 def _hash_from_any(val: Any) -> str:
-    if not isinstance(val, str):
-        val = json.dumps(val)
+    if isinstance(val, dict):
+        b = orjson.dumps(val, option=orjson.OPT_SORT_KEYS)
 
-    hex_string = hashlib.md5(val.encode(), usedforsecurity=False).hexdigest()
+    else:
+        b = orjson.dumps(val)
+
+    hex_string = hashlib.md5(b, usedforsecurity=False).hexdigest()
 
     return hex_string
 
@@ -187,4 +189,10 @@ def _uuid4_from_any(val: Any) -> UUID:
 
 
 def uuid4(val: Any | None = None) -> UUID:
+    """Return a UUIDv4, optionally derived from an arbitrary value.
+
+    When ``val`` is provided, a deterministic UUIDv4 is generated from the
+    MD5 hash of ``val``. When omitted, a random UUIDv4 is returned.
+    """
+
     return _uuid4_from_any(val) if val else uuid4_func()

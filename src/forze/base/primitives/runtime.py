@@ -12,12 +12,12 @@ from ..errors import CoreError
 class RuntimeVar[T: object]:
     """Thread-safe runtime variable that can be set once and accessed globally.
 
-    Used to store application-wide runtime values (e.g., AppContext) that are
-    initialized during application startup and accessed throughout the application
-    lifecycle.
+    Used to store application-wide runtime values (for example an
+    ``AppContext``) that are initialized during application startup and
+    accessed throughout the application lifecycle.
 
-    Example:
-        ```python
+    Example::
+
         app_rt_var: RuntimeVar[AppContext] = RuntimeVar("app_rt")
 
         # During startup
@@ -25,7 +25,6 @@ class RuntimeVar[T: object]:
 
         # Later, anywhere in the application
         ctx = app_rt_var.get()
-        ```
     """
 
     name: str

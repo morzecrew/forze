@@ -1,3 +1,5 @@
+"""Dict-diff and merge helpers used by higher-level composition logic."""
+
 from copy import deepcopy
 from itertools import chain
 from typing import Any, Iterable, cast
@@ -78,6 +80,13 @@ def _parent_list_path(node: DiffLevel) -> list[str | int]:
 
 
 def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
+    """Apply a merge-style JSON patch to ``before``.
+
+    :param before: Original JSON-like dictionary.
+    :param patch: Merge patch to apply.
+    :returns: New dictionary with the patch applied.
+    """
+
     before_copy = deepcopy(before)
     res = merge(before_copy, patch)  # type: ignore[report-untyped-call]
 
@@ -93,6 +102,18 @@ def calculate_dict_difference(
     *,
     deletions_as_none: bool = True,
 ) -> JsonDict:
+    """Calculate a JSON-merge-style patch representing ``after`` vs ``before``.
+
+    The resulting patch can be applied with :func:`apply_dict_patch` to obtain
+    ``after`` from ``before``. List changes are represented by replacing the
+    entire parent list.
+
+    :param before: Original JSON-like dictionary.
+    :param after: Target JSON-like dictionary.
+    :param deletions_as_none: When true, dictionary item deletions are encoded
+        as ``None`` values in the patch instead of being omitted.
+    :returns: Merge patch that transforms ``before`` into ``after``.
+    """
     dd = DeepDiff(
         before,
         after,
@@ -149,6 +170,8 @@ def deep_dict_intersection(
     b: JsonDict,
     _prefix: DictPath = (),
 ) -> set[DictPath]:
+    """Return the set of matching leaf key paths shared by both dictionaries."""
+
     res: set[DictPath] = set()
 
     for k in a.keys() & b.keys():

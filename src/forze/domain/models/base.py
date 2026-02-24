@@ -1,10 +1,16 @@
+"""Base Pydantic models for domain entities and DTOs."""
+
 from pydantic import BaseModel, ConfigDict
 
 # ----------------------- #
 
 
 class CoreModel(BaseModel):
-    """Base model class for the project."""
+    """Base model class for the project.
+
+    Provides common configuration for all domain models, including usage of
+    field docstrings for schema generation and stable JSON encoders.
+    """
 
     model_config = ConfigDict(
         use_attribute_docstrings=True,
@@ -21,6 +27,9 @@ class CoreModel(BaseModel):
 
 
 class BaseDTO(CoreModel):
-    """Base DTO model."""
+    """Base DTO model class for the project.
+
+    DTOs are frozen by default to discourage in-place mutation.
+    """
 
     model_config = ConfigDict(frozen=True)

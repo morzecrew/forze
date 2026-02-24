@@ -1,3 +1,5 @@
+"""Helpers for diffing and serializing data structures and Pydantic models."""
+
 from .diff import apply_dict_patch, calculate_dict_difference, deep_dict_intersection
 from .pydantic import (
     pydantic_dump,

@@ -1,3 +1,5 @@
+"""String normalization helpers used by primitive types."""
+
 import re
 import unicodedata
 from typing import Optional, overload
@@ -42,6 +44,16 @@ def normalize_string(s: None) -> None: ...
 
 
 def normalize_string(s: Optional[str]) -> Optional[str]:
+    """Normalize user-provided text for consistent storage and comparison.
+
+    The normalization:
+
+    * normalizes Unicode to NFC,
+    * strips most invisible/control characters while preserving emoji shaping,
+    * collapses whitespace (except newlines) to single spaces,
+    * trims trailing/leading spaces on each line.
+    """
+
     if s is None:
         return None
 

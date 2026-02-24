@@ -1,3 +1,5 @@
+"""Primitive types and helpers shared across the application."""
+
 from .datetime import utcnow
 from .runtime import RuntimeVar
 from .string import normalize_string

@@ -1,3 +1,10 @@
+"""Core error types and error-handling utilities for the base layer.
+
+Provides a small hierarchy of :class:`CoreError` subclasses used across the
+application, together with helpers and decorators for converting arbitrary
+exceptions into structured core errors in a consistent way.
+"""
+
 import asyncio
 import inspect
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
@@ -27,7 +34,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 @attrs.define(slots=True, eq=False)
 class CoreError(Exception):
-    """Base core error."""
+    """Base core error for the application.
+
+    All domain- and application-level errors that should be surfaced to
+    callers should derive from :class:`CoreError` so they can be handled
+    uniformly by infrastructure and presentation layers.
+    """
 
     message: str = "An internal error occurred"
     """Message of the error."""
@@ -49,6 +61,8 @@ class CoreError(Exception):
 
 @attrs.define(slots=True, eq=False)
 class NotFoundError(CoreError):
+    """Error raised when a requested resource cannot be found."""
+
     code: str = attrs.field(default="not_found", kw_only=True)
     message: str = "Resource not found"
 
@@ -58,6 +72,8 @@ class NotFoundError(CoreError):
 
 @attrs.define(slots=True, eq=False)
 class ConflictError(CoreError):
+    """Error raised when an operation encounters a conflicting state."""
+
     code: str = attrs.field(default="conflict", kw_only=True)
     message: str = "State conflict occured"
 
@@ -67,6 +83,8 @@ class ConflictError(CoreError):
 
 @attrs.define(slots=True, eq=False)
 class ValidationError(CoreError):
+    """Error raised when validation of user or external input fails."""
+
     code: str = attrs.field(default="validation_error", kw_only=True)
     message: str = "Validation failed"
 
@@ -75,10 +93,14 @@ class ValidationError(CoreError):
 
 
 class ErrorHandler(Protocol):
+    """Callable protocol for converting exceptions into :class:`CoreError`."""
+
     def __call__(self, e: Exception, op: str, /, **kwargs: Any) -> CoreError: ...
 
 
 def _default_error_hanlder(e: Exception, op: str, **kwargs: Any) -> Optional[CoreError]:
+    """Best-effort mapping of low-level exceptions to :class:`CoreError`."""
+
     err: Optional[CoreError] = None
 
     match e:
@@ -92,6 +114,8 @@ def _default_error_hanlder(e: Exception, op: str, **kwargs: Any) -> Optional[Cor
 
 
 def error_handler(fn: ErrorHandler) -> ErrorHandler:
+    """Decorator that applies :func:`_default_error_hanlder` before ``fn``."""
+
     def decorator(fn: ErrorHandler) -> ErrorHandler:
         @wraps(fn)
         def wrapper(e: Exception, op: str, **kwargs: Any) -> CoreError:

@@ -1,8 +1,14 @@
+"""Domain document models and commands.
+
+The core :class:`Document` model implements versioning and update semantics
+based on JSON-like diffs and pluggable update validators.
+"""
+
 from datetime import datetime
-from typing import Optional, Self
+from typing import Any, ClassVar, Literal, Optional, Self, cast
 from uuid import UUID
 
-from pydantic import Field, PositiveInt
+from pydantic import Field
 
 from forze.base.errors import ValidationError
 from forze.base.primitives import JsonDict, utcnow, uuid7
@@ -12,18 +18,33 @@ from forze.base.serialization import (
     deep_dict_intersection,
 )
 
+from ..validation import (
+    UpdateValidator,
+    UpdateValidatorMetadata,
+    collect_update_validators,
+)
 from .base import BaseDTO, CoreModel
 
 # ----------------------- #
 
 
 class Document(CoreModel):
-    """Base document model."""
+    """Base document model with revision tracking and update validation."""
+
+    _update_validators_: ClassVar[list[tuple[str, UpdateValidatorMetadata]]] = []
+    """Update validators."""
+
+    _update_validators_on_conflict: ClassVar[Literal["warn", "error", "overwrite"]] = (
+        "warn"
+    )
+    """Update validators on conflict."""
+
+    # ....................... #
 
     id: UUID = Field(default_factory=uuid7, frozen=True)
     """Unique identifier of the document."""
 
-    rev: PositiveInt = Field(default=1, frozen=True)
+    rev: int = Field(default=1, frozen=True)
     """Revision number of the document."""
 
     created_at: datetime = Field(default_factory=utcnow, frozen=True)
@@ -34,26 +55,19 @@ class Document(CoreModel):
 
     # ....................... #
 
-    def _apply_update(self, diff: JsonDict) -> Self:
-        if not diff:
-            return self
+    def __init_subclass__(cls, **kwargs: Any):
+        super().__init_subclass__(**kwargs)
 
-        return self.model_copy(update=diff, deep=True)
-
-    # ....................... #
-
-    def _calculate_update_diff(self, data: JsonDict) -> JsonDict:
-        patch = self._validate_update_data(data)
-        before = self.model_dump(mode="json")
-
-        after = apply_dict_patch(before, patch)
-        diff = calculate_dict_difference(before, after)
-
-        return diff
+        cls._update_validators_ = collect_update_validators(
+            cls,
+            on_conflict=cls._update_validators_on_conflict,
+        )
 
     # ....................... #
 
     def _validate_update_data(self, data: JsonDict) -> JsonDict:
+        """Validate incoming update data against model fields and frozen flags."""
+
         valid: JsonDict = {}
         fields = type(self).model_fields
 
@@ -71,20 +85,71 @@ class Document(CoreModel):
 
     # ....................... #
 
+    def _calculate_update_diff(self, data: JsonDict) -> JsonDict:
+        """Return a minimal merge patch that represents ``data`` applied to self."""
+
+        patch = self._validate_update_data(data)
+        before = self.model_dump(mode="json")
+
+        after = apply_dict_patch(before, patch)
+        diff = calculate_dict_difference(before, after)
+
+        return diff
+
+    # ....................... #
+
+    def _apply_update(self, diff: JsonDict) -> Self:
+        if not diff:
+            return self
+
+        return self.model_copy(update=diff, deep=True)
+
+    # ....................... #
+
+    def _run_update_validators(self, after: Self, diff: JsonDict) -> None:
+        if not diff:
+            return
+
+        keys = diff.keys()
+        cls = type(self)
+
+        for name, meta in cls._update_validators_:
+            if meta.fields is not None and keys.isdisjoint(meta.fields):
+                continue
+
+            method = cast(UpdateValidator[Self], getattr(cls, name))
+            method(self, after, diff)
+
+    # ....................... #
+
     def update(self, data: JsonDict) -> tuple[Self, JsonDict]:
+        """Apply a validated update and return the new document and diff.
+
+        The method:
+
+        * validates the requested field changes,
+        * computes a JSON merge-style diff,
+        * bumps ``last_update_at``,
+        * runs registered :func:`update_validator` hooks.
+        """
+
         diff = self._calculate_update_diff(data)
 
         if not diff:
             return self, {}
 
         diff["last_update_at"] = utcnow()
+
         after = self._apply_update(diff)
+        self._run_update_validators(after, diff)
 
         return after, diff
 
     # ....................... #
 
     def touch(self) -> tuple[Self, JsonDict]:
+        """Update only ``last_update_at`` and return the instance and diff."""
+
         now = utcnow()
         self.last_update_at = now
 
@@ -93,6 +158,12 @@ class Document(CoreModel):
     # ....................... #
 
     def validate_historical_consistency(self, old: Self, data: JsonDict) -> bool:
+        """Check that applying ``data`` to ``old`` does not conflict with ``self``.
+
+        This is used to prevent merging conflicting concurrent updates when
+        reconstructing state from history.
+        """
+
         old_state = old.model_dump(mode="json")
         self_state = self.model_dump(mode="json")
 
@@ -110,13 +181,11 @@ class Document(CoreModel):
 class CreateDocumentCmd(BaseDTO):
     """Create document command DTO."""
 
-    # id, created_at added to ensure compatibility with external imports
-
     id: Optional[UUID] = None
-    """Unique identifier of the document."""
+    """Unique identifier of the document. Added to ensure compatibility with external imports."""
 
     created_at: Optional[datetime] = None
-    """Timestamp of the document creation."""
+    """Timestamp of the document creation. Added to ensure compatibility with external imports."""
 
 
 # ....................... #
@@ -128,7 +197,7 @@ class ReadDocument(BaseDTO):
     id: UUID
     """Unique identifier of the document."""
 
-    rev: PositiveInt
+    rev: int
     """Revision number of the document."""
 
     created_at: datetime

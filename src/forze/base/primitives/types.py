@@ -1,3 +1,5 @@
+"""Common Pydantic-based primitive types used across the application."""
+
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, StringConstraints
@@ -15,6 +17,7 @@ String = Annotated[
     ),
     BeforeValidator(normalize_string),
 ]
+"""Normalized short string for titles, names and similar user-facing text."""
 
 
 LongString = Annotated[
@@ -25,6 +28,8 @@ LongString = Annotated[
     ),
     BeforeValidator(normalize_string),
 ]
+"""Normalized long-form string for descriptions, notes and content bodies."""
+
 
 JsonDict = dict[str, Any]
 """JSON compatible dictionary."""
