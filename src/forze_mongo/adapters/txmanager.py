@@ -1,6 +1,6 @@
-from forze_postgres._compat import require_psycopg
+from forze_mongo._compat import require_mongo
 
-require_psycopg()
+require_mongo()
 
 # ....................... #
 
@@ -11,17 +11,15 @@ import attrs
 
 from forze.application.kernel.ports import TxManagerPort
 
-from ..kernel.platform import PostgresClient, PostgresTransactionOptions
+from ..kernel.platform import MongoClient, MongoTransactionOptions
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresTxManagerAdapter(TxManagerPort):
-    client: PostgresClient
-    options: PostgresTransactionOptions = attrs.field(
-        factory=PostgresTransactionOptions
-    )
+class MongoTxManagerAdapter(TxManagerPort):
+    client: MongoClient
+    options: MongoTransactionOptions = attrs.field(factory=MongoTransactionOptions)
 
     # ....................... #
 
