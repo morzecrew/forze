@@ -5,9 +5,8 @@ from __future__ import annotations
 import pytest
 
 from forze.base.errors import ValidationError
-from forze.infra.providers.postgres.builder import build_filters
-from forze.infra.providers.postgres.introspect import PostgresType
-
+from forze_postgres.kernel.builder import build_filters
+from forze_postgres.kernel.introspect import PostgresType
 
 # ----------------------- #
 # Minimal type maps for tests
