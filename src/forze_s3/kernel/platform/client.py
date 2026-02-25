@@ -22,6 +22,7 @@ from forze.base.errors import CoreError
 from .errors import s3_handled
 
 # ----------------------- #
+#! TODO: abstract config class with attrs or typed dict
 
 
 @final

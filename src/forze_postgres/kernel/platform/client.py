@@ -14,6 +14,7 @@ require_psycopg()
 
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import (
     Any,
     AsyncIterator,
@@ -47,7 +48,7 @@ IsolationLevel = Literal["repeatable read", "serializable"]
 
 
 @final
-class TransactionOptions(TypedDict, total=False):
+class PostgresTransactionOptions(TypedDict, total=False):
     """Options for :meth:`PostgresClient.transaction`."""
 
     read_only: bool
@@ -72,14 +73,14 @@ class PostgresConfig:
     max_size: int = 15
     """Maximum number of connections in the pool."""
 
-    max_lifetime: int = 3600
-    """Connection lifetime in seconds before recycling."""
+    max_lifetime: timedelta = timedelta(hours=1)
+    """Connection lifetime before recycling."""
 
-    max_idle: int = 1800
-    """Idle time in seconds before closing a connection."""
+    max_idle: timedelta = timedelta(minutes=30)
+    """Idle time before closing a connection."""
 
-    reconnect_timeout: int = 10
-    """Timeout in seconds when reconnecting after a failure."""
+    reconnect_timeout: timedelta = timedelta(seconds=10)
+    """Timeout when reconnecting after a failure."""
 
     num_workers: int = 4
     """Number of worker threads for the pool."""
@@ -114,7 +115,9 @@ class PostgresClient:
     )
 
     # Connection options
-    __acquire_timeout: float = attrs.field(default=0.5, init=False)
+    __acquire_timeout: timedelta = attrs.field(
+        default=timedelta(seconds=0.5), init=False
+    )
 
     # ....................... #
     # Lifecycle
@@ -124,7 +127,7 @@ class PostgresClient:
         dsn: str,
         *,
         config: PostgresConfig = PostgresConfig(),
-        acquire_timeout: float = 0.5,
+        acquire_timeout: timedelta = timedelta(seconds=0.5),
     ) -> None:
         """Creates and opens the connection pool.
 
@@ -143,9 +146,9 @@ class PostgresClient:
             open=False,
             min_size=config.min_size,
             max_size=config.max_size,
-            max_lifetime=config.max_lifetime,
-            max_idle=config.max_idle,
-            reconnect_timeout=config.reconnect_timeout,
+            max_lifetime=config.max_lifetime.total_seconds(),
+            max_idle=config.max_idle.total_seconds(),
+            reconnect_timeout=config.reconnect_timeout.total_seconds(),
             num_workers=config.num_workers,
         )
 
@@ -212,7 +215,7 @@ class PostgresClient:
             return
 
         async with self.__require_pool().connection(
-            timeout=self.__acquire_timeout
+            timeout=self.__acquire_timeout.total_seconds()
         ) as pooled_conn:
             yield pooled_conn
 
@@ -237,7 +240,7 @@ class PostgresClient:
     async def transaction(
         self,
         *,
-        options: TransactionOptions = TransactionOptions(),
+        options: PostgresTransactionOptions = PostgresTransactionOptions(),
     ) -> AsyncIterator[AsyncConnection]:
         """Enters a transaction (or nested savepoint), yielding the connection.
 
@@ -323,7 +326,7 @@ class PostgresClient:
             return
 
         async with self.__require_pool().connection(
-            timeout=self.__acquire_timeout
+            timeout=self.__acquire_timeout.total_seconds()
         ) as conn:
             token_conn = self.__ctx_conn.set(conn)
             token_depth = self.__ctx_depth.set(1)

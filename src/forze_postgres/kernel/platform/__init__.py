@@ -1,5 +1,5 @@
-from .client import PostgresClient, PostgresConfig, TransactionOptions
+from .client import PostgresClient, PostgresConfig, PostgresTransactionOptions
 
 # ----------------------- #
 
-__all__ = ["PostgresClient", "PostgresConfig", "TransactionOptions"]
+__all__ = ["PostgresClient", "PostgresConfig", "PostgresTransactionOptions"]

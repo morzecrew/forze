@@ -20,6 +20,7 @@ from .types import StreamMessage
 from .utils import parse_stream_messages
 
 # ----------------------- #
+#! TODO: declare timeouts etc for redis config
 
 
 @final

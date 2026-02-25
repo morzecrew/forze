@@ -11,7 +11,7 @@ import attrs
 
 from forze.application.kernel.ports import TxManagerPort
 
-from ..kernel.platform import PostgresClient, TransactionOptions
+from ..kernel.platform import PostgresClient, PostgresTransactionOptions
 
 # ----------------------- #
 
@@ -19,7 +19,9 @@ from ..kernel.platform import PostgresClient, TransactionOptions
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresTxManagerAdapter(TxManagerPort):
     client: PostgresClient
-    options: TransactionOptions = attrs.field(factory=TransactionOptions)
+    options: PostgresTransactionOptions = attrs.field(
+        factory=PostgresTransactionOptions
+    )
 
     # ....................... #
 
