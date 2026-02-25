@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.dto.paginated import Paginated, RawPaginated
 from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
-from forze.application.kernel.ports import DocumentReadPort
+from forze.application.kernel.ports import DocumentPort
 from forze.application.kernel.usecase import Usecase
 from forze.domain.models import ReadDocument
 
@@ -31,7 +31,7 @@ class RawSearchArgs(TypedDict):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchDocument[Out: ReadDocument](Usecase[SearchArgs, Paginated[Out]]):
-    doc: DocumentReadPort[Out]
+    doc: DocumentPort[Out, Any, Any, Any]
 
     # ....................... #
 
@@ -68,7 +68,7 @@ class SearchDocument[Out: ReadDocument](Usecase[SearchArgs, Paginated[Out]]):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RawSearchDocument(Usecase[RawSearchArgs, RawPaginated]):
-    doc: DocumentReadPort[Any]
+    doc: DocumentPort[Any, Any, Any, Any]
 
     # ....................... #
 

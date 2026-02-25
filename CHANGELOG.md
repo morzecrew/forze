@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Postgres filter builder** (`forze.infra.providers.postgres.builder`): filter input now accepts only canonical operator names (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `is_null`, `or`, array and ltree ops). Aliases such as `==`, `ge`, `not in`, `in_`, `or_` are no longer accepted and raise `ValidationError`. Use `in` and `or` (not `in_`/`or_`) for membership and disjunction.
+- Document kernel registry and composition updated to support pluggable plans and a `DocumentUsecasesFacade` factory for document operations.
+- Document search ports unified under `DocumentPort` with explicit `DocumentSearchPort` support for search usecases.
 
 ### Fixed
 

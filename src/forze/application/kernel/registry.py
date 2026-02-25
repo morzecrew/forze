@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Self, TypeVar, cast
+from typing import Any, Callable, Literal, Optional, Self, TypeVar, cast, overload
 
 import attrs
 
@@ -17,15 +17,41 @@ UsecaseFactory = Callable[[UsecaseContext], U]
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True)
 class UsecaseRegistry:
     defaults: dict[str, UsecaseFactory[Any]] = attrs.field(factory=dict)
-    plan: UsecasePlan = attrs.field(factory=UsecasePlan, init=False, repr=False)
-    overriden: frozenset[str] = attrs.field(factory=frozenset, init=False, repr=False)
+
+    # Non initable fields
+    __plan: UsecasePlan = attrs.field(factory=UsecasePlan, init=False, repr=False)
+    __overriden: frozenset[str] = attrs.field(factory=frozenset, init=False, repr=False)
 
     # ....................... #
 
-    def register(self, op: str, factory: UsecaseFactory[Any]) -> Self:
+    @overload
+    def register(
+        self,
+        op: str,
+        factory: UsecaseFactory[Any],
+        *,
+        inplace: Literal[True],
+    ) -> None: ...
+
+    @overload
+    def register(
+        self,
+        op: str,
+        factory: UsecaseFactory[Any],
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    def register(
+        self,
+        op: str,
+        factory: UsecaseFactory[Any],
+        *,
+        inplace: bool = False,
+    ) -> Optional[Self]:
         if op in self.defaults:
             raise CoreError(
                 f"Usecase factory is already registered for operation: {op}"
@@ -34,26 +60,81 @@ class UsecaseRegistry:
         new = dict(self.defaults)
         new[op] = factory
 
-        return attrs.evolve(self, defaults=new)
+        if inplace:
+            self.defaults = new
+            return
+
+        else:
+            new_instance = type(self)(defaults=new)
+            return new_instance
 
     # ....................... #
 
-    def override(self, op: str, factory: UsecaseFactory[Any]) -> Self:
+    @overload
+    def override(
+        self,
+        op: str,
+        factory: UsecaseFactory[Any],
+        *,
+        inplace: Literal[True],
+    ) -> None: ...
+
+    @overload
+    def override(
+        self,
+        op: str,
+        factory: UsecaseFactory[Any],
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    def override(
+        self,
+        op: str,
+        factory: UsecaseFactory[Any],
+        *,
+        inplace: bool = False,
+    ) -> Optional[Self]:
         if op not in self.defaults:
             raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
         new = dict(self.defaults)
         new[op] = factory
 
-        return attrs.evolve(
-            self,
-            defaults=new,
-            overriden=frozenset({*self.overriden, op}),
-        )
+        if inplace:
+            self.defaults = new
+            self.__overriden = frozenset({*self.__overriden, op})
+            return
+
+        else:
+            new_instance = type(self)(defaults=new)
+            new_instance.__overriden = frozenset({*self.__overriden, op})
+            return new_instance
 
     # ....................... #
 
-    def register_many(self, ops: dict[str, UsecaseFactory[Any]]) -> Self:
+    @overload
+    def register_many(
+        self,
+        ops: dict[str, UsecaseFactory[Any]],
+        *,
+        inplace: Literal[True],
+    ) -> None: ...
+
+    @overload
+    def register_many(
+        self,
+        ops: dict[str, UsecaseFactory[Any]],
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    def register_many(
+        self,
+        ops: dict[str, UsecaseFactory[Any]],
+        *,
+        inplace: bool = False,
+    ) -> Optional[Self]:
         already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
         if already_registered:
@@ -64,11 +145,37 @@ class UsecaseRegistry:
         new = dict(self.defaults)
         new.update(ops)
 
-        return attrs.evolve(self, defaults=new)
+        if inplace:
+            self.defaults = new
+            return
+
+        else:
+            new_instance = type(self)(defaults=new)
+            return new_instance
 
     # ....................... #
 
-    def override_many(self, ops: dict[str, UsecaseFactory[Any]]) -> Self:
+    @overload
+    def override_many(
+        self,
+        ops: dict[str, UsecaseFactory[Any]],
+        *,
+        inplace: Literal[True],
+    ) -> None: ...
+    @overload
+    def override_many(
+        self,
+        ops: dict[str, UsecaseFactory[Any]],
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self: ...
+
+    def override_many(
+        self,
+        ops: dict[str, UsecaseFactory[Any]],
+        *,
+        inplace: bool = False,
+    ) -> Optional[Self]:
         not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
         if not_yet_registered:
@@ -79,31 +186,61 @@ class UsecaseRegistry:
         new = dict(self.defaults)
         new.update(ops)
 
-        return attrs.evolve(
-            self,
-            defaults=new,
-            overriden=frozenset({*self.overriden, *ops.keys()}),
-        )
+        if inplace:
+            self.defaults = new
+            self.__overriden = frozenset({*self.__overriden, *ops.keys()})
+            return
+
+        else:
+            new_instance = type(self)(defaults=new)
+            new_instance.__overriden = frozenset({*self.__overriden, *ops.keys()})
+            return new_instance
 
     # ....................... #
+
+    @overload
+    def extend_plan(
+        self,
+        extra: UsecasePlan,
+        *,
+        inplace: Literal[True],
+        allow_override_on_overriden: bool = False,
+    ) -> None: ...
+    @overload
+    def extend_plan(
+        self,
+        extra: UsecasePlan,
+        *,
+        inplace: Literal[False] = False,
+        allow_override_on_overriden: bool = False,
+    ) -> Self: ...
 
     def extend_plan(
         self,
         extra: UsecasePlan,
         *,
+        inplace: bool = False,
         allow_override_on_overriden: bool = False,
-    ) -> Self:
+    ) -> Optional[Self]:
         if not allow_override_on_overriden:
             for op, pl in extra.ops.items():
-                if pl.override is not None and op in self.overriden:
+                if pl.override is not None and op in self.__overriden:
                     raise CoreError(
                         f"Plan override for '{op}' conflicts with registry override. "
                         "Use allow_override_on_overridden=True explicitly."
                     )
 
-        merged = UsecasePlan.merge(self.plan, extra)
+        merged = UsecasePlan.merge(self.__plan, extra)
 
-        return attrs.evolve(self, plan=merged)
+        if inplace:
+            self.__plan = merged
+            return
+
+        else:
+            new_instance = type(self)(defaults=self.defaults)
+            new_instance.__plan = merged
+
+            return new_instance
 
     # ....................... #
 
@@ -124,7 +261,7 @@ class UsecaseRegistry:
         if not factory:
             raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
-        uc = self.plan.resolve(op, ctx, cast(UsecaseFactory[U], factory))
+        uc = self.__plan.resolve(op, ctx, cast(UsecaseFactory[U], factory))
 
         if expected is not None and not isinstance(uc, expected):
             raise CoreError(f"Usecase '{op}' has unexpected type: {type(uc)!r}")

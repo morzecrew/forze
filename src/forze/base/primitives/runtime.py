@@ -31,10 +31,10 @@ class RuntimeVar[T: object]:
     """Name identifier for the runtime variable (used in error messages)."""
 
     # Non initable fields
-    lock: RLock = attrs.field(factory=RLock, init=False)
+    __lock: RLock = attrs.field(factory=RLock, init=False)
     """Thread lock for thread-safe operations."""
 
-    value: Optional[T] = attrs.field(default=None, init=False)
+    __value: Optional[T] = attrs.field(default=None, init=False)
     """The stored value (None until set)."""
 
     # ....................... #
@@ -55,13 +55,13 @@ class RuntimeVar[T: object]:
         if value is None:
             raise CoreError(f"Value cannot be None for {self.name}")
 
-        with self.lock:
-            if self.value is not None:
+        with self.__lock:
+            if self.__value is not None:
                 raise CoreError(
                     f"Value is already set for runtime variable {self.name}"
                 )
 
-            self.value = value
+            self.__value = value
 
     # ....................... #
 
@@ -75,10 +75,10 @@ class RuntimeVar[T: object]:
             CoreError: If the value has not been set yet.
         """
 
-        if self.value is None:
+        if self.__value is None:
             raise CoreError(f"Value is not set for {self.name}")
 
-        return self.value
+        return self.__value
 
     # ....................... #
 
@@ -89,5 +89,5 @@ class RuntimeVar[T: object]:
         set again (useful for testing or cleanup).
         """
 
-        with self.lock:
-            self.value = None
+        with self.__lock:
+            self.__value = None

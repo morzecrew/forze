@@ -4,6 +4,7 @@ from .document import (
     DocumentPort,
     DocumentReadPort,
     DocumentSearchOptions,
+    DocumentSearchPort,
     DocumentSorts,
     DocumentWritePort,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "WorkflowPort",
     "DocumentPort",
     "DocumentReadPort",
+    "DocumentSearchPort",
     "DocumentWritePort",
     "DocumentSearchOptions",
     "DocumentSorts",

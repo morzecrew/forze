@@ -20,7 +20,7 @@ class RedisDocumentCacheGateway(DocumentCachePort):
     client: RedisClient
     key_codec: KeyCodec
 
-    # Non initable fields
+    # Non initable fields #! TODO: replace with static definitions
     json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
     text_codec: TextCodec = attrs.field(factory=TextCodec, init=False)
 

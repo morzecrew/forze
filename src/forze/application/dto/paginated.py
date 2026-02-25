@@ -10,16 +10,16 @@ class Paginated[T: BaseModel](BaseDTO):
     """Paginated response model."""
 
     hits: list[T]
-    """Hits of the response."""
+    """Records of the paginated response."""
 
     page: int
-    """Page of the response."""
+    """Page number of the paginated response."""
 
     size: int
-    """Size of the response."""
+    """Size of the page of the paginated response."""
 
     count: int
-    """Count of the response."""
+    """Total number of records available."""
 
 
 # ....................... #
@@ -29,13 +29,13 @@ class RawPaginated(BaseDTO):
     """Paginated response model."""
 
     hits: list[JsonDict]
-    """Hits of the response."""
+    """Records of the paginated response."""
 
     page: int
-    """Page of the response."""
+    """Page number of the paginated response."""
 
     size: int
-    """Size of the response."""
+    """Size of the page of the paginated response."""
 
     count: int
-    """Count of the response."""
+    """Total number of records available."""

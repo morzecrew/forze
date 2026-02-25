@@ -146,8 +146,12 @@ class DocumentReadPort[R: ReadDocument](Protocol):
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[R] | list[JsonDict], int]: ...
 
-    # ....................... #
 
+# ....................... #
+
+
+@runtime_checkable
+class DocumentSearchPort[R: ReadDocument](Protocol):
     @overload
     async def search(
         self,
@@ -236,7 +240,9 @@ class DocumentPort[
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
-](DocumentReadPort[R], DocumentWritePort[R, D, C, U], Protocol): ...
+](
+    DocumentReadPort[R], DocumentSearchPort[R], DocumentWritePort[R, D, C, U], Protocol
+): ...
 
 
 # ....................... #

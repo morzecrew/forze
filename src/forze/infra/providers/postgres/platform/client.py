@@ -89,21 +89,21 @@ class PostgresClient:
     context and auto-commit when not inside a transaction.
     """
 
-    _pool: Optional[AsyncConnectionPool] = attrs.field(default=None, init=False)
-    _ctx_conn: ContextVar[Optional[AsyncConnection]] = attrs.field(
+    __pool: Optional[AsyncConnectionPool] = attrs.field(default=None, init=False)
+    __ctx_conn: ContextVar[Optional[AsyncConnection]] = attrs.field(
         factory=lambda: ContextVar(
             "pg_conn",
             default=None,
         ),
         init=False,
     )
-    _ctx_depth: ContextVar[int] = attrs.field(
+    __ctx_depth: ContextVar[int] = attrs.field(
         factory=lambda: ContextVar("pg_tx_depth", default=0),
         init=False,
     )
 
     # Connection options
-    _acquire_timeout: float = attrs.field(default=0.5, init=False)
+    __acquire_timeout: float = attrs.field(default=0.5, init=False)
 
     # ....................... #
     # Lifecycle
@@ -124,10 +124,10 @@ class PostgresClient:
         :param acquire_timeout: Timeout in seconds when acquiring a connection.
         """
 
-        if self._pool is not None:
+        if self.__pool is not None:
             return
 
-        self._pool = AsyncConnectionPool(
+        self.__pool = AsyncConnectionPool(
             conninfo=dsn,
             open=False,
             min_size=config.min_size,
@@ -138,30 +138,30 @@ class PostgresClient:
             num_workers=config.num_workers,
         )
 
-        self._acquire_timeout = acquire_timeout
+        self.__acquire_timeout = acquire_timeout
 
-        await self._pool.open()
+        await self.__pool.open()
 
     # ....................... #
 
     async def close(self) -> None:
         """Closes the connection pool. No-op if not initialized."""
 
-        if self._pool is None:
+        if self.__pool is None:
             return
 
-        await self._pool.close()
-        self._pool = None
+        await self.__pool.close()
+        self.__pool = None
 
     # ....................... #
 
-    def _require_pool(self) -> AsyncConnectionPool:
+    def __require_pool(self) -> AsyncConnectionPool:
         """Returns the active pool. Raises :exc:`InfrastructureError` if not initialized."""
 
-        if self._pool is None:
+        if self.__pool is None:
             raise InfrastructureError("Postgres client is not initialized")
 
-        return self._pool
+        return self.__pool
 
     # ....................... #
 
@@ -172,7 +172,7 @@ class PostgresClient:
         """
 
         try:
-            async with self._acquire_conn() as conn:
+            async with self.__acquire_conn() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1")
                     return "ok", True
@@ -183,25 +183,25 @@ class PostgresClient:
     # ....................... #
     # Context helpers
 
-    def _current_conn(self) -> Optional[AsyncConnection]:
+    def __current_conn(self) -> Optional[AsyncConnection]:
         """Connection bound to the current context, or ``None``."""
 
-        return self._ctx_conn.get()
+        return self.__ctx_conn.get()
 
     # ....................... #
 
     @asynccontextmanager
-    async def _acquire_conn(self) -> AsyncIterator[AsyncConnection]:
+    async def __acquire_conn(self) -> AsyncIterator[AsyncConnection]:
         """Yields the context-bound connection or a new one from the pool."""
 
-        conn = self._current_conn()
+        conn = self.__current_conn()
 
         if conn is not None:
             yield conn
             return
 
-        async with self._require_pool().connection(
-            timeout=self._acquire_timeout
+        async with self.__require_pool().connection(
+            timeout=self.__acquire_timeout
         ) as pooled_conn:
             yield pooled_conn
 
@@ -211,7 +211,7 @@ class PostgresClient:
     def is_in_transaction(self) -> bool:
         """Returns ``True`` if the current context is inside a transaction (including nested)."""
 
-        return self._ctx_depth.get() > 0 and self._current_conn() is not None
+        return self.__ctx_depth.get() > 0 and self.__current_conn() is not None
 
     def require_transaction(self) -> None:
         """Raises :exc:`InfrastructureError` if the current context is not inside a transaction."""
@@ -239,12 +239,12 @@ class PostgresClient:
         :yields: The connection to use for the transaction.
         """
 
-        depth = self._ctx_depth.get()
-        parent_conn = self._current_conn()
+        depth = self.__ctx_depth.get()
+        parent_conn = self.__current_conn()
 
         if depth > 0 and parent_conn is not None:
             sp_name = f"sp_{depth}"
-            self._ctx_depth.set(depth + 1)
+            self.__ctx_depth.set(depth + 1)
 
             async with parent_conn.cursor() as cur:
                 await cur.execute(
@@ -273,14 +273,15 @@ class PostgresClient:
                 raise
 
             finally:
-                self._ctx_depth.set(depth)
+                self.__ctx_depth.set(depth)
 
             return
 
         # If a connection is already bound in the context (e.g., tests / UoW),
         # run the top-level transaction on it instead of acquiring a new one.
         if depth == 0 and parent_conn is not None:
-            self._ctx_depth.set(1)
+            self.__ctx_depth.set(1)
+
             try:
                 async with parent_conn.cursor() as cur:
                     await cur.execute("BEGIN")
@@ -306,15 +307,15 @@ class PostgresClient:
                 raise
 
             finally:
-                self._ctx_depth.set(0)
+                self.__ctx_depth.set(0)
 
             return
 
-        async with self._require_pool().connection(
-            timeout=self._acquire_timeout
+        async with self.__require_pool().connection(
+            timeout=self.__acquire_timeout
         ) as conn:
-            token_conn = self._ctx_conn.set(conn)
-            token_depth = self._ctx_depth.set(1)
+            token_conn = self.__ctx_conn.set(conn)
+            token_depth = self.__ctx_depth.set(1)
 
             try:
                 async with conn.cursor() as cur:
@@ -342,8 +343,8 @@ class PostgresClient:
                 raise
 
             finally:
-                self._ctx_depth.reset(token_depth)
-                self._ctx_conn.reset(token_conn)
+                self.__ctx_depth.reset(token_depth)
+                self.__ctx_conn.reset(token_conn)
 
     # ....................... #
     # Query API
@@ -398,13 +399,13 @@ class PostgresClient:
         :returns: Row count when ``return_rowcount`` is ``True``, else ``None``.
         """
 
-        async with self._acquire_conn() as conn:
+        async with self.__acquire_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 
                 rowcount = cur.rowcount
 
-            if self._current_conn() is None:
+            if self.__current_conn() is None:
                 await conn.commit()
 
             if return_rowcount:
@@ -424,11 +425,11 @@ class PostgresClient:
         executions.
         """
 
-        async with self._acquire_conn() as conn:
+        async with self.__acquire_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.executemany(query, params)
 
-            if self._current_conn() is None:
+            if self.__current_conn() is None:
                 await conn.commit()
 
     # ....................... #
@@ -474,7 +475,7 @@ class PostgresClient:
         :returns: List of rows as dicts or tuples.
         """
 
-        async with self._acquire_conn() as conn:
+        async with self.__acquire_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 
@@ -486,7 +487,7 @@ class PostgresClient:
                 else:
                     res = self._rows_to_dicts(cur.description, rows)
 
-            if commit and self._current_conn() is None:
+            if commit and self.__current_conn() is None:
                 await conn.commit()
 
             return res
@@ -534,7 +535,7 @@ class PostgresClient:
         :returns: First row as dict or tuple, or ``None``.
         """
 
-        async with self._acquire_conn() as conn:
+        async with self.__acquire_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 
@@ -549,7 +550,7 @@ class PostgresClient:
                 else:
                     res = self._rows_to_dicts(cur.description, [row])[0]
 
-            if commit and self._current_conn() is None:
+            if commit and self.__current_conn() is None:
                 await conn.commit()
 
             return res
@@ -574,7 +575,7 @@ class PostgresClient:
         :returns: First column value or ``default``.
         """
 
-        async with self._acquire_conn() as conn:
+        async with self.__acquire_conn() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
 

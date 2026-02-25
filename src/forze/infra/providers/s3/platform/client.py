@@ -44,14 +44,14 @@ class S3Config:
 
 @attrs.define(slots=True)
 class S3Client:
-    _opts: Optional[S3Config] = attrs.field(default=None, init=False)
-    _session: Optional[aioboto3.Session] = attrs.field(default=None, init=False)
+    __opts: Optional[S3Config] = attrs.field(default=None, init=False)
+    __session: Optional[aioboto3.Session] = attrs.field(default=None, init=False)
 
-    _ctx_client: ContextVar[Optional[AsyncS3Client]] = attrs.field(
+    __ctx_client: ContextVar[Optional[AsyncS3Client]] = attrs.field(
         factory=lambda: ContextVar("s3_client", default=None),
         init=False,
     )
-    _ctx_depth: ContextVar[int] = attrs.field(
+    __ctx_depth: ContextVar[int] = attrs.field(
         factory=lambda: ContextVar("s3_depth", default=0),
         init=False,
     )
@@ -66,40 +66,40 @@ class S3Client:
         secret_access_key: str | SecretStr,
         config: Optional[AioConfig] = None,
     ) -> None:
-        if self._session is not None:
+        if self.__session is not None:
             return
 
-        self._opts = S3Config(
+        self.__opts = S3Config(
             endpoint=endpoint,
             access_key_id=access_key_id,
             secret_access_key=secret_access_key,
             config=config,
         )
-        self._session = aioboto3.Session()
+        self.__session = aioboto3.Session()
 
     # ....................... #
 
     def close(self) -> None:
-        self._session = None
-        self._opts = None
+        self.__session = None
+        self.__opts = None
 
     # ....................... #
 
-    def _require_session(self) -> aioboto3.Session:
-        if self._session is None:
+    def __require_session(self) -> aioboto3.Session:
+        if self.__session is None:
             raise CoreError("S3 session is not initialized")
 
-        return self._session
+        return self.__session
 
     # ....................... #
 
-    def _current_client(self) -> Optional[AsyncS3Client]:
-        return self._ctx_client.get()
+    def __current_client(self) -> Optional[AsyncS3Client]:
+        return self.__ctx_client.get()
 
     # ....................... #
 
-    def _require_client(self) -> AsyncS3Client:
-        c = self._current_client()
+    def __require_client(self) -> AsyncS3Client:
+        c = self.__current_client()
 
         if c is None:
             raise CoreError("S3 client is not initialized")
@@ -110,22 +110,22 @@ class S3Client:
 
     @asynccontextmanager
     async def client(self) -> AsyncIterator[AsyncS3Client]:
-        depth = self._ctx_depth.get()
-        parent = self._current_client()
+        depth = self.__ctx_depth.get()
+        parent = self.__current_client()
 
         if depth > 0 and parent is not None:
-            self._ctx_depth.set(depth + 1)
+            self.__ctx_depth.set(depth + 1)
 
             try:
                 yield parent
 
             finally:
-                self._ctx_depth.set(depth)
+                self.__ctx_depth.set(depth)
 
             return
 
-        session = self._require_session()
-        opts = self._opts
+        session = self.__require_session()
+        opts = self.__opts
 
         if opts is None:
             raise CoreError("S3 client options are not initialized")
@@ -145,15 +145,15 @@ class S3Client:
         cm = cast(AsyncS3Client, cm)
 
         async with cm as c:
-            token_client = self._ctx_client.set(c)
-            token_depth = self._ctx_depth.set(1)
+            token_client = self.__ctx_client.set(c)
+            token_depth = self.__ctx_depth.set(1)
 
             try:
                 yield c
 
             finally:
-                self._ctx_client.reset(token_client)
-                self._ctx_depth.reset(token_depth)
+                self.__ctx_client.reset(token_client)
+                self.__ctx_depth.reset(token_depth)
 
     # ....................... #
 
@@ -171,7 +171,7 @@ class S3Client:
 
     @s3_handled("s3.bucket_exists")
     async def bucket_exists(self, bucket: str) -> bool:
-        c = self._require_client()
+        c = self.__require_client()
 
         try:
             await c.head_bucket(Bucket=bucket)
@@ -189,7 +189,7 @@ class S3Client:
 
     @s3_handled("s3.create_bucket")
     async def create_bucket(self, bucket: str) -> None:
-        c = self._require_client()
+        c = self.__require_client()
 
         try:
             await c.create_bucket(Bucket=bucket)
@@ -215,7 +215,7 @@ class S3Client:
 
     @s3_handled("s3.object_exists")
     async def object_exists(self, bucket: str, key: str) -> bool:
-        c = self._require_client()
+        c = self.__require_client()
 
         try:
             await c.head_object(Bucket=bucket, Key=key)
@@ -242,7 +242,7 @@ class S3Client:
         metadata: Optional[dict[str, str]] = None,
         tags: Optional[dict[str, str]] = None,
     ) -> None:
-        c = self._require_client()
+        c = self.__require_client()
 
         extra: dict[str, Any] = {}
 
@@ -267,7 +267,7 @@ class S3Client:
 
     @s3_handled("s3.download_bytes")
     async def download_bytes(self, bucket: str, key: str) -> bytes:
-        c = self._require_client()
+        c = self.__require_client()
 
         resp = await c.get_object(Bucket=bucket, Key=key)
         body = resp["Body"]
@@ -278,7 +278,7 @@ class S3Client:
 
     @s3_handled("s3.delete_object")
     async def delete_object(self, bucket: str, key: str) -> None:
-        c = self._require_client()
+        c = self.__require_client()
 
         await c.delete_object(Bucket=bucket, Key=key)
 
@@ -293,7 +293,7 @@ class S3Client:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
     ) -> tuple[list[ObjectTypeDef], int]:
-        c = self._require_client()
+        c = self.__require_client()
         paginator = c.get_paginator("list_objects_v2")
         _prefix = prefix or ""
 
@@ -334,7 +334,7 @@ class S3Client:
 
     @s3_handled("s3.head_object")
     async def head_object(self, bucket: str, key: str) -> S3Head:
-        c = self._require_client()
+        c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)
 
         return {

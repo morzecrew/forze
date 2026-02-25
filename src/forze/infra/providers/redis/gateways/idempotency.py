@@ -32,7 +32,7 @@ class _Payload(TypedDict, total=False):
 class RedisIdempotencyGateway(IdempotencyPort):
     client: RedisClient
 
-    # Non initable fields
+    # Non initable fields #! TODO: replace with static definitions
     key_codec: KeyCodec = attrs.field(
         factory=lambda: KeyCodec(namespace="idem"),
         init=False,

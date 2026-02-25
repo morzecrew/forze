@@ -28,14 +28,14 @@ class RedisConfig:
 
 @attrs.define(slots=True)
 class RedisClient:
-    _pool: Optional[ConnectionPool] = attrs.field(default=None, init=False)
-    _client: Optional[Redis] = attrs.field(default=None, init=False)
+    __pool: Optional[ConnectionPool] = attrs.field(default=None, init=False)
+    __client: Optional[Redis] = attrs.field(default=None, init=False)
 
-    _ctx_pipe: ContextVar[Optional[Pipeline]] = attrs.field(
+    __ctx_pipe: ContextVar[Optional[Pipeline]] = attrs.field(
         factory=lambda: ContextVar("redis_pipe", default=None),
         init=False,
     )
-    _ctx_depth: ContextVar[int] = attrs.field(
+    __ctx_depth: ContextVar[int] = attrs.field(
         factory=lambda: ContextVar("redis_pipe_depth", default=0),
         init=False,
     )
@@ -46,10 +46,10 @@ class RedisClient:
     async def initialize(
         self, dsn: str, *, config: RedisConfig = RedisConfig()
     ) -> None:
-        if self._client is not None:
+        if self.__client is not None:
             return
 
-        self._pool = (
+        self.__pool = (
             ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
                 dsn,
                 max_connections=config.max_size,
@@ -57,35 +57,35 @@ class RedisClient:
                 encoding="utf-8",
             )
         )
-        self._client = Redis(connection_pool=self._pool)
+        self.__client = Redis(connection_pool=self.__pool)
 
-        await self._client.ping()  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
+        await self.__client.ping()  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
 
     # ....................... #
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        if self.__client is not None:
+            await self.__client.aclose()
+            self.__client = None
 
-        if self._pool is not None:
-            await self._pool.disconnect(inuse_connections=True)
-            self._pool = None
+        if self.__pool is not None:
+            await self.__pool.disconnect(inuse_connections=True)
+            self.__pool = None
 
     # ....................... #
 
-    def _require_client(self) -> Redis:
-        if self._client is None:
+    def __require_client(self) -> Redis:
+        if self.__client is None:
             raise InfrastructureError("Redis client is not initialized")
 
-        return self._client
+        return self.__client
 
     # ....................... #
 
     async def health(self) -> tuple[str, bool]:
         try:
             ok = (  # pyright: ignore[reportUnknownVariableType]
-                await self._require_client().ping()  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
+                await self.__require_client().ping()  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
             )
             return "ok", bool(ok)  # pyright: ignore[reportUnknownArgumentType]
 
@@ -95,13 +95,13 @@ class RedisClient:
     # ....................... #
     # Context helpers
 
-    def _current_pipe(self) -> Optional[Pipeline]:
-        return self._ctx_pipe.get()
+    def __current_pipe(self) -> Optional[Pipeline]:
+        return self.__ctx_pipe.get()
 
     # ....................... #
 
-    def _executor(self) -> Redis | Pipeline:
-        return self._current_pipe() or self._require_client()
+    def __executor(self) -> Redis | Pipeline:
+        return self.__current_pipe() or self.__require_client()
 
     # ....................... #
     # Pipeline API
@@ -109,31 +109,31 @@ class RedisClient:
     @redis_handled("redis.pipeline")
     @asynccontextmanager
     async def pipeline(self, *, transaction: bool = True) -> AsyncIterator[Pipeline]:
-        depth = self._ctx_depth.get()
-        parent = self._current_pipe()
+        depth = self.__ctx_depth.get()
+        parent = self.__current_pipe()
 
         if depth > 0 and parent is not None:
-            self._ctx_depth.set(depth + 1)
+            self.__ctx_depth.set(depth + 1)
 
             try:
                 yield parent
 
             finally:
-                self._ctx_depth.set(depth)
+                self.__ctx_depth.set(depth)
 
             return
 
-        pipe = self._require_client().pipeline(transaction=transaction)
-        token_pipe = self._ctx_pipe.set(pipe)
-        token_depth = self._ctx_depth.set(1)
+        pipe = self.__require_client().pipeline(transaction=transaction)
+        token_pipe = self.__ctx_pipe.set(pipe)
+        token_depth = self.__ctx_depth.set(1)
 
         try:
             yield pipe
             await pipe.execute()
 
         finally:
-            self._ctx_pipe.reset(token_pipe)
-            self._ctx_depth.reset(token_depth)
+            self.__ctx_pipe.reset(token_pipe)
+            self.__ctx_depth.reset(token_depth)
             await pipe.reset()
 
     # ....................... #
@@ -141,13 +141,13 @@ class RedisClient:
 
     @redis_handled("redis.get")
     async def get(self, key: str) -> Optional[bytes | str]:
-        return await self._executor().get(key)
+        return await self.__executor().get(key)
 
     # ....................... #
 
     @redis_handled("redis.mget")
     async def mget(self, keys: Sequence[str]) -> list[Optional[bytes | str]]:
-        return await self._executor().mget(*keys)
+        return await self.__executor().mget(*keys)
 
     # ....................... #
 
@@ -162,7 +162,7 @@ class RedisClient:
         nx: bool = False,
         xx: bool = False,
     ) -> bool:
-        res = await self._executor().set(key, value, ex=ex, px=px, nx=nx, xx=xx)
+        res = await self.__executor().set(key, value, ex=ex, px=px, nx=nx, xx=xx)
 
         return bool(res)
 
@@ -194,7 +194,7 @@ class RedisClient:
         if not keys:
             return 0
 
-        res = await self._executor().delete(*keys)
+        res = await self.__executor().delete(*keys)
 
         return int(res)
 
@@ -205,7 +205,7 @@ class RedisClient:
         if not keys:
             return 0
 
-        res = await self._executor().unlink(*keys)
+        res = await self.__executor().unlink(*keys)
 
         return int(res)
 
@@ -213,7 +213,7 @@ class RedisClient:
 
     @redis_handled("redis.expire")
     async def expire(self, key: str, seconds: int) -> bool:
-        res = await self._executor().expire(key, seconds)
+        res = await self.__executor().expire(key, seconds)
 
         return bool(res)
 
@@ -222,7 +222,7 @@ class RedisClient:
 
     @redis_handled("redis.incr")
     async def incr(self, key: str, by: int = 1) -> int:
-        res = await self._executor().incrby(key, by)
+        res = await self.__executor().incrby(key, by)
 
         return int(res)
 
@@ -230,7 +230,7 @@ class RedisClient:
 
     @redis_handled("redis.decr")
     async def decr(self, key: str, by: int = 1) -> int:
-        res = await self._executor().decrby(key, by)
+        res = await self.__executor().decrby(key, by)
 
         return int(res)
 
@@ -238,7 +238,7 @@ class RedisClient:
 
     @redis_handled("redis.reset")
     async def reset(self, key: str, value: int) -> int:
-        res = await self._executor().getset(key, value)
+        res = await self.__executor().getset(key, value)
 
         return int(res or 0)
 
@@ -260,7 +260,7 @@ class RedisClient:
         minid: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> str:
-        res = await self._executor().xadd(
+        res = await self.__executor().xadd(
             stream,
             data,  # type: ignore[reportUnknownArgumentType]
             id=id,
@@ -286,7 +286,7 @@ class RedisClient:
         count: Optional[int] = None,
         block_ms: Optional[int] = None,
     ) -> list[tuple[str, list[StreamMessage]]]:
-        res = await self._executor().xread(
+        res = await self.__executor().xread(
             streams=streams,  # type: ignore[reportUnknownMemberType]
             count=count,
             block=block_ms,
@@ -301,7 +301,7 @@ class RedisClient:
         if not ids:
             return 0
 
-        res = await self._executor().xdel(stream, *ids)
+        res = await self.__executor().xdel(stream, *ids)
 
         return int(res)
 
@@ -316,7 +316,7 @@ class RedisClient:
         approx: bool = True,
         limit: Optional[int] = None,
     ) -> int:
-        res = await self._executor().xtrim(
+        res = await self.__executor().xtrim(
             stream,
             maxlen=maxlen,
             approximate=approx,
@@ -336,7 +336,7 @@ class RedisClient:
         approx: bool = True,
         limit: Optional[int] = None,
     ) -> int:
-        res = await self._executor().xtrim(
+        res = await self.__executor().xtrim(
             stream,
             minid=minid,
             approximate=approx,
@@ -356,7 +356,7 @@ class RedisClient:
         id: str = "0-0",
         mkstream: bool = True,
     ) -> bool:
-        res = await self._executor().xgroup_create(
+        res = await self.__executor().xgroup_create(
             stream,
             group,
             id=id,
@@ -378,7 +378,7 @@ class RedisClient:
         block_ms: Optional[int] = None,
         noack: bool = False,
     ) -> list[tuple[str, list[StreamMessage]]]:
-        res = await self._executor().xreadgroup(
+        res = await self.__executor().xreadgroup(
             group,
             consumer,
             streams,  # type: ignore[reportUnknownArgumentType]
@@ -396,6 +396,6 @@ class RedisClient:
         if not ids:
             return 0
 
-        res = await self._executor().xack(stream, group, *ids)
+        res = await self.__executor().xack(stream, group, *ids)
 
         return int(res)

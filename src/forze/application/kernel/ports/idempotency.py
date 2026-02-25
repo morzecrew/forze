@@ -10,6 +10,8 @@ class IdempotencySnapshot(TypedDict):
 
 
 # ....................... #
+#! TODO: use contextvar or so for idempotency snapshot and async context manager
+#! to wrap the scope
 
 
 @runtime_checkable

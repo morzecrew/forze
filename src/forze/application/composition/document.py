@@ -1,4 +1,4 @@
-from typing import Any, TypeVar
+from typing import Any, Callable, TypeVar
 
 from forze.application.dto.mappers import DTOMapper
 from forze.application.usecases.document import (
@@ -13,6 +13,9 @@ from forze.application.usecases.document import (
 )
 from forze.domain.models import BaseDTO, ReadDocument
 
+from ..facades import DocumentUsecasesFacade
+from ..kernel.dependencies import UsecaseContext
+from ..kernel.plan import UsecasePlan
 from ..kernel.registry import UsecaseRegistry
 from ..kernel.specs import DocumentSpec
 
@@ -27,7 +30,7 @@ U = TypeVar("U", bound=BaseDTO)
 
 def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRegistry:
     reg = UsecaseRegistry(
-        defaults={
+        {
             "get": lambda ctx: GetDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
@@ -52,20 +55,19 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
         }
     )
 
-    #! should it be like below ?
-
     if spec.supports_update():
-        reg = reg.register(
+        reg.register(
             "update",
             lambda ctx: UpdateDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
                 mapper=DTOMapper(dto=spec.models["update_cmd"]),
             ),
+            inplace=True,
         )
 
     if spec.supports_soft_delete():
-        reg = reg.register_many(
+        reg.register_many(
             {
                 "delete": lambda ctx: DeleteDocument(
                     doc=ctx.doc(spec),
@@ -75,7 +77,8 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
                     doc=ctx.doc(spec),
                     runtime=ctx.runtime,
                 ),
-            }
+            },
+            inplace=True,
         )
 
     return reg
@@ -84,4 +87,18 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 # ....................... #
 
 
-def build_document_facade(spec: DocumentSpec[Any, Any, Any, Any]): ...
+def build_document_facade(
+    spec: DocumentSpec[Any, Any, Any, Any],
+    reg_builder: Callable[
+        [DocumentSpec[Any, Any, Any, Any]],
+        UsecaseRegistry,
+    ] = build_document_registry,
+    plan_builder: Callable[[], UsecasePlan] = lambda: UsecasePlan(),
+) -> Callable[[UsecaseContext], DocumentUsecasesFacade[R, C, U]]:
+    base_reg = reg_builder(spec)
+
+    def factory(ctx: UsecaseContext) -> DocumentUsecasesFacade[R, C, U]:
+        reg = base_reg.extend_plan(plan_builder())
+        return DocumentUsecasesFacade[R, C, U](ctx=ctx, reg=reg)
+
+    return factory
