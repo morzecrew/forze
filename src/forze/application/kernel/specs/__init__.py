@@ -1,3 +1,5 @@
+"""Public specifications exposed by the application kernel."""
+
 from .document import DocumentModelSpec, DocumentSearchSpec, DocumentSpec
 
 # ----------------------- #

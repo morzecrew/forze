@@ -1,3 +1,11 @@
+"""Registry for application usecase factories.
+
+The registry owns a mapping from logical operation names to
+callables that produce concrete :class:`~forze.application.kernel.usecase.Usecase`
+instances. It also tracks an associated :class:`~forze.application.kernel.plan.UsecasePlan`
+that describes how guards and effects should wrap each operation.
+"""
+
 from typing import Any, Callable, Literal, Optional, Self, TypeVar, cast, overload
 
 import attrs
@@ -13,12 +21,27 @@ from .usecase import Usecase
 U = TypeVar("U", bound=Usecase[Any, Any])
 
 UsecaseFactory = Callable[[UsecaseContext], U]
+"""Factory that builds a concrete :class:`Usecase` from a :class:`UsecaseContext`."""
+
 
 # ....................... #
 
 
 @attrs.define(slots=True)
 class UsecaseRegistry:
+    """Container for registering and composing usecases.
+
+    The registry is responsible for:
+
+    * registering factories for named operations
+    * applying overrides in a controlled way
+    * attaching a :class:`UsecasePlan` that enriches usecases with guards
+      and effects
+
+    It can be used in an immutable style by returning new instances, or in a
+    mutable style when ``inplace=True`` is passed to mutation methods.
+    """
+
     defaults: dict[str, UsecaseFactory[Any]] = attrs.field(factory=dict)
 
     # Non initable fields
@@ -34,7 +57,16 @@ class UsecaseRegistry:
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[True],
-    ) -> None: ...
+    ) -> None:
+        """Register a usecase factory for an operation.
+
+        :param op: Logical operation name.
+        :param factory: Factory that builds the usecase.
+        :param inplace: When ``True``, mutate the registry in place, otherwise
+            return a new instance.
+        :raises CoreError: If a factory is already registered for ``op``.
+        """
+        ...
 
     @overload
     def register(
@@ -43,7 +75,16 @@ class UsecaseRegistry:
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[False] = False,
-    ) -> Self: ...
+    ) -> Self:
+        """Register a usecase factory for an operation.
+
+        :param op: Logical operation name.
+        :param factory: Factory that builds the usecase.
+        :param inplace: When ``True``, mutate the registry in place, otherwise
+            return a new instance.
+        :raises CoreError: If a factory is already registered for ``op``.
+        """
+        ...
 
     def register(
         self,
@@ -52,6 +93,15 @@ class UsecaseRegistry:
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
+        """Register a usecase factory for an operation.
+
+        :param op: Logical operation name.
+        :param factory: Factory that builds the usecase.
+        :param inplace: When ``True``, mutate the registry in place, otherwise
+            return a new instance.
+        :raises CoreError: If a factory is already registered for ``op``.
+        """
+
         if op in self.defaults:
             raise CoreError(
                 f"Usecase factory is already registered for operation: {op}"
@@ -77,7 +127,18 @@ class UsecaseRegistry:
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[True],
-    ) -> None: ...
+    ) -> None:
+        """Override an existing usecase factory for an operation.
+
+        The override is tracked so that conflicting :class:`UsecasePlan`
+        overrides can be detected when plans are extended.
+
+        :param op: Logical operation name to override.
+        :param factory: Replacement factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: If ``op`` has not been registered yet.
+        """
+        ...
 
     @overload
     def override(
@@ -86,7 +147,17 @@ class UsecaseRegistry:
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[False] = False,
-    ) -> Self: ...
+    ) -> Self:
+        """Override an existing usecase factory for an operation.
+
+        The override is tracked so that conflicting :class:`UsecasePlan`
+        overrides can be detected when plans are extended.
+
+        :param op: Logical operation name to override.
+        :param factory: Replacement factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: If ``op`` has not been registered yet.
+        """
 
     def override(
         self,
@@ -95,6 +166,17 @@ class UsecaseRegistry:
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
+        """Override an existing usecase factory for an operation.
+
+        The override is tracked so that conflicting :class:`UsecasePlan`
+        overrides can be detected when plans are extended.
+
+        :param op: Logical operation name to override.
+        :param factory: Replacement factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: If ``op`` has not been registered yet.
+        """
+
         if op not in self.defaults:
             raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
@@ -119,7 +201,14 @@ class UsecaseRegistry:
         ops: dict[str, UsecaseFactory[Any]],
         *,
         inplace: Literal[True],
-    ) -> None: ...
+    ) -> None:
+        """Register several operations at once.
+
+        :param ops: Mapping from operation name to factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations is already registered.
+        """
+        ...
 
     @overload
     def register_many(
@@ -127,7 +216,14 @@ class UsecaseRegistry:
         ops: dict[str, UsecaseFactory[Any]],
         *,
         inplace: Literal[False] = False,
-    ) -> Self: ...
+    ) -> Self:
+        """Register several operations at once.
+
+        :param ops: Mapping from operation name to factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations is already registered.
+        """
+        ...
 
     def register_many(
         self,
@@ -135,6 +231,13 @@ class UsecaseRegistry:
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
+        """Register several operations at once.
+
+        :param ops: Mapping from operation name to factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations is already registered.
+        """
+
         already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
         if already_registered:
@@ -161,14 +264,31 @@ class UsecaseRegistry:
         ops: dict[str, UsecaseFactory[Any]],
         *,
         inplace: Literal[True],
-    ) -> None: ...
+    ) -> None:
+        """Override several operations in a single call.
+
+        :param ops: Mapping from operation name to replacement factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations has not yet been
+            registered.
+        """
+        ...
+
     @overload
     def override_many(
         self,
         ops: dict[str, UsecaseFactory[Any]],
         *,
         inplace: Literal[False] = False,
-    ) -> Self: ...
+    ) -> Self:
+        """Override several operations in a single call.
+
+        :param ops: Mapping from operation name to replacement factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations has not yet been
+            registered.
+        """
+        ...
 
     def override_many(
         self,
@@ -176,6 +296,14 @@ class UsecaseRegistry:
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
+        """Override several operations in a single call.
+
+        :param ops: Mapping from operation name to replacement factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations has not yet been
+            registered.
+        """
+
         not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
         if not_yet_registered:
@@ -205,7 +333,18 @@ class UsecaseRegistry:
         *,
         inplace: Literal[True],
         allow_override_on_overriden: bool = False,
-    ) -> None: ...
+    ) -> None:
+        """Attach additional planning information to the registry.
+
+        :param extra: Plan to merge into the existing registry plan.
+        :param inplace: When ``True``, mutate the registry in place.
+        :param allow_override_on_overriden: When ``True``, allow the plan to
+            override operations that have also been overridden at the registry
+            level. When ``False``, such conflicts raise :class:`CoreError`.
+        """
+
+        ...
+
     @overload
     def extend_plan(
         self,
@@ -213,7 +352,17 @@ class UsecaseRegistry:
         *,
         inplace: Literal[False] = False,
         allow_override_on_overriden: bool = False,
-    ) -> Self: ...
+    ) -> Self:
+        """Attach additional planning information to the registry.
+
+        :param extra: Plan to merge into the existing registry plan.
+        :param inplace: When ``True``, mutate the registry in place.
+        :param allow_override_on_overriden: When ``True``, allow the plan to
+            override operations that have also been overridden at the registry
+            level. When ``False``, such conflicts raise :class:`CoreError`.
+        """
+
+        ...
 
     def extend_plan(
         self,
@@ -222,6 +371,18 @@ class UsecaseRegistry:
         inplace: bool = False,
         allow_override_on_overriden: bool = False,
     ) -> Optional[Self]:
+        """Attach additional planning information to the registry.
+
+        :param extra: Plan to merge into the existing registry plan.
+        :param inplace: When ``True``, mutate the registry in place.
+        :param allow_override_on_overriden: When ``True``, allow the plan to
+            override operations that have also been overridden at the registry
+            level. When ``False``, such conflicts raise :class:`CoreError`.
+        :raises CoreError: When a plan tries to override an operation that has
+            already been explicitly overridden and
+            ``allow_override_on_overriden`` is ``False``.
+        """
+
         if not allow_override_on_overriden:
             for op, pl in extra.ops.items():
                 if pl.override is not None and op in self.__overriden:
@@ -245,6 +406,8 @@ class UsecaseRegistry:
     # ....................... #
 
     def exists(self, op: str) -> bool:
+        """Return ``True`` when a factory is registered for ``op``."""
+
         return op in self.defaults
 
     # ....................... #
@@ -256,6 +419,20 @@ class UsecaseRegistry:
         *,
         expected: Optional[type[U]] = None,
     ) -> U:
+        """Build a fully composed usecase for an operation.
+
+        The method looks up the factory for ``op``, resolves the configured
+        :class:`UsecasePlan`, and optionally validates that the concrete
+        instance is of the expected type.
+
+        :param op: Logical operation name.
+        :param ctx: Usecase context passed to the underlying factories.
+        :param expected: Expected concrete type of the resulting usecase.
+        :returns: A composed :class:`Usecase` instance.
+        :raises CoreError: When no factory is registered or the resulting
+            usecase has an unexpected type.
+        """
+
         factory = self.defaults.get(op)
 
         if not factory:

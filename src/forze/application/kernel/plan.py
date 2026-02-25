@@ -1,3 +1,11 @@
+"""Composition plan for application usecases.
+
+This module defines small, composable building blocks that describe how
+guards and effects should wrap a concrete :class:`~forze.application.kernel.usecase.Usecase`
+implementation. Plans are keyed by operation name and can be merged or extended
+at composition time.
+"""
+
 from typing import Any, Callable, Optional, Self, TypeVar, cast
 
 import attrs
@@ -12,14 +20,26 @@ from .usecase import Effect, Guard, TxUsecase, Usecase
 U = TypeVar("U", bound=Usecase[Any, Any])
 
 GuardFactory = Callable[[UsecaseContext], Guard[Any]]
+"""Factory that produces a :class:`~forze.application.kernel.usecase.Guard` from a :class:`UsecaseContext`."""
+
 EffectFactory = Callable[[UsecaseContext], Effect[Any, Any]]
+"""Factory that produces an :class:`~forze.application.kernel.usecase.Effect` from a :class:`UsecaseContext`."""
+
 UsecaseFactory = Callable[[UsecaseContext], U]
+"""Factory that builds a concrete :class:`~forze.application.kernel.usecase.Usecase` instance."""
+
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GuardSpec:
+    """Specification for a guard attached to an operation plan.
+
+    Guards are ordered by ``priority`` (ascending) and created lazily from a
+    :class:`UsecaseContext` when a plan is resolved.
+    """
+
     priority: int = attrs.field(
         validator=[
             attrs.validators.gt(int(-1e5)),
@@ -34,6 +54,12 @@ class GuardSpec:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class EffectSpec:
+    """Specification for an effect attached to an operation plan.
+
+    Effects are ordered by ``priority`` (ascending) and created lazily from a
+    :class:`UsecaseContext` when a plan is resolved.
+    """
+
     priority: int = attrs.field(
         validator=[
             attrs.validators.gt(int(-1e5)),
@@ -48,6 +74,16 @@ class EffectSpec:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
+    """Per-operation composition describing overrides, guards and effects.
+
+    The plan tracks:
+
+    * an optional ``override`` usecase factory
+    * ordered guards/effects that wrap the operation
+    * "side" guards/effects that execute outside a transaction for
+      transactional usecases.
+    """
+
     override: Optional[UsecaseFactory[Any]] = None
     guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
     effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
@@ -60,11 +96,25 @@ class OperationPlan:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UsecasePlan:
+    """Mutable description of how usecases for operations are composed.
+
+    A plan is a mapping from operation name to :class:`OperationPlan`. It can
+    be extended with additional guards and effects or merged with other plans
+    to form a final composition.
+    """
+
     ops: dict[str, OperationPlan] = attrs.field(factory=dict)
 
     # ....................... #
 
     def override(self, op: str, factory: UsecaseFactory[U]) -> Self:
+        """Override the base usecase factory for a specific operation.
+
+        :param op: Logical operation name (e.g. ``"get"`` or ``"search"``).
+        :param factory: Factory that builds the concrete usecase.
+        :returns: A new :class:`UsecasePlan` with the override applied.
+        """
+
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
         new_ops[op] = attrs.evolve(cur, override=factory)
@@ -81,6 +131,17 @@ class UsecasePlan:
         *,
         side: bool = False,
     ) -> Self:
+        """Attach a guard to run before a usecase for an operation.
+
+        :param op: Logical operation name.
+        :param guard: Factory for the guard to attach.
+        :param priority: Sorting key; lower values run earlier.
+        :param side: When ``True``, attach as a side guard that will run
+            outside transactions for :class:`~forze.application.kernel.usecase.TxUsecase`
+            instances.
+        :returns: A new :class:`UsecasePlan` with the guard added.
+        """
+
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
         guard_spec = GuardSpec(priority=priority, guard=guard)
@@ -103,6 +164,17 @@ class UsecasePlan:
         *,
         side: bool = False,
     ) -> Self:
+        """Attach an effect to run after a usecase for an operation.
+
+        :param op: Logical operation name.
+        :param effect: Factory for the effect to attach.
+        :param priority: Sorting key; lower values run earlier.
+        :param side: When ``True``, attach as a side effect that will run
+            outside transactions for :class:`~forze.application.kernel.usecase.TxUsecase`
+            instances.
+        :returns: A new :class:`UsecasePlan` with the effect added.
+        """
+
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
         effect_spec = EffectSpec(priority=priority, effect=effect)
@@ -121,6 +193,20 @@ class UsecasePlan:
     # ....................... #
 
     def resolve(self, op: str, ctx: UsecaseContext, default: UsecaseFactory[U]) -> U:
+        """Build a composed usecase instance for an operation.
+
+        The method chooses an override factory when configured, instantiates
+        the usecase with the provided :class:`UsecaseContext`, and then applies
+        guards/effects (including side variants for transactional usecases) in
+        priority order.
+
+        :param op: Logical operation name.
+        :param ctx: Context that provides runtime and infrastructure access.
+        :param default: Fallback factory when no override is configured.
+        :returns: A composed :class:`~forze.application.kernel.usecase.Usecase`
+            instance ready to be invoked.
+        """
+
         plan = self.ops.get(op)
         factory = default
 
@@ -173,6 +259,18 @@ class UsecasePlan:
 
     @classmethod
     def merge(cls, *plans: Self) -> Self:
+        """Merge multiple plans into a single aggregate plan.
+
+        Later plans override earlier ones when both define an override factory
+        for the same operation; guards and effects are concatenated in the
+        order plans are provided.
+
+        :param plans: Plans to merge.
+        :returns: A new :class:`UsecasePlan` with combined operations.
+        :raises CoreError: If two plans provide incompatible overrides for the
+            same operation (different factory objects).
+        """
+
         acc: dict[str, OperationPlan] = {}
 
         for p in plans:

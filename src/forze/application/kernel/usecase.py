@@ -9,13 +9,22 @@ from .ports import AppRuntimePort
 
 
 class Effect[Args, R](Protocol):  # pragma: no cover
-    """Effect to run after the usecase execution."""
+    """Effect to run after the usecase execution.
+
+    Effects can transform the result or perform asynchronous side effects
+    (logging, auditing, indexing, etc.) based on the input arguments and the
+    produced result.
+    """
 
     async def __call__(self, args: Args, res: R) -> R: ...
 
 
 class Guard[Args](Protocol):  # pragma: no cover
-    """Guard to run before the usecase execution."""
+    """Guard to run before the usecase execution.
+
+    Guards are responsible for validating or enriching arguments before the
+    main usecase logic runs. They may raise exceptions on failure.
+    """
 
     async def __call__(self, args: Args) -> None: ...
 
@@ -25,10 +34,15 @@ class Guard[Args](Protocol):  # pragma: no cover
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class Usecase[Args, R]:
-    """Usecase base class."""
+    """Base class for asynchronous application usecases.
+
+    A usecase encapsulates business logic and is invoked as an async callable.
+    It can be decorated with guards and effects that run before and after the
+    main execution, respectively.
+    """
 
     runtime: AppRuntimePort
-    """Application runtime."""
+    """Application runtime providing transactions and health checks."""
 
     guards: tuple[Guard[Args], ...] = attrs.field(factory=tuple)
     """Guards to run before the usecase."""
@@ -39,7 +53,7 @@ class Usecase[Args, R]:
     # ....................... #
 
     def with_effects(self, *effects: Effect[Args, R]) -> Self:
-        """Add effects to the usecase."""
+        """Return a new usecase with additional effects appended."""
 
         if not effects:
             return self
@@ -49,7 +63,7 @@ class Usecase[Args, R]:
     # ....................... #
 
     def with_guards(self, *guards: Guard[Args]) -> Self:
-        """Add guards to the usecase."""
+        """Return a new usecase with additional guards appended."""
 
         if not guards:
             return self
@@ -59,6 +73,11 @@ class Usecase[Args, R]:
     # ....................... #
 
     async def main(self, args: Args) -> R:
+        """Main implementation of the usecase.
+
+        Subclasses must override this method to implement their behavior.
+        """
+
         raise NotImplementedError
 
     # ....................... #
@@ -82,6 +101,8 @@ class Usecase[Args, R]:
     # ....................... #
 
     async def __call__(self, args: Args) -> R:
+        """Execute the usecase with the configured guards and effects."""
+
         await self._run_guards(args)
         res = await self.main(args)
         return await self._run_effects(args, res)
@@ -93,7 +114,12 @@ class Usecase[Args, R]:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TxUsecase[Args, R](Usecase[Args, R]):
-    """Transactional usecase base class."""
+    """Usecase that runs within a transaction boundary.
+
+    Transactional usecases support both "inner" guards/effects executed
+    inside the transaction and "side" variants that run outside the
+    transaction (e.g. integration events, notifications).
+    """
 
     side_guards: tuple[Guard[Args], ...] = attrs.field(factory=tuple)
     """Guards to run before the usecase outside the transaction."""
@@ -104,7 +130,7 @@ class TxUsecase[Args, R](Usecase[Args, R]):
     # ....................... #
 
     def with_side_effects(self, *effects: Effect[Args, R]) -> Self:
-        """Add side effects to the usecase."""
+        """Return a new usecase with additional side effects appended."""
 
         if not effects:
             return self
@@ -114,7 +140,7 @@ class TxUsecase[Args, R](Usecase[Args, R]):
     # ....................... #
 
     def with_side_guards(self, *guards: Guard[Args]) -> Self:
-        """Add side guards to the usecase."""
+        """Return a new usecase with additional side guards appended."""
 
         if not guards:
             return self
@@ -143,6 +169,8 @@ class TxUsecase[Args, R](Usecase[Args, R]):
 
     @override
     async def __call__(self, args: Args) -> R:
+        """Execute the usecase inside a transaction with side hooks."""
+
         await self._run_side_guards(args)
 
         async with self.runtime.transaction():

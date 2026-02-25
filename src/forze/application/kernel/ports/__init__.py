@@ -1,3 +1,9 @@
+"""Aggregate exports for kernel ports.
+
+This module re-exports the main port protocols that define how the application
+kernel talks to infrastructure and external services.
+"""
+
 from .counter import CounterPort
 from .document import (
     DocumentCachePort,

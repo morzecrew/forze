@@ -44,7 +44,7 @@ test *args='':
     {{ _uv_sync }}
 
     uv run pytest -- {{ args }}
-
+    
 
 # Run all quality checks
 [arg("strict", long, short="s", value="true", help="Enable strict mode (fail on error in any check)")]
