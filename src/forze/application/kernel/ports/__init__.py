@@ -18,6 +18,7 @@ from .idempotency import IdempotencyPort, IdempotencySnapshot
 from .runtime import AppRuntimePort
 from .storage import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
 from .stream import StreamEvent, StreamPort
+from .txmanager import TxManagerPort
 from .workflow import WorkflowPort
 
 # ----------------------- #
@@ -41,4 +42,5 @@ __all__ = [
     "IdempotencySnapshot",
     "StreamPort",
     "StreamEvent",
+    "TxManagerPort",
 ]

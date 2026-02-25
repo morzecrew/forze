@@ -1,4 +1,7 @@
-from typing import Any, Callable, TypeVar
+from functools import cached_property
+from typing import Any, Generic, NotRequired, Optional, TypedDict, TypeVar, final
+
+import attrs
 
 from forze.application.dto.mappers import DTOMapper
 from forze.application.usecases.document import (
@@ -29,6 +32,8 @@ U = TypeVar("U", bound=BaseDTO)
 
 
 def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRegistry:
+    """Build a usecase registry for the given document spec."""
+
     reg = UsecaseRegistry(
         {
             DocumentOperation.GET: lambda ctx: GetDocument(
@@ -87,18 +92,48 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 # ....................... #
 
 
-def build_document_facade(
-    spec: DocumentSpec[Any, Any, Any, Any],
-    reg_builder: Callable[
-        [DocumentSpec[Any, Any, Any, Any]],
-        UsecaseRegistry,
-    ] = build_document_registry,
-    plan_builder: Callable[[], UsecasePlan] = lambda: UsecasePlan(),
-) -> Callable[[UsecaseContext], DocumentUsecasesFacade[R, C, U]]:
-    base_reg = reg_builder(spec)
+class DTOSpec(TypedDict, Generic[R, C, U]):
+    """DTO specification for a document aggregate."""
 
-    def factory(ctx: UsecaseContext) -> DocumentUsecasesFacade[R, C, U]:
-        reg = base_reg.extend_plan(plan_builder())
-        return DocumentUsecasesFacade[R, C, U](ctx=ctx, reg=reg)
+    read: type[R]
+    """Read DTO."""
 
-    return factory
+    create: NotRequired[type[C]]
+    """Create DTO."""
+
+    update: NotRequired[type[U]]
+    """Update DTO."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
+    """Provider of document usecases facade for a document spec."""
+
+    spec: DocumentSpec[Any, Any, Any, Any]
+    """Document spec."""
+
+    reg: Optional[UsecaseRegistry] = None
+    """Usecase registry."""
+
+    plan: UsecasePlan = attrs.field(factory=UsecasePlan)
+    """Usecase plan."""
+
+    dtos: DTOSpec[R, C, U]
+    """DTO specification."""
+
+    # ....................... #
+
+    @cached_property
+    def __reg(self) -> UsecaseRegistry:
+        reg = self.reg or build_document_registry(self.spec)
+
+        return reg.extend_plan(self.plan)
+
+    # ....................... #
+
+    def __call__(self, ctx: UsecaseContext) -> DocumentUsecasesFacade[R, C, U]:
+        return DocumentUsecasesFacade(ctx=ctx, reg=self.__reg)

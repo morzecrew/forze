@@ -92,6 +92,15 @@ class ValidationError(CoreError):
 # ....................... #
 
 
+@attrs.define(slots=True, eq=False)
+class InfrastructureError(CoreError):
+    code: str = "infrastructure_error"
+    message: str = "An infrastructure error occurred"
+
+
+# ....................... #
+
+
 class ErrorHandler(Protocol):
     """Callable protocol for converting exceptions into :class:`CoreError`."""
 

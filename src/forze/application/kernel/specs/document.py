@@ -67,8 +67,8 @@ class DocumentSpec(Generic[R, D, C, U]):
 
     A :class:`DocumentSpec` binds together:
 
-    * namespace used for counters and cache keys
-    * storage relations
+    * namespace used for cache keys
+    * data storage relations
     * concrete model types for read/domain/commands
     * optional search configuration
 
@@ -77,10 +77,19 @@ class DocumentSpec(Generic[R, D, C, U]):
     """
 
     namespace: str
+    """Namespace used for cache keys."""
+
     relations: DocumentRelationSpec
+    """Data storage relations."""
+
     models: DocumentModelSpec[R, D, C, U]
+    """Concrete model types for read/domain/commands."""
+
     search: Optional[DocumentSearchSpec] = None
+    """Optional search configuration."""
+
     enable_cache: bool = False
+    """Enable caching for the document aggregate."""
 
     # ....................... #
 

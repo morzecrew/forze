@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Infra layer (`forze.infra`) with Postgres, Redis, S3, and Temporal providers (gateways, platform clients, shared errors and codecs).
 - Domain document support built from `forze.domain.models.Document` with reusable name/number/soft-deletion mixins and update-validator infrastructure for safer incremental updates.
+- Optional FastAPI integration package (`forze_fastapi`) with routing helpers and a `fastapi` extra.
 
 ### Changed
 

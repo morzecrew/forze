@@ -4,7 +4,7 @@ set shell := ["bash", "-cu"]
 # ----------------------- #
 # Paths / constants
 
-_uv_sync := "uv sync --all-groups > /dev/null 2>&1"
+_uv_sync := "uv sync --all-groups --all-extras > /dev/null 2>&1"
 
 _publish_url := "https://pyoci.com/ghcr.io/morzecrew/"
 

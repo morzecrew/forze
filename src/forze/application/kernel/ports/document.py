@@ -22,6 +22,8 @@ DocumentSorts = dict[str, Literal["asc", "desc"]]
 
 # Filters = JsonDict  #! TODO: review?
 
+# ....................... #
+
 
 class DocumentSearchOptions(TypedDict, total=False):
     """Optional tuning parameters for search backends."""
@@ -37,6 +39,9 @@ class DocumentSearchOptions(TypedDict, total=False):
 
     overwrite_fuzzy_max: float
     """Upper bound for fuzziness distance when fuzzy search is enabled."""
+
+
+# ....................... #
 
 
 @runtime_checkable
@@ -198,6 +203,9 @@ class DocumentReadPort[R: ReadDocument](Protocol):
         ...
 
 
+# ....................... #
+
+
 @runtime_checkable
 class DocumentSearchPort[R: ReadDocument](Protocol):
     """Full-text or secondary index search over documents."""
@@ -257,6 +265,9 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
         :returns: A tuple of hits and total hit count.
         """
         ...
+
+
+# ....................... #
 
 
 @runtime_checkable
@@ -333,6 +344,9 @@ class DocumentWritePort[
         ...
 
 
+# ....................... #
+
+
 @runtime_checkable
 class DocumentPort[
     R: ReadDocument,
@@ -341,6 +355,9 @@ class DocumentPort[
     U: BaseDTO,
 ](DocumentReadPort[R], DocumentSearchPort[R], DocumentWritePort[R, D, C, U], Protocol):
     """Combined port exposing read, search and write operations for documents."""
+
+
+# ....................... #
 
 
 @runtime_checkable

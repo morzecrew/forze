@@ -14,14 +14,21 @@ from pydantic import BaseModel
 
 
 def as_form[M: BaseModel](cls: type[M]) -> type[M]:
-    """Decorator to convert `pydantic` model to a suitable `fastapi.Form` model"""
+    """Decorate a Pydantic model so FastAPI treats it as form data.
+
+    The function rewrites the model's ``__signature__`` so that each field is
+    bound via :class:`fastapi.Form`, making the model usable as a request body
+    in HTML form submissions.
+    """
 
     new_params = [
         inspect.Parameter(
             field_name,
             inspect.Parameter.POSITIONAL_ONLY,
             default=model_field.default,
-            annotation=Annotated[model_field.annotation, *model_field.metadata, Form()],
+            annotation=Annotated[
+                model_field.annotation, *model_field.metadata, Form()
+            ],
         )
         for field_name, model_field in cls.model_fields.items()
     ]

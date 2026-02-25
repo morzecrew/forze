@@ -10,24 +10,14 @@ requires-python = ">=3.13,<3.15"
 # Dependencies
 
 dependencies = [
-    "aioboto3>=15.5.0",
-    "aiobotocore>=2.25.1",
     "attrs>=25.4.0",
-    "botocore>=1.40.61",
     "deepdiff>=8.6.1",
     "mergedeep>=1.3.4",
     "orjson>=3.11.7",
-    "psycopg-pool>=3.3.0",
-    "psycopg[binary]>=3.3.3",
     "pydantic>=2.12.5",
     "pydantic-extra-types>=2.11.0",
     "python-dateutil>=2.9.0.post0",
-    "python-magic>=0.4.27",
     "pyyaml>=6.0.3",
-    "redis>=7.2.0",
-    "temporalio>=1.23.0",
-    "types-aioboto3[s3]>=15.5.0",
-    "types-aiobotocore>=3.1.3",
 ]
 
 [dependency-groups]
@@ -44,7 +34,19 @@ dev = [
 ]
 
 [project.optional-dependencies]
-fastapi = ["annotated-doc>=0.0.4", "fastapi>=0.131.0", "starlette>=0.52.1"]
+fastapi = ["fastapi>=0.131.0", "starlette>=0.52.1"]
+postgres = ["psycopg-pool>=3.3.0", "psycopg[binary]>=3.3.3"]
+redis = ["redis>=7.2.0"]
+temporal = ["temporalio>=1.23.0"]
+s3 = [
+    "aioboto3>=15.5.0",
+    "aiobotocore>=2.25.1",
+    "botocore>=1.40.61",
+    "python-magic>=0.4.27",
+    "types-aioboto3[s3]>=15.5.0",
+    "types-aiobotocore>=3.1.3",
+]
+mongo = ["pymongo>=4.16.0"]
 
 # ....................... #
 # Private index (PyOCI)
@@ -122,15 +124,23 @@ exclude_lines = [
 # Import contracts
 
 [tool.importlinter]
-root_packages = ["forze", "forze_fastapi"]
+root_packages = [
+    "forze",
+    "forze_fastapi",
+    "forze_postgres",
+    "forze_redis",
+    "forze_s3",
+    "forze_temporal",
+    "forze_mongo",
+]
 
 [[tool.importlinter.contracts]]
-name = "Layered package architecture"
+name = "Layered `forze` package architecture"
 type = "layers"
-layers = ["forze.infra", "forze.application", "forze.domain", "forze.base"]
+layers = ["forze.application", "forze.domain", "forze.utils", "forze.base"]
 
 [[tool.importlinter.contracts]]
-name = "Layered `application` module architecture"
+name = "Layered `forze.application` module architecture"
 type = "layers"
 layers = [
     "forze.application.composition",
@@ -141,7 +151,7 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Layered `domain` module architecture"
+name = "Layered `forze.domain` module architecture"
 type = "layers"
 layers = [
     "forze.domain.mixins",
@@ -150,22 +160,41 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Infrastructure providers independence"
-type = "independence"
-modules = ["forze.infra.providers.*"]
-
-[[tool.importlinter.contracts]]
 name = "Protect integration subpackages"
 type = "protected"
-protected_modules = ["forze_fastapi"]
+protected_modules = [
+    "forze_fastapi",
+    "forze_postgres",
+    "forze_redis",
+    "forze_s3",
+    "forze_temporal",
+    "forze_mongo",
+]
 allowed_importers = []
 as_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered `forze_fastapi` package architecture"
+type = "layers"
+layers = [
+    "forze_fastapi.routers",
+    "forze_fastapi.routing",
+    "forze_fastapi.constants",
+]
 
 # ....................... #
 # Dead code
 
 [tool.vulture]
-paths = ["src/forze", "src/forze_fastapi"]
+paths = [
+    "src/forze",
+    "src/forze_fastapi",
+    "src/forze_postgres",
+    "src/forze_redis",
+    "src/forze_s3",
+    "src/forze_temporal",
+    "src/forze_mongo",
+]
 sort_by_size = true
 min_confidence = 80
 
@@ -181,7 +210,15 @@ mi_min = "B"
 # Dependency analysis
 
 [tool.deptry]
-known_first_party = ["forze", "forze_fastapi"]
+known_first_party = [
+    "forze",
+    "forze_fastapi",
+    "forze_postgres",
+    "forze_redis",
+    "forze_s3",
+    "forze_temporal",
+    "forze_mongo",
+]
 ignore_notebooks = true
 
 [tool.deptry.per_rule_ignores]

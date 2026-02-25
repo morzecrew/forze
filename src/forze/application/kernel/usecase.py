@@ -2,6 +2,7 @@ from typing import Protocol, Self, override
 
 import attrs
 
+from .dependencies import UsecaseContext  # noqa: F401
 from .ports import AppRuntimePort
 
 # ----------------------- #

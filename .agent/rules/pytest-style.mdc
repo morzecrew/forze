@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Pytest style
 
-- **Layout:** Tests under `tests/unit/` and `tests/integration/`. Path determines marker (`unit` / `integration`). Mirror `src`: e.g. `src/forze/foo/bar.py` → `tests/unit/foo/test_bar.py`.
+- **Layout:** Tests under `tests/unit/` and `tests/integration/`. Path determines marker (`unit` / `integration`). Mirror `src` with adjustments: e.g. `src/pkg/foo/bar.py` → `tests/unit/test_pkg/foo/test_bar.py` - to avoid conflicts with source files and the same time keep consistency.
 - **Naming:** Files `test_*.py`, classes `Test*`, functions `test_*`. Imports: `from forze....` (pythonpath is `src`).
 - **Unit:** No I/O. Use mocks; prefer `MagicMock(spec=RealClass)`. One `class TestX:` per tested type; methods `test_<behavior>`. Fixtures in module or `conftest.py`. Use `@pytest.mark.asyncio` only for async tests.
 - **Integration:** Use fixtures from `tests/integration/conftest.py` (`pg_client`, `redis_client`, `s3_client`). Compose gateways in test/module fixtures. Mark async tests with `@pytest.mark.asyncio`. One scenario per test; isolate data.
