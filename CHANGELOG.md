@@ -9,15 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Infra layer (`forze.infra`) with Postgres, Redis, S3, and Temporal providers (gateways, platform clients, shared errors and codecs).
-- Domain document support built from `forze.domain.models.Document` with reusable name/number/soft-deletion mixins and update-validator infrastructure for safer incremental updates.
-- Optional FastAPI integration package (`forze_fastapi`) with routing helpers and a `fastapi` extra.
+- Domain document support in `forze.domain` built from `forze.domain.models.Document` with name/number/soft-deletion mixins and update-validator infrastructure for safer incremental updates.
+- Document kernel in `forze.application.kernel`: pluggable usecase plans, `DocumentUsecasesFacade` factory, `DocumentPort` with explicit `DocumentSearchPort` and `DocumentReadPort`/`DocumentWritePort`, and `DocumentOperation` enum for operation keys.
+- Optional FastAPI integration package `forze_fastapi` (extra `fastapi`): routing helpers, idempotent POST support, and prebuilt document router.
+- Optional provider packages (separate installs): `forze_postgres`, `forze_redis`, `forze_s3`, `forze_temporal`, `forze_mongo` with platform clients, gateways/adapters, and dependency keys for composition.
 
 ### Changed
 
-- **Postgres filter builder** (`forze.infra.providers.postgres.builder`): filter input now accepts only canonical operator names (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `is_null`, `or`, array and ltree ops). Aliases such as `==`, `ge`, `not in`, `in_`, `or_` are no longer accepted and raise `ValidationError`. Use `in` and `or` (not `in_`/`or_`) for membership and disjunction.
-- Document kernel registry and composition updated to support pluggable plans and a `DocumentUsecasesFacade` factory for document operations.
-- Document search ports unified under `DocumentPort` with explicit `DocumentSearchPort` support for search usecases.
+- **Postgres filter builder** (in `forze_postgres.kernel.builder`): filter input accepts only canonical operator names (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `is_null`, `or`, plus array and ltree ops). Aliases such as `==`, `ge`, `not in`, `in_`, `or_` are no longer accepted and raise `ValidationError`. Use `in` and `or` for membership and disjunction.
+- Infrastructure previously under `forze.infra` has been moved into optional packages; core `forze` no longer ships Postgres, Redis, S3, or Temporal implementations.
 
 ### Fixed
 
