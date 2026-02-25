@@ -6,7 +6,7 @@ implementation. Plans are keyed by operation name and can be merged or extended
 at composition time.
 """
 
-from typing import Any, Callable, Optional, Self, TypeVar, cast
+from typing import Any, Callable, Optional, Self, TypeVar, cast, final
 
 import attrs
 
@@ -32,6 +32,7 @@ UsecaseFactory = Callable[[UsecaseContext], U]
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GuardSpec:
     """Specification for a guard attached to an operation plan.
@@ -52,6 +53,7 @@ class GuardSpec:
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class EffectSpec:
     """Specification for an effect attached to an operation plan.
@@ -72,6 +74,7 @@ class EffectSpec:
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
     """Per-operation composition describing overrides, guards and effects.
@@ -94,6 +97,7 @@ class OperationPlan:
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UsecasePlan:
     """Mutable description of how usecases for operations are composed.

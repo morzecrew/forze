@@ -1,4 +1,4 @@
-from typing import Any, TypedDict
+from typing import Any, TypedDict, final
 from uuid import UUID
 
 import attrs
@@ -10,6 +10,7 @@ from forze.domain.models import ReadDocument
 # ----------------------- #
 
 
+@final
 class SoftDeleteArgs(TypedDict):
     pk: UUID
     rev: int

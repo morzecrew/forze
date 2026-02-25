@@ -1,5 +1,5 @@
 from functools import cached_property
-from typing import Any, Never, Optional, Sequence, TypeVar, overload
+from typing import Any, Never, Optional, Sequence, TypeVar, final, overload
 
 import attrs
 from psycopg import sql
@@ -20,6 +20,7 @@ T = TypeVar("T", bound=BaseModel)
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     indexes: Sequence[PostgresSearchIndexSpec] = attrs.field(

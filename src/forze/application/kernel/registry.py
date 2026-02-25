@@ -6,7 +6,18 @@ instances. It also tracks an associated :class:`~forze.application.kernel.plan.U
 that describes how guards and effects should wrap each operation.
 """
 
-from typing import Any, Callable, Literal, Optional, Self, TypeVar, cast, overload
+from enum import StrEnum
+from typing import (
+    Any,
+    Callable,
+    Literal,
+    Optional,
+    Self,
+    TypeVar,
+    cast,
+    final,
+    overload,
+)
 
 import attrs
 
@@ -23,10 +34,18 @@ U = TypeVar("U", bound=Usecase[Any, Any])
 UsecaseFactory = Callable[[UsecaseContext], U]
 """Factory that builds a concrete :class:`Usecase` from a :class:`UsecaseContext`."""
 
+OpKey = str | StrEnum
+"""Key for operation names."""
+
+
+def _op(op: OpKey) -> str:
+    return str(op)
+
 
 # ....................... #
 
 
+@final
 @attrs.define(slots=True)
 class UsecaseRegistry:
     """Container for registering and composing usecases.
@@ -53,7 +72,7 @@ class UsecaseRegistry:
     @overload
     def register(
         self,
-        op: str,
+        op: OpKey,
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[True],
@@ -71,7 +90,7 @@ class UsecaseRegistry:
     @overload
     def register(
         self,
-        op: str,
+        op: OpKey,
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[False] = False,
@@ -88,7 +107,7 @@ class UsecaseRegistry:
 
     def register(
         self,
-        op: str,
+        op: OpKey,
         factory: UsecaseFactory[Any],
         *,
         inplace: bool = False,
@@ -101,6 +120,8 @@ class UsecaseRegistry:
             return a new instance.
         :raises CoreError: If a factory is already registered for ``op``.
         """
+
+        op = _op(op)
 
         if op in self.defaults:
             raise CoreError(
@@ -123,7 +144,7 @@ class UsecaseRegistry:
     @overload
     def override(
         self,
-        op: str,
+        op: OpKey,
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[True],
@@ -143,7 +164,7 @@ class UsecaseRegistry:
     @overload
     def override(
         self,
-        op: str,
+        op: OpKey,
         factory: UsecaseFactory[Any],
         *,
         inplace: Literal[False] = False,
@@ -161,7 +182,7 @@ class UsecaseRegistry:
 
     def override(
         self,
-        op: str,
+        op: OpKey,
         factory: UsecaseFactory[Any],
         *,
         inplace: bool = False,
@@ -176,6 +197,8 @@ class UsecaseRegistry:
         :param inplace: When ``True``, mutate the registry in place.
         :raises CoreError: If ``op`` has not been registered yet.
         """
+
+        op = _op(op)
 
         if op not in self.defaults:
             raise CoreError(f"Usecase factory is not registered for operation: {op}")
@@ -198,7 +221,7 @@ class UsecaseRegistry:
     @overload
     def register_many(
         self,
-        ops: dict[str, UsecaseFactory[Any]],
+        ops: dict[OpKey, UsecaseFactory[Any]],
         *,
         inplace: Literal[True],
     ) -> None:
@@ -213,7 +236,7 @@ class UsecaseRegistry:
     @overload
     def register_many(
         self,
-        ops: dict[str, UsecaseFactory[Any]],
+        ops: dict[OpKey, UsecaseFactory[Any]],
         *,
         inplace: Literal[False] = False,
     ) -> Self:
@@ -227,7 +250,7 @@ class UsecaseRegistry:
 
     def register_many(
         self,
-        ops: dict[str, UsecaseFactory[Any]],
+        ops: dict[OpKey, UsecaseFactory[Any]],
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
@@ -237,6 +260,8 @@ class UsecaseRegistry:
         :param inplace: When ``True``, mutate the registry in place.
         :raises CoreError: When any of the operations is already registered.
         """
+
+        ops = {_op(op): factory for op, factory in ops.items()}
 
         already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
@@ -261,7 +286,7 @@ class UsecaseRegistry:
     @overload
     def override_many(
         self,
-        ops: dict[str, UsecaseFactory[Any]],
+        ops: dict[OpKey, UsecaseFactory[Any]],
         *,
         inplace: Literal[True],
     ) -> None:
@@ -277,7 +302,7 @@ class UsecaseRegistry:
     @overload
     def override_many(
         self,
-        ops: dict[str, UsecaseFactory[Any]],
+        ops: dict[OpKey, UsecaseFactory[Any]],
         *,
         inplace: Literal[False] = False,
     ) -> Self:
@@ -292,7 +317,7 @@ class UsecaseRegistry:
 
     def override_many(
         self,
-        ops: dict[str, UsecaseFactory[Any]],
+        ops: dict[OpKey, UsecaseFactory[Any]],
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
@@ -303,6 +328,8 @@ class UsecaseRegistry:
         :raises CoreError: When any of the operations has not yet been
             registered.
         """
+
+        ops = {_op(op): factory for op, factory in ops.items()}
 
         not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
@@ -405,8 +432,10 @@ class UsecaseRegistry:
 
     # ....................... #
 
-    def exists(self, op: str) -> bool:
+    def exists(self, op: OpKey) -> bool:
         """Return ``True`` when a factory is registered for ``op``."""
+
+        op = _op(op)
 
         return op in self.defaults
 
@@ -414,7 +443,7 @@ class UsecaseRegistry:
 
     def resolve(
         self,
-        op: str,
+        op: OpKey,
         ctx: UsecaseContext,
         *,
         expected: Optional[type[U]] = None,
@@ -433,6 +462,7 @@ class UsecaseRegistry:
             usecase has an unexpected type.
         """
 
+        op = _op(op)
         factory = self.defaults.get(op)
 
         if not factory:

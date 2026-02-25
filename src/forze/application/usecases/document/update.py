@@ -1,4 +1,4 @@
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable, TypedDict, final
 from uuid import UUID
 
 import attrs
@@ -10,6 +10,7 @@ from forze.domain.models import BaseDTO, ReadDocument
 # ----------------------- #
 
 
+@final
 class UpdateArgs[In: BaseDTO](TypedDict):
     pk: UUID
     dto: In

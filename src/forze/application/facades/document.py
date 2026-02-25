@@ -1,4 +1,5 @@
-from typing import Generic, TypeVar
+from enum import StrEnum
+from typing import Generic, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -26,6 +27,29 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+@final
+class DocumentOperation(StrEnum):
+    """Logical operation identifiers for document usecases.
+
+    The values correspond to operation keys used by :class:`DocumentUsecasesFacade`
+    and the underlying :class:`forze.application.kernel.registry.UsecaseRegistry`
+    when resolving concrete usecase instances.
+    """
+
+    GET = "get"
+    SEARCH = "search"
+    RAW_SEARCH = "raw_search"
+    CREATE = "create"
+    UPDATE = "update"
+    KILL = "kill"
+    DELETE = "delete"
+    RESTORE = "restore"
+
+
+# ....................... #
+
+
+#!? Should we make it final? Or allow subclassing?
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentUsecasesFacade(Generic[R, C, U]):
     ctx: UsecaseContext
@@ -35,7 +59,7 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
 
     def get(self) -> Usecase[UUID, R]:
         return self.reg.resolve(
-            "get",
+            DocumentOperation.GET,
             self.ctx,
             expected=Usecase[UUID, R],
         )
@@ -44,7 +68,7 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
 
     def search(self) -> Usecase[SearchArgs, Paginated[R]]:
         return self.reg.resolve(
-            "search",
+            DocumentOperation.SEARCH,
             self.ctx,
             expected=Usecase[SearchArgs, Paginated[R]],
         )
@@ -53,7 +77,7 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
 
     def raw_search(self) -> Usecase[RawSearchArgs, RawPaginated]:
         return self.reg.resolve(
-            "raw_search",
+            DocumentOperation.RAW_SEARCH,
             self.ctx,
             expected=Usecase[RawSearchArgs, RawPaginated],
         )
@@ -62,7 +86,7 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
 
     def create(self) -> TxUsecase[C, R]:
         return self.reg.resolve(
-            "create",
+            DocumentOperation.CREATE,
             self.ctx,
             expected=TxUsecase[C, R],
         )
@@ -70,11 +94,11 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
     # ....................... #
 
     def update(self) -> TxUsecase[UpdateArgs[U], R]:
-        if not self.reg.exists("update"):
+        if not self.reg.exists(DocumentOperation.UPDATE):
             raise CoreError("Update operation is not supported for this document")
 
         return self.reg.resolve(
-            "update",
+            DocumentOperation.UPDATE,
             self.ctx,
             expected=TxUsecase[UpdateArgs[U], R],
         )
@@ -83,7 +107,7 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
 
     def kill(self) -> TxUsecase[UUID, None]:
         return self.reg.resolve(
-            "kill",
+            DocumentOperation.KILL,
             self.ctx,
             expected=TxUsecase[UUID, None],
         )
@@ -91,11 +115,11 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
     # ....................... #
 
     def delete(self) -> TxUsecase[SoftDeleteArgs, R]:
-        if not self.reg.exists("delete"):
+        if not self.reg.exists(DocumentOperation.DELETE):
             raise CoreError("Delete operation is not supported for this document")
 
         return self.reg.resolve(
-            "delete",
+            DocumentOperation.DELETE,
             self.ctx,
             expected=TxUsecase[SoftDeleteArgs, R],
         )
@@ -103,11 +127,11 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
     # ....................... #
 
     def restore(self) -> TxUsecase[SoftDeleteArgs, R]:
-        if not self.reg.exists("restore"):
+        if not self.reg.exists(DocumentOperation.RESTORE):
             raise CoreError("Restore operation is not supported for this document")
 
         return self.reg.resolve(
-            "restore",
+            DocumentOperation.RESTORE,
             self.ctx,
             expected=TxUsecase[SoftDeleteArgs, R],
         )

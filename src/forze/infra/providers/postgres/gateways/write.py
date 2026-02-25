@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Optional, Sequence
+from typing import Any, Optional, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -18,6 +18,7 @@ from .read import PostgresReadGateway
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     PostgresGateway[D]

@@ -1,4 +1,4 @@
-from typing import Any, Optional, Sequence, TypeVar
+from typing import Any, Optional, Sequence, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -15,6 +15,7 @@ K = TypeVar("K", bound=UUID | str)
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisDocumentCacheGateway(DocumentCachePort):
     client: RedisClient

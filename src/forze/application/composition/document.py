@@ -13,7 +13,7 @@ from forze.application.usecases.document import (
 )
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..facades import DocumentUsecasesFacade
+from ..facades import DocumentOperation, DocumentUsecasesFacade
 from ..kernel.dependencies import UsecaseContext
 from ..kernel.plan import UsecasePlan
 from ..kernel.registry import UsecaseRegistry
@@ -31,24 +31,24 @@ U = TypeVar("U", bound=BaseDTO)
 def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRegistry:
     reg = UsecaseRegistry(
         {
-            "get": lambda ctx: GetDocument(
+            DocumentOperation.GET: lambda ctx: GetDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
             ),
-            "search": lambda ctx: SearchDocument(
+            DocumentOperation.SEARCH: lambda ctx: SearchDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
             ),
-            "raw_search": lambda ctx: RawSearchDocument(
+            DocumentOperation.RAW_SEARCH: lambda ctx: RawSearchDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
             ),
-            "create": lambda ctx: CreateDocument(
+            DocumentOperation.CREATE: lambda ctx: CreateDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
                 mapper=DTOMapper(dto=spec.models["create_cmd"]),
             ),
-            "kill": lambda ctx: KillDocument(
+            DocumentOperation.KILL: lambda ctx: KillDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
             ),
@@ -57,7 +57,7 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 
     if spec.supports_update():
         reg.register(
-            "update",
+            DocumentOperation.UPDATE,
             lambda ctx: UpdateDocument(
                 doc=ctx.doc(spec),
                 runtime=ctx.runtime,
@@ -69,11 +69,11 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
     if spec.supports_soft_delete():
         reg.register_many(
             {
-                "delete": lambda ctx: DeleteDocument(
+                DocumentOperation.DELETE: lambda ctx: DeleteDocument(
                     doc=ctx.doc(spec),
                     runtime=ctx.runtime,
                 ),
-                "restore": lambda ctx: RestoreDocument(
+                DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
                     doc=ctx.doc(spec),
                     runtime=ctx.runtime,
                 ),

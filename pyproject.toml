@@ -43,6 +43,9 @@ dev = [
     "vulture>=2.14",
 ]
 
+[project.optional-dependencies]
+fastapi = ["annotated-doc>=0.0.4", "fastapi>=0.131.0", "starlette>=0.52.1"]
+
 # ....................... #
 # Private index (PyOCI)
 
@@ -66,8 +69,18 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "src",
+    "pyproject.toml",
+    "README.md",
+    "uv.lock",
+    "tests",
+    "CHANGELOG.md",
+]
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/forze"]
+packages = ["src/forze", "src/forze_fastapi"]
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/forze/_version.py"
@@ -109,7 +122,7 @@ exclude_lines = [
 # Import contracts
 
 [tool.importlinter]
-root_packages = ["forze"]
+root_packages = ["forze", "forze_fastapi"]
 
 [[tool.importlinter.contracts]]
 name = "Layered package architecture"
@@ -121,6 +134,7 @@ name = "Layered `application` module architecture"
 type = "layers"
 layers = [
     "forze.application.composition",
+    "forze.application.facades",
     "forze.application.usecases",
     "forze.application.dto",
     "forze.application.kernel",
@@ -140,11 +154,18 @@ name = "Infrastructure providers independence"
 type = "independence"
 modules = ["forze.infra.providers.*"]
 
+[[tool.importlinter.contracts]]
+name = "Protect integration subpackages"
+type = "protected"
+protected_modules = ["forze_fastapi"]
+allowed_importers = []
+as_packages = true
+
 # ....................... #
 # Dead code
 
 [tool.vulture]
-paths = ["src/forze"]
+paths = ["src/forze", "src/forze_fastapi"]
 sort_by_size = true
 min_confidence = 80
 
@@ -160,7 +181,7 @@ mi_min = "B"
 # Dependency analysis
 
 [tool.deptry]
-known_first_party = ["forze"]
+known_first_party = ["forze", "forze_fastapi"]
 ignore_notebooks = true
 
 [tool.deptry.per_rule_ignores]
@@ -171,4 +192,10 @@ DEP002 = [
     "aiobotocore",
     "temporalio",
 ]
-DEP003 = ["types_aiobotocore_s3"]
+DEP003 = ["types_aiobotocore_s3", "typing_extensions"]
+
+# ....................... #
+# Ruff configuration
+
+[tool.ruff.lint]
+ignore = ["E402"]

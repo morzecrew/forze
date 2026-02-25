@@ -1,4 +1,4 @@
-from typing import Any, TypedDict
+from typing import Any, TypedDict, final
 
 import attrs
 
@@ -11,6 +11,7 @@ from forze.domain.models import ReadDocument
 # ----------------------- #
 
 
+@final
 class SearchArgs(TypedDict):
     body: SearchRequestDTO
     page: int
@@ -20,6 +21,7 @@ class SearchArgs(TypedDict):
 # ....................... #
 
 
+@final
 class RawSearchArgs(TypedDict):
     body: RawSearchRequestDTO
     page: int

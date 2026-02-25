@@ -1,6 +1,6 @@
 import mimetypes
 from datetime import datetime
-from typing import Optional
+from typing import Optional, final
 
 import attrs
 import magic
@@ -20,6 +20,7 @@ from .platform import S3Client
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class S3Gateway(StoragePort):
     client: S3Client

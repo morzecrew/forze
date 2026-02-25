@@ -1,4 +1,4 @@
-from typing import Optional, Self
+from typing import Optional, Self, final
 
 import attrs
 
@@ -11,6 +11,7 @@ from ..platform import RedisClient
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisCounterGateway(CounterPort):
     client: RedisClient

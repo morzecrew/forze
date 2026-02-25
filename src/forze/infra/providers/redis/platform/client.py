@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncIterator, Mapping, Optional, Sequence
+from typing import AsyncIterator, Mapping, Optional, Sequence, final
 
 import attrs
 from redis.asyncio.client import Pipeline, Redis
@@ -16,6 +16,7 @@ from .utils import parse_stream_messages
 # ----------------------- #
 
 
+@final
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class RedisConfig:
     """Redis configuration."""
@@ -26,6 +27,7 @@ class RedisConfig:
 # ....................... #
 
 
+@final
 @attrs.define(slots=True)
 class RedisClient:
     __pool: Optional[ConnectionPool] = attrs.field(default=None, init=False)

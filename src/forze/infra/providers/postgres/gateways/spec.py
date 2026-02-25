@@ -1,4 +1,4 @@
-from typing import Any, Optional, Self, Sequence
+from typing import Any, Optional, Self, Sequence, final
 
 import attrs
 from psycopg import sql
@@ -8,6 +8,7 @@ from forze.application.kernel.specs import DocumentSearchSpec
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True, kw_only=True)
 class PostgresTableSpec:
     """Postgres table specification."""
@@ -49,6 +50,7 @@ class PostgresTableSpec:
 # ....................... #
 
 
+@final  #! Questionable as it's suitable only for pgroonga search
 @attrs.define(slots=True, kw_only=True)
 class PostgresSearchIndexSpec:
     """Postgres search index specification."""

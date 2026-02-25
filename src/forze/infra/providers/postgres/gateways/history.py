@@ -1,4 +1,4 @@
-from typing import Any, Sequence
+from typing import Any, Sequence, final
 from uuid import UUID
 
 from psycopg import sql
@@ -21,6 +21,7 @@ from .spec import PostgresTableSpec
 #! TODO: Review logics
 
 
+@final
 class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     async def _get(
         self,

@@ -42,6 +42,9 @@ class DocumentModelSpec(TypedDict, Generic[R, D, C, U]):
     """Command DTO used for partial updates of existing instances."""
 
 
+# ....................... #
+
+
 class DocumentRelationSpec(TypedDict):
     """Storage-level relation names associated with a document aggregate."""
 
@@ -53,6 +56,9 @@ class DocumentRelationSpec(TypedDict):
 
     history: NotRequired[str]
     """Optional relation used to store history or audit events."""
+
+
+# ....................... #
 
 
 @attrs.define(kw_only=True, frozen=True)

@@ -5,14 +5,24 @@ uses small keys and callables to lazily construct ports such as
 ``DocumentPort`` or ``CounterPort`` from a :class:`UsecaseContext`.
 """
 
-from typing import Any, Callable, Generic, Protocol, TypeVar, cast, runtime_checkable
+from datetime import timedelta
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Protocol,
+    TypeVar,
+    cast,
+    final,
+    runtime_checkable,
+)
 
 import attrs
 
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, ReadDocument
 
-from .ports import AppRuntimePort, CounterPort, DocumentPort
+from .ports import AppRuntimePort, CounterPort, DocumentPort, IdempotencyPort
 from .specs import DocumentSpec
 
 # ----------------------- #
@@ -26,6 +36,7 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, frozen=True)
 class DependencyKey(Generic[T]):
     """Typed key used to identify dependencies in the kernel.
@@ -48,6 +59,7 @@ class DependenciesPort(Protocol):
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, frozen=True)
 class Dependencies(DependenciesPort):
     """In-memory dependency container used by the kernel.
@@ -87,6 +99,7 @@ class Dependencies(DependenciesPort):
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UsecaseContext:
     """Execution context shared by usecases and factories.
@@ -168,3 +181,21 @@ class CounterDependencyPort(Protocol):
 
 CounterDependencyKey: DependencyKey[CounterDependencyPort] = DependencyKey("counter")
 """Key used to register the :class:`CounterDependencyPort` implementation."""
+
+# ....................... #
+
+
+@runtime_checkable
+class IdempotencyDependencyPort(Protocol):
+    """Factory protocol for building :class:`IdempotencyPort` instances."""
+
+    def __call__(
+        self,
+        runtime: AppRuntimePort,
+        ttl: timedelta = timedelta(seconds=30),
+    ) -> IdempotencyPort:
+        """Build an idempotency port bound to the given runtime and TTL."""
+        ...
+
+
+# Dependency key is not implemented as we typically don't need to use idempotency dependency within the application code, only in interfaces (e.g. HTTP API)

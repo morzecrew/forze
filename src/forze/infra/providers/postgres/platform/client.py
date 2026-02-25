@@ -15,6 +15,7 @@ from typing import (
     Optional,
     Sequence,
     TypedDict,
+    final,
     overload,
 )
 
@@ -39,6 +40,7 @@ IsolationLevel = Literal["repeatable read", "serializable"]
 # ....................... #
 
 
+@final
 class TransactionOptions(TypedDict, total=False):
     """Options for :meth:`PostgresClient.transaction`."""
 
@@ -50,8 +52,10 @@ class TransactionOptions(TypedDict, total=False):
 
 
 # ....................... #
+#! TypedDict instead ? or typed dict adapter with cast to dataclass (attrs)
 
 
+@final
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class PostgresConfig:
     """Connection pool configuration for :class:`PostgresClient`."""
@@ -78,6 +82,7 @@ class PostgresConfig:
 # ....................... #
 
 
+@final
 @attrs.define(slots=True)
 class PostgresClient:
     """Async Postgres client with connection pooling and context-bound transactions.

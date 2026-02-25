@@ -1,4 +1,4 @@
-from typing import Any, Never, Optional, Sequence, TypeVar, overload
+from typing import Any, Never, Optional, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 from psycopg import sql
@@ -19,6 +19,7 @@ T = TypeVar("T", bound=BaseModel)
 # ....................... #
 
 
+@final
 class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def get(

@@ -1,5 +1,5 @@
 import base64
-from typing import Final, Optional, TypedDict
+from typing import Final, Optional, TypedDict, final
 
 import attrs
 
@@ -17,6 +17,7 @@ _DONE: Final[str] = "D"
 # ....................... #
 
 
+@final
 class _Payload(TypedDict, total=False):
     st: str
     ph: str
@@ -28,6 +29,7 @@ class _Payload(TypedDict, total=False):
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisIdempotencyGateway(IdempotencyPort):
     client: RedisClient

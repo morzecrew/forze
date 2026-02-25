@@ -2,7 +2,7 @@ import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, AsyncIterator, Optional, TypedDict, cast
+from typing import Any, AsyncIterator, Optional, TypedDict, cast, final
 
 import aioboto3
 import attrs
@@ -18,6 +18,7 @@ from .errors import s3_handled
 # ----------------------- #
 
 
+@final
 class S3Head(TypedDict, total=False):
     content_type: str
     metadata: dict[str, str]
@@ -29,6 +30,7 @@ class S3Head(TypedDict, total=False):
 # ....................... #
 
 
+@final
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class S3Config:
     """S3 configuration."""
@@ -42,6 +44,7 @@ class S3Config:
 # ....................... #
 
 
+@final
 @attrs.define(slots=True)
 class S3Client:
     __opts: Optional[S3Config] = attrs.field(default=None, init=False)

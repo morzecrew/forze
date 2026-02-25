@@ -1,4 +1,4 @@
-from typing import Optional, TypeAlias
+from typing import Optional, TypeAlias, final
 
 import attrs
 from psycopg import sql
@@ -11,6 +11,7 @@ from .utils import normalize_pg_type
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresType:
     base: str
@@ -24,6 +25,7 @@ PostgresColumnCache: TypeAlias = dict[tuple[Optional[str], str], PostgresColumnT
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True)
 class PostgresTypesProvider:
     client: PostgresClient = attrs.field(on_setattr=attrs.setters.frozen)

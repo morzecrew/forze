@@ -23,6 +23,7 @@ from ..gateways import (
 # ----------------------- #
 
 
+#!? Should we make it final? Or allow subclassing?
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresDocumentRepo[
     R: ReadDocument,

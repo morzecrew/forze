@@ -1,4 +1,12 @@
-from typing import AsyncIterator, Final, NotRequired, Optional, Sequence, TypedDict
+from typing import (
+    AsyncIterator,
+    Final,
+    NotRequired,
+    Optional,
+    Sequence,
+    TypedDict,
+    final,
+)
 
 import attrs
 from pydantic import BaseModel
@@ -20,6 +28,7 @@ KEY_KEY: Final[str] = "k"
 # ....................... #
 
 
+@final
 class _Payload(TypedDict):
     """Payload as sent to Redis (data is serialized bytes)."""
 
@@ -32,6 +41,7 @@ class _Payload(TypedDict):
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamGateway[M: BaseModel](StreamPort[M]):
     client: RedisClient
@@ -232,6 +242,20 @@ class RedisStreamGateway[M: BaseModel](StreamPort[M]):
         )
 
         return self._raw_to_events(res)
+
+    # ....................... #
+
+    async def subscribe_group(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        *,
+        start_id: str = ">",
+        block_ms: int = 5000,
+        count: int = 200,
+    ) -> AsyncIterator[StreamEvent[M]]:
+        raise NotImplementedError("Not implemented")
 
     # ....................... #
 

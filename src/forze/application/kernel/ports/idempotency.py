@@ -14,8 +14,6 @@ class IdempotencySnapshot(TypedDict):
 
 
 # ....................... #
-#! TODO: use contextvar or so for idempotency snapshot and async context manager
-#! to wrap the scope
 
 
 @runtime_checkable
@@ -35,7 +33,7 @@ class IdempotencyPort(Protocol):
     ) -> Optional[IdempotencySnapshot]:
         """Start an idempotent operation and return a cached snapshot if any.
 
-        :param op: Operation name or route identifier.
+        :param op: Operation name.
         :param key: Optional idempotency key provided by the caller.
         :param payload_hash: Hash of the normalized request payload.
         :returns: A previously stored :class:`IdempotencySnapshot` or ``None``.
