@@ -82,7 +82,15 @@ include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/forze", "src/forze_fastapi"]
+packages = [
+    "src/forze",
+    "src/forze_fastapi",
+    "src/forze_postgres",
+    "src/forze_redis",
+    "src/forze_s3",
+    "src/forze_temporal",
+    "src/forze_mongo",
+]
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/forze/_version.py"
