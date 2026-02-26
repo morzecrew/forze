@@ -14,7 +14,7 @@ from forze.application.usecases.document import (
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..kernel.dependencies import UsecaseContext
+from ..kernel.dependencies import ExecutionContext
 from ..kernel.registry import UsecaseRegistry
 from ..kernel.usecase import TxUsecase, Usecase
 
@@ -52,7 +52,7 @@ class DocumentOperation(StrEnum):
 #!? Should we make it final? Or allow subclassing?
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentUsecasesFacade(Generic[R, C, U]):
-    ctx: UsecaseContext
+    ctx: ExecutionContext
     reg: UsecaseRegistry
 
     # ....................... #

@@ -2,8 +2,8 @@ from typing import Protocol, Self, override
 
 import attrs
 
-from .dependencies import UsecaseContext  # noqa: F401
-from .ports import AppRuntimePort
+# from .dependencies import UsecaseContext
+from .ports import TxManagerPort
 
 # ----------------------- #
 # ?! Should we give access to runtime to effects and guards?
@@ -42,8 +42,8 @@ class Usecase[Args, R]:
     main execution, respectively.
     """
 
-    runtime: AppRuntimePort
-    """Application runtime providing transactions and health checks."""
+    # context: UsecaseContext
+    # """Application context providing dependencies and infrastructure access."""
 
     guards: tuple[Guard[Args], ...] = attrs.field(factory=tuple)
     """Guards to run before the usecase."""
@@ -122,6 +122,9 @@ class TxUsecase[Args, R](Usecase[Args, R]):
     transaction (e.g. integration events, notifications).
     """
 
+    txmanager: TxManagerPort
+    """Transaction manager to use for the usecase."""
+
     side_guards: tuple[Guard[Args], ...] = attrs.field(factory=tuple)
     """Guards to run before the usecase outside the transaction."""
 
@@ -174,7 +177,7 @@ class TxUsecase[Args, R](Usecase[Args, R]):
 
         await self._run_side_guards(args)
 
-        async with self.runtime.transaction():
+        async with self.txmanager.transaction():
             await self._run_guards(args)
             res = await self.main(args)
             final_res = await self._run_effects(args, res)

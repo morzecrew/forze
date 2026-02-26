@@ -5,11 +5,12 @@ uses small keys and callables to lazily construct ports such as
 ``DocumentPort`` or ``CounterPort`` from a :class:`UsecaseContext`.
 """
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from typing import (
     Any,
-    Callable,
-    Generic,
+    Iterator,
     Literal,
     Optional,
     Protocol,
@@ -27,11 +28,11 @@ from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, ReadDocument
 
 from .ports import (
-    AppRuntimePort,
     CounterPort,
     DocumentCachePort,
     DocumentPort,
     IdempotencyPort,
+    TxManagerPort,
 )
 from .specs import DocumentSpec
 
@@ -49,7 +50,7 @@ U = TypeVar("U", bound=BaseDTO)
 
 @final
 @attrs.define(slots=True, frozen=True)
-class DependencyKey(Generic[T]):
+class DependencyKey[T]:
     """Typed key used to identify dependencies in the kernel.
 
     The ``name`` is only used for diagnostics; type information is carried
@@ -81,21 +82,13 @@ class DependenciesPort(Protocol):
 @final
 @attrs.define(slots=True, kw_only=True)
 class Dependencies(DependenciesPort):
-    """In-memory dependency container used by the kernel.
+    """In-memory dependency container used by the kernel."""
 
-    Dependencies are registered as zero-argument provider callables and are
-    cached after the first use to avoid repeated construction. The container
-    is small on purpose and is not meant to be a full-featured DI framework.
-    """
-
-    providers: dict[DependencyKey[Any], Callable[[], Any]] = attrs.field(
+    deps: dict[DependencyKey[Any], Any] = attrs.field(
         factory=dict,
         on_setattr=attrs.setters.frozen,
     )
-    """Providers of dependencies by key (type-parameterized)."""
-
-    cache: dict[DependencyKey[Any], Any] = attrs.field(factory=dict, init=False)
-    """Cache of dependencies by key (type-parameterized)."""
+    """Dependencies by key (type-parameterized)."""
 
     # ....................... #
 
@@ -103,14 +96,14 @@ class Dependencies(DependenciesPort):
     def register(
         self,
         key: DependencyKey[T],
-        provider: Callable[[], T],
+        dep: T,
         *,
         inplace: Literal[True],
     ) -> None:
         """Register a dependency provider for a given key.
 
-        :param key: Dependency key identifying the provider.
-        :param provider: Callable that builds the dependency instance.
+        :param key: Dependency key identifying the dependency.
+        :param dep: Dependency instance.
         :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If the dependency is already registered.
@@ -121,14 +114,14 @@ class Dependencies(DependenciesPort):
     def register(
         self,
         key: DependencyKey[T],
-        provider: Callable[[], T],
+        dep: T,
         *,
         inplace: Literal[False] = False,
     ) -> Self:
         """Register a dependency provider for a given key.
 
-        :param key: Dependency key identifying the provider.
-        :param provider: Callable that builds the dependency instance.
+        :param key: Dependency key identifying the dependency.
+        :param dep: Dependency instance.
         :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If the dependency is already registered.
@@ -138,31 +131,31 @@ class Dependencies(DependenciesPort):
     def register(
         self,
         key: DependencyKey[T],
-        provider: Callable[[], T],
+        dep: T,
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
         """Register a dependency provider for a given key.
 
-        :param key: Dependency key identifying the provider.
-        :param provider: Callable that builds the dependency instance.
+        :param key: Dependency key identifying the dependency.
+        :param dep: Dependency instance.
         :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If the dependency is already registered.
         """
 
-        if key in self.providers:
+        if key in self.deps:
             raise CoreError(f"Dependency {key.name} already registered")
 
-        new = dict(self.providers)
-        new[key] = provider
+        new = dict(self.deps)
+        new[key] = dep
 
         if inplace:
-            self.providers = new
+            self.deps = new
             return
 
         else:
-            new_instance = type(self)(providers=new)
+            new_instance = type(self)(deps=new)
             return new_instance
 
     # ....................... #
@@ -170,13 +163,13 @@ class Dependencies(DependenciesPort):
     @overload
     def register_many(
         self,
-        providers: dict[DependencyKey[T], Callable[[], T]],
+        deps: dict[DependencyKey[T], T],
         *,
         inplace: Literal[True],
     ) -> None:
-        """Register multiple dependency providers at once.
+        """Register multiple dependencies at once.
 
-        :param providers: Mapping from dependency key to provider callable.
+        :param deps: Mapping from dependency key to dependency instance.
         :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If any of the dependencies are already registered.
@@ -186,13 +179,13 @@ class Dependencies(DependenciesPort):
     @overload
     def register_many(
         self,
-        providers: dict[DependencyKey[T], Callable[[], T]],
+        deps: dict[DependencyKey[T], T],
         *,
         inplace: Literal[False] = False,
     ) -> Self:
-        """Register multiple dependency providers at once.
+        """Register multiple dependencies at once.
 
-        :param providers: Mapping from dependency key to provider callable.
+        :param deps: Mapping from dependency key to dependency instance.
         :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If any of the dependencies are already registered.
@@ -201,27 +194,34 @@ class Dependencies(DependenciesPort):
 
     def register_many(
         self,
-        providers: dict[DependencyKey[T], Callable[[], T]],
+        deps: dict[DependencyKey[T], T],
         *,
         inplace: bool = False,
     ) -> Optional[Self]:
-        """Register multiple dependency providers at once.
+        """Register multiple dependencies at once.
 
-        :param providers: Mapping from dependency key to provider callable.
+        :param deps: Mapping from dependency key to dependency instance.
         :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If any of the dependencies are already registered.
         """
 
-        new = dict(self.providers)
-        new.update(providers)
+        already_registered = set(self.deps.keys()).intersection(deps.keys())
+
+        if already_registered:
+            raise CoreError(
+                f"Dependencies are already registered for keys: {already_registered}"
+            )
+
+        new = dict(self.deps)
+        new.update(deps)
 
         if inplace:
-            self.providers = new
+            self.deps = new
             return
 
         else:
-            new_instance = type(self)(providers=new)
+            new_instance = type(self)(deps=new)
             return new_instance
 
     # ....................... #
@@ -234,25 +234,19 @@ class Dependencies(DependenciesPort):
         :raises CoreError: If the dependency is not registered.
         """
 
-        if key in self.cache:
-            return cast(T, self.cache[key])
+        dep = self.deps.get(key)
 
-        prov = self.providers.get(key)
-
-        if not prov:
+        if not dep:
             raise CoreError(f"Dependency {key.name} not found")
 
-        val = prov()
-        self.cache[key] = val
-
-        return cast(T, val)
+        return cast(T, dep)
 
     # ....................... #
 
     def exists(self, key: DependencyKey[T]) -> bool:
         """Return ``True`` if the dependency is registered."""
 
-        return key in self.providers
+        return key in self.deps
 
 
 # ....................... #
@@ -260,25 +254,49 @@ class Dependencies(DependenciesPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class UsecaseContext:
+class ExecutionContext:
     """Execution context shared by usecases and factories.
 
     The context provides access to the application runtime and to a
     :class:`DependenciesPort` used to resolve infrastructure-specific ports.
     """
 
-    runtime: AppRuntimePort
-    """Application runtime."""
-
     deps: DependenciesPort
     """Dependencies container."""
+
+    # Non initable fields
+    __resolve_stack: ContextVar[tuple[DependencyKey[Any], ...]] = attrs.field(
+        factory=lambda: ContextVar("resolve_stack", default=tuple()),
+        init=False,
+        repr=False,
+    )
+    """Per-task dependency resolution stack used to detect cycles."""
+
+    # ....................... #
+
+    @contextmanager
+    def __resolving(self, key: DependencyKey[Any]) -> Iterator[None]:
+        stack = self.__resolve_stack.get()
+
+        if key in stack:
+            chain = " -> ".join(k.name for k in (*stack, key))
+            raise CoreError(f"Dependency cycle detected: {chain}")
+
+        token = self.__resolve_stack.set(stack + (key,))
+
+        try:
+            yield
+
+        finally:
+            self.__resolve_stack.reset(token)
 
     # ....................... #
 
     def dep(self, key: DependencyKey[T]) -> T:
         """Resolve a dependency by key using the underlying container."""
 
-        return self.deps.provide(key)
+        with self.__resolving(key):
+            return self.deps.provide(key)
 
     # ....................... #
 
@@ -299,13 +317,13 @@ class UsecaseContext:
         that binds the current :class:`AppRuntimePort` and document spec.
         """
 
-        cache = self.doc_cache(spec)
-
-        return self.dep(DocumentDependencyKey)(self.runtime, spec, cache)
+        with self.__resolving(DocumentDependencyKey):
+            cache = self.cache(spec)
+            return self.dep(DocumentDependencyKey)(self, spec, cache)
 
     # ....................... #
 
-    def doc_cache(
+    def cache(
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
     ) -> Optional[DocumentCachePort]:
@@ -318,7 +336,8 @@ class UsecaseContext:
         if not self.__dep_exists(DocumentCacheDependencyKey):
             return None
 
-        return self.dep(DocumentCacheDependencyKey)(self.runtime, spec)
+        with self.__resolving(DocumentCacheDependencyKey):
+            return self.dep(DocumentCacheDependencyKey)(self, spec)
 
     # ....................... #
 
@@ -328,7 +347,16 @@ class UsecaseContext:
         The namespace is used by implementations to partition counters.
         """
 
-        return self.dep(CounterDependencyKey)(self.runtime, namespace)
+        with self.__resolving(CounterDependencyKey):
+            return self.dep(CounterDependencyKey)(self, namespace)
+
+    # ....................... #
+
+    def txmanager(self) -> TxManagerPort:
+        """Return a transaction manager port bound to the current context."""
+
+        with self.__resolving(TxManagerDependencyKey):
+            return self.dep(TxManagerDependencyKey)(self)
 
 
 # ....................... #
@@ -340,10 +368,10 @@ class DocumentCacheDependencyPort(Protocol):
 
     def __call__(
         self,
-        runtime: AppRuntimePort,
+        context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
     ) -> DocumentCachePort:
-        """Build a document cache port bound to the given runtime and spec."""
+        """Build a document cache port bound to the given context and spec."""
         ...
 
 
@@ -361,11 +389,11 @@ class DocumentDependencyPort(Protocol):
 
     def __call__(
         self,
-        runtime: AppRuntimePort,
+        context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: Optional[DocumentCachePort] = None,
     ) -> DocumentPort[Any, Any, Any, Any]:
-        """Build a document port bound to the given runtime, spec,
+        """Build a document port bound to the given context, spec,
         and optional cache.
         """
         ...
@@ -379,9 +407,9 @@ class RoutedDocumentDependency(DocumentDependencyPort):
     routes: dict[str, DocumentDependencyPort]  # namespace -> provider
     default: DocumentDependencyPort
 
-    def __call__(self, runtime: AppRuntimePort, spec: DocumentSpec[..., ...], cache=None):
+    def __call__(self, context: ExecutionContext, spec: DocumentSpec[..., ...], cache=None):
         provider = self.routes.get(spec.namespace, self.default)
-        return provider(runtime, spec, cache=cache)
+        return provider(context, spec, cache=cache)
 """
 
 
@@ -397,10 +425,10 @@ class CounterDependencyPort(Protocol):
 
     def __call__(
         self,
-        runtime: AppRuntimePort,
+        context: ExecutionContext,
         namespace: str,
     ) -> CounterPort:
-        """Build a counter port bound to the given runtime and namespace."""
+        """Build a counter port bound to the given context and namespace."""
         ...
 
 
@@ -416,12 +444,29 @@ class IdempotencyDependencyPort(Protocol):
 
     def __call__(
         self,
-        runtime: AppRuntimePort,
+        context: ExecutionContext,
         ttl: timedelta = timedelta(seconds=30),
     ) -> IdempotencyPort:
-        """Build an idempotency port bound to the given runtime and TTL."""
+        """Build an idempotency port bound to the given context and TTL."""
         ...
 
 
 # Dependency key is not implemented as we typically don't need to use idempotency dependency
-# within the application code, only in interfaces (e.g. HTTP API)
+# within the application code, only in interfaces (e.g. HTTP API).
+
+# ....................... #
+
+
+@runtime_checkable
+class TxManagerDependencyPort(Protocol):
+    """Factory protocol for building :class:`TxManagerPort` instances."""
+
+    def __call__(self, context: ExecutionContext) -> TxManagerPort:
+        """Build a transaction manager port bound to the given context."""
+        ...
+
+
+TxManagerDependencyKey: DependencyKey[TxManagerDependencyPort] = DependencyKey(
+    "tx_manager"
+)
+"""Key used to register the :class:`TxManagerDependencyPort` implementation."""

@@ -12,21 +12,21 @@ import attrs
 
 from forze.base.errors import CoreError
 
-from .dependencies import UsecaseContext
+from .dependencies import ExecutionContext
 from .usecase import Effect, Guard, TxUsecase, Usecase
 
 # ----------------------- #
 
 U = TypeVar("U", bound=Usecase[Any, Any])
 
-GuardFactory = Callable[[UsecaseContext], Guard[Any]]
-"""Factory that produces a :class:`~forze.application.kernel.usecase.Guard` from a :class:`UsecaseContext`."""
+GuardFactory = Callable[[ExecutionContext], Guard[Any]]
+"""Factory that produces a :class:`~forze.application.kernel.usecase.Guard` from a :class:`ExecutionContext`."""
 
-EffectFactory = Callable[[UsecaseContext], Effect[Any, Any]]
-"""Factory that produces an :class:`~forze.application.kernel.usecase.Effect` from a :class:`UsecaseContext`."""
+EffectFactory = Callable[[ExecutionContext], Effect[Any, Any]]
+"""Factory that produces an :class:`~forze.application.kernel.usecase.Effect` from a :class:`ExecutionContext`."""
 
-UsecaseFactory = Callable[[UsecaseContext], U]
-"""Factory that builds a concrete :class:`~forze.application.kernel.usecase.Usecase` instance."""
+UsecaseFactory = Callable[[ExecutionContext], U]
+"""Factory that builds a concrete :class:`~forze.application.kernel.usecase.Usecase` instance from a :class:`ExecutionContext`."""
 
 
 # ....................... #
@@ -38,7 +38,7 @@ class GuardSpec:
     """Specification for a guard attached to an operation plan.
 
     Guards are ordered by ``priority`` (ascending) and created lazily from a
-    :class:`UsecaseContext` when a plan is resolved.
+    :class:`ExecutionContext` when a plan is resolved.
     """
 
     priority: int = attrs.field(
@@ -59,7 +59,7 @@ class EffectSpec:
     """Specification for an effect attached to an operation plan.
 
     Effects are ordered by ``priority`` (ascending) and created lazily from a
-    :class:`UsecaseContext` when a plan is resolved.
+    :class:`ExecutionContext` when a plan is resolved.
     """
 
     priority: int = attrs.field(
@@ -196,16 +196,16 @@ class UsecasePlan:
 
     # ....................... #
 
-    def resolve(self, op: str, ctx: UsecaseContext, default: UsecaseFactory[U]) -> U:
+    def resolve(self, op: str, ctx: ExecutionContext, default: UsecaseFactory[U]) -> U:
         """Build a composed usecase instance for an operation.
 
         The method chooses an override factory when configured, instantiates
-        the usecase with the provided :class:`UsecaseContext`, and then applies
+        the usecase with the provided :class:`ExecutionContext`, and then applies
         guards/effects (including side variants for transactional usecases) in
         priority order.
 
         :param op: Logical operation name.
-        :param ctx: Context that provides runtime and infrastructure access.
+        :param ctx: Context that provides dependencies and access to infrastructure.
         :param default: Fallback factory when no override is configured.
         :returns: A composed :class:`~forze.application.kernel.usecase.Usecase`
             instance ready to be invoked.

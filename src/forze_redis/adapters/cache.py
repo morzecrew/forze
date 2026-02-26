@@ -4,6 +4,7 @@ require_redis()
 
 # ....................... #
 
+from datetime import timedelta
 from typing import Any, Optional, Sequence, TypeVar, final
 from uuid import UUID
 
@@ -32,8 +33,8 @@ class RedisDocumentCacheAdapter(DocumentCachePort):
     text_codec: TextCodec = attrs.field(factory=TextCodec, init=False)
 
     # Defaults (overrideable)
-    ttl_s_pointer: int = 60
-    ttl_s_body: int = 300
+    ttl_pointer: timedelta = timedelta(seconds=60)
+    ttl_body: timedelta = timedelta(seconds=300)
 
     # ....................... #
 
@@ -65,14 +66,16 @@ class RedisDocumentCacheAdapter(DocumentCachePort):
         self,
         mapping: dict[K, int],
         *,
-        ttl_s: Optional[int] = None,
+        ttl: Optional[timedelta] = None,
     ) -> None:
-        ttl_s = ttl_s or self.ttl_s_pointer
+        ttl = ttl or self.ttl_pointer
 
         pointer_keys = [self.__pointer_key(pk) for pk in mapping.keys()]
         pointer_values = [str(rev) for rev in mapping.values()]
 
-        await self.client.mset(dict(zip(pointer_keys, pointer_values)), ex=ttl_s)
+        await self.client.mset(
+            dict(zip(pointer_keys, pointer_values)), ex=int(ttl.total_seconds())
+        )
 
     # ....................... #
 
@@ -110,14 +113,16 @@ class RedisDocumentCacheAdapter(DocumentCachePort):
         self,
         mapping: dict[tuple[K, int], Any],
         *,
-        ttl_s: Optional[int] = None,
+        ttl: Optional[timedelta] = None,
     ) -> None:
-        ttl_s = ttl_s or self.ttl_s_body
+        ttl = ttl or self.ttl_body
 
         body_keys = [self.__body_key(pk, rev) for pk, rev in mapping.keys()]
         body_values = [self.json_codec.dumps(value) for value in mapping.values()]
 
-        await self.client.mset(dict(zip(body_keys, body_values)), ex=ttl_s)
+        await self.client.mset(
+            dict(zip(body_keys, body_values)), ex=int(ttl.total_seconds())
+        )
 
     # ....................... #
 
@@ -149,15 +154,15 @@ class RedisDocumentCacheAdapter(DocumentCachePort):
         rev: int,
         value: Any,
         *,
-        ttl_s_pointer: Optional[int] = None,
-        ttl_s_body: Optional[int] = None,
+        ttl_pointer: Optional[timedelta] = None,
+        ttl_body: Optional[timedelta] = None,
     ) -> None:
-        ttl_pointer = ttl_s_pointer or self.ttl_s_pointer
-        ttl_body = ttl_s_body or self.ttl_s_body
+        ttl_pointer = ttl_pointer or self.ttl_pointer
+        ttl_body = ttl_body or self.ttl_body
 
         async with self.client.pipeline(transaction=False):
-            await self.__mset_pointers({pk: rev}, ttl_s=ttl_pointer)
-            await self.__mset_bodies({(pk, rev): value}, ttl_s=ttl_body)
+            await self.__mset_pointers({pk: rev}, ttl=ttl_pointer)
+            await self.__mset_bodies({(pk, rev): value}, ttl=ttl_body)
 
     # ....................... #
 
@@ -192,20 +197,20 @@ class RedisDocumentCacheAdapter(DocumentCachePort):
         self,
         mapping: dict[tuple[K, int], Any],
         *,
-        ttl_s_pointer: Optional[int] = None,
-        ttl_s_body: Optional[int] = None,
+        ttl_pointer: Optional[timedelta] = None,
+        ttl_body: Optional[timedelta] = None,
     ) -> None:
         if not mapping:
             return
 
-        ttl_pointer = ttl_s_pointer or self.ttl_s_pointer
-        ttl_body = ttl_s_body or self.ttl_s_body
+        ttl_pointer = ttl_pointer or self.ttl_pointer
+        ttl_body = ttl_body or self.ttl_body
 
         pointer_mapping = {pk: rev for pk, rev in mapping.keys()}
 
         async with self.client.pipeline(transaction=False):
-            await self.__mset_pointers(pointer_mapping, ttl_s=ttl_pointer)
-            await self.__mset_bodies(mapping, ttl_s=ttl_body)
+            await self.__mset_pointers(pointer_mapping, ttl=ttl_pointer)
+            await self.__mset_bodies(mapping, ttl=ttl_body)
 
     # ....................... #
 

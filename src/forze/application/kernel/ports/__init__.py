@@ -15,7 +15,6 @@ from .document import (
     DocumentWritePort,
 )
 from .idempotency import IdempotencyPort, IdempotencySnapshot
-from .runtime import AppRuntimePort
 from .storage import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
 from .stream import StreamEvent, StreamPort
 from .txmanager import TxManagerPort
@@ -31,7 +30,6 @@ __all__ = [
     "DocumentWritePort",
     "DocumentSearchOptions",
     "DocumentSorts",
-    "AppRuntimePort",
     "CounterPort",
     "DocumentCachePort",
     "StoragePort",

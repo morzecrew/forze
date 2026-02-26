@@ -17,7 +17,7 @@ from forze.application.usecases.document import (
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..facades import DocumentOperation, DocumentUsecasesFacade
-from ..kernel.dependencies import UsecaseContext
+from ..kernel.dependencies import ExecutionContext
 from ..kernel.plan import UsecasePlan
 from ..kernel.registry import UsecaseRegistry
 from ..kernel.specs import DocumentSpec
@@ -36,26 +36,19 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 
     reg = UsecaseRegistry(
         {
-            DocumentOperation.GET: lambda ctx: GetDocument(
-                doc=ctx.doc(spec),
-                runtime=ctx.runtime,
-            ),
-            DocumentOperation.SEARCH: lambda ctx: SearchDocument(
-                doc=ctx.doc(spec),
-                runtime=ctx.runtime,
-            ),
+            DocumentOperation.GET: lambda ctx: GetDocument(doc=ctx.doc(spec)),
+            DocumentOperation.SEARCH: lambda ctx: SearchDocument(doc=ctx.doc(spec)),
             DocumentOperation.RAW_SEARCH: lambda ctx: RawSearchDocument(
-                doc=ctx.doc(spec),
-                runtime=ctx.runtime,
+                doc=ctx.doc(spec)
             ),
             DocumentOperation.CREATE: lambda ctx: CreateDocument(
                 doc=ctx.doc(spec),
-                runtime=ctx.runtime,
+                txmanager=ctx.txmanager(),
                 mapper=DTOMapper(dto=spec.models["create_cmd"]),
             ),
             DocumentOperation.KILL: lambda ctx: KillDocument(
                 doc=ctx.doc(spec),
-                runtime=ctx.runtime,
+                txmanager=ctx.txmanager(),
             ),
         }
     )
@@ -65,7 +58,7 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
             DocumentOperation.UPDATE,
             lambda ctx: UpdateDocument(
                 doc=ctx.doc(spec),
-                runtime=ctx.runtime,
+                txmanager=ctx.txmanager(),
                 mapper=DTOMapper(dto=spec.models["update_cmd"]),
             ),
             inplace=True,
@@ -76,11 +69,11 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
             {
                 DocumentOperation.DELETE: lambda ctx: DeleteDocument(
                     doc=ctx.doc(spec),
-                    runtime=ctx.runtime,
+                    txmanager=ctx.txmanager(),
                 ),
                 DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
                     doc=ctx.doc(spec),
-                    runtime=ctx.runtime,
+                    txmanager=ctx.txmanager(),
                 ),
             },
             inplace=True,
@@ -128,12 +121,12 @@ class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
     # ....................... #
 
     @cached_property
-    def __reg(self) -> UsecaseRegistry:
+    def _reg(self) -> UsecaseRegistry:
         reg = self.reg or build_document_registry(self.spec)
 
         return reg.extend_plan(self.plan)
 
     # ....................... #
 
-    def __call__(self, ctx: UsecaseContext) -> DocumentUsecasesFacade[R, C, U]:
-        return DocumentUsecasesFacade(ctx=ctx, reg=self.__reg)
+    def __call__(self, ctx: ExecutionContext) -> DocumentUsecasesFacade[R, C, U]:
+        return DocumentUsecasesFacade(ctx=ctx, reg=self._reg)

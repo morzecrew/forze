@@ -5,6 +5,7 @@ require_redis()
 # ....................... #
 
 import base64
+from datetime import timedelta
 from typing import Final, Optional, TypedDict, final
 
 import attrs
@@ -48,7 +49,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
 
     # Defaults (overrideable)
-    ttl_s: int = 30
+    ttl: timedelta = timedelta(seconds=30)
 
     # ....................... #
 
@@ -71,7 +72,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         return await self.client.set(
             key,
             self.json_codec.dumps(p),
-            ex=self.ttl_s,
+            ex=int(self.ttl.total_seconds()),
             nx=True,
         )
 
@@ -148,7 +149,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         )
 
         ok = await self.client.set(
-            k, self.json_codec.dumps(idem_p), ex=self.ttl_s, xx=True
+            k, self.json_codec.dumps(idem_p), ex=int(self.ttl.total_seconds()), xx=True
         )
 
         if not ok:

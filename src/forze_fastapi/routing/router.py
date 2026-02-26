@@ -33,15 +33,18 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Lifespan
 
-from forze.application.kernel.dependencies import IdempotencyDependencyPort
-from forze.application.kernel.ports import AppRuntimePort, IdempotencyPort
+from forze.application.kernel.dependencies import (
+    ExecutionContext,
+    IdempotencyDependencyPort,
+)
+from forze.application.kernel.ports import IdempotencyPort
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_model_hash
 from forze_fastapi.constants import IDEMPOTENCY_KEY_HEADER
 
 # ----------------------- #
 
-AppRuntimeDependencyPort = Callable[[], AppRuntimePort]
+ExecutionContextDependencyPort = Callable[[], ExecutionContext]
 
 # ....................... #
 
@@ -74,6 +77,7 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 # ....................... #
 
 
+#! ????? ...
 def _idem_header_dependency(header_key: str):
     """Build a dependency that extracts a non-empty idempotency header."""
 
@@ -87,16 +91,16 @@ def _idem_header_dependency(header_key: str):
 
 
 def _idempotency_dependency(
-    app_runtime: AppRuntimeDependencyPort,
+    context: ExecutionContextDependencyPort,
     idempotency: IdempotencyDependencyPort,
 ):
     """Build a dependency that wires runtime and TTL into an :class:`IdempotencyPort`."""
 
     def dependency(
         ttl: timedelta,
-        runtime: AppRuntimePort = Dependency(app_runtime),
+        context: ExecutionContext = Dependency(context),
     ):
-        return idempotency(runtime=runtime, ttl=ttl)
+        return idempotency(context=context, ttl=ttl)
 
     return dependency
 
@@ -106,7 +110,7 @@ def _idempotency_dependency(
 
 @final
 class ForzeAPIRouter(APIRouter):
-    """FastAPI router with idempotency and runtime integration.
+    """FastAPI router with idempotency integration.
 
     The router extends :class:`fastapi.APIRouter` with support for:
 
@@ -136,10 +140,10 @@ class ForzeAPIRouter(APIRouter):
             generate_unique_id
         ),
         # extra parameters
-        app_runtime_dependency: AppRuntimeDependencyPort,
+        context_dependency: ExecutionContextDependencyPort,
         idempotency_config: Optional[RouterIdempotencyConfig] = None,
         idempotency_dependency: Optional[IdempotencyDependencyPort] = None,
-        ) -> None:
+    ) -> None:
         super().__init__(
             prefix=prefix,
             tags=tags,
@@ -163,7 +167,7 @@ class ForzeAPIRouter(APIRouter):
 
         else:
             self.__idempotency_dependency = _idempotency_dependency(
-                app_runtime_dependency, idempotency_dependency
+                context_dependency, idempotency_dependency
             )
 
         self.__idempotency_config = idempotency_config or {}

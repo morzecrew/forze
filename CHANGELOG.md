@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze.base.typing` with protocol conformance helpers (e.g. for dependency factories).
+- `forze_redis.dependencies.module` with Redis-backed dependency factories for idempotency, document cache, and counter.
 - Domain document support in `forze.domain` built from `forze.domain.models.Document` with name/number/soft-deletion mixins and update-validator infrastructure for safer incremental updates.
 - Document kernel in `forze.application.kernel`: pluggable usecase plans, `DocumentUsecasesFacade` factory, `DocumentPort` with explicit `DocumentSearchPort` and `DocumentReadPort`/`DocumentWritePort`, and `DocumentOperation` enum for operation keys.
 - Optional FastAPI integration package `forze_fastapi` (extra `fastapi`): routing helpers, idempotent POST support, and prebuilt document router.
@@ -16,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Kernel:** Transaction handling refactored around `TxManagerPort` and execution context; `AppRuntimePort` removed from `forze.application.kernel.ports`. Usecase base and dependency resolution updated accordingly.
 - **Postgres filter builder** (in `forze_postgres.kernel.builder`): filter input accepts only canonical operator names (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `is_null`, `or`, plus array and ltree ops). Aliases such as `==`, `ge`, `not in`, `in_`, `or_` are no longer accepted and raise `ValidationError`. Use `in` and `or` for membership and disjunction.
 - Infrastructure previously under `forze.infra` has been moved into optional packages; core `forze` no longer ships Postgres, Redis, S3, or Temporal implementations.
+- `forze_redis` adapters (cache, idempotency) and `forze_fastapi` router/routing updated for new dependency and context wiring.
 
 ### Fixed
 

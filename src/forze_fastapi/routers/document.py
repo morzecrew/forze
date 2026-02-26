@@ -14,13 +14,13 @@ from forze.application.dto.paginated import Paginated, RawPaginated
 from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
 from forze.application.facades import DocumentUsecasesFacade
 from forze.application.kernel.dependencies import (
+    ExecutionContext,
     IdempotencyDependencyPort,
-    UsecaseContext,
 )
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..routing.params import Pagination, RevQuery, UUIDQuery, pagination
-from ..routing.router import AppRuntimeDependencyPort, ForzeAPIRouter
+from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
 
 # ----------------------- #
 
@@ -34,7 +34,7 @@ U = TypeVar("U", bound=BaseDTO)
 def document_facade_dependency(provider: DocumentUsecasesFacadeProvider[R, C, U]):
     """Build a FastAPI dependency that resolves :class:`DocumentUsecasesFacade`."""
 
-    def facade(ctx: UsecaseContext) -> DocumentUsecasesFacade[R, C, U]:
+    def facade(ctx: ExecutionContext) -> DocumentUsecasesFacade[R, C, U]:
         return provider(ctx)
 
     return facade
@@ -48,7 +48,7 @@ def build_document_router(
     tags: Optional[list[str | Enum]] = None,
     *,
     provider: DocumentUsecasesFacadeProvider[R, C, U],
-    app_runtime: AppRuntimeDependencyPort,
+    context: ExecutionContextDependencyPort,
     idempotency: Optional[IdempotencyDependencyPort] = None,
 ):
     """Construct a router exposing CRUD and search endpoints for a document spec.
@@ -62,7 +62,7 @@ def build_document_router(
     router = ForzeAPIRouter(
         prefix=prefix,
         tags=tags,
-        app_runtime_dependency=app_runtime,
+        context_dependency=context,
         idempotency_dependency=idempotency,
     )
 

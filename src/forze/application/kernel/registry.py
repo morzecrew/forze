@@ -23,7 +23,7 @@ import attrs
 
 from forze.base.errors import CoreError
 
-from .dependencies import UsecaseContext
+from .dependencies import ExecutionContext
 from .plan import UsecasePlan
 from .usecase import Usecase
 
@@ -31,8 +31,8 @@ from .usecase import Usecase
 
 U = TypeVar("U", bound=Usecase[Any, Any])
 
-UsecaseFactory = Callable[[UsecaseContext], U]
-"""Factory that builds a concrete :class:`Usecase` from a :class:`UsecaseContext`."""
+UsecaseFactory = Callable[[ExecutionContext], U]
+"""Factory that builds a concrete :class:`Usecase` from a :class:`ExecutionContext`."""
 
 OpKey = str | StrEnum
 """Key for operation names."""
@@ -444,7 +444,7 @@ class UsecaseRegistry:
     def resolve(
         self,
         op: OpKey,
-        ctx: UsecaseContext,
+        ctx: ExecutionContext,
         *,
         expected: Optional[type[U]] = None,
     ) -> U:
@@ -455,7 +455,7 @@ class UsecaseRegistry:
         instance is of the expected type.
 
         :param op: Logical operation name.
-        :param ctx: Usecase context passed to the underlying factories.
+        :param ctx: Execution context passed to the underlying factories.
         :param expected: Expected concrete type of the resulting usecase.
         :returns: A composed :class:`Usecase` instance.
         :raises CoreError: When no factory is registered or the resulting
