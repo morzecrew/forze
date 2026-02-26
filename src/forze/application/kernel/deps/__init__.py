@@ -1,5 +1,5 @@
-from .base import DepKey, Deps, DepsPort
+from .base import DepKey, DepRouter, Deps, DepsPort
 
 # ----------------------- #
 
-__all__ = ["DepKey", "Deps", "DepsPort"]
+__all__ = ["DepKey", "Deps", "DepsPort", "DepRouter"]

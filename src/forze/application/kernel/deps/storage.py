@@ -1,9 +1,9 @@
-from typing import TYPE_CHECKING, Callable, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs
 
 from ..ports import StoragePort
-from .base import DepKey, RoutingKey
+from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -22,23 +22,18 @@ class StorageDepPort(Protocol):
 
 # ....................... #
 
+StorageDepKey = DepKey[StorageDepPort]("storage")
+"""Key used to register the :class:`StorageDepPort` implementation."""
+
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class StorageDepRouter(StorageDepPort):
-    selector: Callable[[str], RoutingKey]
-    routes: dict[RoutingKey, StorageDepPort]
-    default: StorageDepPort
+class StorageDepRouter(DepRouter[str, StorageDepPort], StorageDepPort):
+    dep_key = StorageDepKey
 
     # ....................... #
 
     def __call__(self, context: "ExecutionContext", bucket: str) -> StoragePort:
-        sel = self.selector(bucket)
-        route = self.routes.get(sel, self.default)
+        route = self._select(bucket)
+
         return route(context, bucket)
-
-
-# ....................... #
-
-StorageDepKey: DepKey[StorageDepPort] = DepKey("storage")
-"""Key used to register the :class:`StorageDepPort` implementation."""

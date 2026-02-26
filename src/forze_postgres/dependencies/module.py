@@ -49,13 +49,14 @@ def postgres_document(
 
 
 # ....................... #
+#! Need to set transaction options on usecase level rather than here.
 
 
 @conforms_to(TxManagerDepPort)
 def postgres_txmanager(context: ExecutionContext) -> TxManagerPort:
     client = context.dep(PostgresClientDepKey)
 
-    return PostgresTxManagerAdapter(client=client)  #! options ....... ???? ....
+    return PostgresTxManagerAdapter(client=client)
 
 
 # ....................... #

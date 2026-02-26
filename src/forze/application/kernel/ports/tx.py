@@ -1,14 +1,24 @@
-from typing import AsyncContextManager, Protocol, runtime_checkable
+from typing import AsyncContextManager, Protocol, final, runtime_checkable
 
 import attrs
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True, frozen=True)
 class TxScopeKey:
     name: str
 
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class TxOptions: ...
+
+
+#! ^^^ And how to make it abstract ????
 
 # ....................... #
 
@@ -26,6 +36,7 @@ class TxManagerPort(Protocol):
         """Return the key used to scope the transaction."""
         ...
 
+    #! we should add tx options to this protocol method
     def transaction(self) -> AsyncContextManager[None]:
         """Return an async context manager that scopes a transaction."""
         ...

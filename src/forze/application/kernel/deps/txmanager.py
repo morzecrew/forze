@@ -1,9 +1,9 @@
-from typing import TYPE_CHECKING, Callable, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs
 
 from ..ports import TxManagerPort
-from .base import DepKey, RoutingKey
+from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -22,24 +22,18 @@ class TxManagerDepPort(Protocol):
 
 # ....................... #
 
+TxManagerDepKey = DepKey[TxManagerDepPort]("tx_manager")
+"""Key used to register the :class:`TxManagerDepPort` implementation."""
+
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TxManagerDepRouter(TxManagerDepPort):
-    selector: Callable[[], RoutingKey]
-    routes: dict[RoutingKey, TxManagerDepPort]
-    default: TxManagerDepPort
+class TxManagerDepRouter(DepRouter[None, TxManagerDepPort], TxManagerDepPort):
+    dep_key = TxManagerDepKey
 
     # ....................... #
 
     def __call__(self, context: "ExecutionContext") -> TxManagerPort:
-        sel = self.selector()
-        route = self.routes.get(sel, self.default)
+        route = self._select(None)
 
         return route(context)
-
-
-# ....................... #
-
-TxManagerDepKey: DepKey[TxManagerDepPort] = DepKey("tx_manager")
-"""Key used to register the :class:`TxManagerDepPort` implementation."""

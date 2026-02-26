@@ -1,18 +1,10 @@
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Optional,
-    Protocol,
-    final,
-    runtime_checkable,
-)
+from typing import TYPE_CHECKING, Any, Optional, Protocol, final, runtime_checkable
 
 import attrs
 
 from ..ports import DocumentCachePort, DocumentPort
 from ..specs import DocumentSpec
-from .base import DepKey, RoutingKey
+from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -40,6 +32,11 @@ class DocumentCacheDepPort(Protocol):
 
 # ....................... #
 
+DocumentCacheDepKey = DepKey[DocumentCacheDepPort]("document_cache")
+"""Key used to register the :class:`DocumentCacheDepPort` implementation."""
+
+# ....................... #
+
 
 @runtime_checkable
 class DocumentDepPort(Protocol):
@@ -59,13 +56,14 @@ class DocumentDepPort(Protocol):
 
 # ....................... #
 
+DocumentDepKey = DepKey[DocumentDepPort]("document")
+"""Key used to register the :class:`DocumentDepPort` implementation."""
+
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentDepRouter(DocumentDepPort):
-    selector: Callable[[DocSpec], RoutingKey]
-    routes: dict[RoutingKey, DocumentDepPort]
-    default: DocumentDepPort
+class DocumentDepRouter(DepRouter[DocSpec, DocumentDepPort], DocumentDepPort):
+    dep_key = DocumentDepKey
 
     # ....................... #
 
@@ -75,17 +73,6 @@ class DocumentDepRouter(DocumentDepPort):
         spec: DocSpec,
         cache: Optional[DocumentCachePort] = None,
     ) -> DocPort:
-        sel = self.selector(spec)
-        route = self.routes.get(sel, self.default)
+        route = self._select(spec)
 
         return route(context, spec, cache=cache)
-
-
-# ....................... #
-
-DocumentCacheDepKey: DepKey[DocumentCacheDepPort] = DepKey("document_cache")
-"""Key used to register the :class:`DocumentCacheDepPort` implementation."""
-
-
-DocumentDepKey: DepKey[DocumentDepPort] = DepKey("document")
-"""Key used to register the :class:`DocumentDepPort` implementation."""

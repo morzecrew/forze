@@ -1,6 +1,9 @@
 from enum import StrEnum
 from typing import (
     Any,
+    Callable,
+    ClassVar,
+    Generic,
     Literal,
     Optional,
     Protocol,
@@ -18,8 +21,6 @@ from forze.base.errors import CoreError
 # ----------------------- #
 
 T = TypeVar("T")
-
-RoutingKey = str | StrEnum
 
 # ....................... #
 
@@ -239,3 +240,68 @@ class Deps(DepsPort):
             acc.update(d.deps)
 
         return cls(deps=acc)
+
+    # ....................... #
+
+    def without(self, key: DepKey[T]) -> Self:
+        """Create a new dependency container without the given key."""
+
+        new = dict(self.deps)
+        new.pop(key)
+
+        return type(self)(deps=new)
+
+
+# ....................... #
+
+SpecT = TypeVar("SpecT")
+PortT = TypeVar("PortT")
+DepPortT = TypeVar("DepPortT")
+
+# ....................... #
+
+RoutingKey = str | StrEnum
+Selector = Callable[[SpecT], RoutingKey]
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DepRouter(Generic[SpecT, DepPortT]):
+    selector: Selector[SpecT]
+    routes: dict[RoutingKey, DepPortT]
+    default: RoutingKey
+
+    dep_key: ClassVar[DepKey[Any]]
+
+    # ....................... #
+
+    def __attrs_post_init__(self):
+        if self.default not in self.routes:
+            raise CoreError(f"Default routing key `{self.default}` not found")
+
+    # ....................... #
+
+    def _select(self, spec: SpecT) -> DepPortT:
+        sel = self.selector(spec)
+
+        return self.routes.get(sel) or self.routes[self.default]
+
+    # ....................... #
+
+    @classmethod
+    def from_deps(
+        cls,
+        *,
+        deps: dict[RoutingKey, Deps],
+        selector: Selector[SpecT],
+        default: RoutingKey,
+    ) -> tuple[Self, Deps]:
+        routes: dict[RoutingKey, DepPortT] = {}
+        remainder = Deps()
+
+        for key, dep in deps.items():
+            routes[key] = dep.provide(cls.dep_key)
+            remainder = remainder.merge(dep.without(cls.dep_key))
+
+        return cls(selector=selector, routes=routes, default=default), remainder
