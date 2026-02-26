@@ -19,8 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
----
-
 ## [0.1.1] - 2026-02-23
 
 ### Added
@@ -30,8 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Packaging metadata for PyOCI classifiers.
-
----
 
 ## [0.1.2] - 2026-02-26
 
@@ -52,8 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Correct UUIDv7 datetime conversion in `forze.base.primitives.uuid` so round-trips between datetimes and UUIDs preserve timestamp semantics.
-
----
 
 [unreleased]: https://github.com/morzecrew/forze/compare/v0.1.2...HEAD
 [0.1.2]: https://github.com/morzecrew/forze/compare/v0.1.1...v0.1.2
