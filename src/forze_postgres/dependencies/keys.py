@@ -1,10 +1,8 @@
-from forze.application.kernel.dependencies import DependencyKey
+from forze.application.kernel.deps import DepKey
 
 from ..kernel.platform import PostgresClient
 
 # ----------------------- #
 
-PostgresClientDependencyKey: DependencyKey[PostgresClient] = DependencyKey(
-    "postgres_client"
-)
+PostgresClientDepKey: DepKey[PostgresClient] = DepKey("postgres_client")
 """Key used to register the :class:`PostgresClient` implementation."""

@@ -14,6 +14,8 @@ from forze.application.kernel.ports import (
     DocumentPort,
     DocumentSearchOptions,
     DocumentSorts,
+    TxScopedPort,
+    TxScopeKey,
 )
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -25,6 +27,7 @@ from ..kernel.gateways import (
     PostgresSearchGateway,
     PostgresWriteGateway,
 )
+from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
@@ -36,11 +39,13 @@ class PostgresDocumentAdapter[
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
-](DocumentPort[R, D, C, U]):
+](DocumentPort[R, D, C, U], TxScopedPort):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
     search_gw: Optional[PostgresSearchGateway[R]] = None
     cache_gw: Optional[DocumentCachePort] = None
+
+    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
 

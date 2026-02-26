@@ -23,7 +23,7 @@ import attrs
 
 from forze.base.errors import CoreError
 
-from .dependencies import ExecutionContext
+from .context import ExecutionContext
 from .plan import UsecasePlan
 from .usecase import Usecase
 

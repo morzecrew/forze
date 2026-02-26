@@ -31,9 +31,9 @@ from ..kernel.platform import S3Client
 class S3StorageAdapter(StoragePort):
     client: S3Client
     bucket: str
-    path_codec: PathCodec
 
     # Non initable fields
+    path_codec: PathCodec = attrs.field(factory=PathCodec, init=False)
     ascii_b64_codec: AsciiB64Codec = attrs.field(factory=AsciiB64Codec, init=False)
 
     # ....................... #
@@ -44,6 +44,7 @@ class S3StorageAdapter(StoragePort):
         return self.path_codec.cond_join(prefix, uid)
 
     # ....................... #
+    #! TODO: validate prefix against valid S3 path characters
 
     async def upload(
         self,

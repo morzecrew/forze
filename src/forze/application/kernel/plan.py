@@ -12,7 +12,7 @@ import attrs
 
 from forze.base.errors import CoreError
 
-from .dependencies import ExecutionContext
+from .context import ExecutionContext
 from .usecase import Effect, Guard, TxUsecase, Usecase
 
 # ----------------------- #

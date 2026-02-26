@@ -1,8 +1,8 @@
-from forze.application.kernel.dependencies import DependencyKey
+from forze.application.kernel.deps import DepKey
 
 from ..kernel.platform import MongoClient
 
 # ----------------------- #
 
-MongoClientDependencyKey: DependencyKey[MongoClient] = DependencyKey("mongo_client")
+MongoClientDepKey: DepKey[MongoClient] = DepKey("mongo_client")
 """Key used to register the :class:`MongoClient` implementation."""

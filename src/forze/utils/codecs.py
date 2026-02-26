@@ -112,5 +112,24 @@ class KeyCodec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PathCodec(KeyCodec):
+class PathCodec:
     sep: str = attrs.field(default="/", init=False)
+
+    # ....................... #
+
+    def join(self, *parts: str) -> str:
+        items = [p.strip(self.sep) for p in parts if p]
+
+        return self.sep.join(items)
+
+    # ....................... #
+
+    def split(self, key: str) -> list[str]:
+        return key.split(self.sep)
+
+    # ....................... #
+
+    def cond_join(self, *parts: Optional[str]) -> str:
+        items = list(filter(None, parts))
+
+        return self.join(*items)

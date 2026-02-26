@@ -1,5 +1,5 @@
-from .txmanager import MongoTxManagerAdapter
+from .txmanager import MongoTxManagerAdapter, MongoTxScopeKey
 
 # ----------------------- #
 
-__all__ = ["MongoTxManagerAdapter"]
+__all__ = ["MongoTxManagerAdapter", "MongoTxScopeKey"]

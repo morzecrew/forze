@@ -17,7 +17,7 @@ from forze.application.usecases.document import (
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..facades import DocumentOperation, DocumentUsecasesFacade
-from ..kernel.dependencies import ExecutionContext
+from ..kernel.context import ExecutionContext
 from ..kernel.plan import UsecasePlan
 from ..kernel.registry import UsecaseRegistry
 from ..kernel.specs import DocumentSpec

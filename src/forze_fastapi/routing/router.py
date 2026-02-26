@@ -33,10 +33,8 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Lifespan
 
-from forze.application.kernel.dependencies import (
-    ExecutionContext,
-    IdempotencyDependencyPort,
-)
+from forze.application.kernel.context import ExecutionContext
+from forze.application.kernel.deps.idempotency import IdempotencyDepPort
 from forze.application.kernel.ports import IdempotencyPort
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_model_hash
@@ -92,7 +90,7 @@ def _idem_header_dependency(header_key: str):
 
 def _idempotency_dependency(
     context: ExecutionContextDependencyPort,
-    idempotency: IdempotencyDependencyPort,
+    idempotency: IdempotencyDepPort,
 ):
     """Build a dependency that wires runtime and TTL into an :class:`IdempotencyPort`."""
 
@@ -142,7 +140,7 @@ class ForzeAPIRouter(APIRouter):
         # extra parameters
         context_dependency: ExecutionContextDependencyPort,
         idempotency_config: Optional[RouterIdempotencyConfig] = None,
-        idempotency_dependency: Optional[IdempotencyDependencyPort] = None,
+        idempotency_dependency: Optional[IdempotencyDepPort] = None,
     ) -> None:
         super().__init__(
             prefix=prefix,

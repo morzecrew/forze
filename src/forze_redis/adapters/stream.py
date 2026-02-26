@@ -74,7 +74,7 @@ class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
         id: str = "*",
         maxlen: Optional[int] = None,
         approx: Optional[bool] = None,
-    ):
+    ) -> str:
         if isinstance(payload, BaseModel):
             payload = pydantic_dump(payload)
 
@@ -146,7 +146,7 @@ class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
         streams: dict[str, str],
         *,
         count: Optional[int] = None,
-        block_ms: Optional[int] = None,
+        block_ms: Optional[int] = None,  #! use timedelta
     ) -> list[StreamEvent[M]]:
         res = await self.client.xread(streams, count=count, block_ms=block_ms)
 
@@ -159,7 +159,7 @@ class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
         stream: str,
         *,
         start_id: str = "$",
-        block_ms: int = 5000,
+        block_ms: int = 5000,  #! use timedelta
         count: int = 200,
     ) -> AsyncIterator[StreamEvent[M]]:
         last_id = start_id
@@ -234,7 +234,7 @@ class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
         consumer: str,
         *,
         start_id: str = ">",
-        block_ms: Optional[int] = None,
+        block_ms: Optional[int] = None,  #! use timedelta
         count: Optional[int] = None,
         noack: bool = False,
     ) -> list[StreamEvent[M]]:
@@ -258,7 +258,7 @@ class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
         consumer: str,
         *,
         start_id: str = ">",
-        block_ms: int = 5000,
+        block_ms: int = 5000,  #! use timedelta
         count: int = 200,
     ) -> AsyncIterator[StreamEvent[M]]:
         raise NotImplementedError("Not implemented")

@@ -14,7 +14,7 @@ from forze.application.usecases.document import (
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..kernel.dependencies import ExecutionContext
+from ..kernel.context import ExecutionContext
 from ..kernel.registry import UsecaseRegistry
 from ..kernel.usecase import TxUsecase, Usecase
 
