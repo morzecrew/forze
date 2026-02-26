@@ -2,6 +2,7 @@
 
 from typing import (
     Any,
+    Awaitable,
     Literal,
     Optional,
     Protocol,
@@ -49,36 +50,36 @@ class DocumentReadPort[R: ReadDocument](Protocol):
     """Read-only operations for document aggregates."""
 
     @overload
-    async def get(
+    def get(
         self,
         pk: UUID,
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> JsonDict:
+    ) -> Awaitable[JsonDict]:
         """Fetch a document and return selected fields as a JSON mapping."""
 
         ...
 
     @overload
-    async def get(
+    def get(
         self,
         pk: UUID,
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> R:
+    ) -> Awaitable[R]:
         """Fetch a document and return the typed read model."""
 
         ...
 
-    async def get(
+    def get(
         self,
         pk: UUID,
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
-    ) -> R | JsonDict:
+    ) -> Awaitable[R | JsonDict]:
         """Fetch a single document by primary key.
 
         :param pk: Document identifier.
@@ -91,76 +92,76 @@ class DocumentReadPort[R: ReadDocument](Protocol):
     # ....................... #
 
     @overload
-    async def get_many(
+    def get_many(
         self,
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str],
-    ) -> Sequence[JsonDict]:
+    ) -> Awaitable[Sequence[JsonDict]]:
         """Fetch multiple documents and project selected fields as JSON."""
 
         ...
 
     @overload
-    async def get_many(
+    def get_many(
         self,
         pks: Sequence[UUID],
         *,
         return_fields: None = ...,
-    ) -> Sequence[R]:
+    ) -> Awaitable[Sequence[R]]:
         """Fetch multiple documents and return typed read models."""
 
         ...
 
-    async def get_many(
+    def get_many(
         self,
         pks: Sequence[UUID],
         *,
         return_fields: Optional[Sequence[str]] = None,
-    ) -> Sequence[R] | Sequence[JsonDict]:
+    ) -> Awaitable[Sequence[R] | Sequence[JsonDict]]:
         """Fetch multiple documents by primary key."""
         ...
 
     # ....................... #
 
     @overload
-    async def find(
+    def find(
         self,
         filters: JsonDict,
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> Optional[JsonDict]:
+    ) -> Awaitable[Optional[JsonDict]]:
         """Find a single document by filters and project selected fields."""
 
         ...
 
     @overload
-    async def find(
+    def find(
         self,
         filters: JsonDict,
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> Optional[R]:
+    ) -> Awaitable[Optional[R]]:
         """Find a single document by filters and return the typed read model."""
 
         ...
 
-    async def find(
+    def find(
         self,
         filters: JsonDict,
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
-    ) -> Optional[R | JsonDict]:
+    ) -> Awaitable[Optional[R | JsonDict]]:
         """Find a single document by filters or return ``None`` when missing."""
         ...
 
     # ....................... #
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: Optional[JsonDict] = ...,
         limit: Optional[int] = ...,
@@ -168,13 +169,13 @@ class DocumentReadPort[R: ReadDocument](Protocol):
         sorts: Optional[DocumentSorts] = ...,
         *,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]:
+    ) -> Awaitable[tuple[list[JsonDict], int]]:
         """Find many documents and project selected fields as JSON."""
 
         ...
 
     @overload
-    async def find_many(
+    def find_many(
         self,
         filters: Optional[JsonDict] = ...,
         limit: Optional[int] = ...,
@@ -182,12 +183,12 @@ class DocumentReadPort[R: ReadDocument](Protocol):
         sorts: Optional[DocumentSorts] = ...,
         *,
         return_fields: None = ...,
-    ) -> tuple[list[R], int]:
+    ) -> Awaitable[tuple[list[R], int]]:
         """Find many documents and return typed read models."""
 
         ...
 
-    async def find_many(
+    def find_many(
         self,
         filters: Optional[JsonDict] = None,
         limit: Optional[int] = None,
@@ -195,7 +196,7 @@ class DocumentReadPort[R: ReadDocument](Protocol):
         sorts: Optional[DocumentSorts] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,
-    ) -> tuple[list[R] | list[JsonDict], int]:
+    ) -> Awaitable[tuple[list[R] | list[JsonDict], int]]:
         """Find many documents, optionally paginated and sorted.
 
         :returns: A tuple of result list and total count.
@@ -211,7 +212,7 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
     """Full-text or secondary index search over documents."""
 
     @overload
-    async def search(
+    def search(
         self,
         query: str,
         filters: Optional[JsonDict] = ...,
@@ -221,13 +222,13 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
         *,
         options: Optional[DocumentSearchOptions] = ...,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]:
+    ) -> Awaitable[tuple[list[JsonDict], int]]:
         """Search documents and project selected fields as JSON."""
 
         ...
 
     @overload
-    async def search(
+    def search(
         self,
         query: str,
         filters: Optional[JsonDict] = ...,
@@ -237,12 +238,12 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
         *,
         options: Optional[DocumentSearchOptions] = ...,
         return_fields: None = ...,
-    ) -> tuple[list[R], int]:
+    ) -> Awaitable[tuple[list[R], int]]:
         """Search documents and return typed read models."""
 
         ...
 
-    async def search(
+    def search(
         self,
         query: str,
         filters: Optional[JsonDict] = None,
@@ -252,7 +253,7 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
         options: Optional[DocumentSearchOptions] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,
-    ) -> tuple[list[R] | list[JsonDict], int]:
+    ) -> Awaitable[tuple[list[R] | list[JsonDict], int]]:
         """Search documents using a query string and optional filters.
 
         :param query: Query expression interpreted by the backend.
@@ -279,67 +280,67 @@ class DocumentWritePort[
 ](Protocol):
     """Write operations for document aggregates."""
 
-    async def create(self, dto: C) -> R:
+    def create(self, dto: C) -> Awaitable[R]:
         """Create a new document from the given command DTO."""
         ...
 
-    async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
+    def create_many(self, dtos: Sequence[C]) -> Awaitable[Sequence[R]]:
         """Create multiple documents in a batch."""
         ...
 
-    async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
+    def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
         ...
 
-    async def update_many(
+    def update_many(
         self,
         pks: Sequence[UUID],
         dtos: Sequence[U],
         *,
         revs: Optional[Sequence[int]] = None,
-    ) -> Sequence[R]:
+    ) -> Awaitable[Sequence[R]]:
         """Apply partial updates to multiple documents."""
         ...
 
-    async def touch(self, pk: UUID) -> R:
+    def touch(self, pk: UUID) -> Awaitable[R]:
         """Bump metadata (e.g. ``last_update_at``) for a single document."""
         ...
 
-    async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
+    def touch_many(self, pks: Sequence[UUID]) -> Awaitable[Sequence[R]]:
         """Bump metadata for multiple documents."""
         ...
 
-    async def kill(self, pk: UUID) -> None:
+    def kill(self, pk: UUID) -> Awaitable[None]:
         """Hard-delete a single document without soft-delete semantics."""
         ...
 
-    async def kill_many(self, pks: Sequence[UUID]) -> None:
+    def kill_many(self, pks: Sequence[UUID]) -> Awaitable[None]:
         """Hard-delete multiple documents."""
         ...
 
-    async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+    def delete(self, pk: UUID, *, rev: Optional[int] = None) -> Awaitable[R]:
         """Soft-delete a document if the model supports it."""
         ...
 
-    async def delete_many(
+    def delete_many(
         self,
         pks: Sequence[UUID],
         *,
         revs: Optional[Sequence[int]] = None,
-    ) -> Sequence[R]:
+    ) -> Awaitable[Sequence[R]]:
         """Soft-delete multiple documents."""
         ...
 
-    async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+    def restore(self, pk: UUID, *, rev: Optional[int] = None) -> Awaitable[R]:
         """Restore a previously soft-deleted document."""
         ...
 
-    async def restore_many(
+    def restore_many(
         self,
         pks: Sequence[UUID],
         *,
         revs: Optional[Sequence[int]] = None,
-    ) -> Sequence[R]:
+    ) -> Awaitable[Sequence[R]]:
         """Restore multiple previously soft-deleted documents."""
         ...
 
@@ -364,16 +365,16 @@ class DocumentPort[
 class DocumentCachePort(Protocol):  # pragma: no cover
     """Cache abstraction for document read models."""
 
-    async def get(self, pk: UUID) -> Optional[Any]: ...
-    async def set(self, pk: UUID, rev: int, value: Any) -> None: ...
-    async def delete(self, pk: UUID, *, hard: bool) -> None: ...
+    def get(self, pk: UUID) -> Awaitable[Optional[Any]]: ...
+    def set(self, pk: UUID, rev: int, value: Any) -> Awaitable[None]: ...
+    def delete(self, pk: UUID, *, hard: bool) -> Awaitable[None]: ...
 
-    async def get_many(
+    def get_many(
         self,
         pks: Sequence[UUID],
-    ) -> tuple[dict[UUID, Any], list[UUID]]: ...
-    async def set_many(
+    ) -> Awaitable[tuple[dict[UUID, Any], list[UUID]]]: ...
+    def set_many(
         self,
         mapping: dict[tuple[UUID, int], Any],
-    ) -> None: ...
-    async def delete_many(self, pks: Sequence[UUID], *, hard: bool) -> None: ...
+    ) -> Awaitable[None]: ...
+    def delete_many(self, pks: Sequence[UUID], *, hard: bool) -> Awaitable[None]: ...

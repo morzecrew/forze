@@ -2,6 +2,7 @@
 
 from typing import (
     AsyncIterator,
+    Awaitable,
     NotRequired,
     Optional,
     Protocol,
@@ -46,7 +47,7 @@ class StreamEvent[M: BaseModel](TypedDict):
 class StreamPort[M: BaseModel](Protocol):
     """Contract for event streams used by the application kernel."""
 
-    async def publish(
+    def publish(
         self,
         stream: str,
         payload: M | JsonDict,
@@ -57,17 +58,17 @@ class StreamPort[M: BaseModel](Protocol):
         id: str = "*",
         maxlen: Optional[int] = None,
         approx: Optional[bool] = None,
-    ) -> str:
+    ) -> Awaitable[str]:
         """Append a new event to a stream and return its backend ID."""
         ...
 
-    async def read(
+    def read(
         self,
         streams: dict[str, str],
         *,
         count: Optional[int] = None,
         block_ms: Optional[int] = None,
-    ) -> list[StreamEvent[M]]:
+    ) -> Awaitable[list[StreamEvent[M]]]:
         """Read events from one or more streams in a blocking or polling mode."""
         ...
 
@@ -82,22 +83,22 @@ class StreamPort[M: BaseModel](Protocol):
         """Subscribe to a stream and yield events as they arrive."""
         ...
 
-    async def trim(
+    def trim(
         self,
         stream: str,
         *,
         maxlen: int,
         approx: bool = True,
         limit: Optional[int] = None,
-    ) -> int:
+    ) -> Awaitable[int]:
         """Trim a stream to at most ``maxlen`` entries and return removed count."""
         ...
 
-    async def delete(self, stream: str, ids: Sequence[str]) -> int:
+    def delete(self, stream: str, ids: Sequence[str]) -> Awaitable[int]:
         """Delete individual events by ID and return the number removed."""
         ...
 
-    async def ensure_group(
+    def ensure_group(
         self,
         stream: str,
         group: str,
@@ -105,11 +106,11 @@ class StreamPort[M: BaseModel](Protocol):
         start_id: str = "0-0",
         mkstream: bool = True,
         ignore_busy: bool = True,
-    ) -> bool:
+    ) -> Awaitable[bool]:
         """Ensure a consumer group exists for ``stream`` and ``group``."""
         ...
 
-    async def read_group(
+    def read_group(
         self,
         stream: str,
         group: str,
@@ -119,11 +120,11 @@ class StreamPort[M: BaseModel](Protocol):
         block_ms: Optional[int] = None,
         count: Optional[int] = None,
         noack: bool = False,
-    ) -> list[StreamEvent[M]]:
+    ) -> Awaitable[list[StreamEvent[M]]]:
         """Read events for a consumer in a group."""
         ...
 
-    async def subscribe_group(
+    def subscribe_group(
         self,
         stream: str,
         group: str,
@@ -136,6 +137,6 @@ class StreamPort[M: BaseModel](Protocol):
         """Subscribe to a consumer group and yield events as they arrive."""
         ...
 
-    async def ack(self, stream: str, group: str, ids: Sequence[str]) -> int:
+    def ack(self, stream: str, group: str, ids: Sequence[str]) -> Awaitable[int]:
         """Acknowledge processing of events for a consumer group."""
         ...

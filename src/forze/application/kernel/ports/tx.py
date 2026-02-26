@@ -1,9 +1,6 @@
 from typing import AsyncContextManager, Protocol, runtime_checkable
-from uuid import UUID
 
 import attrs
-
-from forze.base.primitives import uuid7
 
 # ----------------------- #
 
@@ -11,28 +8,6 @@ from forze.base.primitives import uuid7
 @attrs.define(slots=True, frozen=True)
 class TxScopeKey:
     name: str
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, frozen=True)
-class TxHandle:
-    """Opaque capability token for transactional execution."""
-
-    scope: TxScopeKey
-    """The scope of the transaction."""
-
-    id: UUID = attrs.field(factory=uuid7, init=False)
-    """The unique identifier of the transaction."""
-
-
-# ....................... #
-
-
-@runtime_checkable
-class TxScopedPort(Protocol):
-    tx_scope: TxScopeKey
 
 
 # ....................... #

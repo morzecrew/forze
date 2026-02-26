@@ -42,11 +42,13 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
                 doc=ctx.doc(spec)
             ),
             DocumentOperation.CREATE: lambda ctx: CreateDocument(
+                ctx=ctx,
                 doc=ctx.doc(spec),
                 txmanager=ctx.txmanager(),
                 mapper=DTOMapper(dto=spec.models["create_cmd"]),
             ),
             DocumentOperation.KILL: lambda ctx: KillDocument(
+                ctx=ctx,
                 doc=ctx.doc(spec),
                 txmanager=ctx.txmanager(),
             ),
@@ -57,6 +59,7 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
         reg.register(
             DocumentOperation.UPDATE,
             lambda ctx: UpdateDocument(
+                ctx=ctx,
                 doc=ctx.doc(spec),
                 txmanager=ctx.txmanager(),
                 mapper=DTOMapper(dto=spec.models["update_cmd"]),
@@ -68,10 +71,12 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
         reg.register_many(
             {
                 DocumentOperation.DELETE: lambda ctx: DeleteDocument(
+                    ctx=ctx,
                     doc=ctx.doc(spec),
                     txmanager=ctx.txmanager(),
                 ),
                 DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
+                    ctx=ctx,
                     doc=ctx.doc(spec),
                     txmanager=ctx.txmanager(),
                 ),

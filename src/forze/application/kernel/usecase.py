@@ -2,7 +2,7 @@ from typing import Protocol, Self, override
 
 import attrs
 
-# from .dependencies import UsecaseContext
+from .context import ExecutionContext
 from .ports import TxManagerPort
 
 # ----------------------- #
@@ -41,9 +41,6 @@ class Usecase[Args, R]:
     It can be decorated with guards and effects that run before and after the
     main execution, respectively.
     """
-
-    # context: UsecaseContext
-    # """Application context providing dependencies and infrastructure access."""
 
     guards: tuple[Guard[Args], ...] = attrs.field(factory=tuple)
     """Guards to run before the usecase."""
@@ -122,6 +119,9 @@ class TxUsecase[Args, R](Usecase[Args, R]):
     transaction (e.g. integration events, notifications).
     """
 
+    ctx: ExecutionContext
+    """Execution context to use for the usecase."""
+
     txmanager: TxManagerPort
     """Transaction manager to use for the usecase."""
 
@@ -177,7 +177,7 @@ class TxUsecase[Args, R](Usecase[Args, R]):
 
         await self._run_side_guards(args)
 
-        async with self.txmanager.transaction():
+        async with self.ctx.transaction(self.txmanager):
             await self._run_guards(args)
             res = await self.main(args)
             final_res = await self._run_effects(args, res)

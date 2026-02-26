@@ -17,7 +17,7 @@ from .document import (
 from .idempotency import IdempotencyPort, IdempotencySnapshot
 from .storage import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
 from .stream import StreamEvent, StreamPort
-from .tx import TxHandle, TxManagerPort, TxScopedPort, TxScopeKey
+from .tx import TxManagerPort, TxScopeKey
 from .workflow import WorkflowPort
 
 # ----------------------- #
@@ -42,6 +42,4 @@ __all__ = [
     "StreamEvent",
     "TxManagerPort",
     "TxScopeKey",
-    "TxHandle",
-    "TxScopedPort",
 ]

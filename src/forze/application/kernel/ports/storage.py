@@ -1,7 +1,14 @@
 """Ports and DTOs for object storage backends."""
 
 from datetime import datetime
-from typing import NotRequired, Optional, Protocol, TypedDict, runtime_checkable
+from typing import (
+    Awaitable,
+    NotRequired,
+    Optional,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 # ----------------------- #
 
@@ -64,14 +71,14 @@ class DownloadedObject(TypedDict):
 class StoragePort(Protocol):
     """Abstraction over object storage providers (e.g. S3-compatible services)."""
 
-    async def upload(
+    def upload(
         self,
         filename: str,
         data: bytes,
         description: Optional[str] = None,
         *,
         prefix: Optional[str] = None,
-    ) -> StoredObject:
+    ) -> Awaitable[StoredObject]:
         """Upload an object and return its stored metadata.
 
         :param filename: Original filename for the object.
@@ -81,21 +88,21 @@ class StoragePort(Protocol):
         """
         ...
 
-    async def download(self, key: str) -> DownloadedObject:
+    def download(self, key: str) -> Awaitable[DownloadedObject]:
         """Download previously stored object data by key."""
         ...
 
-    async def delete(self, key: str) -> None:
+    def delete(self, key: str) -> Awaitable[None]:
         """Delete an object identified by ``key``."""
         ...
 
-    async def list(
+    def list(
         self,
         limit: int,
         offset: int,
         *,
         prefix: Optional[str] = None,
-    ) -> tuple[list[StoredObject], int]:
+    ) -> Awaitable[tuple[list[StoredObject], int]]:
         """List stored objects with pagination.
 
         :param limit: Maximum number of objects to return.

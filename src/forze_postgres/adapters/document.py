@@ -9,12 +9,16 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.kernel.context import (
+    ExecutionContext,
+    TxContextScopedPort,
+    require_tx_scope_match,
+)
 from forze.application.kernel.ports import (
     DocumentCachePort,
     DocumentPort,
     DocumentSearchOptions,
     DocumentSorts,
-    TxScopedPort,
     TxScopeKey,
 )
 from forze.base.errors import CoreError
@@ -39,12 +43,13 @@ class PostgresDocumentAdapter[
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
-](DocumentPort[R, D, C, U], TxScopedPort):
+](DocumentPort[R, D, C, U], TxContextScopedPort):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
     search_gw: Optional[PostgresSearchGateway[R]] = None
-    cache_gw: Optional[DocumentCachePort] = None
+    cache: Optional[DocumentCachePort] = None
 
+    ctx: ExecutionContext
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
@@ -117,21 +122,21 @@ class PostgresDocumentAdapter[
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
     ) -> R | JsonDict:
-        if return_fields is not None or self.cache_gw is None:
+        if return_fields is not None or self.cache is None:
             return await self.read_gw.get(
                 pk,
                 for_update=for_update,
                 return_fields=return_fields,
             )
 
-        cached = await self.cache_gw.get(pk)
+        cached = await self.cache.get(pk)
 
         if cached is not None:
             return pydantic_validate(self.read_gw.model, cached)
 
         res = await self.read_gw.get(pk)
 
-        await self.cache_gw.set(pk, res.rev, self._map_to_cache(res))
+        await self.cache.set(pk, res.rev, self._map_to_cache(res))
 
         return res
 
@@ -159,17 +164,17 @@ class PostgresDocumentAdapter[
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Sequence[R] | Sequence[JsonDict]:
-        if return_fields is not None or self.cache_gw is None:
+        if return_fields is not None or self.cache is None:
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
-        hits, misses = await self.cache_gw.get_many(pks)
+        hits, misses = await self.cache.get_many(pks)
         miss_res: list[R] = []
 
         if misses:
             miss_res = await self.read_gw.get_many(misses)
             miss_mapping = {(x.id, x.rev): self._map_to_cache(x) for x in miss_res}
 
-            await self.cache_gw.set_many(miss_mapping)
+            await self.cache.set_many(miss_mapping)
 
         by_pk: dict[UUID, R] = {
             k: pydantic_validate(self.read_gw.model, v) for k, v in hits.items()
@@ -319,6 +324,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def create(self, dto: C) -> R:
         w = self._require_write()
         domain = await w.create(dto)
@@ -327,6 +333,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
         w = self._require_write()
         domains = await w.create_many(dtos)
@@ -336,11 +343,12 @@ class PostgresDocumentAdapter[
     # ....................... #
 
     async def _clear_cache(self, *pks: UUID) -> None:
-        if self.cache_gw is not None:
-            await self.cache_gw.delete_many(pks, hard=True)
+        if self.cache is not None:
+            await self.cache.delete_many(pks, hard=True)
 
     # ....................... #
 
+    @require_tx_scope_match
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
         domain = await w.update(pk, dto, rev=rev)
@@ -351,6 +359,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def update_many(
         self,
         pks: Sequence[UUID],
@@ -367,6 +376,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def touch(self, pk: UUID) -> R:
         w = self._require_write()
 
@@ -377,6 +387,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
         w = self._require_write()
 
@@ -387,6 +398,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def kill(self, pk: UUID) -> None:
         w = self._require_write()
 
@@ -395,6 +407,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         w = self._require_write()
 
@@ -403,6 +416,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
@@ -413,6 +427,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def delete_many(
         self,
         pks: Sequence[UUID],
@@ -428,6 +443,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
@@ -438,6 +454,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
+    @require_tx_scope_match
     async def restore_many(
         self,
         pks: Sequence[UUID],

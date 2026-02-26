@@ -1,10 +1,28 @@
+from __future__ import annotations
+
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncIterator, Iterator, Optional, TypeVar, final
+from functools import wraps
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Concatenate,
+    Iterator,
+    Optional,
+    ParamSpec,
+    Protocol,
+    TypeVar,
+    final,
+    runtime_checkable,
+)
+from uuid import UUID
 
 import attrs
 
 from forze.base.errors import CoreError
+from forze.base.primitives import uuid7
 
 from .deps.base import DepKey, DepsPort
 from .ports import (
@@ -12,9 +30,7 @@ from .ports import (
     DocumentCachePort,
     DocumentPort,
     StoragePort,
-    TxHandle,
     TxManagerPort,
-    TxScopedPort,
     TxScopeKey,
 )
 from .specs import DocumentSpec
@@ -22,6 +38,51 @@ from .specs import DocumentSpec
 # ----------------------- #
 
 T = TypeVar("T")
+P = ParamSpec("P")
+TxCsp = TypeVar("TxCsp", bound="TxContextScopedPort")
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class TxHandle:
+    """Opaque capability token for transactional execution."""
+
+    scope: TxScopeKey
+    """The scope of the transaction."""
+
+    id: UUID = attrs.field(factory=uuid7, init=False)
+    """The unique identifier of the transaction."""
+
+
+# ....................... #
+
+
+@runtime_checkable
+class TxContextScopedPort(Protocol):
+    ctx: ExecutionContext
+    tx_scope: TxScopeKey
+
+
+# ....................... #
+
+
+def require_tx_scope_match(
+    method: Callable[Concatenate[TxCsp, P], Awaitable[T]],
+) -> Callable[Concatenate[TxCsp, P], Awaitable[T]]:
+    @wraps(method)
+    async def async_wrapper(
+        self: TxCsp,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> T:
+        if self.ctx.active_tx() is not None:
+            self.ctx.require_tx(self.tx_scope)
+
+        return await method(self, *args, **kwargs)
+
+    return async_wrapper
+
 
 # ....................... #
 
@@ -135,7 +196,7 @@ class ExecutionContext:
 
         if (
             h is not None
-            and isinstance(instance, TxScopedPort)
+            and isinstance(instance, TxContextScopedPort)
             and h.scope != instance.tx_scope
         ):
             raise CoreError(

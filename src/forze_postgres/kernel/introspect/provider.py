@@ -35,7 +35,7 @@ PostgresColumnCache: TypeAlias = dict[tuple[Optional[str], str], PostgresColumnT
 @attrs.define(slots=True, kw_only=True)
 class PostgresTypesProvider:
     client: PostgresClient = attrs.field(on_setattr=attrs.setters.frozen)
-    _cache: PostgresColumnCache = attrs.field(factory=PostgresColumnCache)
+    _cache: PostgresColumnCache = attrs.field(factory=PostgresColumnCache, init=False)
 
     # ....................... #
 

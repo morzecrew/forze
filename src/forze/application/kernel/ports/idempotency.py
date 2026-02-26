@@ -1,6 +1,6 @@
 """Port for HTTP-style idempotency handling."""
 
-from typing import Optional, Protocol, TypedDict, runtime_checkable
+from typing import Awaitable, Optional, Protocol, TypedDict, runtime_checkable
 
 # ----------------------- #
 
@@ -25,12 +25,12 @@ class IdempotencyPort(Protocol):
     hash.
     """
 
-    async def begin(
+    def begin(
         self,
         op: str,
         key: Optional[str],
         payload_hash: str,
-    ) -> Optional[IdempotencySnapshot]:
+    ) -> Awaitable[Optional[IdempotencySnapshot]]:
         """Start an idempotent operation and return a cached snapshot if any.
 
         :param op: Operation name.
@@ -38,12 +38,14 @@ class IdempotencyPort(Protocol):
         :param payload_hash: Hash of the normalized request payload.
         :returns: A previously stored :class:`IdempotencySnapshot` or ``None``.
         """
+        ...
 
-    async def commit(
+    def commit(
         self,
         op: str,
         key: Optional[str],
         payload_hash: str,
         snapshot: IdempotencySnapshot,
-    ) -> None:
+    ) -> Awaitable[None]:
         """Persist the snapshot for the given idempotent operation."""
+        ...

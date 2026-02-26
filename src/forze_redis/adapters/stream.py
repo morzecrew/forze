@@ -251,7 +251,7 @@ class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
 
     # ....................... #
 
-    async def subscribe_group(
+    def subscribe_group(
         self,
         stream: str,
         group: str,
