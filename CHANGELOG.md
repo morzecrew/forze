@@ -9,11 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- `scalar-fastapi` dependency and `register_scalar_docs` in `forze_fastapi.openapi` for Scalar API reference UI.
+- Exception handlers module in `forze_fastapi.handlers` with `register_exception_handlers`.
+- `operation_id` on all document router endpoints for stable OpenAPI operation IDs.
+- Exports in `forze_postgres` and `forze_redis`: `postgres_module`, `PostgresClient`, `PostgresConfig`, `redis_module`, `RedisClient`, `RedisConfig`.
+- `IdempotencyDepKey` in `forze.application.contracts.idempotency` for registering idempotency implementation in the execution context.
 
 ### Changed
 
-- ...
+- `DTOSpec` renamed to `DocumentDTOSpec` in `forze.application.composition.document`. Update imports accordingly.
+- Document router: request body params now use `Body(...)` with `override_annotations` for correct OpenAPI schema generation.
+- `ForzeAPIRouter` no longer accepts `idempotency_dependency`; idempotency is resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` implementation with the key and remove the constructor parameter.
 
 ### Fixed
 

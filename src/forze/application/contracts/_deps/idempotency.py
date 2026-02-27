@@ -2,6 +2,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .._ports.idempotency import IdempotencyPort
+from .base import DepKey
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -22,5 +23,7 @@ class IdempotencyDepPort(Protocol):
         ...
 
 
-# Dependency key is not implemented as we typically don't need to use idempotency dependency
-# within the application code, only in interfaces (e.g. HTTP API).
+# ....................... #
+
+IdempotencyDepKey = DepKey[IdempotencyDepPort]("idempotency")
+"""Key used to register the :class:`IdempotencyDepPort` implementation."""

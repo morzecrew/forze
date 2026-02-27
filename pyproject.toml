@@ -36,11 +36,7 @@ dev = [
 ]
 
 [project.optional-dependencies]
-fastapi = [
-    "fastapi>=0.131.0",
- "scalar-fastapi>=1.6.2",
- "starlette>=0.52.1",
-]
+fastapi = ["fastapi>=0.131.0", "scalar-fastapi>=1.6.2", "starlette>=0.52.1"]
 postgres = ["psycopg-pool>=3.3.0", "psycopg[binary]>=3.3.3"]
 redis = ["redis>=7.2.0"]
 temporal = ["temporalio>=1.23.0"]

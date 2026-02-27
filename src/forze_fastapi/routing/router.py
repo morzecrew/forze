@@ -33,7 +33,11 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Lifespan
 
-from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.contracts.idempotency import (
+    IdempotencyDepKey,
+    IdempotencyDepPort,
+    IdempotencyPort,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_model_hash
@@ -87,18 +91,15 @@ def _idem_header_dependency(header_key: str):
     return dependency
 
 
-#! TODO: replace with dep port and access via execution context (maybe)
-def _idempotency_dependency(
-    context: ExecutionContextDependencyPort,
-    idempotency: IdempotencyDepPort,
-):
+def _idempotency_dependency(ctx_dep: ExecutionContextDependencyPort):
     """Build a dependency that wires runtime and TTL into an :class:`IdempotencyPort`."""
 
     def dependency(
         ttl: timedelta,
-        context: ExecutionContext = Dependency(context),
+        ctx: ExecutionContext = Dependency(ctx_dep),
     ):
-        return idempotency(context=context, ttl=ttl)
+        idem = ctx.dep(IdempotencyDepKey)
+        return idem(context=ctx, ttl=ttl)
 
     return dependency
 
@@ -164,9 +165,7 @@ class ForzeAPIRouter(APIRouter):
             self.__idempotency_dependency = None
 
         else:
-            self.__idempotency_dependency = _idempotency_dependency(
-                context_dependency, idempotency_dependency
-            )
+            self.__idempotency_dependency = _idempotency_dependency(context_dependency)
 
         self.__idempotency_config = idempotency_config or {}
         self.__idempotency_header_dependency = _idem_header_dependency(
