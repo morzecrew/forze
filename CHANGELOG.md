@@ -9,11 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- Configurable revision bump strategy in `forze_postgres`: `PostgresRevBumpStrategy` enum (DATABASE vs APPLICATION) and `postgres_document_configurable` factory with `rev_bump_strategy` parameter.
+- Middleware protocol and chain composition in `forze.application.execution.usecase.Usecase`.
+- `forze.application.features.outbox` module with buffer middleware and flush effect.
+- `MiddlewareFactory` and middleware support in `UsecasePlan`.
 
 ### Changed
 
-- ...
+- `TxContextScopedPort` renamed to `TxScopedPort` (simplified: removed `ctx` requirement). Update imports from `TxContextScopedPort` to `TxScopedPort`.
+- `require_tx_scope_match` decorator removed; tx scope validation is now handled by `ExecutionContext` when resolving dependencies.
+- `PostgresDocumentAdapter` no longer requires `ctx`; uses `TxScopedPort` instead.
 
 ### Fixed
 
