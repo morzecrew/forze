@@ -10,7 +10,6 @@ from typing import Optional, TypeVar
 from fastapi import Body, Depends
 
 from forze.application.composition import DocumentUsecasesFacadeProvider
-from forze.application.contracts.idempotency import IdempotencyDepPort
 from forze.application.dto.paginated import Paginated, RawPaginated
 from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
 from forze.application.execution import ExecutionContext
@@ -53,7 +52,6 @@ def build_document_router(
     *,
     provider: DocumentUsecasesFacadeProvider[R, C, U],
     context: ExecutionContextDependencyPort,
-    idempotency: Optional[IdempotencyDepPort] = None,
 ):
     """Construct a router exposing CRUD and search endpoints for a document spec.
 
@@ -67,7 +65,6 @@ def build_document_router(
         prefix=prefix,
         tags=tags,
         context_dependency=context,
-        idempotency_dependency=idempotency,
     )
 
     read_dto = provider.dtos["read"]

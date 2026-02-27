@@ -14,12 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `operation_id` on all document router endpoints for stable OpenAPI operation IDs.
 - Exports in `forze_postgres` and `forze_redis`: `postgres_module`, `PostgresClient`, `PostgresConfig`, `redis_module`, `RedisClient`, `RedisConfig`.
 - `IdempotencyDepKey` in `forze.application.contracts.idempotency` for registering idempotency implementation in the execution context.
+- `forze_fastapi.routing.routes` with `IdempotentRoute` and `make_idempotent_route_class` for route-level idempotency (replaces endpoint wrapping).
 
 ### Changed
 
 - `DTOSpec` renamed to `DocumentDTOSpec` in `forze.application.composition.document`. Update imports accordingly.
 - Document router: request body params now use `Body(...)` with `override_annotations` for correct OpenAPI schema generation.
-- `ForzeAPIRouter` no longer accepts `idempotency_dependency`; idempotency is resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` implementation with the key and remove the constructor parameter.
+- `ForzeAPIRouter` and `build_document_router` no longer accept idempotency parameters; idempotency is applied via custom route class and resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` with the key.
 
 ### Fixed
 

@@ -7,7 +7,6 @@ require_fastapi()
 import inspect
 from datetime import timedelta
 from enum import Enum
-from functools import partial, wraps
 from typing import (
     Any,
     Callable,
@@ -19,10 +18,7 @@ from typing import (
     get_type_hints,
 )
 
-import orjson
 from fastapi import APIRouter as APIRouter
-from fastapi import Depends as Dependency
-from fastapi import Header, HTTPException
 from fastapi.datastructures import Default, DefaultPlaceholder
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse, Response
@@ -33,15 +29,11 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Lifespan
 
-from forze.application.contracts.idempotency import (
-    IdempotencyDepKey,
-    IdempotencyDepPort,
-    IdempotencyPort,
-)
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
-from forze.base.serialization import pydantic_dump, pydantic_model_hash
 from forze_fastapi.constants import IDEMPOTENCY_KEY_HEADER
+
+from .routes import make_idempotent_route_class
 
 # ----------------------- #
 
@@ -73,35 +65,6 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 
     header_key: str
     """Name of the header key to be used for the idempotency key."""
-
-
-# ....................... #
-
-
-#! ????? ...
-def _idem_header_dependency(header_key: str):
-    """Build a dependency that extracts a non-empty idempotency header."""
-
-    def dependency(idempotency_key: str = Header(..., alias=header_key)) -> str:
-        if not idempotency_key:
-            raise HTTPException(status_code=400, detail="Idempotency key is required")
-
-        return idempotency_key
-
-    return dependency
-
-
-def _idempotency_dependency(ctx_dep: ExecutionContextDependencyPort):
-    """Build a dependency that wires runtime and TTL into an :class:`IdempotencyPort`."""
-
-    def dependency(
-        ttl: timedelta,
-        ctx: ExecutionContext = Dependency(ctx_dep),
-    ):
-        idem = ctx.dep(IdempotencyDepKey)
-        return idem(context=ctx, ttl=ttl)
-
-    return dependency
 
 
 # ....................... #
@@ -141,7 +104,6 @@ class ForzeAPIRouter(APIRouter):
         # extra parameters
         context_dependency: ExecutionContextDependencyPort,
         idempotency_config: Optional[RouterIdempotencyConfig] = None,
-        idempotency_dependency: Optional[IdempotencyDepPort] = None,
     ) -> None:
         super().__init__(
             prefix=prefix,
@@ -161,16 +123,8 @@ class ForzeAPIRouter(APIRouter):
             generate_unique_id_function=generate_unique_id_function,
         )
 
-        if idempotency_dependency is None:
-            self.__idempotency_dependency = None
-
-        else:
-            self.__idempotency_dependency = _idempotency_dependency(context_dependency)
-
         self.__idempotency_config = idempotency_config or {}
-        self.__idempotency_header_dependency = _idem_header_dependency(
-            self.__idempotency_config.get("header_key", IDEMPOTENCY_KEY_HEADER)
-        )
+        self.__context_dependency = context_dependency
 
     # ....................... #
 
@@ -231,13 +185,15 @@ class ForzeAPIRouter(APIRouter):
                 endpoint
             )
 
-            endpoint = self.__wrap_idempotent_route(
-                endpoint,
-                ttl=idempotency_config.get("ttl", timedelta(seconds=30)),
-                dto_param=dto_name,
+            route_class_override = make_idempotent_route_class(
+                ctx_dep=self.__context_dependency,
                 operation=operation_id,
+                ttl=idempotency_config.get("ttl", timedelta(seconds=30)),
+                header_key=self.__idempotency_config.get(
+                    "header_key", IDEMPOTENCY_KEY_HEADER
+                ),
                 adapter=adapter,
-                status_code=status_code,
+                dto_param=dto_name,
             )
 
         return super().add_api_route(
@@ -355,61 +311,3 @@ class ForzeAPIRouter(APIRouter):
         raise RuntimeError(  #!? Replace with CoreError or so
             "Cannot infer DTO param for idempotent route; pass it explicitly"
         )
-
-    # ....................... #
-
-    def __wrap_idempotent_route(
-        self,
-        endpoint: Callable[..., Any],
-        *,
-        ttl: timedelta,
-        dto_param: str,
-        operation: str,
-        adapter: TypeAdapter[Any],
-        status_code: int,
-    ):
-        if self.__idempotency_dependency is None:
-            raise CoreError("Idempotency dependency is not set")
-
-        @wraps(endpoint)
-        async def wrapper(
-            *args: Any,
-            __idem: IdempotencyPort = Dependency(
-                partial(self.__idempotency_dependency, ttl=ttl)
-            ),
-            __idem_key: str = Dependency(self.__idempotency_header_dependency),
-            **kwargs: Any,
-        ) -> Any:
-            dto = kwargs.get(dto_param)
-
-            if not isinstance(dto, BaseModel):
-                bound = inspect.signature(endpoint).bind_partial(*args, **kwargs)
-                dto = bound.arguments.get(dto_param)
-
-            if not isinstance(dto, BaseModel):
-                return await endpoint(*args, **kwargs)
-
-            h = pydantic_model_hash(dto)
-            snap = await __idem.begin(operation, __idem_key, h)
-
-            if snap is not None:
-                data = orjson.loads(snap["body"])
-                return adapter.validate_python(data)
-
-            out = await endpoint(*args, **kwargs)
-
-            body = orjson.dumps(pydantic_dump(out, exclude={"none": True}))
-            await __idem.commit(
-                operation,
-                __idem_key,
-                h,
-                {
-                    "code": status_code,
-                    "content_type": "application/json",
-                    "body": body,
-                },
-            )
-
-            return out
-
-        return wrapper
