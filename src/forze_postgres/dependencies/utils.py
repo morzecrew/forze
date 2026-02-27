@@ -6,6 +6,7 @@ from forze.application.execution import ExecutionContext
 from ..kernel.gateways import (
     PostgresHistoryGateway,
     PostgresReadGateway,
+    PostgresRevBumpStrategy,
     PostgresSearchGateway,
     PostgresSearchIndexSpec,
     PostgresTableSpec,
@@ -72,6 +73,8 @@ def doc_write_gw(
     relation: str,
     models: DocumentModelSpec[Any, Any, Any, Any],
     history_relation: Optional[str] = None,
+    *,
+    rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE,
 ):
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
@@ -91,4 +94,5 @@ def doc_write_gw(
         create_dto=models["create_cmd"],
         update_dto=models["update_cmd"],
         history=hist,
+        rev_bump_strategy=rev_bump_strategy,
     )

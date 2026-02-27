@@ -2,7 +2,7 @@ from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
 from .search import PostgresSearchGateway
 from .spec import PostgresSearchIndexSpec, PostgresTableSpec
-from .write import PostgresWriteGateway
+from .write import PostgresRevBumpStrategy, PostgresWriteGateway
 
 # ----------------------- #
 
@@ -13,4 +13,5 @@ __all__ = [
     "PostgresReadGateway",
     "PostgresSearchGateway",
     "PostgresWriteGateway",
+    "PostgresRevBumpStrategy",
 ]

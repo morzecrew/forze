@@ -31,6 +31,7 @@ dev = [
     "pytest-mock>=3.15.1",
     "pytest-xdist>=3.8.0",
     "radon>=6.0.1",
+    "testcontainers>=4.14.1",
     "vulture>=2.14",
 ]
 
@@ -143,6 +144,7 @@ root_packages = [
     "forze_temporal",
     "forze_mongo",
 ]
+exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Layered `forze` package architecture"
@@ -156,8 +158,10 @@ layers = [
     "forze.application.composition",
     "forze.application.facades",
     "forze.application.usecases",
+    "forze.application.execution",
     "forze.application.dto",
-    "forze.application.kernel",
+    "forze.application.dsl",
+    "forze.application.contracts",
 ]
 
 [[tool.importlinter.contracts]]

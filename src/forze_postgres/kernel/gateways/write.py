@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -24,6 +26,19 @@ from .read import PostgresReadGateway
 # ----------------------- #
 
 
+class PostgresRevBumpStrategy(StrEnum):
+    """Strategy for bumping the revision number."""
+
+    DATABASE = "database"
+    """Bump revision using database triggers."""
+
+    APPLICATION = "application"
+    """Bump revision using application logic."""
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
@@ -33,6 +48,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     create_dto: type[C]
     update_dto: type[U]
     history: Optional[PostgresHistoryGateway[D]] = None
+    rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE
 
     # ....................... #
 
@@ -101,7 +117,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
 
         if row is None:
-            raise CoreError("Не удалось создать запись")
+            raise CoreError("Не удалось создать запись")  #! TODO: translate
 
         return pydantic_validate(self.model, row)
 
@@ -156,7 +172,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if len(rows) != len(batch):
-                raise CoreError(
+                raise CoreError(  #! TODO: translate
                     "Не удалось создать записи (несовпадение количества строк)"
                 )
 
@@ -164,7 +180,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             offset += batch_size
 
         if len(result) != len(dtos):
-            raise CoreError("Не удалось создать все записи")
+            raise CoreError("Не удалось создать все записи")  #! TODO: translate
 
         return result
 
@@ -197,6 +213,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not diff:
             return current
 
+        #! TODO: validate this
+        if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
+            diff["rev"] = current.rev + 1
+
         set_parts: list[sql.Composable] = []
         params: list[Any] = []
 
@@ -220,7 +240,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
 
         if row is None:
-            raise CoreError("Не удалось обновить запись")
+            raise CoreError("Не удалось обновить запись")  #! TODO: translate
 
         return pydantic_validate(self.model, row)
 
@@ -250,10 +270,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         if updates is not None and len(pks) != len(updates):
-            raise ValidationError("Pks и updates должны иметь одинаковую длину")
+            raise ValidationError(
+                "Pks и updates должны иметь одинаковую длину"
+            )  #! TODO: translate
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Pks должны быть уникальными")
+            raise ValidationError("Pks должны быть уникальными")  #! TODO: translate
 
         currents = await self.read.get_many(pks)
 
@@ -264,6 +286,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if updates is None:
             for c in currents:
                 _, diff = c.touch()
+
+                #! TODO: validate this
+                if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
+                    diff["rev"] = c.rev + 1
 
                 # always the same key so we can handle only one group
                 key = tuple(sorted(diff.keys()))
@@ -284,6 +310,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 if not diff:
                     continue
+
+                #! TODO: validate this (replace with custom method)
+                if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
+                    diff["rev"] = c.rev + 1
 
                 key = tuple(sorted(diff.keys()))
                 groups[key].append((c.id, c.rev, diff))
@@ -345,7 +375,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> D:
         if not self.supports_soft_delete():
-            raise CoreError("Мягкое удаление не поддерживается для этой модели")
+            raise CoreError(
+                "Мягкое удаление не поддерживается для этой модели"
+            )  #! TODO: translate
 
         return await self.__patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
 
@@ -359,7 +391,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
-            raise CoreError("Мягкое удаление не поддерживается для этой модели")
+            raise CoreError(
+                "Мягкое удаление не поддерживается для этой модели"
+            )  #! TODO: translate
 
         return await self.__patch_many(
             pks,
@@ -372,7 +406,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> D:
         if not self.supports_soft_delete():
-            raise CoreError("Мягкое удаление не поддерживается для этой модели")
+            raise CoreError(
+                "Мягкое удаление не поддерживается для этой модели"
+            )  #! TODO: translate
 
         return await self.__patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
 
@@ -386,7 +422,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
-            raise CoreError("Мягкое удаление не поддерживается для этой модели")
+            raise CoreError(
+                "Мягкое удаление не поддерживается для этой модели"
+            )  #! TODO: translate
 
         return await self.__patch_many(
             pks,
@@ -420,7 +458,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Pks должны быть уникальными")
+            raise ValidationError("Pks должны быть уникальными")  #! TODO: translate
 
         currents = await self.read.get_many(pks)
         pairs = [(c.id, c.rev) for c in currents]
@@ -457,4 +495,4 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             killed_total += killed
 
         if killed_total != expected:
-            raise CoreError("Не удалось удалить записи")
+            raise CoreError("Не удалось удалить записи")  #! TODO: translate
