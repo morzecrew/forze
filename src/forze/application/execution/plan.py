@@ -6,7 +6,7 @@ implementation. Plans are keyed by operation name and can be merged or extended
 at composition time.
 """
 
-from typing import Any, Callable, Final, Optional, Self, TypeVar, cast, final
+from typing import Any, Callable, Final, Iterable, Optional, Self, TypeVar, cast, final
 
 import attrs
 
@@ -94,6 +94,30 @@ class MiddlewareSpec:
         ]
     )
     middleware: MiddlewareFactory
+
+
+# ....................... #
+
+
+def dedupe_and_sort_specs[S](
+    items: Iterable[S],
+    *,
+    key: Callable[[S], Any],
+    reverse: bool = True,
+) -> tuple[S, ...]:
+    seen: set[Any] = set()
+    out: list[S] = []
+
+    for i in items:
+        k = key(i)
+
+        if k in seen:
+            continue
+
+        seen.add(k)
+        out.append(i)
+
+    return tuple(sorted(out, key=key, reverse=reverse))
 
 
 # ....................... #
@@ -310,7 +334,7 @@ class UsecasePlan:
         if plan:
             guards = tuple(
                 gs.guard(ctx)
-                for gs in sorted(
+                for gs in dedupe_and_sort_specs(
                     plan.guards,
                     key=lambda x: x.priority,
                     reverse=True,
@@ -318,7 +342,7 @@ class UsecasePlan:
             )
             middlewares = tuple(
                 ms.middleware(ctx)
-                for ms in sorted(
+                for ms in dedupe_and_sort_specs(
                     plan.middlewares,
                     key=lambda x: x.priority,
                     reverse=True,
@@ -326,7 +350,7 @@ class UsecasePlan:
             )
             effects = tuple(
                 es.effect(ctx)
-                for es in sorted(
+                for es in dedupe_and_sort_specs(
                     plan.effects,
                     key=lambda x: x.priority,
                     reverse=True,
@@ -334,7 +358,7 @@ class UsecasePlan:
             )
             side_guards = tuple(
                 gs.guard(ctx)
-                for gs in sorted(
+                for gs in dedupe_and_sort_specs(
                     plan.side_guards,
                     key=lambda x: x.priority,
                     reverse=True,
@@ -342,7 +366,7 @@ class UsecasePlan:
             )
             side_effects = tuple(
                 es.effect(ctx)
-                for es in sorted(
+                for es in dedupe_and_sort_specs(
                     plan.side_effects,
                     key=lambda x: x.priority,
                     reverse=True,

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.4] - 2026-02-27
+
+### Added
+
 - Configurable revision bump strategy in `forze_postgres`: `PostgresRevBumpStrategy` enum (DATABASE vs APPLICATION) and `postgres_document_configurable` factory with `rev_bump_strategy` parameter.
 - Middleware protocol and chain composition in `forze.application.execution.usecase.Usecase`.
 - `forze.application.features.outbox` module with buffer middleware and flush effect.
@@ -22,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- Duplicate guards, middlewares, and effects are now deduplicated by priority when merging `UsecasePlan` operations.
 
 ## [0.1.3] - 2026-02-27
 
@@ -69,7 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.3...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/morzecrew/forze/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/morzecrew/forze/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/morzecrew/forze/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/morzecrew/forze/releases/tag/v0.1.1
