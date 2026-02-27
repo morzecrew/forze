@@ -1,4 +1,4 @@
-from .base import DepKey, DepRouter, Deps, DepsPort
+from ._deps.base import DepKey, DepRouter, Deps, DepsPort
 
 # ----------------------- #
 

@@ -1,5 +1,5 @@
-from .deps.idempotency import IdempotencyDepPort
-from .ports.idempotency import IdempotencyPort, IdempotencySnapshot
+from ._deps.idempotency import IdempotencyDepPort
+from ._ports.idempotency import IdempotencyPort, IdempotencySnapshot
 
 # ----------------------- #
 

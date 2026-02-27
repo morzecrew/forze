@@ -1,5 +1,5 @@
-from .deps.txmanager import TxManagerDepKey, TxManagerDepPort, TxManagerDepRouter
-from .ports.txmanager import TxManagerPort, TxScopeKey
+from ._deps.txmanager import TxManagerDepKey, TxManagerDepPort, TxManagerDepRouter
+from ._ports.txmanager import TxManagerPort, TxScopeKey
 
 # ----------------------- #
 

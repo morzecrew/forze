@@ -15,7 +15,7 @@ from uuid import UUID
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
-from ..schemas.query import FilterExpression, SortExpression
+from .._schemas.query import FilterExpression, SortExpression
 
 # ----------------------- #
 

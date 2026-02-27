@@ -1,4 +1,4 @@
-from .ports.stream import StreamEvent, StreamPort
+from ._ports.stream import StreamEvent, StreamPort
 
 # ----------------------- #
 

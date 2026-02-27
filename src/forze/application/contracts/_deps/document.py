@@ -2,8 +2,8 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol, final, runtime_checka
 
 import attrs
 
-from ..ports.document import DocumentCachePort, DocumentPort
-from ..specs.document import DocumentSpec
+from .._ports.document import DocumentCachePort, DocumentPort
+from .._specs.document import DocumentSpec
 from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:

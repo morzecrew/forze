@@ -1,10 +1,13 @@
-from .schemas.query import (
+from ._schemas.query import (
     Array,
     EqOp,
+    FieldMapValue,
     FilterExpression,
     MembOp,
+    Numeric,
     Op,
     OrdOp,
+    Predicate,
     Scalar,
     SetRelOp,
     SortExpression,
@@ -14,9 +17,6 @@ from .schemas.query import (
     is_field_conjunction,
     is_field_shortcut,
     is_predicate,
-    FieldMapValue,
-    Predicate,
-    Numeric,
 )
 
 # ----------------------- #

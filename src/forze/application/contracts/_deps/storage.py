@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs
 
-from ..ports.storage import StoragePort
+from .._ports.storage import StoragePort
 from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:

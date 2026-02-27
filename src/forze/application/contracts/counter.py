@@ -1,5 +1,5 @@
-from .deps.counter import CounterDepKey, CounterDepPort, CounterDepRouter
-from .ports.counter import CounterPort
+from ._deps.counter import CounterDepKey, CounterDepPort, CounterDepRouter
+from ._ports.counter import CounterPort
 
 # ----------------------- #
 

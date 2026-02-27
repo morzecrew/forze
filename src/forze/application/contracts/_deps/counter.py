@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs
 
-from ..ports.counter import CounterPort
+from .._ports.counter import CounterPort
 from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:

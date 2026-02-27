@@ -2,7 +2,7 @@ from typing import Optional
 
 from pydantic import Field
 
-from forze.application.contracts.schemas.query import FilterExpression, SortExpression
+from forze.application.contracts.query import FilterExpression, SortExpression
 from forze.domain.models import BaseDTO
 
 # ----------------------- #

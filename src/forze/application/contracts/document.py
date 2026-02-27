@@ -1,11 +1,11 @@
-from .deps.document import (
+from ._deps.document import (
     DocumentCacheDepKey,
     DocumentCacheDepPort,
     DocumentDepKey,
     DocumentDepPort,
     DocumentDepRouter,
 )
-from .ports.document import (
+from ._ports.document import (
     DocumentCachePort,
     DocumentPort,
     DocumentReadPort,
@@ -13,8 +13,8 @@ from .ports.document import (
     DocumentSearchPort,
     DocumentWritePort,
 )
-from .schemas.query import FilterExpression, SortExpression
-from .specs.document import DocumentModelSpec, DocumentSearchSpec, DocumentSpec
+from ._schemas.query import FilterExpression, SortExpression
+from ._specs.document import DocumentModelSpec, DocumentSearchSpec, DocumentSpec
 
 # ----------------------- #
 

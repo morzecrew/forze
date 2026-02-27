@@ -1,5 +1,5 @@
-from .deps.storage import StorageDepKey, StorageDepPort, StorageDepRouter
-from .ports.storage import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
+from ._deps.storage import StorageDepKey, StorageDepPort, StorageDepRouter
+from ._ports.storage import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
 
 # ----------------------- #
 
