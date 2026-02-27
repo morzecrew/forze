@@ -34,10 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tx contracts rename:** `TxManagerPort` and related contracts moved from `contracts.txmanager` to `contracts.tx`. Update imports from `forze.application.contracts.txmanager` to `forze.application.contracts.tx`.
 - **Postgres filter builder:** Replaced `forze_postgres.kernel.builder` with DSL-based `forze_postgres.kernel.query` renderer. Old builder (coerce, filters, sorts) removed.
 
-### Fixed
-
-- ...
-
 ## [0.1.2] - 2026-02-26
 
 ### Added
@@ -68,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.2...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/morzecrew/forze/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/morzecrew/forze/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/morzecrew/forze/releases/tag/v0.1.1
