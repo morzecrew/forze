@@ -16,6 +16,7 @@ from typing import (
     TypeVar,
     cast,
     final,
+    get_origin,
     overload,
 )
 
@@ -470,8 +471,10 @@ class UsecaseRegistry:
 
         uc = self.__plan.resolve(op, ctx, cast(UsecaseFactory[U], factory))
 
-        if expected is not None and not isinstance(uc, expected):
-            raise CoreError(f"Usecase '{op}' has unexpected type: {type(uc)!r}")
+        if expected is not None:
+            check_type = get_origin(expected) or expected
+            if not isinstance(uc, check_type):
+                raise CoreError(f"Usecase '{op}' has unexpected type: {type(uc)!r}")
 
         return uc
 

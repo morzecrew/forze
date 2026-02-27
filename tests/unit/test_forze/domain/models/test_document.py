@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from forze.base.primitives import JsonDict
 from forze.domain.models import Document
 
@@ -44,13 +42,11 @@ def test_document_touch_updates_last_update_only() -> None:
 
 
 def test_validate_historical_consistency_detects_conflict() -> None:
-    base: JsonDict = {"name": "v1"}
-
     old = SampleDocument(name="v1")
     current = SampleDocument(name="v2")
 
     # data that would update old to v3 conflicts with current (=v2)
     data: JsonDict = {"name": "v3"}
     consistent = current.validate_historical_consistency(old, data)
-    assert not consistent
 
+    assert not consistent

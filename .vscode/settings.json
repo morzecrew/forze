@@ -38,7 +38,7 @@
         ".specify": true,
         ".agent": true,
         ".cursor": true,
-        "specs/**": true,
+        // "specs/**": true,
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",
     "cursorpyright.analysis.typeCheckingMode": "strict",
