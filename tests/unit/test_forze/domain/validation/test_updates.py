@@ -1,5 +1,3 @@
-from typing import Any
-
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
@@ -40,15 +38,12 @@ def test_update_validator_decorator_normalizes_signatures() -> None:
 def test_collect_update_validators_respects_inheritance_order() -> None:
     class BaseM(BaseModel):
         @update_validator
-        def base_validator(self) -> None:
-            ...
+        def base_validator(self) -> None: ...
 
     class ChildM(BaseM):
         @update_validator
-        def child_validator(self) -> None:
-            ...
+        def child_validator(self) -> None: ...
 
     validators = collect_update_validators(ChildM)
     names = [name for name, _ in validators]
     assert names == ["base_validator", "child_validator"]
-

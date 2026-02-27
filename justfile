@@ -43,7 +43,7 @@ _uv_cmd name strict *command:
 test *args='':
     {{ _uv_sync }}
 
-    uv run pytest -- {{ args }}
+    uv run pytest {{ args }}
     
 
 # Run all quality checks
