@@ -4,7 +4,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Optional, get_args
+from typing import Any, Optional
 
 import attrs
 from psycopg import sql
@@ -21,7 +21,7 @@ from forze.application.contracts.query import (
 from forze.application.dsl.query import And, Expr, Field, Or, ValueCaster
 
 from ..introspect import PostgresColumnTypes, PostgresType
-from .utils import PsycopgPositionalBinds
+from .utils import PsycopgPositionalBinder
 
 # ----------------------- #
 
@@ -47,11 +47,7 @@ class PsycopgValueCoercer:
             return None
 
         if t is None:
-            if isinstance(v, Scalar):
-                return v
-
-            # fallback: convert to string
-            return str(v)
+            return self.caster.pass_through(v)
 
         if t.is_array:
             raise ValueError(f"Array type not supported: {t!r}")
@@ -109,8 +105,8 @@ class PsycopgQueryRenderer:
     types: Optional[PostgresColumnTypes] = None
 
     # Non initable fields
-    binds: PsycopgPositionalBinds = attrs.field(
-        factory=PsycopgPositionalBinds,
+    binder: PsycopgPositionalBinder = attrs.field(
+        factory=PsycopgPositionalBinder,
         init=False,
     )
     coercer: PsycopgValueCoercer = attrs.field(
@@ -122,7 +118,7 @@ class PsycopgQueryRenderer:
 
     def render(self, expr: Expr) -> tuple[sql.Composable, list[Any]]:
         query = self._render_expr(expr)
-        params = self.binds.values()
+        params = self.binder.values()
 
         return query, params
 
@@ -141,36 +137,36 @@ class PsycopgQueryRenderer:
                     t = None
 
                 col = sql.Identifier(name)
-                return self._render_op(col, op, value, t=t)
+                return self._render_field(col, op, value, t=t)
 
             case And(items):
                 if not items:
                     return sql.SQL("TRUE")
 
-                ops = [self._render_expr(i) for i in items]
+                and_parts = [self._render_expr(i) for i in items]
 
-                if len(ops) == 1:
-                    return ops[0]
+                if len(and_parts) == 1:
+                    return and_parts[0]
 
-                return sql.SQL("(") + sql.SQL(" AND ").join(ops) + sql.SQL(")")
+                return sql.SQL("(") + sql.SQL(" AND ").join(and_parts) + sql.SQL(")")
 
             case Or(items):
                 if not items:
                     return sql.SQL("FALSE")
 
-                ops = [self._render_expr(i) for i in items]
+                or_parts = [self._render_expr(i) for i in items]
 
-                if len(ops) == 1:
-                    return ops[0]
+                if len(or_parts) == 1:
+                    return or_parts[0]
 
-                return sql.SQL("(") + sql.SQL(" OR ").join(ops) + sql.SQL(")")
+                return sql.SQL("(") + sql.SQL(" OR ").join(or_parts) + sql.SQL(")")
 
             case _:
                 raise ValueError(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
-    def _render_op(
+    def _render_field(
         self,
         col: sql.Composable,
         op: Op,
@@ -180,33 +176,24 @@ class PsycopgQueryRenderer:
     ) -> sql.Composable:
         op, value = self._normalize_op(op, value, t=t)
 
-        if op in get_args(UnaryOp):
-            return self._render_unary(
-                col, op, value, t=t  # pyright: ignore[reportArgumentType]
-            )
+        match op:
+            case "$null" | "$empty":
+                return self._render_unary(col, op, value, t=t)
 
-        elif op in get_args(OrdOp):
-            return self._render_ord(
-                col, op, value, t=t  # pyright: ignore[reportArgumentType]
-            )
+            case "$gt" | "$gte" | "$lt" | "$lte":
+                return self._render_ord(col, op, value, t=t)
 
-        elif op in get_args(EqOp):
-            return self._render_eq(
-                col, op, value, t=t  # pyright: ignore[reportArgumentType]
-            )
+            case "$eq" | "$neq":
+                return self._render_eq(col, op, value, t=t)
 
-        elif op in get_args(MembOp):
-            return self._render_memb(
-                col, op, value, t=t  # pyright: ignore[reportArgumentType]
-            )
+            case "$in" | "$nin":
+                return self._render_memb(col, op, value, t=t)
 
-        elif op in get_args(SetRelOp):
-            return self._render_set_rel(
-                col, op, value, t=t  # pyright: ignore[reportArgumentType]
-            )
+            case "$superset" | "$subset" | "$disjoint" | "$overlaps":
+                return self._render_set_rel(col, op, value, t=t)
 
-        else:
-            raise ValueError(f"Unknown operator: {op!r}")
+            case _:  # pyright: ignore[reportUnnecessaryComparison]
+                raise ValueError(f"Unknown operator: {op!r}")
 
     # ....................... #
 
@@ -218,20 +205,21 @@ class PsycopgQueryRenderer:
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        value = self.coercer.bool_flag(value)
+        v = self.coercer.bool_flag(value)
 
-        if op == "$null":
-            return self._render_null(col, value, t=t)
+        match op:
+            case "$null":
+                return self._render_null(col, v, t=t)
 
-        else:
-            return self._render_empty(col, value, t=t)
+            case "$empty":
+                return self._render_empty(col, v, t=t)
 
     # ....................... #
 
     def _render_null(
         self,
         col: sql.Composable,
-        value: Any,
+        value: bool,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
@@ -246,7 +234,7 @@ class PsycopgQueryRenderer:
     def _render_empty(
         self,
         col: sql.Composable,
-        value: Any,
+        value: bool,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
@@ -275,7 +263,7 @@ class PsycopgQueryRenderer:
         op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
         value = self.coercer.scalar(value, t=t)
 
-        return sql.SQL("{} {} {}").format(col, op_sql, self.binds.add(value))
+        return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(value))
 
     # ....................... #
 
@@ -294,7 +282,7 @@ class PsycopgQueryRenderer:
         op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
         value = self.coercer.scalar(value, t=t)
 
-        return sql.SQL("{} {} {}").format(col, op_sql, self.binds.add(value))
+        return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(value))
 
     # ....................... #
 
@@ -307,7 +295,7 @@ class PsycopgQueryRenderer:
         t: Optional[PostgresType],
     ) -> sql.Composable:
         value = self.coercer.array(value, t=t)
-        expr = sql.SQL("{} = ANY({})").format(col, self.binds.add(value))
+        expr = sql.SQL("{} = ANY({})").format(col, self.binder.add(value))
 
         return expr if op == "$in" else sql.SQL("NOT ({})").format(expr)
 
@@ -327,7 +315,7 @@ class PsycopgQueryRenderer:
             "$overlaps": "&&",
         }
         value = self.coercer.array(value, t=t)
-        ph = self.binds.add(value)
+        ph = self.binder.add(value)
 
         if op == "$disjoint":
             return sql.SQL("NOT ({} && {})").format(col, ph)
@@ -360,6 +348,3 @@ class PsycopgQueryRenderer:
                 return "$disjoint", value
 
         return op, value
-
-
-# ....................... #

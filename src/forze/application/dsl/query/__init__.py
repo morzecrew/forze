@@ -1,5 +1,6 @@
+from .cast import ValueCaster
 from .nodes import And, Expr, Field, Or
-from .parse import FilterExpressionParser, ValueCaster
+from .parse import FilterExpressionParser
 
 # ----------------------- #
 

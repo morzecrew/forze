@@ -13,7 +13,7 @@ from psycopg import sql
 
 
 @attrs.define(slots=True)
-class PsycopgPositionalBinds:
+class PsycopgPositionalBinder:
     """Accumulates params as a list and returns '%s' placeholders."""
 
     params: list[Any] = attrs.field(factory=list)
