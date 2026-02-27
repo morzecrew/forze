@@ -1,9 +1,7 @@
 """Unit tests for forze.application.composition.document."""
 
-import pytest
-
 from forze.application.composition.document import (
-    DTOSpec,
+    DocumentDTOSpec,
     DocumentUsecasesFacadeProvider,
     build_document_registry,
 )
@@ -14,7 +12,9 @@ from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 # ----------------------- #
 
 
-def _minimal_spec(supports_update: bool = False, supports_soft_delete: bool = False) -> DocumentSpec:
+def _minimal_spec(
+    supports_update: bool = False, supports_soft_delete: bool = False
+) -> DocumentSpec:
     """Build a minimal DocumentSpec for testing."""
     from forze.domain.models import BaseDTO
 
@@ -27,7 +27,9 @@ def _minimal_spec(supports_update: bool = False, supports_soft_delete: bool = Fa
         "read": ReadDocument,
         "domain": Document,
         "create_cmd": CreateDocumentCmd,
-        "update_cmd": UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {}),
+        "update_cmd": (
+            UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
+        ),
     }
     return DocumentSpec(
         namespace="test",
@@ -81,7 +83,7 @@ class TestDocumentUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
-        dtos: DTOSpec = {"read": ReadDocument}
+        dtos: DocumentDTOSpec = {"read": ReadDocument}
         provider = DocumentUsecasesFacadeProvider(spec=spec, dtos=dtos)
         facade = provider(composition_ctx)
         assert facade is not None
@@ -92,7 +94,7 @@ class TestDocumentUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
-        dtos: DTOSpec = {"read": ReadDocument}
+        dtos: DocumentDTOSpec = {"read": ReadDocument}
         provider = DocumentUsecasesFacadeProvider(spec=spec, dtos=dtos)
         facade = provider(composition_ctx)
         uc = facade.get()

@@ -7,7 +7,7 @@ require_fastapi()
 from enum import Enum
 from typing import Optional, TypeVar
 
-from fastapi import Depends
+from fastapi import Body, Depends
 
 from forze.application.composition import DocumentUsecasesFacadeProvider
 from forze.application.contracts.idempotency import IdempotencyDepPort
@@ -19,6 +19,7 @@ from forze.domain.models import BaseDTO, ReadDocument
 
 from ..routing.params import Pagination, RevQuery, UUIDQuery, pagination
 from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
+from ._utils import override_annotations
 
 # ----------------------- #
 
@@ -29,11 +30,16 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
-def document_facade_dependency(provider: DocumentUsecasesFacadeProvider[R, C, U]):
+def document_facade_dependency(
+    provider: DocumentUsecasesFacadeProvider[R, C, U],
+    ctx: ExecutionContextDependencyPort,
+):
     """Build a FastAPI dependency that resolves :class:`DocumentUsecasesFacade`."""
 
-    def facade(ctx: ExecutionContext) -> DocumentUsecasesFacade[R, C, U]:
-        return provider(ctx)
+    def facade(
+        context: ExecutionContext = Depends(ctx),
+    ) -> DocumentUsecasesFacade[R, C, U]:
+        return provider(context)
 
     return facade
 
@@ -68,13 +74,14 @@ def build_document_router(
     create_dto = provider.dtos.get("create")
     update_dto = provider.dtos.get("update")
 
-    ucs_dep = document_facade_dependency(provider)
+    ucs_dep = document_facade_dependency(provider, context)
 
     # ....................... #
 
     @router.get(
         "/medatada",
         response_model=read_dto,
+        operation_id=f"{provider.spec.namespace}.metadata",
     )
     async def metadata(  # pyright: ignore[reportUnusedFunction]
         id: UUIDQuery,
@@ -89,6 +96,7 @@ def build_document_router(
     @router.post(
         "/search",
         response_model=Paginated[read_dto],
+        operation_id=f"{provider.spec.namespace}.search",
     )
     async def search(  # pyright: ignore[reportUnusedFunction]
         body: SearchRequestDTO,
@@ -110,9 +118,10 @@ def build_document_router(
     @router.post(
         "/raw-search",
         response_model=RawPaginated,
+        operation_id=f"{provider.spec.namespace}.raw_search",
     )
     async def raw_search(  # pyright: ignore[reportUnusedFunction]
-        body: RawSearchRequestDTO,
+        body: RawSearchRequestDTO = Body(...),
         pagi: Pagination = Depends(pagination),
         ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
     ):
@@ -134,13 +143,12 @@ def build_document_router(
             "/create",
             response_model=read_dto,
             idempotent=True,
-            idempotency_config={
-                "dto_param": "dto",
-                #! TODO: add ttl configuration
-            },
+            idempotency_config={"dto_param": "dto"},
+            operation_id=f"{provider.spec.namespace}.create",
         )
+        @override_annotations({"dto": create_dto})
         async def create(  # pyright: ignore[reportUnusedFunction]
-            dto: C,
+            dto: C = Body(...),
             ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
         ):
             """Create a new document from the provided DTO."""
@@ -154,11 +162,13 @@ def build_document_router(
         @router.patch(
             "/update",
             response_model=read_dto,
+            operation_id=f"{provider.spec.namespace}.update",
         )
+        @override_annotations({"dto": update_dto})
         async def update(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
             rev: RevQuery,
-            dto: U,
+            dto: U = Body(...),
             ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
         ):
             """Apply a partial update to an existing document."""
@@ -178,6 +188,7 @@ def build_document_router(
         @router.patch(
             "/delete",
             response_model=read_dto,
+            operation_id=f"{provider.spec.namespace}.delete",
         )
         async def delete(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
@@ -196,6 +207,7 @@ def build_document_router(
         @router.patch(
             "/restore",
             response_model=read_dto,
+            operation_id=f"{provider.spec.namespace}.restore",
         )
         async def restore(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
@@ -217,6 +229,7 @@ def build_document_router(
         "/kill",
         response_model=None,
         status_code=204,
+        operation_id=f"{provider.spec.namespace}.kill",
     )
     async def kill(  # pyright: ignore[reportUnusedFunction]
         id: UUIDQuery,

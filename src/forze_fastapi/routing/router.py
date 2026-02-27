@@ -87,6 +87,7 @@ def _idem_header_dependency(header_key: str):
     return dependency
 
 
+#! TODO: replace with dep port and access via execution context (maybe)
 def _idempotency_dependency(
     context: ExecutionContextDependencyPort,
     idempotency: IdempotencyDepPort,

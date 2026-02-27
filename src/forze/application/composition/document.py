@@ -88,7 +88,8 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 # ....................... #
 
 
-class DTOSpec(TypedDict, Generic[R, C, U]):
+#! TODO: rename to DocumentDTOSpec
+class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
     """DTO specification for a document aggregate."""
 
     read: type[R]
@@ -118,7 +119,7 @@ class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
     plan: UsecasePlan = attrs.field(factory=UsecasePlan)
     """Usecase plan."""
 
-    dtos: DTOSpec[R, C, U]
+    dtos: DocumentDTOSpec[R, C, U]
     """DTO specification."""
 
     # ....................... #
