@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.3] - 2026-02-27
+
+### Added
+
 - Filter query DSL in `forze.application.dsl.query`: AST nodes, parser, and value coercion.
 - Mongo query renderer in `forze_mongo.kernel.query` for compiling filter expressions to MongoDB queries.
 - `forze.base.primitives.buffer` for buffer handling.
