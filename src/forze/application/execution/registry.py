@@ -1,8 +1,8 @@
 """Registry for application usecase factories.
 
 The registry owns a mapping from logical operation names to
-callables that produce concrete :class:`~forze.application.kernel.usecase.Usecase`
-instances. It also tracks an associated :class:`~forze.application.kernel.plan.UsecasePlan`
+callables that produce concrete :class:`~forze.application.execution.usecase.Usecase`
+instances. It also tracks an associated :class:`~forze.application.execution.plan.UsecasePlan`
 that describes how guards and effects should wrap each operation.
 """
 

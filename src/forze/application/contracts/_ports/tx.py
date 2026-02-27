@@ -1,18 +1,9 @@
-from typing import (
-    TYPE_CHECKING,
-    AsyncContextManager,
-    Protocol,
-    final,
-    runtime_checkable,
-)
+from typing import AsyncContextManager, Protocol, final, runtime_checkable
 from uuid import UUID
 
 import attrs
 
 from forze.base.primitives import uuid7
-
-if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 
@@ -33,8 +24,19 @@ class TxHandle:
     scope: TxScopeKey
     """The scope of the transaction."""
 
-    id: UUID = attrs.field(factory=uuid7, init=False)
+    id: UUID = attrs.field(factory=uuid7, init=False)  #!? not necessary ?
     """The unique identifier of the transaction."""
+
+
+# ....................... #
+
+
+@runtime_checkable
+class TxScopedPort(Protocol):
+    """Port that requires a transaction scope key."""
+
+    tx_scope: TxScopeKey
+    """The scope of the transaction."""
 
 
 # ....................... #
@@ -65,14 +67,3 @@ class TxManagerPort(Protocol):
     def transaction(self) -> AsyncContextManager[None]:
         """Return an async context manager that scopes a transaction."""
         ...
-
-
-# ....................... #
-
-
-@runtime_checkable
-class TxContextScopedPort(Protocol):
-    """Port that requires a transaction scope to be matched with the current execution context."""
-
-    ctx: "ExecutionContext"
-    tx_scope: TxScopeKey

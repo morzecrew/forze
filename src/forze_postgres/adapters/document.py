@@ -16,11 +16,7 @@ from forze.application.contracts.document import (
     FilterExpression,
     SortExpression,
 )
-from forze.application.contracts.tx import TxContextScopedPort, TxScopeKey
-from forze.application.execution import (
-    ExecutionContext,
-    require_tx_scope_match,
-)
+from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_dump, pydantic_validate
@@ -43,13 +39,12 @@ class PostgresDocumentAdapter[
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
-](DocumentPort[R, D, C, U], TxContextScopedPort):
+](DocumentPort[R, D, C, U], TxScopedPort):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
     search_gw: Optional[PostgresSearchGateway[R]] = None
     cache: Optional[DocumentCachePort] = None
 
-    ctx: ExecutionContext
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
@@ -329,7 +324,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def create(self, dto: C) -> R:
         w = self._require_write()
         domain = await w.create(dto)
@@ -338,7 +332,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
         w = self._require_write()
         domains = await w.create_many(dtos)
@@ -353,7 +346,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
         domain = await w.update(pk, dto, rev=rev)
@@ -364,7 +356,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def update_many(
         self,
         pks: Sequence[UUID],
@@ -381,7 +372,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def touch(self, pk: UUID) -> R:
         w = self._require_write()
 
@@ -392,7 +382,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
         w = self._require_write()
 
@@ -403,7 +392,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def kill(self, pk: UUID) -> None:
         w = self._require_write()
 
@@ -412,7 +400,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         w = self._require_write()
 
@@ -421,7 +408,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
@@ -432,7 +418,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def delete_many(
         self,
         pks: Sequence[UUID],
@@ -448,7 +433,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
@@ -459,7 +443,6 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    @require_tx_scope_match
     async def restore_many(
         self,
         pks: Sequence[UUID],

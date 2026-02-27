@@ -1,19 +1,19 @@
 """Composition plan for application usecases.
 
 This module defines small, composable building blocks that describe how
-guards and effects should wrap a concrete :class:`~forze.application.kernel.usecase.Usecase`
+guards and effects should wrap a concrete :class:`~forze.application.execution.usecase.Usecase`
 implementation. Plans are keyed by operation name and can be merged or extended
 at composition time.
 """
 
-from typing import Any, Callable, Optional, Self, TypeVar, cast, final
+from typing import Any, Callable, Final, Optional, Self, TypeVar, cast, final
 
 import attrs
 
 from forze.base.errors import CoreError
 
 from .context import ExecutionContext
-from .usecase import Effect, Guard, TxUsecase, Usecase
+from .usecase import Effect, Guard, Middleware, TxUsecase, Usecase
 
 # ----------------------- #
 
@@ -25,9 +25,13 @@ GuardFactory = Callable[[ExecutionContext], Guard[Any]]
 EffectFactory = Callable[[ExecutionContext], Effect[Any, Any]]
 """Factory that produces an :class:`~forze.application.kernel.usecase.Effect` from a :class:`ExecutionContext`."""
 
+MiddlewareFactory = Callable[[ExecutionContext], Middleware[Any, Any]]
+"""Factory that produces a :class:`~forze.application.kernel.usecase.Middleware` from a :class:`ExecutionContext`."""
+
 UsecaseFactory = Callable[[ExecutionContext], U]
 """Factory that builds a concrete :class:`~forze.application.kernel.usecase.Usecase` instance from a :class:`ExecutionContext`."""
 
+WILDCARD: Final[str] = "*"  #! ??? how to attach middlewares to all operations?
 
 # ....................... #
 
@@ -37,7 +41,7 @@ UsecaseFactory = Callable[[ExecutionContext], U]
 class GuardSpec:
     """Specification for a guard attached to an operation plan.
 
-    Guards are ordered by ``priority`` (ascending) and created lazily from a
+    Guards are ordered by ``priority`` (descending) and created lazily from a
     :class:`ExecutionContext` when a plan is resolved.
     """
 
@@ -58,7 +62,7 @@ class GuardSpec:
 class EffectSpec:
     """Specification for an effect attached to an operation plan.
 
-    Effects are ordered by ``priority`` (ascending) and created lazily from a
+    Effects are ordered by ``priority`` (descending) and created lazily from a
     :class:`ExecutionContext` when a plan is resolved.
     """
 
@@ -69,6 +73,27 @@ class EffectSpec:
         ]
     )
     effect: EffectFactory
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MiddlewareSpec:
+    """Specification for a middleware attached to an operation plan.
+
+    Middlewares are ordered by ``priority`` (descending) and created lazily from a
+    :class:`ExecutionContext` when a plan is resolved.
+    """
+
+    priority: int = attrs.field(
+        validator=[
+            attrs.validators.gt(int(-1e5)),
+            attrs.validators.lt(int(1e5)),
+        ]
+    )
+    middleware: MiddlewareFactory
 
 
 # ....................... #
@@ -90,8 +115,38 @@ class OperationPlan:
     override: Optional[UsecaseFactory[Any]] = None
     guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
     effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
+    middlewares: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     side_guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
     side_effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
+
+    # ....................... #
+
+    @classmethod
+    def merge(cls, *plans: Self):
+        """Merge multiple plans into a single aggregate plan.
+
+        :param plans: Plans to merge.
+        :returns: A new :class:`OperationPlan` with combined operations.
+        """
+
+        acc: OperationPlan = OperationPlan()
+
+        for plan in plans:
+            # prevent conflicting builders
+            if acc.override and plan.override and acc.override is not plan.override:
+                raise CoreError("Conflicting overrides for operation")
+
+            override = plan.override if plan.override is not None else acc.override
+            acc = OperationPlan(
+                override=override,
+                guards=(*acc.guards, *plan.guards),
+                effects=(*acc.effects, *plan.effects),
+                middlewares=(*acc.middlewares, *plan.middlewares),
+                side_guards=(*acc.side_guards, *plan.side_guards),
+                side_effects=(*acc.side_effects, *plan.side_effects),
+            )
+
+        return acc
 
 
 # ....................... #
@@ -111,6 +166,11 @@ class UsecasePlan:
 
     # ....................... #
 
+    def _get_base_plan(self):
+        return self.ops.get(WILDCARD, OperationPlan())
+
+    # ....................... #
+
     def override(self, op: str, factory: UsecaseFactory[U]) -> Self:
         """Override the base usecase factory for a specific operation.
 
@@ -118,6 +178,9 @@ class UsecasePlan:
         :param factory: Factory that builds the concrete usecase.
         :returns: A new :class:`UsecasePlan` with the override applied.
         """
+
+        if op == WILDCARD or op.endswith(WILDCARD):
+            raise CoreError(f"Override on wildcard operation `{op}` is not allowed")
 
         cur = self.ops.get(op, OperationPlan())
         new_ops = dict(self.ops)
@@ -139,7 +202,7 @@ class UsecasePlan:
 
         :param op: Logical operation name.
         :param guard: Factory for the guard to attach.
-        :param priority: Sorting key; lower values run earlier.
+        :param priority: Sorting key; higher values run earlier.
         :param side: When ``True``, attach as a side guard that will run
             outside transactions for :class:`~forze.application.kernel.usecase.TxUsecase`
             instances.
@@ -160,6 +223,25 @@ class UsecasePlan:
 
     # ....................... #
 
+    def wrap(self, op: str, middleware: MiddlewareFactory, priority: int = 0) -> Self:
+        """Attach a middleware to wrap a usecase for an operation.
+
+        :param op: Logical operation name.
+        :param middleware: Factory for the middleware to attach.
+        :param priority: Sorting key; higher values run earlier.
+        :returns: A new :class:`UsecasePlan` with the middleware added.
+        """
+
+        cur = self.ops.get(op, OperationPlan())
+        middleware_spec = MiddlewareSpec(priority=priority, middleware=middleware)
+
+        new_ops = dict(self.ops)
+        new_ops[op] = attrs.evolve(cur, middlewares=(*cur.middlewares, middleware_spec))
+
+        return attrs.evolve(self, ops=new_ops)
+
+    # ....................... #
+
     def after(
         self,
         op: str,
@@ -172,7 +254,7 @@ class UsecasePlan:
 
         :param op: Logical operation name.
         :param effect: Factory for the effect to attach.
-        :param priority: Sorting key; lower values run earlier.
+        :param priority: Sorting key; higher values run earlier.
         :param side: When ``True``, attach as a side effect that will run
             outside transactions for :class:`~forze.application.kernel.usecase.TxUsecase`
             instances.
@@ -211,7 +293,13 @@ class UsecasePlan:
             instance ready to be invoked.
         """
 
-        plan = self.ops.get(op)
+        if op == WILDCARD or op.endswith(WILDCARD):
+            raise CoreError(f"Resolve on wildcard operation `{op}` is not allowed")
+
+        base_plan = self._get_base_plan()
+        op_plan = self.ops.get(op, base_plan)
+        plan = OperationPlan.merge(base_plan, op_plan)
+
         factory = default
 
         if plan and plan.override:
@@ -221,23 +309,50 @@ class UsecasePlan:
 
         if plan:
             guards = tuple(
-                gs.guard(ctx) for gs in sorted(plan.guards, key=lambda x: x.priority)
+                gs.guard(ctx)
+                for gs in sorted(
+                    plan.guards,
+                    key=lambda x: x.priority,
+                    reverse=True,
+                )
+            )
+            middlewares = tuple(
+                ms.middleware(ctx)
+                for ms in sorted(
+                    plan.middlewares,
+                    key=lambda x: x.priority,
+                    reverse=True,
+                )
             )
             effects = tuple(
-                es.effect(ctx) for es in sorted(plan.effects, key=lambda x: x.priority)
+                es.effect(ctx)
+                for es in sorted(
+                    plan.effects,
+                    key=lambda x: x.priority,
+                    reverse=True,
+                )
             )
             side_guards = tuple(
                 gs.guard(ctx)
-                for gs in sorted(plan.side_guards, key=lambda x: x.priority)
+                for gs in sorted(
+                    plan.side_guards,
+                    key=lambda x: x.priority,
+                    reverse=True,
+                )
             )
             side_effects = tuple(
                 es.effect(ctx)
-                for es in sorted(plan.side_effects, key=lambda x: x.priority)
+                for es in sorted(
+                    plan.side_effects,
+                    key=lambda x: x.priority,
+                    reverse=True,
+                )
             )
 
             if isinstance(uc, TxUsecase):
                 uc = (
                     uc.with_guards(*guards)
+                    .with_middlewares(*middlewares)
                     .with_effects(*effects)
                     .with_side_guards(*side_guards)
                     .with_side_effects(*side_effects)
@@ -249,12 +364,18 @@ class UsecasePlan:
 
                 #! TODO: introduce explicit on_conflict or so with warn, error, ignore
                 #! so it's clear when side guards and effects treated as usual ones
-                uc = uc.with_effects(
-                    *effects,
-                    *side_effects,
-                ).with_guards(
-                    *side_guards,
-                    *guards,
+                uc = (
+                    uc.with_effects(
+                        *effects,
+                        *side_effects,
+                    )
+                    .with_guards(
+                        *side_guards,
+                        *guards,
+                    )
+                    .with_middlewares(
+                        *middlewares,
+                    )
                 )
 
         return uc
@@ -280,19 +401,6 @@ class UsecasePlan:
         for p in plans:
             for op, pl in p.ops.items():
                 cur = acc.get(op, OperationPlan())
-
-                # prevent conflicting builders
-                if cur.override and pl.override and cur.override is not pl.override:
-                    raise CoreError(f"Conflicting overrides for operation: {op}")
-
-                # override: last wins
-                override = pl.override if pl.override is not None else cur.override
-                acc[op] = OperationPlan(
-                    override=override,
-                    guards=(*cur.guards, *pl.guards),
-                    effects=(*cur.effects, *pl.effects),
-                    side_guards=(*cur.side_guards, *pl.side_guards),
-                    side_effects=(*cur.side_effects, *pl.side_effects),
-                )
+                acc[op] = OperationPlan.merge(cur, pl)
 
         return cls(ops=acc)

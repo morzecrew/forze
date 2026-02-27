@@ -1,4 +1,6 @@
-from typing import Protocol, Self, override
+from __future__ import annotations
+
+from typing import Awaitable, Callable, Protocol, Self, override
 
 import attrs
 
@@ -21,6 +23,9 @@ class Effect[Args, R](Protocol):  # pragma: no cover
     async def __call__(self, args: Args, res: R) -> R: ...
 
 
+# ....................... #
+
+
 class Guard[Args](Protocol):  # pragma: no cover
     """Guard to run before the usecase execution.
 
@@ -29,6 +34,15 @@ class Guard[Args](Protocol):  # pragma: no cover
     """
 
     async def __call__(self, args: Args) -> None: ...
+
+
+# ....................... #
+
+type NextCall[Args, R] = Callable[[Args], Awaitable[R]]
+
+
+class Middleware[Args, R](Protocol):  # pragma: no cover
+    async def __call__(self, next: NextCall[Args, R], args: Args) -> R: ...
 
 
 # ....................... #
@@ -46,8 +60,21 @@ class Usecase[Args, R]:
     guards: tuple[Guard[Args], ...] = attrs.field(factory=tuple)
     """Guards to run before the usecase."""
 
+    middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
+    """Middlewares to run before the usecase."""
+
     effects: tuple[Effect[Args, R], ...] = attrs.field(factory=tuple)
     """Effects to run after the usecase."""
+
+    # ....................... #
+
+    def with_middlewares(self, *middlewares: Middleware[Args, R]) -> Self:
+        """Return a new usecase with additional middlewares appended."""
+
+        if not middlewares:
+            return self
+
+        return attrs.evolve(self, middlewares=(*self.middlewares, *middlewares))
 
     # ....................... #
 
@@ -99,12 +126,46 @@ class Usecase[Args, R]:
 
     # ....................... #
 
-    async def __call__(self, args: Args) -> R:
-        """Execute the usecase with the configured guards and effects."""
+    async def _core(self, args: Args) -> R:
+        """Execute the core of the usecase with the configured guards and effects."""
 
         await self._run_guards(args)
         res = await self.main(args)
         return await self._run_effects(args, res)
+
+    # ....................... #
+
+    def _build_chain(self):
+        async def last(args: Args) -> R:
+            return await self._core(args)
+
+        fn: NextCall[Args, R] = last
+
+        #! TODO: check order, because we sort middlewares by priority in descending order
+        #! in the usecase plan
+        for mw in reversed(self.middlewares):
+            prev = fn
+
+            async def wrapped(
+                a: Args,
+                *,
+                _mw: Middleware[Args, R] = mw,
+                _prev: NextCall[Args, R] = prev,
+            ) -> R:
+                return await _mw(_prev, a)
+
+            fn = wrapped
+
+        return fn
+
+    # ....................... #
+
+    async def __call__(self, args: Args) -> R:
+        """Execute the usecase with the configured guards and effects."""
+
+        chain = self._build_chain()
+
+        return await chain(args)
 
 
 # ....................... #
@@ -173,8 +234,8 @@ class TxUsecase[Args, R](Usecase[Args, R]):
     # ....................... #
 
     @override
-    async def __call__(self, args: Args) -> R:
-        """Execute the usecase inside a transaction with side hooks."""
+    async def _core(self, args: Args) -> R:
+        """Execute the core of the usecase inside a transaction with side hooks."""
 
         await self._run_side_guards(args)
 

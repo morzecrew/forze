@@ -57,7 +57,6 @@ def postgres_document_configurable(
             write_gw=write,
             search_gw=search,
             cache=cache,
-            ctx=context,
         )
 
     return postgres_document

@@ -1,14 +1,13 @@
-from .context import ExecutionContext, require_tx_scope_match
+from .context import ExecutionContext
 from .plan import UsecasePlan
 from .registry import UsecaseRegistry
 from .resolvers import counter, doc, storage, txmanager
-from .usecase import TxUsecase, Usecase
+from .usecase import Effect, Guard, Middleware, NextCall, TxUsecase, Usecase
 
 # ----------------------- #
 
 __all__ = [
     "ExecutionContext",
-    "require_tx_scope_match",
     "UsecasePlan",
     "UsecaseRegistry",
     "doc",
@@ -17,4 +16,8 @@ __all__ = [
     "counter",
     "TxUsecase",
     "Usecase",
+    "Effect",
+    "Guard",
+    "Middleware",
+    "NextCall",
 ]

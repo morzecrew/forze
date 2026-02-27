@@ -2,53 +2,16 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from functools import wraps
-from typing import (
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Concatenate,
-    Iterator,
-    Optional,
-    ParamSpec,
-    TypeVar,
-    final,
-)
+from typing import Any, AsyncIterator, Iterator, Optional, final
 
 import attrs
 
 from forze.base.errors import CoreError
 
 from ..contracts.deps import DepKey, DepsPort
-from ..contracts.tx import TxContextScopedPort, TxHandle, TxManagerPort, TxScopeKey
+from ..contracts.tx import TxHandle, TxManagerPort, TxScopedPort, TxScopeKey
 
 # ----------------------- #
-
-T = TypeVar("T")
-P = ParamSpec("P")
-
-# ....................... #
-
-
-def require_tx_scope_match[**P, T, S: TxContextScopedPort](
-    method: Callable[Concatenate[S, P], Awaitable[T]],
-) -> Callable[Concatenate[S, P], Awaitable[T]]:
-    @wraps(method)
-    async def async_wrapper(
-        self: S,
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> T:
-        if self.ctx.active_tx() is not None:
-            self.ctx.require_tx(self.tx_scope)
-
-        return await method(self, *args, **kwargs)
-
-    return async_wrapper
-
-
-# ....................... #
 
 
 @final
@@ -125,7 +88,9 @@ class ExecutionContext:
         cur = self.__tx_handle.get()
 
         if depth > 0:
-            if cur is None or cur.scope != scope:
+            if (  # protect against different kind (implementations) of tx opened simultaneously
+                cur is None or cur.scope != scope
+            ):
                 raise CoreError(
                     f"Nested tx scope mismatch: active={cur.scope.name if cur else None} "
                     f"requested={scope.name}"
@@ -160,7 +125,7 @@ class ExecutionContext:
 
         if (
             h is not None
-            and isinstance(instance, TxContextScopedPort)
+            and isinstance(instance, TxScopedPort)
             and h.scope != instance.tx_scope
         ):
             raise CoreError(
@@ -187,7 +152,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def dep(self, key: DepKey[T]) -> T:
+    def dep[T](self, key: DepKey[T]) -> T:
         """Resolve a dependency by key using the underlying container."""
 
         with self.__resolving(key):
