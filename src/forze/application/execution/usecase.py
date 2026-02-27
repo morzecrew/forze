@@ -2,11 +2,12 @@ from typing import Protocol, Self, override
 
 import attrs
 
+from ..contracts.txmanager import TxManagerPort
 from .context import ExecutionContext
-from .ports import TxManagerPort
 
 # ----------------------- #
-# ?! Should we give access to runtime to effects and guards?
+
+#! most likely ctx should be part of effect and guard
 
 
 class Effect[Args, R](Protocol):  # pragma: no cover

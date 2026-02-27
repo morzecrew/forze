@@ -1,7 +1,7 @@
 from typing import Any, Optional
 
-from forze.application.kernel.context import ExecutionContext
-from forze.application.kernel.specs import DocumentModelSpec, DocumentSearchSpec
+from forze.application.contracts.document import DocumentModelSpec, DocumentSearchSpec
+from forze.application.execution import ExecutionContext
 
 from ..kernel.gateways import (
     PostgresHistoryGateway,

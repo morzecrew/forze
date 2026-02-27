@@ -1,20 +1,20 @@
 from datetime import timedelta
 from typing import Any
 
-from forze.application.kernel.context import ExecutionContext
-from forze.application.kernel.deps import Deps
-from forze.application.kernel.deps.counter import CounterDepKey, CounterDepPort
-from forze.application.kernel.deps.document import (
+from forze.application.contracts.counter import (
+    CounterDepKey,
+    CounterDepPort,
+    CounterPort,
+)
+from forze.application.contracts.deps import Deps
+from forze.application.contracts.document import (
     DocumentCacheDepKey,
     DocumentCacheDepPort,
-)
-from forze.application.kernel.deps.idempotency import IdempotencyDepPort
-from forze.application.kernel.ports import (
-    CounterPort,
     DocumentCachePort,
-    IdempotencyPort,
+    DocumentSpec,
 )
-from forze.application.kernel.specs import DocumentSpec
+from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
 

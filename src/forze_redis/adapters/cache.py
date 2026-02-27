@@ -10,7 +10,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.kernel.ports import DocumentCachePort
+from forze.application.contracts.document import DocumentCachePort
 from forze.utils.codecs import JsonCodec, KeyCodec, TextCodec
 
 from ..kernel.platform import RedisClient

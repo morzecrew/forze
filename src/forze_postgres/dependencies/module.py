@@ -1,15 +1,19 @@
 from typing import Any, Optional
 
-from forze.application.kernel.context import ExecutionContext
-from forze.application.kernel.deps import Deps
-from forze.application.kernel.deps.document import DocumentDepKey, DocumentDepPort
-from forze.application.kernel.deps.txmanager import TxManagerDepKey, TxManagerDepPort
-from forze.application.kernel.ports import (
+from forze.application.contracts.deps import Deps
+from forze.application.contracts.document import (
     DocumentCachePort,
+    DocumentDepKey,
+    DocumentDepPort,
     DocumentPort,
+    DocumentSpec,
+)
+from forze.application.contracts.txmanager import (
+    TxManagerDepKey,
+    TxManagerDepPort,
     TxManagerPort,
 )
-from forze.application.kernel.specs import DocumentSpec
+from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 
 from ..adapters import PostgresDocumentAdapter, PostgresTxManagerAdapter

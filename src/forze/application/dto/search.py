@@ -2,8 +2,7 @@ from typing import Optional
 
 from pydantic import Field
 
-from forze.application.kernel.ports import DocumentSorts
-from forze.base.primitives import JsonDict
+from forze.application.contracts.schemas.query import FilterExpression, SortExpression
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -15,10 +14,10 @@ class SearchRequestDTO(BaseDTO):
     query: str = ""
     """Query to search."""
 
-    filters: Optional[JsonDict] = None
+    filters: Optional[FilterExpression] = None
     """Filters to search."""
 
-    sorts: Optional[DocumentSorts] = None
+    sorts: Optional[SortExpression] = None
     """Sort to search."""
 
 

@@ -9,7 +9,7 @@ from typing import Any, Optional, Self, Sequence, final
 import attrs
 from psycopg import sql
 
-from forze.application.kernel.specs import DocumentSearchSpec
+from forze.application.contracts.document import DocumentSearchSpec
 
 # ----------------------- #
 

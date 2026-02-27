@@ -1,7 +1,6 @@
 import attrs
 
-from ..api import Scalar, SeqScalar
-from .operators import Op
+from forze.application.contracts.query import Array, Op, Scalar
 
 # ----------------------- #
 
@@ -11,12 +10,12 @@ class Expr:
     """Base class for all AST nodes."""
 
 
-@attrs.define(slots=True, frozen=True)
+@attrs.define(slots=True, frozen=True, match_args=True)
 class And(Expr):
     items: tuple[Expr, ...]
 
 
-@attrs.define(slots=True, frozen=True)
+@attrs.define(slots=True, frozen=True, match_args=True)
 class Or(Expr):
     items: tuple[Expr, ...]
 
@@ -24,8 +23,8 @@ class Or(Expr):
 # ....................... #
 
 
-@attrs.define(slots=True, frozen=True)
+@attrs.define(slots=True, frozen=True, match_args=True)
 class Field(Expr):
     name: str
     op: Op
-    value: Scalar | SeqScalar
+    value: Scalar | Array

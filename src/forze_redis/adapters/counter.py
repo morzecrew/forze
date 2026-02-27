@@ -8,7 +8,7 @@ from typing import Optional, Self, final
 
 import attrs
 
-from forze.application.kernel.ports import CounterPort
+from forze.application.contracts.counter import CounterPort
 from forze.base.errors import ValidationError
 from forze.utils.codecs import KeyCodec
 

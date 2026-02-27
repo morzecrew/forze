@@ -1,10 +1,10 @@
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from ..ports import IdempotencyPort
+from ..ports.idempotency import IdempotencyPort
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 

@@ -10,7 +10,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.kernel.ports import DocumentSorts
+from forze.application.contracts.document import FilterExpression, SortExpression
 from forze.base.errors import NotFoundError, ValidationError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
@@ -178,7 +178,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -188,7 +188,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -198,7 +198,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -208,7 +208,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -217,15 +217,12 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     async def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = False,
         return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Optional[M | T | JsonDict]:
-        if not filters:
-            raise ValidationError("Фильтры не могут быть пустыми")
-
         where, params = await self.where_clause(filters)
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where} LIMIT 1").format(
@@ -256,10 +253,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         return_model: None = ...,
         return_fields: None = ...,
@@ -268,10 +265,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         return_model: type[T],
         return_fields: None = ...,
@@ -280,10 +277,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         return_model: None = ...,
         return_fields: Sequence[str],
@@ -292,10 +289,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         return_model: type[T],
         return_fields: Sequence[str],
@@ -303,10 +300,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     async def find_many(
         self,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[DocumentSorts] = None,
+        sorts: Optional[SortExpression] = None,
         *,
         return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
@@ -346,7 +343,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: Optional[JsonDict] = None) -> int:
+    async def count(self, filters: Optional[FilterExpression] = None) -> int:
         where, params = await self.where_clause(filters)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(

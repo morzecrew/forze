@@ -33,9 +33,8 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.routing import BaseRoute
 from starlette.types import ASGIApp, Lifespan
 
-from forze.application.kernel.context import ExecutionContext
-from forze.application.kernel.deps.idempotency import IdempotencyDepPort
-from forze.application.kernel.ports import IdempotencyPort
+from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_model_hash
 from forze_fastapi.constants import IDEMPOTENCY_KEY_HEADER

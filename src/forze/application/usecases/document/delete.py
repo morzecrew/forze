@@ -3,8 +3,8 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.kernel.ports import DocumentPort
-from forze.application.kernel.usecase import TxUsecase
+from forze.application.contracts.document import DocumentPort
+from forze.application.execution import TxUsecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #

@@ -2,8 +2,9 @@ from typing import Any, Callable
 
 import attrs
 
-from forze.application.kernel.ports import CounterPort, DocumentPort
-from forze.application.kernel.usecase import TxUsecase
+from forze.application.contracts.counter import CounterPort
+from forze.application.contracts.document import DocumentPort
+from forze.application.execution import TxUsecase
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #

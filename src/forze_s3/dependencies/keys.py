@@ -1,4 +1,4 @@
-from forze.application.kernel.deps import DepKey
+from forze.application.contracts.deps import DepKey
 
 from ..kernel.platform import S3Client
 

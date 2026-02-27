@@ -72,7 +72,7 @@ class DocumentSpec(Generic[R, D, C, U]):
     * concrete model types for read/domain/commands
     * optional search configuration
 
-    Implementations of :class:`~forze.application.kernel.ports.DocumentPort`
+    Implementations of :class:`~forze.application.contracts.ports.DocumentPort`
     and related ports use this spec to configure themselves.
     """
 

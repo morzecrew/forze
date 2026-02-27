@@ -2,12 +2,12 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol, final, runtime_checka
 
 import attrs
 
-from ..ports import DocumentCachePort, DocumentPort
-from ..specs import DocumentSpec
+from ..ports.document import DocumentCachePort, DocumentPort
+from ..specs.document import DocumentSpec
 from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 

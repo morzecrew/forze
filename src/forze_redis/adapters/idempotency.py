@@ -10,7 +10,7 @@ from typing import Final, Optional, TypedDict, final
 
 import attrs
 
-from forze.application.kernel.ports import IdempotencyPort, IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.base.errors import ConflictError
 from forze.utils.codecs import JsonCodec, KeyCodec
 

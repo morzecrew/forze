@@ -11,15 +11,15 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.kernel.ports import DocumentSorts
+from forze.application.contracts.query import FilterExpression, SortExpression
+from forze.application.dsl.query import FilterExpressionParser
 from forze.base.errors import CoreError
-from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
-from ..builder import build_filters
 from ..introspect import PostgresTypesProvider
 from ..platform import PostgresClient
+from ..query import PsycopgQueryRenderer
 from .spec import PostgresTableSpec
 
 # ----------------------- #
@@ -47,7 +47,7 @@ class PostgresGateway[M: BaseModel]:
 
     async def where_clause(
         self,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         if not filters:
             return sql.SQL("TRUE"), []
@@ -56,13 +56,18 @@ class PostgresGateway[M: BaseModel]:
             schema=self.spec.schema,
             table=self.spec.table,
         )
-        parts, params = build_filters(filters, types=types)
 
-        return sql.SQL(" AND ").join(parts), params
+        p = FilterExpressionParser()
+        r = PsycopgQueryRenderer(types=types)
+
+        expr = p.parse(filters)
+        query, params = r.render(expr)
+
+        return query, params
 
     # ....................... #
 
-    def sort_clause(self, sorts: Optional[DocumentSorts] = None) -> sql.Composable:
+    def sort_clause(self, sorts: Optional[SortExpression] = None) -> sql.Composable:
         if not sorts:
             sorts = {ID_FIELD: "desc"}
 

@@ -2,8 +2,8 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.kernel.ports import DocumentReadPort
-from forze.application.kernel.usecase import Usecase
+from forze.application.contracts.document import DocumentReadPort
+from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #

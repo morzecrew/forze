@@ -2,11 +2,11 @@ from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs
 
-from ..ports import TxManagerPort
+from ..ports.txmanager import TxManagerPort
 from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 

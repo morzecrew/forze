@@ -2,10 +2,10 @@ from typing import Any, TypedDict, final
 
 import attrs
 
+from forze.application.contracts.document import DocumentPort
 from forze.application.dto.paginated import Paginated, RawPaginated
 from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
-from forze.application.kernel.ports import DocumentPort
-from forze.application.kernel.usecase import Usecase
+from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #

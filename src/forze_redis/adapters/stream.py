@@ -17,7 +17,7 @@ from typing import (
 import attrs
 from pydantic import BaseModel
 
-from forze.application.kernel.ports import StreamEvent, StreamPort
+from forze.application.contracts.stream import StreamEvent, StreamPort
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.utils.codecs import JsonCodec, TextCodec

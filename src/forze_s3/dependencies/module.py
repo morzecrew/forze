@@ -1,7 +1,10 @@
-from forze.application.kernel.context import ExecutionContext
-from forze.application.kernel.deps import Deps
-from forze.application.kernel.deps.storage import StorageDepKey, StorageDepPort
-from forze.application.kernel.ports import StoragePort
+from forze.application.contracts.deps import Deps
+from forze.application.contracts.storage import (
+    StorageDepKey,
+    StorageDepPort,
+    StoragePort,
+)
+from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 
 from ..adapters import S3StorageAdapter

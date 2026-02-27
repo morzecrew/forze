@@ -3,7 +3,6 @@
 from typing import (
     Any,
     Awaitable,
-    Literal,
     Optional,
     Protocol,
     Sequence,
@@ -16,14 +15,9 @@ from uuid import UUID
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
+from ..schemas.query import FilterExpression, SortExpression
+
 # ----------------------- #
-
-DocumentSorts = dict[str, Literal["asc", "desc"]]
-"""Sort specification for document queries keyed by field name."""
-
-# Filters = JsonDict  #! TODO: review?
-
-# ....................... #
 
 
 class DocumentSearchOptions(TypedDict, total=False):
@@ -127,7 +121,7 @@ class DocumentReadPort[R: ReadDocument](Protocol):
     @overload
     def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
@@ -139,7 +133,7 @@ class DocumentReadPort[R: ReadDocument](Protocol):
     @overload
     def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = ...,
         return_fields: None = ...,
@@ -150,7 +144,7 @@ class DocumentReadPort[R: ReadDocument](Protocol):
 
     def find(
         self,
-        filters: JsonDict,
+        filters: FilterExpression,
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -163,10 +157,10 @@ class DocumentReadPort[R: ReadDocument](Protocol):
     @overload
     def find_many(
         self,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         return_fields: Sequence[str],
     ) -> Awaitable[tuple[list[JsonDict], int]]:
@@ -177,10 +171,10 @@ class DocumentReadPort[R: ReadDocument](Protocol):
     @overload
     def find_many(
         self,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         return_fields: None = ...,
     ) -> Awaitable[tuple[list[R], int]]:
@@ -190,10 +184,10 @@ class DocumentReadPort[R: ReadDocument](Protocol):
 
     def find_many(
         self,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[DocumentSorts] = None,
+        sorts: Optional[SortExpression] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Awaitable[tuple[list[R] | list[JsonDict], int]]:
@@ -201,6 +195,12 @@ class DocumentReadPort[R: ReadDocument](Protocol):
 
         :returns: A tuple of result list and total count.
         """
+        ...
+
+    # ....................... #
+
+    def count(self, filters: Optional[FilterExpression] = None) -> Awaitable[int]:
+        """Count documents by filters."""
         ...
 
 
@@ -215,10 +215,10 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         options: Optional[DocumentSearchOptions] = ...,
         return_fields: Sequence[str],
@@ -231,10 +231,10 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         *,
         options: Optional[DocumentSearchOptions] = ...,
         return_fields: None = ...,
@@ -246,10 +246,10 @@ class DocumentSearchPort[R: ReadDocument](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[DocumentSorts] = None,
+        sorts: Optional[SortExpression] = None,
         options: Optional[DocumentSearchOptions] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,

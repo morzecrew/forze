@@ -11,7 +11,7 @@ from typing import Optional, final
 import attrs
 import magic
 
-from forze.application.kernel.ports import (
+from forze.application.contracts.storage import (
     DownloadedObject,
     ObjectMetadata,
     StoragePort,

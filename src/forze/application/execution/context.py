@@ -24,16 +24,8 @@ import attrs
 from forze.base.errors import CoreError
 from forze.base.primitives import uuid7
 
-from .deps.base import DepKey, DepsPort
-from .ports import (
-    CounterPort,
-    DocumentCachePort,
-    DocumentPort,
-    StoragePort,
-    TxManagerPort,
-    TxScopeKey,
-)
-from .specs import DocumentSpec
+from ..contracts.deps import DepKey, DepsPort
+from ..contracts.txmanager import TxManagerPort, TxScopeKey
 
 # ----------------------- #
 
@@ -191,7 +183,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def __validate_tx_scope(self, instance: Any) -> None:
+    def validate_tx_scope(self, instance: Any) -> None:
         h = self.active_tx()
 
         if (
@@ -228,66 +220,3 @@ class ExecutionContext:
 
         with self.__resolving(key):
             return self.deps.provide(key)
-
-    # ....................... #
-
-    def doc(
-        self,
-        spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentPort[Any, Any, Any, Any]:
-        """Return a document port for the given :class:`DocumentSpec`.
-
-        This is a convenience wrapper around :class:`DocumentDepPort`
-        that binds the current :class:`ExecutionContext` and document spec.
-        """
-
-        from .deps.document import DocumentDepKey
-
-        cache = self.doc_cache(spec)
-        dep = self.dep(DocumentDepKey)(self, spec, cache=cache)
-        self.__validate_tx_scope(dep)
-
-        return dep
-
-    # ....................... #
-
-    def doc_cache(self, spec: DocumentSpec[Any, Any, Any, Any]) -> DocumentCachePort:
-        """Return a document cache port for the given :class:`DocumentSpec`.
-
-        This is a convenience wrapper around :class:`DocumentCacheDepPort`
-        that binds the current :class:`ExecutionContext` and document spec.
-        """
-
-        from .deps.document import DocumentCacheDepKey
-
-        return self.dep(DocumentCacheDepKey)(self, spec)
-
-    # ....................... #
-
-    def counter(self, namespace: str) -> CounterPort:
-        """Return a counter port bound to a namespace.
-
-        The namespace is used by implementations to partition counters.
-        """
-
-        from .deps.counter import CounterDepKey
-
-        return self.dep(CounterDepKey)(self, namespace)
-
-    # ....................... #
-
-    def txmanager(self) -> TxManagerPort:
-        """Return a transaction manager port bound to the current context."""
-
-        from .deps.txmanager import TxManagerDepKey
-
-        return self.dep(TxManagerDepKey)(self)
-
-    # ....................... #
-
-    def storage(self, bucket: str) -> StoragePort:
-        """Return a storage port bound to the current context."""
-
-        from .deps.storage import StorageDepKey
-
-        return self.dep(StorageDepKey)(self, bucket)

@@ -11,7 +11,11 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.kernel.ports import DocumentSearchOptions, DocumentSorts
+from forze.application.contracts.document import (
+    DocumentSearchOptions,
+    FilterExpression,
+    SortExpression,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
@@ -87,7 +91,7 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search_where_clause(
         self,
         query: str,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
         options: Optional[DocumentSearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         sw, sp = self._search_clause(query, options=options)
@@ -101,7 +105,8 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     # ....................... #
 
     def search_sort_clause(
-        self, sorts: Optional[DocumentSorts] = None
+        self,
+        sorts: Optional[SortExpression] = None,
     ) -> sql.Composable:
         parts: list[sql.Composable] = [sql.SQL("pgroonga_score(tableoid, ctid) DESC")]
 
@@ -121,10 +126,10 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         options: Optional[DocumentSearchOptions] = ...,
         *,
         return_model: None = ...,
@@ -135,10 +140,10 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         options: Optional[DocumentSearchOptions] = ...,
         *,
         return_model: type[T],
@@ -149,10 +154,10 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         options: Optional[DocumentSearchOptions] = ...,
         *,
         return_model: None = ...,
@@ -163,10 +168,10 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = ...,
+        filters: Optional[FilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[DocumentSorts] = ...,
+        sorts: Optional[SortExpression] = ...,
         options: Optional[DocumentSearchOptions] = ...,
         *,
         return_model: type[T] = ...,
@@ -176,10 +181,10 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[DocumentSorts] = None,
+        sorts: Optional[SortExpression] = None,
         options: Optional[DocumentSearchOptions] = None,
         *,
         return_model: Optional[type[T]] = None,
@@ -223,7 +228,7 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     async def search_count(
         self,
         query: str,
-        filters: Optional[JsonDict] = None,
+        filters: Optional[FilterExpression] = None,
         options: Optional[DocumentSearchOptions] = None,
     ) -> int:
         where, params = await self.search_where_clause(query, filters, options=options)

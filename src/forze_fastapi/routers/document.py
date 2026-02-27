@@ -10,11 +10,11 @@ from typing import Optional, TypeVar
 from fastapi import Depends
 
 from forze.application.composition import DocumentUsecasesFacadeProvider
+from forze.application.contracts.idempotency import IdempotencyDepPort
 from forze.application.dto.paginated import Paginated, RawPaginated
 from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
+from forze.application.execution import ExecutionContext
 from forze.application.facades import DocumentUsecasesFacade
-from forze.application.kernel.context import ExecutionContext
-from forze.application.kernel.deps.idempotency import IdempotencyDepPort
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..routing.params import Pagination, RevQuery, UUIDQuery, pagination

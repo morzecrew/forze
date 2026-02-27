@@ -4,19 +4,17 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.dto.paginated import Paginated, RawPaginated
-from forze.application.usecases.document import (
+from forze.base.errors import CoreError
+from forze.domain.models import BaseDTO, ReadDocument
+
+from ..dto.paginated import Paginated, RawPaginated
+from ..execution import ExecutionContext, TxUsecase, Usecase, UsecaseRegistry
+from ..usecases.document import (
     RawSearchArgs,
     SearchArgs,
     SoftDeleteArgs,
     UpdateArgs,
 )
-from forze.base.errors import CoreError
-from forze.domain.models import BaseDTO, ReadDocument
-
-from ..kernel.context import ExecutionContext
-from ..kernel.registry import UsecaseRegistry
-from ..kernel.usecase import TxUsecase, Usecase
 
 # ----------------------- #
 
