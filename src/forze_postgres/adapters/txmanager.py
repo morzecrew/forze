@@ -9,7 +9,7 @@ from typing import AsyncIterator, final
 
 import attrs
 
-from forze.application.contracts.txmanager import TxManagerPort, TxScopeKey
+from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 
 from ..kernel.platform import PostgresClient, PostgresTransactionOptions
 

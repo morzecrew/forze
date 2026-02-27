@@ -2,7 +2,7 @@ from typing import Protocol, Self, override
 
 import attrs
 
-from ..contracts.txmanager import TxManagerPort
+from ..contracts.tx import TxManagerPort
 from .context import ExecutionContext
 
 # ----------------------- #

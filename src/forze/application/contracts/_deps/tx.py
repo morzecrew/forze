@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs
 
-from .._ports.txmanager import TxManagerPort
+from .._ports.tx import TxManagerPort
 from .base import DepKey, DepRouter
 
 if TYPE_CHECKING:

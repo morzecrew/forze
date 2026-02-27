@@ -12,59 +12,31 @@ from typing import (
     Iterator,
     Optional,
     ParamSpec,
-    Protocol,
     TypeVar,
     final,
-    runtime_checkable,
 )
-from uuid import UUID
 
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.primitives import uuid7
 
 from ..contracts.deps import DepKey, DepsPort
-from ..contracts.txmanager import TxManagerPort, TxScopeKey
+from ..contracts.tx import TxContextScopedPort, TxHandle, TxManagerPort, TxScopeKey
 
 # ----------------------- #
 
 T = TypeVar("T")
 P = ParamSpec("P")
-TxCsp = TypeVar("TxCsp", bound="TxContextScopedPort")
 
 # ....................... #
 
 
-@attrs.define(slots=True, frozen=True)
-class TxHandle:
-    """Opaque capability token for transactional execution."""
-
-    scope: TxScopeKey
-    """The scope of the transaction."""
-
-    id: UUID = attrs.field(factory=uuid7, init=False)
-    """The unique identifier of the transaction."""
-
-
-# ....................... #
-
-
-@runtime_checkable
-class TxContextScopedPort(Protocol):
-    ctx: ExecutionContext
-    tx_scope: TxScopeKey
-
-
-# ....................... #
-
-
-def require_tx_scope_match(
-    method: Callable[Concatenate[TxCsp, P], Awaitable[T]],
-) -> Callable[Concatenate[TxCsp, P], Awaitable[T]]:
+def require_tx_scope_match[**P, T, S: TxContextScopedPort](
+    method: Callable[Concatenate[S, P], Awaitable[T]],
+) -> Callable[Concatenate[S, P], Awaitable[T]]:
     @wraps(method)
     async def async_wrapper(
-        self: TxCsp,
+        self: S,
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> T:

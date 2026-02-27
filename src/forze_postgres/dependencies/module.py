@@ -8,7 +8,7 @@ from forze.application.contracts.document import (
     DocumentPort,
     DocumentSpec,
 )
-from forze.application.contracts.txmanager import (
+from forze.application.contracts.tx import (
     TxManagerDepKey,
     TxManagerDepPort,
     TxManagerPort,

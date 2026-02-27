@@ -16,9 +16,9 @@ from forze.application.contracts.document import (
     FilterExpression,
     SortExpression,
 )
+from forze.application.contracts.tx import TxContextScopedPort, TxScopeKey
 from forze.application.execution import (
     ExecutionContext,
-    TxContextScopedPort,
     require_tx_scope_match,
 )
 from forze.base.errors import CoreError

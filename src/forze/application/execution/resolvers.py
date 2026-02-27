@@ -8,7 +8,7 @@ from ..contracts.document import (
     DocumentSpec,
 )
 from ..contracts.storage import StorageDepKey, StoragePort
-from ..contracts.txmanager import TxManagerDepKey, TxManagerPort
+from ..contracts.tx import TxManagerDepKey, TxManagerPort
 from .context import ExecutionContext
 
 # ----------------------- #
