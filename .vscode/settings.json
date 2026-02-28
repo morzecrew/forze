@@ -36,7 +36,7 @@
         // temporarily excluded (for readability)
         "**/.venv/": true,
         ".specify": true,
-        ".agent": true,
+        // ".agent": true,
         ".cursor": true,
         // "specs/**": true,
     },

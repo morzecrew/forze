@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.5] - 2026-02-28
+
+### Added
+
 - `scalar-fastapi` dependency and `register_scalar_docs` in `forze_fastapi.openapi` for Scalar API reference UI.
 - Exception handlers module in `forze_fastapi.handlers` with `register_exception_handlers`.
 - `operation_id` on all document router endpoints for stable OpenAPI operation IDs.
@@ -29,10 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DTOSpec` renamed to `DocumentDTOSpec` in `forze.application.composition.document`. Update imports accordingly.
 - Document router: request body params now use `Body(...)` with `override_annotations` for correct OpenAPI schema generation.
 - `ForzeAPIRouter` and `build_document_router` no longer accept idempotency parameters; idempotency is applied via custom route class and resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` with the key.
-
-### Fixed
-
-- ...
 
 ## [0.1.4] - 2026-02-27
 
@@ -98,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.4...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/morzecrew/forze/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/morzecrew/forze/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/morzecrew/forze/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/morzecrew/forze/compare/v0.1.1...v0.1.2
