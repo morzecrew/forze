@@ -13,7 +13,11 @@ from forze.application.contracts.document import (
     DocumentCachePort,
     DocumentSpec,
 )
-from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.contracts.idempotency import (
+    IdempotencyDepKey,
+    IdempotencyDepPort,
+    IdempotencyPort,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
@@ -80,5 +84,6 @@ def redis_module(client: RedisClient) -> Deps:
             RedisClientDepKey: client,
             DocumentCacheDepKey: redis_document_cache,
             CounterDepKey: redis_counter,
+            IdempotencyDepKey: redis_idempotency,
         }
     )

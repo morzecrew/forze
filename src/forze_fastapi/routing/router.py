@@ -19,6 +19,7 @@ from typing import (
 )
 
 from fastapi import APIRouter as APIRouter
+from fastapi import Header, HTTPException
 from fastapi.datastructures import Default, DefaultPlaceholder
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse, Response
@@ -65,6 +66,17 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 
     header_key: str
     """Name of the header key to be used for the idempotency key."""
+
+
+# ....................... #
+
+
+def make_idem_header_dependency(header_key: str):
+    async def dep(idempotency_key: str = Header(..., alias=header_key)) -> None:
+        if not idempotency_key:
+            raise HTTPException(400, "Idempotency key is required")
+
+    return dep
 
 
 # ....................... #
@@ -166,6 +178,7 @@ class ForzeAPIRouter(APIRouter):
         idempotency_config: Optional[RouteIdempotencyConfig] = None,
     ) -> None:
         idempotency_config = idempotency_config or self.__idempotency_config
+        deps = list(dependencies or [])
 
         if idempotent and methods and "POST" in methods:
             if operation_id is None:
@@ -184,17 +197,19 @@ class ForzeAPIRouter(APIRouter):
             dto_name = idempotency_config.get("dto_param") or self.__guess_dto_param(
                 endpoint
             )
+            header_key = self.__idempotency_config.get(
+                "header_key", IDEMPOTENCY_KEY_HEADER
+            )
 
             route_class_override = make_idempotent_route_class(
                 ctx_dep=self.__context_dependency,
                 operation=operation_id,
                 ttl=idempotency_config.get("ttl", timedelta(seconds=30)),
-                header_key=self.__idempotency_config.get(
-                    "header_key", IDEMPOTENCY_KEY_HEADER
-                ),
+                header_key=header_key,
                 adapter=adapter,
                 dto_param=dto_name,
             )
+            deps.append(Depends(make_idem_header_dependency(header_key)))
 
         return super().add_api_route(
             path,
@@ -202,7 +217,7 @@ class ForzeAPIRouter(APIRouter):
             response_model=response_model,
             status_code=status_code,
             tags=tags,
-            dependencies=dependencies,
+            dependencies=deps,
             summary=summary,
             description=description,
             response_description=response_description,
