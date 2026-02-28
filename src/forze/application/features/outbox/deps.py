@@ -1,7 +1,7 @@
 from typing import Any
 
 from forze.application.contracts.deps import DepKey
-from forze.application.execution import ExecutionContext, doc
+from forze.application.execution import ExecutionContext, PortResolver
 from forze.base.primitives import ContextualBuffer
 
 from .effects import FlushOutboxEffect
@@ -26,7 +26,7 @@ OutboxBuffer = ContextualBuffer[CreateOutboxEventCmd]()
 
 
 def build_outbox_service(ctx: ExecutionContext, spec: OutboxSpec) -> OutboxService:
-    d = doc(ctx, spec)
+    d = PortResolver.doc(ctx, spec)
 
     return OutboxService(doc=d)
 

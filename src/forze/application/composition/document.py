@@ -7,7 +7,7 @@ from forze.domain.models import BaseDTO, ReadDocument
 
 from ..contracts.document import DocumentSpec
 from ..dto.mappers import DTOMapper
-from ..execution import ExecutionContext, UsecasePlan, UsecaseRegistry, doc, txmanager
+from ..execution import ExecutionContext, PortResolver, UsecasePlan, UsecaseRegistry
 from ..facades import DocumentOperation, DocumentUsecasesFacade
 from ..usecases.document import (
     CreateDocument,
@@ -34,21 +34,25 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 
     reg = UsecaseRegistry(
         {
-            DocumentOperation.GET: lambda ctx: GetDocument(doc=doc(ctx, spec)),
-            DocumentOperation.SEARCH: lambda ctx: SearchDocument(doc=doc(ctx, spec)),
+            DocumentOperation.GET: lambda ctx: GetDocument(
+                doc=PortResolver.doc(ctx, spec)
+            ),
+            DocumentOperation.SEARCH: lambda ctx: SearchDocument(
+                doc=PortResolver.doc(ctx, spec)
+            ),
             DocumentOperation.RAW_SEARCH: lambda ctx: RawSearchDocument(
-                doc=doc(ctx, spec)
+                doc=PortResolver.doc(ctx, spec)
             ),
             DocumentOperation.CREATE: lambda ctx: CreateDocument(
                 ctx=ctx,
-                doc=doc(ctx, spec),
-                txmanager=txmanager(ctx),
+                doc=PortResolver.doc(ctx, spec),
+                txmanager=PortResolver.txmanager(ctx),
                 mapper=DTOMapper(dto=spec.models["create_cmd"]),
             ),
             DocumentOperation.KILL: lambda ctx: KillDocument(
                 ctx=ctx,
-                doc=doc(ctx, spec),
-                txmanager=txmanager(ctx),
+                doc=PortResolver.doc(ctx, spec),
+                txmanager=PortResolver.txmanager(ctx),
             ),
         }
     )
@@ -58,8 +62,8 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
             DocumentOperation.UPDATE,
             lambda ctx: UpdateDocument(
                 ctx=ctx,
-                doc=doc(ctx, spec),
-                txmanager=txmanager(ctx),
+                doc=PortResolver.doc(ctx, spec),
+                txmanager=PortResolver.txmanager(ctx),
                 mapper=DTOMapper(dto=spec.models["update_cmd"]),
             ),
             inplace=True,
@@ -70,13 +74,13 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
             {
                 DocumentOperation.DELETE: lambda ctx: DeleteDocument(
                     ctx=ctx,
-                    doc=doc(ctx, spec),
-                    txmanager=txmanager(ctx),
+                    doc=PortResolver.doc(ctx, spec),
+                    txmanager=PortResolver.txmanager(ctx),
                 ),
                 DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
                     ctx=ctx,
-                    doc=doc(ctx, spec),
-                    txmanager=txmanager(ctx),
+                    doc=PortResolver.doc(ctx, spec),
+                    txmanager=PortResolver.txmanager(ctx),
                 ),
             },
             inplace=True,
@@ -88,7 +92,6 @@ def build_document_registry(spec: DocumentSpec[Any, Any, Any, Any]) -> UsecaseRe
 # ....................... #
 
 
-#! TODO: rename to DocumentDTOSpec
 class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
     """DTO specification for a document aggregate."""
 

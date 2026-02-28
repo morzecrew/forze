@@ -3,7 +3,7 @@ from .deps import Deps, DepsModule, DepsPlan
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
 from .plan import UsecasePlan
 from .registry import UsecaseRegistry
-from .resolvers import counter, doc, storage, txmanager
+from .resolvers import PortResolver
 from .runtime import ExecutionRuntime
 from .usecase import Effect, Guard, Middleware, NextCall, TxUsecase, Usecase
 
@@ -13,10 +13,7 @@ __all__ = [
     "ExecutionContext",
     "UsecasePlan",
     "UsecaseRegistry",
-    "doc",
-    "txmanager",
-    "storage",
-    "counter",
+    "PortResolver",
     "TxUsecase",
     "Usecase",
     "Effect",
