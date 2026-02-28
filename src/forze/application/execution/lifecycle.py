@@ -1,4 +1,4 @@
-from typing import Awaitable, Callable, Optional, Self, final
+from typing import Optional, Protocol, Self, final
 
 import attrs
 
@@ -8,8 +8,12 @@ from .context import ExecutionContext
 
 # ----------------------- #
 
-LifecycleHook = Callable[[ExecutionContext], Awaitable[None]]
-"""Hook to be executed during startup or shutdown."""
+
+class LifecycleHook(Protocol):
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        """Execute the hook during startup or shutdown."""
+        ...
+
 
 # ....................... #
 
@@ -60,6 +64,18 @@ class LifecyclePlan:
             raise CoreError(f"Lifecycle step name collision: {name}")
 
     # ....................... #
+
+    @classmethod
+    def from_steps(cls, *steps: LifecycleStep) -> Self:
+        return cls(steps=steps)
+
+    # ....................... #
+
+    def with_steps(self, *steps: LifecycleStep) -> Self:
+        return attrs.evolve(self, steps=(*self.steps, *steps))
+
+    # ....................... #
+    #! TODO: review ... maybe remove this strange method
 
     def with_step(
         self,

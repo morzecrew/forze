@@ -6,9 +6,15 @@ require_psycopg()
 
 # ....................... #
 
-from .dependencies import postgres_module
+from .execution import PostgresClientDepKey, PostgresDepsModule, postgres_lifecycle_step
 from .kernel.platform import PostgresClient, PostgresConfig
 
 # ----------------------- #
 
-__all__ = ["postgres_module", "PostgresClient", "PostgresConfig"]
+__all__ = [
+    "PostgresDepsModule",
+    "PostgresClient",
+    "PostgresConfig",
+    "PostgresClientDepKey",
+    "postgres_lifecycle_step",
+]

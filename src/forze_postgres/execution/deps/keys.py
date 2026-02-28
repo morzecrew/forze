@@ -1,7 +1,7 @@
 from forze.application.contracts.deps import DepKey
 
-from ..kernel.introspect import PostgresTypesProvider
-from ..kernel.platform import PostgresClient
+from ...kernel.introspect import PostgresTypesProvider
+from ...kernel.platform import PostgresClient
 
 # ----------------------- #
 

@@ -1,8 +1,8 @@
 from typing import (
     Any,
-    Callable,
     Literal,
     Optional,
+    Protocol,
     Self,
     TypeVar,
     cast,
@@ -227,8 +227,14 @@ class Deps(DepsPort):
 
 # ....................... #
 
-DepsModule = Callable[[], Deps]
-"""Function that returns a dependency container."""
+
+class DepsModule(Protocol):
+    def __call__(self) -> Deps:
+        """Return a dependency container."""
+        ...
+
+
+# ....................... #
 
 
 @final
@@ -237,6 +243,12 @@ class DepsPlan:
     """Declarative plan for building dependency containers."""
 
     modules: tuple[DepsModule, ...] = attrs.field(factory=tuple)
+
+    # ....................... #
+
+    @classmethod
+    def from_modules(cls, *modules: DepsModule) -> Self:
+        return cls(modules=modules)
 
     # ....................... #
 

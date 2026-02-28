@@ -6,9 +6,15 @@ require_redis()
 
 # ....................... #
 
-from .dependencies import redis_module
+from .execution import RedisClientDepKey, RedisDepsModule, redis_lifecycle_step
 from .kernel.platform import RedisClient, RedisConfig
 
 # ----------------------- #
 
-__all__ = ["redis_module", "RedisClient", "RedisConfig"]
+__all__ = [
+    "RedisClient",
+    "RedisConfig",
+    "RedisClientDepKey",
+    "RedisDepsModule",
+    "redis_lifecycle_step",
+]

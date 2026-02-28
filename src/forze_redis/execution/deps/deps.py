@@ -2,31 +2,27 @@ from datetime import timedelta
 from typing import Any
 
 from forze.application.contracts.counter import (
-    CounterDepKey,
     CounterDepPort,
     CounterPort,
 )
 from forze.application.contracts.document import (
-    DocumentCacheDepKey,
     DocumentCacheDepPort,
     DocumentCachePort,
     DocumentSpec,
 )
 from forze.application.contracts.idempotency import (
-    IdempotencyDepKey,
     IdempotencyDepPort,
     IdempotencyPort,
 )
-from forze.application.execution import Deps, DepsModule, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
 
-from ..adapters import (
+from ...adapters import (
     RedisCounterAdapter,
     RedisDocumentCacheAdapter,
     RedisIdempotencyAdapter,
 )
-from ..kernel.platform import RedisClient
 from .keys import RedisClientDepKey
 
 # ----------------------- #
@@ -72,20 +68,3 @@ def redis_counter(
         client=redis_client,
         key_codec=KeyCodec(namespace=namespace),
     )
-
-
-# ....................... #
-
-
-def redis_module(client: RedisClient) -> DepsModule:
-    def module() -> Deps:
-        return Deps(
-            {
-                RedisClientDepKey: client,
-                DocumentCacheDepKey: redis_document_cache,
-                CounterDepKey: redis_counter,
-                IdempotencyDepKey: redis_idempotency,
-            }
-        )
-
-    return module

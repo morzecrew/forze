@@ -1,6 +1,6 @@
 from .context import ExecutionContext
 from .deps import Deps, DepsModule, DepsPlan
-from .lifecycle import LifecyclePlan
+from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
 from .plan import UsecasePlan
 from .registry import UsecaseRegistry
 from .resolvers import counter, doc, storage, txmanager
@@ -28,4 +28,6 @@ __all__ = [
     "DepsPlan",
     "Deps",
     "DepsModule",
+    "LifecycleHook",
+    "LifecycleStep",
 ]

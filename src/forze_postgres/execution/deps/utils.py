@@ -3,7 +3,7 @@ from typing import Any, Optional
 from forze.application.contracts.document import DocumentModelSpec, DocumentSearchSpec
 from forze.application.execution import ExecutionContext
 
-from ..kernel.gateways import (
+from ...kernel.gateways import (
     PostgresHistoryGateway,
     PostgresReadGateway,
     PostgresRevBumpStrategy,

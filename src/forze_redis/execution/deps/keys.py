@@ -1,6 +1,6 @@
 from forze.application.contracts.deps import DepKey
 
-from ..kernel.platform import RedisClient
+from ...kernel.platform import RedisClient
 
 # ----------------------- #
 
