@@ -48,17 +48,6 @@ jobs:
         uses: softprops/action-gh-release@v2.5.0
         with:
           body: |
-            Published to OCI (ghcr.io) via PyOCI.
-
-            Install (uv):
-            ```bash
-            export UV_INDEX_PYOCI_USERNAME="..."
-            export UV_INDEX_PYOCI_PASSWORD="..."
-
-            uv add forze==${{ steps.ver.outputs.version }} \
-              --index pyoci=https://pyoci.com/ghcr.io/morzecrew/ 
-            ```
-
             ## Changelog
 
             ${{ steps.changelog.outputs.changes }}
