@@ -84,7 +84,7 @@ class TestUsecaseRegistry:
         assert not reg.exists("get")
 
     def test_resolve_returns_usecase(self) -> None:
-        from forze.application.contracts.deps import Deps
+        from forze.application.execution import Deps
 
         reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase())
         ctx = ExecutionContext(deps=Deps())
@@ -92,7 +92,7 @@ class TestUsecaseRegistry:
         assert isinstance(uc, StubUsecase)
 
     def test_resolve_unregistered_raises(self) -> None:
-        from forze.application.contracts.deps import Deps
+        from forze.application.execution import Deps
         from forze.base.errors import CoreError
 
         reg = UsecaseRegistry()

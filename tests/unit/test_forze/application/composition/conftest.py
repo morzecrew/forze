@@ -6,7 +6,7 @@ because build_document_registry uses doc(ctx, spec) which invokes these.
 
 import pytest
 
-from forze.application.contracts.deps import Deps
+from forze.application.execution import Deps
 from forze.application.execution import ExecutionContext
 
 from .._stubs import (

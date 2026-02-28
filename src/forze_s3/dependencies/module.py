@@ -1,10 +1,9 @@
-from forze.application.contracts.deps import Deps
 from forze.application.contracts.storage import (
     StorageDepKey,
     StorageDepPort,
     StoragePort,
 )
-from forze.application.execution import ExecutionContext
+from forze.application.execution import Deps, DepsModule, ExecutionContext
 from forze.base.typing import conforms_to
 
 from ..adapters import S3StorageAdapter
@@ -24,10 +23,13 @@ def s3_storage(context: ExecutionContext, bucket: str) -> StoragePort:
 # ....................... #
 
 
-def s3_module(client: S3Client) -> Deps:
-    return Deps(
-        {
-            S3ClientDepKey: client,
-            StorageDepKey: s3_storage,
-        }
-    )
+def s3_module(client: S3Client) -> DepsModule:
+    def module() -> Deps:
+        return Deps(
+            {
+                S3ClientDepKey: client,
+                StorageDepKey: s3_storage,
+            }
+        )
+
+    return module

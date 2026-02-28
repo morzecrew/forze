@@ -2,7 +2,8 @@
 
 import pytest
 
-from forze.application.contracts.deps import DepKey, Deps
+from forze.application.contracts.deps import DepKey
+from forze.application.execution import Deps
 from forze.base.errors import CoreError
 
 # ----------------------- #

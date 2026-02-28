@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.contracts.deps import Deps
+from forze.application.execution import Deps
 from forze.application.execution import ExecutionContext
 
 from ._stubs import (

@@ -1,53 +1,36 @@
-from enum import StrEnum
 from typing import (
     Any,
     Callable,
-    ClassVar,
-    Generic,
     Literal,
     Optional,
-    Protocol,
     Self,
     TypeVar,
+    cast,
     final,
     overload,
 )
 
 import attrs
 
+from forze.application.contracts.deps import DepKey, DepsPort
 from forze.base.errors import CoreError
 
 # ----------------------- #
 
 T = TypeVar("T")
-SpecT = TypeVar("SpecT")
-PortT = TypeVar("PortT")
-DepPortT = TypeVar("DepPortT")
-
-RoutingKey = str | StrEnum
-Selector = Callable[[SpecT], RoutingKey]
 
 # ....................... #
 
 
 @final
-@attrs.define(slots=True, frozen=True)
-class DepKey[T]:
-    """Typed key used to identify dependencies in the kernel.
+@attrs.define(slots=True)
+class Deps(DepsPort):
+    """In-memory dependency container used by the kernel."""
 
-    The ``name`` is only used for diagnostics; type information is carried
-    through the type parameter ``T``.
-    """
+    deps: dict[DepKey[Any], Any] = attrs.field(factory=dict)
+    """Dependencies by key (type-parameterized)."""
 
-    name: str
-    """Name of the dependency."""
-
-
-# ....................... #
-
-
-class DepsPort(Protocol):
-    """Abstract access to dependency resolution."""
+    # ....................... #
 
     @overload
     def register(
@@ -100,7 +83,20 @@ class DepsPort(Protocol):
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If the dependency is already registered.
         """
-        ...
+
+        if key in self.deps:
+            raise CoreError(f"Dependency {key.name} already registered")
+
+        new = dict(self.deps)
+        new[key] = dep
+
+        if inplace:
+            self.deps = new
+            return
+
+        else:
+            new_instance = type(self)(deps=new)
+            return new_instance
 
     # ....................... #
 
@@ -149,104 +145,108 @@ class DepsPort(Protocol):
         :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
         :raises CoreError: If any of the dependencies are already registered.
         """
-        ...
+
+        already_registered = set(self.deps.keys()).intersection(deps.keys())
+
+        if already_registered:
+            raise CoreError(
+                f"Dependencies are already registered for keys: {already_registered}"
+            )
+
+        new = dict(self.deps)
+        new.update(deps)
+
+        if inplace:
+            self.deps = new
+            return
+
+        else:
+            new_instance = type(self)(deps=new)
+            return new_instance
 
     # ....................... #
 
     def provide(self, key: DepKey[T]) -> T:
-        """Return the dependency instance registered under ``key``."""
-        ...
+        """Return a dependency value for the given key.
+
+        :param key: Dependency key identifying the provider.
+        :returns: Cached or newly constructed instance of the dependency.
+        :raises CoreError: If the dependency is not registered.
+        """
+
+        dep = self.deps.get(key)
+
+        if not dep:
+            raise CoreError(f"Dependency {key.name} not found")
+
+        return cast(T, dep)
 
     # ....................... #
 
     def exists(self, key: DepKey[T]) -> bool:
         """Return ``True`` if the dependency is registered."""
-        ...
+
+        return key in self.deps
 
     # ....................... #
 
     @classmethod
     def merge(cls, *deps: Self) -> Self:
         """Merge multiple dependency containers into a single container."""
-        ...
+
+        acc: dict[DepKey[Any], Any] = {}
+
+        for d in deps:
+            overlap = set(acc.keys()).intersection(d.deps.keys())
+
+            if overlap:
+                names = ", ".join(k.name for k in overlap)
+                raise CoreError(f"Conflicting dependencies: {names}")
+
+            acc.update(d.deps)
+
+        return cls(deps=acc)
 
     # ....................... #
 
     def without(self, key: DepKey[T]) -> Self:
         """Create a new dependency container without the given key."""
-        ...
+
+        new = dict(self.deps)
+        new.pop(key)
+
+        return type(self)(deps=new)
 
     # ....................... #
 
     def empty(self) -> bool:
         """Return ``True`` if the dependency container is empty."""
-        ...
+
+        return len(self.deps) == 0
 
 
 # ....................... #
 
+DepsModule = Callable[[], Deps]
+"""Function that returns a dependency container."""
 
+
+@final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class DepRouter(Generic[SpecT, DepPortT]):
-    """Dependency router used to select and route dependencies based on a specification."""
+class DepsPlan:
+    """Declarative plan for building dependency containers."""
 
-    selector: Selector[SpecT]
-    """Function to select the routing key based on the specification."""
-
-    routes: dict[RoutingKey, DepPortT]
-    """Mapping from routing key to dependency container."""
-
-    default: RoutingKey
-    """Default routing key to use if the selector does not return a valid routing key."""
-
-    dep_key: ClassVar[DepKey[Any]]
-    """Dependency key to use for the router."""
+    modules: tuple[DepsModule, ...] = attrs.field(factory=tuple)
 
     # ....................... #
 
-    def __attrs_post_init__(self):
-        if self.default not in self.routes:
-            raise CoreError(f"Default routing key `{self.default}` not found")
+    def with_modules(self, *modules: DepsModule) -> Self:
+        return attrs.evolve(self, modules=(*self.modules, *modules))
 
     # ....................... #
 
-    def _select(self, spec: SpecT) -> DepPortT:
-        sel = self.selector(spec)
+    def build(self) -> Deps:
+        if not self.modules:
+            return Deps()
 
-        return self.routes.get(sel) or self.routes[self.default]
-
-    # ....................... #
-
-    @classmethod
-    def from_deps(
-        cls,
-        *,
-        deps: dict[RoutingKey, DepsPort],
-        selector: Selector[SpecT],
-        default: RoutingKey,
-    ) -> tuple[Self, Optional[DepsPort]]:
-        """Create a new dependency router from a dictionary of dependencies.
-
-        :param deps: Dictionary of dependencies to use for the router.
-        :param selector: Function to select the routing key based on the specification.
-        :param default: Default routing key to use if the selector does not return a valid routing key.
-        :returns: A tuple containing the new router and the remainder of dependencies.
-        """
-
-        routes: dict[RoutingKey, DepPortT] = {}
-        glob_remainder: Optional[DepsPort] = None
-
-        for key, dep in deps.items():
-            routes[key] = dep.provide(cls.dep_key)
-            remainder = dep.without(cls.dep_key)
-
-            if glob_remainder is None:
-                glob_remainder = remainder
-
-            else:
-                glob_remainder = glob_remainder.merge(glob_remainder, remainder)
-
-        if glob_remainder is not None and glob_remainder.empty():
-            glob_remainder = None
-
-        return cls(selector=selector, routes=routes, default=default), glob_remainder
+        return Deps.merge(*(m() for m in self.modules))

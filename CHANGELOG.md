@@ -15,9 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exports in `forze_postgres` and `forze_redis`: `postgres_module`, `PostgresClient`, `PostgresConfig`, `redis_module`, `RedisClient`, `RedisConfig`.
 - `IdempotencyDepKey` in `forze.application.contracts.idempotency` for registering idempotency implementation in the execution context.
 - `forze_fastapi.routing.routes` with `IdempotentRoute` and `make_idempotent_route_class` for route-level idempotency (replaces endpoint wrapping).
+- `DepsModule`, `DepsPlan` in `forze.application.execution.deps` for dependency composition.
+- `LifecyclePlan` and `LifecycleStep` in `forze.application.execution.lifecycle` for startup/shutdown hooks.
+- `ExecutionRuntime` in `forze.application.execution.runtime` combining deps plan, lifecycle, and context scope.
 
 ### Changed
 
+- `Deps` moved from `forze.application.contracts.deps` to `forze.application.execution`. Update imports accordingly.
+- `postgres_module`, `redis_module`, `s3_module` now return `DepsModule` (callable returning `Deps`) instead of `Deps` directly.
+- `DepRouter.from_deps` now accepts `DepsPort` and returns optional remainder.
 - `DTOSpec` renamed to `DocumentDTOSpec` in `forze.application.composition.document`. Update imports accordingly.
 - Document router: request body params now use `Body(...)` with `override_annotations` for correct OpenAPI schema generation.
 - `ForzeAPIRouter` and `build_document_router` no longer accept idempotency parameters; idempotency is applied via custom route class and resolved from `ExecutionContext` via `IdempotencyDepKey`. Register your `IdempotencyDepPort` with the key.

@@ -1,6 +1,5 @@
 from typing import Any, Optional
 
-from forze.application.contracts.deps import Deps
 from forze.application.contracts.document import (
     DocumentCachePort,
     DocumentDepKey,
@@ -13,7 +12,7 @@ from forze.application.contracts.tx import (
     TxManagerDepPort,
     TxManagerPort,
 )
-from forze.application.execution import ExecutionContext
+from forze.application.execution import Deps, DepsModule, ExecutionContext
 from forze.base.typing import conforms_to
 
 from ..adapters import PostgresDocumentAdapter, PostgresTxManagerAdapter
@@ -80,17 +79,20 @@ def postgres_module(
     client: PostgresClient,
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE,
-):
+) -> DepsModule:
     # shared types provider for all adapters bound to this client
     types_provider = PostgresTypesProvider(client=client)
 
-    return Deps(
-        {
-            PostgresClientDepKey: client,
-            PostgresTypesProviderDepKey: types_provider,
-            TxManagerDepKey: postgres_txmanager,
-            DocumentDepKey: postgres_document_configurable(
-                rev_bump_strategy=rev_bump_strategy
-            ),
-        }
-    )
+    def module() -> Deps:
+        return Deps(
+            {
+                PostgresClientDepKey: client,
+                PostgresTypesProviderDepKey: types_provider,
+                TxManagerDepKey: postgres_txmanager,
+                DocumentDepKey: postgres_document_configurable(
+                    rev_bump_strategy=rev_bump_strategy
+                ),
+            }
+        )
+
+    return module

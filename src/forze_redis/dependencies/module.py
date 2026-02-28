@@ -6,7 +6,6 @@ from forze.application.contracts.counter import (
     CounterDepPort,
     CounterPort,
 )
-from forze.application.contracts.deps import Deps
 from forze.application.contracts.document import (
     DocumentCacheDepKey,
     DocumentCacheDepPort,
@@ -18,7 +17,7 @@ from forze.application.contracts.idempotency import (
     IdempotencyDepPort,
     IdempotencyPort,
 )
-from forze.application.execution import ExecutionContext
+from forze.application.execution import Deps, DepsModule, ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
 
@@ -78,12 +77,15 @@ def redis_counter(
 # ....................... #
 
 
-def redis_module(client: RedisClient) -> Deps:
-    return Deps(
-        {
-            RedisClientDepKey: client,
-            DocumentCacheDepKey: redis_document_cache,
-            CounterDepKey: redis_counter,
-            IdempotencyDepKey: redis_idempotency,
-        }
-    )
+def redis_module(client: RedisClient) -> DepsModule:
+    def module() -> Deps:
+        return Deps(
+            {
+                RedisClientDepKey: client,
+                DocumentCacheDepKey: redis_document_cache,
+                CounterDepKey: redis_counter,
+                IdempotencyDepKey: redis_idempotency,
+            }
+        )
+
+    return module
