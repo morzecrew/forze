@@ -3,8 +3,8 @@
 from .diff import (
     apply_dict_patch,
     calculate_dict_difference,
-    collect_touched_paths_from_patch,
-    has_path_conflict,
+    has_hybrid_patch_conflict,
+    split_touches_from_merge_patch,
 )
 from .pydantic import (
     pydantic_dump,
@@ -22,6 +22,6 @@ __all__ = [
     "pydantic_field_names",
     "pydantic_validate",
     "pydantic_model_hash",
-    "collect_touched_paths_from_patch",
-    "has_path_conflict",
+    "split_touches_from_merge_patch",
+    "has_hybrid_patch_conflict",
 ]

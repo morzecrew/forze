@@ -10,11 +10,22 @@ from uuid import UUID
 
 import attrs
 from psycopg import sql
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-from forze.base.errors import ConflictError, CoreError, ValidationError
+from forze.base.errors import (
+    ConcurrencyError,
+    ConflictError,
+    CoreError,
+    ValidationError,
+)
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_dump, pydantic_validate
-from forze.domain.constants import REV_FIELD, SOFT_DELETE_FIELD
+from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from .base import PostgresGateway
@@ -24,6 +35,18 @@ from .read import PostgresReadGateway
 # ----------------------- #
 
 PostgresRevBumpStrategy = Literal["database", "application"]
+
+# ....................... #
+
+
+def optimistic_retry(*, attempts: int = 3):
+    return retry(
+        retry=retry_if_exception_type(ConcurrencyError),
+        stop=stop_after_attempt(attempts),
+        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
+        reraise=True,
+    )
+
 
 # ....................... #
 
@@ -95,7 +118,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 for (c, _, u), h in zip(to_check, hist_records, strict=True):
                     if not c.validate_historical_consistency(h, u):
                         raise ConflictError(
-                            "Historical consistency violation during update"
+                            "Historical consistency violation during update",
+                            code="historical_consistency_violation",
                         )
 
     # ....................... #
@@ -224,6 +248,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    def __bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
+        if self.rev_bump_strategy == "application":
+            diff[REV_FIELD] = current.rev + 1
+
+        return diff
+
+    # ....................... #
+
+    @optimistic_retry()
     async def __patch(
         self,
         pk: UUID,
@@ -246,9 +279,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not diff:
             return current
 
-        #! TODO: validate this
-        if self.rev_bump_strategy == "application":
-            diff["rev"] = current.rev + 1
+        diff = self.__bump_rev(current, diff)
 
         diff = await self.adapt_payload_for_write(diff)
         set_parts: list[sql.Composable] = []
@@ -274,7 +305,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
 
         if row is None:
-            raise CoreError("Не удалось обновить запись")  #! TODO: translate
+            raise ConcurrencyError("Failed to update record")
 
         res = pydantic_validate(self.model, row)
         await self._write_history(res)
@@ -295,6 +326,60 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    async def __patch_group(
+        self,
+        key: tuple[str, ...],
+        batch: list[tuple[UUID, int, JsonDict]],
+    ) -> None:
+        cols = [ID_FIELD, REV_FIELD] + list(key)
+        values_rows: list[sql.Composable] = []
+        params: list[Any] = []
+
+        for _id, _rev, d in batch:
+            row_params = [_id, _rev] + [d[k] for k in key]
+            params.extend(row_params)
+            values_rows.append(
+                sql.SQL("(")
+                + sql.SQL(", ").join(sql.Placeholder() for _ in row_params)
+                + sql.SQL(")")
+            )
+
+        set_parts = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
+
+        stmt = sql.SQL(
+            """
+            UPDATE {table} AS t
+            SET {sets}
+            FROM (VALUES {vals}) AS v({cols})
+            WHERE t.{pk} = v.id AND t.{rev} = v.rev
+            RETURNING t.{pk}
+            """
+        ).format(
+            table=self.spec.ident(),
+            sets=set_parts,
+            vals=sql.SQL(", ").join(values_rows),
+            cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
+            pk=self.ident_pk(),
+            rev=self._ident_rev(),
+        )
+
+        rows = await self.client.fetch_all(
+            stmt,
+            params,
+            row_factory="tuple",
+            commit=True,
+        )
+        updated_ids = {r[0] for r in rows}
+        expected_ids = {_id for _id, _, _ in batch}
+
+        missing = expected_ids - updated_ids
+
+        if missing:
+            raise ConcurrencyError("Failed to update records")
+
+    # ....................... #
+
+    @optimistic_retry()
     async def __patch_many(
         self,
         pks: Sequence[UUID],
@@ -307,12 +392,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         if updates is not None and len(pks) != len(updates):
-            raise ValidationError(
-                "Pks и updates должны иметь одинаковую длину"
-            )  #! TODO: translate
+            raise CoreError("Length mismatch between primary keys and updates")
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Pks должны быть уникальными")  #! TODO: translate
+            raise ValidationError("Primary keys must be unique")
 
         currents = await self.read.get_many(pks)
 
@@ -324,11 +407,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for c in currents:
                 _, diff = c.touch()
 
-                #! TODO: validate this
-                if self.rev_bump_strategy == "application":
-                    diff["rev"] = c.rev + 1
-
+                diff = self.__bump_rev(c, diff)
                 diff = await self.adapt_payload_for_write(diff)
+
                 # always the same key so we can handle only one group
                 key = tuple(sorted(diff.keys()))
                 groups[key].append((c.id, c.rev, diff))
@@ -353,11 +434,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 if not diff:
                     continue
 
-                #! TODO: validate this (replace with custom method)
-                if self.rev_bump_strategy == "application":
-                    diff["rev"] = c.rev + 1
-
+                diff = self.__bump_rev(c, diff)
                 diff = await self.adapt_payload_for_write(diff)
+
+                # always the same key so we can handle only one group
                 key = tuple(sorted(diff.keys()))
                 groups[key].append((c.id, c.rev, diff))
 
@@ -367,26 +447,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         for fields_key, rows in groups.items():
             for start in range(0, len(rows), batch_size):
                 batch = rows[start : start + batch_size]
-
-                set_parts = [
-                    sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
-                    for k in fields_key
-                ]
-
-                stmt = sql.SQL("UPDATE {table} SET {sets} WHERE {where}").format(
-                    table=self.spec.ident(),
-                    sets=sql.SQL(", ").join(set_parts),
-                    where=self._where_pk_rev(),
-                )
-
-                params_for_many: list[Sequence[Any]] = []
-
-                for _id, _rev, d in batch:
-                    params = [d[k] for k in fields_key]
-                    params.extend([_id, _rev])
-                    params_for_many.append(params)
-
-                await self.client.execute_many(stmt, params_for_many)
+                await self.__patch_group(fields_key, batch)
 
         res = await self.read.get_many(pks)
         await self._write_history(*res)
@@ -474,15 +535,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
-        current = await self.read.get(pk)
-
-        stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
+        stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = {}").format(
             table=self.spec.ident(),
-            where=self._where_pk_rev(),
+            pk=self.ident_pk(),
         )
-        params = [current.id, current.rev]
 
-        await self.client.execute(stmt, params)
+        await self.client.execute(stmt, [pk])
 
     # ....................... #
 
@@ -496,41 +554,13 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return
 
         if len(pks) != len(set(pks)):
-            raise ValidationError("Pks должны быть уникальными")  #! TODO: translate
+            raise ValidationError("Primary keys must be unique")
 
-        currents = await self.read.get_many(pks)
-        pairs = [(c.id, c.rev) for c in currents]
-        expected = len(pairs)
-        killed_total = 0
-
-        for start in range(0, len(pairs), batch_size):
-            batch = pairs[start : start + batch_size]
-
-            values_sql = sql.SQL(", ").join(
-                sql.SQL("({}, {})").format(sql.Placeholder(), sql.Placeholder())
-                for _ in batch
-            )
-
-            stmt = sql.SQL(
-                """
-                    DELETE FROM {table} AS t
-                    USING (VALUES {vals}) AS v(id, rev)
-                    WHERE t.{pk} = v.id AND t.{rev} = v.rev
-                    """
-            ).format(
+        for start in range(0, len(pks), batch_size):
+            batch = pks[start : start + batch_size]
+            stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = ANY({ids})").format(
                 table=self.spec.ident(),
-                vals=values_sql,
                 pk=self.ident_pk(),
-                rev=self._ident_rev(),
+                ids=sql.Placeholder(),
             )
-
-            params: list[Any] = []
-
-            for _id, _rev in batch:
-                params.extend([_id, _rev])
-
-            killed = await self.client.execute(stmt, params, return_rowcount=True)
-            killed_total += killed
-
-        if killed_total != expected:
-            raise CoreError("Не удалось удалить записи")  #! TODO: translate
+            await self.client.execute(stmt, [list(batch)])

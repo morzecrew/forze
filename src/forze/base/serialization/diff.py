@@ -166,75 +166,6 @@ DictPath = tuple[str, ...]
 """Path into a nested dict as a tuple of keys."""
 
 
-def deep_dict_intersection(
-    a: JsonDict,
-    b: JsonDict,
-    _prefix: DictPath = (),
-) -> set[DictPath]:
-    """Return the set of matching leaf key paths shared by both dictionaries.
-
-    Recursively compares nested dicts; only paths where both values are
-    non-dict (leaf) and equal are included.
-
-    :param a: First dictionary.
-    :param b: Second dictionary.
-    :param _prefix: Internal recursion prefix; do not pass.
-    :returns: Set of key paths where both dicts have the same leaf value.
-    """
-    res: set[DictPath] = set()
-
-    for k in a.keys() & b.keys():
-        va, vb = a[k], b[k]
-        path = _prefix + (k,)
-
-        if isinstance(va, dict) and isinstance(vb, dict):
-            res |= deep_dict_intersection(va, vb, path)  # type: ignore[report-call-arg]
-
-        elif not isinstance(va, dict) and not isinstance(vb, dict):
-            res.add(path)
-
-        else:
-            continue
-
-    return res
-
-
-# ....................... #
-
-
-def collect_touched_paths_from_patch(
-    patch: JsonDict, *, atomic_containers: bool = True
-) -> set[DictPath]:
-    out: set[DictPath] = set()
-
-    def walk(node: Any, prefix: DictPath) -> None:
-        if isinstance(node, dict):
-            for k, v in node.items():  # pyright: ignore[reportUnknownVariableType]
-                if not isinstance(k, str):
-                    k = str(k)  # pyright: ignore[reportUnknownArgumentType]
-
-                p = prefix + (k,)
-
-                if isinstance(v, dict):
-                    if atomic_containers:
-                        out.add(p)
-
-                    else:
-                        walk(v, p)
-
-                out.add(p)
-
-        out.add(prefix)
-
-    walk(patch, ())
-    out.discard(())
-
-    return out
-
-
-# ....................... #
-
-
 def _is_prefix(a: DictPath, b: DictPath) -> bool:
     if len(a) > len(b):
         return False
@@ -242,19 +173,75 @@ def _is_prefix(a: DictPath, b: DictPath) -> bool:
     return b[: len(a)] == a
 
 
+def is_prefix(a: DictPath, b: DictPath) -> bool:
+    return _is_prefix(a, b) or _is_prefix(b, a)
+
+
 # ....................... #
 
 
-def has_path_conflict(a: set[DictPath], b: set[DictPath]) -> bool:
-    if not a or not b:
-        return False
+def split_touches_from_merge_patch(
+    patch: JsonDict,
+) -> tuple[dict[DictPath, Any], set[DictPath]]:
+    scalar_map: dict[DictPath, Any] = {}
+    container_paths: set[DictPath] = set()
 
-    a_sorted = sorted(a, key=len)
-    b_sorted = sorted(b, key=len)
+    def walk(node: Any, prefix: DictPath) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():  # pyright: ignore[reportUnknownVariableType]
+                k = str(k)  # pyright: ignore[reportUnknownArgumentType]
+                p = prefix + (k,)
 
-    for pa in a_sorted:
-        for pb in b_sorted:
-            if _is_prefix(pa, pb) or _is_prefix(pb, pa):
+                if isinstance(v, (dict, list)):
+                    container_paths.add(p)
+
+                else:
+                    scalar_map[p] = v
+
+            return
+
+        if prefix and isinstance(node, (dict, list)):
+            container_paths.add(prefix)
+
+        else:
+            scalar_map[prefix] = node
+
+    walk(patch, ())
+
+    return scalar_map, container_paths
+
+
+# ....................... #
+
+
+def has_hybrid_patch_conflict(
+    a_scalars: dict[DictPath, Any],
+    a_containers: set[DictPath],
+    b_scalars: dict[DictPath, Any],
+    b_containers: set[DictPath],
+) -> bool:
+    for pa in a_containers:
+        for pb in b_containers:
+            if is_prefix(pa, pb):
                 return True
+
+        for pb in b_scalars.keys():
+            if is_prefix(pa, pb):
+                return True
+
+    for pb in b_containers:
+        for pa in a_scalars.keys():
+            if is_prefix(pb, pa):
+                return True
+
+    for pa, va in a_scalars.items():
+        for pb, vb in b_scalars.items():
+            if not is_prefix(pb, pa):
+                continue
+
+            if pa == pb and va == vb:
+                continue
+
+            return True
 
     return False

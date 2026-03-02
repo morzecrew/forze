@@ -15,8 +15,8 @@ from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,
     calculate_dict_difference,
-    collect_touched_paths_from_patch,
-    has_path_conflict,
+    has_hybrid_patch_conflict,
+    split_touches_from_merge_patch,
 )
 
 from ..validation import (
@@ -173,16 +173,19 @@ class Document(CoreModel):
         old_self_diff = calculate_dict_difference(old_state, self_state)
         old_upd_diff = calculate_dict_difference(old_state, old_upd_state)
 
-        self_paths = collect_touched_paths_from_patch(
-            old_self_diff,
-            atomic_containers=True,
+        old_self_scalars, old_self_containers = split_touches_from_merge_patch(
+            old_self_diff
         )
-        upd_paths = collect_touched_paths_from_patch(
-            old_upd_diff,
-            atomic_containers=True,
+        old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(
+            old_upd_diff
         )
 
-        return not has_path_conflict(self_paths, upd_paths)
+        return not has_hybrid_patch_conflict(
+            old_self_scalars,
+            old_self_containers,
+            old_upd_scalars,
+            old_upd_containers,
+        )
 
 
 # ....................... #

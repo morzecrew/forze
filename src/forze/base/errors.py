@@ -103,6 +103,17 @@ class InfrastructureError(CoreError):
 # ....................... #
 
 
+@attrs.define(slots=True, eq=False)
+class ConcurrencyError(CoreError):
+    """Error raised when a concurrency conflict occurs."""
+
+    code: str = "concurrency_error"
+    message: str = "Concurrency conflict occurred"
+
+
+# ....................... #
+
+
 class ErrorHandler(Protocol):
     """Callable protocol for converting exceptions into :class:`CoreError`."""
 

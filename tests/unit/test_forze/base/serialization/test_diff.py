@@ -2,7 +2,8 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization.diff import (
     apply_dict_patch,
     calculate_dict_difference,
-    deep_dict_intersection,
+    has_hybrid_patch_conflict,
+    split_touches_from_merge_patch,
 )
 
 
@@ -25,10 +26,17 @@ def test_calculate_dict_difference_simple_changes_and_additions() -> None:
     assert diff["c"] == 5
 
 
-def test_deep_dict_intersection_returns_matching_leaf_paths() -> None:
-    a: JsonDict = {"a": {"x": 1, "y": 2}, "b": 3}
-    b: JsonDict = {"a": {"x": 10, "z": 3}, "b": 3}
+def test_split_touches_from_merge_patch_separates_scalars_and_containers() -> None:
+    patch: JsonDict = {"a": {"x": 1, "y": 2}, "b": 3}
+    scalars, containers = split_touches_from_merge_patch(patch)
+    assert ("b",) in scalars and scalars[("b",)] == 3
+    assert ("a",) in containers
 
-    intersection = deep_dict_intersection(a, b)
-    assert {("a", "x"), ("b",)}.issubset(intersection)
+
+def test_has_hybrid_patch_conflict_detects_prefix_overlap() -> None:
+    a_scalars = {("a",): 1}
+    a_containers = set()
+    b_scalars = {("a", "x"): 2}
+    b_containers = set()
+    assert has_hybrid_patch_conflict(a_scalars, a_containers, b_scalars, b_containers)
 
