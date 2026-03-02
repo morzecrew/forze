@@ -20,8 +20,8 @@ from .utils import doc_search_gw, doc_write_gw, read_gw
 
 def postgres_document_configurable(
     *,
-    rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE,
-    history_write_strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE,
+    rev_bump_strategy: PostgresRevBumpStrategy = "database",
+    history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
     @conforms_to(DocumentDepPort)
     def postgres_document(

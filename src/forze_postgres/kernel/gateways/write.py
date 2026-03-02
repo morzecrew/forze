@@ -1,5 +1,3 @@
-from enum import StrEnum
-
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -7,7 +5,7 @@ require_psycopg()
 # ....................... #
 
 from collections import defaultdict
-from typing import Any, Optional, Sequence, final
+from typing import Any, Literal, Optional, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
@@ -25,16 +23,7 @@ from .read import PostgresReadGateway
 
 # ----------------------- #
 
-
-class PostgresRevBumpStrategy(StrEnum):
-    """Strategy for bumping the revision number."""
-
-    DATABASE = "database"
-    """Bump revision using database triggers."""
-
-    APPLICATION = "application"
-    """Bump revision using application logic."""
-
+PostgresRevBumpStrategy = Literal["database", "application"]
 
 # ....................... #
 
@@ -48,7 +37,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     create_dto: type[C]
     update_dto: type[U]
     history: Optional[PostgresHistoryGateway[D]] = None
-    rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE
+    rev_bump_strategy: PostgresRevBumpStrategy = "database"
 
     # ....................... #
 
@@ -73,6 +62,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 raise CoreError(
                     "Table specification mismatch. Write gateway and nested history gateway must have the same specification."
                 )
+
+        if self.rev_bump_strategy not in get_args(PostgresRevBumpStrategy):
+            raise CoreError(f"Invalid revision bump strategy: {self.rev_bump_strategy}")
 
     # ....................... #
 
@@ -255,7 +247,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return current
 
         #! TODO: validate this
-        if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
+        if self.rev_bump_strategy == "application":
             diff["rev"] = current.rev + 1
 
         diff = await self.adapt_payload_for_write(diff)
@@ -333,7 +325,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 _, diff = c.touch()
 
                 #! TODO: validate this
-                if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
+                if self.rev_bump_strategy == "application":
                     diff["rev"] = c.rev + 1
 
                 diff = await self.adapt_payload_for_write(diff)
@@ -362,7 +354,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     continue
 
                 #! TODO: validate this (replace with custom method)
-                if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
+                if self.rev_bump_strategy == "application":
                     diff["rev"] = c.rev + 1
 
                 diff = await self.adapt_payload_for_write(diff)

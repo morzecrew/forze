@@ -19,10 +19,8 @@ from .keys import PostgresClientDepKey, PostgresTypesProviderDepKey
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresDepsModule(DepsModule):
     client: PostgresClient
-    rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE
-    history_write_strategy: PostgresHistoryWriteStrategy = (
-        PostgresHistoryWriteStrategy.DATABASE
-    )
+    rev_bump_strategy: PostgresRevBumpStrategy = "database"
+    history_write_strategy: PostgresHistoryWriteStrategy = "database"
 
     # ....................... #
 

@@ -4,14 +4,13 @@ require_psycopg()
 
 # ....................... #
 
-from enum import StrEnum
-from typing import Any, Sequence, final
+from typing import Any, Literal, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
 from psycopg import sql
 
-from forze.base.errors import NotFoundError, ValidationError
+from forze.base.errors import CoreError, NotFoundError, ValidationError
 from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
@@ -26,16 +25,7 @@ from .spec import PostgresTableSpec
 
 # ----------------------- #
 
-
-class PostgresHistoryWriteStrategy(StrEnum):
-    """Strategy for writing history."""
-
-    DATABASE = "database"
-    """Write history using database triggers."""
-
-    APPLICATION = "application"
-    """Write history using application logic."""
-
+PostgresHistoryWriteStrategy = Literal["database", "application"]
 
 # ....................... #
 
@@ -43,8 +33,14 @@ class PostgresHistoryWriteStrategy(StrEnum):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
-    strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE
+    strategy: PostgresHistoryWriteStrategy = "database"
     target_spec: PostgresTableSpec
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.strategy not in get_args(PostgresHistoryWriteStrategy):
+            raise CoreError(f"Invalid history write strategy: {self.strategy}")
 
     # ....................... #
 
@@ -117,7 +113,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     # ....................... #
 
     async def write(self, data: D) -> None:
-        if self.strategy == PostgresHistoryWriteStrategy.DATABASE:
+        if self.strategy == "database":
             return
 
         record = self._from_data(data)
@@ -139,7 +135,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     # ....................... #
 
     async def write_many(self, data: Sequence[D], *, batch_size: int = 500) -> None:
-        if self.strategy == PostgresHistoryWriteStrategy.DATABASE:
+        if self.strategy == "database":
             return
 
         records = [self._from_data(d) for d in data]

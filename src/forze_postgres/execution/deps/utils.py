@@ -38,7 +38,7 @@ def _doc_history_gw(
     relation: str,
     write_relation: str,
     model: type[Any],
-    history_write_strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE,
+    history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
@@ -83,8 +83,8 @@ def doc_write_gw(
     models: DocumentModelSpec[Any, Any, Any, Any],
     history_relation: Optional[str] = None,
     *,
-    rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE,
-    history_write_strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE,
+    rev_bump_strategy: PostgresRevBumpStrategy = "database",
+    history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
