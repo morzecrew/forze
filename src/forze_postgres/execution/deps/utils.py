@@ -5,6 +5,7 @@ from forze.application.execution import ExecutionContext
 
 from ...kernel.gateways import (
     PostgresHistoryGateway,
+    PostgresHistoryWriteStrategy,
     PostgresReadGateway,
     PostgresRevBumpStrategy,
     PostgresSearchGateway,
@@ -32,12 +33,20 @@ def read_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
 # ....................... #
 
 
-def _doc_history_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
+def _doc_history_gw(
+    ctx: ExecutionContext,
+    relation: str,
+    write_relation: str,
+    model: type[Any],
+    history_write_strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE,
+):
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
 
     return PostgresHistoryGateway(
         spec=PostgresTableSpec.from_relation(relation),
+        target_spec=PostgresTableSpec.from_relation(write_relation),
+        strategy=history_write_strategy,
         client=client,
         model=model,
         types_provider=types_provider,
@@ -75,6 +84,7 @@ def doc_write_gw(
     history_relation: Optional[str] = None,
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE,
+    history_write_strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE,
 ):
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
@@ -83,7 +93,13 @@ def doc_write_gw(
     hist = None
 
     if history_relation:
-        hist = _doc_history_gw(ctx, history_relation, models["domain"])
+        hist = _doc_history_gw(
+            ctx,
+            history_relation,
+            relation,
+            models["domain"],
+            history_write_strategy,
+        )
 
     return PostgresWriteGateway(
         spec=PostgresTableSpec.from_relation(relation),

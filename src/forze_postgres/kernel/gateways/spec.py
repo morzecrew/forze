@@ -42,6 +42,14 @@ class PostgresTableSpec:
 
     # ....................... #
 
+    def string(self) -> str:
+        if self.schema:
+            return f"{self.schema}.{self.table}"
+
+        return self.table
+
+    # ....................... #
+
     @classmethod
     def from_relation(cls, relation: str) -> Self:
         try:
@@ -54,6 +62,7 @@ class PostgresTableSpec:
 
 
 # ....................... #
+#! should we add "type" field for search index? so then we can adjust ...
 
 
 @final  #! Questionable as it's suitable only for pgroonga search

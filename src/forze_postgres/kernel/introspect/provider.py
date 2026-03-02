@@ -87,9 +87,7 @@ class PostgresTypesProvider:
         rows = await self.client.fetch_all(stmt, [schema, table], row_factory="dict")
 
         if not rows:
-            raise CoreError(
-                f"Таблица не найдена или не имеет столбцов: {schema}.{table}"
-            )
+            raise CoreError(f"Table not found or has no columns: {schema}.{table}")
 
         out: dict[str, PostgresType] = {}
 

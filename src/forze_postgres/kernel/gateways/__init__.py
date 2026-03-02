@@ -1,4 +1,4 @@
-from .history import PostgresHistoryGateway
+from .history_v2 import PostgresHistoryGateway, PostgresHistoryWriteStrategy
 from .read import PostgresReadGateway
 from .search import PostgresSearchGateway
 from .spec import PostgresSearchIndexSpec, PostgresTableSpec
@@ -14,4 +14,5 @@ __all__ = [
     "PostgresSearchGateway",
     "PostgresWriteGateway",
     "PostgresRevBumpStrategy",
+    "PostgresHistoryWriteStrategy",
 ]

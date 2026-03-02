@@ -11,7 +11,7 @@ from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 
 from ...adapters import PostgresDocumentAdapter, PostgresTxManagerAdapter
-from ...kernel.gateways import PostgresRevBumpStrategy
+from ...kernel.gateways import PostgresHistoryWriteStrategy, PostgresRevBumpStrategy
 from .keys import PostgresClientDepKey
 from .utils import doc_search_gw, doc_write_gw, read_gw
 
@@ -21,6 +21,7 @@ from .utils import doc_search_gw, doc_write_gw, read_gw
 def postgres_document_configurable(
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE,
+    history_write_strategy: PostgresHistoryWriteStrategy = PostgresHistoryWriteStrategy.DATABASE,
 ):
     @conforms_to(DocumentDepPort)
     def postgres_document(
@@ -37,6 +38,7 @@ def postgres_document_configurable(
             spec.models,
             spec.relations.get("history"),
             rev_bump_strategy=rev_bump_strategy,
+            history_write_strategy=history_write_strategy,
         )
 
         if spec.search:

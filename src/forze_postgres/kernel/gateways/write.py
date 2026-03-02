@@ -13,14 +13,14 @@ from uuid import UUID
 import attrs
 from psycopg import sql
 
-from forze.base.errors import CoreError, ValidationError
+from forze.base.errors import ConflictError, CoreError, ValidationError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.domain.constants import REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from .base import PostgresGateway
-from .history import PostgresHistoryGateway
+from .history_v2 import PostgresHistoryGateway
 from .read import PostgresReadGateway
 
 # ----------------------- #
@@ -63,10 +63,48 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
             )
 
-        if self.history is not None and self.client is not self.history.client:
-            raise CoreError(
-                "Client mismatch. Write gateway and nested history gateway must use the same client."
-            )
+        if self.history is not None:
+            if self.client is not self.history.client:
+                raise CoreError(
+                    "Client mismatch. Write gateway and nested history gateway must use the same client."
+                )
+
+            if self.spec != self.history.target_spec:
+                raise CoreError(
+                    "Table specification mismatch. Write gateway and nested history gateway must have the same specification."
+                )
+
+    # ....................... #
+
+    async def _write_history(self, *data: D) -> None:
+        if self.history is not None:
+            await self.history.write_many(data)
+
+    # ....................... #
+
+    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
+        if self.history is not None:
+            currents = [c for c, _, _ in data]
+            revs = [r for _, r, _ in data]
+            updates = [u for _, _, u in data]
+
+            to_check = [
+                (c, r, u)
+                for c, r, u in zip(currents, revs, updates, strict=True)
+                if r != c.rev
+            ]
+
+            if to_check:
+                pks_to_check = [c.id for c, _, _ in to_check]
+                revs_to_check = [r for _, r, _ in to_check]
+
+                hist_records = await self.history.read_many(pks_to_check, revs_to_check)
+
+                for (c, _, u), h in zip(to_check, hist_records, strict=True):
+                    if not c.validate_historical_consistency(h, u):
+                        raise ConflictError(
+                            "Historical consistency violation during update"
+                        )
 
     # ....................... #
 
@@ -74,8 +112,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         return sql.Identifier(REV_FIELD)
 
     # ....................... #
+    #! TODO: get rid of this or replace with mixin check (subclass or so)
 
-    def supports_soft_delete(self) -> bool:
+    def supports_soft_delete(
+        self,
+    ) -> bool:
         return SOFT_DELETE_FIELD in self.read_fields
 
     # ....................... #
@@ -99,7 +140,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
-        insert_data = pydantic_dump(model)
+        insert_data_raw = pydantic_dump(model)  #! mode=python ??????
+        insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
         cols = [sql.Identifier(k) for k in insert_data.keys()]
         vals = [sql.Placeholder() for _ in insert_data.keys()]
@@ -117,9 +159,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
 
         if row is None:
-            raise CoreError("Не удалось создать запись")  #! TODO: translate
+            raise CoreError("Failed to create a record")
 
-        return pydantic_validate(self.model, row)
+        res = pydantic_validate(self.model, row)
+        await self._write_history(res)
+
+        return res
 
     # ....................... #
 
@@ -133,7 +178,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         models = [self._from_cdto(d) for d in dtos]
-        insert_data = [pydantic_dump(m) for m in models]
+        insert_data_raw = [pydantic_dump(m) for m in models]
+        insert_data = [await self.adapt_payload_for_write(d) for d in insert_data_raw]
 
         keys = list(insert_data[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]
@@ -172,15 +218,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if len(rows) != len(batch):
-                raise CoreError(  #! TODO: translate
-                    "Не удалось создать записи (несовпадение количества строк)"
-                )
+                raise CoreError("Failed to create records (mismatch in number of rows)")
 
             result.extend(pydantic_validate(self.model, row) for row in rows)
             offset += batch_size
 
         if len(result) != len(dtos):
-            raise CoreError("Не удалось создать все записи")  #! TODO: translate
+            raise CoreError("Failed to create all records")
+
+        await self._write_history(*result)
 
         return result
 
@@ -196,13 +242,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         current = await self.read.get(pk)
 
         if update is not None:
-            if self.history is not None and rev is not None:
-                await self.history.validate(
-                    target_spec=self.spec,
-                    current=current,
-                    update=update,
-                    rev=rev,
-                )
+            if rev is not None:
+                await self._validate_history((current, rev, update))
 
             _, diff = current.update(update)
 
@@ -217,6 +258,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
             diff["rev"] = current.rev + 1
 
+        diff = await self.adapt_payload_for_write(diff)
         set_parts: list[sql.Composable] = []
         params: list[Any] = []
 
@@ -242,7 +284,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if row is None:
             raise CoreError("Не удалось обновить запись")  #! TODO: translate
 
-        return pydantic_validate(self.model, row)
+        res = pydantic_validate(self.model, row)
+        await self._write_history(res)
+
+        return res
 
     # ....................... #
 
@@ -291,19 +336,24 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
                     diff["rev"] = c.rev + 1
 
+                diff = await self.adapt_payload_for_write(diff)
                 # always the same key so we can handle only one group
                 key = tuple(sorted(diff.keys()))
                 groups[key].append((c.id, c.rev, diff))
 
         else:
             # if revisions are provided, validate historical consistency
-            if self.history is not None and revs is not None:
-                await self.history.validate_many(
-                    target_spec=self.spec,
-                    currents=currents,
-                    updates=updates,
-                    revs=revs,
-                )
+            if revs is not None:
+                data = [
+                    (c, r, u)
+                    for c, r, u in zip(
+                        currents,
+                        revs,
+                        updates,
+                        strict=True,
+                    )
+                ]
+                await self._validate_history(*data)
 
             for c, u in zip(currents, updates):
                 _, diff = c.update(u)
@@ -315,6 +365,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 if self.rev_bump_strategy == PostgresRevBumpStrategy.APPLICATION:
                     diff["rev"] = c.rev + 1
 
+                diff = await self.adapt_payload_for_write(diff)
                 key = tuple(sorted(diff.keys()))
                 groups[key].append((c.id, c.rev, diff))
 
@@ -345,7 +396,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 await self.client.execute_many(stmt, params_for_many)
 
-        return await self.read.get_many(pks)
+        res = await self.read.get_many(pks)
+        await self._write_history(*res)
+
+        return res
 
     # ....................... #
 
@@ -375,9 +429,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> D:
         if not self.supports_soft_delete():
-            raise CoreError(
-                "Мягкое удаление не поддерживается для этой модели"
-            )  #! TODO: translate
+            raise CoreError("Soft deletion is not supported for this model")
 
         return await self.__patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
 
@@ -391,9 +443,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
-            raise CoreError(
-                "Мягкое удаление не поддерживается для этой модели"
-            )  #! TODO: translate
+            raise CoreError("Soft deletion is not supported for this model")
 
         return await self.__patch_many(
             pks,
@@ -406,9 +456,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> D:
         if not self.supports_soft_delete():
-            raise CoreError(
-                "Мягкое удаление не поддерживается для этой модели"
-            )  #! TODO: translate
+            raise CoreError("Soft deletion is not supported for this model")
 
         return await self.__patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
 
@@ -422,9 +470,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
-            raise CoreError(
-                "Мягкое удаление не поддерживается для этой модели"
-            )  #! TODO: translate
+            raise CoreError("Soft deletion is not supported for this model")
 
         return await self.__patch_many(
             pks,

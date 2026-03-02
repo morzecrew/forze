@@ -1,3 +1,4 @@
+from forze.base.primitives import JsonDict
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -8,7 +9,9 @@ from functools import cached_property
 from typing import Any, Optional, Sequence
 
 import attrs
+import orjson
 from psycopg import sql
+from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
 from forze.application.contracts.query import FilterExpression, SortExpression
@@ -17,7 +20,7 @@ from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
-from ..introspect import PostgresTypesProvider
+from ..introspect import PostgresColumnTypes, PostgresType, PostgresTypesProvider
 from ..platform import PostgresClient
 from ..query import PsycopgQueryRenderer
 from .spec import PostgresTableSpec
@@ -108,3 +111,39 @@ class PostgresGateway[M: BaseModel]:
             raise CoreError(f"Неверные поля: {bad}")
 
         return sql.SQL(", ").join(sql.Identifier(f) for f in use)
+
+    # ....................... #
+
+    async def column_types(self) -> PostgresColumnTypes:
+        return await self.types_provider.get(
+            schema=self.spec.schema,
+            table=self.spec.table,
+        )
+
+    # ....................... #
+
+    def adapt_value_for_write(self, v: Any, *, t: Optional[PostgresType]) -> Any:
+        if v is None or t is None:
+            return v
+
+        if t.base in {"jsonb", "json"}:
+            wrapper = Jsonb if t.base == "jsonb" else Json
+
+            if not t.is_array:
+                return wrapper(v, dumps=orjson.dumps)
+
+            else:
+                return [wrapper(x, dumps=orjson.dumps) for x in v]
+
+        return v
+
+    # ....................... #
+
+    async def adapt_payload_for_write(self, payload: JsonDict) -> JsonDict:
+        types = await self.column_types()
+        out: JsonDict = dict(payload)
+
+        for k, v in out.items():
+            out[k] = self.adapt_value_for_write(v, t=types.get(k))
+
+        return out

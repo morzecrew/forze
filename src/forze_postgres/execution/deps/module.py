@@ -6,7 +6,7 @@ from forze.application.contracts.document import DocumentDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.gateways import PostgresRevBumpStrategy
+from ...kernel.gateways import PostgresHistoryWriteStrategy, PostgresRevBumpStrategy
 from ...kernel.introspect import PostgresTypesProvider
 from ...kernel.platform import PostgresClient
 from .deps import postgres_document_configurable, postgres_txmanager
@@ -20,6 +20,9 @@ from .keys import PostgresClientDepKey, PostgresTypesProviderDepKey
 class PostgresDepsModule(DepsModule):
     client: PostgresClient
     rev_bump_strategy: PostgresRevBumpStrategy = PostgresRevBumpStrategy.DATABASE
+    history_write_strategy: PostgresHistoryWriteStrategy = (
+        PostgresHistoryWriteStrategy.DATABASE
+    )
 
     # ....................... #
 
@@ -30,7 +33,8 @@ class PostgresDepsModule(DepsModule):
                 PostgresTypesProviderDepKey: PostgresTypesProvider(client=self.client),
                 TxManagerDepKey: postgres_txmanager,
                 DocumentDepKey: postgres_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy
+                    rev_bump_strategy=self.rev_bump_strategy,
+                    history_write_strategy=self.history_write_strategy,
                 ),
             }
         )

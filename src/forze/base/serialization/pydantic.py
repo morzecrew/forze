@@ -1,7 +1,7 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import orjson
 from pydantic import BaseModel
@@ -39,12 +39,14 @@ class _PydanticDumpExcludeOptions(TypedDict, total=False):
 def pydantic_dump(
     obj: BaseModel,
     *,
+    mode: Literal["json", "python"] = "python",
     exclude: _PydanticDumpExcludeOptions = {},
 ) -> dict[str, Any]:
     """Dump a Pydantic model into a JSON-compatible ``dict``.
 
     :param obj: Model instance to serialize.
     :param exclude: Fine-grained control over which fields are omitted.
+    :param mode: Serialization mode.
     :returns: JSON-ready dictionary representation.
     """
 
@@ -53,7 +55,7 @@ def pydantic_dump(
         exclude_none=exclude.get("none", False),
         exclude_defaults=exclude.get("defaults", False),
         exclude_computed_fields=exclude.get("computed_fields", False),
-        mode="json",
+        mode=mode,
     )
 
 
