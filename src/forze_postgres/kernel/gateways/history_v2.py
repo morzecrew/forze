@@ -167,3 +167,4 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             )
 
             await self.client.execute(stmt, params)
+            offset += batch_size
