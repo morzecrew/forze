@@ -56,8 +56,14 @@ def scalar_docs(
 
         servers = [{"url": f"{proto}://{host}{root_path}"}]
 
-    if not _is_valid_dns(favicon_url):
-        favicon_url = f"{root_path}/{favicon_url.lstrip('/')}"
+    try:
+        favicon_host = favicon_url.split("://")[1]
+
+        if not _is_valid_dns(favicon_host):
+            favicon_url = f"{root_path}/{favicon_url.lstrip('/')}"
+
+    except Exception:
+        pass
 
     return get_scalar_api_reference(
         title=title,

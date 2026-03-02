@@ -46,11 +46,12 @@ class S3ShutdownHook(LifecycleHook):
 
 
 def s3_lifecycle_step(
+    name: str = "s3_lifecycle",
+    *,
     endpoint: str,
     access_key_id: str,
     secret_access_key: str,
     config: Optional[AioConfig] = None,
-    name: str = "s3_lifecycle",
 ) -> LifecycleStep:
     startup_hook = S3StartupHook(
         endpoint=endpoint,

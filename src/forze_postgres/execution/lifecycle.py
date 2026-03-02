@@ -38,9 +38,10 @@ class PostgresShutdownHook(LifecycleHook):
 
 
 def postgres_lifecycle_step(
+    name: str = "postgres_lifecycle",
+    *,
     dsn: str,
     config: PostgresConfig = PostgresConfig(),
-    name: str = "postgres_lifecycle",
 ) -> LifecycleStep:
     startup_hook = PostgresStartupHook(dsn=dsn, config=config)
     shutdown_hook = PostgresShutdownHook()

@@ -38,9 +38,10 @@ class RedisShutdownHook(LifecycleHook):
 
 
 def redis_lifecycle_step(
+    name: str = "redis_lifecycle",
+    *,
     dsn: str,
     config: RedisConfig = RedisConfig(),
-    name: str = "redis_lifecycle",
 ) -> LifecycleStep:
     startup_hook = RedisStartupHook(dsn=dsn, config=config)
     shutdown_hook = RedisShutdownHook()
