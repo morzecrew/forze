@@ -205,3 +205,26 @@ class ReadDocument(BaseDTO):
 
     last_update_at: datetime
     """Timestamp of the last document update."""
+
+
+# ....................... #
+# Document history
+
+
+class DocumentHistory[D: Document](BaseDTO):
+    """Document history entry representation."""
+
+    source: str
+    """Source of the document."""
+
+    id: UUID
+    """Unique identifier of the document."""
+
+    rev: int
+    """Revision number of the document."""
+
+    created_at: datetime = Field(default_factory=utcnow)
+    """Timestamp of the document history entry creation."""
+
+    data: D
+    """Document data."""

@@ -47,10 +47,10 @@ type UpdateValidatorLike[M] = Union[
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UpdateValidatorMetadata:
-    """Update validator metadata."""
+    """Metadata attached to an update validator by :func:`update_validator`."""
 
     fields: Optional[frozenset[str]] = None
-    """Fields that trigger the update validator call. If None, any update is considered."""
+    """Fields that trigger the validator. If ``None``, the validator runs on any update."""
 
 
 # ....................... #
@@ -68,7 +68,9 @@ class _ValidatorEntry:
 @overload
 def update_validator(
     _func: UpdateValidatorLike[M],
-) -> UpdateValidator[M]: ...
+) -> UpdateValidator[M]:
+    """Register a method as an update validator when used as a bare decorator."""
+    ...
 
 
 @overload
@@ -76,7 +78,9 @@ def update_validator(
     _func: None = None,
     *,
     fields: Optional[Iterable[str]] = None,
-) -> Callable[[UpdateValidatorLike[M]], UpdateValidator[M]]: ...
+) -> Callable[[UpdateValidatorLike[M]], UpdateValidator[M]]:
+    """Return a decorator that registers a method as an update validator with optional field filter."""
+    ...
 
 
 def update_validator(

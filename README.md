@@ -25,7 +25,7 @@ It is not just a framework; it is a structural foundation.
 
 ## Quick Start
 
-Install via `uv`:
+Install:
 
 ```bash
 export UV_INDEX_PYOCI_USERNAME="github"

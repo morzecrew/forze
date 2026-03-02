@@ -94,6 +94,8 @@ class ValidationError(CoreError):
 
 @attrs.define(slots=True, eq=False)
 class InfrastructureError(CoreError):
+    """Error raised when an infrastructure component (DB, cache, etc.) fails."""
+
     code: str = "infrastructure_error"
     message: str = "An infrastructure error occurred"
 

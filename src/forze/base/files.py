@@ -1,4 +1,4 @@
-"""File helper functions used across the base layer."""
+"""File I/O helpers for YAML, text, and chunked byte iteration."""
 
 import io
 from pathlib import Path
@@ -28,8 +28,11 @@ def read_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def read_text(path: str | Path) -> str:
-    """Read a text file and return its full contents."""
+    """Read a text file and return its full contents.
 
+    :param path: Path to the text file.
+    :returns: File contents as a string.
+    """
     with open(path, "r") as f:
         return f.read()
 
@@ -61,8 +64,13 @@ def _iter_fileobj(
 
 
 def iter_file(b: bytes | io.BytesIO) -> Iterator[bytes]:
-    """Return an iterator over file bytes from raw bytes or a file-like object."""
+    """Yield chunks from raw bytes or a file-like object.
 
+    Uses 32 KB chunks. File-like objects are closed when exhausted.
+
+    :param b: Raw bytes or a readable file-like object.
+    :returns: Iterator over byte chunks.
+    """
     if isinstance(b, bytes):
         return _iter_bytes(b)
 

@@ -5,7 +5,12 @@ from typing import Generic, NotRequired, Optional, TypedDict, TypeVar
 import attrs
 
 from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import (
+    BaseDTO,
+    CreateDocumentCmd,
+    Document,
+    ReadDocument,
+)
 
 # ----------------------- #
 

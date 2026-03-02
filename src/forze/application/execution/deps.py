@@ -1,14 +1,4 @@
-from typing import (
-    Any,
-    Literal,
-    Optional,
-    Protocol,
-    Self,
-    TypeVar,
-    cast,
-    final,
-    overload,
-)
+from typing import Any, Protocol, Self, TypeVar, cast, final
 
 import attrs
 
@@ -23,146 +13,12 @@ T = TypeVar("T")
 
 
 @final
-@attrs.define(slots=True)
+@attrs.define(slots=True, frozen=True)
 class Deps(DepsPort):
     """In-memory dependency container used by the kernel."""
 
     deps: dict[DepKey[Any], Any] = attrs.field(factory=dict)
     """Dependencies by key (type-parameterized)."""
-
-    # ....................... #
-
-    @overload
-    def register(
-        self,
-        key: DepKey[T],
-        dep: T,
-        *,
-        inplace: Literal[True],
-    ) -> None:
-        """Register a dependency provider for a given key.
-
-        :param key: Dependency key identifying the dependency.
-        :param dep: Dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If the dependency is already registered.
-        """
-        ...
-
-    @overload
-    def register(
-        self,
-        key: DepKey[T],
-        dep: T,
-        *,
-        inplace: Literal[False] = False,
-    ) -> Self:
-        """Register a dependency provider for a given key.
-
-        :param key: Dependency key identifying the dependency.
-        :param dep: Dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If the dependency is already registered.
-        """
-        ...
-
-    def register(
-        self,
-        key: DepKey[T],
-        dep: T,
-        *,
-        inplace: bool = False,
-    ) -> Optional[Self]:
-        """Register a dependency provider for a given key.
-
-        :param key: Dependency key identifying the dependency.
-        :param dep: Dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If the dependency is already registered.
-        """
-
-        if key in self.deps:
-            raise CoreError(f"Dependency {key.name} already registered")
-
-        new = dict(self.deps)
-        new[key] = dep
-
-        if inplace:
-            self.deps = new
-            return
-
-        else:
-            new_instance = type(self)(deps=new)
-            return new_instance
-
-    # ....................... #
-
-    @overload
-    def register_many(
-        self,
-        deps: dict[DepKey[T], T],
-        *,
-        inplace: Literal[True],
-    ) -> None:
-        """Register multiple dependencies at once.
-
-        :param deps: Mapping from dependency key to dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If any of the dependencies are already registered.
-        """
-        ...
-
-    @overload
-    def register_many(
-        self,
-        deps: dict[DepKey[T], T],
-        *,
-        inplace: Literal[False] = False,
-    ) -> Self:
-        """Register multiple dependencies at once.
-
-        :param deps: Mapping from dependency key to dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If any of the dependencies are already registered.
-        """
-        ...
-
-    def register_many(
-        self,
-        deps: dict[DepKey[T], T],
-        *,
-        inplace: bool = False,
-    ) -> Optional[Self]:
-        """Register multiple dependencies at once.
-
-        :param deps: Mapping from dependency key to dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If any of the dependencies are already registered.
-        """
-
-        already_registered = set(self.deps.keys()).intersection(deps.keys())
-
-        if already_registered:
-            raise CoreError(
-                f"Dependencies are already registered for keys: {already_registered}"
-            )
-
-        new = dict(self.deps)
-        new.update(deps)
-
-        if inplace:
-            self.deps = new
-            return
-
-        else:
-            new_instance = type(self)(deps=new)
-            return new_instance
 
     # ....................... #
 
@@ -235,6 +91,7 @@ class DepsModule(Protocol):
 
 
 # ....................... #
+#! It's not really a plan and basically just defers 'merge' call
 
 
 @final

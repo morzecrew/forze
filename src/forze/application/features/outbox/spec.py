@@ -10,5 +10,8 @@ from .model import (
 # ----------------------- #
 
 OutboxSpec = DocumentSpec[
-    ReadOutboxEvent, OutboxEvent, CreateOutboxEventCmd, UpdateOutboxEventCmd
+    ReadOutboxEvent,
+    OutboxEvent,
+    CreateOutboxEventCmd,
+    UpdateOutboxEventCmd,
 ]

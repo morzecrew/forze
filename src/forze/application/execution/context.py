@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncIterator, Iterator, Optional, final
@@ -8,8 +6,22 @@ import attrs
 
 from forze.base.errors import CoreError
 
+from ..contracts.counter import CounterDepKey, CounterPort
 from ..contracts.deps import DepKey, DepsPort
-from ..contracts.tx import TxHandle, TxManagerPort, TxScopedPort, TxScopeKey
+from ..contracts.document import (
+    DocumentCacheDepKey,
+    DocumentDepKey,
+    DocumentPort,
+    DocumentSpec,
+)
+from ..contracts.storage import StorageDepKey, StoragePort
+from ..contracts.tx import (
+    TxHandle,
+    TxManagerDepKey,
+    TxManagerPort,
+    TxScopedPort,
+    TxScopeKey,
+)
 
 # ----------------------- #
 
@@ -80,9 +92,10 @@ class ExecutionContext:
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self, tx: TxManagerPort) -> AsyncIterator[None]:
+    async def transaction(self) -> AsyncIterator[None]:
         """Enter a transaction scope."""
 
+        tx = self.dep(TxManagerDepKey)(self)  #! mb add local PortResolver import ...
         scope = tx.scope_key()
         depth = self.__tx_depth.get()
         cur = self.__tx_handle.get()
@@ -157,3 +170,31 @@ class ExecutionContext:
 
         with self.__resolving(key):
             return self.deps.provide(key)
+
+    # ....................... #
+    # Convenient namespace methods for resolving ports
+
+    def doc(
+        self,
+        spec: DocumentSpec[Any, Any, Any, Any],
+    ) -> DocumentPort[Any, Any, Any, Any]:
+        cache = self.dep(DocumentCacheDepKey)(self, spec)
+        dep = self.dep(DocumentDepKey)(self, spec, cache=cache)
+        self.validate_tx_scope(dep)
+
+        return dep
+
+    # ....................... #
+
+    def counter(self, namespace: str) -> CounterPort:
+        return self.dep(CounterDepKey)(self, namespace)
+
+    # ....................... #
+
+    def txmanager(self) -> TxManagerPort:
+        return self.dep(TxManagerDepKey)(self)
+
+    # ....................... #
+
+    def storage(self, bucket: str) -> StoragePort:
+        return self.dep(StorageDepKey)(self, bucket)

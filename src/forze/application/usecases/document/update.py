@@ -4,7 +4,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.document import DocumentPort
-from forze.application.execution import TxUsecase
+from forze.application.execution import Usecase
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
@@ -22,7 +22,7 @@ class UpdateArgs[In: BaseDTO](TypedDict):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
-    TxUsecase[UpdateArgs[In], Out]
+    Usecase[UpdateArgs[In], Out]
 ):
     doc: DocumentPort[Out, Any, Any, Cmd]
     mapper: Callable[[In], Cmd]

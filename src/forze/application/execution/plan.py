@@ -1,78 +1,87 @@
-"""Composition plan for application usecases.
-
-This module defines small, composable building blocks that describe how
-guards and effects should wrap a concrete :class:`~forze.application.execution.usecase.Usecase`
-implementation. Plans are keyed by operation name and can be merged or extended
-at composition time.
-"""
-
-from typing import Any, Callable, Final, Iterable, Optional, Self, TypeVar, cast, final
+from enum import StrEnum
+from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
 import attrs
+from pydantic import BaseModel, Field
 
 from forze.base.errors import CoreError
+from forze.utils.debug import get_callable_module, get_callable_name
 
 from .context import ExecutionContext
-from .usecase import Effect, Guard, Middleware, TxUsecase, Usecase
+from .middleware import (
+    Effect,
+    EffectMiddleware,
+    Guard,
+    GuardMiddleware,
+    Middleware,
+    TxMiddleware,
+)
+from .usecase import Usecase
 
 # ----------------------- #
 
 U = TypeVar("U", bound=Usecase[Any, Any])
 
 GuardFactory = Callable[[ExecutionContext], Guard[Any]]
-"""Factory that produces a :class:`~forze.application.kernel.usecase.Guard` from a :class:`ExecutionContext`."""
-
 EffectFactory = Callable[[ExecutionContext], Effect[Any, Any]]
-"""Factory that produces an :class:`~forze.application.kernel.usecase.Effect` from a :class:`ExecutionContext`."""
-
 MiddlewareFactory = Callable[[ExecutionContext], Middleware[Any, Any]]
-"""Factory that produces a :class:`~forze.application.kernel.usecase.Middleware` from a :class:`ExecutionContext`."""
 
-UsecaseFactory = Callable[[ExecutionContext], U]
-"""Factory that builds a concrete :class:`~forze.application.kernel.usecase.Usecase` instance from a :class:`ExecutionContext`."""
+OpKey = str | StrEnum
 
-WILDCARD: Final[str] = "*"  #! ??? how to attach middlewares to all operations?
+WILDCARD: Final[str] = "*"
 
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class GuardSpec:
-    """Specification for a guard attached to an operation plan.
-
-    Guards are ordered by ``priority`` (descending) and created lazily from a
-    :class:`ExecutionContext` when a plan is resolved.
-    """
-
-    priority: int = attrs.field(
-        validator=[
-            attrs.validators.gt(int(-1e5)),
-            attrs.validators.lt(int(1e5)),
-        ]
-    )
-    guard: GuardFactory
-
+PlanBucket = Literal[
+    "outer_before",
+    "outer_wrap",
+    "outer_after",
+    "in_tx_before",
+    "in_tx_wrap",
+    "in_tx_after",
+    "after_commit",
+]
 
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class EffectSpec:
-    """Specification for an effect attached to an operation plan.
+class _ExplainItem(BaseModel):
+    bucket: PlanBucket
+    priority: int
+    factory: str
+    factory_id: int
 
-    Effects are ordered by ``priority`` (descending) and created lazily from a
-    :class:`ExecutionContext` when a plan is resolved.
-    """
 
-    priority: int = attrs.field(
-        validator=[
-            attrs.validators.gt(int(-1e5)),
-            attrs.validators.lt(int(1e5)),
-        ]
-    )
-    effect: EffectFactory
+class _Explain(BaseModel):
+    op: str
+    tx: bool
+    chain: list[_ExplainItem] = Field(default_factory=list)
+    after_commit: list[_ExplainItem] = Field(default_factory=list)
+
+    # ....................... #
+
+    def pretty_format(self) -> str:
+        lines: list[str] = []
+        lines.append(f"UsecasePlan explain for operation `{self.op}` (tx={self.tx})")
+        lines.append("Chain (outer -> inner):")
+
+        for i, item in enumerate(self.chain, 1):
+            lines.append(
+                f"  {i:02d}. {item.bucket:12s} prio={item.priority:6d} "
+                f"factory={item.factory} id={item.factory_id}"
+            )
+
+        if self.after_commit:
+            lines.append("After-commit effects (run after successful commit):")
+
+            for i, item in enumerate(self.after_commit, 1):
+                lines.append(
+                    f"  {i:02d}. {item.bucket:12s} prio={item.priority:6d} "
+                    f"factory={item.factory} id={item.factory_id}"
+                )
+
+        else:
+            lines.append("After-commit effects: <none>")
+
+        return "\n".join(lines)
 
 
 # ....................... #
@@ -93,31 +102,7 @@ class MiddlewareSpec:
             attrs.validators.lt(int(1e5)),
         ]
     )
-    middleware: MiddlewareFactory
-
-
-# ....................... #
-
-
-def dedupe_and_sort_specs[S](
-    items: Iterable[S],
-    *,
-    key: Callable[[S], Any],
-    reverse: bool = True,
-) -> tuple[S, ...]:
-    seen: set[Any] = set()
-    out: list[S] = []
-
-    for i in items:
-        k = key(i)
-
-        if k in seen:
-            continue
-
-        seen.add(k)
-        out.append(i)
-
-    return tuple(sorted(out, key=key, reverse=reverse))
+    factory: MiddlewareFactory
 
 
 # ....................... #
@@ -126,22 +111,99 @@ def dedupe_and_sort_specs[S](
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
-    """Per-operation composition describing overrides, guards and effects.
+    """Per-operation composition"""
 
-    The plan tracks:
+    tx: bool = False
 
-    * an optional ``override`` usecase factory
-    * ordered guards/effects that wrap the operation
-    * "side" guards/effects that execute outside a transaction for
-      transactional usecases.
-    """
+    # outer
+    outer_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    outer_wrap: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    outer_after: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
 
-    override: Optional[UsecaseFactory[Any]] = None
-    guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
-    effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
-    middlewares: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
-    side_guards: tuple[GuardSpec, ...] = attrs.field(factory=tuple)
-    side_effects: tuple[EffectSpec, ...] = attrs.field(factory=tuple)
+    # in tx
+    in_tx_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    in_tx_wrap: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    in_tx_after: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+
+    after_commit: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+
+    # ....................... #
+
+    def add(
+        self,
+        bucket: PlanBucket,
+        spec: MiddlewareSpec,
+    ) -> Self:  # questionable dodgy code ...
+        if not hasattr(self, bucket):
+            raise CoreError(f"Invalid bucket: {bucket}")
+
+        cur = getattr(self, bucket)
+        return attrs.evolve(self, **{bucket: (*cur, spec)})
+
+    # ....................... #
+
+    def validate(self) -> None:
+        if (
+            self.in_tx_before
+            or self.in_tx_after
+            or self.in_tx_wrap
+            or self.after_commit
+        ) and not self.tx:
+            raise CoreError(
+                "Operation plan uses IN_TX_* middlewares but tx() is not enabled"
+            )
+
+    # ....................... #
+
+    def __ensure_no_collisions(
+        self, specs: Iterable[MiddlewareSpec], *, bucket: PlanBucket
+    ) -> None:
+        used: set[int] = set()
+
+        for s in specs:
+            k = s.priority
+            if k in used:
+                raise CoreError(
+                    f"Priority collision in bucket '{bucket}': {s.priority}"
+                )
+
+            used.add(k)
+
+    # ....................... #
+
+    def __dedupe(self, bucket: PlanBucket) -> tuple[MiddlewareSpec, ...]:
+        if not hasattr(self, bucket):
+            raise CoreError(f"Invalid bucket: {bucket}")
+
+        cur = getattr(self, bucket)
+        seen: set[tuple[int, int]] = set()
+        out: list[MiddlewareSpec] = []
+
+        for s in cur:
+            k = (id(s.factory), s.priority)
+            if k in seen:
+                continue
+
+            seen.add(k)
+            out.append(s)
+
+        self.__ensure_no_collisions(out, bucket=bucket)
+
+        return tuple(out)
+
+    # ....................... #
+
+    def __sort(
+        self, specs: Iterable[MiddlewareSpec], *, reverse: bool
+    ) -> tuple[MiddlewareSpec, ...]:
+        return tuple(sorted(specs, key=lambda s: s.priority, reverse=reverse))
+
+    # ....................... #
+
+    def build(self, bucket: PlanBucket) -> tuple[MiddlewareSpec, ...]:
+        deduped_specs = self.__dedupe(bucket)
+
+        return self.__sort(deduped_specs, reverse=True)
 
     # ....................... #
 
@@ -156,18 +218,15 @@ class OperationPlan:
         acc: OperationPlan = OperationPlan()
 
         for plan in plans:
-            # prevent conflicting builders
-            if acc.override and plan.override and acc.override is not plan.override:
-                raise CoreError("Conflicting overrides for operation")
-
-            override = plan.override if plan.override is not None else acc.override
             acc = OperationPlan(
-                override=override,
-                guards=(*acc.guards, *plan.guards),
-                effects=(*acc.effects, *plan.effects),
-                middlewares=(*acc.middlewares, *plan.middlewares),
-                side_guards=(*acc.side_guards, *plan.side_guards),
-                side_effects=(*acc.side_effects, *plan.side_effects),
+                tx=acc.tx or plan.tx,
+                outer_before=(*acc.outer_before, *plan.outer_before),
+                outer_wrap=(*acc.outer_wrap, *plan.outer_wrap),
+                outer_after=(*acc.outer_after, *plan.outer_after),
+                in_tx_before=(*acc.in_tx_before, *plan.in_tx_before),
+                in_tx_wrap=(*acc.in_tx_wrap, *plan.in_tx_wrap),
+                in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
+                after_commit=(*acc.after_commit, *plan.after_commit),
             )
 
         return acc
@@ -179,246 +238,264 @@ class OperationPlan:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UsecasePlan:
-    """Mutable description of how usecases for operations are composed.
-
-    A plan is a mapping from operation name to :class:`OperationPlan`. It can
-    be extended with additional guards and effects or merged with other plans
-    to form a final composition.
-    """
+    """Mutable description of how usecases for operations are composed."""
 
     ops: dict[str, OperationPlan] = attrs.field(factory=dict)
 
     # ....................... #
+    # Helpers
 
-    def _get_base_plan(self):
+    def _base(self):
         return self.ops.get(WILDCARD, OperationPlan())
 
-    # ....................... #
+    def _op(self, op: OpKey) -> OperationPlan:
+        return self.ops.get(str(op), OperationPlan())
 
-    def override(self, op: str, factory: UsecaseFactory[U]) -> Self:
-        """Override the base usecase factory for a specific operation.
-
-        :param op: Logical operation name (e.g. ``"get"`` or ``"search"``).
-        :param factory: Factory that builds the concrete usecase.
-        :returns: A new :class:`UsecasePlan` with the override applied.
-        """
-
-        if op == WILDCARD or op.endswith(WILDCARD):
-            raise CoreError(f"Override on wildcard operation `{op}` is not allowed")
-
-        cur = self.ops.get(op, OperationPlan())
+    def _put(self, op: OpKey, plan: OperationPlan) -> Self:
         new_ops = dict(self.ops)
-        new_ops[op] = attrs.evolve(cur, override=factory)
+        new_ops[str(op)] = plan
 
         return attrs.evolve(self, ops=new_ops)
 
+    def _add(self, op: OpKey, bucket: PlanBucket, spec: MiddlewareSpec) -> Self:
+        cur = self._op(op)
+        return self._put(op, cur.add(bucket, spec))
+
     # ....................... #
 
-    def before(
+    def tx(self, op: OpKey) -> Self:
+        cur = self._op(op)
+        return self._put(op, attrs.evolve(cur, tx=True))
+
+    # ....................... #
+
+    def before(self, op: OpKey, guard: GuardFactory, *, priority: int = 0) -> Self:
+        def factory(ctx: ExecutionContext):
+            return GuardMiddleware[Any, Any](guard=guard(ctx))
+
+        return self._add(
+            op,
+            "outer_before",
+            MiddlewareSpec(factory=factory, priority=priority),
+        )
+
+    # ....................... #
+
+    def after(self, op: OpKey, effect: EffectFactory, *, priority: int = 0) -> Self:
+        def factory(ctx: ExecutionContext):
+            return EffectMiddleware[Any, Any](effect=effect(ctx))
+
+        return self._add(
+            op,
+            "outer_after",
+            MiddlewareSpec(factory=factory, priority=priority),
+        )
+
+    # ....................... #
+
+    def wrap(
         self,
-        op: str,
+        op: OpKey,
+        middleware: MiddlewareFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        return self._add(
+            op,
+            "outer_wrap",
+            MiddlewareSpec(factory=middleware, priority=priority),
+        )
+
+    # ....................... #
+
+    def in_tx_before(
+        self,
+        op: OpKey,
         guard: GuardFactory,
-        priority: int = 0,
         *,
-        side: bool = False,
+        priority: int = 0,
     ) -> Self:
-        """Attach a guard to run before a usecase for an operation.
+        def factory(ctx: ExecutionContext):
+            return GuardMiddleware[Any, Any](guard=guard(ctx))
 
-        :param op: Logical operation name.
-        :param guard: Factory for the guard to attach.
-        :param priority: Sorting key; higher values run earlier.
-        :param side: When ``True``, attach as a side guard that will run
-            outside transactions for :class:`~forze.application.kernel.usecase.TxUsecase`
-            instances.
-        :returns: A new :class:`UsecasePlan` with the guard added.
-        """
-
-        cur = self.ops.get(op, OperationPlan())
-        new_ops = dict(self.ops)
-        guard_spec = GuardSpec(priority=priority, guard=guard)
-
-        if side:
-            new_ops[op] = attrs.evolve(cur, side_guards=(*cur.side_guards, guard_spec))
-
-        else:
-            new_ops[op] = attrs.evolve(cur, guards=(*cur.guards, guard_spec))
-
-        return attrs.evolve(self, ops=new_ops)
+        return self._add(
+            op,
+            "in_tx_before",
+            MiddlewareSpec(factory=factory, priority=priority),
+        )
 
     # ....................... #
 
-    def wrap(self, op: str, middleware: MiddlewareFactory, priority: int = 0) -> Self:
-        """Attach a middleware to wrap a usecase for an operation.
-
-        :param op: Logical operation name.
-        :param middleware: Factory for the middleware to attach.
-        :param priority: Sorting key; higher values run earlier.
-        :returns: A new :class:`UsecasePlan` with the middleware added.
-        """
-
-        cur = self.ops.get(op, OperationPlan())
-        middleware_spec = MiddlewareSpec(priority=priority, middleware=middleware)
-
-        new_ops = dict(self.ops)
-        new_ops[op] = attrs.evolve(cur, middlewares=(*cur.middlewares, middleware_spec))
-
-        return attrs.evolve(self, ops=new_ops)
-
-    # ....................... #
-
-    def after(
+    def in_tx_after(
         self,
-        op: str,
+        op: OpKey,
         effect: EffectFactory,
-        priority: int = 0,
         *,
-        side: bool = False,
+        priority: int = 0,
     ) -> Self:
-        """Attach an effect to run after a usecase for an operation.
+        def factory(ctx: ExecutionContext):
+            return EffectMiddleware[Any, Any](effect=effect(ctx))
 
-        :param op: Logical operation name.
-        :param effect: Factory for the effect to attach.
-        :param priority: Sorting key; higher values run earlier.
-        :param side: When ``True``, attach as a side effect that will run
-            outside transactions for :class:`~forze.application.kernel.usecase.TxUsecase`
-            instances.
-        :returns: A new :class:`UsecasePlan` with the effect added.
-        """
-
-        cur = self.ops.get(op, OperationPlan())
-        new_ops = dict(self.ops)
-        effect_spec = EffectSpec(priority=priority, effect=effect)
-
-        if side:
-            new_ops[op] = attrs.evolve(
-                cur,
-                side_effects=(*cur.side_effects, effect_spec),
-            )
-
-        else:
-            new_ops[op] = attrs.evolve(cur, effects=(*cur.effects, effect_spec))
-
-        return attrs.evolve(self, ops=new_ops)
+        return self._add(
+            op,
+            "in_tx_after",
+            MiddlewareSpec(factory=factory, priority=priority),
+        )
 
     # ....................... #
 
-    def resolve(self, op: str, ctx: ExecutionContext, default: UsecaseFactory[U]) -> U:
-        """Build a composed usecase instance for an operation.
+    def in_tx_wrap(
+        self,
+        op: OpKey,
+        middleware: MiddlewareFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        return self._add(
+            op,
+            "in_tx_wrap",
+            MiddlewareSpec(factory=middleware, priority=priority),
+        )
 
-        The method chooses an override factory when configured, instantiates
-        the usecase with the provided :class:`ExecutionContext`, and then applies
-        guards/effects (including side variants for transactional usecases) in
-        priority order.
+    # ....................... #
 
-        :param op: Logical operation name.
-        :param ctx: Context that provides dependencies and access to infrastructure.
-        :param default: Fallback factory when no override is configured.
-        :returns: A composed :class:`~forze.application.kernel.usecase.Usecase`
-            instance ready to be invoked.
-        """
+    def after_commit(
+        self,
+        op: OpKey,
+        effect: EffectFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        def factory(ctx: ExecutionContext):
+            return EffectMiddleware[Any, Any](effect=effect(ctx))
+
+        return self._add(
+            op,
+            "after_commit",
+            MiddlewareSpec(factory=factory, priority=priority),
+        )
+
+    # ....................... #
+
+    def resolve(
+        self,
+        op: OpKey,
+        ctx: ExecutionContext,
+        factory: Callable[[ExecutionContext], U],
+    ) -> U:
+        """Build a composed usecase instance for an operation."""
+
+        op = str(op)
 
         if op == WILDCARD or op.endswith(WILDCARD):
             raise CoreError(f"Resolve on wildcard operation `{op}` is not allowed")
 
-        base_plan = self._get_base_plan()
-        op_plan = self.ops.get(op, base_plan)
-        plan = OperationPlan.merge(base_plan, op_plan)
+        plan = OperationPlan.merge(self._base(), self._op(op))
+        plan.validate()
 
-        factory = default
+        outer_before = plan.build("outer_before")
+        outer_wrap = plan.build("outer_wrap")
+        outer_after = plan.build("outer_after")
 
-        if plan and plan.override:
-            factory = cast(UsecaseFactory[U], plan.override)
+        in_tx_before = plan.build("in_tx_before")
+        in_tx_wrap = plan.build("in_tx_wrap")
+        in_tx_after = plan.build("in_tx_after")
+
+        after_commit = plan.build("after_commit")
+        after_commit_effects: list[Effect[Any, Any]] = []
+
+        for s in after_commit:
+            mw = s.factory(ctx)
+
+            if not isinstance(mw, EffectMiddleware):
+                raise CoreError(f"Expected EffectMiddleware, got {type(mw)}")
+
+            after_commit_effects.append(mw.effect)
+
+        chain: list[Middleware[Any, Any]] = []
+
+        chain += [s.factory(ctx) for s in outer_before]
+        chain += [s.factory(ctx) for s in outer_wrap]
+
+        if plan.tx:
+            chain.append(
+                TxMiddleware[Any, Any](ctx=ctx).with_after_commit(*after_commit_effects)
+            )
+            chain += [s.factory(ctx) for s in in_tx_before]
+            chain += [s.factory(ctx) for s in in_tx_wrap]
+            chain += [s.factory(ctx) for s in in_tx_after]
+
+        chain += [s.factory(ctx) for s in outer_after]
 
         uc = factory(ctx)
 
-        if plan:
-            guards = tuple(
-                gs.guard(ctx)
-                for gs in dedupe_and_sort_specs(
-                    plan.guards,
-                    key=lambda x: x.priority,
-                    reverse=True,
-                )
-            )
-            middlewares = tuple(
-                ms.middleware(ctx)
-                for ms in dedupe_and_sort_specs(
-                    plan.middlewares,
-                    key=lambda x: x.priority,
-                    reverse=True,
-                )
-            )
-            effects = tuple(
-                es.effect(ctx)
-                for es in dedupe_and_sort_specs(
-                    plan.effects,
-                    key=lambda x: x.priority,
-                    reverse=True,
-                )
-            )
-            side_guards = tuple(
-                gs.guard(ctx)
-                for gs in dedupe_and_sort_specs(
-                    plan.side_guards,
-                    key=lambda x: x.priority,
-                    reverse=True,
-                )
-            )
-            side_effects = tuple(
-                es.effect(ctx)
-                for es in dedupe_and_sort_specs(
-                    plan.side_effects,
-                    key=lambda x: x.priority,
-                    reverse=True,
-                )
-            )
+        return uc.with_middlewares(*chain)
 
-            if isinstance(uc, TxUsecase):
-                uc = (
-                    uc.with_guards(*guards)
-                    .with_middlewares(*middlewares)
-                    .with_effects(*effects)
-                    .with_side_guards(*side_guards)
-                    .with_side_effects(*side_effects)
-                )
+    # ....................... #
 
-            else:
-                #! TODO: log warning that side guards and effects are not supported for non-tx usecases
-                #! and they will be translated into guards and effects
+    def explain(self, op: OpKey):
+        op = str(op)
 
-                #! TODO: introduce explicit on_conflict or so with warn, error, ignore
-                #! so it's clear when side guards and effects treated as usual ones
-                uc = (
-                    uc.with_effects(
-                        *effects,
-                        *side_effects,
-                    )
-                    .with_guards(
-                        *side_guards,
-                        *guards,
-                    )
-                    .with_middlewares(
-                        *middlewares,
+        if op == WILDCARD or op.endswith(WILDCARD):
+            raise CoreError(f"Explain on wildcard operation `{op}` is not allowed")
+
+        plan = OperationPlan.merge(self._base(), self._op(op))
+        plan.validate()
+
+        def pack(
+            bucket: PlanBucket,
+            specs: Iterable[MiddlewareSpec],
+        ) -> list[_ExplainItem]:
+            out: list[_ExplainItem] = []
+
+            for s in specs:
+                mod = get_callable_module(s.factory)
+                name = get_callable_name(s.factory)
+
+                out.append(
+                    _ExplainItem(
+                        bucket=bucket,
+                        priority=s.priority,
+                        factory=f"{mod}:{name}",
+                        factory_id=id(s.factory),
                     )
                 )
 
-        return uc
+            return out
+
+        outer_before = plan.build("outer_before")
+        outer_wrap = plan.build("outer_wrap")
+        outer_after = plan.build("outer_after")
+
+        in_tx_before = plan.build("in_tx_before")
+        in_tx_wrap = plan.build("in_tx_wrap")
+        in_tx_after = plan.build("in_tx_after")
+
+        after_commit = plan.build("after_commit")
+
+        chain: list[_ExplainItem] = []
+        chain += pack("outer_before", outer_before)
+        chain += pack("outer_wrap", outer_wrap)
+
+        if plan.tx:
+            chain += pack("in_tx_before", in_tx_before)
+            chain += pack("in_tx_wrap", in_tx_wrap)
+            chain += pack("in_tx_after", in_tx_after)
+
+        chain += pack("outer_after", outer_after)
+
+        return _Explain(
+            op=op,
+            tx=plan.tx,
+            chain=chain,
+            after_commit=pack("after_commit", after_commit),
+        )
 
     # ....................... #
 
     @classmethod
     def merge(cls, *plans: Self) -> Self:
-        """Merge multiple plans into a single aggregate plan.
-
-        Later plans override earlier ones when both define an override factory
-        for the same operation; guards and effects are concatenated in the
-        order plans are provided.
-
-        :param plans: Plans to merge.
-        :returns: A new :class:`UsecasePlan` with combined operations.
-        :raises CoreError: If two plans provide incompatible overrides for the
-            same operation (different factory objects).
-        """
+        """Merge multiple plans into a single aggregate plan."""
 
         acc: dict[str, OperationPlan] = {}
 

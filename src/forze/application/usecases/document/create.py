@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.document import DocumentPort
-from forze.application.execution import TxUsecase
+from forze.application.execution import Usecase
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
@@ -12,7 +12,7 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
-    TxUsecase[In, Out]
+    Usecase[In, Out]
 ):
     doc: DocumentPort[Out, Any, Cmd, Any]
     mapper: Callable[[In], Cmd]
@@ -29,9 +29,10 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
 # Numbered
 
 
+#! TODO: get rid of that
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class CreateNumberedDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
-    TxUsecase[In, Out]
+    Usecase[In, Out]
 ):
     doc: DocumentPort[Out, Any, Cmd, Any]
     counter: CounterPort

@@ -4,13 +4,11 @@ from typing import (
     Callable,
     ClassVar,
     Generic,
-    Literal,
     Optional,
     Protocol,
     Self,
     TypeVar,
     final,
-    overload,
 )
 
 import attrs
@@ -48,110 +46,6 @@ class DepKey[T]:
 
 class DepsPort(Protocol):
     """Abstract access to dependency resolution."""
-
-    @overload
-    def register(
-        self,
-        key: DepKey[T],
-        dep: T,
-        *,
-        inplace: Literal[True],
-    ) -> None:
-        """Register a dependency provider for a given key.
-
-        :param key: Dependency key identifying the dependency.
-        :param dep: Dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If the dependency is already registered.
-        """
-        ...
-
-    @overload
-    def register(
-        self,
-        key: DepKey[T],
-        dep: T,
-        *,
-        inplace: Literal[False] = False,
-    ) -> Self:
-        """Register a dependency provider for a given key.
-
-        :param key: Dependency key identifying the dependency.
-        :param dep: Dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If the dependency is already registered.
-        """
-        ...
-
-    def register(
-        self,
-        key: DepKey[T],
-        dep: T,
-        *,
-        inplace: bool = False,
-    ) -> Optional[Self]:
-        """Register a dependency provider for a given key.
-
-        :param key: Dependency key identifying the dependency.
-        :param dep: Dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If the dependency is already registered.
-        """
-        ...
-
-    # ....................... #
-
-    @overload
-    def register_many(
-        self,
-        deps: dict[DepKey[T], T],
-        *,
-        inplace: Literal[True],
-    ) -> None:
-        """Register multiple dependencies at once.
-
-        :param deps: Mapping from dependency key to dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If any of the dependencies are already registered.
-        """
-        ...
-
-    @overload
-    def register_many(
-        self,
-        deps: dict[DepKey[T], T],
-        *,
-        inplace: Literal[False] = False,
-    ) -> Self:
-        """Register multiple dependencies at once.
-
-        :param deps: Mapping from dependency key to dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If any of the dependencies are already registered.
-        """
-        ...
-
-    def register_many(
-        self,
-        deps: dict[DepKey[T], T],
-        *,
-        inplace: bool = False,
-    ) -> Optional[Self]:
-        """Register multiple dependencies at once.
-
-        :param deps: Mapping from dependency key to dependency instance.
-        :param inplace: When ``True``, mutate the dependencies container in place, otherwise return a new instance.
-        :returns: The dependencies container instance if ``inplace`` is ``False``, otherwise ``None``.
-        :raises CoreError: If any of the dependencies are already registered.
-        """
-        ...
-
-    # ....................... #
 
     def provide(self, key: DepKey[T]) -> T:
         """Return the dependency instance registered under ``key``."""

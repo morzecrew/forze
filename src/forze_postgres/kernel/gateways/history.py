@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -25,6 +27,19 @@ from .spec import PostgresTableSpec
 
 # ----------------------- #
 #! TODO: Review logics
+
+
+class PostgresHistoryWriteStrategy(StrEnum):
+    """Strategy for writing history."""
+
+    DATABASE = "database"
+    """Write history using database triggers."""
+
+    APPLICATION = "application"
+    """Write history using application logic."""
+
+
+# ....................... #
 
 
 @final

@@ -4,7 +4,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.document import DocumentPort
-from forze.application.execution import TxUsecase
+from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -20,7 +20,7 @@ class SoftDeleteArgs(TypedDict):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class KillDocument(TxUsecase[UUID, None]):
+class KillDocument(Usecase[UUID, None]):
     doc: DocumentPort[Any, Any, Any, Any]
 
     # ....................... #
@@ -33,7 +33,7 @@ class KillDocument(TxUsecase[UUID, None]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DeleteDocument[Out: ReadDocument](TxUsecase[SoftDeleteArgs, Out]):
+class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
     doc: DocumentPort[Out, Any, Any, Any]
 
     # ....................... #
@@ -46,7 +46,7 @@ class DeleteDocument[Out: ReadDocument](TxUsecase[SoftDeleteArgs, Out]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RestoreDocument[Out: ReadDocument](TxUsecase[SoftDeleteArgs, Out]):
+class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
     doc: DocumentPort[Out, Any, Any, Any]
 
     # ....................... #

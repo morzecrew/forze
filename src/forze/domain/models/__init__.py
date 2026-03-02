@@ -1,7 +1,7 @@
 """Domain models exported by the ``forze.domain.models`` package."""
 
 from .base import BaseDTO, CoreModel
-from .document import CreateDocumentCmd, Document, ReadDocument
+from .document import CreateDocumentCmd, Document, DocumentHistory, ReadDocument
 
 # ----------------------- #
 
@@ -12,4 +12,5 @@ __all__ = [
     "Document",
     "CreateDocumentCmd",
     "ReadDocument",
+    "DocumentHistory",
 ]

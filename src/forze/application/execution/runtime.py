@@ -17,45 +17,43 @@ from .lifecycle import LifecyclePlan
 class ExecutionRuntime:
     """Runnable scope which combines deps plan, lifecycle plan and execution context."""
 
-    deps: DepsPlan
+    deps: DepsPlan = attrs.field(factory=DepsPlan)
     """Dependencies plan."""
 
     lifecycle: LifecyclePlan = attrs.field(factory=LifecyclePlan)
     """Lifecycle plan."""
 
-    ctx: RuntimeVar[ExecutionContext] = attrs.field(
+    # Non initable fields
+    __ctx: RuntimeVar[ExecutionContext] = attrs.field(
         factory=lambda: RuntimeVar("execution_context"),
         repr=False,
         init=False,
     )
-    """Execution context."""
 
     # ....................... #
 
     def get_context(self) -> ExecutionContext:
-        return self.ctx.get()
+        return self.__ctx.get()
 
     # ....................... #
 
     def create_context(self) -> None:
         ctx = ExecutionContext(deps=self.deps.build())
-        self.ctx.set_once(ctx)
+        self.__ctx.set_once(ctx)
 
     # ....................... #
 
     async def startup(self) -> None:
-        await self.lifecycle.startup(self.get_context())
+        await self.lifecycle.startup(self.__ctx.get())
 
     # ....................... #
 
     async def shutdown(self) -> None:
-        ctx = self.get_context()
-
         try:
-            await self.lifecycle.shutdown(ctx)
+            await self.lifecycle.shutdown(self.__ctx.get())
 
         finally:
-            self.ctx.reset()
+            self.__ctx.reset()
 
     # ....................... #
 

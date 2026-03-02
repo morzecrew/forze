@@ -1,4 +1,8 @@
-"""Shared string constants for core domain field names."""
+"""Shared string constants for core domain field names.
+
+Used as keys in serialization, validation, and infrastructure layers to ensure
+consistent naming across the application.
+"""
 
 from typing import Final
 

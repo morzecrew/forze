@@ -12,9 +12,9 @@ from ..errors import CoreError
 class RuntimeVar[T: object]:
     """Thread-safe runtime variable that can be set once and accessed globally.
 
-    Used to store application-wide runtime values (for example an
-    ``AppContext``) that are initialized during application startup and
-    accessed throughout the application lifecycle.
+    Used to store application-wide runtime values (e.g. an ``AppContext``)
+    initialized during startup and accessed throughout the application lifecycle.
+    Raises :exc:`~forze.base.errors.CoreError` on invalid operations.
 
     Example::
 
@@ -35,22 +35,12 @@ class RuntimeVar[T: object]:
     """Thread lock for thread-safe operations."""
 
     __value: Optional[T] = attrs.field(default=None, init=False)
-    """The stored value (None until set)."""
+    """The stored value (``None`` until set)."""
 
     # ....................... #
 
     def set_once(self, value: T) -> None:
-        """Set the runtime value once.
-
-        Thread-safe operation that ensures the value can only be set once.
-        Subsequent calls will raise RuntimeError.
-
-        Args:
-            value: The value to store.
-
-        Raises:
-            CoreError: If the value has already been set or nullable value is provided.
-        """
+        """Set the runtime value once. Thread-safe; subsequent calls raise :exc:`CoreError`."""
 
         if value is None:
             raise CoreError(f"Value cannot be None for {self.name}")
@@ -66,14 +56,7 @@ class RuntimeVar[T: object]:
     # ....................... #
 
     def get(self) -> T:
-        """Get the stored runtime value.
-
-        Returns:
-            The stored value.
-
-        Raises:
-            CoreError: If the value has not been set yet.
-        """
+        """Return the stored value. Raises :exc:`CoreError` if not yet set."""
 
         if self.__value is None:
             raise CoreError(f"Value is not set for {self.name}")
@@ -83,11 +66,7 @@ class RuntimeVar[T: object]:
     # ....................... #
 
     def reset(self) -> None:
-        """Reset the runtime value to None.
-
-        Thread-safe operation that clears the stored value, allowing it to be
-        set again (useful for testing or cleanup).
-        """
+        """Clear the stored value so it can be set again. Thread-safe. Useful for testing."""
 
         with self.__lock:
             self.__value = None

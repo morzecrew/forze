@@ -1,3 +1,10 @@
+"""Context-scoped buffer for collecting objects during a logical task.
+
+Uses :class:`contextvars.ContextVar` so each async task or thread has its own
+buffer. Use :meth:`ContextualBuffer.scope` to isolate buffers within nested
+operations.
+"""
+
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, Sequence, final
@@ -10,7 +17,11 @@ import attrs
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ContextualBuffer[T]:
-    """Generic class for buffering objects during a task execution."""
+    """Context-scoped buffer for collecting objects during task execution.
+
+    Each async task or thread gets its own buffer via a :class:`~contextvars.ContextVar`.
+    Use :meth:`scope` to create a nested scope that clears on exit.
+    """
 
     __buffer: ContextVar[list[T]] = attrs.field(
         factory=lambda: ContextVar("buffer"),
@@ -21,12 +32,7 @@ class ContextualBuffer[T]:
     # ....................... #
 
     def peek(self) -> list[T]:
-        """Get current buffered objects without clearing the buffer.
-
-        Returns:
-            list[T]: List of currently buffered objects.
-        """
-
+        """Return currently buffered objects without clearing the buffer."""
         return self.__buffer.get([])
 
     # ....................... #
@@ -39,14 +45,7 @@ class ContextualBuffer[T]:
     # ....................... #
 
     def push(self, e: Sequence[T]) -> None:
-        """Add objects to the buffer.
-
-        Extends the current buffer with the provided objects.
-
-        Args:
-            e (list[T]): List of objects to add to the buffer.
-        """
-
+        """Append objects to the buffer. Extends the current list in place."""
         buf = self.peek()
         buf.extend(list(e))
 
@@ -55,12 +54,7 @@ class ContextualBuffer[T]:
     # ....................... #
 
     def pop(self) -> list[T]:
-        """Get all buffered objects and clear the buffer.
-
-        Returns:
-            list[T]: List of all buffered objects (buffer is cleared after this call).
-        """
-
+        """Return all buffered objects and clear the buffer."""
         buf = self.peek()
         self.clear()
 
@@ -70,8 +64,11 @@ class ContextualBuffer[T]:
 
     @contextmanager
     def scope(self) -> Iterator[None]:
-        """Context manager for the buffer"""
+        """Context manager that provides an isolated buffer scope.
 
+        On entry, the buffer is cleared. On exit, the previous buffer state
+        is restored.
+        """
         token = self.__buffer.set([])
 
         try:

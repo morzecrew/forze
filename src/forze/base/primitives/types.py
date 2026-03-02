@@ -1,4 +1,8 @@
-"""Common Pydantic-based primitive types used across the application."""
+"""Common Pydantic-based primitive types used across the application.
+
+:data:`String` and :data:`LongString` apply normalization and length constraints.
+:data:`JsonDict` is a type alias for JSON-compatible dictionaries.
+"""
 
 from typing import Annotated, Any
 

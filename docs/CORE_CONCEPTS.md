@@ -19,21 +19,29 @@ The result: you can swap databases, add caching, or change web frameworks withou
 
 Forze organizes code into three layers. Dependencies flow **inward**: infrastructure depends on application, application depends on domain. The domain layer has no external dependencies.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Infrastructure (adapters)                                  │
-│  Databases, caches, storage, web frameworks, workflows      │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ implements
-┌───────────────────────────▼─────────────────────────────────┐
-│  Application (operations, orchestration, contracts)         │
-│  Use cases, execution runtime, dependency resolution        │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ uses
-┌───────────────────────────▼─────────────────────────────────┐
-│  Domain (models, invariants, validation)                    │
-│  Business rules, value objects, no infrastructure           │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart LR
+    subgraph Infra["<b>Infrastructure</b> (adapters)"]
+        I["Databases, caches, storage, web frameworks, workflows"]
+    end
+
+    subgraph App["<b>Application</b> (operations, orchestration, contracts)"]
+        A["Use cases, execution runtime, dependency resolution"]
+    end
+
+    subgraph Dom["<b>Domain</b> (models, invariants, validation)"]
+        D["Business rules, value objects, no infrastructure"]
+    end
+
+    Infra -->|implements| App
+    App -->|uses| Dom
 ```
 
 **Why it matters:** Each layer has a clear responsibility. Domain logic stays pure and testable. Application orchestrates without knowing storage details. Infrastructure can be swapped or extended without touching business rules.
@@ -59,11 +67,21 @@ The application layer **orchestrates** domain logic and coordinates infrastructu
 
 An **operation** is a single, well-defined business action. It takes arguments and returns a result. Operations support composition via guards, effects, and middlewares:
 
-```
-    ┌──────────┐       ┌─────────────┐       ┌──────────┐       ┌─────────┐
-    │ Guards   │  ──►  │ Middlewares │  ──►  │   Core   │  ──►  │ Effects │
-    │ (before) │       │  (around)   │       │ (logic)  │       │ (after) │
-    └──────────┘       └─────────────┘       └──────────┘       └─────────┘
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart LR
+    G["<b>Guards</b><br/>(before)"]
+    M["<b>Middlewares</b><br/>(around)"]
+    C["<b>Core</b><br/>(logic)"]
+    E["<b>Effects</b><br/>(after)"]
+
+    G --> M --> C --> E
 ```
 
 | Hook | When | Purpose |
@@ -78,21 +96,39 @@ Composition is **immutable** — adding a guard or effect returns a new instance
 
 The **execution runtime** is the runnable scope where operations run. It combines three elements and follows a clear lifecycle:
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│  Execution Runtime (scope)                                    │
-│                                                               │
-│  ┌────────────┐  ┌─────────────┐  ┌────────────────────────┐  │
-│  │ Deps plan  │  │ Lifecycle   │  │ Execution context      │  │
-│  │ (what to   │  │ plan        │  │ (deps + transactions   │  │
-│  │  build)    │  │ (startup/   │  │  passed to operations) │  │
-│  │            │  │  shutdown)  │  │                        │  │
-│  └────────────┘  └─────────────┘  └────────────────────────┘  │
-└───────────────────────────────────────────────────────────────┘
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart LR
+    subgraph Runtime["<b>Execution Runtime</b> (scope)"]
+    direction LR
+        Deps["Deps plan (what to build)"]
+        Life["Lifecycle plan (startup/shutdown)"]
+        Ctx["Execution context (deps + transactions passed to operations)"]
+    end
 
-    enter scope  ──►  create context  ──►  startup  ──►  run operations
-                                                              │
-    exit scope   ◄──  reset context   ◄──  shutdown  ◄────────┘
+    Deps ~~~ Life ~~~ Ctx
+```
+
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart LR
+    Setup["<b>Setup</b><br/>enter scope → create context → startup"]
+    Run["<b>Run</b><br/>run operations"]
+    Teardown["<b>Teardown</b><br/>shutdown → reset context → exit scope"]
+
+    Setup --> Run --> Teardown
 ```
 
 **Why it matters:** Dependencies and lifecycle are configured once, declaratively. Operations receive a context and resolve what they need. No global state, no hidden coupling.
@@ -101,20 +137,24 @@ The **execution runtime** is the runnable scope where operations run. It combine
 
 The **dependency plan** describes how to build the dependency container. Modules produce dependencies; plans compose (e.g. base + database + cache). The runtime builds the container before any operation runs.
 
-```
-    ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-    │ Module A    │     │ Module B    │     │ Module C    │
-    │ (base)      │  +  │ (database)  │  +  │ (cache)     │
-    └──────┬──────┘     └──────┬──────┘     └────────┬────┘
-           │                   │                     │
-           └───────────────────┼─────────────────────┘
-                               ▼
-                    ┌──────────────────┐
-                    │ Dependency       │
-                    │ container        │
-                    │ (clients, ports, │
-                    │  services, etc.) │
-                    └──────────────────┘
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart TB
+    subgraph Mods["Modules"]
+        A["Module A (base)"]
+        B["Module B (database)"]
+        C["Module C (cache)"]
+    end
+
+    A --> Container["<b>Dependency container</b><br/>clients, ports, services, etc."]
+    B --> Container
+    C --> Container
 ```
 
 Dependencies are **not** limited to contracts — the container can hold raw clients, custom services, implementations, or parameterized factories. **Dependency routers** select the right implementation when resolution depends on a parameter (e.g. aggregate type) or when multiple adapters exist for the same contract.
@@ -123,17 +163,21 @@ Dependencies are **not** limited to contracts — the container can hold raw cli
 
 The **operation registry** maps names to factories; the **operation plan** describes how each operation is composed (guards, effects, middlewares). Resolution applies both:
 
-```
-    "get" / "create" / "search"
-              │
-              ▼
-         Registry  ──►  Factory  ──►  Base operation
-                                            │
-                                            │  Plan wraps with
-                                            │  guards, effects, overrides
-                                            │
-                                            ▼
-                                    Composed operation
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart TB
+    names["get / create / search"]
+    names --> Registry["Registry"]
+    Registry --> Factory["Factory"]
+    Factory --> Base["Base operation"]
+    Base --> Plan["Plan wraps with guards, effects, overrides"]
+    Plan --> Composed["Composed operation"]
 ```
 
 Plans are keyed by operation name, mergeable and extensible. A base plan might add logging to all operations; a specific plan might add authorization to “create” only. Plans support **overrides** (replace implementation) and **priorities** (order of hooks when merged).
@@ -144,14 +188,26 @@ Plans are keyed by operation name, mergeable and extensible. A base plan might a
 
 **Contracts** (also called ports) are interfaces defined by the application. **Adapters** are implementations provided by infrastructure. The application depends on contracts, not adapters.
 
-```
-    Application                    Infrastructure
-    ┌──────────────────┐           ┌────────────────────────────┐
-    │  Operations      │  depends  │  Contract  ──►  Adapter    │
-    │  resolve what    │  on       │  Storage   ──►  Postgres   │
-    │  they need       │  ───────► │  Cache     ──►  Redis      │
-    │  (contracts)     │           │  Blob      ──►  S3         │
-    └──────────────────┘           └────────────────────────────┘
+```mermaid
+---
+config:
+  flowchart:
+    subGraphTitleMargin:
+      top: 10
+      bottom: 30
+---
+flowchart LR
+    subgraph App["<b>Application</b>"]
+        Ops["Operations resolve what they need (contracts)"]
+    end
+
+    subgraph Infra["<b>Infrastructure</b>"]
+        S["Storage → Postgres"]
+        C["Cache → Redis"]
+        B["Blob → S3"]
+    end
+
+    App -->|depends on| Infra
 ```
 
 | Contract | Purpose |

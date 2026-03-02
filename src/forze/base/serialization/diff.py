@@ -163,6 +163,7 @@ def calculate_dict_difference(
 # ....................... #
 
 DictPath = tuple[str, ...]
+"""Path into a nested dict as a tuple of keys."""
 
 
 def deep_dict_intersection(
@@ -170,8 +171,16 @@ def deep_dict_intersection(
     b: JsonDict,
     _prefix: DictPath = (),
 ) -> set[DictPath]:
-    """Return the set of matching leaf key paths shared by both dictionaries."""
+    """Return the set of matching leaf key paths shared by both dictionaries.
 
+    Recursively compares nested dicts; only paths where both values are
+    non-dict (leaf) and equal are included.
+
+    :param a: First dictionary.
+    :param b: Second dictionary.
+    :param _prefix: Internal recursion prefix; do not pass.
+    :returns: Set of key paths where both dicts have the same leaf value.
+    """
     res: set[DictPath] = set()
 
     for k in a.keys() & b.keys():
