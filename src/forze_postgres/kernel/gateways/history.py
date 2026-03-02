@@ -26,7 +26,9 @@ from .base import PostgresGateway
 from .spec import PostgresTableSpec
 
 # ----------------------- #
-#! TODO: Review logics
+#! TODO:
+#! - replace with explicit strategy handling
+#! - review model -> jsonb serialization/deserialization
 
 
 class PostgresHistoryWriteStrategy(StrEnum):
@@ -127,9 +129,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             hist = await self._get(target_spec=target_spec, pk=current.id, rev=rev)
 
             if not current.validate_historical_consistency(hist, update):
-                raise ConflictError(
-                    "Нарушение согласованности истории во время обновления"
-                )
+                raise ConflictError("Historical consistency violation during update")
 
     # ....................... #
 
@@ -160,5 +160,5 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             for (c, _, u), h in zip(to_check, hists, strict=True):
                 if not c.validate_historical_consistency(h, u):
                     raise ConflictError(
-                        "Нарушение согласованности истории во время обновления"
+                        "Historical consistency violation during update"
                     )

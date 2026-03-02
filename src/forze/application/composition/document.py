@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
+from typing import Any, Generic, NotRequired, Optional, TypedDict, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -123,18 +123,31 @@ def build_document_plan(
 # ....................... #
 
 
-def build_document_registry(
+def build_document_create_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     *,
     numbered: bool = False,
+) -> DTOMapper[Any]:
+    mapper = DTOMapper(out=spec.models["create_cmd"])
+
+    if numbered:
+        mapper = mapper.with_steps(NumberIdStep(namespace=spec.namespace))
+
+    return mapper
+
+
+# ....................... #
+
+
+def build_document_registry(
+    spec: DocumentSpec[Any, Any, Any, Any],
+    *,
+    replace_create_mapper: Optional[DTOMapper[Any]] = None,
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec."""
 
-    create_mapper = DTOMapper(out=spec.models["create_cmd"])
+    create_mapper = replace_create_mapper or DTOMapper(out=spec.models["create_cmd"])
     update_mapper = DTOMapper(out=spec.models["update_cmd"])
-
-    if numbered:
-        create_mapper = create_mapper.with_steps(NumberIdStep(namespace=spec.namespace))
 
     reg = UsecaseRegistry(
         {
@@ -231,4 +244,5 @@ class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
 
     def __call__(self, ctx: ExecutionContext) -> DocumentUsecasesFacade[R, C, U]:
         reg = self.reg.extend_plan(self.plan)
+
         return DocumentUsecasesFacade(ctx=ctx, reg=reg)

@@ -9,15 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- `forze.application.mapping` module with `DTOMapper`, `MappingStep`, `NumberIdStep`, `CreatorIdStep`, `MappingPolicy` for composable async DTO mapping.
+- `build_document_plan`, `build_document_create_mapper`, and `replace_create_mapper` in `build_document_registry` for document lifecycle and custom create mappers.
+- Namespaced `DocumentOperation` and `StorageOperation` values (`document.*`, `storage.*`).
+- `CREATOR_ID_FIELD` constant in `forze.domain.constants`.
 
 ### Changed
 
-- ...
+- `DocumentOperation`, `DocumentUsecasesFacade` moved from `forze.application.facades` to `forze.application.composition.document`. `StorageOperation` moved to `forze.application.usecases.storage`. Facades package removed.
+- `Effect`, `Guard`, `Middleware`, `NextCall` moved from `forze.application.execution.usecase` to `forze.application.execution.middleware`.
+- `Deps` constructor-based API: use `Deps(deps={...})` instead of `register`/`register_many`. Builder methods removed.
+- `Usecase` now requires `ctx: ExecutionContext`; `with_guards`/`with_effects` replaced by `with_middlewares`.
+- `TxUsecase` removed; transaction handling via `TxMiddleware` in plan.
+- `DocumentUsecasesFacadeProvider` now requires `reg` and `plan` (no longer optional).
+- `CreateDocument` and `UpdateDocument` use async `DTOMapper` instead of sync `Callable` mappers. `CreateNumberedDocument` removed; use `build_document_create_mapper(spec, numbered=True)` with `replace_create_mapper` in registry.
 
 ### Fixed
 
-- ...
+- Postgres history gateway: consistency error messages now in English.
 
 ## [0.1.5] - 2026-02-28
 

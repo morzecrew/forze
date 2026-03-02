@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
-from forze.domain.constants import NUMBER_ID_FIELD
+from forze.domain.constants import CREATOR_ID_FIELD, NUMBER_ID_FIELD
 
 from .mapper import MappingStep
 
@@ -39,4 +39,18 @@ class NumberIdStep(MappingStep):
 
 # ....................... #
 
-#! TODO: add creator id step
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class CreatorIdStep(MappingStep):
+    def produces(self) -> frozenset[str]:
+        return frozenset({CREATOR_ID_FIELD})
+
+    # ....................... #
+
+    async def __call__(
+        self,
+        ctx: "ExecutionContext",
+        source: BaseModel,
+        payload: JsonDict,
+    ) -> JsonDict:
+        raise NotImplementedError("CreatorIdStep is not implemented")
