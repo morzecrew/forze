@@ -1,3 +1,10 @@
+"""Document CRUD and search usecases.
+
+Provides create, read, update, delete, restore, kill, and search operations
+backed by :class:`forze.application.contracts.document.DocumentPort` and
+:class:`forze.application.contracts.document.DocumentReadPort`.
+"""
+
 from .create import CreateDocument
 from .delete import DeleteDocument, KillDocument, RestoreDocument, SoftDeleteArgs
 from .get import GetDocument

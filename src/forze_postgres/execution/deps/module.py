@@ -1,3 +1,5 @@
+"""Postgres dependency module for the application kernel."""
+
 from typing import final
 
 import attrs
@@ -18,13 +20,29 @@ from .keys import PostgresClientDepKey, PostgresTypesProviderDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresDepsModule(DepsModule):
+    """Dependency module that registers Postgres client, tx manager, and document port.
+
+    Invoke to produce a :class:`Deps` container with all Postgres-backed
+    dependencies. The client must be initialized separately (e.g. via
+    :func:`postgres_lifecycle_step`) before usecases run.
+    """
+
     client: PostgresClient
+    """Pre-constructed Postgres client (pool not yet initialized)."""
+
     rev_bump_strategy: PostgresRevBumpStrategy
+    """Strategy for revision bumps: ``"database"`` or ``"application"``."""
+
     history_write_strategy: PostgresHistoryWriteStrategy
+    """Strategy for history writes: ``"database"`` or ``"application"``."""
 
     # ....................... #
 
     def __call__(self) -> Deps:
+        """Build a dependency container with Postgres-backed ports.
+
+        :returns: Deps with client, types provider, tx manager, and document port.
+        """
         return Deps(
             {
                 PostgresClientDepKey: self.client,

@@ -1,9 +1,16 @@
+"""Dependency injection container and plans.
+
+Provides :class:`Deps` (in-memory container implementing :class:`DepsPort`),
+:class:`DepsModule` protocol, and :class:`DepsPlan` for declarative assembly.
+"""
+
 from typing import Any, Protocol, Self, TypeVar, cast, final
 
 import attrs
 
-from forze.application.contracts.deps import DepKey, DepsPort
 from forze.base.errors import CoreError
+
+from ..contracts.deps import DepKey, DepsPort
 
 # ----------------------- #
 
@@ -48,8 +55,12 @@ class Deps(DepsPort):
 
     @classmethod
     def merge(cls, *deps: Self) -> Self:
-        """Merge multiple dependency containers into a single container."""
+        """Merge multiple dependency containers into a single container.
 
+        :param deps: Containers to merge.
+        :returns: New container with all dependencies.
+        :raises CoreError: If any key is registered in more than one container.
+        """
         acc: dict[DepKey[Any], Any] = {}
 
         for d in deps:
@@ -66,8 +77,11 @@ class Deps(DepsPort):
     # ....................... #
 
     def without(self, key: DepKey[T]) -> Self:
-        """Create a new dependency container without the given key."""
+        """Create a new dependency container without the given key.
 
+        :param key: Key to remove.
+        :returns: New container without the key.
+        """
         new = dict(self.deps)
         new.pop(key)
 
@@ -77,7 +91,6 @@ class Deps(DepsPort):
 
     def empty(self) -> bool:
         """Return ``True`` if the dependency container is empty."""
-
         return len(self.deps) == 0
 
 
@@ -85,6 +98,12 @@ class Deps(DepsPort):
 
 
 class DepsModule(Protocol):
+    """Protocol for a module that returns a dependency container.
+
+    Callables are invoked to produce a :class:`Deps` instance; multiple
+    modules are merged via :meth:`Deps.merge` when building a plan.
+    """
+
     def __call__(self) -> Deps:
         """Return a dependency container."""
         ...
@@ -97,24 +116,45 @@ class DepsModule(Protocol):
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class DepsPlan:
-    """Declarative plan for building dependency containers."""
+    """Declarative plan for building dependency containers.
+
+    Collects :class:`DepsModule` callables and merges them into a single
+    :class:`Deps` instance on :meth:`build`. Merging fails if any module
+    registers a conflicting dependency key.
+    """
 
     modules: tuple[DepsModule, ...] = attrs.field(factory=tuple)
+    """Modules to invoke and merge when building."""
 
     # ....................... #
 
     @classmethod
     def from_modules(cls, *modules: DepsModule) -> Self:
+        """Create a plan from modules.
+
+        :param modules: Modules to include.
+        :returns: New plan instance.
+        """
         return cls(modules=modules)
 
     # ....................... #
 
     def with_modules(self, *modules: DepsModule) -> Self:
+        """Return a new plan with additional modules appended.
+
+        :param modules: Modules to append.
+        :returns: New plan instance.
+        """
         return attrs.evolve(self, modules=(*self.modules, *modules))
 
     # ....................... #
 
     def build(self) -> Deps:
+        """Build a merged dependency container from all modules.
+
+        :returns: Merged :class:`Deps` instance.
+        :raises CoreError: If any module registers a conflicting key.
+        """
         if not self.modules:
             return Deps()
 

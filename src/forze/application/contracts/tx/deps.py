@@ -1,3 +1,5 @@
+"""Transaction manager dependency keys and routers."""
+
 from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 import attrs

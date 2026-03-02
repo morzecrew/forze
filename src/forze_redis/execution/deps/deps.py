@@ -1,3 +1,5 @@
+"""Factory functions for Redis counter, document cache, and idempotency adapters."""
+
 from datetime import timedelta
 from typing import Any
 
@@ -33,6 +35,12 @@ def redis_idempotency(
     context: ExecutionContext,
     ttl: timedelta = timedelta(seconds=30),
 ) -> IdempotencyPort:
+    """Build a Redis-backed idempotency port for the execution context.
+
+    :param context: Execution context for resolving the Redis client.
+    :param ttl: Time-to-live for idempotency keys.
+    :returns: Idempotency port backed by :class:`RedisIdempotencyAdapter`.
+    """
     redis_client = context.dep(RedisClientDepKey)
 
     return RedisIdempotencyAdapter(client=redis_client, ttl=ttl)
@@ -46,6 +54,12 @@ def redis_document_cache(
     context: ExecutionContext,
     spec: DocumentSpec[Any, Any, Any, Any],
 ) -> DocumentCachePort:
+    """Build a Redis-backed document cache port for the given spec.
+
+    :param context: Execution context for resolving the Redis client.
+    :param spec: Document specification (namespace used for key prefixing).
+    :returns: Document cache port backed by :class:`RedisDocumentCacheAdapter`.
+    """
     redis_client = context.dep(RedisClientDepKey)
 
     return RedisDocumentCacheAdapter(
@@ -62,6 +76,12 @@ def redis_counter(
     context: ExecutionContext,
     namespace: str,
 ) -> CounterPort:
+    """Build a Redis-backed counter port for the given namespace.
+
+    :param context: Execution context for resolving the Redis client.
+    :param namespace: Counter namespace (used for key prefixing).
+    :returns: Counter port backed by :class:`RedisCounterAdapter`.
+    """
     redis_client = context.dep(RedisClientDepKey)
 
     return RedisCounterAdapter(

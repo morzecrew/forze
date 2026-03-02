@@ -1,3 +1,5 @@
+"""Dependency container protocol."""
+
 from typing import Protocol, Self, TypeVar
 
 from .value_objects import DepKey
@@ -10,7 +12,12 @@ T = TypeVar("T")
 
 
 class DepsPort(Protocol):
-    """Abstract access to dependency resolution."""
+    """Abstract access to dependency resolution.
+
+    Implementations provide a registry of dependencies keyed by :class:`DepKey`.
+    Merging is used when combining multiple modules; ``without`` supports
+    routers that extract a dependency from a container.
+    """
 
     def provide(self, key: DepKey[T]) -> T:
         """Return the dependency instance registered under ``key``."""

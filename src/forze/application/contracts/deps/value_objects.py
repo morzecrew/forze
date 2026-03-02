@@ -1,3 +1,5 @@
+"""Dependency key value object."""
+
 from typing import TypeVar, final
 
 import attrs
@@ -14,9 +16,9 @@ T = TypeVar("T")
 class DepKey[T]:
     """Typed key used to identify dependencies in the kernel.
 
-    The ``name`` is only used for diagnostics; type information is carried
-    through the type parameter ``T``.
+    The ``name`` is used for diagnostics and error messages; type information
+    is carried through the type parameter ``T`` for static resolution.
     """
 
     name: str
-    """Name of the dependency."""
+    """Human-readable name for diagnostics and error messages."""

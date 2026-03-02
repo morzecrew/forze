@@ -1,3 +1,5 @@
+"""Lifecycle hooks for S3 client initialization and shutdown."""
+
 from typing import Optional, final
 
 import attrs
@@ -14,10 +16,24 @@ from .deps import S3ClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class S3StartupHook(LifecycleHook):
+    """Startup hook that initializes the S3 client from the deps container.
+
+    Resolves :data:`S3ClientDepKey` and calls :meth:`S3Client.initialize`
+    with endpoint and credentials. The client must be registered before
+    startup runs.
+    """
+
     endpoint: str
+    """S3-compatible endpoint URL."""
+
     access_key_id: str
+    """Access key for authentication."""
+
     secret_access_key: str
+    """Secret key for authentication."""
+
     config: Optional[AioConfig] = None
+    """Optional botocore config for retries, timeouts, etc."""
 
     # ....................... #
 
@@ -37,6 +53,11 @@ class S3StartupHook(LifecycleHook):
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class S3ShutdownHook(LifecycleHook):
+    """Shutdown hook that closes the S3 client session.
+
+    Resolves :data:`S3ClientDepKey` and calls :meth:`S3Client.close`.
+    """
+
     async def __call__(self, ctx: ExecutionContext) -> None:
         s3_client = ctx.dep(S3ClientDepKey)
         s3_client.close()
@@ -53,6 +74,15 @@ def s3_lifecycle_step(
     secret_access_key: str,
     config: Optional[AioConfig] = None,
 ) -> LifecycleStep:
+    """Build a lifecycle step for S3 client init and shutdown.
+
+    :param name: Step name for collision detection.
+    :param endpoint: S3-compatible endpoint URL.
+    :param access_key_id: Access key for authentication.
+    :param secret_access_key: Secret key for authentication.
+    :param config: Optional botocore config.
+    :returns: Lifecycle step with startup and shutdown hooks.
+    """
     startup_hook = S3StartupHook(
         endpoint=endpoint,
         access_key_id=access_key_id,

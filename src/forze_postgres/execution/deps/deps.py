@@ -1,3 +1,5 @@
+"""Factory functions for Postgres document and tx manager adapters."""
+
 from typing import Any, Optional
 
 from forze.application.contracts.document import (
@@ -23,6 +25,17 @@ def postgres_document_configurable(
     rev_bump_strategy: PostgresRevBumpStrategy = "database",
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
+    """Return a :class:`DocumentDepPort` factory with configurable strategies.
+
+    The inner factory builds :class:`PostgresDocumentAdapter` from the execution
+    context and document spec. Revision bump and history write strategies
+    control whether the database or application handles rev increments and
+    history persistence.
+
+    :param rev_bump_strategy: ``"database"`` (trigger) or ``"application"``.
+    :param history_write_strategy: ``"database"`` or ``"application"``.
+    :returns: Document dep port factory conforming to :class:`DocumentDepPort`.
+    """
     @conforms_to(DocumentDepPort)
     def postgres_document(
         context: ExecutionContext,
@@ -62,6 +75,11 @@ def postgres_document_configurable(
 
 @conforms_to(TxManagerDepPort)
 def postgres_txmanager(context: ExecutionContext) -> TxManagerPort:
+    """Build a Postgres-backed transaction manager for the execution context.
+
+    :param context: Execution context for resolving the Postgres client.
+    :returns: Tx manager port backed by :class:`PostgresTxManagerAdapter`.
+    """
     client = context.dep(PostgresClientDepKey)
 
     return PostgresTxManagerAdapter(client=client)

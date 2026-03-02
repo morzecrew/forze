@@ -1,3 +1,12 @@
+"""Execution kernel for usecases, dependency injection, and lifecycle.
+
+Provides :class:`ExecutionContext` (dependency resolution, transactions),
+:class:`Usecase` (base for application workflows), :class:`ExecutionRuntime`
+(scoped execution with deps and lifecycle), and :class:`UsecaseRegistry` for
+composing usecases with middlewares. Middlewares include guards, effects, and
+transaction wrapping.
+"""
+
 from .context import ExecutionContext
 from .deps import Deps, DepsModule, DepsPlan
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep

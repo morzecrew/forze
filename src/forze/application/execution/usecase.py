@@ -10,19 +10,27 @@ from .middleware import Middleware, NextCall
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class Usecase[Args, R]:
-    """Base class for asynchronous application usecases."""
+    """Base class for asynchronous application usecases.
+
+    Subclasses implement :meth:`main`. Middlewares wrap the usecase in a chain
+    (guards run before, effects after; order is reversed so middlewares added
+    first run outermost). Invoke via :meth:`__call__` to run the full chain.
+    """
 
     ctx: ExecutionContext
-    """Execution context to use for the usecase."""
+    """Execution context for resolving ports and transactions."""
 
     middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
-    """Middlewares to run before the usecase."""
+    """Middlewares wrapping the usecase; first added runs outermost."""
 
     # ....................... #
 
     def with_middlewares(self, *middlewares: Middleware[Args, R]) -> Self:
-        """Return a new usecase with additional middlewares appended."""
+        """Return a new usecase with additional middlewares appended.
 
+        :param middlewares: Middlewares to append.
+        :returns: New usecase instance.
+        """
         if not middlewares:
             return self
 
@@ -35,7 +43,6 @@ class Usecase[Args, R]:
 
         Subclasses must override this method to implement their behavior.
         """
-
         raise NotImplementedError
 
     # ....................... #
@@ -64,8 +71,10 @@ class Usecase[Args, R]:
     # ....................... #
 
     async def __call__(self, args: Args) -> R:
-        """Execute the usecase with the configured guards and effects."""
+        """Execute the usecase with the configured middlewares.
 
+        Builds the middleware chain and runs it with the given args.
+        """
         chain = self._build_chain()
 
         return await chain(args)

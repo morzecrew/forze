@@ -1,3 +1,11 @@
+"""Usecase composition plans for middleware ordering and transaction wrapping.
+
+Provides :class:`UsecasePlan` (per-operation middleware composition),
+:class:`OperationPlan` (buckets for before/wrap/after, in-tx, after-commit),
+and :class:`MiddlewareSpec` (priority + factory). Plans are merged and resolved
+into composed usecases via :class:`UsecaseRegistry`.
+"""
+
 from enum import StrEnum
 from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
@@ -23,12 +31,19 @@ from .usecase import Usecase
 U = TypeVar("U", bound=Usecase[Any, Any])
 
 GuardFactory = Callable[[ExecutionContext], Guard[Any]]
+"""Factory that builds a guard from execution context."""
+
 EffectFactory = Callable[[ExecutionContext], Effect[Any, Any]]
+"""Factory that builds an effect from execution context."""
+
 MiddlewareFactory = Callable[[ExecutionContext], Middleware[Any, Any]]
+"""Factory that builds a middleware from execution context."""
 
 OpKey = str | StrEnum
+"""Operation identifier (string or enum)."""
 
 WILDCARD: Final[str] = "*"
+"""Wildcard operation key for default/fallback plans."""
 
 PlanBucket = Literal[
     "outer_before",
@@ -39,6 +54,7 @@ PlanBucket = Literal[
     "in_tx_after",
     "after_commit",
 ]
+"""Bucket names for middleware placement in the chain."""
 
 # ....................... #
 
@@ -111,21 +127,38 @@ class MiddlewareSpec:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
-    """Per-operation composition"""
+    """Per-operation middleware composition with transaction support.
+
+    Buckets: ``outer_*`` run outside tx; ``in_tx_*`` inside
+    :class:`TxMiddleware`; ``after_commit`` runs after successful commit.
+    When ``tx`` is ``True``, in-tx and after-commit buckets are used.
+    """
 
     tx: bool = False
+    """Whether the operation runs inside a transaction."""
 
     # outer
     outer_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Guards/effects before the transaction (if any)."""
+
     outer_wrap: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Wrapping middlewares outside the transaction."""
+
     outer_after: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Guards/effects after the transaction."""
 
     # in tx
     in_tx_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Guards/effects inside the transaction, before the usecase."""
+
     in_tx_wrap: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Wrapping middlewares inside the transaction."""
+
     in_tx_after: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Guards/effects inside the transaction, after the usecase."""
 
     after_commit: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Effects to run after successful commit."""
 
     # ....................... #
 
@@ -133,7 +166,14 @@ class OperationPlan:
         self,
         bucket: PlanBucket,
         spec: MiddlewareSpec,
-    ) -> Self:  # questionable dodgy code ...
+    ) -> Self:
+        """Add a middleware spec to a bucket.
+
+        :param bucket: Bucket name.
+        :param spec: Middleware spec.
+        :returns: New plan instance.
+        :raises CoreError: If bucket is invalid.
+        """
         if not hasattr(self, bucket):
             raise CoreError(f"Invalid bucket: {bucket}")
 
@@ -143,6 +183,10 @@ class OperationPlan:
     # ....................... #
 
     def validate(self) -> None:
+        """Validate that in-tx buckets are only used when tx is enabled.
+
+        :raises CoreError: If in-tx or after-commit buckets are used without tx.
+        """
         if (
             self.in_tx_before
             or self.in_tx_after
@@ -201,6 +245,14 @@ class OperationPlan:
     # ....................... #
 
     def build(self, bucket: PlanBucket) -> tuple[MiddlewareSpec, ...]:
+        """Build the ordered middleware specs for a bucket.
+
+        Deduplicates by priority and factory id, then sorts by priority
+        descending (higher first).
+
+        :param bucket: Bucket name.
+        :returns: Ordered specs.
+        """
         deduped_specs = self.__dedupe(bucket)
 
         return self.__sort(deduped_specs, reverse=True)
@@ -238,9 +290,15 @@ class OperationPlan:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UsecasePlan:
-    """Mutable description of how usecases for operations are composed."""
+    """Declarative plan for composing usecases per operation.
+
+    Maps operation keys to :class:`OperationPlan`. Use ``*`` (wildcard) for
+    defaults applied to all operations. :meth:`resolve` merges base and
+    op-specific plans, then builds the middleware chain.
+    """
 
     ops: dict[str, OperationPlan] = attrs.field(factory=dict)
+    """Operation key to plan mapping."""
 
     # ....................... #
     # Helpers
@@ -264,6 +322,11 @@ class UsecasePlan:
     # ....................... #
 
     def tx(self, op: OpKey) -> Self:
+        """Enable transaction wrapping for the operation.
+
+        :param op: Operation key.
+        :returns: New plan instance.
+        """
         cur = self._op(op)
         return self._put(op, attrs.evolve(cur, tx=True))
 
@@ -383,8 +446,17 @@ class UsecasePlan:
         ctx: ExecutionContext,
         factory: Callable[[ExecutionContext], U],
     ) -> U:
-        """Build a composed usecase instance for an operation."""
+        """Build a composed usecase instance for an operation.
 
+        Merges base (wildcard) and op-specific plans, validates, builds the
+        middleware chain, and wraps the factory result.
+
+        :param op: Operation key (wildcard not allowed).
+        :param ctx: Execution context for factory resolution.
+        :param factory: Usecase factory.
+        :returns: Composed usecase with middlewares.
+        :raises CoreError: If op is wildcard or plan is invalid.
+        """
         op = str(op)
 
         if op == WILDCARD or op.endswith(WILDCARD):
@@ -434,6 +506,12 @@ class UsecasePlan:
     # ....................... #
 
     def explain(self, op: OpKey):
+        """Return a human-readable explanation of the middleware chain for an op.
+
+        :param op: Operation key.
+        :returns: Explain object with pretty_format.
+        :raises CoreError: If op is wildcard.
+        """
         op = str(op)
 
         if op == WILDCARD or op.endswith(WILDCARD):
@@ -495,8 +573,14 @@ class UsecasePlan:
 
     @classmethod
     def merge(cls, *plans: Self) -> Self:
-        """Merge multiple plans into a single aggregate plan."""
+        """Merge multiple plans into a single aggregate plan.
 
+        For each operation key, merges the corresponding :class:`OperationPlan`
+        instances. Base (wildcard) and op-specific plans are combined per op.
+
+        :param plans: Plans to merge.
+        :returns: Merged plan.
+        """
         acc: dict[str, OperationPlan] = {}
 
         for p in plans:

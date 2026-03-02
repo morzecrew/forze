@@ -33,6 +33,8 @@ CounterDepKey = DepKey[CounterDepPort]("counter")
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class CounterDepRouter(DepRouter[str, CounterDepPort], CounterDepPort):
+    """Router that selects a counter provider by namespace."""
+
     dep_key = CounterDepKey
 
     # ....................... #

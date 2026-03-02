@@ -1,4 +1,8 @@
-"""Ports for document storage, retrieval and search."""
+"""Ports for document storage, retrieval, and search.
+
+Provides :class:`DocumentReadPort`, :class:`DocumentSearchPort`,
+:class:`DocumentWritePort`, :class:`DocumentPort`, and :class:`DocumentCachePort`.
+"""
 
 from typing import (
     Any,
@@ -355,7 +359,7 @@ class DocumentPort[
     C: CreateDocumentCmd,
     U: BaseDTO,
 ](DocumentReadPort[R], DocumentSearchPort[R], DocumentWritePort[R, D, C, U], Protocol):
-    """Combined port exposing read, search and write operations for documents."""
+    """Combined port exposing read, search, and write operations for documents."""
 
 
 # ....................... #

@@ -1,3 +1,5 @@
+"""Storage composition: operation identifiers for object storage usecases."""
+
 from .operations import StorageOperation
 
 # ----------------------- #

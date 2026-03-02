@@ -1,3 +1,10 @@
+"""Registry for usecase factories and composition plans.
+
+Provides :class:`UsecaseRegistry` to register operation-to-factory mappings
+and attach :class:`UsecasePlan` middleware composition. :meth:`resolve` builds
+a fully composed usecase for an operation.
+"""
+
 from typing import Any, Callable, Literal, Optional, Self, final, overload
 
 import attrs
@@ -11,6 +18,7 @@ from .usecase import Usecase
 # ----------------------- #
 
 UsecaseFactory = Callable[[ExecutionContext], Usecase[Any, Any]]
+"""Factory that builds a usecase from execution context."""
 
 # ....................... #
 
@@ -18,12 +26,19 @@ UsecaseFactory = Callable[[ExecutionContext], Usecase[Any, Any]]
 @final
 @attrs.define(slots=True)
 class UsecaseRegistry:
-    """Container for registering and composing usecases."""
+    """Container for registering usecase factories and composition plans.
+
+    Maps operation keys to factories. Plan (middlewares, tx) is merged via
+    :meth:`extend_plan`. :meth:`resolve` builds the composed usecase for an
+    operation using the plan.
+    """
 
     defaults: dict[str, UsecaseFactory] = attrs.field(factory=dict)
+    """Operation key to factory mapping."""
 
     # Non initable fields
     __plan: UsecasePlan = attrs.field(factory=UsecasePlan, init=False, repr=False)
+    """Composition plan for middleware and transaction wrapping."""
 
     # ....................... #
 
@@ -35,14 +50,7 @@ class UsecaseRegistry:
         *,
         inplace: Literal[True],
     ) -> None:
-        """Register a usecase factory for an operation.
-
-        :param op: Logical operation name.
-        :param factory: Factory that builds the usecase.
-        :param inplace: When ``True``, mutate the registry in place, otherwise
-            return a new instance.
-        :raises CoreError: If a factory is already registered for ``op``.
-        """
+        """Register a usecase factory and mutate the registry in place."""
         ...
 
     @overload
@@ -53,14 +61,7 @@ class UsecaseRegistry:
         *,
         inplace: Literal[False] = False,
     ) -> Self:
-        """Register a usecase factory for an operation.
-
-        :param op: Logical operation name.
-        :param factory: Factory that builds the usecase.
-        :param inplace: When ``True``, mutate the registry in place, otherwise
-            return a new instance.
-        :raises CoreError: If a factory is already registered for ``op``.
-        """
+        """Register a usecase factory and return a new registry."""
         ...
 
     def register(
@@ -107,16 +108,7 @@ class UsecaseRegistry:
         *,
         inplace: Literal[True],
     ) -> None:
-        """Override an existing usecase factory for an operation.
-
-        The override is tracked so that conflicting :class:`UsecasePlan`
-        overrides can be detected when plans are extended.
-
-        :param op: Logical operation name to override.
-        :param factory: Replacement factory.
-        :param inplace: When ``True``, mutate the registry in place.
-        :raises CoreError: If ``op`` has not been registered yet.
-        """
+        """Override an existing factory and mutate in place."""
         ...
 
     @overload
@@ -127,16 +119,8 @@ class UsecaseRegistry:
         *,
         inplace: Literal[False] = False,
     ) -> Self:
-        """Override an existing usecase factory for an operation.
-
-        The override is tracked so that conflicting :class:`UsecasePlan`
-        overrides can be detected when plans are extended.
-
-        :param op: Logical operation name to override.
-        :param factory: Replacement factory.
-        :param inplace: When ``True``, mutate the registry in place.
-        :raises CoreError: If ``op`` has not been registered yet.
-        """
+        """Override an existing factory and return a new registry."""
+        ...
 
     def override(
         self,
@@ -379,8 +363,17 @@ class UsecaseRegistry:
         *,
         debug_plan: bool = False,
     ) -> Usecase[Any, Any]:
-        """Build a fully composed usecase for an operation."""
+        """Build a fully composed usecase for an operation.
 
+        Looks up the factory, optionally prints the plan when debug_plan,
+        then delegates to :meth:`UsecasePlan.resolve`.
+
+        :param op: Operation key.
+        :param ctx: Execution context.
+        :param debug_plan: When ``True``, print the middleware chain to stdout.
+        :returns: Composed usecase with middlewares.
+        :raises CoreError: If op is not registered.
+        """
         op = str(op)
         factory = self.defaults.get(op)
 

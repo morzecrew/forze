@@ -19,7 +19,10 @@ from forze.base.primitives import JsonDict
 
 
 class StreamEvent[M: BaseModel](TypedDict):
-    """Event as read from or written to a stream backend."""
+    """Event as read from or written to a stream backend.
+
+    Backend-specific identifiers (e.g. Redis stream ID) are in ``id``.
+    """
 
     stream: str
     """Logical stream name or topic."""

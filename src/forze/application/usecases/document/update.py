@@ -13,9 +13,16 @@ from forze.domain.models import BaseDTO, ReadDocument
 
 @final
 class UpdateArgs[In: BaseDTO](TypedDict):
+    """Arguments for update usecases."""
+
     pk: UUID
+    """Document primary key."""
+
     dto: In
+    """Update payload DTO."""
+
     rev: int
+    """Expected revision for optimistic concurrency."""
 
 
 # ....................... #
@@ -25,12 +32,26 @@ class UpdateArgs[In: BaseDTO](TypedDict):
 class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
     Usecase[UpdateArgs[In], Out]
 ):
+    """Usecase that updates an existing document from a mapped command.
+
+    Maps the input DTO to an update command via :attr:`mapper`, then delegates
+    to :meth:`DocumentPort.update` with the primary key and optional revision.
+    """
+
     doc: DocumentPort[Out, Any, Any, Cmd]
+    """Document port for update operations."""
+
     mapper: DTOMapper[Cmd]
+    """Mapper that converts input DTO to update command."""
 
     # ....................... #
 
     async def main(self, args: UpdateArgs[In]) -> Out:
+        """Update a document from the mapped command.
+
+        :param args: Update arguments (pk, dto, rev).
+        :returns: Updated read model.
+        """
         cmd = await self.mapper(self.ctx, args["dto"])
 
         return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))

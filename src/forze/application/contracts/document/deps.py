@@ -1,3 +1,5 @@
+"""Document dependency keys and routers."""
+
 from typing import TYPE_CHECKING, Any, Optional, Protocol, final, runtime_checkable
 
 import attrs

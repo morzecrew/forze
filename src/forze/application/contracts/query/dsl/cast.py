@@ -8,8 +8,15 @@ from ..types import Scalar
 
 
 class ValueCaster:
+    """Static methods for casting raw values to typed scalars.
+
+    Used when rendering filter expressions to backend-specific formats
+    (e.g. MongoDB, Postgres) where values may arrive as strings or numbers.
+    """
+
     @staticmethod
     def as_bool(v: Any) -> bool:
+        """Cast a value to bool; accepts ``"true"``, ``"1"``, etc."""
         if isinstance(v, bool):
             return v
 
@@ -31,6 +38,7 @@ class ValueCaster:
 
     @staticmethod
     def as_uuid(v: Any) -> UUID:
+        """Cast a value to UUID; accepts UUID or parseable string."""
         if isinstance(v, UUID):
             return v
 
@@ -47,6 +55,7 @@ class ValueCaster:
 
     @staticmethod
     def as_int(v: Any) -> int:
+        """Cast a value to int; rejects bool."""
         if isinstance(v, bool):
             raise ValueError("Expected int, got bool")
 
@@ -71,6 +80,7 @@ class ValueCaster:
 
     @staticmethod
     def as_float(v: Any) -> float:
+        """Cast a value to float; rejects bool."""
         if isinstance(v, bool):
             raise ValueError("Expected float, got bool")
 
@@ -120,6 +130,7 @@ class ValueCaster:
 
     @classmethod
     def as_datetime(cls, v: Any, *, force_tz: bool) -> datetime:
+        """Cast a value to datetime; accepts ISO string or timestamp."""
         if isinstance(v, datetime):
             dt = v
 
@@ -169,6 +180,7 @@ class ValueCaster:
 
     @classmethod
     def as_date(cls, v: Any) -> date:
+        """Cast a value to date; accepts date, datetime, or ISO string."""
         if isinstance(v, date) and not isinstance(v, datetime):
             return v
 
@@ -193,6 +205,7 @@ class ValueCaster:
 
     @staticmethod
     def pass_through(v: Any) -> Any:
+        """Return scalar as-is; coerce other values to string."""
         if v is None or isinstance(v, Scalar):
             return v
 

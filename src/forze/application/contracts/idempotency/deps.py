@@ -1,3 +1,5 @@
+"""Idempotency dependency keys."""
+
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 

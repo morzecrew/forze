@@ -1,3 +1,5 @@
+"""Storage port and object metadata TypedDicts."""
+
 from datetime import datetime
 from typing import (
     Awaitable,

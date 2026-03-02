@@ -1,3 +1,9 @@
+"""Paginated response DTOs for search and list operations.
+
+Provides :class:`Paginated` (typed hits) and :class:`RawPaginated` (raw dict
+hits). Page numbers are one-based; ``count`` is the total across all pages.
+"""
+
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
@@ -7,35 +13,44 @@ from forze.domain.models import BaseDTO
 
 
 class Paginated[T: BaseModel](BaseDTO):
-    """Paginated response model."""
+    """Paginated response with typed hit records.
+
+    Used when search returns domain read models (e.g. :class:`ReadDocument`).
+    ``page`` and ``size`` describe the requested slice; ``count`` is the
+    total number of matching records.
+    """
 
     hits: list[T]
-    """Records of the paginated response."""
+    """Records for the current page."""
 
     page: int
-    """Page number of the paginated response."""
+    """One-based page number."""
 
     size: int
-    """Size of the page of the paginated response."""
+    """Page size (number of records per page)."""
 
     count: int
-    """Total number of records available."""
+    """Total number of matching records across all pages."""
 
 
 # ....................... #
 
 
 class RawPaginated(BaseDTO):
-    """Paginated response model."""
+    """Paginated response with raw dict hit records.
+
+    Used when search returns field-projected JSON mappings instead of typed
+    models. Same pagination semantics as :class:`Paginated`.
+    """
 
     hits: list[JsonDict]
-    """Records of the paginated response."""
+    """Raw record dicts for the current page."""
 
     page: int
-    """Page number of the paginated response."""
+    """One-based page number."""
 
     size: int
-    """Size of the page of the paginated response."""
+    """Page size (number of records per page)."""
 
     count: int
-    """Total number of records available."""
+    """Total number of matching records across all pages."""

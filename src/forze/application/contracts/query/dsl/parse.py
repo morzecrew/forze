@@ -23,6 +23,8 @@ from .nodes import And, Expr, Field, Or
 
 
 class FilterExpressionParser:
+    """Parser that converts :class:`FilterExpression` dicts into AST nodes."""
+
     @classmethod
     def parse(cls, expr: FilterExpression) -> Expr:
         if is_predicate(expr):

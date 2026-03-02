@@ -1,3 +1,10 @@
+"""Document contracts: ports, specs, and dependency keys.
+
+Provides :class:`DocumentPort`, :class:`DocumentReadPort`, :class:`DocumentWritePort`,
+:class:`DocumentSearchPort`, :class:`DocumentCachePort`, and specs for
+configuring document aggregates.
+"""
+
 from .deps import (
     DocumentCacheDepKey,
     DocumentCacheDepPort,

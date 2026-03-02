@@ -1,3 +1,5 @@
+"""Gateway factory helpers for building Postgres read, write, search, and history gateways."""
+
 from typing import Any, Optional
 
 from forze.application.contracts.document import DocumentModelSpec, DocumentSearchSpec
@@ -19,6 +21,13 @@ from .keys import PostgresClientDepKey, PostgresTypesProviderDepKey
 
 
 def read_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
+    """Build a read gateway for a relation and model.
+
+    :param ctx: Execution context for resolving client and types provider.
+    :param relation: Table or view name.
+    :param model: Pydantic model for row validation.
+    :returns: Postgres read gateway.
+    """
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
 
@@ -40,6 +49,7 @@ def _doc_history_gw(
     model: type[Any],
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
+    """Build a history gateway for document audit trails."""
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
 
@@ -62,6 +72,14 @@ def doc_search_gw(
     model: type[Any],
     search: DocumentSearchSpec,
 ):
+    """Build a search gateway for full-text search over a relation.
+
+    :param ctx: Execution context.
+    :param relation: Table or view name.
+    :param model: Read model for result validation.
+    :param search: Search index specification.
+    :returns: Postgres search gateway.
+    """
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
 
@@ -86,6 +104,16 @@ def doc_write_gw(
     rev_bump_strategy: PostgresRevBumpStrategy = "database",
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
+    """Build a write gateway for document CRUD with optional history.
+
+    :param ctx: Execution context.
+    :param relation: Write table name.
+    :param models: Document model spec (domain, create_cmd, update_cmd).
+    :param history_relation: Optional history table name.
+    :param rev_bump_strategy: Revision bump strategy.
+    :param history_write_strategy: History write strategy.
+    :returns: Postgres write gateway.
+    """
     client = ctx.dep(PostgresClientDepKey)
     types_provider = ctx.dep(PostgresTypesProviderDepKey)
 

@@ -1,3 +1,11 @@
+"""Execution context for dependency resolution and transactions.
+
+Provides :class:`ExecutionContext` with :meth:`dep`, :meth:`transaction`, and
+convenience methods (:meth:`doc`, :meth:`counter`, :meth:`txmanager`,
+:meth:`storage`). Uses context variables for per-task transaction state and
+dependency cycle detection.
+"""
+
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncIterator, Iterator, Optional, final
@@ -62,16 +70,21 @@ class ExecutionContext:
     # ....................... #
 
     def active_tx(self) -> Optional[TxHandle]:
-        """Return the current active transaction handle."""
+        """Return the current active transaction handle.
 
+        Returns ``None`` when no transaction is active.
+        """
         return self.__tx_handle.get()
 
     # ....................... #
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
-        """Enter a transaction scope."""
+        """Enter a transaction scope.
 
+        Nested calls reuse the same transaction (savepoints when supported).
+        Raises :exc:`CoreError` on scope mismatch (e.g. different tx manager).
+        """
         tx = self.txmanager()
 
         scope = tx.scope_key()
@@ -144,8 +157,12 @@ class ExecutionContext:
     # ....................... #
 
     def dep[T](self, key: DepKey[T]) -> T:
-        """Resolve a dependency by key using the underlying container."""
+        """Resolve a dependency by key using the underlying container.
 
+        :param key: Dependency key.
+        :returns: Resolved instance.
+        :raises CoreError: If the dependency is not registered or a cycle is detected.
+        """
         with self.__resolving(key):
             return self.deps.provide(key)
 
@@ -156,6 +173,11 @@ class ExecutionContext:
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
     ) -> DocumentPort[Any, Any, Any, Any]:
+        """Resolve a document port for the given spec.
+
+        :param spec: Document specification.
+        :returns: Document port instance.
+        """
         cache = self.dep(DocumentCacheDepKey)(self, spec)
         dep = self.dep(DocumentDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
@@ -165,14 +187,25 @@ class ExecutionContext:
     # ....................... #
 
     def counter(self, namespace: str) -> CounterPort:
+        """Resolve a counter port for the given namespace.
+
+        :param namespace: Counter namespace.
+        :returns: Counter port instance.
+        """
         return self.dep(CounterDepKey)(self, namespace)
 
     # ....................... #
 
     def txmanager(self) -> TxManagerPort:
+        """Resolve the transaction manager port."""
         return self.dep(TxManagerDepKey)(self)
 
     # ....................... #
 
     def storage(self, bucket: str) -> StoragePort:
+        """Resolve a storage port for the given bucket.
+
+        :param bucket: Storage bucket name.
+        :returns: Storage port instance.
+        """
         return self.dep(StorageDepKey)(self, bucket)

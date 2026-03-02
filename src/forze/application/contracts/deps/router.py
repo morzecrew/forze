@@ -1,3 +1,5 @@
+"""Dependency router for spec-based provider selection."""
+
 from enum import StrEnum
 from typing import Any, Callable, ClassVar, Generic, Optional, Self, TypeVar
 
@@ -15,26 +17,36 @@ PortT = TypeVar("PortT")
 DepPortT = TypeVar("DepPortT")
 
 RoutingKey = str | StrEnum
+"""Key used to select a route (e.g. bucket name, namespace)."""
+
 Selector = Callable[[SpecT], RoutingKey]
+"""Function that extracts a routing key from a specification."""
 
 # ....................... #
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class DepRouter(Generic[SpecT, DepPortT]):
-    """Dependency router used to select and route dependencies based on a specification."""
+    """Dependency router that selects a provider based on a specification.
+
+    Uses a selector to derive a routing key from the spec; looks up the
+    corresponding provider in the routes map. Falls back to :attr:`default`
+    when the selector's result is not in routes. Subclasses implement
+    :class:`DepKey` and are used as :class:`DepsPort` providers that extract
+    the router from the container and delegate to the selected route.
+    """
 
     selector: Selector[SpecT]
     """Function to select the routing key based on the specification."""
 
     routes: dict[RoutingKey, DepPortT]
-    """Mapping from routing key to dependency container."""
+    """Mapping from routing key to dependency provider."""
 
     default: RoutingKey
-    """Default routing key to use if the selector does not return a valid routing key."""
+    """Default routing key when selector result is not in routes."""
 
     dep_key: ClassVar[DepKey[Any]]
-    """Dependency key to use for the router."""
+    """Dependency key used to register this router in the container."""
 
     # ....................... #
 

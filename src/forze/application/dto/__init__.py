@@ -1,3 +1,10 @@
+"""Data transfer objects for application layer requests and responses.
+
+Provides search request DTOs (:class:`SearchRequestDTO`, :class:`RawSearchRequestDTO`)
+and paginated response DTOs (:class:`Paginated`, :class:`RawPaginated`). All extend
+:class:`forze.domain.models.BaseDTO` for validation and serialization.
+"""
+
 from .paginated import Paginated, RawPaginated
 from .search import RawSearchRequestDTO, SearchRequestDTO
 

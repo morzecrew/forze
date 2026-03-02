@@ -1,3 +1,5 @@
+"""Transaction manager and scoped port contracts."""
+
 from typing import AsyncContextManager, Protocol, final, runtime_checkable
 from uuid import UUID
 
@@ -11,7 +13,10 @@ from forze.base.primitives import uuid7
 @final
 @attrs.define(slots=True, frozen=True)
 class TxScopeKey:
+    """Identifier for a transaction scope (e.g. database vs cache)."""
+
     name: str
+    """Scope name used to match ports with the active transaction."""
 
 
 # ....................... #
@@ -65,5 +70,9 @@ class TxManagerPort(Protocol):
 
     #! we should add tx options to this protocol method
     def transaction(self) -> AsyncContextManager[None]:
-        """Return an async context manager that scopes a transaction."""
+        """Return an async context manager that scopes a transaction.
+
+        On entry, begins a transaction; on exit, commits or rolls back
+        according to implementation policy.
+        """
         ...
