@@ -1,11 +1,15 @@
 """Helpers for diffing and serializing data structures and Pydantic models."""
 
-from .diff import apply_dict_patch, calculate_dict_difference, deep_dict_intersection
+from .diff import (
+    apply_dict_patch,
+    calculate_dict_difference,
+    collect_touched_paths_from_patch,
+    has_path_conflict,
+)
 from .pydantic import (
     pydantic_dump,
     pydantic_field_names,
     pydantic_model_hash,
-    # pydantic_simple_schema,
     pydantic_validate,
 )
 
@@ -14,10 +18,10 @@ from .pydantic import (
 __all__ = [
     "apply_dict_patch",
     "calculate_dict_difference",
-    "deep_dict_intersection",
     "pydantic_dump",
     "pydantic_field_names",
     "pydantic_validate",
     "pydantic_model_hash",
-    # "pydantic_simple_schema",
+    "collect_touched_paths_from_patch",
+    "has_path_conflict",
 ]

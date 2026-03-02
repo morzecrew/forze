@@ -197,3 +197,64 @@ def deep_dict_intersection(
             continue
 
     return res
+
+
+# ....................... #
+
+
+def collect_touched_paths_from_patch(
+    patch: JsonDict, *, atomic_containers: bool = True
+) -> set[DictPath]:
+    out: set[DictPath] = set()
+
+    def walk(node: Any, prefix: DictPath) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():  # pyright: ignore[reportUnknownVariableType]
+                if not isinstance(k, str):
+                    k = str(k)  # pyright: ignore[reportUnknownArgumentType]
+
+                p = prefix + (k,)
+
+                if isinstance(v, dict):
+                    if atomic_containers:
+                        out.add(p)
+
+                    else:
+                        walk(v, p)
+
+                out.add(p)
+
+        out.add(prefix)
+
+    walk(patch, ())
+    out.discard(())
+
+    return out
+
+
+# ....................... #
+
+
+def _is_prefix(a: DictPath, b: DictPath) -> bool:
+    if len(a) > len(b):
+        return False
+
+    return b[: len(a)] == a
+
+
+# ....................... #
+
+
+def has_path_conflict(a: set[DictPath], b: set[DictPath]) -> bool:
+    if not a or not b:
+        return False
+
+    a_sorted = sorted(a, key=len)
+    b_sorted = sorted(b, key=len)
+
+    for pa in a_sorted:
+        for pb in b_sorted:
+            if _is_prefix(pa, pb) or _is_prefix(pb, pa):
+                return True
+
+    return False
