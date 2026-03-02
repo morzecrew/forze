@@ -1,10 +1,11 @@
-from typing import Any, Callable, TypedDict, final
+from typing import Any, TypedDict, final
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.document import DocumentPort
 from forze.application.execution import Usecase
+from forze.application.mapping.mapper import DTOMapper
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
@@ -25,11 +26,11 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
     Usecase[UpdateArgs[In], Out]
 ):
     doc: DocumentPort[Out, Any, Any, Cmd]
-    mapper: Callable[[In], Cmd]
+    mapper: DTOMapper[Cmd]
 
     # ....................... #
 
     async def main(self, args: UpdateArgs[In]) -> Out:
-        cmd = self.mapper(args["dto"])
+        cmd = await self.mapper(self.ctx, args["dto"])
 
         return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))

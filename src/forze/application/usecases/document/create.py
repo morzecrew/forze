@@ -1,10 +1,10 @@
-from typing import Any, Callable
+from typing import Any
 
 import attrs
 
-from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.document import DocumentPort
 from forze.application.execution import Usecase
+from forze.application.mapping.mapper import DTOMapper
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
@@ -15,33 +15,11 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
     Usecase[In, Out]
 ):
     doc: DocumentPort[Out, Any, Cmd, Any]
-    mapper: Callable[[In], Cmd]
+    mapper: DTOMapper[Cmd]
 
     # ....................... #
 
     async def main(self, args: In) -> Out:
-        cmd = self.mapper(args)
-
-        return await self.doc.create(cmd)
-
-
-# ....................... #
-# Numbered
-
-
-#! TODO: get rid of that
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class CreateNumberedDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
-    Usecase[In, Out]
-):
-    doc: DocumentPort[Out, Any, Cmd, Any]
-    counter: CounterPort
-    mapper: Callable[[In, int], Cmd]
-
-    # ....................... #
-
-    async def main(self, args: In) -> Out:
-        number_id = await self.counter.incr()
-        cmd = self.mapper(args, number_id)
+        cmd = await self.mapper(self.ctx, args)
 
         return await self.doc.create(cmd)

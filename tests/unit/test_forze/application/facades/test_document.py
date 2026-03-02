@@ -16,14 +16,14 @@ class TestDocumentOperation:
     """Tests for DocumentOperation enum."""
 
     def test_all_operation_values(self) -> None:
-        assert DocumentOperation.GET == "get"
-        assert DocumentOperation.SEARCH == "search"
-        assert DocumentOperation.RAW_SEARCH == "raw_search"
-        assert DocumentOperation.CREATE == "create"
-        assert DocumentOperation.UPDATE == "update"
-        assert DocumentOperation.KILL == "kill"
-        assert DocumentOperation.DELETE == "delete"
-        assert DocumentOperation.RESTORE == "restore"
+        assert DocumentOperation.GET == "document.get"
+        assert DocumentOperation.SEARCH == "document.search"
+        assert DocumentOperation.RAW_SEARCH == "document.raw_search"
+        assert DocumentOperation.CREATE == "document.create"
+        assert DocumentOperation.UPDATE == "document.update"
+        assert DocumentOperation.KILL == "document.kill"
+        assert DocumentOperation.DELETE == "document.delete"
+        assert DocumentOperation.RESTORE == "document.restore"
 
 
 class TestDocumentUsecasesFacade:
@@ -61,7 +61,7 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: update"):
+        with pytest.raises(CoreError, match="not registered for operation: document.update"):
             facade.update()
 
     def test_delete_not_supported_raises(
@@ -72,7 +72,7 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: delete"):
+        with pytest.raises(CoreError, match="not registered for operation: document.delete"):
             facade.delete()
 
     def test_restore_not_supported_raises(
@@ -83,5 +83,5 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: restore"):
+        with pytest.raises(CoreError, match="not registered for operation: document.restore"):
             facade.restore()

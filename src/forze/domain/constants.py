@@ -21,6 +21,9 @@ SOFT_DELETE_FIELD: Final[str] = "is_deleted"
 NUMBER_ID_FIELD: Final[str] = "number_id"
 """Number identifier field."""
 
+CREATOR_ID_FIELD: Final[str] = "creator_id"
+"""Creator identifier field."""
+
 # ....................... #
 #! Move these constants to the infra layer ! at least not domain definitely
 

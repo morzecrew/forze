@@ -2,7 +2,9 @@
 
 from forze.application.composition.document import (
     DocumentDTOSpec,
+    DocumentOperation,
     DocumentUsecasesFacadeProvider,
+    build_document_plan,
     build_document_registry,
 )
 from forze.application.contracts.document import DocumentSpec
@@ -49,21 +51,21 @@ class TestBuildDocumentRegistry:
     def test_has_core_operations(self) -> None:
         spec = _minimal_spec()
         reg = build_document_registry(spec)
-        assert reg.exists("get")
-        assert reg.exists("search")
-        assert reg.exists("raw_search")
-        assert reg.exists("create")
-        assert reg.exists("kill")
+        assert reg.exists(DocumentOperation.GET)
+        assert reg.exists(DocumentOperation.SEARCH)
+        assert reg.exists(DocumentOperation.RAW_SEARCH)
+        assert reg.exists(DocumentOperation.CREATE)
+        assert reg.exists(DocumentOperation.KILL)
 
     def test_update_registered_when_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=True)
         reg = build_document_registry(spec)
-        assert reg.exists("update")
+        assert reg.exists(DocumentOperation.UPDATE)
 
     def test_update_not_registered_when_no_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=False)
         reg = build_document_registry(spec)
-        assert not reg.exists("update")
+        assert not reg.exists(DocumentOperation.UPDATE)
 
     def test_resolve_get_returns_usecase(
         self,
@@ -71,7 +73,7 @@ class TestBuildDocumentRegistry:
     ) -> None:
         spec = _minimal_spec()
         reg = build_document_registry(spec)
-        uc = reg.resolve("get", composition_ctx)
+        uc = reg.resolve(DocumentOperation.GET, composition_ctx)
         assert uc is not None
 
 
@@ -83,8 +85,12 @@ class TestDocumentUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
+        reg = build_document_registry(spec)
+        plan = build_document_plan()
         dtos: DocumentDTOSpec = {"read": ReadDocument}
-        provider = DocumentUsecasesFacadeProvider(spec=spec, dtos=dtos)
+        provider = DocumentUsecasesFacadeProvider(
+            spec=spec, reg=reg, plan=plan, dtos=dtos
+        )
         facade = provider(composition_ctx)
         assert facade is not None
         assert facade.ctx is composition_ctx
@@ -94,8 +100,12 @@ class TestDocumentUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
+        reg = build_document_registry(spec)
+        plan = build_document_plan()
         dtos: DocumentDTOSpec = {"read": ReadDocument}
-        provider = DocumentUsecasesFacadeProvider(spec=spec, dtos=dtos)
+        provider = DocumentUsecasesFacadeProvider(
+            spec=spec, reg=reg, plan=plan, dtos=dtos
+        )
         facade = provider(composition_ctx)
         uc = facade.get()
         assert uc is not None

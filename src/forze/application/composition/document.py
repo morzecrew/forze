@@ -1,6 +1,5 @@
 from enum import StrEnum
-from functools import cached_property
-from typing import Any, Generic, NotRequired, Optional, TypedDict, TypeVar, final
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -8,9 +7,10 @@ import attrs
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..contracts.document import DocumentSpec
-from ..dto.mappers import DTOMapper
 from ..dto.paginated import Paginated, RawPaginated
 from ..execution import ExecutionContext, Usecase, UsecasePlan, UsecaseRegistry
+from ..mapping.mapper import DTOMapper
+from ..mapping.steps import NumberIdStep
 from ..usecases.document import (
     CreateDocument,
     DeleteDocument,
@@ -39,14 +39,14 @@ U = TypeVar("U", bound=BaseDTO)
 class DocumentOperation(StrEnum):
     """Logical operation identifiers for document usecases."""
 
-    GET = "get"
-    SEARCH = "search"
-    RAW_SEARCH = "raw_search"
-    CREATE = "create"
-    UPDATE = "update"
-    KILL = "kill"
-    DELETE = "delete"
-    RESTORE = "restore"
+    GET = "document.get"
+    SEARCH = "document.search"
+    RAW_SEARCH = "document.raw_search"
+    CREATE = "document.create"
+    UPDATE = "document.update"
+    KILL = "document.kill"
+    DELETE = "document.delete"
+    RESTORE = "document.restore"
 
 
 # ....................... #
@@ -98,10 +98,43 @@ class DocumentUsecasesFacade(Generic[R, C, U]):
         return self.reg.resolve(DocumentOperation.RESTORE, self.ctx)
 
 
+# ....................... #
+
+
+def build_document_plan(
+    *,
+    tx_on_write: bool = True,
+) -> UsecasePlan:
+    plan = UsecasePlan()
+
+    if tx_on_write:
+        for op in [
+            DocumentOperation.CREATE,
+            DocumentOperation.UPDATE,
+            DocumentOperation.DELETE,
+            DocumentOperation.RESTORE,
+            DocumentOperation.KILL,
+        ]:
+            plan = plan.tx(op)
+
+    return plan
+
+
+# ....................... #
+
+
 def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
+    *,
+    numbered: bool = False,
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec."""
+
+    create_mapper = DTOMapper(out=spec.models["create_cmd"])
+    update_mapper = DTOMapper(out=spec.models["update_cmd"])
+
+    if numbered:
+        create_mapper = create_mapper.with_steps(NumberIdStep(namespace=spec.namespace))
 
     reg = UsecaseRegistry(
         {
@@ -120,7 +153,7 @@ def build_document_registry(
             DocumentOperation.CREATE: lambda ctx: CreateDocument(
                 ctx=ctx,
                 doc=ctx.doc(spec),
-                mapper=DTOMapper(dto=spec.models["create_cmd"]),
+                mapper=create_mapper,
             ),
             DocumentOperation.KILL: lambda ctx: KillDocument(
                 ctx=ctx,
@@ -132,10 +165,10 @@ def build_document_registry(
     if spec.supports_update():
         reg.register(
             DocumentOperation.UPDATE,
-            lambda ctx: UpdateDocument(
+            lambda ctx: UpdateDocument[Any, Any, Any](
                 ctx=ctx,
                 doc=ctx.doc(spec),
-                mapper=DTOMapper(dto=spec.models["update_cmd"]),
+                mapper=update_mapper,
             ),
             inplace=True,
         )
@@ -185,10 +218,10 @@ class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
     spec: DocumentSpec[Any, Any, Any, Any]
     """Document spec."""
 
-    reg: Optional[UsecaseRegistry] = None
+    reg: UsecaseRegistry
     """Usecase registry."""
 
-    plan: UsecasePlan = attrs.field(factory=UsecasePlan)
+    plan: UsecasePlan
     """Usecase plan."""
 
     dtos: DocumentDTOSpec[R, C, U]
@@ -196,13 +229,6 @@ class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
 
     # ....................... #
 
-    @cached_property
-    def _reg(self) -> UsecaseRegistry:
-        reg = self.reg or build_document_registry(self.spec)
-
-        return reg.extend_plan(self.plan)
-
-    # ....................... #
-
     def __call__(self, ctx: ExecutionContext) -> DocumentUsecasesFacade[R, C, U]:
-        return DocumentUsecasesFacade(ctx=ctx, reg=self._reg)
+        reg = self.reg.extend_plan(self.plan)
+        return DocumentUsecasesFacade(ctx=ctx, reg=reg)
