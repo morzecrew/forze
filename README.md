@@ -57,6 +57,10 @@ See the [Installation Guide](./docs/INSTALLATION.md) for details.
 - 🔌 (coming soon) Ports & Adapters
 - 📚 (coming soon) Example Service
 
+### Integrations
+
+- [🐘 PostgreSQL](./docs/integrations/postgres.md) — schema setup, relations, revision handling, history, search
+
 ## Versioning
 
 Forze follows [Semantic Versioning (SemVer)](https://semver.org/). Pre-release builds may include experimental APIs and are not guaranteed to be stable.
