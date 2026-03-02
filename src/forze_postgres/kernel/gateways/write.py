@@ -21,6 +21,7 @@ from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
     CoreError,
+    NotFoundError,
     ValidationError,
 )
 from forze.base.primitives import JsonDict
@@ -109,11 +110,20 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 if r != c.rev
             ]
 
+            bad_records = [r for c, r, _ in to_check if r > c.rev]
+
+            if bad_records:
+                raise ValidationError("Invalid revision number")
+
             if to_check:
                 pks_to_check = [c.id for c, _, _ in to_check]
                 revs_to_check = [r for _, r, _ in to_check]
-
                 hist_records = await self.history.read_many(pks_to_check, revs_to_check)
+
+                if len(hist_records) != len(to_check):
+                    raise NotFoundError(
+                        "History records not found. Please retry with actual revision number."
+                    )
 
                 for (c, _, u), h in zip(to_check, hist_records, strict=True):
                     if not c.validate_historical_consistency(h, u):

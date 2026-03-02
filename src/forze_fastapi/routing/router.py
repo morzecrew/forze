@@ -192,22 +192,22 @@ class ForzeAPIRouter(APIRouter):
                     "Response model or return annotation is required for idempotent routes"
                 )
 
-            adapter = TypeAdapter[Any](resp_model)
             status_code = status_code or 200
-            dto_name = idempotency_config.get("dto_param") or self.__guess_dto_param(
+            dto_param = idempotency_config.get("dto_param") or self.__guess_dto_param(
                 endpoint
             )
             header_key = self.__idempotency_config.get(
                 "header_key", IDEMPOTENCY_KEY_HEADER
             )
+            request_adapter = self.__get_request_model_adapter(endpoint, dto_param)
 
             route_class_override = make_idempotent_route_class(
                 ctx_dep=self.__context_dependency,
                 operation=operation_id,
                 ttl=idempotency_config.get("ttl", timedelta(seconds=30)),
                 header_key=header_key,
-                adapter=adapter,
-                dto_param=dto_name,
+                adapter=request_adapter,
+                dto_param=dto_param,
             )
             deps.append(Depends(make_idem_header_dependency(header_key)))
 
@@ -326,3 +326,21 @@ class ForzeAPIRouter(APIRouter):
         raise RuntimeError(  #!? Replace with CoreError or so
             "Cannot infer DTO param for idempotent route; pass it explicitly"
         )
+
+    # ....................... #
+
+    def __get_request_model_adapter(
+        self, endpoint: Callable[..., Any], dto_param: str
+    ) -> TypeAdapter[Any]:
+        sig = inspect.signature(endpoint)
+        p = sig.parameters.get(dto_param)
+
+        if p is None:
+            raise CoreError("DTO param not found in endpoint signature")
+
+        ann = p.annotation
+
+        if not isinstance(ann, type) or not issubclass(ann, BaseModel):
+            raise CoreError("DTO param must be a Pydantic model")
+
+        return TypeAdapter[Any](ann)
