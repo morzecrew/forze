@@ -156,7 +156,6 @@ name = "Layered `forze.application` module architecture"
 type = "layers"
 layers = [
     "forze.application.composition",
-    "forze.application.facades",
     "forze.application.usecases",
     "forze.application.execution",
     "forze.application.dto",

@@ -20,7 +20,6 @@ from ..contracts.tx import (
     TxManagerDepKey,
     TxManagerPort,
     TxScopedPort,
-    TxScopeKey,
 )
 
 # ----------------------- #
@@ -69,33 +68,12 @@ class ExecutionContext:
 
     # ....................... #
 
-    def require_tx(self, scope: TxScopeKey) -> TxHandle:
-        """Require a transaction handle for the given scope.
-
-        This method raises :exc:`CoreError` if no transaction is active or if the active transaction is not for the given scope.
-        """
-
-        h = self.__tx_handle.get()
-
-        if h is None:
-            raise CoreError(
-                f"Transactional context is required for scope: {scope.name}"
-            )
-
-        if h.scope != scope:
-            raise CoreError(
-                f"Transaction scope mismatch: active={h.scope.name}, requested={scope.name}"
-            )
-
-        return h
-
-    # ....................... #
-
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
         """Enter a transaction scope."""
 
-        tx = self.dep(TxManagerDepKey)(self)  #! mb add local PortResolver import ...
+        tx = self.txmanager()
+
         scope = tx.scope_key()
         depth = self.__tx_depth.get()
         cur = self.__tx_handle.get()
@@ -133,7 +111,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def validate_tx_scope(self, instance: Any) -> None:
+    def __validate_tx_scope(self, instance: Any) -> None:
         h = self.active_tx()
 
         if (
@@ -180,7 +158,7 @@ class ExecutionContext:
     ) -> DocumentPort[Any, Any, Any, Any]:
         cache = self.dep(DocumentCacheDepKey)(self, spec)
         dep = self.dep(DocumentDepKey)(self, spec, cache=cache)
-        self.validate_tx_scope(dep)
+        self.__validate_tx_scope(dep)
 
         return dep
 

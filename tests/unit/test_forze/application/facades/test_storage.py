@@ -1,8 +1,8 @@
-"""Unit tests for forze.application.facades.storage."""
+"""Unit tests for StorageOperation (usecases.storage)."""
 
 import pytest
 
-from forze.application.facades.storage import StorageOperation
+from forze.application.usecases.storage import StorageOperation
 
 # ----------------------- #
 

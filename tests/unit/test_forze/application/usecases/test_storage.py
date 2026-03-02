@@ -18,8 +18,8 @@ class TestStorageUsecasesModule:
         assert storage is not None
 
     def test_storage_operation_enum_available(self) -> None:
-        """StorageOperation enum from facades is available for future use."""
-        from forze.application.facades.storage import StorageOperation
+        """StorageOperation enum from usecases.storage is available for future use."""
+        from forze.application.usecases.storage import StorageOperation
 
         assert StorageOperation.UPLOAD == "upload"
         assert StorageOperation.LIST == "list"

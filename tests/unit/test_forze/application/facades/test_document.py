@@ -1,4 +1,4 @@
-"""Unit tests for forze.application.facades.document."""
+"""Unit tests for DocumentOperation and DocumentUsecasesFacade (composition.document)."""
 
 from datetime import datetime, timezone
 from uuid import UUID
@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.execution import ExecutionContext, UsecaseRegistry
-from forze.application.facades.document import DocumentOperation, DocumentUsecasesFacade
+from forze.application.composition.document import DocumentOperation, DocumentUsecasesFacade
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
