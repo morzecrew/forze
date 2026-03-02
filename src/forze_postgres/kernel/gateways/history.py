@@ -1,61 +1,53 @@
-from enum import StrEnum
-
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence, final
+from typing import Any, Literal, Sequence, final, get_args
 from uuid import UUID
 
+import attrs
 from psycopg import sql
 
-from forze.base.errors import ConflictError, NotFoundError, ValidationError
-from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate
+from forze.base.errors import CoreError, NotFoundError, ValidationError
+from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
     ID_FIELD,
     REV_FIELD,
 )
-from forze.domain.models import Document
+from forze.domain.models import Document, DocumentHistory
 
 from .base import PostgresGateway
 from .spec import PostgresTableSpec
 
 # ----------------------- #
-#! TODO:
-#! - replace with explicit strategy handling
-#! - review model -> jsonb serialization/deserialization
 
-
-class PostgresHistoryWriteStrategy(StrEnum):
-    """Strategy for writing history."""
-
-    DATABASE = "database"
-    """Write history using database triggers."""
-
-    APPLICATION = "application"
-    """Write history using application logic."""
-
+PostgresHistoryWriteStrategy = Literal["database", "application"]
 
 # ....................... #
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
-    async def _get(
-        self,
-        *,
-        target_spec: PostgresTableSpec,
-        pk: UUID,
-        rev: int,
-    ) -> D:
+    strategy: PostgresHistoryWriteStrategy = "database"
+    target_spec: PostgresTableSpec
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.strategy not in get_args(PostgresHistoryWriteStrategy):
+            raise CoreError(f"Invalid history write strategy: {self.strategy}")
+
+    # ....................... #
+
+    async def read(self, pk: UUID, rev: int) -> D:
         where = sql.SQL("{h} = {h_v} AND {pk} = {pk_v} AND {rev} = {rev_v}").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
-            h_v=target_spec.literal(),
+            h_v=self.target_spec.literal(),
             pk=sql.Identifier(ID_FIELD),
             pk_v=sql.Placeholder(),
             rev=sql.Identifier(REV_FIELD),
@@ -71,21 +63,15 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         row = await self.client.fetch_one(stmt, (pk, rev), row_factory="dict")
 
         if row is None:
-            raise NotFoundError(f"История не найдена: {pk}, {rev}")
+            raise NotFoundError(f"History not found: {pk}, {rev}")
 
         return pydantic_validate(self.model, row[HISTORY_DATA_FIELD])
 
     # ....................... #
 
-    async def _get_many(
-        self,
-        *,
-        target_spec: PostgresTableSpec,
-        pks: Sequence[UUID],
-        revs: Sequence[int],
-    ) -> Sequence[D]:
+    async def read_many(self, pks: Sequence[UUID], revs: Sequence[int]) -> Sequence[D]:
         if len(pks) != len(revs):
-            raise ValidationError("Длина pks и revs должна быть одинаковой")
+            raise ValidationError("Length of pks and revs must be the same")
 
         values_sql = sql.SQL(", ").join(
             sql.SQL("({}, {})").format(sql.Placeholder(), sql.Placeholder())
@@ -94,7 +80,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         where = sql.SQL("{h} = {h_v} AND ({pk}, {rev}) IN ({vals})").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
-            h_v=target_spec.literal(),
+            h_v=self.target_spec.literal(),
             pk=sql.Identifier(ID_FIELD),
             rev=sql.Identifier(REV_FIELD),
             vals=values_sql,
@@ -112,53 +98,73 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             params.extend([p, r])
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
-
         return [pydantic_validate(self.model, row[HISTORY_DATA_FIELD]) for row in rows]
 
     # ....................... #
 
-    async def validate(
-        self,
-        *,
-        target_spec: PostgresTableSpec,
-        current: D,
-        update: JsonDict,
-        rev: int,
-    ) -> None:
-        if rev != current.rev:
-            hist = await self._get(target_spec=target_spec, pk=current.id, rev=rev)
-
-            if not current.validate_historical_consistency(hist, update):
-                raise ConflictError("Historical consistency violation during update")
+    def _from_data(self, data: D) -> DocumentHistory[D]:
+        return DocumentHistory(
+            source=self.target_spec.string(),
+            id=data.id,
+            rev=data.rev,
+            data=data,
+        )
 
     # ....................... #
 
-    async def validate_many(
-        self,
-        *,
-        target_spec: PostgresTableSpec,
-        currents: Sequence[D],
-        updates: Sequence[JsonDict],
-        revs: Sequence[int],
-    ) -> None:
-        to_check = [
-            (c, r, u)
-            for c, r, u in zip(currents, revs, updates, strict=True)
-            if r != c.rev
-        ]
+    async def write(self, data: D) -> None:
+        if self.strategy == "database":
+            return
 
-        if to_check:
-            pks_to_check = [c.id for c, _, _ in to_check]
-            revs_to_check = [r for _, r, _ in to_check]
+        record = self._from_data(data)
+        insert_data_raw = pydantic_dump(record)
+        insert_data = await self.adapt_payload_for_write(insert_data_raw)
 
-            hists = await self._get_many(
-                target_spec=target_spec,
-                pks=pks_to_check,
-                revs=revs_to_check,
+        cols = [sql.Identifier(k) for k in insert_data.keys()]
+        vals = [sql.Placeholder() for _ in insert_data.keys()]
+        params = list(insert_data.values())
+
+        stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
+            table=self.spec.ident(),
+            cols=sql.SQL(", ").join(cols),
+            vals=sql.SQL(", ").join(vals),
+        )
+
+        await self.client.execute(stmt, params)
+
+    # ....................... #
+
+    async def write_many(self, data: Sequence[D], *, batch_size: int = 500) -> None:
+        if self.strategy == "database":
+            return
+
+        records = [self._from_data(d) for d in data]
+        insert_data_raw = [pydantic_dump(r) for r in records]
+        insert_data = [await self.adapt_payload_for_write(d) for d in insert_data_raw]
+
+        keys = list(insert_data[0].keys())
+        col_idents = [sql.Identifier(k) for k in keys]
+
+        offset = 0
+
+        while offset < len(insert_data):
+            batch = insert_data[offset : offset + batch_size]
+            value_parts: list[sql.Composable] = []
+            params: list[Any] = []
+
+            for b in batch:
+                value_parts.append(
+                    sql.SQL("(")
+                    + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                    + sql.SQL(")")
+                )
+                params.extend(b[k] for k in keys)
+
+            stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
+                table=self.spec.ident(),
+                cols=sql.SQL(", ").join(col_idents),
+                vals=sql.SQL(", ").join(value_parts),
             )
 
-            for (c, _, u), h in zip(to_check, hists, strict=True):
-                if not c.validate_historical_consistency(h, u):
-                    raise ConflictError(
-                        "Historical consistency violation during update"
-                    )
+            await self.client.execute(stmt, params)
+            offset += batch_size

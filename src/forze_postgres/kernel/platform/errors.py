@@ -10,6 +10,7 @@ from typing import Any
 from psycopg import errors
 
 from forze.base.errors import (
+    ConcurrencyError,
     ConflictError,
     CoreError,
     InfrastructureError,
@@ -63,19 +64,23 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
 
         case errors.DeadlockDetected():
             # usually safe to retry
-            return InfrastructureError("Deadlock detected. Please retry.")
+            return ConcurrencyError("Deadlock detected. Please retry.", code="deadlock")
 
         case errors.SerializationFailure():
             # SERIALIZABLE / REPEATABLE READ conflicts
-            return InfrastructureError(
-                "Transaction serialization failure. Please retry."
+            return ConcurrencyError(
+                "Transaction serialization failure. Please retry.",
+                code="serialization_failure",
             )
 
         # Connection / availability
 
         case errors.LockNotAvailable():
             # NOWAIT lock couldn't be acquired
-            return InfrastructureError("Lock not available. Please retry.")
+            return ConcurrencyError(
+                "Lock not available. Please retry.",
+                code="lock_not_available",
+            )
 
         case (
             errors.AdminShutdown() | errors.CrashShutdown() | errors.CannotConnectNow()

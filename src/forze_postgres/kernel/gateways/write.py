@@ -29,7 +29,7 @@ from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from .base import PostgresGateway
-from .history_v2 import PostgresHistoryGateway
+from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
 
 # ----------------------- #
@@ -154,6 +154,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    @optimistic_retry()
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
         insert_data_raw = pydantic_dump(model)  #! mode=python ??????
@@ -175,7 +176,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
 
         if row is None:
-            raise CoreError("Failed to create a record")
+            raise ConcurrencyError("Failed to create a record", code="create_failed")
 
         res = pydantic_validate(self.model, row)
         await self._write_history(res)
@@ -184,6 +185,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    @optimistic_retry()
     async def create_many(
         self,
         dtos: Sequence[C],
@@ -234,7 +236,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
 
             if len(rows) != len(batch):
-                raise CoreError("Failed to create records (mismatch in number of rows)")
+                raise ConcurrencyError(
+                    "Failed to create records (mismatch in number of rows)",
+                    code="create_many_mismatch",
+                )
 
             result.extend(pydantic_validate(self.model, row) for row in rows)
             offset += batch_size
@@ -326,6 +331,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    @optimistic_retry()
     async def __patch_group(
         self,
         key: tuple[str, ...],
@@ -379,7 +385,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()
     async def __patch_many(
         self,
         pks: Sequence[UUID],
