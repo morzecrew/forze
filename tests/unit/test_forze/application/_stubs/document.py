@@ -3,11 +3,11 @@
 from typing import Any, Optional, Sequence, Type, final
 from uuid import UUID
 
-from forze.application.contracts._ports.document import (
+from forze.application.contracts.document import (
     DocumentPort,
     DocumentSearchOptions,
 )
-from forze.application.contracts._schemas.query import (
+from forze.application.contracts.query import (
     FilterExpression,
     SortExpression,
 )

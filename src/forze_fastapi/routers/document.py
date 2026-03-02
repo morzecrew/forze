@@ -13,8 +13,12 @@ from forze.application.composition.document import (
     DocumentUsecasesFacade,
     DocumentUsecasesFacadeProvider,
 )
-from forze.application.dto.paginated import Paginated, RawPaginated
-from forze.application.dto.search import RawSearchRequestDTO, SearchRequestDTO
+from forze.application.dto import (
+    Paginated,
+    RawPaginated,
+    RawSearchRequestDTO,
+    SearchRequestDTO,
+)
 from forze.application.execution import ExecutionContext
 from forze.domain.models import BaseDTO, ReadDocument
 

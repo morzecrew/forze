@@ -13,9 +13,8 @@ from forze.application.contracts.document import (
     DocumentCachePort,
     DocumentPort,
     DocumentSearchOptions,
-    FilterExpression,
-    SortExpression,
 )
+from forze.application.contracts.query import FilterExpression, SortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict

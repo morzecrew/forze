@@ -10,7 +10,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.document import FilterExpression, SortExpression
+from forze.application.contracts.query import FilterExpression, SortExpression
 from forze.base.errors import NotFoundError, ValidationError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate

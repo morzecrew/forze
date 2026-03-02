@@ -9,7 +9,8 @@ from typing import Any, Optional
 import attrs
 from psycopg import sql
 
-from forze.application.contracts.query import (
+from forze.application.contracts.query.dsl import And, Expr, Field, Or, ValueCaster
+from forze.application.contracts.query.types import (
     EqOp,
     MembOp,
     Op,
@@ -18,7 +19,6 @@ from forze.application.contracts.query import (
     SetRelOp,
     UnaryOp,
 )
-from forze.application.dsl.query import And, Expr, Field, Or, ValueCaster
 
 from ..introspect import PostgresColumnTypes, PostgresType
 from .utils import PsycopgPositionalBinder

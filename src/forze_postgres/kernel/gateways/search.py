@@ -11,8 +11,8 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.document import (
-    DocumentSearchOptions,
+from forze.application.contracts.document import DocumentSearchOptions
+from forze.application.contracts.query import (
     FilterExpression,
     SortExpression,
 )

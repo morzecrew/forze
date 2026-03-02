@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentPort
 from forze.application.execution import Usecase
-from forze.application.mapping.mapper import DTOMapper
+from forze.application.mapping import DTOMapper
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #

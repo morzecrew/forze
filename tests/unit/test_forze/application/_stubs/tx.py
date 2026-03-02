@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from typing import AsyncContextManager, final
 
-from forze.application.contracts._ports.tx import TxManagerPort, TxScopeKey
+from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 
 # ----------------------- #
 

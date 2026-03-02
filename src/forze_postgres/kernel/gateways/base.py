@@ -15,7 +15,7 @@ from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
 from forze.application.contracts.query import FilterExpression, SortExpression
-from forze.application.dsl.query import FilterExpressionParser
+from forze.application.contracts.query.dsl import FilterExpressionParser
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD

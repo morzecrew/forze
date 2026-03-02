@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, final
 
-from forze.application.contracts._ports.storage import (
+from forze.application.contracts.storage import (
     DownloadedObject,
     StoragePort,
     StoredObject,

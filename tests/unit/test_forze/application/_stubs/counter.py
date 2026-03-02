@@ -2,7 +2,7 @@
 
 from typing import Optional, final
 
-from forze.application.contracts._ports.counter import CounterPort
+from forze.application.contracts.counter import CounterPort
 
 # ----------------------- #
 

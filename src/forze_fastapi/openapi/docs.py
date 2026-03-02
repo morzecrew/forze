@@ -39,7 +39,7 @@ def _is_valid_dns(address: str) -> bool:
 def scalar_docs(
     request: Request,
     title: Optional[str] = None,
-    favicon_url: str = "https://fastapi.tiangolo.com/img",
+    favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     version: str = "1.41.0",
 ):
     root_path = request.scope.get("root_path")
@@ -56,14 +56,10 @@ def scalar_docs(
 
         servers = [{"url": f"{proto}://{host}{root_path}"}]
 
-    try:
-        favicon_host = favicon_url.split("://")[1]
+    favicon_host_split = favicon_url.split("://")
 
-        if not _is_valid_dns(favicon_host):
-            favicon_url = f"{root_path}/{favicon_url.lstrip('/')}"
-
-    except Exception:
-        pass
+    if len(favicon_host_split) == 1:
+        favicon_url = f"{root_path}/{favicon_url.lstrip('/')}"
 
     return get_scalar_api_reference(
         title=title,
@@ -90,7 +86,7 @@ def register_scalar_docs(
     app: FastAPI,
     *,
     path: str = "/docs",
-    favicon_url: str = "https://fastapi.tiangolo.com/img",
+    favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     version: str = "1.41.0",
 ):
     @app.get(path, include_in_schema=False)

@@ -3,9 +3,10 @@
 from typing import Any, Optional, Sequence, final
 from uuid import UUID
 
-from forze.application.contracts._ports.document import DocumentCachePort
+from forze.application.contracts.document import DocumentCachePort
 
 # ----------------------- #
+
 
 @final
 class InMemoryDocumentCachePort(DocumentCachePort):
