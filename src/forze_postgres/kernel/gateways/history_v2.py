@@ -13,7 +13,12 @@ from psycopg import sql
 
 from forze.base.errors import NotFoundError, ValidationError
 from forze.base.serialization import pydantic_dump, pydantic_validate
-from forze.domain.constants import HISTORY_SOURCE_FIELD, ID_FIELD, REV_FIELD
+from forze.domain.constants import (
+    HISTORY_DATA_FIELD,
+    HISTORY_SOURCE_FIELD,
+    ID_FIELD,
+    REV_FIELD,
+)
 from forze.domain.models import Document, DocumentHistory
 
 from .base import PostgresGateway
@@ -53,7 +58,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             rev_v=sql.Placeholder(),
         )
 
-        stmt = sql.SQL("SELECT * FROM {table} WHERE {where}").format(
+        stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
+            data=sql.Identifier(HISTORY_DATA_FIELD),
             table=self.spec.ident(),
             where=where,
         )
@@ -63,9 +69,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if row is None:
             raise NotFoundError(f"History not found: {pk}, {rev}")
 
-        rec = pydantic_validate(DocumentHistory[D], row)
-
-        return rec.data
+        return pydantic_validate(self.model, row[HISTORY_DATA_FIELD])
 
     # ....................... #
 
@@ -86,7 +90,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             vals=values_sql,
         )
 
-        stmt = sql.SQL("SELECT * FROM {table} WHERE {where}").format(
+        stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
+            data=sql.Identifier(HISTORY_DATA_FIELD),
             table=self.spec.ident(),
             where=where,
         )
@@ -97,10 +102,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             params.extend([p, r])
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
-        recs = [pydantic_validate(DocumentHistory[D], row) for row in rows]
-        data = [rec.data for rec in recs]
-
-        return data
+        return [pydantic_validate(self.model, row[HISTORY_DATA_FIELD]) for row in rows]
 
     # ....................... #
 
