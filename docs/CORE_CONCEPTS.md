@@ -176,11 +176,11 @@ flowchart TB
     names --> Registry["Registry"]
     Registry --> Factory["Factory"]
     Factory --> Base["Base operation"]
-    Base --> Plan["Plan wraps with guards, effects, overrides"]
+    Base --> Plan["Plan wraps with guards, effects, tx"]
     Plan --> Composed["Composed operation"]
 ```
 
-Plans are keyed by operation name, mergeable and extensible. A base plan might add logging to all operations; a specific plan might add authorization to “create” only. Plans support **overrides** (replace implementation) and **priorities** (order of hooks when merged).
+Plans are keyed by operation name, mergeable and extensible. A base plan (wildcard) might add logging to all operations; a specific plan might add authorization to “create” only. Per-operation plans extend the base plan; **priorities** control the order of hooks when merged. Transactional operations support in-tx and after-commit buckets.
 
 **Why it matters:** Operations are registered once; composition is declared in plans. Add auditing, idempotency, or custom behavior by extending the plan, without touching the core operation.
 
@@ -198,30 +198,32 @@ config:
 ---
 flowchart LR
     subgraph App["<b>Application</b>"]
-        Ops["Operations resolve what they need (contracts)"]
+        Ops["Operations resolve contracts via context"]
     end
 
     subgraph Infra["<b>Infrastructure</b>"]
-        S["Storage → Postgres"]
+        S["Document → Postgres"]
         C["Cache → Redis"]
         B["Blob → S3"]
     end
 
-    App -->|depends on| Infra
+    Infra -->|implements| App
 ```
 
 | Contract | Purpose |
 |----------|---------|
-| Storage | Read, write, search for domain aggregates |
-| Transaction boundary | Begin, commit, rollback |
-| Cache | Get, set, invalidate |
-| Blob storage | Store and retrieve files |
-| Counters | Distributed increment |
+| Document storage | Read, write, search for document aggregates (split into read/write/search ports) |
+| Transaction manager | Begin, commit, rollback; scoped ports participate in active transaction |
+| Document cache | Optional caching for document read models |
+| Blob storage | Store and retrieve files (S3-style) |
+| Counters | Distributed increment (e.g. sequence numbers) |
 | Idempotency | Track and deduplicate requests |
 | Streams | Publish and consume events |
 | Workflows | Orchestrate long-running processes |
+| Tenant context | Ambient tenant identity for multi-tenant routing |
+| Actor context | Ambient actor identity for audit and creator injection |
 
-Each contract has one or more adapters. The dependency plan wires adapters to contracts. Switching from Postgres to Mongo means changing the plan, not the operations.
+The application defines contracts; infrastructure provides adapters that implement them. The dependency plan wires adapters to contracts. Switching from Postgres to Mongo means changing the plan, not the operations.
 
 ### Aggregate Specification
 
@@ -230,9 +232,9 @@ For document-like aggregates, a **specification** binds together what adapters n
 | Spec element | Purpose |
 |--------------|---------|
 | Namespace | Cache key prefix |
-| Storage relations | Tables, views, history |
-| Model types | Read, domain, commands |
-| Features | Search, soft delete, caching |
+| Storage relations | Read/write/history relation names (tables, views) |
+| Model types | Read model, domain model, create command, update command |
+| Features | Search config, soft delete, caching |
 
 You define the spec once. Switching adapters means swapping the implementation, not rewriting the spec.
 
