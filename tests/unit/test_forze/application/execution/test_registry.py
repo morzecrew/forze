@@ -19,26 +19,26 @@ class TestUsecaseRegistry:
 
     def test_register_returns_new_instance(self) -> None:
         reg = UsecaseRegistry()
-        new = reg.register("get", lambda ctx: StubUsecase())
+        new = reg.register("get", lambda ctx: StubUsecase(ctx=ctx))
         assert new is not reg
         assert new.exists("get")
         assert not reg.exists("get")
 
     def test_register_inplace_mutates(self) -> None:
         reg = UsecaseRegistry()
-        reg.register("get", lambda ctx: StubUsecase(), inplace=True)
+        reg.register("get", lambda ctx: StubUsecase(ctx=ctx), inplace=True)
         assert reg.exists("get")
 
     def test_register_duplicate_raises(self) -> None:
         from forze.base.errors import CoreError
 
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase())
+        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
         with pytest.raises(CoreError, match="already registered"):
-            reg.register("get", lambda ctx: StubUsecase())
+            reg.register("get", lambda ctx: StubUsecase(ctx=ctx))
 
     def test_override_replaces_factory(self) -> None:
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase())
-        new = reg.override("get", lambda ctx: StubUsecase())
+        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
+        new = reg.override("get", lambda ctx: StubUsecase(ctx=ctx))
         assert new is not reg
         assert new.exists("get")
 
@@ -47,14 +47,14 @@ class TestUsecaseRegistry:
 
         reg = UsecaseRegistry()
         with pytest.raises(CoreError, match="not registered"):
-            reg.override("get", lambda ctx: StubUsecase())
+            reg.override("get", lambda ctx: StubUsecase(ctx=ctx))
 
     def test_register_many_adds_multiple(self) -> None:
         reg = UsecaseRegistry()
         new = reg.register_many(
             {
-                "get": lambda ctx: StubUsecase(),
-                "create": lambda ctx: StubUsecase(),
+                "get": lambda ctx: StubUsecase(ctx=ctx),
+                "create": lambda ctx: StubUsecase(ctx=ctx),
             }
         )
         assert new.exists("get")
@@ -63,20 +63,20 @@ class TestUsecaseRegistry:
     def test_override_many_replaces_multiple(self) -> None:
         reg = (
             UsecaseRegistry()
-            .register("get", lambda ctx: StubUsecase())
-            .register("create", lambda ctx: StubUsecase())
+            .register("get", lambda ctx: StubUsecase(ctx=ctx))
+            .register("create", lambda ctx: StubUsecase(ctx=ctx))
         )
         new = reg.override_many(
             {
-                "get": lambda ctx: StubUsecase(),
-                "create": lambda ctx: StubUsecase(),
+                "get": lambda ctx: StubUsecase(ctx=ctx),
+                "create": lambda ctx: StubUsecase(ctx=ctx),
             }
         )
         assert new.exists("get")
         assert new.exists("create")
 
     def test_exists_returns_true_for_registered(self) -> None:
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase())
+        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
         assert reg.exists("get")
 
     def test_exists_returns_false_for_unregistered(self) -> None:
@@ -86,7 +86,7 @@ class TestUsecaseRegistry:
     def test_resolve_returns_usecase(self) -> None:
         from forze.application.execution import Deps
 
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase())
+        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
         ctx = ExecutionContext(deps=Deps())
         uc = reg.resolve("get", ctx)
         assert isinstance(uc, StubUsecase)
@@ -97,5 +97,5 @@ class TestUsecaseRegistry:
 
         reg = UsecaseRegistry()
         ctx = ExecutionContext(deps=Deps())
-        with pytest.raises(CoreError, match="not registered"):
+        with pytest.raises(CoreError, match="not registered for operation"):
             reg.resolve("get", ctx)

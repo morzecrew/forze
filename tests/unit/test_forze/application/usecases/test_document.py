@@ -17,6 +17,7 @@ class TestGetDocument:
     @pytest.mark.asyncio
     async def test_get_returns_document(
         self,
+        stub_ctx,
         stub_document_port: DocumentPort,
     ) -> None:
         doc_port = stub_document_port
@@ -24,7 +25,7 @@ class TestGetDocument:
         created = await doc_port.create(cmd)
         pk = created.id
 
-        usecase = GetDocument(doc=doc_port)
+        usecase = GetDocument(ctx=stub_ctx, doc=doc_port)
         result = await usecase(pk)
 
         assert result.id == pk
@@ -33,8 +34,9 @@ class TestGetDocument:
     @pytest.mark.asyncio
     async def test_get_missing_raises(
         self,
+        stub_ctx,
         stub_document_port: DocumentPort,
     ) -> None:
-        usecase = GetDocument(doc=stub_document_port)
+        usecase = GetDocument(ctx=stub_ctx, doc=stub_document_port)
         with pytest.raises(KeyError, match="not found"):
             await usecase(uuid4())

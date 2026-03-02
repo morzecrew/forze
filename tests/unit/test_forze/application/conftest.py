@@ -49,8 +49,8 @@ def stub_deps() -> Deps:
     from forze.application.contracts.storage import StorageDepKey
     from forze.application.contracts.tx import TxManagerDepKey
 
-    return Deps().register_many(
-        {
+    return Deps(
+        deps={
             DocumentDepKey: InMemoryDocumentPort(),
             DocumentCacheDepKey: InMemoryDocumentCachePort(),
             StorageDepKey: InMemoryStoragePort(),

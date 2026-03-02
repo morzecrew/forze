@@ -44,8 +44,8 @@ def composition_deps() -> Deps:
     def _storage_port(ctx, bucket):
         return InMemoryStoragePort()
 
-    return Deps().register_many(
-        {
+    return Deps(
+        deps={
             DocumentDepKey: _doc_port,
             DocumentCacheDepKey: _cache_port,
             TxManagerDepKey: _tx_port,

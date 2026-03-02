@@ -13,12 +13,12 @@ class TestExecutionContextDep:
     """Tests for ExecutionContext.dep() dependency resolution."""
 
     def test_dep_resolves_registered(self) -> None:
-        deps = Deps().register(DepKey[str]("foo"), "bar")
+        deps = Deps(deps={DepKey[str]("foo"): "bar"})
         ctx = ExecutionContext(deps=deps)
         assert ctx.dep(DepKey[str]("foo")) == "bar"
 
     def test_dep_resolves_typed(self) -> None:
-        deps = Deps().register(DepKey[int]("num"), 42)
+        deps = Deps(deps={DepKey[int]("num"): 42})
         ctx = ExecutionContext(deps=deps)
         result: int = ctx.dep(DepKey[int]("num"))
         assert result == 42

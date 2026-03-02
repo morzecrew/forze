@@ -41,7 +41,7 @@ class TestDocumentUsecasesFacade:
 
         return UsecaseRegistry().register(
             DocumentOperation.GET,
-            lambda ctx: StubGetUsecase(),
+            lambda ctx: StubGetUsecase(ctx=ctx),
         )
 
     def test_get_returns_usecase(
@@ -61,7 +61,7 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="Update operation is not supported"):
+        with pytest.raises(CoreError, match="not registered for operation: update"):
             facade.update()
 
     def test_delete_not_supported_raises(
@@ -72,7 +72,7 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="Delete operation is not supported"):
+        with pytest.raises(CoreError, match="not registered for operation: delete"):
             facade.delete()
 
     def test_restore_not_supported_raises(
@@ -83,5 +83,5 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="Restore operation is not supported"):
+        with pytest.raises(CoreError, match="not registered for operation: restore"):
             facade.restore()
