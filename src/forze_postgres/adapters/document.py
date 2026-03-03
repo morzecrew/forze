@@ -14,7 +14,7 @@ from forze.application.contracts.document import (
     DocumentPort,
     DocumentSearchOptions,
 )
-from forze.application.contracts.query import FilterExpression, SortExpression
+from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -182,7 +182,7 @@ class PostgresDocumentAdapter[
     @overload
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
@@ -191,7 +191,7 @@ class PostgresDocumentAdapter[
     @overload
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = ...,
         return_fields: None = ...,
@@ -199,7 +199,7 @@ class PostgresDocumentAdapter[
 
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -215,10 +215,10 @@ class PostgresDocumentAdapter[
     @overload
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
@@ -226,20 +226,20 @@ class PostgresDocumentAdapter[
     @overload
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         return_fields: None = ...,
     ) -> tuple[list[R], int]: ...
 
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[SortExpression] = None,
+        sorts: Optional[QuerySortExpression] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
@@ -260,7 +260,7 @@ class PostgresDocumentAdapter[
 
     # ....................... #
 
-    async def count(self, filters: Optional[FilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
         return await self.read_gw.count(filters)
 
     # ....................... #
@@ -269,10 +269,10 @@ class PostgresDocumentAdapter[
     async def search(
         self,
         query: str,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         options: Optional[DocumentSearchOptions] = ...,
         return_fields: Sequence[str],
@@ -282,10 +282,10 @@ class PostgresDocumentAdapter[
     async def search(
         self,
         query: str,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         options: Optional[DocumentSearchOptions] = ...,
         return_fields: None = ...,
@@ -294,10 +294,10 @@ class PostgresDocumentAdapter[
     async def search(
         self,
         query: str,
-        filters: Optional[FilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[SortExpression] = None,
+        sorts: Optional[QuerySortExpression] = None,
         *,
         options: Optional[DocumentSearchOptions] = None,
         return_fields: Optional[Sequence[str]] = None,

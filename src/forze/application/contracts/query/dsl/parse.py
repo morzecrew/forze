@@ -1,12 +1,12 @@
 from typing import Any, get_args
 
-from ..expressions import FieldMapValue, FilterExpression, Predicate
+from ..expressions import QueryFieldMapValue, QueryFilterExpression, QueryPredicate
 from ..guards import (
-    is_conjunction,
-    is_disjunction,
-    is_field_conjunction,
-    is_field_shortcut,
-    is_predicate,
+    is_query_conjunction,
+    is_query_disjunction,
+    is_query_field_conjunction,
+    is_query_field_shortcut,
+    is_query_predicate,
 )
 from ..types import (
     EqOp,
@@ -17,43 +17,43 @@ from ..types import (
     SetRelOp,
     UnaryOp,
 )
-from .nodes import And, Expr, Field, Or
+from .nodes import QueryAnd, QueryExpr, QueryField, QueryOr
 
 # ----------------------- #
 
 
-class FilterExpressionParser:
+class QueryFilterExpressionParser:
     """Parser that converts :class:`FilterExpression` dicts into AST nodes."""
 
     @classmethod
-    def parse(cls, expr: FilterExpression) -> Expr:
-        if is_predicate(expr):
+    def parse(cls, expr: QueryFilterExpression) -> QueryExpr:
+        if is_query_predicate(expr):
             return cls._parse_predicate(expr)
 
-        elif is_conjunction(expr):
+        elif is_query_conjunction(expr):
             items = expr["$and"]
             nodes = [cls.parse(item) for item in items]
 
-            return And(tuple(nodes))
+            return QueryAnd(tuple(nodes))
 
-        elif is_disjunction(expr):
+        elif is_query_disjunction(expr):
             items = expr["$or"]
             nodes = [cls.parse(item) for item in items]
 
-            return Or(tuple(nodes))
+            return QueryOr(tuple(nodes))
 
         raise ValueError(f"Invalid filter expression: {expr!r}")
 
     # ....................... #
 
     @classmethod
-    def _parse_predicate(cls, expr: Predicate) -> Expr:
-        nodes: list[Expr] = []
+    def _parse_predicate(cls, expr: QueryPredicate) -> QueryExpr:
+        nodes: list[QueryExpr] = []
 
         for field, raw in expr["$fields"].items():
             nodes.extend(cls._parse_field(field, raw))
 
-        return And(tuple(nodes))
+        return QueryAnd(tuple(nodes))
 
     # ....................... #
 
@@ -61,23 +61,23 @@ class FilterExpressionParser:
     def _parse_field(
         cls,
         field: str,
-        raw: FieldMapValue,
-    ) -> list[Expr]:
-        if is_field_shortcut(raw):
+        raw: QueryFieldMapValue,
+    ) -> list[QueryExpr]:
+        if is_query_field_shortcut(raw):
             if raw is None:
-                return [Field(field, "$null", True)]
+                return [QueryField(field, "$null", True)]
 
             elif isinstance(raw, Scalar):
-                return [Field(field, "$eq", raw)]
+                return [QueryField(field, "$eq", raw)]
 
             else:
-                return [Field(field, "$in", raw)]
+                return [QueryField(field, "$in", raw)]
 
-        elif is_field_conjunction(raw):
+        elif is_query_field_conjunction(raw):
             if not raw:
                 raise ValueError("Empty field map is not allowed")
 
-            nodes: list[Expr] = []
+            nodes: list[QueryExpr] = []
 
             for op, value in raw.items():
                 nodes.append(cls._validate_op(field, op, value))
@@ -91,12 +91,12 @@ class FilterExpressionParser:
     # ....................... #
 
     @staticmethod
-    def _validate_field(field: str, nodes: list[Expr]) -> None:
-        ops = {n.op for n in nodes if isinstance(n, Field)}
+    def _validate_field(field: str, nodes: list[QueryExpr]) -> None:
+        ops = {n.op for n in nodes if isinstance(n, QueryField)}
 
         if "$null" in ops:
             null_node = next(
-                n for n in nodes if isinstance(n, Field) and n.op == "$null"
+                n for n in nodes if isinstance(n, QueryField) and n.op == "$null"
             )
 
             if null_node.value is True and len(ops) > 1:
@@ -106,7 +106,7 @@ class FilterExpressionParser:
 
         if "$empty" in ops:
             empty_node = next(
-                n for n in nodes if isinstance(n, Field) and n.op == "$empty"
+                n for n in nodes if isinstance(n, QueryField) and n.op == "$empty"
             )
 
             if empty_node.value is True and len(ops) > 1:
@@ -142,7 +142,7 @@ class FilterExpressionParser:
         else:
             raise ValueError(f"Invalid operator: {op!r}")
 
-        return Field(
+        return QueryField(
             field,
             op,  # pyright: ignore[reportArgumentType]
             value,  # pyright: ignore[reportUnknownArgumentType]

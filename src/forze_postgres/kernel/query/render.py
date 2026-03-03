@@ -9,15 +9,14 @@ from typing import Any, Optional
 import attrs
 from psycopg import sql
 
-from forze.application.contracts.query.dsl import And, Expr, Field, Or, ValueCaster
-from forze.application.contracts.query.types import (
-    EqOp,
-    MembOp,
-    Op,
-    OrdOp,
-    Scalar,
-    SetRelOp,
-    UnaryOp,
+from forze.application.contracts.query import (
+    QueryAnd,
+    QueryExpr,
+    QueryField,
+    QueryOp,
+    QueryOr,
+    QueryValue,
+    QueryValueCaster,
 )
 
 from ..introspect import PostgresColumnTypes, PostgresType
@@ -33,7 +32,7 @@ class PsycopgValueCoercer:
     Keeps renderer code clean and consistent.
     """
 
-    caster: ValueCaster = attrs.field(factory=ValueCaster, init=False)
+    caster: QueryValueCaster = attrs.field(factory=QueryValueCaster, init=False)
 
     # ....................... #
 
@@ -83,7 +82,7 @@ class PsycopgValueCoercer:
         if v is None:
             return []
 
-        if isinstance(v, Scalar):
+        if isinstance(v, QueryValue.Scalar):
             raise ValueError(f"Scalar value not supported: {v!r}")
 
         if t is None:
@@ -116,7 +115,7 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
-    def render(self, expr: Expr) -> tuple[sql.Composable, list[Any]]:
+    def render(self, expr: QueryExpr) -> tuple[sql.Composable, list[Any]]:
         query = self._render_expr(expr)
         params = self.binder.values()
 
@@ -124,9 +123,9 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
-    def _render_expr(self, expr: Expr) -> sql.Composable:
+    def _render_expr(self, expr: QueryExpr) -> sql.Composable:
         match expr:
-            case Field(name, op, value):
+            case QueryField(name, op, value):
                 if self.types is not None:
                     t = self.types.get(name)
 
@@ -139,7 +138,7 @@ class PsycopgQueryRenderer:
                 col = sql.Identifier(name)
                 return self._render_field(col, op, value, t=t)
 
-            case And(items):
+            case QueryAnd(items):
                 if not items:
                     return sql.SQL("TRUE")
 
@@ -150,7 +149,7 @@ class PsycopgQueryRenderer:
 
                 return sql.SQL("(") + sql.SQL(" AND ").join(and_parts) + sql.SQL(")")
 
-            case Or(items):
+            case QueryOr(items):
                 if not items:
                     return sql.SQL("FALSE")
 
@@ -169,7 +168,7 @@ class PsycopgQueryRenderer:
     def _render_field(
         self,
         col: sql.Composable,
-        op: Op,
+        op: QueryOp.All,
         value: Any,
         *,
         t: Optional[PostgresType],
@@ -200,7 +199,7 @@ class PsycopgQueryRenderer:
     def _render_unary(
         self,
         col: sql.Composable,
-        op: UnaryOp,
+        op: QueryOp.Unary,
         value: Any,
         *,
         t: Optional[PostgresType],
@@ -249,12 +248,12 @@ class PsycopgQueryRenderer:
     def _render_ord(
         self,
         col: sql.Composable,
-        op: OrdOp,
+        op: QueryOp.Ord,
         value: Any,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        op_map: dict[OrdOp, str] = {
+        op_map: dict[QueryOp.Ord, str] = {
             "$gt": ">",
             "$gte": ">=",
             "$lt": "<",
@@ -270,12 +269,12 @@ class PsycopgQueryRenderer:
     def _render_eq(
         self,
         col: sql.Composable,
-        op: EqOp,
+        op: QueryOp.Eq,
         value: Any,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        op_map: dict[EqOp, str] = {
+        op_map: dict[QueryOp.Eq, str] = {
             "$eq": "=",
             "$neq": "<>",
         }
@@ -289,7 +288,7 @@ class PsycopgQueryRenderer:
     def _render_memb(
         self,
         col: sql.Composable,
-        op: MembOp,
+        op: QueryOp.Memb,
         value: Any,
         *,
         t: Optional[PostgresType],
@@ -304,12 +303,12 @@ class PsycopgQueryRenderer:
     def _render_set_rel(
         self,
         col: sql.Composable,
-        op: SetRelOp,
+        op: QueryOp.SetRel,
         value: Any,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        op_map: dict[SetRelOp, str] = {
+        op_map: dict[QueryOp.SetRel, str] = {
             "$superset": "@>",
             "$subset": "<@",
             "$overlaps": "&&",
@@ -329,14 +328,14 @@ class PsycopgQueryRenderer:
 
     @staticmethod
     def _normalize_op(
-        op: Op,
+        op: QueryOp.All,
         value: Any,
         *,
         t: Optional[PostgresType],
-    ) -> tuple[Op, Any]:
+    ) -> tuple[QueryOp.All, Any]:
         if t is not None and t.is_array:
             if op == "$eq":
-                if isinstance(value, Scalar):
+                if isinstance(value, QueryValue.Scalar):
                     return "$superset", [value]
 
                 return "$superset", value

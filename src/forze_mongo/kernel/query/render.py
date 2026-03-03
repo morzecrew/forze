@@ -2,15 +2,14 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.query.dsl import And, Expr, Field, Or, ValueCaster
-from forze.application.contracts.query.types import (
-    EqOp,
-    MembOp,
-    Op,
-    OrdOp,
-    Scalar,
-    SetRelOp,
-    UnaryOp,
+from forze.application.contracts.query import (
+    QueryAnd,
+    QueryExpr,
+    QueryField,
+    QueryOp,
+    QueryOr,
+    QueryValue,
+    QueryValueCaster,
 )
 from forze.base.primitives import JsonDict
 
@@ -23,21 +22,21 @@ class MongoQueryRenderer:
     require_exists_for_not_null: bool = True
 
     # non initable fields
-    caster: ValueCaster = attrs.field(factory=ValueCaster, init=False)
+    caster: QueryValueCaster = attrs.field(factory=QueryValueCaster, init=False)
 
     # ....................... #
 
-    def render(self, expr: Expr) -> JsonDict:
+    def render(self, expr: QueryExpr) -> JsonDict:
         return self._render_expr(expr)
 
     # ....................... #
 
-    def _render_expr(self, expr: Expr) -> JsonDict:
+    def _render_expr(self, expr: QueryExpr) -> JsonDict:
         match expr:
-            case Field(name, op, value):
+            case QueryField(name, op, value):
                 return self._render_field(name, op, value)
 
-            case And(items):
+            case QueryAnd(items):
                 if not items:
                     return {}
 
@@ -52,7 +51,7 @@ class MongoQueryRenderer:
 
                 return {"$and": parts}
 
-            case Or(items):
+            case QueryOr(items):
                 if not items:
                     return {"$expr": False}
 
@@ -72,7 +71,7 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_field(self, field: str, op: Op, value: Any) -> JsonDict:
+    def _render_field(self, field: str, op: QueryOp.All, value: Any) -> JsonDict:
         match op:
             case "$null" | "$empty":
                 return self._render_unary(field, op, value)
@@ -94,7 +93,7 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_unary(self, field: str, op: UnaryOp, value: Any) -> JsonDict:
+    def _render_unary(self, field: str, op: QueryOp.Unary, value: Any) -> JsonDict:
         v = self.caster.as_bool(value)
 
         match op:
@@ -133,14 +132,14 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_ord(self, field: str, op: OrdOp, value: Any) -> JsonDict:
+    def _render_ord(self, field: str, op: QueryOp.Ord, value: Any) -> JsonDict:
         v = self.caster.pass_through(value)
 
         return {field: {op: v}}
 
     # ....................... #
 
-    def _render_eq(self, field: str, op: EqOp, value: Any) -> JsonDict:
+    def _render_eq(self, field: str, op: QueryOp.Eq, value: Any) -> JsonDict:
         v = self.caster.pass_through(value)
 
         match op:
@@ -152,8 +151,8 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_memb(self, field: str, op: MembOp, value: Any) -> JsonDict:
-        if isinstance(value, Scalar | None):
+    def _render_memb(self, field: str, op: QueryOp.Memb, value: Any) -> JsonDict:
+        if isinstance(value, QueryValue.Scalar | None):
             raise ValueError(f"{field}: {op} expects list")
 
         vs = [self.caster.pass_through(v) for v in value]
@@ -167,8 +166,8 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_set_rel(self, field: str, op: SetRelOp, value: Any) -> JsonDict:
-        if isinstance(value, Scalar | None):
+    def _render_set_rel(self, field: str, op: QueryOp.SetRel, value: Any) -> JsonDict:
+        if isinstance(value, QueryValue.Scalar | None):
             raise ValueError(f"{field}: {op} expects list")
 
         vs = [self.caster.pass_through(v) for v in value]

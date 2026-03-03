@@ -34,3 +34,23 @@ SetRelOp = Literal["$superset", "$subset", "$disjoint", "$overlaps"]
 
 Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp
 """All supported filter operators."""
+
+# ....................... #
+
+
+class QueryOp:
+    Unary = UnaryOp
+    Ord = OrdOp
+    Eq = EqOp
+    Memb = MembOp
+    SetRel = SetRelOp
+    All = Op
+
+
+# ....................... #
+
+
+class QueryValue:
+    Scalar = Scalar
+    Array = Array
+    Numeric = Numeric

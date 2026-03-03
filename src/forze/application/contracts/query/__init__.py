@@ -5,8 +5,28 @@ Provides :class:`FilterExpression` (predicates, conjunctions, disjunctions),
 rendering to backend-specific formats.
 """
 
-from .expressions import FilterExpression, SortExpression
+from .dsl import (
+    QueryAnd,
+    QueryExpr,
+    QueryField,
+    QueryFilterExpressionParser,
+    QueryOr,
+    QueryValueCaster,
+)
+from .expressions import QueryFilterExpression, QuerySortExpression
+from .types import QueryOp, QueryValue
 
 # ----------------------- #
 
-__all__ = ["FilterExpression", "SortExpression"]
+__all__ = [
+    "QueryFilterExpression",
+    "QuerySortExpression",
+    "QueryFilterExpressionParser",
+    "QueryValueCaster",
+    "QueryAnd",
+    "QueryExpr",
+    "QueryField",
+    "QueryOr",
+    "QueryOp",
+    "QueryValue",
+]

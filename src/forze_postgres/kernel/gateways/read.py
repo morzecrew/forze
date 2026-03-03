@@ -10,7 +10,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.query import FilterExpression, SortExpression
+from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.base.errors import NotFoundError, ValidationError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
@@ -178,7 +178,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -188,7 +188,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -198,7 +198,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -208,7 +208,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -217,7 +217,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = False,
         return_model: Optional[type[T]] = None,
@@ -253,10 +253,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         return_model: None = ...,
         return_fields: None = ...,
@@ -265,10 +265,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         return_model: type[T],
         return_fields: None = ...,
@@ -277,10 +277,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         return_model: None = ...,
         return_fields: Sequence[str],
@@ -289,10 +289,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
-        sorts: Optional[SortExpression] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
         *,
         return_model: type[T],
         return_fields: Sequence[str],
@@ -300,10 +300,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[SortExpression] = None,
+        sorts: Optional[QuerySortExpression] = None,
         *,
         return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
@@ -343,7 +343,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: Optional[FilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
         where, params = await self.where_clause(filters)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(

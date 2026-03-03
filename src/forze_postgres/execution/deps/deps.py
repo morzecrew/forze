@@ -36,6 +36,7 @@ def postgres_document_configurable(
     :param history_write_strategy: ``"database"`` or ``"application"``.
     :returns: Document dep port factory conforming to :class:`DocumentDepPort`.
     """
+
     @conforms_to(DocumentDepPort)
     def postgres_document(
         context: ExecutionContext,
@@ -44,19 +45,22 @@ def postgres_document_configurable(
     ) -> DocumentPort[Any, Any, Any, Any]:
         search = None
 
-        read = read_gw(context, spec.relations["read"], spec.models["read"])
+        read = read_gw(context, spec.sources["read"], spec.models["read"])
         write = doc_write_gw(
             context,
-            spec.relations["write"],
+            spec.sources["write"],
             spec.models,
-            spec.relations.get("history"),
+            spec.sources.get("history"),
             rev_bump_strategy=rev_bump_strategy,
             history_write_strategy=history_write_strategy,
         )
 
         if spec.search:
             search = doc_search_gw(
-                context, spec.relations["read"], spec.models["read"], spec.search
+                context,
+                spec.sources["read"],
+                spec.models["read"],
+                spec.search,
             )
 
         return PostgresDocumentAdapter(

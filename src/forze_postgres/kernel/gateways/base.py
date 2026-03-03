@@ -14,8 +14,11 @@ from psycopg import sql
 from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
-from forze.application.contracts.query import FilterExpression, SortExpression
-from forze.application.contracts.query.dsl import FilterExpressionParser
+from forze.application.contracts.query import (
+    QueryFilterExpression,
+    QueryFilterExpressionParser,
+    QuerySortExpression,
+)
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
@@ -50,7 +53,7 @@ class PostgresGateway[M: BaseModel]:
 
     async def where_clause(
         self,
-        filters: Optional[FilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         if not filters:
             return sql.SQL("TRUE"), []
@@ -60,7 +63,7 @@ class PostgresGateway[M: BaseModel]:
             table=self.spec.table,
         )
 
-        p = FilterExpressionParser()
+        p = QueryFilterExpressionParser()
         r = PsycopgQueryRenderer(types=types)
 
         expr = p.parse(filters)
@@ -70,7 +73,7 @@ class PostgresGateway[M: BaseModel]:
 
     # ....................... #
 
-    def sort_clause(self, sorts: Optional[SortExpression] = None) -> sql.Composable:
+    def sort_clause(self, sorts: Optional[QuerySortExpression] = None) -> sql.Composable:
         if not sorts:
             sorts = {ID_FIELD: "desc"}
 

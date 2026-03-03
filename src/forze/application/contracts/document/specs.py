@@ -1,6 +1,6 @@
 """Specifications for document models and storage layout."""
 
-from typing import Generic, NotRequired, Optional, TypedDict, TypeVar
+from typing import Generic, NotRequired, Optional, TypedDict, TypeVar, final
 
 import attrs
 
@@ -31,6 +31,7 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+@final
 class DocumentModelSpec(TypedDict, Generic[R, D, C, U]):
     """Concrete model classes that make up a document aggregate."""
 
@@ -50,30 +51,32 @@ class DocumentModelSpec(TypedDict, Generic[R, D, C, U]):
 # ....................... #
 
 
-class DocumentRelationSpec(TypedDict):
-    """Storage-level relation names associated with a document aggregate."""
+@final
+class DocumentSourceSpec(TypedDict):
+    """Storage-level source names associated with a document aggregate."""
 
     read: str
-    """Primary readable relation (e.g. Postgres view or table name)."""
+    """Primary readable source (e.g. Postgres view or table name)."""
 
     write: str
-    """Writable relation backing persistence for the aggregate."""
+    """Writable source backing persistence for the aggregate."""
 
     history: NotRequired[str]
-    """Optional relation used to store history or audit events."""
+    """Optional source used to store history or audit events."""
 
 
 # ....................... #
 
 
-@attrs.define(kw_only=True, frozen=True)
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentSpec(Generic[R, D, C, U]):
     """Declarative specification for a document aggregate.
 
     A :class:`DocumentSpec` binds together:
 
     * namespace used for cache keys
-    * data storage relations
+    * data storage sources
     * concrete model types for read/domain/commands
     * optional search configuration
 
@@ -84,8 +87,8 @@ class DocumentSpec(Generic[R, D, C, U]):
     namespace: str
     """Namespace used for cache keys."""
 
-    relations: DocumentRelationSpec
-    """Data storage relations."""
+    sources: DocumentSourceSpec
+    """Data storage sources."""
 
     models: DocumentModelSpec[R, D, C, U]
     """Concrete model types for read/domain/commands."""

@@ -35,7 +35,7 @@ def _minimal_spec(
     }
     return DocumentSpec(
         namespace="test",
-        relations={"read": "test_read", "write": "test_write"},
+        sources={"read": "test_read", "write": "test_write"},
         models=models,
     )
 

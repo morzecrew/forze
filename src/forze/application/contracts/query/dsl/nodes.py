@@ -8,23 +8,23 @@ from ..types import Array, Op, Scalar
 
 
 @attrs.define(slots=True, frozen=True)
-class Expr:
+class QueryExpr:
     """Base class for all filter AST nodes."""
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class And(Expr):
+class QueryAnd(QueryExpr):
     """Conjunction of child expressions (logical AND)."""
 
-    items: tuple[Expr, ...]
+    items: tuple[QueryExpr, ...]
     """Child expressions."""
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class Or(Expr):
+class QueryOr(QueryExpr):
     """Disjunction of child expressions (logical OR)."""
 
-    items: tuple[Expr, ...]
+    items: tuple[QueryExpr, ...]
     """Child expressions."""
 
 
@@ -32,7 +32,7 @@ class Or(Expr):
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class Field(Expr):
+class QueryField(QueryExpr):
     """Leaf node: field name, operator, and value."""
 
     name: str

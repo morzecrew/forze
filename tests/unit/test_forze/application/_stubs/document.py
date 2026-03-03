@@ -8,8 +8,8 @@ from forze.application.contracts.document import (
     DocumentSearchOptions,
 )
 from forze.application.contracts.query import (
-    FilterExpression,
-    SortExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
 )
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
@@ -67,7 +67,7 @@ class InMemoryDocumentPort(
 
     async def find(
         self,
-        filters: FilterExpression,
+        filters: QueryFilterExpression,
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -81,10 +81,10 @@ class InMemoryDocumentPort(
 
     async def find_many(
         self,
-        filters: Optional[FilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[SortExpression] = None,
+        sorts: Optional[QuerySortExpression] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[ReadDocument] | list[JsonDict], int]:
@@ -100,16 +100,16 @@ class InMemoryDocumentPort(
             out = [self._to_read(d) for d in items]
         return out, total
 
-    async def count(self, filters: Optional[FilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
         return sum(1 for pk in self._store if pk not in self._deleted)
 
     async def search(
         self,
         query: str,
-        filters: Optional[FilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        sorts: Optional[SortExpression] = None,
+        sorts: Optional[QuerySortExpression] = None,
         options: Optional[DocumentSearchOptions] = None,
         *,
         return_fields: Optional[Sequence[str]] = None,

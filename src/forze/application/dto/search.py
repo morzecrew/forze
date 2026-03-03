@@ -10,7 +10,7 @@ from typing import Optional
 
 from pydantic import Field
 
-from forze.application.contracts.query import FilterExpression, SortExpression
+from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -27,10 +27,10 @@ class SearchRequestDTO(BaseDTO):
     query: str = ""
     """Full-text search query; empty string for filter-only mode."""
 
-    filters: Optional[FilterExpression] = None
+    filters: Optional[QueryFilterExpression] = None
     """Optional filter expression (predicates, conjunctions, disjunctions)."""
 
-    sorts: Optional[SortExpression] = None
+    sorts: Optional[QuerySortExpression] = None
     """Optional sort expression (field name to ``"asc"`` or ``"desc"``)."""
 
 

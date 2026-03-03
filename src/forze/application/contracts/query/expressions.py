@@ -6,11 +6,11 @@ from .types import Array, Numeric, Scalar
 
 # ----------------------- #
 
-FieldShortcutValue = Scalar | Array | None
+QueryFieldShortcutValue = Scalar | Array | None
 """Shortcut value: scalar (eq), array (in), or None (null check)."""
 
-FieldOpConjunction = TypedDict(
-    "FieldOpConjunction",
+QueryFieldOpConjunction = TypedDict(
+    "QueryFieldOpConjunction",
     {
         # Equality
         "$eq": Scalar,
@@ -36,30 +36,32 @@ FieldOpConjunction = TypedDict(
     total=False,
 )
 
-FieldMapValue = FieldOpConjunction | FieldShortcutValue
+QueryFieldMapValue = QueryFieldOpConjunction | QueryFieldShortcutValue
 """Value for a single field: operator map or shortcut."""
 
-FieldMap = Mapping[str, FieldMapValue]
+QueryFieldMap = Mapping[str, QueryFieldMapValue]
 """Map of field names to filter values."""
 
 # ....................... #
 
-Predicate = TypedDict("Predicate", {"$fields": FieldMap})
+QueryPredicate = TypedDict("QueryPredicate", {"$fields": QueryFieldMap})
 """Predicate with ``$fields`` mapping."""
 
-Conjunction = TypedDict("Conjunction", {"$and": list["FilterExpression"]})
+QueryConjunction = TypedDict(
+    "QueryConjunction", {"$and": list["QueryFilterExpression"]}
+)
 """Conjunction of filter expressions."""
 
-Disjunction = TypedDict("Disjunction", {"$or": list["FilterExpression"]})
+QueryDisjunction = TypedDict("QueryDisjunction", {"$or": list["QueryFilterExpression"]})
 """Disjunction of filter expressions."""
 
-FilterExpression = Predicate | Conjunction | Disjunction
+QueryFilterExpression = QueryPredicate | QueryConjunction | QueryDisjunction
 """Recursive filter expression (predicate, and, or)."""
 
 # ....................... #
 
-SortDirection = Literal["asc", "desc"]
+QuerySortDirection = Literal["asc", "desc"]
 """Sort direction for a field."""
 
-SortExpression = Mapping[str, SortDirection]
+QuerySortExpression = Mapping[str, QuerySortDirection]
 """Map of field names to sort direction."""
