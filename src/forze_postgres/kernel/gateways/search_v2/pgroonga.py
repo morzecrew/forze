@@ -11,9 +11,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.search import SearchIndexSpec, SearchOptions
+from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
 
+from ..spec import PostgresQualifiedName
 from .base import PostgresSearchGateway
 
 # ----------------------- #
@@ -25,7 +27,9 @@ T = TypeVar("T", bound=BaseModel)
 
 class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     def _effective_field_weights(
-        self, spec: SearchIndexSpec, options: Optional[SearchOptions] = None
+        self,
+        spec: SearchIndexSpec,
+        options: Optional[SearchOptions] = None,
     ) -> list[tuple[str, float]]:
         options = options or {}
         ov_weights = options.get("weights", {})
@@ -59,7 +63,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
     # ....................... #
 
-    def _pgroonga_where(
+    async def _pgroonga_where(
         self,
         query: str,
         index: str,
@@ -94,10 +98,18 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         r_ph = sql.Placeholder()
         w_ph = sql.Placeholder()
 
-        #! TODO: introspect index to check whether it's defined as array or as a single field
-        #! then use it here
+        q = PostgresQualifiedName.from_string(index)
+        index_info = await self.introspector.get_index_info(
+            index=q.name, schema=q.schema
+        )
 
-        if len(fields) == 1:
+        if index_info.engine != "pgroonga":
+            raise CoreError(
+                f"Index {q.string()} has unsupported engine: {index_info.engine} (required: pgroonga)"
+            )
+
+        # check expression for array or single field
+        if index_info.expr is None or ("ARRAY" not in index_info.expr.upper()):
             text_expr = sql.SQL("coalesce({}::text, '')").format(
                 sql.Identifier(fields[0])
             )
@@ -115,6 +127,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
             return sql.SQL("{} &@~ {}").format(text_expr, cond), params
 
+        # if array in index expression - we need to build array expression
         array_expr = sql.SQL("(ARRAY[{}])").format(
             sql.SQL(", ").join(
                 sql.SQL("coalesce({}::text, '')").format(sql.Identifier(f))
@@ -165,7 +178,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         index, spec = self._pick_index(options)
-        sw, sp = self._pgroonga_where(query, index, spec, options=options)
+        sw, sp = await self._pgroonga_where(query, index, spec, options=options)
         fw, fp = await self.where_clause(filters)
 
         where_parts = sql.SQL(" AND ").join([sw, fw])

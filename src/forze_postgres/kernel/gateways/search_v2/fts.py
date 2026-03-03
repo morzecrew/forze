@@ -20,7 +20,7 @@ from forze.base.serialization import pydantic_validate
 
 from ..spec import PostgresQualifiedName
 from .base import PostgresSearchGateway
-from .utils import extract_index_expr_from_indexdef, fts_rank_weights_array
+from .utils import fts_rank_weights_array
 
 # ----------------------- #
 
@@ -30,30 +30,6 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
-    #! TODO: move to introspector
-    async def _fetch_indexdef(self, index: str) -> str:
-        q = PostgresQualifiedName.from_string(index)
-        schema = q.schema or self.spec.schema or "public"
-
-        stmt = sql.SQL(
-            """
-            SELECT pg_get_indexdef(c.oid) AS indexdef
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = {schema}
-              AND c.relname = {idx}
-            LIMIT 1
-            """
-        ).format(schema=sql.Placeholder(), idx=sql.Placeholder())
-
-        row = await self.client.fetch_one(stmt, [schema, q.name], row_factory="dict")
-        if row is None or not row.get("indexdef"):
-            raise CoreError(f"Cannot load indexdef for index: {index}")
-
-        return str(row["indexdef"])
-
-    # ....................... #
-
     async def _resolve_tsvector_expr(
         self,
         index: str,
@@ -72,17 +48,25 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
             return sql.Identifier(str(hints["tsvector_col"]))
 
         # 2) try parsing pg_get_indexdef(...)
-        indexdef = await self._fetch_indexdef(index)
-        expr = extract_index_expr_from_indexdef(indexdef)
+        q = PostgresQualifiedName.from_string(index)
+        index_info = await self.introspector.get_index_info(
+            index=q.name,
+            schema=q.schema,
+        )
 
-        if not expr:
+        if index_info.engine != "fts":
+            raise CoreError(
+                f"Index {q.string()} has unsupported engine: {index_info.engine} (required: fts)"
+            )
+
+        if not index_info.expr:
             raise CoreError(
                 "Unable to infer tsvector expression from index definition. "
                 "Provide IndexSpec.hints['tsvector_expr'] or ['tsvector_col']."
             )
 
         # NOTE: expr is raw SQL fragment from Postgres catalog; we still treat it as config.
-        return sql.SQL(expr)  # pyright: ignore[reportArgumentType]
+        return sql.SQL(index_info.expr)  # pyright: ignore[reportArgumentType]
 
     # ....................... #
 

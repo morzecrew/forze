@@ -4,7 +4,8 @@ Provides :class:`StreamPort` and :class:`StreamEvent` for publish, read,
 subscribe, and consumer group operations.
 """
 
-from .ports import StreamEvent, StreamPort
+from .ports import StreamPort
+from .types import StreamEvent
 
 # ----------------------- #
 

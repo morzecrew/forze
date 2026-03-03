@@ -17,34 +17,25 @@ from forze.application.contracts.document import DocumentSearchSpec
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresQualifiedName:
-    schema: Optional[str] = None
+    schema: str
     name: str
 
     # ....................... #
 
     def ident(self) -> sql.Composable:
-        if self.schema:
-            return sql.SQL(".").join(
-                [sql.Identifier(self.schema), sql.Identifier(self.name)]
-            )
-
-        return sql.Identifier(self.name)
+        return sql.SQL(".").join(
+            [sql.Identifier(self.schema), sql.Identifier(self.name)]
+        )
 
     # ....................... #
 
     def string(self) -> str:
-        if self.schema:
-            return f"{self.schema}.{self.name}"
-
-        return self.name
+        return f"{self.schema}.{self.name}"
 
     # ....................... #
 
     def literal(self) -> sql.Composable:
-        if self.schema:
-            return sql.Literal(f"{self.schema}.{self.name}")
-
-        return sql.Literal(self.name)
+        return sql.Literal(f"{self.schema}.{self.name}")
 
     # ....................... #
 
@@ -54,10 +45,11 @@ class PostgresQualifiedName:
             schema, name = x.split(".", 1)
             return cls(schema=schema, name=name)
 
-        return cls(name=x)
+        return cls(schema="public", name=x)
 
 
 # ....................... #
+#! TODO: get rid of all below
 
 
 @final

@@ -7,7 +7,7 @@ from more_itertools import first
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 
-from ..types import SearchIndexMode
+from ..types import SearchIndexMode, SearchOptions
 
 # ----------------------- #
 
@@ -149,3 +149,17 @@ class SearchSpec:
     @cached_property
     def stable_default_index(self) -> str:
         return self.default_index or first(self.indexes.keys())
+
+    # ....................... #
+
+    def pick_index(
+        self,
+        options: Optional[SearchOptions] = None,
+    ) -> tuple[str, SearchIndexSpec]:
+        options = options or {}
+        index = options.get("use_index", self.stable_default_index)
+
+        if index not in self.indexes:
+            raise CoreError(f"Index `{index}` not found")
+
+        return index, self.indexes[index]

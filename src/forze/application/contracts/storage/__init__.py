@@ -5,7 +5,8 @@ dependency keys/routers for building storage ports by bucket.
 """
 
 from .deps import StorageDepKey, StorageDepPort, StorageDepRouter
-from .ports import DownloadedObject, ObjectMetadata, StoragePort, StoredObject
+from .ports import StoragePort
+from .types import DownloadedObject, ObjectMetadata, StoredObject
 
 # ----------------------- #
 

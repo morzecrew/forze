@@ -44,6 +44,7 @@ class PostgresDocumentAdapter[
     search_gw: Optional[PostgresSearchGateway[R]] = None
     cache: Optional[DocumentCachePort] = None
 
+    # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #

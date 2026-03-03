@@ -15,7 +15,6 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchSpec,
 )
-from forze.base.errors import CoreError
 
 from ..base import PostgresGateway
 
@@ -38,10 +37,4 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
         self,
         options: Optional[SearchOptions] = None,
     ) -> tuple[str, SearchIndexSpec]:
-        options = options or {}
-        index = options.get("use_index", self._default_index)
-
-        if index not in self.search_spec.indexes:
-            raise CoreError(f"Index `{index}` not found")
-
-        return index, self.search_spec.indexes[index]
+        return self.search_spec.pick_index(options)

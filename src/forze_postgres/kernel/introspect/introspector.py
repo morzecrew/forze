@@ -4,7 +4,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Optional, cast, final
+from typing import Any, Optional, cast, final
 
 import attrs
 from psycopg import sql
@@ -16,12 +16,14 @@ from .types import (
     PostgresColumnCache,
     PostgresColumnTypes,
     PostgresIndexCache,
+    PostgresIndexDefCache,
     PostgresIndexEngine,
+    PostgresIndexInfo,
     PostgresRelationCache,
     PostgresRelationKind,
     PostgresType,
 )
-from .utils import normalize_pg_type
+from .utils import extract_index_expr_from_indexdef, normalize_pg_type
 
 # ----------------------- #
 
@@ -35,6 +37,7 @@ class PostgresIntrospector:
     __column_cache: PostgresColumnCache = attrs.field(factory=dict, init=False)
     __index_cache: PostgresIndexCache = attrs.field(factory=dict, init=False)
     __relation_cache: PostgresRelationCache = attrs.field(factory=dict, init=False)
+    __index_def_cache: PostgresIndexDefCache = attrs.field(factory=dict, init=False)
 
     # ....................... #
 
@@ -49,25 +52,22 @@ class PostgresIntrospector:
         schema: Optional[str],
         relation: str,
     ) -> PostgresRelationKind:
+        schema = self.__normalize_schema(schema)
         key = (schema, relation)
 
         if key in self.__relation_cache:
             return self.__relation_cache[key]
-
-        schema = self.__normalize_schema(schema)
 
         stmt = sql.SQL(
             """
             SELECT c.relkind
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = {schema} AND c.relname = {relation}
+            WHERE n.nspname = {schema} 
+                AND c.relname = {relation}
             LIMIT 1
             """
-        ).format(
-            schema=sql.Placeholder(),
-            relation=sql.Placeholder(),
-        )
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
 
         rk = await self.client.fetch_value(stmt, [schema, relation], default=None)
 
@@ -129,12 +129,11 @@ class PostgresIntrospector:
         schema: Optional[str],
         relation: str,
     ) -> PostgresColumnTypes:
+        schema = self.__normalize_schema(schema)
         key = (schema, relation)
 
         if key in self.__column_cache:
             return self.__column_cache[key]
-
-        schema = self.__normalize_schema(schema)
 
         # Fail fast if relation doesn't exist
         await self.require_relation(schema=schema, relation=relation)
@@ -202,100 +201,150 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def get_index_engine(
-        self,
-        *,
-        schema: Optional[str],
-        relation: str,
-        index_name: str,
-    ) -> PostgresIndexEngine:
-        key = (schema, relation, index_name)
+    async def get_index_def(self, *, index: str, schema: Optional[str] = None) -> str:
+        schema = self.__normalize_schema(schema)
+        key = (schema, index)
+
+        if key in self.__index_def_cache:
+            return self.__index_def_cache[key]
+
+        stmt = sql.SQL(
+            """
+            SELECT pg_get_indexdef(c.oid) AS indexdef
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = {schema}
+              AND c.relname = {idx}
+            LIMIT 1
+            """
+        ).format(schema=sql.Placeholder(), idx=sql.Placeholder())
+
+        row = await self.client.fetch_one(stmt, [schema, index], row_factory="dict")
+
+        if row is None or not row.get("indexdef"):
+            raise CoreError(f"Cannot load indexdef for index: {schema}.{index}")
+
+        indexdef = str(row["indexdef"])
+        self.__index_def_cache[key] = indexdef
+
+        return indexdef
+
+    # ....................... #
+
+    async def get_index_info(
+        self, *, index: str, schema: Optional[str] = None
+    ) -> PostgresIndexInfo:
+        schema = self.__normalize_schema(schema)
+        key = (schema, index)
 
         if key in self.__index_cache:
             return self.__index_cache[key]
 
-        schema = self.__normalize_schema(schema)
-
-        # Fail fast if relation doesn't exist
-        await self.require_relation(schema=schema, relation=relation)
-
-        # We resolve index by name in schema.
-        # NOTE: This assumes index lives in the same schema; if you want cross-schema indexes,
-        # pass full schema explicitly or extend this method.
+        # NOTE:
+        # - pg_get_expr(ix.indexprs, ix.indrelid) gives expression for expression indexes
+        # - columns extracted from indkey -> pg_attribute
         stmt = sql.SQL(
             """
             SELECT
               am.amname AS amname,
-              pg_get_indexdef(i.indexrelid) AS indexdef,
+              pg_get_indexdef(i.oid) AS indexdef,
+              pg_get_expr(ix.indexprs, ix.indrelid) AS expr,
+              array_remove(array_agg(a.attname ORDER BY k.ord), NULL) AS cols,
               (
                 SELECT bool_or(t.typname = 'tsvector')
-                FROM unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
-                JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
-                JOIN pg_type t ON t.oid = a.atttypid
+                FROM unnest(ix.indkey) WITH ORDINALITY AS kk(attnum, ord)
+                JOIN pg_attribute aa ON aa.attrelid = ix.indrelid AND aa.attnum = kk.attnum
+                JOIN pg_type t ON t.oid = aa.atttypid
               ) AS has_tsvector_col
             FROM pg_index ix
             JOIN pg_class i ON i.oid = ix.indexrelid
-            JOIN pg_class r ON r.oid = ix.indrelid
-            JOIN pg_namespace rn ON rn.oid = r.relnamespace
+            JOIN pg_namespace in_ ON in_.oid = i.relnamespace
             JOIN pg_am am ON am.oid = i.relam
-            WHERE rn.nspname = {schema}
-              AND r.relname = {relation}
-              AND i.relname = {index_name}
+            LEFT JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+              ON ix.indkey IS NOT NULL
+            LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+            WHERE in_.nspname = {schema}
+              AND i.relname = {idx}
+            GROUP BY am.amname, i.oid, ix.indexprs, ix.indrelid
             LIMIT 1
             """
-        ).format(
-            schema=sql.Placeholder(),
-            relation=sql.Placeholder(),
-            index_name=sql.Placeholder(),
-        )
+        ).format(schema=sql.Placeholder(), idx=sql.Placeholder())
 
         row = await self.client.fetch_one(
             stmt,
-            [schema, relation, index_name],
+            [schema, index],
             row_factory="dict",
             commit=False,
         )
 
         if row is None:
-            raise CoreError(
-                f"Index not found: {schema}.{index_name} on {schema}.{relation}."
+            raise CoreError(f"Index not found: {schema}.{index}")
+
+        amname = str(row.get("amname") or "")
+        indexdef = str(row.get("indexdef") or "")
+        expr = row.get("expr")
+        expr_s = str(expr).strip() if expr is not None else None
+
+        cols_raw: list[Any] = row.get("cols") or []
+        # psycopg может вернуть list[str] уже; на всякий случай:
+        columns = (
+            tuple(str(x) for x in cols_raw)
+            if isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+                cols_raw, (list, tuple)
             )
+            else ()
+        )
 
-        amname = str(row.get("amname", ""))
-        indexdef = str(row.get("indexdef", ""))
-        has_tsvector_col = bool(row.get("has_tsvector_col", False))
+        has_tsvector_col = bool(row.get("has_tsvector_col") or False)
 
+        # classify engine
         engine: PostgresIndexEngine = "unknown"
+        idx_l = indexdef.lower()
 
         if amname == "pgroonga":
             engine = "pgroonga"
 
         elif amname == "gin":
-            # Heuristic: gin + tsvector column OR expression-based tsvector
-            idx_l = indexdef.lower()
-
+            # Heuristic: gin + tsvector column OR to_tsvector(...) inside expression/DDL
             if has_tsvector_col or ("to_tsvector(" in idx_l) or ("tsvector" in idx_l):
                 engine = "fts"
 
-            else:
-                engine = "unknown"
+        # fallback expr (ONLY if pg_get_expr didn't return it, but DDL shows expression)
+        if expr_s is None:
+            maybe = extract_index_expr_from_indexdef(indexdef)
+            if maybe:
+                expr_s = maybe
 
-        self.__index_cache[key] = engine
+        info = PostgresIndexInfo(
+            schema=schema,
+            name=index,
+            amname=amname,
+            engine=engine,
+            indexdef=indexdef,
+            expr=expr_s,
+            columns=columns,
+            has_tsvector_col=has_tsvector_col,
+        )
 
-        return engine
+        self.__index_cache[key] = info
+        self.__index_def_cache[key] = indexdef
+
+        return info
 
     # ....................... #
 
     def invalidate_relation(self, *, schema: Optional[str], relation: str) -> None:
+        schema = self.__normalize_schema(schema)
         self.__relation_cache.pop((schema, relation), None)
         self.__column_cache.pop((schema, relation), None)
 
-        index_keys = [
-            k for k in self.__index_cache.keys() if k[:2] == (schema, relation)
-        ]
+    # ....................... #
 
-        for k in index_keys:
-            self.__index_cache.pop(k, None)
+    def invalidate_index(self, *, schema: Optional[str], index: str) -> None:
+        schema = self.__normalize_schema(schema)
+        key = (schema, index)
+        self.__index_cache.pop(key, None)
+        self.__index_def_cache.pop(key, None)
 
     # ....................... #
 
@@ -303,3 +352,4 @@ class PostgresIntrospector:
         self.__relation_cache.clear()
         self.__column_cache.clear()
         self.__index_cache.clear()
+        self.__index_def_cache.clear()

@@ -5,7 +5,8 @@ dependency keys for building idempotency handlers.
 """
 
 from .deps import IdempotencyDepKey, IdempotencyDepPort
-from .ports import IdempotencyPort, IdempotencySnapshot
+from .ports import IdempotencyPort
+from .types import IdempotencySnapshot
 
 # ----------------------- #
 
