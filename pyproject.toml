@@ -161,7 +161,7 @@ layers = [
     "forze.application.usecases",
     "forze.application.execution",
     "forze.application.dto",
-    "forze.application.dsl",
+    "forze.application.mapping",
     "forze.application.contracts",
 ]
 

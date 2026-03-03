@@ -9,14 +9,15 @@ from more_itertools import first
 from forze.base.errors import CoreError, NotFoundError
 from forze.base.primitives import JsonDict
 
-from .types import FieldType, IndexMode, RankingStrategy
+from .types import SearchFieldType, SearchIndexMode, SearchRankingStrategy
 
 # ----------------------- #
+#! Link model to index or search
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchSpec:
-    indexes: dict[str, IndexSpec] = attrs.field(factory=dict)
+    indexes: dict[str, SearchIndexSpec] = attrs.field(factory=dict)
     default_index: Optional[str] = None
 
     # ....................... #
@@ -38,7 +39,7 @@ class SearchSpec:
 
     # ....................... #
 
-    def get_index(self, name: Optional[str] = None) -> IndexSpec:
+    def get_index(self, name: Optional[str] = None) -> SearchIndexSpec:
         idx = name or self.stable_default_index
 
         if idx not in self.indexes:
@@ -51,11 +52,11 @@ class SearchSpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class IndexSpec:
-    fields: list[FieldSpec]
-    mode: IndexMode = "fulltext"
-    fuzzy: Optional[FuzzySpec] = None
-    ranking: Optional[RankingSpec] = None
+class SearchIndexSpec:
+    fields: list[SearchFieldSpec]
+    mode: SearchIndexMode = "fulltext"
+    fuzzy: Optional[SearchFuzzySpec] = None
+    ranking: Optional[SearchRankingSpec] = None
     hints: JsonDict = attrs.field(factory=dict)
     source: Optional[str] = None
 
@@ -78,10 +79,10 @@ class IndexSpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FieldSpec:
+class SearchFieldSpec:
     path: str
     weight: float = 1.0
-    type: FieldType = "text"
+    type: SearchFieldType = "text"
     analyzer: Optional[str] = None
 
     # ....................... #
@@ -104,7 +105,7 @@ class FieldSpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FuzzySpec:
+class SearchFuzzySpec:
     enabled: bool = False
     max_distance_ratio: Optional[float] = None
     prefix_length: Optional[int] = None
@@ -129,6 +130,6 @@ class FuzzySpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RankingSpec:
-    strategy: RankingStrategy = "native"
+class SearchRankingSpec:
+    strategy: SearchRankingStrategy = "native"
     weights_overridable: bool = True

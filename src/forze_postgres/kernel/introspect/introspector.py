@@ -1,0 +1,305 @@
+from forze_postgres._compat import require_psycopg
+
+require_psycopg()
+
+# ....................... #
+
+from typing import Optional, cast, final
+
+import attrs
+from psycopg import sql
+
+from forze.base.errors import CoreError
+
+from ..platform import PostgresClient
+from .types import (
+    PostgresColumnCache,
+    PostgresColumnTypes,
+    PostgresIndexCache,
+    PostgresIndexEngine,
+    PostgresRelationCache,
+    PostgresRelationKind,
+    PostgresType,
+)
+from .utils import normalize_pg_type
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class PostgresIntrospector:
+    client: PostgresClient = attrs.field(on_setattr=attrs.setters.frozen)
+
+    # Non initable fields
+    __column_cache: PostgresColumnCache = attrs.field(factory=dict, init=False)
+    __index_cache: PostgresIndexCache = attrs.field(factory=dict, init=False)
+    __relation_cache: PostgresRelationCache = attrs.field(factory=dict, init=False)
+
+    # ....................... #
+
+    def __normalize_schema(self, schema: Optional[str]) -> str:
+        return schema or "public"
+
+    # ....................... #
+
+    async def get_relation(
+        self,
+        *,
+        schema: Optional[str],
+        relation: str,
+    ) -> PostgresRelationKind:
+        key = (schema, relation)
+
+        if key in self.__relation_cache:
+            return self.__relation_cache[key]
+
+        schema = self.__normalize_schema(schema)
+
+        stmt = sql.SQL(
+            """
+            SELECT c.relkind
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = {schema} AND c.relname = {relation}
+            LIMIT 1
+            """
+        ).format(
+            schema=sql.Placeholder(),
+            relation=sql.Placeholder(),
+        )
+
+        rk = await self.client.fetch_value(stmt, [schema, relation], default=None)
+
+        if rk is None:
+            raise CoreError(f"Relation not found: {schema}.{relation}")
+
+        kind: PostgresRelationKind = "other"
+
+        match str(rk):
+            case "r":
+                kind = "table"
+
+            case "v":
+                kind = "view"
+
+            case "m":
+                kind = "materialized_view"
+
+            case "p":
+                kind = "partitioned_table"
+
+            case _:
+                pass
+
+        self.__relation_cache[key] = kind
+
+        return kind
+
+    # ....................... #
+
+    async def require_relation(
+        self,
+        *,
+        schema: Optional[str],
+        relation: str,
+        allow: tuple[PostgresRelationKind, ...] = (
+            "table",
+            "view",
+            "materialized_view",
+            "partitioned_table",
+        ),
+    ) -> PostgresRelationKind:
+        kind = await self.get_relation(schema=schema, relation=relation)
+
+        if kind not in allow:
+            schema = self.__normalize_schema(schema)
+
+            raise CoreError(
+                f"Unsupported relation kind for {schema}.{relation}: {kind} (allowed: {allow})"
+            )
+
+        return kind
+
+    # ....................... #
+
+    async def get_column_types(
+        self,
+        *,
+        schema: Optional[str],
+        relation: str,
+    ) -> PostgresColumnTypes:
+        key = (schema, relation)
+
+        if key in self.__column_cache:
+            return self.__column_cache[key]
+
+        schema = self.__normalize_schema(schema)
+
+        # Fail fast if relation doesn't exist
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            WITH rel AS (
+              SELECT c.oid
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = {schema}
+                AND c.relname = {relation}
+              LIMIT 1
+            )
+            SELECT
+              a.attnum,
+              a.attname AS column_name,
+              CASE
+                WHEN t.typelem <> 0 THEN format_type(t.typelem, NULL)
+                ELSE NULL
+              END AS array_elem_type,
+              format_type(a.atttypid, a.atttypmod) AS full_type,
+              (t.typelem <> 0) AS is_array,
+              a.attnotnull AS not_null
+            FROM rel
+            JOIN pg_attribute a ON a.attrelid = rel.oid
+            JOIN pg_type t ON t.oid = a.atttypid
+            WHERE a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        if not rows:
+            raise CoreError(f"Relation has no columns: {schema}.{relation}")
+
+        out: dict[str, PostgresType] = {}
+
+        for r in rows:
+            col = cast(str, r["column_name"])
+            is_array = bool(r["is_array"])
+            not_null = bool(r["not_null"])
+
+            if is_array:
+                elem = r["array_elem_type"]
+                if not elem:
+                    base = normalize_pg_type(str(r["full_type"]).rstrip("[]"))
+                else:
+                    base = normalize_pg_type(str(elem))
+            else:
+                base = normalize_pg_type(str(r["full_type"]))
+
+            out[col] = PostgresType(base=base, is_array=is_array, not_null=not_null)
+
+        self.__column_cache[key] = out
+
+        return out
+
+    # ....................... #
+
+    async def get_index_engine(
+        self,
+        *,
+        schema: Optional[str],
+        relation: str,
+        index_name: str,
+    ) -> PostgresIndexEngine:
+        key = (schema, relation, index_name)
+
+        if key in self.__index_cache:
+            return self.__index_cache[key]
+
+        schema = self.__normalize_schema(schema)
+
+        # Fail fast if relation doesn't exist
+        await self.require_relation(schema=schema, relation=relation)
+
+        # We resolve index by name in schema.
+        # NOTE: This assumes index lives in the same schema; if you want cross-schema indexes,
+        # pass full schema explicitly or extend this method.
+        stmt = sql.SQL(
+            """
+            SELECT
+              am.amname AS amname,
+              pg_get_indexdef(i.indexrelid) AS indexdef,
+              (
+                SELECT bool_or(t.typname = 'tsvector')
+                FROM unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+                JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+                JOIN pg_type t ON t.oid = a.atttypid
+              ) AS has_tsvector_col
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_class r ON r.oid = ix.indrelid
+            JOIN pg_namespace rn ON rn.oid = r.relnamespace
+            JOIN pg_am am ON am.oid = i.relam
+            WHERE rn.nspname = {schema}
+              AND r.relname = {relation}
+              AND i.relname = {index_name}
+            LIMIT 1
+            """
+        ).format(
+            schema=sql.Placeholder(),
+            relation=sql.Placeholder(),
+            index_name=sql.Placeholder(),
+        )
+
+        row = await self.client.fetch_one(
+            stmt,
+            [schema, relation, index_name],
+            row_factory="dict",
+            commit=False,
+        )
+
+        if row is None:
+            raise CoreError(
+                f"Index not found: {schema}.{index_name} on {schema}.{relation}."
+            )
+
+        amname = str(row.get("amname", ""))
+        indexdef = str(row.get("indexdef", ""))
+        has_tsvector_col = bool(row.get("has_tsvector_col", False))
+
+        engine: PostgresIndexEngine = "unknown"
+
+        if amname == "pgroonga":
+            engine = "pgroonga"
+
+        elif amname == "gin":
+            # Heuristic: gin + tsvector column OR expression-based tsvector
+            idx_l = indexdef.lower()
+
+            if has_tsvector_col or ("to_tsvector(" in idx_l) or ("tsvector" in idx_l):
+                engine = "fts"
+
+            else:
+                engine = "unknown"
+
+        self.__index_cache[key] = engine
+
+        return engine
+
+    # ....................... #
+
+    def invalidate_relation(self, *, schema: Optional[str], relation: str) -> None:
+        self.__relation_cache.pop((schema, relation), None)
+        self.__column_cache.pop((schema, relation), None)
+
+        index_keys = [
+            k for k in self.__index_cache.keys() if k[:2] == (schema, relation)
+        ]
+
+        for k in index_keys:
+            self.__index_cache.pop(k, None)
+
+    # ....................... #
+
+    def clear(self) -> None:
+        self.__relation_cache.clear()
+        self.__column_cache.clear()
+        self.__index_cache.clear()

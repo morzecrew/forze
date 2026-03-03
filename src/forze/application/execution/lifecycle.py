@@ -134,7 +134,7 @@ class LifecyclePlan:
                 try:
                     await step.shutdown(ctx)
 
-                except Exception:
+                except Exception:  # nosec: B110
                     pass
 
             raise
@@ -149,5 +149,6 @@ class LifecyclePlan:
         for step in reversed(self.steps):
             try:
                 await step.shutdown(ctx)
-            except Exception:
+
+            except Exception:  # nosec: B110
                 pass

@@ -23,7 +23,7 @@ from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
-from ..introspect import PostgresColumnTypes, PostgresType, PostgresTypesProvider
+from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClient
 from ..query import PsycopgQueryRenderer
 from .spec import PostgresTableSpec
@@ -36,7 +36,7 @@ class PostgresGateway[M: BaseModel]:
     spec: PostgresTableSpec
     client: PostgresClient
     model: type[M]
-    types_provider: PostgresTypesProvider
+    introspector: PostgresIntrospector
 
     # ....................... #
 
@@ -58,9 +58,9 @@ class PostgresGateway[M: BaseModel]:
         if not filters:
             return sql.SQL("TRUE"), []
 
-        types = await self.types_provider.get(
+        types = await self.introspector.get_column_types(
             schema=self.spec.schema,
-            table=self.spec.table,
+            relation=self.spec.table,
         )
 
         p = QueryFilterExpressionParser()
@@ -73,7 +73,10 @@ class PostgresGateway[M: BaseModel]:
 
     # ....................... #
 
-    def sort_clause(self, sorts: Optional[QuerySortExpression] = None) -> sql.Composable:
+    def sort_clause(
+        self,
+        sorts: Optional[QuerySortExpression] = None,
+    ) -> sql.Composable:
         if not sorts:
             sorts = {ID_FIELD: "desc"}
 
@@ -95,7 +98,7 @@ class PostgresGateway[M: BaseModel]:
     ) -> sql.Composable:
         if return_fields is not None and return_model is not None:
             raise CoreError(
-                "Поля и модель для маппинга не могут быть указаны одновременно"
+                "Fields and model for mapping cannot be specified simultaneously"
             )
 
         elif return_fields is not None:
@@ -111,16 +114,16 @@ class PostgresGateway[M: BaseModel]:
 
         #!? explicitly exclude bad fields or not ?!
         if bad:
-            raise CoreError(f"Неверные поля: {bad}")
+            raise CoreError(f"Invalid fields: {bad}")
 
         return sql.SQL(", ").join(sql.Identifier(f) for f in use)
 
     # ....................... #
 
     async def column_types(self) -> PostgresColumnTypes:
-        return await self.types_provider.get(
+        return await self.introspector.get_column_types(
             schema=self.spec.schema,
-            table=self.spec.table,
+            relation=self.spec.table,
         )
 
     # ....................... #

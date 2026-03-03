@@ -15,6 +15,52 @@ from forze.application.contracts.document import DocumentSearchSpec
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresQualifiedName:
+    schema: Optional[str] = None
+    name: str
+
+    # ....................... #
+
+    def ident(self) -> sql.Composable:
+        if self.schema:
+            return sql.SQL(".").join(
+                [sql.Identifier(self.schema), sql.Identifier(self.name)]
+            )
+
+        return sql.Identifier(self.name)
+
+    # ....................... #
+
+    def string(self) -> str:
+        if self.schema:
+            return f"{self.schema}.{self.name}"
+
+        return self.name
+
+    # ....................... #
+
+    def literal(self) -> sql.Composable:
+        if self.schema:
+            return sql.Literal(f"{self.schema}.{self.name}")
+
+        return sql.Literal(self.name)
+
+    # ....................... #
+
+    @classmethod
+    def from_string(cls, x: str) -> Self:
+        if "." in x:
+            schema, name = x.split(".", 1)
+            return cls(schema=schema, name=name)
+
+        return cls(name=x)
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True)
 class PostgresTableSpec:
     """Postgres table specification."""
@@ -62,6 +108,7 @@ class PostgresTableSpec:
 
 
 # ....................... #
+#! GET RID OF THIS SPEC
 #! should we add "type" field for search index? so then we can adjust ...
 
 

@@ -113,7 +113,7 @@ class IdempotentRoute(APIRoute):
                     },
                 )
 
-            except Exception:
+            except Exception:  # nosec: B110
                 pass
 
             return resp

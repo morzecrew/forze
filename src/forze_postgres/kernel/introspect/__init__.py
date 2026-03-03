@@ -1,15 +1,23 @@
-from .provider import (
+from .introspector import PostgresIntrospector
+from .types import (
     PostgresColumnCache,
     PostgresColumnTypes,
+    PostgresIndexCache,
+    PostgresIndexEngine,
+    PostgresRelationCache,
+    PostgresRelationKind,
     PostgresType,
-    PostgresTypesProvider,
 )
 
 # ----------------------- #
 
 __all__ = [
-    "PostgresTypesProvider",
     "PostgresColumnCache",
     "PostgresColumnTypes",
     "PostgresType",
+    "PostgresIntrospector",
+    "PostgresIndexCache",
+    "PostgresIndexEngine",
+    "PostgresRelationCache",
+    "PostgresRelationKind",
 ]

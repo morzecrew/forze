@@ -15,7 +15,7 @@ from ...kernel.gateways import (
     PostgresTableSpec,
     PostgresWriteGateway,
 )
-from .keys import PostgresClientDepKey, PostgresTypesProviderDepKey
+from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #
 
@@ -29,13 +29,13 @@ def read_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
     :returns: Postgres read gateway.
     """
     client = ctx.dep(PostgresClientDepKey)
-    types_provider = ctx.dep(PostgresTypesProviderDepKey)
+    introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresReadGateway(
         spec=PostgresTableSpec.from_relation(relation),
         client=client,
         model=model,
-        types_provider=types_provider,
+        introspector=introspector,
     )
 
 
@@ -51,7 +51,7 @@ def _doc_history_gw(
 ):
     """Build a history gateway for document audit trails."""
     client = ctx.dep(PostgresClientDepKey)
-    types_provider = ctx.dep(PostgresTypesProviderDepKey)
+    introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresHistoryGateway(
         spec=PostgresTableSpec.from_relation(relation),
@@ -59,7 +59,7 @@ def _doc_history_gw(
         strategy=history_write_strategy,
         client=client,
         model=model,
-        types_provider=types_provider,
+        introspector=introspector,
     )
 
 
@@ -81,13 +81,13 @@ def doc_search_gw(
     :returns: Postgres search gateway.
     """
     client = ctx.dep(PostgresClientDepKey)
-    types_provider = ctx.dep(PostgresTypesProviderDepKey)
+    introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresSearchGateway(
         spec=PostgresTableSpec.from_relation(relation),
         client=client,
         model=model,
-        types_provider=types_provider,
+        introspector=introspector,
         indexes=PostgresSearchIndexSpec.from_dict(search),
     )
 
@@ -115,7 +115,7 @@ def doc_write_gw(
     :returns: Postgres write gateway.
     """
     client = ctx.dep(PostgresClientDepKey)
-    types_provider = ctx.dep(PostgresTypesProviderDepKey)
+    introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     read = read_gw(ctx, relation, models["domain"])
     hist = None
@@ -132,7 +132,7 @@ def doc_write_gw(
     return PostgresWriteGateway(
         spec=PostgresTableSpec.from_relation(relation),
         client=client,
-        types_provider=types_provider,
+        introspector=introspector,
         read=read,
         model=models["domain"],
         create_dto=models["create_cmd"],

@@ -2,6 +2,6 @@ from typing import Literal
 
 # ----------------------- #
 
-IndexMode = Literal["fulltext", "phrase", "prefix", "exact"]
-FieldType = Literal["text", "keyword"]
-RankingStrategy = Literal["bm25", "tfidf", "native"]
+SearchIndexMode = Literal["fulltext", "phrase", "prefix", "exact"]
+SearchFieldType = Literal["text", "keyword"]
+SearchRankingStrategy = Literal["bm25", "tfidf", "native"]
