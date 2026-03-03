@@ -24,6 +24,7 @@ from ..query import QueryFilterExpression, QuerySortExpression
 # ----------------------- #
 
 
+#! TODO: get rid of search within document ports, use search ports instead
 class DocumentSearchOptions(TypedDict, total=False):
     """Optional tuning parameters for search backends."""
 

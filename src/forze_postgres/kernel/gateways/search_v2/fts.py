@@ -10,14 +10,17 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchIndexSpec
+from forze.application.contracts.search import (
+    SearchIndexSpec,
+    SearchOptions,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
 
 from ..spec import PostgresQualifiedName
 from .base import PostgresSearchGateway
-from .utils import extract_index_expr_from_indexdef
+from .utils import extract_index_expr_from_indexdef, fts_rank_weights_array
 
 # ----------------------- #
 
@@ -27,6 +30,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
+    #! TODO: move to introspector
     async def _fetch_indexdef(self, index: str) -> str:
         q = PostgresQualifiedName.from_string(index)
         schema = q.schema or self.spec.schema or "public"
@@ -51,7 +55,9 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     # ....................... #
 
     async def _resolve_tsvector_expr(
-        self, index: str, spec: SearchIndexSpec
+        self,
+        index: str,
+        spec: SearchIndexSpec,
     ) -> sql.Composable:
         # 1) explicit hints win
         hints = spec.hints or {}
@@ -85,7 +91,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         query: str,
         spec: SearchIndexSpec,
         *,
-        options: Optional[JsonDict] = None,
+        options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         q = query.strip()
 
@@ -122,57 +128,32 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
     # ....................... #
 
-    async def _fts_where(
-        self,
-        query: str,
-        index: str,
-        spec: SearchIndexSpec,
-        *,
-        options: Optional[JsonDict] = None,
-    ) -> tuple[sql.Composable, list[Any]]:
-        tsv = await self._resolve_tsvector_expr(index, spec)
-        tsq, tsp = self._tsquery_expr(query, spec, options=options)
-
-        cond = sql.SQL("({tsv}) @@ ({tsq})").format(tsv=tsv, tsq=tsq)
-
-        return cond, tsp
-
-    # ....................... #
-
-    def _fts_rank_expr(self, spec: SearchIndexSpec) -> sql.Composable:
-        # simple default: ts_rank_cd(tsv, tsq)
-        # For weights: if you want, you can translate FieldSpec.weight into A/B/C/D weights later via hints.
-        return sql.SQL("ts_rank_cd")
-
-    # ....................... #
-
-    async def _where(
+    async def _build_search_parts(
         self,
         query: str,
         filters: Optional[QueryFilterExpression],
         *,
-        options: Optional[JsonDict],
-    ) -> tuple[tuple[sql.Composable, list[Any]], tuple[sql.Composable, list[Any]]]:
-        idx_key, idx = self._pick_index(options)
+        options: Optional[SearchOptions] = None,
+    ):
+        idx_name, idx_spec = self._pick_index(options)
+        rank_weights = fts_rank_weights_array(idx_spec)
 
-        sw, sp = await self._fts_where(query, idx_key, idx, options=options)
-        fw, fp = await self.where_clause(filters)
+        tsv = await self._resolve_tsvector_expr(idx_name, idx_spec)
+        tsq, tsq_params = self._tsquery_expr(query, idx_spec, options=options)
 
-        # also return rank order expr, because fts ordering depends on same tsquery
-        # We'll rebuild tsquery again inside ORDER BY to keep it simple+deterministic.
-        tsv = await self._resolve_tsvector_expr(idx_key, idx)
-        tsq, tsq_params = self._tsquery_expr(query, idx, options=options)
+        search_cond = sql.SQL("({tsv}) @@ ({tsq})").format(tsv=tsv, tsq=tsq)
+        filter_cond, filter_params = await self.where_clause(filters)
 
-        rank = sql.SQL("ts_rank_cd(({tsv}), ({tsq}))").format(tsv=tsv, tsq=tsq)
-        # IMPORTANT: params must match SELECT order usage; easiest is to reuse same params
-        # for WHERE and ORDER BY (duplicated). We'll do: params = where_params + order_params
+        where_sql = sql.SQL(" AND ").join([search_cond, filter_cond])
+        where_params = [*tsq_params, *filter_params]
 
-        where_sql = sql.SQL(" AND ").join([sw, fw])
-        where_params = [*sp, *fp]
-        order_sql = rank
-        order_params = tsq_params  # same as for ORDER BY
+        # order by rank
+        rank_expr = sql.SQL("ts_rank_cd(({tsv}), ({tsq}), {weights})").format(
+            tsv=tsv, tsq=tsq, weights=sql.Placeholder()
+        )
+        rank_params = [*tsq_params, rank_weights]
 
-        return (where_sql, where_params), (order_sql, order_params)
+        return (where_sql, where_params), (rank_expr, rank_params)
 
     # ....................... #
     # API
@@ -186,7 +167,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> tuple[list[M], int]: ...
@@ -200,7 +181,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> tuple[list[T], int]: ...
@@ -214,7 +195,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
@@ -228,7 +209,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: type[T] = ...,
         return_fields: Sequence[str] = ...,
     ) -> Never: ...
@@ -241,12 +222,12 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
         *,
-        options: Optional[JsonDict] = None,
+        options: Optional[SearchOptions] = None,
         return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
-        (where_sql, where_params), (rank_sql, rank_params) = await self._where(
-            query, filters, options=options
+        (where_sql, where_params), (rank_sql, rank_params) = (
+            await self._build_search_parts(query, filters, options=options)
         )
 
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
@@ -261,6 +242,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
         # order: rank desc + optional secondary sorts
         order_parts: list[sql.Composable] = [sql.SQL("{} DESC").format(rank_sql)]
+
         if sorts:
             for field, order in sorts.items():
                 order_parts.append(
@@ -280,15 +262,15 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
             order=order_sql,
         )
 
-        params = [*where_params, *rank_params]  # ORDER BY needs its tsquery params
+        params = [*where_params, *rank_params]
 
         if limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(limit))
+            params.append(limit)
 
         if offset is not None:
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(offset))
+            params.append(offset)
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 

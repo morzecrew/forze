@@ -1,11 +1,12 @@
 """Query contracts for filter and sort expressions.
 
 Provides :class:`FilterExpression` (predicates, conjunctions, disjunctions),
-:class:`SortExpression`, and the DSL in :mod:`query.dsl` for parsing and
+:class:`SortExpression`, and the DSL in :mod:`query.internal` for parsing and
 rendering to backend-specific formats.
 """
 
-from .dsl import (
+from .expressions import QueryFilterExpression, QuerySortExpression
+from .internal import (
     QueryAnd,
     QueryExpr,
     QueryField,
@@ -13,7 +14,6 @@ from .dsl import (
     QueryOr,
     QueryValueCaster,
 )
-from .expressions import QueryFilterExpression, QuerySortExpression
 from .types import QueryOp, QueryValue
 
 # ----------------------- #

@@ -10,8 +10,7 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchIndexSpec
-from forze.base.errors import CoreError
+from forze.application.contracts.search import SearchIndexSpec, SearchOptions
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
 
@@ -25,33 +24,62 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
+    def _effective_field_weights(
+        self, spec: SearchIndexSpec, options: Optional[SearchOptions] = None
+    ) -> list[tuple[str, float]]:
+        options = options or {}
+        ov_weights = options.get("weights", {})
+
+        ov_groups = ov_weights.get("groups", {})
+        ov_fields = ov_weights.get("fields", {})
+
+        res: list[tuple[str, float]] = []
+
+        for f in spec.fields:
+            p = f.path_safe
+
+            if f.group:
+                group = spec.groups.get(f.group)
+                base_group_weight = group.weight if group else 1.0
+            else:
+                base_group_weight = 1.0
+
+            if f.group and f.group in ov_groups:
+                base_group_weight = ov_groups[f.group]
+
+            base_field_weight = f.weight if f.weight is not None else 1.0
+
+            if p in ov_fields:
+                base_field_weight = ov_fields[p]
+
+            effective = base_group_weight * base_field_weight
+            res.append((p, effective))
+
+        return res
+
+    # ....................... #
+
     def _pgroonga_where(
         self,
         query: str,
         index: str,
         spec: SearchIndexSpec,
         *,
-        options: Optional[JsonDict] = None,
+        options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
+        options = options or {}
         q = query.strip()
 
         if not q:
             return sql.SQL("TRUE"), []
 
-        options = options or {}
-        use_fuzzy = bool(options.get("use_fuzzy", False))
-        fields = spec.fields
+        eff = self._effective_field_weights(spec, options)
+        fields = [p for p, _ in eff]
+        weights = [int(w * 100) for _, w in eff]
 
-        if not fields:
-            raise CoreError("No fields to search in")
-
-        #! TODO: rewrite to deterministic specification for weights override
-        default_weights = [max(0, int(round(f.weight * 10))) or 1 for f in fields]
-        weights = (
-            list(options.get("overwrite_weights", default_weights)) or default_weights
-        )
-
-        ratio = options.get("overwrite_fuzzy_max", None)
+        fuzzy = options.get("fuzzy", {})
+        use_fuzzy = fuzzy.get("enabled", False)
+        ratio = fuzzy.get("max_distance_ratio")
 
         if ratio is None and spec.fuzzy is not None:
             ratio = spec.fuzzy.max_distance_ratio
@@ -66,9 +94,13 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         r_ph = sql.Placeholder()
         w_ph = sql.Placeholder()
 
+        #! TODO: introspect index to check whether it's defined as array or as a single field
+        #! then use it here
+
         if len(fields) == 1:
-            field = fields[0].path_safe
-            text_expr = sql.SQL("coalesce({}::text, '')").format(sql.Identifier(field))
+            text_expr = sql.SQL("coalesce({}::text, '')").format(
+                sql.Identifier(fields[0])
+            )
 
             if use_fuzzy:
                 params.append(float(ratio))
@@ -85,7 +117,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
         array_expr = sql.SQL("(ARRAY[{}])").format(
             sql.SQL(", ").join(
-                sql.SQL("coalesce({}::text, '')").format(sql.Identifier(f.path_safe))
+                sql.SQL("coalesce({}::text, '')").format(sql.Identifier(f))
                 for f in fields
             )
         )
@@ -130,7 +162,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         query: str,
         filters: Optional[QueryFilterExpression] = None,
         *,
-        options: Optional[JsonDict] = None,
+        options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         index, spec = self._pick_index(options)
         sw, sp = self._pgroonga_where(query, index, spec, options=options)
@@ -153,7 +185,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> tuple[list[M], int]: ...
@@ -167,7 +199,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> tuple[list[T], int]: ...
@@ -181,7 +213,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
@@ -195,7 +227,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
-        options: Optional[JsonDict] = ...,
+        options: Optional[SearchOptions] = ...,
         return_model: type[T] = ...,
         return_fields: Sequence[str] = ...,
     ) -> Never: ...
@@ -208,7 +240,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
         *,
-        options: Optional[JsonDict] = None,
+        options: Optional[SearchOptions] = None,
         return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:

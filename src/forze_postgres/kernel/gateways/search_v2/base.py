@@ -10,9 +10,12 @@ from typing import Optional
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchIndexSpec, SearchSpec
+from forze.application.contracts.search import (
+    SearchIndexSpec,
+    SearchOptions,
+    SearchSpec,
+)
 from forze.base.errors import CoreError
-from forze.base.primitives import JsonDict
 
 from ..base import PostgresGateway
 
@@ -33,10 +36,10 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
 
     def _pick_index(
         self,
-        options: Optional[JsonDict] = None,
+        options: Optional[SearchOptions] = None,
     ) -> tuple[str, SearchIndexSpec]:
         options = options or {}
-        index = str(options.get("use_index", self._default_index))
+        index = options.get("use_index", self._default_index)
 
         if index not in self.search_spec.indexes:
             raise CoreError(f"Index `{index}` not found")
