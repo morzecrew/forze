@@ -246,25 +246,22 @@ class PostgresIntrospector:
         stmt = sql.SQL(
             """
             SELECT
-              am.amname AS amname,
-              pg_get_indexdef(i.oid) AS indexdef,
-              pg_get_expr(ix.indexprs, ix.indrelid) AS expr,
-              array_remove(array_agg(a.attname ORDER BY k.ord), NULL) AS cols,
-              (
-                SELECT bool_or(t.typname = 'tsvector')
-                FROM unnest(ix.indkey) WITH ORDINALITY AS kk(attnum, ord)
-                JOIN pg_attribute aa ON aa.attrelid = ix.indrelid AND aa.attnum = kk.attnum
-                JOIN pg_type t ON t.oid = aa.atttypid
-              ) AS has_tsvector_col
+                am.amname AS amname,
+                pg_get_indexdef(i.oid) AS indexdef,
+                pg_get_expr(ix.indexprs, ix.indrelid) AS expr,
+                array_remove(array_agg(a.attname ORDER BY k.ord), NULL) AS cols,
+                COALESCE(bool_or(t.typname = 'tsvector'), false) AS has_tsvector_col
             FROM pg_index ix
             JOIN pg_class i ON i.oid = ix.indexrelid
             JOIN pg_namespace in_ ON in_.oid = i.relnamespace
             JOIN pg_am am ON am.oid = i.relam
-            LEFT JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
-              ON ix.indkey IS NOT NULL
+
+            LEFT JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
             LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+            LEFT JOIN pg_type t ON t.oid = a.atttypid
+
             WHERE in_.nspname = {schema}
-              AND i.relname = {idx}
+                AND i.relname = {idx}
             GROUP BY am.amname, i.oid, ix.indexprs, ix.indrelid
             LIMIT 1
             """

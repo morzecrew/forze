@@ -137,6 +137,9 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
         case errors.ProgrammingError():
             return InfrastructureError("Database programming error.")
 
+        case errors.GroupingError():
+            return InfrastructureError("Database grouping error")
+
         case _:
             return InfrastructureError(
                 f"An error occurred while executing the operation {op}: {e}"
