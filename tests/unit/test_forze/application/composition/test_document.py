@@ -3,6 +3,7 @@
 from forze.application.composition.document import (
     DocumentDTOSpec,
     DocumentOperation,
+    DocumentUsecasesFacade,
     DocumentUsecasesFacadeProvider,
     build_document_plan,
     build_document_registry,
@@ -52,8 +53,6 @@ class TestBuildDocumentRegistry:
         spec = _minimal_spec()
         reg = build_document_registry(spec)
         assert reg.exists(DocumentOperation.GET)
-        assert reg.exists(DocumentOperation.SEARCH)
-        assert reg.exists(DocumentOperation.RAW_SEARCH)
         assert reg.exists(DocumentOperation.CREATE)
         assert reg.exists(DocumentOperation.KILL)
 
@@ -89,7 +88,11 @@ class TestDocumentUsecasesFacadeProvider:
         plan = build_document_plan()
         dtos: DocumentDTOSpec = {"read": ReadDocument}
         provider = DocumentUsecasesFacadeProvider(
-            spec=spec, reg=reg, plan=plan, dtos=dtos
+            spec=spec,
+            reg=reg,
+            plan=plan,
+            dtos=dtos,
+            facade=DocumentUsecasesFacade,
         )
         facade = provider(composition_ctx)
         assert facade is not None
@@ -104,7 +107,11 @@ class TestDocumentUsecasesFacadeProvider:
         plan = build_document_plan()
         dtos: DocumentDTOSpec = {"read": ReadDocument}
         provider = DocumentUsecasesFacadeProvider(
-            spec=spec, reg=reg, plan=plan, dtos=dtos
+            spec=spec,
+            reg=reg,
+            plan=plan,
+            dtos=dtos,
+            facade=DocumentUsecasesFacade,
         )
         facade = provider(composition_ctx)
         uc = facade.get()

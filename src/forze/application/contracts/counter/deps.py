@@ -32,11 +32,8 @@ CounterDepKey = DepKey[CounterDepPort]("counter")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class CounterDepRouter(
-    DepRouter[str, CounterDepPort],
-    CounterDepPort,
-    dep_key=CounterDepKey,
-):
+class CounterDepRouter(DepRouter[str, CounterDepPort], CounterDepPort):
+    dep_key = CounterDepKey
     """Router that selects a counter provider by namespace."""
 
     def __call__(self, context: "ExecutionContext", namespace: str) -> CounterPort:

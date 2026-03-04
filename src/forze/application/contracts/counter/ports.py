@@ -16,7 +16,7 @@ class CounterPort(Protocol):
         :param suffix: Optional suffix used to partition counters within
             the same namespace.
         """
-        ...
+        ...  # pragma: no cover
 
     def incr_batch(
         self,
@@ -30,12 +30,12 @@ class CounterPort(Protocol):
         :param suffix: Optional suffix used to partition counters.
         :returns: A list of allocated integer values in ascending order.
         """
-        ...
+        ...  # pragma: no cover
 
     def decr(self, by: int = 1, *, suffix: Optional[str] = None) -> Awaitable[int]:
         """Decrease the counter by ``by`` and return the new value."""
-        ...
+        ...  # pragma: no cover
 
     def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> Awaitable[int]:
         """Reset the counter to the given value and return it."""
-        ...
+        ...  # pragma: no cover

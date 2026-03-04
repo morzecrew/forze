@@ -1,4 +1,4 @@
-"""Document dependency keys and routers."""
+"""Cache dependency keys and routers."""
 
 from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
@@ -37,11 +37,8 @@ CacheDepKey = DepKey[CacheDepPort]("cache")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class CacheDepRouter(
-    DepRouter[CacheSpec, CacheDepPort],
-    CacheDepPort,
-    dep_key=CacheDepKey,
-):
+class CacheDepRouter(DepRouter[CacheSpec, CacheDepPort], CacheDepPort):
+    dep_key = CacheDepKey
     def __call__(
         self,
         context: "ExecutionContext",

@@ -10,9 +10,10 @@ from forze.application.execution import Deps
 from forze.application.execution import ExecutionContext
 
 from .._stubs import (
+    InMemoryCachePort,
     InMemoryCounterPort,
-    InMemoryDocumentCachePort,
     InMemoryDocumentPort,
+    InMemorySearchReadPort,
     InMemoryStoragePort,
     InMemoryTxManagerPort,
 )
@@ -24,8 +25,10 @@ from .._stubs import (
 def composition_deps() -> Deps:
     """Deps with factory callables for doc, txmanager, counter, storage."""
 
+    from forze.application.contracts.cache import CacheDepKey
     from forze.application.contracts.counter import CounterDepKey
-    from forze.application.contracts.document import DocumentCacheDepKey, DocumentDepKey
+    from forze.application.contracts.document import DocumentDepKey
+    from forze.application.contracts.search import SearchReadDepKey
     from forze.application.contracts.storage import StorageDepKey
     from forze.application.contracts.tx import TxManagerDepKey
 
@@ -33,7 +36,10 @@ def composition_deps() -> Deps:
         return InMemoryDocumentPort()
 
     def _cache_port(ctx, spec):
-        return InMemoryDocumentCachePort()
+        return InMemoryCachePort()
+
+    def _search_port(ctx, spec):
+        return InMemorySearchReadPort()
 
     def _tx_port(ctx):
         return InMemoryTxManagerPort()
@@ -47,7 +53,8 @@ def composition_deps() -> Deps:
     return Deps(
         deps={
             DocumentDepKey: _doc_port,
-            DocumentCacheDepKey: _cache_port,
+            CacheDepKey: _cache_port,
+            SearchReadDepKey: _search_port,
             TxManagerDepKey: _tx_port,
             CounterDepKey: _counter_port,
             StorageDepKey: _storage_port,

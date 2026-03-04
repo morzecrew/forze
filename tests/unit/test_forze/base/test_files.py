@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 
 from forze.base.files import iter_file, read_text, read_yaml
@@ -31,4 +32,14 @@ def test_iter_file_from_bytes() -> None:
     chunks = list(iter_file(b))
     # default chunk size is large, for small bytes we expect a single chunk
     assert chunks == [b"abcdef"]
+
+
+def test_iter_file_from_bytesio() -> None:
+    """iter_file with file-like object yields chunks and closes when exhausted."""
+    data = b"x" * (64 * 1024)  # 64 KB to get multiple chunks
+    bio = io.BytesIO(data)
+    chunks = list(iter_file(bio))
+    assert len(chunks) >= 2
+    assert b"".join(chunks) == data
+    assert bio.closed
 

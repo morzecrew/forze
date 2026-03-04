@@ -3,10 +3,7 @@
 from typing import Any, Optional, Sequence, Type, final
 from uuid import UUID
 
-from forze.application.contracts.document import (
-    DocumentPort,
-    DocumentSearchOptions,
-)
+from forze.application.contracts.document import DocumentPort
 from forze.application.contracts.query import (
     QueryFilterExpression,
     QuerySortExpression,
@@ -102,25 +99,6 @@ class InMemoryDocumentPort(
 
     async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
         return sum(1 for pk in self._store if pk not in self._deleted)
-
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
-        options: Optional[DocumentSearchOptions] = None,
-        *,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> tuple[list[ReadDocument] | list[JsonDict], int]:
-        return await self.find_many(
-            filters=filters,
-            limit=limit,
-            offset=offset,
-            sorts=sorts,
-            return_fields=return_fields,
-        )
 
     async def create(self, dto: CreateDocumentCmd) -> ReadDocument:
         data = self._to_dict(dto)

@@ -50,14 +50,20 @@ class DepRouter(Generic[SpecT, DepPortT]):
 
     # ....................... #
 
-    def __init_subclass__(cls, dep_key: DepKey[DepPortT]) -> None:
+    def __init_subclass__(cls, dep_key: DepKey[DepPortT] | None = None, **kwargs: Any) -> None:
         """Initialize the subclass with the dependency key.
 
-        :param dep_key: Dependency key used to register this router in the container.
+        Subclasses must set ``dep_key`` either as a class-definition kwarg
+        (e.g. ``class X(DepRouter, dep_key=Key)``) or as a class attribute
+        (e.g. ``dep_key = Key`` in the class body). The latter is required
+        when the class is decorated with ``@attrs.define``, since attrs
+        recreates the class without passing kwargs to the metaclass.
         """
-
-        super().__init_subclass__()
-
+        super().__init_subclass__(**kwargs)
+        if dep_key is None:
+            dep_key = vars(cls).get("dep_key")
+        if dep_key is None:
+            raise TypeError("DepRouter subclasses must specify dep_key")
         cls.dep_key = dep_key
 
     # ....................... #

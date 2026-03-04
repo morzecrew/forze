@@ -17,8 +17,6 @@ class TestDocumentOperation:
 
     def test_all_operation_values(self) -> None:
         assert DocumentOperation.GET == "document.get"
-        assert DocumentOperation.SEARCH == "document.search"
-        assert DocumentOperation.RAW_SEARCH == "document.raw_search"
         assert DocumentOperation.CREATE == "document.create"
         assert DocumentOperation.UPDATE == "document.update"
         assert DocumentOperation.KILL == "document.kill"

@@ -31,11 +31,8 @@ TxManagerDepKey = DepKey[TxManagerDepPort]("tx_manager")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TxManagerDepRouter(
-    DepRouter[None, TxManagerDepPort],
-    TxManagerDepPort,
-    dep_key=TxManagerDepKey,
-):
+class TxManagerDepRouter(DepRouter[None, TxManagerDepPort], TxManagerDepPort):
+    dep_key = TxManagerDepKey
     def __call__(self, context: "ExecutionContext") -> TxManagerPort:
         route = self._select(None)
 

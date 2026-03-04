@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.contracts.query.dsl import (
+from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QueryValueCaster,
 )

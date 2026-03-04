@@ -2,9 +2,13 @@
 
 import pytest
 
-from forze.application.execution import ExecutionContext, Usecase, UsecaseRegistry
+from forze.application.execution import ExecutionContext, Deps, Usecase, UsecaseRegistry
 
 # ----------------------- #
+
+
+def _stub_factory(ctx: ExecutionContext) -> Usecase[str, str]:
+    return StubUsecase(ctx=ctx)
 
 
 class StubUsecase(Usecase[str, str]):
@@ -32,9 +36,15 @@ class TestUsecaseRegistry:
     def test_register_duplicate_raises(self) -> None:
         from forze.base.errors import CoreError
 
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
+        reg = UsecaseRegistry().register("get", _stub_factory)
         with pytest.raises(CoreError, match="already registered"):
-            reg.register("get", lambda ctx: StubUsecase(ctx=ctx))
+            reg.register("get", _stub_factory)
+
+    def test_register_inplace_returns_none(self) -> None:
+        reg = UsecaseRegistry()
+        result = reg.register("get", _stub_factory, inplace=True)
+        assert result is None
+        assert reg.exists("get")
 
     def test_override_replaces_factory(self) -> None:
         reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
@@ -47,36 +57,66 @@ class TestUsecaseRegistry:
 
         reg = UsecaseRegistry()
         with pytest.raises(CoreError, match="not registered"):
-            reg.override("get", lambda ctx: StubUsecase(ctx=ctx))
+            reg.override("get", _stub_factory)
+
+    def test_override_inplace_mutates(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        result = reg.override("get", _stub_factory, inplace=True)
+        assert result is None
+        assert reg.exists("get")
 
     def test_register_many_adds_multiple(self) -> None:
         reg = UsecaseRegistry()
         new = reg.register_many(
-            {
-                "get": lambda ctx: StubUsecase(ctx=ctx),
-                "create": lambda ctx: StubUsecase(ctx=ctx),
-            }
+            {"get": _stub_factory, "create": _stub_factory}
         )
         assert new.exists("get")
         assert new.exists("create")
+
+    def test_register_many_duplicate_raises(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        with pytest.raises(CoreError, match="already registered"):
+            reg.register_many({"get": _stub_factory, "create": _stub_factory})
+
+    def test_register_many_inplace_mutates(self) -> None:
+        reg = UsecaseRegistry()
+        result = reg.register_many(
+            {"get": _stub_factory, "create": _stub_factory},
+            inplace=True,
+        )
+        assert result is None
+        assert reg.exists("get")
+        assert reg.exists("create")
 
     def test_override_many_replaces_multiple(self) -> None:
         reg = (
             UsecaseRegistry()
-            .register("get", lambda ctx: StubUsecase(ctx=ctx))
-            .register("create", lambda ctx: StubUsecase(ctx=ctx))
+            .register("get", _stub_factory)
+            .register("create", _stub_factory)
         )
-        new = reg.override_many(
-            {
-                "get": lambda ctx: StubUsecase(ctx=ctx),
-                "create": lambda ctx: StubUsecase(ctx=ctx),
-            }
-        )
+        new = reg.override_many({"get": _stub_factory, "create": _stub_factory})
         assert new.exists("get")
         assert new.exists("create")
 
+    def test_override_many_unregistered_raises(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        with pytest.raises(CoreError, match="not registered"):
+            reg.override_many(
+                {"get": _stub_factory, "create": _stub_factory}
+            )
+
+    def test_override_many_inplace_mutates(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        result = reg.override_many({"get": _stub_factory}, inplace=True)
+        assert result is None
+        assert reg.exists("get")
+
     def test_exists_returns_true_for_registered(self) -> None:
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
+        reg = UsecaseRegistry().register("get", _stub_factory)
         assert reg.exists("get")
 
     def test_exists_returns_false_for_unregistered(self) -> None:
@@ -84,18 +124,54 @@ class TestUsecaseRegistry:
         assert not reg.exists("get")
 
     def test_resolve_returns_usecase(self) -> None:
-        from forze.application.execution import Deps
-
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
+        reg = UsecaseRegistry().register("get", _stub_factory)
         ctx = ExecutionContext(deps=Deps())
         uc = reg.resolve("get", ctx)
         assert isinstance(uc, StubUsecase)
 
+    def test_resolve_with_debug_plan_prints(self, capsys: pytest.CaptureFixture) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        ctx = ExecutionContext(deps=Deps())
+        reg.resolve("get", ctx, debug_plan=True)
+        out = capsys.readouterr().out
+        assert "get" in out or "plan" in out.lower() or len(out) > 0
+
     def test_resolve_unregistered_raises(self) -> None:
-        from forze.application.execution import Deps
         from forze.base.errors import CoreError
 
         reg = UsecaseRegistry()
         ctx = ExecutionContext(deps=Deps())
         with pytest.raises(CoreError, match="not registered for operation"):
             reg.resolve("get", ctx)
+
+    def test_extend_plan_returns_new_instance(self) -> None:
+        from forze.application.execution.plan import UsecasePlan
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+
+        async def noop(args):
+            pass
+
+        def guard_factory(ctx):
+            return noop
+
+        plan = UsecasePlan().before("get", guard_factory, priority=1)
+        new = reg.extend_plan(plan)
+        assert new is not reg
+        assert new.exists("get")
+
+    def test_extend_plan_inplace_mutates(self) -> None:
+        from forze.application.execution.plan import UsecasePlan
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+
+        async def noop(args):
+            pass
+
+        def guard_factory(ctx):
+            return noop
+
+        plan = UsecasePlan().before("get", guard_factory, priority=1)
+        result = reg.extend_plan(plan, inplace=True)
+        assert result is None
+        assert reg.exists("get")

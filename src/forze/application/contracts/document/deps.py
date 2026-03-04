@@ -44,11 +44,8 @@ DocumentDepKey = DepKey[DocumentDepPort]("document")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentDepRouter(
-    DepRouter[DocSpec, DocumentDepPort],
-    DocumentDepPort,
-    dep_key=DocumentDepKey,
-):
+class DocumentDepRouter(DepRouter[DocSpec, DocumentDepPort], DocumentDepPort):
+    dep_key = DocumentDepKey
     def __call__(
         self,
         context: "ExecutionContext",
