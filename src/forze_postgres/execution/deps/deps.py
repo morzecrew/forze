@@ -8,13 +8,23 @@ from forze.application.contracts.document import (
     DocumentPort,
     DocumentSpec,
 )
+from forze.application.contracts.search import (
+    SearchReadDepPort,
+    SearchReadPort,
+    SearchSpec,
+    parse_search_spec,
+)
 from forze.application.contracts.tx import TxManagerDepPort, TxManagerPort
 from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 
-from ...adapters import PostgresDocumentAdapter, PostgresTxManagerAdapter
+from ...adapters import (
+    PostgresDocumentAdapter,
+    PostgresSearchAdapter,
+    PostgresTxManagerAdapter,
+)
 from ...kernel.gateways import PostgresHistoryWriteStrategy, PostgresRevBumpStrategy
-from .keys import PostgresClientDepKey
+from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 from .utils import doc_write_gw, read_gw
 
 # ----------------------- #
@@ -76,3 +86,24 @@ def postgres_txmanager(context: ExecutionContext) -> TxManagerPort:
     client = context.dep(PostgresClientDepKey)
 
     return PostgresTxManagerAdapter(client=client)
+
+
+# ....................... #
+
+
+@conforms_to(SearchReadDepPort)
+def postgres_search(
+    context: ExecutionContext,
+    spec: SearchSpec[Any],
+) -> SearchReadPort[Any]:
+    client = context.dep(PostgresClientDepKey)
+    introspector = context.dep(PostgresIntrospectorDepKey)
+
+    internal_spec = parse_search_spec(spec, raise_if_no_sources=True)
+
+    return PostgresSearchAdapter(
+        client=client,
+        model=spec.model,
+        search_spec=internal_spec,
+        introspector=introspector,
+    )

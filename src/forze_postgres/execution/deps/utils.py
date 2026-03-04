@@ -48,6 +48,7 @@ def _doc_history_gw(
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
     """Build a history gateway for document audit trails."""
+
     client = ctx.dep(PostgresClientDepKey)
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 

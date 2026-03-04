@@ -6,14 +6,14 @@ from more_itertools import first
 
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
-
+from pydantic import BaseModel
 from ..types import SearchIndexMode, SearchOptions
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchGroupSpec:
+class SearchGroupSpecInternal:
     """Semantic ranking group"""
 
     name: str
@@ -34,7 +34,7 @@ class SearchGroupSpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchFieldSpec:
+class SearchFieldSpecInternal:
     """Indexed field specification"""
 
     path: str
@@ -65,7 +65,7 @@ class SearchFieldSpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchFuzzySpec:
+class SearchFuzzySpecInternal:
     enabled: bool = False
     max_distance_ratio: Optional[float] = None
     prefix_length: Optional[int] = None
@@ -89,14 +89,13 @@ class SearchFuzzySpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchIndexSpec:
-    fields: list[SearchFieldSpec]
-    groups: dict[str, SearchGroupSpec] = attrs.field(factory=dict)
+class SearchIndexSpecInternal:
+    fields: list[SearchFieldSpecInternal]
+    groups: dict[str, SearchGroupSpecInternal] = attrs.field(factory=dict)
     default_group: Optional[str] = None
-
     mode: SearchIndexMode = "fulltext"
-    fuzzy: Optional[SearchFuzzySpec] = None
-
+    fuzzy: Optional[SearchFuzzySpecInternal] = None
+    source: Optional[str] = None
     hints: JsonDict = attrs.field(factory=dict)
 
     # ....................... #
@@ -129,8 +128,10 @@ class SearchIndexSpec:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchSpec:
-    indexes: dict[str, SearchIndexSpec] = attrs.field(factory=dict)
+class SearchSpecInternal[M: BaseModel]:
+    namespace: str
+    model: type[M]
+    indexes: dict[str, SearchIndexSpecInternal]
     default_index: Optional[str] = None
 
     # ....................... #
@@ -155,7 +156,7 @@ class SearchSpec:
     def pick_index(
         self,
         options: Optional[SearchOptions] = None,
-    ) -> tuple[str, SearchIndexSpec]:
+    ) -> tuple[str, SearchIndexSpecInternal]:
         options = options or {}
         index = options.get("use_index", self.stable_default_index)
 

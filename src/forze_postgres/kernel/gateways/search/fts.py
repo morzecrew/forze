@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.search import (
-    SearchIndexSpec,
+    SearchIndexSpecInternal,
     SearchOptions,
 )
 from forze.base.errors import CoreError
@@ -33,7 +33,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def _resolve_tsvector_expr(
         self,
         index: str,
-        spec: SearchIndexSpec,
+        spec: SearchIndexSpecInternal,
     ) -> sql.Composable:
         # 1) explicit hints win
         hints = spec.hints or {}
@@ -73,7 +73,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     def _tsquery_expr(
         self,
         query: str,
-        spec: SearchIndexSpec,
+        spec: SearchIndexSpecInternal,
         *,
         options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:

@@ -5,13 +5,14 @@ from typing import final
 import attrs
 
 from forze.application.contracts.document import DocumentDepKey
+from forze.application.contracts.search import SearchReadDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.gateways import PostgresHistoryWriteStrategy, PostgresRevBumpStrategy
 from ...kernel.introspect import PostgresIntrospector
 from ...kernel.platform import PostgresClient
-from .deps import postgres_document_configurable, postgres_txmanager
+from .deps import postgres_document_configurable, postgres_search, postgres_txmanager
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #
@@ -43,11 +44,13 @@ class PostgresDepsModule(DepsModule):
 
         :returns: Deps with client, types provider, tx manager, and document port.
         """
+
         return Deps(
             {
                 PostgresClientDepKey: self.client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=self.client),
                 TxManagerDepKey: postgres_txmanager,
+                SearchReadDepKey: postgres_search,
                 DocumentDepKey: postgres_document_configurable(
                     rev_bump_strategy=self.rev_bump_strategy,
                     history_write_strategy=self.history_write_strategy,

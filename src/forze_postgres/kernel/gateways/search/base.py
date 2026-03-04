@@ -11,9 +11,9 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
-    SearchIndexSpec,
+    SearchIndexSpecInternal,
     SearchOptions,
-    SearchSpec,
+    SearchSpecInternal,
 )
 
 from ..base import PostgresGateway
@@ -23,7 +23,7 @@ from ..base import PostgresGateway
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
-    search_spec: SearchSpec
+    search_spec: SearchSpecInternal[M]
 
     # ....................... #
 
@@ -36,5 +36,5 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
     def _pick_index(
         self,
         options: Optional[SearchOptions] = None,
-    ) -> tuple[str, SearchIndexSpec]:
+    ) -> tuple[str, SearchIndexSpecInternal]:
         return self.search_spec.pick_index(options)

@@ -10,7 +10,7 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchIndexSpec, SearchOptions
+from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
@@ -28,7 +28,7 @@ T = TypeVar("T", bound=BaseModel)
 class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     def _effective_field_weights(
         self,
-        spec: SearchIndexSpec,
+        spec: SearchIndexSpecInternal,
         options: Optional[SearchOptions] = None,
     ) -> list[tuple[str, float]]:
         options = options or {}
@@ -67,7 +67,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         self,
         query: str,
         index: str,
-        spec: SearchIndexSpec,
+        spec: SearchIndexSpecInternal,
         *,
         options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:

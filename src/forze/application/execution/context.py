@@ -228,7 +228,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def search(self, spec: SearchSpec) -> SearchReadPort[Any]:
+    def search(self, spec: SearchSpec[Any]) -> SearchReadPort[Any]:
         """Resolve a search port."""
 
         return self.dep(SearchReadDepKey)(self, spec)

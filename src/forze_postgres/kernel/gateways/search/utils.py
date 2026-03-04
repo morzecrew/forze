@@ -1,13 +1,13 @@
 from typing import Literal, Optional
 
-from forze.application.contracts.search import SearchIndexSpec, SearchOptions
+from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
 
 # ----------------------- #
 
 FtsGroupLetter = Literal["A", "B", "C", "D"]
 
 
-def fts_map_groups(spec: SearchIndexSpec) -> dict[str, FtsGroupLetter]:
+def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
     if not spec.groups:
         return {"__default__": "A"}
 
@@ -26,7 +26,7 @@ def fts_map_groups(spec: SearchIndexSpec) -> dict[str, FtsGroupLetter]:
 
 
 def fts_rank_weights_array(
-    spec: SearchIndexSpec,
+    spec: SearchIndexSpecInternal,
     options: Optional[SearchOptions] = None,
 ) -> list[float]:
     options = options or {}

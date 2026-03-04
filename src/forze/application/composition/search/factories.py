@@ -1,3 +1,5 @@
+from typing import Any
+
 from forze.application.contracts.search import SearchSpec
 from forze.application.execution import UsecasePlan, UsecaseRegistry
 from forze.application.usecases.search import RawSearch, TypedSearch
@@ -17,7 +19,7 @@ def build_search_plan() -> UsecasePlan:
 # ....................... #
 
 
-def build_search_registry(spec: SearchSpec) -> UsecaseRegistry:
+def build_search_registry(spec: SearchSpec[Any]) -> UsecaseRegistry:
     reg = UsecaseRegistry(
         {
             SearchOperation.TYPED_SEARCH: lambda ctx: TypedSearch(

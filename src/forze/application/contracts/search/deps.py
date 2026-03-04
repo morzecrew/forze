@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any, Protocol, final, runtime_checkable
 import attrs
 
 from ..deps import DepKey, DepRouter
-from .internal import SearchSpec
 from .ports import SearchReadPort, SearchWritePort
+from .specs import SearchSpec
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -21,7 +21,7 @@ class SearchReadDepPort(Protocol):
     def __call__(
         self,
         context: "ExecutionContext",
-        spec: SearchSpec,
+        spec: SearchSpec[Any],
     ) -> SearchReadPort[Any]: ...
 
 
@@ -33,7 +33,9 @@ class SearchWriteDepPort(Protocol):
     """Factory protocol for building :class:`SearchWritePort` instances."""
 
     def __call__(
-        self, context: "ExecutionContext", spec: SearchSpec
+        self,
+        context: "ExecutionContext",
+        spec: SearchSpec[Any],
     ) -> SearchWritePort[Any]: ...
 
 
@@ -50,10 +52,13 @@ SearchWriteDepKey = DepKey[SearchWriteDepPort]("search_write")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SearchDepRouter(DepRouter[SearchSpec, SearchReadDepPort], SearchReadDepPort):
+class SearchDepRouter(DepRouter[SearchSpec[Any], SearchReadDepPort], SearchReadDepPort):
     dep_key = SearchReadDepKey
+
     def __call__(
-        self, context: "ExecutionContext", spec: SearchSpec
+        self,
+        context: "ExecutionContext",
+        spec: SearchSpec[Any],
     ) -> SearchReadPort[Any]:
         route = self._select(spec)
 
@@ -65,10 +70,15 @@ class SearchDepRouter(DepRouter[SearchSpec, SearchReadDepPort], SearchReadDepPor
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SearchWriteDepRouter(DepRouter[SearchSpec, SearchWriteDepPort], SearchWriteDepPort):
+class SearchWriteDepRouter(
+    DepRouter[SearchSpec[Any], SearchWriteDepPort], SearchWriteDepPort
+):
     dep_key = SearchWriteDepKey
+
     def __call__(
-        self, context: "ExecutionContext", spec: SearchSpec
+        self,
+        context: "ExecutionContext",
+        spec: SearchSpec[Any],
     ) -> SearchWritePort[Any]:
         route = self._select(spec)
 
