@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.6] - 2026-03-04
+
+Execution and mapping refactor, middleware-first approach for usecases, split search, cache, and document contracts.
+
+### Added
+
 - `forze.application.mapping` module with `DTOMapper`, `MappingStep`, `NumberIdStep`, `CreatorIdStep`, `MappingPolicy` for composable async DTO mapping.
 - `build_document_plan`, `build_document_create_mapper`, and `replace_create_mapper` in `build_document_registry` for document lifecycle and custom create mappers.
 - Namespaced `DocumentOperation` and `StorageOperation` values (`document.*`, `storage.*`).
