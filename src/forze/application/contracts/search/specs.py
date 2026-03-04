@@ -42,7 +42,7 @@ class SearchIndexSpec(TypedDict):
     fields: list[SearchFieldSpec]
 
     # not required fields
-    groups: NotRequired[dict[str, SearchGroupSpec]]
+    groups: NotRequired[list[SearchGroupSpec]]
     default_group: NotRequired[str]
     mode: NotRequired[SearchIndexMode]
     fuzzy: NotRequired[SearchFuzzySpec]

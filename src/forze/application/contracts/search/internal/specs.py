@@ -3,10 +3,11 @@ from typing import Optional
 
 import attrs
 from more_itertools import first
+from pydantic import BaseModel
 
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
-from pydantic import BaseModel
+
 from ..types import SearchIndexMode, SearchOptions
 
 # ----------------------- #
@@ -91,7 +92,7 @@ class SearchFuzzySpecInternal:
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchIndexSpecInternal:
     fields: list[SearchFieldSpecInternal]
-    groups: dict[str, SearchGroupSpecInternal] = attrs.field(factory=dict)
+    groups: list[SearchGroupSpecInternal] = attrs.field(factory=list)
     default_group: Optional[str] = None
     mode: SearchIndexMode = "fulltext"
     fuzzy: Optional[SearchFuzzySpecInternal] = None
@@ -109,11 +110,13 @@ class SearchIndexSpecInternal:
         if len(field_paths) != len(set(field_paths)):
             raise CoreError("Field paths must be unique")
 
-        if self.default_group is not None and self.default_group not in self.groups:
+        group_names = [group.name for group in self.groups]
+
+        if self.default_group is not None and self.default_group not in group_names:
             raise CoreError(f"Default group '{self.default_group}' not found in groups")
 
         for f in self.fields:
-            if f.group is not None and f.group not in self.groups:
+            if f.group is not None and f.group not in group_names:
                 raise CoreError(
                     f"Field '{f.path_safe}' references unknown group '{f.group}'"
                 )
@@ -122,6 +125,12 @@ class SearchIndexSpecInternal:
                 raise CoreError(
                     f"Field '{f.path_safe}' has no group and default_group is not set"
                 )
+
+    # ....................... #
+
+    @cached_property
+    def groups_dict(self) -> dict[str, SearchGroupSpecInternal]:
+        return {group.name: group for group in self.groups}
 
 
 # ....................... #

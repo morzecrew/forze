@@ -43,8 +43,9 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
             p = f.path_safe
 
             if f.group:
-                group = spec.groups.get(f.group)
+                group = spec.groups_dict.get(f.group)
                 base_group_weight = group.weight if group else 1.0
+
             else:
                 base_group_weight = 1.0
 

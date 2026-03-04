@@ -11,7 +11,7 @@ def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
     if not spec.groups:
         return {"__default__": "A"}
 
-    ordered = sorted(spec.groups.values(), key=lambda g: g.weight, reverse=True)
+    ordered = sorted(spec.groups, key=lambda g: g.weight, reverse=True)
 
     if len(ordered) > 4:
         #! TODO: add warning
@@ -35,8 +35,8 @@ def fts_rank_weights_array(
     # FTS default weight order: D, C, B, A
     weights: dict[FtsGroupLetter, float] = {"A": 1.0, "B": 0.4, "C": 0.2, "D": 0.1}
 
-    for name, group in spec.groups.items():
-        letter = group_letters.get(name)
+    for group in spec.groups:
+        letter = group_letters.get(group.name)
 
         if letter:
             weights[letter] = group.weight

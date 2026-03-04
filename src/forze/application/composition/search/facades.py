@@ -1,8 +1,9 @@
-from typing import Generic, TypeVar, final
+from typing import Any, Generic, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.search import SearchSpec
 from forze.application.dto import Paginated, RawPaginated
 from forze.application.execution import (
     Usecase,
@@ -19,6 +20,7 @@ M = TypeVar("M", bound=BaseModel)
 # ....................... #
 
 
+@final
 class SearchUsecasesFacade(BaseUsecasesFacade, Generic[M]):
     """Typed facade for search usecases."""
 
@@ -45,6 +47,13 @@ class SearchUsecasesFacadeProvider(
 ):
     """Factory that produces a search usecases facade for a given context."""
 
+    spec: SearchSpec[Any]
+    """Search specification (used by registry factories)."""
+
+    read_dto: type[M]
+    """Read DTO type."""
+
+    # Non initable fields
     facade: type[SearchUsecasesFacade[M]] = attrs.field(
         default=SearchUsecasesFacade,
         init=False,

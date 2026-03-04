@@ -20,6 +20,7 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+@final
 class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U]):
     """Typed facade for document usecases."""
 
@@ -100,3 +101,10 @@ class DocumentUsecasesFacadeProvider(
 
     dtos: DocumentDTOSpec[R, C, U]
     """DTO type mapping for facade typing."""
+
+    # Non initable fields
+    facade: type[DocumentUsecasesFacade[R, C, U]] = attrs.field(
+        default=DocumentUsecasesFacade,
+        init=False,
+    )
+    """Facade type to produce."""

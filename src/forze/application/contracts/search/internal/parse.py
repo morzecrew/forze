@@ -61,9 +61,7 @@ def _parse_index_spec(
     raise_if_no_sources: bool = False,
 ) -> SearchIndexSpecInternal:
     fields = [_parse_field_spec(field) for field in spec["fields"]]
-    groups = {
-        name: _parse_group_spec(group) for name, group in spec.get("groups", {}).items()
-    }
+    groups = [_parse_group_spec(group) for group in spec.get("groups", [])]
     fuzzy = _parse_fuzzy_spec(spec.get("fuzzy", {}))
     source = spec.get("source")
 
