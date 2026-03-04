@@ -78,10 +78,6 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
         q = query.strip()
-
-        if not q:
-            return sql.SQL("TRUE"), []
-
         options = options or {}
         lang: Optional[str] = options.get("language")
         params: list[Any] = []
@@ -118,24 +114,31 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         filters: Optional[QueryFilterExpression],
         *,
         options: Optional[SearchOptions] = None,
-    ):
+    ) -> tuple[tuple[sql.Composable, list[Any]], tuple[sql.Composable, list[Any]]]:
         idx_name, idx_spec = self._pick_index(options)
         rank_weights = fts_rank_weights_array(idx_spec)
 
         tsv = await self._resolve_tsvector_expr(idx_name, idx_spec)
+        filter_cond, filter_params = await self.where_clause(filters)
+
+        # empty query: only filters, no rank
+        if not query.strip():
+            return (filter_cond, filter_params), (sql.SQL("0.0"), [])
+
         tsq, tsq_params = self._tsquery_expr(query, idx_spec, options=options)
 
         search_cond = sql.SQL("({tsv}) @@ ({tsq})").format(tsv=tsv, tsq=tsq)
-        filter_cond, filter_params = await self.where_clause(filters)
 
         where_sql = sql.SQL(" AND ").join([search_cond, filter_cond])
         where_params = [*tsq_params, *filter_params]
 
         # order by rank
-        rank_expr = sql.SQL("ts_rank_cd(({tsv}), ({tsq}), {weights})").format(
-            tsv=tsv, tsq=tsq, weights=sql.Placeholder()
+        rank_expr = sql.SQL("ts_rank_cd({weights}::float4[], ({tsv}), ({tsq}))").format(
+            weights=sql.Placeholder(),
+            tsv=tsv,
+            tsq=tsq,
         )
-        rank_params = [*tsq_params, rank_weights]
+        rank_params = [rank_weights, *tsq_params]
 
         return (where_sql, where_params), (rank_expr, rank_params)
 

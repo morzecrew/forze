@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `build_document_plan`, `build_document_create_mapper`, and `replace_create_mapper` in `build_document_registry` for document lifecycle and custom create mappers.
 - Namespaced `DocumentOperation` and `StorageOperation` values (`document.*`, `storage.*`).
 - `CREATOR_ID_FIELD` constant in `forze.domain.constants`.
+- Search contract in `forze.application.contracts.search`: `SearchReadPort`, `SearchWritePort`, `SearchSpec`, `SearchIndexSpec`, `SearchFieldSpec`, `parse_search_spec`; `PostgresSearchAdapter` in forze_postgres.
+- FastAPI search router: `build_search_router`, `search_facade_dependency` in `forze_fastapi.routers.search`.
 
 ### Changed
 
@@ -23,10 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TxUsecase` removed; transaction handling via `TxMiddleware` in plan.
 - `DocumentUsecasesFacadeProvider` now requires `reg` and `plan` (no longer optional).
 - `CreateDocument` and `UpdateDocument` use async `DTOMapper` instead of sync `Callable` mappers. `CreateNumberedDocument` removed; use `build_document_create_mapper(spec, numbered=True)` with `replace_create_mapper` in registry.
+- Search spec: public TypedDict specs vs internal attrs; per-index `source`; `SearchGroups` from dict to list for ordering.
+- `DepRouter` subclasses: `dep_key` must be set as class attribute when using `@attrs.define` (no longer as class-definition kwarg).
 
 ### Fixed
 
 - Postgres history gateway: consistency error messages now in English.
+- Postgres search adapter: correct attrs mutable default for gateway cache.
+- Postgres index introspection: LATERAL unnest, simplified has_tsvector_col detection.
+- Postgres error handler: `GroupingError` handling.
 
 ## [0.1.5] - 2026-02-28
 

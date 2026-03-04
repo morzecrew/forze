@@ -232,7 +232,10 @@ class PostgresIntrospector:
     # ....................... #
 
     async def get_index_info(
-        self, *, index: str, schema: Optional[str] = None
+        self,
+        *,
+        index: str,
+        schema: Optional[str] = None,
     ) -> PostgresIndexInfo:
         schema = self.__normalize_schema(schema)
         key = (schema, index)
