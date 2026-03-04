@@ -22,6 +22,7 @@ from ..contracts.document import (
     DocumentPort,
     DocumentSpec,
 )
+from ..contracts.search import SearchReadDepKey, SearchReadPort, SearchSpec
 from ..contracts.storage import StorageDepKey, StoragePort
 from ..contracts.tx import (
     TxHandle,
@@ -209,3 +210,10 @@ class ExecutionContext:
         :returns: Storage port instance.
         """
         return self.dep(StorageDepKey)(self, bucket)
+
+    # ....................... #
+
+    def search(self, spec: SearchSpec) -> SearchReadPort[Any]:
+        """Resolve a search port."""
+
+        return self.dep(SearchReadDepKey)(self, spec)

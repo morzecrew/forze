@@ -17,7 +17,7 @@ from pydantic import SecretStr
 from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 from types_aiobotocore_s3.type_defs import ObjectTypeDef
 
-from forze.base.errors import CoreError
+from forze.base.errors import CoreError, NotFoundError
 
 from .errors import s3_handled
 
@@ -216,10 +216,8 @@ class S3Client:
 
     @s3_handled("s3.ensure_bucket")
     async def ensure_bucket(self, bucket: str) -> None:
-        if await self.bucket_exists(bucket):
-            return
-
-        await self.create_bucket(bucket)
+        if not await self.bucket_exists(bucket):
+            raise NotFoundError("Bucket does not exist")
 
     # ....................... #
 
@@ -304,6 +302,7 @@ class S3Client:
         offset: Optional[int] = None,
     ) -> tuple[list[ObjectTypeDef], int]:
         c = self.__require_client()
+
         paginator = c.get_paginator("list_objects_v2")
         _prefix = prefix or ""
 

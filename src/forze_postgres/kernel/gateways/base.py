@@ -1,4 +1,3 @@
-from forze.base.primitives import JsonDict
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -6,7 +5,7 @@ require_psycopg()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Optional, Sequence
+from typing import Any, Final, Optional, Self, Sequence, final
 
 import attrs
 import orjson
@@ -19,24 +18,67 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
+from forze.application.contracts.tenant import TenantContextPort
 from forze.base.errors import CoreError
+from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
-from forze.domain.constants import ID_FIELD
+from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClient
 from ..query import PsycopgQueryRenderer
-from .spec import PostgresTableSpec
 
 # ----------------------- #
+
+DEFAULT_SCHEMA: Final[str] = "public"
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresQualifiedName:
+    schema: str
+    name: str
+
+    # ....................... #
+
+    def ident(self) -> sql.Composable:
+        return sql.SQL(".").join(
+            [sql.Identifier(self.schema), sql.Identifier(self.name)]
+        )
+
+    # ....................... #
+
+    def string(self) -> str:
+        return f"{self.schema}.{self.name}"
+
+    # ....................... #
+
+    def literal(self) -> sql.Composable:
+        return sql.Literal(f"{self.schema}.{self.name}")
+
+    # ....................... #
+
+    @classmethod
+    def from_string(cls, x: str) -> Self:
+        if "." in x:
+            schema, name = x.split(".", 1)
+            return cls(schema=schema, name=name)
+
+        return cls(schema=DEFAULT_SCHEMA, name=x)
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresGateway[M: BaseModel]:
-    spec: PostgresTableSpec
+    qname: PostgresQualifiedName
     client: PostgresClient
     model: type[M]
     introspector: PostgresIntrospector
+    tenant_context: Optional[TenantContextPort] = None
 
     # ....................... #
 
@@ -51,6 +93,11 @@ class PostgresGateway[M: BaseModel]:
 
     # ....................... #
 
+    def ident_tenant_id(self) -> sql.Composable:
+        return sql.Identifier(TENANT_ID_FIELD)
+
+    # ....................... #
+
     async def where_clause(
         self,
         filters: Optional[QueryFilterExpression] = None,
@@ -58,16 +105,24 @@ class PostgresGateway[M: BaseModel]:
         if not filters:
             return sql.SQL("TRUE"), []
 
-        types = await self.introspector.get_column_types(
-            schema=self.spec.schema,
-            relation=self.spec.table,
-        )
+        types = await self.column_types()
 
         p = QueryFilterExpressionParser()
         r = PsycopgQueryRenderer(types=types)
 
         expr = p.parse(filters)
         query, params = r.render(expr)
+
+        # Add mandatory tenant filter for multi-tenant applications
+        #! Maybe it's better to modify 'filters' instead of adding a new clause manually
+        if self.tenant_context is not None:
+            tenant_id = self.tenant_context.get()
+            cond_sql = sql.SQL("{ident} = {value}").format(
+                ident=self.ident_tenant_id(),
+                value=sql.Placeholder(),
+            )
+            query = sql.SQL(" AND ").join([query, cond_sql])
+            params.append(tenant_id)
 
         return query, params
 
@@ -122,8 +177,8 @@ class PostgresGateway[M: BaseModel]:
 
     async def column_types(self) -> PostgresColumnTypes:
         return await self.introspector.get_column_types(
-            schema=self.spec.schema,
-            relation=self.spec.table,
+            schema=self.qname.schema,
+            relation=self.qname.name,
         )
 
     # ....................... #
@@ -144,6 +199,7 @@ class PostgresGateway[M: BaseModel]:
         return v
 
     # ....................... #
+    #! Automatic tenant ID injection for writes ...
 
     async def adapt_payload_for_write(self, payload: JsonDict) -> JsonDict:
         types = await self.column_types()

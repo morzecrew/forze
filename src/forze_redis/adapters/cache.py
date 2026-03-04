@@ -20,6 +20,8 @@ from ..kernel.platform import RedisClient
 K = TypeVar("K", bound=UUID | str)
 
 # ....................... #
+#! TODO: repurpose into abstract cache based on string key
+#! TODO: add tenant context support
 
 
 @final

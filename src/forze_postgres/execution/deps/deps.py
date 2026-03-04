@@ -15,7 +15,7 @@ from forze.base.typing import conforms_to
 from ...adapters import PostgresDocumentAdapter, PostgresTxManagerAdapter
 from ...kernel.gateways import PostgresHistoryWriteStrategy, PostgresRevBumpStrategy
 from .keys import PostgresClientDepKey
-from .utils import doc_search_gw, doc_write_gw, read_gw
+from .utils import doc_write_gw, read_gw
 
 # ----------------------- #
 
@@ -43,8 +43,6 @@ def postgres_document_configurable(
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: Optional[DocumentCachePort] = None,
     ) -> DocumentPort[Any, Any, Any, Any]:
-        search = None
-
         read = read_gw(context, spec.sources["read"], spec.models["read"])
         write = doc_write_gw(
             context,
@@ -55,18 +53,9 @@ def postgres_document_configurable(
             history_write_strategy=history_write_strategy,
         )
 
-        if spec.search:
-            search = doc_search_gw(
-                context,
-                spec.sources["read"],
-                spec.models["read"],
-                spec.search,
-            )
-
         return PostgresDocumentAdapter(
             read_gw=read,
             write_gw=write,
-            search_gw=search,
             cache=cache,
         )
 

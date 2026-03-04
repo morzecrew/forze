@@ -20,8 +20,7 @@ from forze.domain.constants import (
 )
 from forze.domain.models import Document, DocumentHistory
 
-from .base import PostgresGateway
-from .spec import PostgresTableSpec
+from .base import PostgresGateway, PostgresQualifiedName
 
 # ----------------------- #
 
@@ -34,7 +33,7 @@ PostgresHistoryWriteStrategy = Literal["database", "application"]
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     strategy: PostgresHistoryWriteStrategy = "database"
-    target_spec: PostgresTableSpec
+    target_qname: PostgresQualifiedName
 
     # ....................... #
 
@@ -47,7 +46,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     async def read(self, pk: UUID, rev: int) -> D:
         where = sql.SQL("{h} = {h_v} AND {pk} = {pk_v} AND {rev} = {rev_v}").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
-            h_v=self.target_spec.literal(),
+            h_v=self.target_qname.literal(),
             pk=sql.Identifier(ID_FIELD),
             pk_v=sql.Placeholder(),
             rev=sql.Identifier(REV_FIELD),
@@ -56,7 +55,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             where=where,
         )
 
@@ -80,7 +79,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         where = sql.SQL("{h} = {h_v} AND ({pk}, {rev}) IN ({vals})").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
-            h_v=self.target_spec.literal(),
+            h_v=self.target_qname.literal(),
             pk=sql.Identifier(ID_FIELD),
             rev=sql.Identifier(REV_FIELD),
             vals=values_sql,
@@ -88,7 +87,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             where=where,
         )
 
@@ -104,7 +103,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
     def _from_data(self, data: D) -> DocumentHistory[D]:
         return DocumentHistory(
-            source=self.target_spec.string(),
+            source=self.target_qname.string(),
             id=data.id,
             rev=data.rev,
             data=data,
@@ -125,7 +124,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         params = list(insert_data.values())
 
         stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             cols=sql.SQL(", ").join(cols),
             vals=sql.SQL(", ").join(vals),
         )
@@ -161,7 +160,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
                 params.extend(b[k] for k in keys)
 
             stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
-                table=self.spec.ident(),
+                table=self.qname.ident(),
                 cols=sql.SQL(", ").join(col_idents),
                 vals=sql.SQL(", ").join(value_parts),
             )

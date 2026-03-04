@@ -15,9 +15,7 @@ from forze.application.usecases.document import (
     DeleteDocument,
     GetDocument,
     KillDocument,
-    RawSearchDocument,
     RestoreDocument,
-    SearchDocument,
     UpdateDocument,
 )
 
@@ -103,14 +101,6 @@ def build_document_registry(
     reg = UsecaseRegistry(
         {
             DocumentOperation.GET: lambda ctx: GetDocument(
-                ctx=ctx,
-                doc=ctx.doc(spec),
-            ),
-            DocumentOperation.SEARCH: lambda ctx: SearchDocument(
-                ctx=ctx,
-                doc=ctx.doc(spec),
-            ),
-            DocumentOperation.RAW_SEARCH: lambda ctx: RawSearchDocument(
                 ctx=ctx,
                 doc=ctx.doc(spec),
             ),

@@ -10,7 +10,6 @@ from typing import (
     Optional,
     Protocol,
     Sequence,
-    TypedDict,
     overload,
     runtime_checkable,
 )
@@ -22,26 +21,6 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocume
 from ..query import QueryFilterExpression, QuerySortExpression
 
 # ----------------------- #
-
-
-#! TODO: get rid of search within document ports, use search ports instead
-class DocumentSearchOptions(TypedDict, total=False):
-    """Optional tuning parameters for search backends."""
-
-    use_index: str
-    """Explicit index identifier to use when backends support multiple indices."""
-
-    use_fuzzy: bool
-    """Whether to enable fuzzy matching for the search query."""
-
-    overwrite_weights: Sequence[int]
-    """Override default field weights when scoring search results."""
-
-    overwrite_fuzzy_max: float
-    """Upper bound for fuzziness distance when fuzzy search is enabled."""
-
-
-# ....................... #
 
 
 @runtime_checkable
@@ -213,70 +192,6 @@ class DocumentReadPort[R: ReadDocument](Protocol):
 
 
 @runtime_checkable
-class DocumentSearchPort[R: ReadDocument](Protocol):
-    """Full-text or secondary index search over documents."""
-
-    @overload
-    def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[DocumentSearchOptions] = ...,
-        return_fields: Sequence[str],
-    ) -> Awaitable[tuple[list[JsonDict], int]]:
-        """Search documents and project selected fields as JSON."""
-
-        ...
-
-    @overload
-    def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[DocumentSearchOptions] = ...,
-        return_fields: None = ...,
-    ) -> Awaitable[tuple[list[R], int]]:
-        """Search documents and return typed read models."""
-
-        ...
-
-    def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
-        options: Optional[DocumentSearchOptions] = None,
-        *,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> Awaitable[tuple[list[R] | list[JsonDict], int]]:
-        """Search documents using a query string and optional filters.
-
-        :param query: Query expression interpreted by the backend.
-        :param filters: Structured filters applied before scoring.
-        :param limit: Maximum number of hits to return.
-        :param offset: Offset into the result set.
-        :param sorts: Field-level sort specification.
-        :param options: Backend-specific tuning options.
-        :param return_fields: Optional projection of fields.
-        :returns: A tuple of hits and total hit count.
-        """
-        ...
-
-
-# ....................... #
-
-
-@runtime_checkable
 class DocumentWritePort[
     R: ReadDocument,
     D: Document,
@@ -359,7 +274,7 @@ class DocumentPort[
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
-](DocumentReadPort[R], DocumentSearchPort[R], DocumentWritePort[R, D, C, U], Protocol):
+](DocumentReadPort[R], DocumentWritePort[R, D, C, U], Protocol):
     """Combined port exposing read, search, and write operations for documents."""
 
 

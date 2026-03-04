@@ -1,17 +1,18 @@
+from .base import PostgresGateway, PostgresQualifiedName
 from .history import PostgresHistoryGateway, PostgresHistoryWriteStrategy
 from .read import PostgresReadGateway
-from .search import PostgresSearchGateway
-from .spec import PostgresSearchIndexSpec, PostgresTableSpec
+from .search import PostgresFTSSearchGateway, PostgresPGroongaSearchGateway
 from .write import PostgresRevBumpStrategy, PostgresWriteGateway
 
 # ----------------------- #
 
 __all__ = [
-    "PostgresTableSpec",
-    "PostgresSearchIndexSpec",
+    "PostgresQualifiedName",
+    "PostgresGateway",
     "PostgresHistoryGateway",
     "PostgresReadGateway",
-    "PostgresSearchGateway",
+    "PostgresFTSSearchGateway",
+    "PostgresPGroongaSearchGateway",
     "PostgresWriteGateway",
     "PostgresRevBumpStrategy",
     "PostgresHistoryWriteStrategy",

@@ -2,17 +2,15 @@
 
 from typing import Any, Optional
 
-from forze.application.contracts.document import DocumentModelSpec, DocumentSearchSpec
+from forze.application.contracts.document import DocumentModelSpec
 from forze.application.execution import ExecutionContext
 
 from ...kernel.gateways import (
     PostgresHistoryGateway,
     PostgresHistoryWriteStrategy,
+    PostgresQualifiedName,
     PostgresReadGateway,
     PostgresRevBumpStrategy,
-    PostgresSearchGateway,
-    PostgresSearchIndexSpec,
-    PostgresTableSpec,
     PostgresWriteGateway,
 )
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -32,7 +30,7 @@ def read_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresReadGateway(
-        spec=PostgresTableSpec.from_relation(relation),
+        qname=PostgresQualifiedName.from_string(relation),
         client=client,
         model=model,
         introspector=introspector,
@@ -54,41 +52,12 @@ def _doc_history_gw(
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresHistoryGateway(
-        spec=PostgresTableSpec.from_relation(relation),
-        target_spec=PostgresTableSpec.from_relation(write_relation),
+        qname=PostgresQualifiedName.from_string(relation),
+        target_qname=PostgresQualifiedName.from_string(write_relation),
         strategy=history_write_strategy,
         client=client,
         model=model,
         introspector=introspector,
-    )
-
-
-# ....................... #
-
-
-def doc_search_gw(
-    ctx: ExecutionContext,
-    relation: str,
-    model: type[Any],
-    search: DocumentSearchSpec,
-):
-    """Build a search gateway for full-text search over a relation.
-
-    :param ctx: Execution context.
-    :param relation: Table or view name.
-    :param model: Read model for result validation.
-    :param search: Search index specification.
-    :returns: Postgres search gateway.
-    """
-    client = ctx.dep(PostgresClientDepKey)
-    introspector = ctx.dep(PostgresIntrospectorDepKey)
-
-    return PostgresSearchGateway(
-        spec=PostgresTableSpec.from_relation(relation),
-        client=client,
-        model=model,
-        introspector=introspector,
-        indexes=PostgresSearchIndexSpec.from_dict(search),
     )
 
 
@@ -130,7 +99,7 @@ def doc_write_gw(
         )
 
     return PostgresWriteGateway(
-        spec=PostgresTableSpec.from_relation(relation),
+        qname=PostgresQualifiedName.from_string(relation),
         client=client,
         introspector=introspector,
         read=read,

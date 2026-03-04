@@ -24,6 +24,7 @@ from forze.utils.codecs import AsciiB64Codec, PathCodec
 from ..kernel.platform import S3Client
 
 # ----------------------- #
+#! TODO: add tenant context support on prefix level!
 
 
 @final
@@ -40,6 +41,8 @@ class S3StorageAdapter(StoragePort):
 
     def __build_key(self, prefix: Optional[str] = None) -> str:
         uid = str(uuid7())
+
+        #! tenant context should be here (before prefix, i.e. tenant_id, prefix, uid)
 
         return self.path_codec.cond_join(prefix, uid)
 
@@ -162,7 +165,7 @@ class S3StorageAdapter(StoragePort):
                             if "description" in meta
                             else None
                         ),
-                        content_type=str(h["content_type"]),  # type: ignore[arg-type]
+                        content_type=h.get("content_type", "application/json"),
                         size=int(meta["size"]),
                         created_at=datetime.fromisoformat(meta["created_at"]),
                     )

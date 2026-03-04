@@ -1,32 +1,14 @@
-"""Document usecases facades and DTO specifications.
-
-Provides :class:`DocumentUsecasesFacade` (resolved usecases per operation),
-:class:`DocumentDTOSpec` (typed DTO mapping), and
-:class:`DocumentUsecasesFacadeProvider` (factory that merges plan and
-registry to produce a facade).
-"""
-
 from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.dto import Paginated, RawPaginated
-from forze.application.execution import (
-    ExecutionContext,
-    Usecase,
-    UsecasePlan,
-    UsecaseRegistry,
-)
-from forze.application.usecases.document import (
-    RawSearchArgs,
-    SearchArgs,
-    SoftDeleteArgs,
-    UpdateArgs,
-)
+from forze.application.execution import Usecase
+from forze.application.usecases.document import SoftDeleteArgs, UpdateArgs
 from forze.domain.models import BaseDTO, ReadDocument
 
+from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
 from .operations import DocumentOperation
 
 # ----------------------- #
@@ -38,69 +20,48 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentUsecasesFacade(Generic[R, C, U]):
-    """Resolved document usecases for a given execution context.
-
-    Provides accessors for each document operation (get, search, create, etc.).
-    Each method returns a composed usecase from the registry. Type parameters
-    ``R`` (read), ``C`` (create), ``U`` (update) align with
-    :class:`DocumentDTOSpec`.
-    """
-
-    ctx: ExecutionContext
-    """Execution context for resolving usecases."""
-
-    reg: UsecaseRegistry
-    """Registry with plan merged; used to resolve usecases."""
-
-    # ....................... #
+class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U]):
+    """Typed facade for document usecases."""
 
     def get(self) -> Usecase[UUID, R]:
         """Return the get-document usecase."""
-        return self.reg.resolve(DocumentOperation.GET, self.ctx)
 
-    # ....................... #
-
-    def search(self) -> Usecase[SearchArgs, Paginated[R]]:
-        """Return the typed search usecase."""
-        return self.reg.resolve(DocumentOperation.SEARCH, self.ctx)
-
-    # ....................... #
-
-    def raw_search(self) -> Usecase[RawSearchArgs, RawPaginated]:
-        """Return the raw (field-projected) search usecase."""
-        return self.reg.resolve(DocumentOperation.RAW_SEARCH, self.ctx)
+        return self.resolve(DocumentOperation.GET)
 
     # ....................... #
 
     def create(self) -> Usecase[C, R]:
         """Return the create usecase."""
-        return self.reg.resolve(DocumentOperation.CREATE, self.ctx)
+
+        return self.resolve(DocumentOperation.CREATE)
 
     # ....................... #
 
     def update(self) -> Usecase[UpdateArgs[U], R]:
         """Return the update usecase."""
-        return self.reg.resolve(DocumentOperation.UPDATE, self.ctx)
+
+        return self.resolve(DocumentOperation.UPDATE)
 
     # ....................... #
 
     def kill(self) -> Usecase[UUID, None]:
         """Return the hard-delete (kill) usecase."""
-        return self.reg.resolve(DocumentOperation.KILL, self.ctx)
+
+        return self.resolve(DocumentOperation.KILL)
 
     # ....................... #
 
     def delete(self) -> Usecase[SoftDeleteArgs, R]:
         """Return the soft-delete usecase."""
-        return self.reg.resolve(DocumentOperation.DELETE, self.ctx)
+
+        return self.resolve(DocumentOperation.DELETE)
 
     # ....................... #
 
     def restore(self) -> Usecase[SoftDeleteArgs, R]:
         """Return the restore usecase."""
-        return self.reg.resolve(DocumentOperation.RESTORE, self.ctx)
+
+        return self.resolve(DocumentOperation.RESTORE)
 
 
 # ....................... #
@@ -129,34 +90,13 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentUsecasesFacadeProvider(Generic[R, C, U]):
-    """Factory that produces a document usecases facade for a given context.
-
-    Merges :attr:`plan` into the registry and returns a facade bound to the
-    context. Used when the same registry/plan pair is shared across requests
-    but each request has its own context.
-    """
+class DocumentUsecasesFacadeProvider(
+    BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U]], Generic[R, C, U]
+):
+    """Factory that produces a document usecases facade for a given context."""
 
     spec: DocumentSpec[Any, Any, Any, Any]
     """Document specification (used by registry factories)."""
 
-    reg: UsecaseRegistry
-    """Base usecase registry."""
-
-    plan: UsecasePlan
-    """Plan to merge into the registry when building the facade."""
-
     dtos: DocumentDTOSpec[R, C, U]
     """DTO type mapping for facade typing."""
-
-    # ....................... #
-
-    def __call__(self, ctx: ExecutionContext) -> DocumentUsecasesFacade[R, C, U]:
-        """Build a facade for the given execution context.
-
-        :param ctx: Execution context for resolving usecases.
-        :returns: Facade with resolved usecases.
-        """
-        reg = self.reg.extend_plan(self.plan)
-
-        return DocumentUsecasesFacade(ctx=ctx, reg=reg)

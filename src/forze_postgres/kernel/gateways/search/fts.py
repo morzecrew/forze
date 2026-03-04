@@ -18,7 +18,7 @@ from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate
 
-from ..spec import PostgresQualifiedName
+from ..base import PostgresQualifiedName
 from .base import PostgresSearchGateway
 from .utils import fts_rank_weights_array
 
@@ -215,7 +215,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         )
 
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             where=where_sql,
         )
 
@@ -241,7 +241,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
             "SELECT {cols} FROM {table} WHERE {where} ORDER BY {order}"
         ).format(
             cols=self.return_clause(return_model, return_fields),
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             where=where_sql,
             order=order_sql,
         )

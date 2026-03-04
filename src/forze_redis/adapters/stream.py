@@ -25,7 +25,9 @@ from forze.utils.codecs import JsonCodec, TextCodec
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
+#! TODO: add tenant context support
 
+# make var names fully private ("__" prefix)
 PAYLOAD_KEY: Final[str] = "data"
 TYPE_KEY: Final[str] = "t"
 TS_KEY: Final[str] = "ts"

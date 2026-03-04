@@ -66,7 +66,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.spec != self.read.spec:
+        if self.qname != self.read.qname:
             raise CoreError(
                 "Table specification mismatch. Write gateway and nested read gateway must have the same specification."
             )
@@ -82,7 +82,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
                 )
 
-            if self.spec != self.history.target_spec:
+            if self.qname != self.history.target_qname:
                 raise CoreError(
                     "Table specification mismatch. Write gateway and nested history gateway must have the same specification."
                 )
@@ -177,7 +177,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         stmt = sql.SQL(
             "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}"
         ).format(
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             cols=sql.SQL(", ").join(cols),
             vals=sql.SQL(", ").join(vals),
             ret=self.return_clause(),
@@ -232,7 +232,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             stmt = sql.SQL(
                 "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
             ).format(
-                table=self.spec.ident(),
+                table=self.qname.ident(),
                 cols=sql.SQL(", ").join(col_idents),
                 vals=sql.SQL(", ").join(value_parts),
                 ret=self.return_clause(),
@@ -311,7 +311,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         stmt = sql.SQL(
             "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
         ).format(
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             sets=sql.SQL(", ").join(set_parts),
             where=self._where_pk_rev(),
             ret=self.return_clause(),
@@ -371,7 +371,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             RETURNING t.{pk}
             """
         ).format(
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             sets=set_parts,
             vals=sql.SQL(", ").join(values_rows),
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
@@ -551,7 +551,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def kill(self, pk: UUID) -> None:
         stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = {}").format(
-            table=self.spec.ident(),
+            table=self.qname.ident(),
             pk=self.ident_pk(),
         )
 
@@ -574,7 +574,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         for start in range(0, len(pks), batch_size):
             batch = pks[start : start + batch_size]
             stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = ANY({ids})").format(
-                table=self.spec.ident(),
+                table=self.qname.ident(),
                 pk=self.ident_pk(),
                 ids=sql.Placeholder(),
             )

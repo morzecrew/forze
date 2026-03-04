@@ -13,16 +13,10 @@ from forze.application.composition.document import (
     DocumentUsecasesFacade,
     DocumentUsecasesFacadeProvider,
 )
-from forze.application.dto import (
-    Paginated,
-    RawPaginated,
-    RawSearchRequestDTO,
-    SearchRequestDTO,
-)
 from forze.application.execution import ExecutionContext
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..routing.params import Pagination, RevQuery, UUIDQuery, pagination
+from ..routing.params import RevQuery, UUIDQuery
 from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
 from ._utils import override_annotations
 
@@ -93,50 +87,6 @@ def build_document_router(
         """Return metadata for a single document by identifier."""
 
         return await ucs.get()(id)
-
-    # ....................... #
-
-    @router.post(
-        "/search",
-        response_model=Paginated[read_dto],
-        operation_id=f"{provider.spec.namespace}.search",
-    )
-    async def search(  # pyright: ignore[reportUnusedFunction]
-        body: SearchRequestDTO,
-        pagi: Pagination = Depends(pagination),
-        ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-    ):
-        """Search documents using a typed search request body."""
-
-        return await ucs.search()(
-            {
-                "body": body,
-                "page": pagi.page,
-                "size": pagi.size,
-            }
-        )
-
-    # ....................... #
-
-    @router.post(
-        "/raw-search",
-        response_model=RawPaginated,
-        operation_id=f"{provider.spec.namespace}.raw_search",
-    )
-    async def raw_search(  # pyright: ignore[reportUnusedFunction]
-        body: RawSearchRequestDTO = Body(...),
-        pagi: Pagination = Depends(pagination),
-        ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-    ):
-        """Search documents using a raw (untyped) search body."""
-
-        return await ucs.raw_search()(
-            {
-                "body": body,
-                "page": pagi.page,
-                "size": pagi.size,
-            }
-        )
 
     # ....................... #
 

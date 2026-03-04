@@ -16,11 +16,11 @@ from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 
-from ..kernel.gateways.search_v2 import (
+from ..kernel.gateways import (
     PostgresFTSSearchGateway,
     PostgresPGroongaSearchGateway,
+    PostgresQualifiedName,
 )
-from ..kernel.gateways.spec import PostgresQualifiedName, PostgresTableSpec
 from ..kernel.introspect import PostgresIntrospector
 from ..kernel.platform import PostgresClient
 from .txmanager import PostgresTxScopeKey
@@ -42,7 +42,7 @@ type SearchGateway[M: BaseModel] = Union[
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresSearchAdapter[M: BaseModel](SearchReadPort[M], TxScopedPort):
-    spec: PostgresTableSpec
+    qname: PostgresQualifiedName
     client: PostgresClient
     model: type[M]
     search_spec: SearchSpec
@@ -70,7 +70,7 @@ class PostgresSearchAdapter[M: BaseModel](SearchReadPort[M], TxScopedPort):
         match index_info.engine:
             case "pgroonga":
                 gw = PostgresPGroongaSearchGateway[M](
-                    spec=self.spec,
+                    qname=self.qname,
                     client=self.client,
                     model=self.model,
                     introspector=self.introspector,
@@ -79,7 +79,7 @@ class PostgresSearchAdapter[M: BaseModel](SearchReadPort[M], TxScopedPort):
 
             case "fts":
                 gw = PostgresFTSSearchGateway[M](
-                    spec=self.spec,
+                    qname=self.qname,
                     client=self.client,
                     model=self.model,
                     introspector=self.introspector,

@@ -11,6 +11,7 @@ from typing import Optional
 from pydantic import Field
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
+from forze.application.contracts.search import SearchOptions
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -32,6 +33,9 @@ class SearchRequestDTO(BaseDTO):
 
     sorts: Optional[QuerySortExpression] = None
     """Optional sort expression (field name to ``"asc"`` or ``"desc"``)."""
+
+    options: Optional[SearchOptions] = None
+    """Optional search options."""
 
 
 # ....................... #

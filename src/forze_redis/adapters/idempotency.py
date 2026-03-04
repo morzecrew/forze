@@ -17,7 +17,9 @@ from forze.utils.codecs import JsonCodec, KeyCodec
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
+#! TODO: add tenant context support
 
+# make var names fully private ("__" prefix)
 _PENDING: Final[str] = "P"
 _DONE: Final[str] = "D"
 

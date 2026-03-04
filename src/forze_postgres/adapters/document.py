@@ -12,7 +12,6 @@ import attrs
 from forze.application.contracts.document import (
     DocumentCachePort,
     DocumentPort,
-    DocumentSearchOptions,
 )
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
@@ -23,7 +22,6 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocume
 
 from ..kernel.gateways import (
     PostgresReadGateway,
-    PostgresSearchGateway,
     PostgresWriteGateway,
 )
 from .txmanager import PostgresTxScopeKey
@@ -41,7 +39,6 @@ class PostgresDocumentAdapter[
 ](DocumentPort[R, D, C, U], TxScopedPort):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
-    search_gw: Optional[PostgresSearchGateway[R]] = None
     cache: Optional[DocumentCachePort] = None
 
     # Non initable fields
@@ -56,12 +53,6 @@ class PostgresDocumentAdapter[
         ):
             raise CoreError("Write and read gateways must use the same client")
 
-        if (
-            self.search_gw is not None
-            and self.read_gw.client is not self.search_gw.client
-        ):
-            raise CoreError("Search and read gateways must use the same client")
-
     # ....................... #
 
     def _require_write(self) -> PostgresWriteGateway[D, C, U]:
@@ -69,14 +60,6 @@ class PostgresDocumentAdapter[
             raise CoreError("Write gateway is not configured")
 
         return self.write_gw
-
-    # ....................... #
-
-    def _require_search(self) -> PostgresSearchGateway[R]:
-        if self.search_gw is None:
-            raise CoreError("Search gateway is not configured")
-
-        return self.search_gw
 
     # ....................... #
 
@@ -263,64 +246,6 @@ class PostgresDocumentAdapter[
 
     async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
         return await self.read_gw.count(filters)
-
-    # ....................... #
-
-    @overload
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[DocumentSearchOptions] = ...,
-        return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[DocumentSearchOptions] = ...,
-        return_fields: None = ...,
-    ) -> tuple[list[R], int]: ...
-
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
-        *,
-        options: Optional[DocumentSearchOptions] = None,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> tuple[list[R] | list[JsonDict], int]:
-        s = self._require_search()
-
-        cnt = await s.search_count(query, filters, options=options)
-
-        if not cnt:
-            return [], 0
-
-        res = await s.search(
-            query=query,
-            filters=filters,
-            limit=limit,
-            offset=offset,
-            sorts=sorts,
-            options=options,
-            return_fields=return_fields,
-        )
-
-        return res, cnt
 
     # ....................... #
 

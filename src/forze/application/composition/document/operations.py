@@ -17,12 +17,6 @@ class DocumentOperation(StrEnum):
     GET = "document.get"
     """Fetch a single document by primary key."""
 
-    SEARCH = "document.search"
-    """Search with typed paginated results."""
-
-    RAW_SEARCH = "document.raw_search"
-    """Search with field-projected raw results."""
-
     CREATE = "document.create"
     """Create a new document."""
 
