@@ -1,20 +1,30 @@
 """Unit tests for search contract (SearchSpec, SearchReadDepKey)."""
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.search import (
+    SearchFieldSpec,
     SearchIndexSpec,
     SearchReadDepKey,
     SearchSpec,
+    parse_search_spec,
 )
-from forze.application.contracts.search.internal.specs import SearchFieldSpec
 
 # ----------------------- #
 
 
-def _minimal_search_spec() -> SearchSpec:
+class _MinimalSearchModel(BaseModel):
+    """Minimal model for search tests."""
+
+    title: str = ""
+
+
+def _minimal_search_spec() -> SearchSpec[_MinimalSearchModel]:
     """Build a minimal SearchSpec for testing."""
     return SearchSpec(
+        namespace="test",
+        model=_MinimalSearchModel,
         indexes={
             "default": SearchIndexSpec(
                 fields=[SearchFieldSpec(path="title")],
@@ -32,14 +42,19 @@ class TestSearchSpec:
         assert "default" in spec.indexes
 
     def test_stable_default_index(self) -> None:
-        spec = _minimal_search_spec()
-        assert spec.stable_default_index == "default"
+        internal = parse_search_spec(_minimal_search_spec())
+        assert internal.stable_default_index == "default"
 
     def test_empty_indexes_raises(self) -> None:
         from forze.base.errors import CoreError
 
+        spec = SearchSpec(
+            namespace="test",
+            model=_MinimalSearchModel,
+            indexes={},
+        )
         with pytest.raises(CoreError, match="At least one index"):
-            SearchSpec(indexes={})
+            parse_search_spec(spec)
 
 
 class TestSearchReadDepKey:

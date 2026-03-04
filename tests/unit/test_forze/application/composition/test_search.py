@@ -1,5 +1,7 @@
 """Unit tests for forze.application.composition.search."""
 
+from pydantic import BaseModel
+
 from forze.application.composition.search import (
     SearchOperation,
     SearchUsecasesFacade,
@@ -7,16 +9,27 @@ from forze.application.composition.search import (
     build_search_plan,
     build_search_registry,
 )
-from forze.application.contracts.search import SearchIndexSpec, SearchSpec
-from forze.application.contracts.search.internal.specs import SearchFieldSpec
+from forze.application.contracts.search import (
+    SearchFieldSpec,
+    SearchIndexSpec,
+    SearchSpec,
+)
 from forze.application.execution import UsecaseRegistry
 
 # ----------------------- #
 
 
-def _minimal_search_spec() -> SearchSpec:
+class _MinimalSearchModel(BaseModel):
+    """Minimal model for search tests."""
+
+    title: str = ""
+
+
+def _minimal_search_spec() -> SearchSpec[_MinimalSearchModel]:
     """Build a minimal SearchSpec for testing."""
     return SearchSpec(
+        namespace="test",
+        model=_MinimalSearchModel,
         indexes={
             "default": SearchIndexSpec(
                 fields=[SearchFieldSpec(path="title")],
@@ -67,7 +80,12 @@ class TestSearchUsecasesFacadeProvider:
         spec = _minimal_search_spec()
         reg = build_search_registry(spec)
         plan = build_search_plan()
-        provider = SearchUsecasesFacadeProvider(reg=reg, plan=plan)
+        provider = SearchUsecasesFacadeProvider(
+            reg=reg,
+            plan=plan,
+            spec=spec,
+            read_dto=_MinimalSearchModel,
+        )
         facade = provider(composition_ctx)
         assert facade is not None
         assert facade.ctx is composition_ctx
@@ -79,7 +97,12 @@ class TestSearchUsecasesFacadeProvider:
         spec = _minimal_search_spec()
         reg = build_search_registry(spec)
         plan = build_search_plan()
-        provider = SearchUsecasesFacadeProvider(reg=reg, plan=plan)
+        provider = SearchUsecasesFacadeProvider(
+            reg=reg,
+            plan=plan,
+            spec=spec,
+            read_dto=_MinimalSearchModel,
+        )
         facade = provider(composition_ctx)
         uc = facade.raw()
         assert uc is not None

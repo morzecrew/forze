@@ -92,7 +92,6 @@ class TestDocumentUsecasesFacadeProvider:
             reg=reg,
             plan=plan,
             dtos=dtos,
-            facade=DocumentUsecasesFacade,
         )
         facade = provider(composition_ctx)
         assert facade is not None
@@ -111,7 +110,6 @@ class TestDocumentUsecasesFacadeProvider:
             reg=reg,
             plan=plan,
             dtos=dtos,
-            facade=DocumentUsecasesFacade,
         )
         facade = provider(composition_ctx)
         uc = facade.get()

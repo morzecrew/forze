@@ -8,7 +8,7 @@ from .deps import (
 )
 from .internal import SearchIndexSpecInternal, SearchSpecInternal, parse_search_spec
 from .ports import SearchReadPort, SearchWritePort
-from .specs import SearchSpec
+from .specs import SearchFieldSpec, SearchIndexSpec, SearchSpec
 from .types import SearchOptions
 
 # ----------------------- #
@@ -26,5 +26,7 @@ __all__ = [
     "SearchDepRouter",
     "SearchWriteDepRouter",
     "SearchSpec",
+    "SearchIndexSpec",
+    "SearchFieldSpec",
     "parse_search_spec",
 ]

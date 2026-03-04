@@ -103,9 +103,17 @@ class TestExecutionContextConvenienceMethods:
         assert result is not None
 
     def test_search_resolves(self) -> None:
-        from forze.application.contracts.search import SearchReadDepKey
-        from forze.application.contracts.search.internal import SearchIndexSpec, SearchSpec
-        from forze.application.contracts.search.internal.specs import SearchFieldSpec
+        from pydantic import BaseModel
+
+        from forze.application.contracts.search import (
+            SearchFieldSpec,
+            SearchIndexSpec,
+            SearchReadDepKey,
+            SearchSpec,
+        )
+
+        class _MinimalModel(BaseModel):
+            id: str = ""
 
         def search_factory(ctx, spec):
             return object()
@@ -113,6 +121,8 @@ class TestExecutionContextConvenienceMethods:
         deps = Deps(deps={SearchReadDepKey: search_factory})
         ctx = ExecutionContext(deps=deps)
         spec = SearchSpec(
+            namespace="test",
+            model=_MinimalModel,
             indexes={"main": SearchIndexSpec(fields=[SearchFieldSpec(path="id")])},
             default_index="main",
         )
