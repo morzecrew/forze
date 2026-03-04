@@ -53,10 +53,7 @@ class PostgresSearchAdapter[M: BaseModel](SearchReadPort[M], TxScopedPort):
 
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
-    __gw_cache: dict[str, SearchGateway[M]] = attrs.field(
-        default=dict,  # pyright: ignore[reportAssignmentType]
-        init=False,
-    )
+    __gw_cache: dict[str, SearchGateway[M]] = attrs.field(factory=dict, init=False)
 
     # ....................... #
 
