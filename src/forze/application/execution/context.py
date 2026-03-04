@@ -8,28 +8,20 @@ dependency cycle detection.
 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import Any, AsyncIterator, Iterator, Optional, final
 
 import attrs
 
 from forze.base.errors import CoreError
 
+from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
 from ..contracts.deps import DepKey, DepsPort
-from ..contracts.document import (
-    DocumentCacheDepKey,
-    DocumentDepKey,
-    DocumentPort,
-    DocumentSpec,
-)
+from ..contracts.document import DocumentDepKey, DocumentPort, DocumentSpec
 from ..contracts.search import SearchReadDepKey, SearchReadPort, SearchSpec
 from ..contracts.storage import StorageDepKey, StoragePort
-from ..contracts.tx import (
-    TxHandle,
-    TxManagerDepKey,
-    TxManagerPort,
-    TxScopedPort,
-)
+from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPort
 
 # ----------------------- #
 
@@ -179,11 +171,31 @@ class ExecutionContext:
         :param spec: Document specification.
         :returns: Document port instance.
         """
-        cache = self.dep(DocumentCacheDepKey)(self, spec)
+
+        cache = None
+
+        if spec.cache is not None and spec.cache.get("enabled", False):
+            cache_spec = CacheSpec(
+                namespace=spec.namespace,
+                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
+            )
+            cache = self.cache(cache_spec)
+
         dep = self.dep(DocumentDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
 
         return dep
+
+    # ....................... #
+
+    def cache(self, spec: CacheSpec) -> CachePort:
+        """Resolve a cache port for the given spec.
+
+        :param spec: Cache specification.
+        :returns: Cache port instance.
+        """
+
+        return self.dep(CacheDepKey)(self, spec)
 
     # ....................... #
 
@@ -193,12 +205,14 @@ class ExecutionContext:
         :param namespace: Counter namespace.
         :returns: Counter port instance.
         """
+
         return self.dep(CounterDepKey)(self, namespace)
 
     # ....................... #
 
     def txmanager(self) -> TxManagerPort:
         """Resolve the transaction manager port."""
+
         return self.dep(TxManagerDepKey)(self)
 
     # ....................... #
@@ -209,6 +223,7 @@ class ExecutionContext:
         :param bucket: Storage bucket name.
         :returns: Storage port instance.
         """
+
         return self.dep(StorageDepKey)(self, bucket)
 
     # ....................... #

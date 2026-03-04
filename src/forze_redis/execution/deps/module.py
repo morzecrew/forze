@@ -4,13 +4,13 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.cache import CacheDepKey
 from forze.application.contracts.counter import CounterDepKey
-from forze.application.contracts.document import DocumentCacheDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import RedisClient
-from .deps import redis_counter, redis_document_cache, redis_idempotency
+from .deps import redis_cache, redis_counter, redis_idempotency
 from .keys import RedisClientDepKey
 
 # ----------------------- #
@@ -34,12 +34,13 @@ class RedisDepsModule(DepsModule):
     def __call__(self) -> Deps:
         """Build a dependency container with Redis-backed ports.
 
-        :returns: Deps with client, document cache, counter, and idempotency ports.
+        :returns: Deps with client, cache, counter, and idempotency ports.
         """
+
         return Deps(
             {
                 RedisClientDepKey: self.client,
-                DocumentCacheDepKey: redis_document_cache,
+                CacheDepKey: redis_cache,
                 CounterDepKey: redis_counter,
                 IdempotencyDepKey: redis_idempotency,
             }

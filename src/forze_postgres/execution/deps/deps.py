@@ -2,8 +2,8 @@
 
 from typing import Any, Optional
 
+from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
-    DocumentCachePort,
     DocumentDepPort,
     DocumentPort,
     DocumentSpec,
@@ -41,7 +41,7 @@ def postgres_document_configurable(
     def postgres_document(
         context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
-        cache: Optional[DocumentCachePort] = None,
+        cache: Optional[CachePort] = None,
     ) -> DocumentPort[Any, Any, Any, Any]:
         read = read_gw(context, spec.sources["read"], spec.models["read"])
         write = doc_write_gw(

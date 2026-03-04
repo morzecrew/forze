@@ -9,10 +9,8 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.document import (
-    DocumentCachePort,
-    DocumentPort,
-)
+from forze.application.contracts.cache import CachePort
+from forze.application.contracts.document import DocumentPort
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -39,7 +37,7 @@ class PostgresDocumentAdapter[
 ](DocumentPort[R, D, C, U], TxScopedPort):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
-    cache: Optional[DocumentCachePort] = None
+    cache: Optional[CachePort] = None
 
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
@@ -107,14 +105,18 @@ class PostgresDocumentAdapter[
                 return_fields=return_fields,
             )
 
-        cached = await self.cache.get(pk)
+        cached = await self.cache.get(str(pk))
 
         if cached is not None:
             return pydantic_validate(self.read_gw.model, cached)
 
         res = await self.read_gw.get(pk)
 
-        await self.cache.set(pk, res.rev, self._map_to_cache(res))
+        await self.cache.set_versioned(
+            str(pk),
+            str(res.rev),
+            self._map_to_cache(res),
+        )
 
         return res
 
@@ -145,21 +147,22 @@ class PostgresDocumentAdapter[
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
-        hits, misses = await self.cache.get_many(pks)
+        hits, misses = await self.cache.get_many([str(pk) for pk in pks])
         miss_res: list[R] = []
 
+        #! TODO: fallback to read gateway if cache fails
         if misses:
-            miss_res = await self.read_gw.get_many(misses)
-            miss_mapping = {(x.id, x.rev): self._map_to_cache(x) for x in miss_res}
+            miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
+            await self.cache.set_many_versioned(
+                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in miss_res}
+            )
 
-            await self.cache.set_many(miss_mapping)
-
-        by_pk: dict[UUID, R] = {
+        by_pk: dict[str, R] = {
             k: pydantic_validate(self.read_gw.model, v) for k, v in hits.items()
         }
-        by_pk.update({x.id: x for x in miss_res})
+        by_pk.update({str(x.id): x for x in miss_res})
 
-        return [by_pk[pk] for pk in pks]
+        return [by_pk[str(pk)] for pk in pks]
 
     # ....................... #
 
@@ -267,7 +270,7 @@ class PostgresDocumentAdapter[
 
     async def _clear_cache(self, *pks: UUID) -> None:
         if self.cache is not None:
-            await self.cache.delete_many(pks, hard=True)
+            await self.cache.delete_many([str(pk) for pk in pks], hard=True)
 
     # ....................... #
 

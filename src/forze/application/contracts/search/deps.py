@@ -50,11 +50,11 @@ SearchWriteDepKey = DepKey[SearchWriteDepPort]("search_write")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SearchDepRouter(DepRouter[SearchSpec, SearchReadDepPort], SearchReadDepPort):
-    dep_key = SearchReadDepKey
-
-    # ....................... #
-
+class SearchDepRouter(
+    DepRouter[SearchSpec, SearchReadDepPort],
+    SearchReadDepPort,
+    dep_key=SearchReadDepKey,
+):
     def __call__(
         self, context: "ExecutionContext", spec: SearchSpec
     ) -> SearchReadPort[Any]:
@@ -69,12 +69,10 @@ class SearchDepRouter(DepRouter[SearchSpec, SearchReadDepPort], SearchReadDepPor
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class SearchWriteDepRouter(
-    DepRouter[SearchSpec, SearchWriteDepPort], SearchWriteDepPort
+    DepRouter[SearchSpec, SearchWriteDepPort],
+    SearchWriteDepPort,
+    dep_key=SearchWriteDepKey,
 ):
-    dep_key = SearchWriteDepKey
-
-    # ....................... #
-
     def __call__(
         self, context: "ExecutionContext", spec: SearchSpec
     ) -> SearchWritePort[Any]:

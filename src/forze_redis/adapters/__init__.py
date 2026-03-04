@@ -1,4 +1,4 @@
-from .cache import RedisDocumentCacheAdapter
+from .cache import RedisCacheAdapter
 from .counter import RedisCounterAdapter
 from .idempotency import RedisIdempotencyAdapter
 from .stream import RedisStreamAdapter
@@ -6,7 +6,7 @@ from .stream import RedisStreamAdapter
 # ----------------------- #
 
 __all__ = [
-    "RedisDocumentCacheAdapter",
+    "RedisCacheAdapter",
     "RedisCounterAdapter",
     "RedisIdempotencyAdapter",
     "RedisStreamAdapter",

@@ -1,36 +1,21 @@
 """Factory functions for Redis counter, document cache, and idempotency adapters."""
 
 from datetime import timedelta
-from typing import Any
 
-from forze.application.contracts.counter import (
-    CounterDepPort,
-    CounterPort,
-)
-from forze.application.contracts.document import (
-    DocumentCacheDepPort,
-    DocumentCachePort,
-    DocumentSpec,
-)
-from forze.application.contracts.idempotency import (
-    IdempotencyDepPort,
-    IdempotencyPort,
-)
+from forze.application.contracts.cache import CacheDepPort, CachePort, CacheSpec
+from forze.application.contracts.counter import CounterDepPort, CounterPort
+from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
 from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
 
-from ...adapters import (
-    RedisCounterAdapter,
-    RedisDocumentCacheAdapter,
-    RedisIdempotencyAdapter,
-)
+from ...adapters import RedisCacheAdapter, RedisCounterAdapter, RedisIdempotencyAdapter
 from .keys import RedisClientDepKey
 
 # ----------------------- #
 
 
-@conforms_to(IdempotencyDepPort)
+@conforms_to(IdempotencyDepPort)  #! use spec ?
 def redis_idempotency(
     context: ExecutionContext,
     ttl: timedelta = timedelta(seconds=30),
@@ -49,29 +34,7 @@ def redis_idempotency(
 # ....................... #
 
 
-@conforms_to(DocumentCacheDepPort)
-def redis_document_cache(
-    context: ExecutionContext,
-    spec: DocumentSpec[Any, Any, Any, Any],
-) -> DocumentCachePort:
-    """Build a Redis-backed document cache port for the given spec.
-
-    :param context: Execution context for resolving the Redis client.
-    :param spec: Document specification (namespace used for key prefixing).
-    :returns: Document cache port backed by :class:`RedisDocumentCacheAdapter`.
-    """
-    redis_client = context.dep(RedisClientDepKey)
-
-    return RedisDocumentCacheAdapter(
-        client=redis_client,
-        key_codec=KeyCodec(namespace=spec.namespace),
-    )
-
-
-# ....................... #
-
-
-@conforms_to(CounterDepPort)
+@conforms_to(CounterDepPort)  #! use spec ?
 def redis_counter(
     context: ExecutionContext,
     namespace: str,
@@ -87,4 +50,20 @@ def redis_counter(
     return RedisCounterAdapter(
         client=redis_client,
         key_codec=KeyCodec(namespace=namespace),
+    )
+
+
+# ....................... #
+
+
+@conforms_to(CacheDepPort)
+def redis_cache(
+    context: ExecutionContext,
+    spec: CacheSpec,
+) -> CachePort:
+    """Build a Redis-backed cache port for the given spec."""
+    redis_client = context.dep(RedisClientDepKey)
+
+    return RedisCacheAdapter(
+        client=redis_client, key_codec=KeyCodec(namespace=spec.namespace)
     )

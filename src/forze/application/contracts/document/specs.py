@@ -1,5 +1,6 @@
 """Specifications for document models and storage layout."""
 
+from datetime import timedelta
 from typing import Generic, NotRequired, Optional, TypedDict, TypeVar, final
 
 import attrs
@@ -13,13 +14,6 @@ from forze.domain.models import (
 )
 
 # ----------------------- #
-
-DocumentSearchSpec = dict[str, tuple[str, ...] | dict[str, int]]
-"""Configuration for document search backends.
-
-The mapping is implementation-specific but typically describes which fields
-are indexed and how scores are weighted.
-"""
 
 R = TypeVar("R", bound=ReadDocument)  #! Arbitrary read model (CoreModel or so)
 D = TypeVar("D", bound=Document)
@@ -69,6 +63,20 @@ class DocumentSourceSpec(TypedDict):
 
 
 @final
+class DocumentCacheSpec(TypedDict, total=False):
+    """Cache specification for a document aggregate."""
+
+    enabled: bool
+    """Enable caching for the document aggregate."""
+
+    ttl: timedelta
+    """Default TTL for cache entries."""
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentSpec(Generic[R, D, C, U]):
     """Declarative specification for a document aggregate.
@@ -93,11 +101,8 @@ class DocumentSpec(Generic[R, D, C, U]):
     models: DocumentModelSpec[R, D, C, U]
     """Concrete model types for read/domain/commands."""
 
-    search: Optional[DocumentSearchSpec] = None
-    """Optional search configuration."""
-
-    enable_cache: bool = False
-    """Enable caching for the document aggregate."""
+    cache: Optional[DocumentCacheSpec] = None
+    """Cache specification for the document aggregate."""
 
     # ....................... #
 

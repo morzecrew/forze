@@ -7,8 +7,8 @@ import attrs
 
 from forze.base.errors import CoreError
 
+from .key import DepKey
 from .ports import DepsPort
-from .value_objects import DepKey
 
 # ----------------------- #
 
@@ -47,6 +47,18 @@ class DepRouter(Generic[SpecT, DepPortT]):
 
     dep_key: ClassVar[DepKey[Any]]
     """Dependency key used to register this router in the container."""
+
+    # ....................... #
+
+    def __init_subclass__(cls, dep_key: DepKey[DepPortT]) -> None:
+        """Initialize the subclass with the dependency key.
+
+        :param dep_key: Dependency key used to register this router in the container.
+        """
+
+        super().__init_subclass__()
+
+        cls.dep_key = dep_key
 
     # ....................... #
 

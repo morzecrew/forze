@@ -30,11 +30,11 @@ StorageDepKey = DepKey[StorageDepPort]("storage")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class StorageDepRouter(DepRouter[str, StorageDepPort], StorageDepPort):
-    dep_key = StorageDepKey
-
-    # ....................... #
-
+class StorageDepRouter(
+    DepRouter[str, StorageDepPort],
+    StorageDepPort,
+    dep_key=StorageDepKey,
+):
     def __call__(self, context: "ExecutionContext", bucket: str) -> StoragePort:
         route = self._select(bucket)
 

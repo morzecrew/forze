@@ -2,7 +2,7 @@
 
 from typing import Protocol, Self, TypeVar
 
-from .value_objects import DepKey
+from .key import DepKey
 
 # ----------------------- #
 

@@ -78,6 +78,8 @@ class PostgresGateway[M: BaseModel]:
     client: PostgresClient
     model: type[M]
     introspector: PostgresIntrospector
+
+    #! We should be able to disable tenant context (document spec or ... ???)
     tenant_context: Optional[TenantContextPort] = None
 
     # ....................... #

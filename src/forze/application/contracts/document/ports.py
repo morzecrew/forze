@@ -1,18 +1,6 @@
-"""Ports for document storage, retrieval, and search.
+"""Ports for document storage and retrieval"""
 
-Provides :class:`DocumentReadPort`, :class:`DocumentSearchPort`,
-:class:`DocumentWritePort`, :class:`DocumentPort`, and :class:`DocumentCachePort`.
-"""
-
-from typing import (
-    Any,
-    Awaitable,
-    Optional,
-    Protocol,
-    Sequence,
-    overload,
-    runtime_checkable,
-)
+from typing import Awaitable, Optional, Protocol, Sequence, overload, runtime_checkable
 from uuid import UUID
 
 from forze.base.primitives import JsonDict
@@ -276,25 +264,3 @@ class DocumentPort[
     U: BaseDTO,
 ](DocumentReadPort[R], DocumentWritePort[R, D, C, U], Protocol):
     """Combined port exposing read, search, and write operations for documents."""
-
-
-# ....................... #
-
-
-@runtime_checkable
-class DocumentCachePort(Protocol):  # pragma: no cover
-    """Cache abstraction for document read models."""
-
-    def get(self, pk: UUID) -> Awaitable[Optional[Any]]: ...
-    def set(self, pk: UUID, rev: int, value: Any) -> Awaitable[None]: ...
-    def delete(self, pk: UUID, *, hard: bool) -> Awaitable[None]: ...
-
-    def get_many(
-        self,
-        pks: Sequence[UUID],
-    ) -> Awaitable[tuple[dict[UUID, Any], list[UUID]]]: ...
-    def set_many(
-        self,
-        mapping: dict[tuple[UUID, int], Any],
-    ) -> Awaitable[None]: ...
-    def delete_many(self, pks: Sequence[UUID], *, hard: bool) -> Awaitable[None]: ...
