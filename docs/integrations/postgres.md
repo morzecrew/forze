@@ -1,6 +1,6 @@
 # PostgreSQL Integration
 
-This guide explains how to set up PostgreSQL so that Forze document adapters work correctly with your domain structures. It covers schema requirements, relation naming, revision handling, history tables, full-text search, and connection configuration.
+This guide explains how to set up PostgreSQL for Forze document adapters and full-text search. It covers schema requirements, source naming, revision handling, history tables, search (PGroonga and native FTS), and connection configuration.
 
 ## Prerequisites
 
@@ -9,26 +9,37 @@ This guide explains how to set up PostgreSQL so that Forze document adapters wor
 
 ## Connection
 
-The Postgres client uses a DSN and optional pool configuration. Initialize before running operations:
+The Postgres client uses a DSN and optional pool configuration. Initialize before running operations. Use :class:`PostgresDepsModule` to register the client and ports, and :func:`postgres_lifecycle_step` for startup/shutdown:
 
 ```python
-from forze_postgres import PostgresClient, PostgresConfig
+from forze.application.execution import Deps, LifecyclePlan
+from forze_postgres import PostgresClient, PostgresConfig, PostgresDepsModule, postgres_lifecycle_step
 
 client = PostgresClient()
-await client.initialize(
-    "postgresql://user:pass@localhost:5432/mydb",
-    config=PostgresConfig(min_size=2, max_size=15),
+deps_module = PostgresDepsModule(
+    client=client,
+    rev_bump_strategy="database",
+    history_write_strategy="database",
+)
+
+# Build deps and lifecycle
+deps = deps_module()
+lifecycle = LifecyclePlan.from_steps(
+    postgres_lifecycle_step(
+        dsn="postgresql://user:pass@localhost:5432/mydb",
+        config=PostgresConfig(min_size=2, max_size=15),
+    )
 )
 ```
 
 The client supports connection pooling, context-bound transactions (including nested savepoints), and configurable timeouts. See :class:`forze_postgres.kernel.platform.client.PostgresConfig` for pool options.
 
-## Relation Naming
+## Document Sources
 
-Document specs use **relation names** in `schema.table` format. The read, write, and optional history relations must follow this convention:
+Document specs use **source names** in `schema.table` format. The read, write, and optional history sources must follow this convention:
 
-| Relation | Purpose | Example |
-|----------|---------|---------|
+| Source | Purpose | Example |
+|--------|---------|---------|
 | `read` | Table or view used for reads | `public.documents` |
 | `write` | Table used for writes | `public.documents` |
 | `history` | Optional audit table | `public.documents_history` |
@@ -160,26 +171,57 @@ CREATE TRIGGER documents_history_trigger
 
 For `"application"`, no trigger is needed; the gateway writes history directly.
 
-## Full-Text Search (pgroonga)
+## Full-Text Search
 
-When using the search gateway, full-text search is powered by the **pgroonga** extension. Install and create indexes that match the search spec.
+The Postgres search adapter supports two engines:
 
-### Enable Extension
+| Engine | Extension | Use case |
+|--------|-----------|----------|
+| **PGroonga** | `pgroonga` | Japanese/CJK, fuzzy search, array fields |
+| **fts** | Built-in | Native PostgreSQL GIN + tsvector |
+
+The adapter introspects index definitions to detect the engine and routes queries accordingly.
+
+### Search Specification
+
+Search is configured via :class:`SearchSpec`, separate from :class:`DocumentSpec`. Each index has a **source** (the table being indexed) and **fields** (column paths). Index names in the spec must match the actual PostgreSQL index names (use `schema.indexname` when the index is not in `public`).
+
+```python
+from forze.application.contracts.search import SearchSpec
+from pydantic import BaseModel
+
+class DocumentReadModel(BaseModel):
+    id: str
+    title: str
+    body: str
+
+search_spec = SearchSpec(
+    namespace="documents",
+    model=DocumentReadModel,
+    indexes={
+        "public.idx_title": {
+            "fields": [{"path": "title"}],
+            "source": "public.documents",
+        },
+        "public.idx_content": {
+            "fields": [
+                {"path": "title", "weight": 2.0},
+                {"path": "body", "weight": 1.0},
+            ],
+            "source": "public.documents",
+        },
+    },
+    default_index="public.idx_title",
+)
+```
+
+### PGroonga
+
+Install and create indexes:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgroonga;
 ```
-
-### Search Index Spec
-
-The `DocumentSearchSpec` maps index names to fields and optional weights:
-
-- `{"idx_title": ("title",)}` — single field, default weight
-- `{"idx_content": {"title": 2, "body": 1}}` — multiple fields with weights
-
-Index names in the spec must match the actual PostgreSQL index names.
-
-### Creating pgroonga Indexes
 
 **Single field:**
 
@@ -190,8 +232,6 @@ CREATE INDEX idx_title ON public.documents
 
 **Multiple fields (array expression):**
 
-The search gateway uses `(ARRAY[field1::text, field2::text, ...])` for multi-field search. Create a matching index:
-
 ```sql
 CREATE INDEX idx_title_body ON public.documents
     USING pgroonga (
@@ -199,40 +239,80 @@ CREATE INDEX idx_title_body ON public.documents
     );
 ```
 
-Ensure the index name and field order match your `DocumentSearchSpec`.
+Ensure index names and field order match your index specification. Each index must specify `source` (the table) in the spec.
 
-## DocumentSpec Configuration
+### Native FTS (GIN + tsvector)
+
+No extension required. Create a tsvector column or expression index:
+
+```sql
+-- Option 1: tsvector column
+ALTER TABLE public.documents ADD COLUMN title_tsv tsvector
+    GENERATED ALWAYS AS (to_tsvector('english', coalesce(title, ''))) STORED;
+CREATE INDEX idx_documents_fts ON public.documents USING gin (title_tsv);
+
+-- Option 2: expression index
+CREATE INDEX idx_documents_fts ON public.documents
+    USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, '')));
+```
+
+For expression indexes, the adapter infers the tsvector expression from the catalog. For generated columns, you can pass `hints={"tsvector_col": "title_tsv"}` in the field spec or index hints.
+
+### Search Groups (FTS ranking)
+
+For FTS, you can define **groups** (ordered by weight) to map fields to ts_rank weights A–D. Groups are part of the index specification:
+
+```python
+# index specification
+{
+    "fields": [
+        {"path": "title", "group": "title"},
+        {"path": "body", "group": "body"},
+    ],
+    "groups": [
+        {"name": "title", "weight": 1.0},
+        {"name": "body", "weight": 0.4},
+    ],
+    "default_group": "title",
+    "source": "public.documents",
+}
+```
+
+## Document Specification
 
 Wire the schema into a :class:`DocumentSpec`:
 
 ```python
-from forze.application.contracts.document import DocumentSpec, DocumentRelationSpec, DocumentModelSpec
+from forze.application.contracts.document import DocumentSpec, DocumentModelSpec
 
 spec = DocumentSpec(
     namespace="documents",
-    relations=DocumentRelationSpec(
-        read="public.documents",
-        write="public.documents",
-        history="public.documents_history",  # optional
-    ),
+    sources={
+        "read": "public.documents",
+        "write": "public.documents",
+        "history": "public.documents_history",  # optional
+    },
     models=DocumentModelSpec(
         read=DocumentReadModel,
         domain=DocumentModel,
         create_cmd=CreateDocumentCmd,
         update_cmd=UpdateDocumentCmd,
     ),
-    search={"idx_title": ("title",), "idx_content": {"title": 2, "body": 1}},  # optional
-    enable_cache=False,
+    cache=None,  # or DocumentCacheSpec for caching
 )
 ```
 
+When `cache` is enabled, the cache port is wired automatically from the execution context: it is resolved via :data:`CacheDepKey` (directly or through a router) and injected into the document adapter when the document port is resolved.
+
+Search is configured separately via :class:`SearchSpec` and resolved from the execution context via :data:`SearchReadDepKey`.
+
 ## Checklist
 
-- [ ] PostgreSQL 14+ with `pgroonga` extension (if using search)
+- [ ] PostgreSQL 14+ with `pgroonga` extension (if using PGroonga search)
 - [ ] Document table with `id`, `rev`, `created_at`, `last_update_at`
 - [ ] Optional: `is_deleted` for soft delete, `number_id`, `creator_id`, `tenant_id`
-- [ ] Relation names in `schema.table` format
+- [ ] Source names in `schema.table` format
 - [ ] Trigger for `rev` bump when using `rev_bump_strategy="database"`
 - [ ] History table and trigger when using `history_write_strategy="database"`
-- [ ] pgroonga indexes matching search spec when using full-text search
-- [ ] Postgres client initialized with DSN before operations
+- [ ] Search indexes (PGroonga or GIN/tsvector) with matching `SearchSpec` and per-index `source`
+- [ ] Postgres client initialized via `postgres_lifecycle_step` before operations
