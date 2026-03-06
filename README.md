@@ -59,7 +59,10 @@ See the [Installation Guide](./docs/INSTALLATION.md) for details.
 
 ### Integrations
 
-- [🐘 PostgreSQL](./docs/integrations/postgres.md) — schema setup, relations, revision handling, history, search
+- [⚡ FastAPI](./docs/integrations/fastapi.md) — prebuilt routers, idempotency, exception handlers
+- [🐘 PostgreSQL](./docs/integrations/postgres.md) — schema setup, sources, revision handling, history, search
+- [🔴 Redis / Valkey](./docs/integrations/redis.md) — cache, counter, idempotency
+- [📦 S3-Compatible Storage](./docs/integrations/s3.md) — object storage (upload, download, list, delete)
 
 ## Versioning
 
