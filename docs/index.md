@@ -41,17 +41,4 @@ uv add 'forze[fastapi,postgres]' --index pyoci=https://pyoci.com/ghcr.io/morzecr
 ```
 
 Authentication is required because the package is hosted in a private registry.
-See the [Installation Guide](./docs/installation.md) for details.
-
-## Documentation
-
-To see the documentation, you can explore `docs/` directory or serve it locally:
-
-```bash
-uv sync --group docs
-uv run mkdocs serve -c
-```
-
-## Versioning
-
-Forze follows [Semantic Versioning (SemVer)](https://semver.org/). Pre-release builds may include experimental APIs and are not guaranteed to be stable.
+See the [Installation Guide](./installation.md) for details.
