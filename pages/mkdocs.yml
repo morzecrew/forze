@@ -9,25 +9,39 @@ theme:
   topbar_sections: false
   show_title: true
   pygments_style:
-    light: shadcn-light
-    dark: github-dark
+    light: github-light
+    dark: dracula
   show_datetime: true
 
 extra_css:
-  - css/extra.css
+  - assets/css/extra.css
 
 plugins:
   - d2
   - search
-  - mkdocstrings
   - pygments
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["../src"]
+          options:
+            show_root_heading: true
+            show_source: false
+            members_order: source
+            filters:
+              - "!^_"
 
 markdown_extensions:
   - admonition
-  - codehilite
+  - pymdownx.blocks.admonition
   - pymdownx.blocks.details
   - pymdownx.blocks.tab
   - pymdownx.blocks.caption
+  - codehilite:
+      guess_lang: false
+      linenums: false
+      anchor_linenums: false
+      force_linenos: false
 
 nav:
   - Home: index.md
@@ -38,3 +52,5 @@ nav:
     - PostgreSQL: integrations/postgres.md
     - Redis: integrations/redis.md
     - S3: integrations/s3.md
+  # - API Reference:
+  #   - Core: api/core.md

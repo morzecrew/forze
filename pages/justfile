@@ -8,8 +8,8 @@ _pwd := justfile_directory()
 _cwd := join(_pwd, "pages")
 
 _d2_dir := join(_cwd, "diagrams")
-_d2_light_build_dir := join(_cwd, "docs", "diagrams", "light")
-_d2_dark_build_dir := join(_cwd, "docs", "diagrams", "dark")
+_d2_light_build_dir := join(_cwd, "docs", "assets", "diagrams", "light")
+_d2_dark_build_dir := join(_cwd, "docs", "assets", "diagrams", "dark")
 _d2_light_flags := "--center"
 _d2_dark_flags := "--theme 200 --center"
 

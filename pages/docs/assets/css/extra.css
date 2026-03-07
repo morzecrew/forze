@@ -29,3 +29,11 @@ article .typography h5 {
 article .typography p {
     margin-top: 1.2rem;
 }
+
+article .codehilite td.linenos {
+    display: none;
+}
+
+.highlight .gp { /* Generic.Prompt */
+    user-select: none;
+}

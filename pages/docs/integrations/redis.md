@@ -111,12 +111,3 @@ The Redis adapters use :class:`forze.utils.codecs.KeyCodec` for key construction
 | Cache | `{namespace}/cache/pointer/{key}`, `{namespace}/cache/body/{key}/{version}` |
 | Counter | `{namespace}[/{suffix}]` |
 | Idempotency | `idempotency/{op}/{key}` |
-
-## Checklist
-
-- [ ] Redis 6+ or Valkey running
-- [ ] `forze[redis]` extra installed
-- [ ] Redis client initialized via `redis_lifecycle_step` before operations
-- [ ] `RedisDepsModule` merged into your deps (e.g. with Postgres deps when using both)
-- [ ] Document `cache` enabled in spec when using document cache
-- [ ] Counter namespaces chosen to avoid collisions

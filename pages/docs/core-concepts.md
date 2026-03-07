@@ -18,8 +18,8 @@ The result: you can swap databases, add caching, or change web frameworks withou
 ## Layered Architecture
 
 <div class="d2-diagram">
-  <img class="d2-light" src="../diagrams/light/layered-architecture.svg" alt="Architecture">
-  <img class="d2-dark" src="../diagrams/dark/layered-architecture.svg" alt="Architecture">
+  <img class="d2-light" src="../assets/diagrams/light/layered-architecture.svg" alt="Architecture">
+  <img class="d2-dark" src="../assets/diagrams/dark/layered-architecture.svg" alt="Architecture">
 </div>
 
 Forze organizes code into three layers. Dependencies flow **inward**: infrastructure depends on application, application depends on domain. The domain layer has no external dependencies.
