@@ -32,10 +32,10 @@ The domain layer holds **business logic and invariants**. It knows nothing about
 
 | Concept | Purpose |
 |---------|---------|
-| **Versioned entities** | Aggregates with revisions, timestamps, identity; updates produce new revisions, not in-place mutation. Supports optimistic concurrency and audit trails. |
-| **Value objects & commands** | Immutable inputs/outputs; read models may differ from domain models. Enables independent evolution of queries and writes. |
-| **Pluggable validation** | Hooks that run on update (previous state, new state, patch). Invariants stay close to the model. |
-| **Mixins** | Reusable concerns (soft delete, naming, numbering) composed without deep inheritance. |
+| **Versioned entities** | Aggregates with revisions, timestamps, identity.<br>Updates produce new revisions, not in-place mutation.<br>Supports optimistic concurrency and audit trails. |
+| **Value objects & commands** | Immutable inputs/outputs.<br>Read models may differ from domain models.<br>Enables independent evolution of queries and writes. |
+| **Pluggable validation** | Hooks that run on update (previous state, new state, patch).<br>Invariants stay close to the model. |
+| **Mixins** | Reusable concerns (soft delete, naming, numbering) composed<br>without deep inheritance. |
 
 **Why it matters:** Business rules live in one place. The domain is testable in isolation. Changes to infrastructure do not ripple into business logic.
 
@@ -192,16 +192,16 @@ flowchart LR
 
 | Contract | Purpose |
 |----------|---------|
-| Document storage | Read, write, search for document aggregates (split into read/write/search ports) |
-| Transaction manager | Begin, commit, rollback; scoped ports participate in active transaction |
-| Document cache | Optional caching for document read models |
-| Blob storage | Store and retrieve files (S3-style) |
-| Counters | Distributed increment (e.g. sequence numbers) |
-| Idempotency | Track and deduplicate requests |
-| Streams | Publish and consume events |
-| Workflows | Orchestrate long-running processes |
-| Tenant context | Ambient tenant identity for multi-tenant routing |
-| Actor context | Ambient actor identity for audit and creator injection |
+| **Document storage** | Read, write, search for document aggregates<br>(split into read/write/search ports) |
+| **Transaction manager** | Begin, commit, rollback; scoped ports participate in active transaction |
+| **Document cache** | Optional caching for document read models |
+| **Blob storage** | Store and retrieve files (S3-style) |
+| **Counters** | Distributed increment (e.g. sequence numbers) |
+| **Idempotency** | Track and deduplicate requests |
+| **Streams** | Publish and consume events |
+| **Workflows** | Orchestrate long-running processes |
+| **Tenant context** | Ambient tenant identity for multi-tenant routing |
+| **Actor context** | Ambient actor identity for audit and creator injection |
 
 The application defines contracts; infrastructure provides adapters that implement them. The dependency plan wires adapters to contracts. Switching from Postgres to Mongo means changing the plan, not the operations.
 
@@ -211,13 +211,11 @@ For document-like aggregates, a **specification** binds together what adapters n
 
 | Spec element | Purpose |
 |--------------|---------|
-| Namespace | Cache key prefix |
-| Storage relations | Read/write/history relation names (tables, views) |
-| Model types | Read model, domain model, create command, update command |
-| Features | Search config, soft delete, caching |
+| **Namespace** | Cache key prefix |
+| **Storage relations** | Read/write/history relation names (tables, views) |
+| **Model types** | Read model, domain model, create command, update command |
+| **Features** | Search config, soft delete, caching |
 
 You define the spec once. Switching adapters means swapping the implementation, not rewriting the spec.
 
 **Why it matters:** Business logic talks to contracts. Infrastructure implements them. Technology choices stay at the edges. Tests stub contracts with in-memory or fake implementations.
-
-Forze gives you a **structural foundation** — concepts and patterns that keep backend code clean, modular, and maintainable as it grows. The specifics may evolve; the ideas endure.
