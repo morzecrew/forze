@@ -9,3 +9,23 @@ html.dark .d2-diagram .d2-light {
 html.dark .d2-diagram .d2-dark {
     display: block;
 }
+
+article .typography h2 {
+    margin-top: 2.2rem;
+}
+  
+article .typography h3 {
+    margin-top: 1.8rem;
+}
+
+article .typography h4 {
+    margin-top: 1.6rem;
+}
+
+article .typography h5 {
+    margin-top: 1.4rem;
+}
+
+article .typography p {
+    margin-top: 1.2rem;
+}
