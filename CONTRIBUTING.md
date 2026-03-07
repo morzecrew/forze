@@ -1,109 +1,175 @@
 # Contributing to Forze
 
-Thank you for your interest in contributing. This document outlines the development workflow, conventions, and how to submit changes.
+Thank you for your interest in contributing to **Forze**. This document describes the development workflow, coding conventions, and contribution guidelines.
 
 ## Prerequisites
 
 - Python 3.13+
-- [uv](https://docs.astral.sh/uv/) (recommended) or another PEP 517–compatible package manager
+- [uv](https://docs.astral.sh/uv/)
 
 ## Development Setup
 
+Clone the repository and install all dependencies, including development tools, documentation dependencies, and optional integrations:
+
 ```bash
+git clone https://github.com/morzecrew/forze
+cd forze
 uv sync --all-groups --all-extras
 ```
 
-This installs core dependencies, dev tools, docs, and optional extras (fastapi, postgres, redis, etc.).
-
 ## Running Tests
+
+Run the full test suite:
 
 ```bash
 just test
 ```
 
-Unit tests only:
+Run only unit tests:
 
 ```bash
 just test tests/unit
 ```
 
-Integration tests (require running services or testcontainers):
+Run integration tests (require running external services or testcontainers):
 
 ```bash
 just test tests/integration
 ```
 
-## Quality Checks
+## Code Quality
 
-Run all checks (types, imports, dead code, dependencies, security):
+Run all quality checks (types, imports, dead code, dependencies, security):
 
 ```bash
 just quality
 ```
 
-Strict mode (fail on any error):
+Strict mode (fail on any issue):
 
 ```bash
 just quality -s
 ```
 
+All checks must pass before submitting a pull request.
+
 ## Commit Messages
 
-Use **Conventional Commits** with a **gitmoji** prefix:
+Commits follow **Conventional Commits** with a **gitmoji** prefix:
 
 ```
 <gitmoji> <type>[scope]: <description>
 ```
 
-**Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`, `revert`
+| Gitmoji | Type | Purpose |
+|---------|---------|---------|
+| ✨ | feat | new features |
+| 🐛 | fix | bug fixes |
+| 📝 | docs | documentation changes |
+| 💄 | style | formatting or style changes |
+| ♻️ | refactor | internal code restructuring |
+| ⚡️ | perf | performance improvements |
+| ✅ | test | test changes |
+| 🔧 | chore | maintenance tasks |
+| 📦 | build | build system changes |
+| 👷 | ci | CI configuration changes |
+| ⏪ | revert | revert a previous commit |
 
-**Gitmoji mapping:** feat → ✨, fix → 🐛, docs → 📝, style → 💄, refactor → ♻️, perf → ⚡️, test → ✅, chore → 🔧, build → 📦, ci → 👷, revert → ⏪
+Examples:
 
-**Examples:**
+```text
+✨ feat(search): add fuzzy match option
+🐛 fix(postgres): correct ts_rank_cd signature
+📝 docs: add S3 integration guide
+```
 
-- `✨ feat(search): add fuzzy match option`
-- `🐛 fix(postgres): correct ts_rank_cd signature`
-- `📝 docs: add S3 integration guide`
+Commits may include an optional body after the subject line. The body should be separated from the subject by a blank line and may contain additional context, rationale, or a list of changes:
 
-Subject line: imperative mood, concise (≤72 chars), no trailing period.
+```text
+✨ feat(search): add fuzzy match option
+
+- implement trigram-based matching
+- add configuration flag for fuzzy mode
+- update search API documentation
+```
+
+Guidelines:
+
+- Use **imperative mood** for the description
+- Keep the subject line concise (≤72 chars)
+- Do not end the subject line with a period
+- If additional context is needed, add a body separated by a blank line
+- Bullet lists are recommended for describing multiple changes
 
 ## Pull Requests
 
-PR titles follow the same format as commit messages. One logical change per PR; squash or rebase as needed before merge.
+Pull request titles follow the same format as commit messages.
 
-## Tests
+Guidelines:
 
-- **Layout:** `tests/unit/` and `tests/integration/`. Mirror `src` structure: `src/pkg/foo/bar.py` → `tests/unit/test_pkg/foo/test_bar.py`
-- **Naming:** Files `test_*.py`, classes `Test*`, functions `test_*`
-- **Unit:** No I/O. Use mocks; prefer `MagicMock(spec=RealClass)`. One `class TestX:` per tested type
-- **Integration:** Use fixtures from `tests/integration/conftest.py`. One scenario per test; isolate data
-- **Markers:** Register new markers in `pyproject.toml` before use
+- Submit **one logical change per pull request**
+- Ensure tests and quality checks pass
+- Rebase or squash commits before merging if needed
+- Update documentation when behavior changes
+
+## Testing Guidelines
+
+Test layout:
+
+```text
+tests/
+  unit/
+  integration/
+```
+
+Mirror the `src` structure when possible:
+
+```text
+src/pkg/foo/bar.py -> tests/unit/test_pkg/foo/test_bar.py
+```
+
+Conventions:
+
+- Test files: `test_*.py`
+- Test classes: `Test*`
+- Test functions: `test_*`
+
+**Unit Tests**
+
+Avoid external i/o. Use mocks when necessary. Prefer `MagicMoc(spec=RealClass)`. One `TestX` class per tested type.
+
+**Integration Tests**
+
+Use fixtures defined in `tests/integration/conftest.py`. One scenario per test. Ensure test data isolation.
+
+**Markers**
+
+New pytest markers must be registered in `pyproject.toml` before use.
 
 ## Changelog
 
-User-relevant changes go in `CHANGELOG.md` under `## [Unreleased]`:
+User-facing changes must be recorded in `CHANGELOG.md` under the `[Unreleased]` section.
 
-- **Added** — New APIs, features, modules
-- **Changed** — Behavior changes, refactors affecting usage
-- **Fixed** — Bug fixes
+Categories:
 
-Exclude: test-only changes, CI/CD, internal tooling, trivial refactors.
+- **Added** — new APIs, features, modules
+- **Changed** — behavior changes, refactors affecting usage
+- **Fixed** — bug fixes
 
-## Documentation
-
-Docs live in `docs/` and are built with MkDocs:
-
-```bash
-uv sync --group docs
-uv run mkdocs serve
-```
-
-Update `mkdocs.yml` when adding or renaming pages.
+Exclude internal changes such as CI updates, test-only changes, or trivial refactors.
 
 ## Release Process
 
-Releases are tag-driven. Pushing `vX.Y.Z` triggers GitHub Actions to publish the package and create a GitHub Release. Update `CHANGELOG.md` with the new version section before tagging.
+Releases are tag-driven.
+
+Creating a tag `vX.Y.Z` triggers GitHub Actions to:
+
+1. Build the package
+2. Publish it to PyPI
+3. Create a GitHub release
+
+Before tagging a release, move the relevant entries from the `[Unreleased]` section to the new version section in `CHANGELOG.md`.
 
 ## Questions
 
-Open an issue or discussion on GitHub for questions about contributing or the codebase.
+If you have questions about contributing or the codebase, please open an issue or start a discussion on GitHub.

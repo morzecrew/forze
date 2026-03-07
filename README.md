@@ -40,12 +40,12 @@ Pre-release builds may include experimental APIs and are not guaranteed to be st
 ## Contributing
 
 Contributions, issues, and feature requests are welcome. 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+See [CONTRIBUTING.md](https://github.com/morzecrew/forze/blob/main/CONTRIBUTING.md) for details.
 
 ## Security
 
-Please report security vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).
+Please report security vulnerabilities privately as described in [SECURITY.md](https://github.com/morzecrew/forze/blob/main/SECURITY.md).
 
 ## License
 
-Forze is licensed under the MIT License - see [LICENSE](./LICENSE) for details.
+Forze is licensed under the MIT License - see [LICENSE](https://github.com/morzecrew/forze/blob/main/LICENSE) for details.
