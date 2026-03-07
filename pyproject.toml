@@ -1,10 +1,28 @@
 [project]
 name = "forze"
 dynamic = ["version"]
+requires-python = ">=3.13,<3.15"
+license = { file = "LICENSE" }
 classifiers = [
     "PyOCI :: Label :: org.opencontainers.image.source :: https://github.com/morzecrew/forze",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
 ]
-requires-python = ">=3.13,<3.15"
+authors = [{ name = "Lev Litvinov", email = "misery7100@gmail.com" }]
+maintainers = [{ name = "Lev Litvinov", email = "misery7100@gmail.com" }]
+keywords = [
+    "architecture",
+    "ddd",
+    "hexagonal",
+    "domain-driven-design",
+    "hexagonal-architecture",
+    "hexa",
+    "framework",
+    "kernel",
+]
 
 # ....................... #
 # Dependencies
@@ -68,8 +86,11 @@ publish-url = "https://pyoci.com/ghcr.io/morzecrew/"
 explicit = true
 
 [project.urls]
+homepage = "https://github.com/morzecrew/forze"
 repository = "https://github.com/morzecrew/forze"
 documentation = "https://github.com/morzecrew/forze/README.md"
+issues = "https://github.com/morzecrew/forze/issues"
+changelog = "https://github.com/morzecrew/forze/blob/main/CHANGELOG.md"
 
 # ....................... #
 # Build
