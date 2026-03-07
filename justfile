@@ -72,15 +72,3 @@ quality strict="false":
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"
-
-
-# ----------------------- #
-# Release
-
-# Publish
-publish username password:
-    uv build
-    uv publish \
-        --publish-url {{ _publish_url }} \
-        --username {{ username }} \
-        --password {{ password }}

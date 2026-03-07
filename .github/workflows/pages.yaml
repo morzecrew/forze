@@ -41,24 +41,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --group docs
 
-      - name: Restore site cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache
-          key: mkdocs-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles('pages/**') }}
-          restore-keys: |
-            mkdocs-${{ runner.os }}-${{ github.ref_name }}-
-            mkdocs-${{ runner.os }}-
-
       - name: Build site
         run: just pages build site
-
-      - name: Save site cache
-        if: success()
-        uses: actions/cache/save@v4
-        with:
-          path: .cache
-          key: mkdocs-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles('pages/**') }}
 
       - name: Upload pages artifact
         id: upload-artifact

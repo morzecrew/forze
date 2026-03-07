@@ -81,13 +81,6 @@ s3 = [
 mongo = ["pymongo>=4.16.0"]
 
 # ....................... #
-# Private index (PyOCI)
-
-[[tool.uv.index]]
-name = "pyoci"
-url = "https://pyoci.com/ghcr.io/morzecrew/"
-publish-url = "https://pyoci.com/ghcr.io/morzecrew/"
-explicit = true
 
 [project.urls]
 homepage = "https://github.com/morzecrew/forze"
