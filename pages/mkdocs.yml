@@ -46,7 +46,13 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Installation: installation.md
-  - Core Concepts: core-concepts.md
+  - Core Concepts:
+    - Overview: core-concepts/index.md
+    - Layered Architecture: core-concepts/layered-architecture.md
+    - Domain Layer: core-concepts/domain-layer.md
+    - Application Layer: core-concepts/application-layer.md
+    - Contracts and Adapters: core-concepts/contracts-adapters.md
+    - Aggregate Specification: core-concepts/aggregate-specification.md
   - Integrations:
     - FastAPI: integrations/fastapi.md
     - PostgreSQL: integrations/postgres.md

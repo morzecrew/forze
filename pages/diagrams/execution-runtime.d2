@@ -1,0 +1,33 @@
+# Execution runtime scope
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+Runtime: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+
+    DepsPlan: |md
+        ### Deps plan
+        What to build
+    |
+
+    LifecyclePlan: |md
+        ### Lifecycle plan
+        Startup / shutdown
+    |
+
+    ExecutionContext: |md
+        ### Execution context
+        Deps + transactions passed to operations
+    |
+}

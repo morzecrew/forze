@@ -1,0 +1,45 @@
+# Operation registry and plan resolution
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+Names: |md
+    ### Operation names
+    get / create / search
+|
+Names.shape: rectangle
+
+Registry: |md
+    ### Registry
+    Name → factory mapping
+|
+Registry.shape: rectangle
+
+Factory: |md
+    ### Factory
+    Builds base operation from context
+|
+Factory.shape: rectangle
+
+Plan: |md
+    ### Plan
+    Wraps with guards, effects, tx
+|
+Plan.shape: rectangle
+
+Composed: |md
+    ### Composed operation
+|
+Composed.shape: rectangle
+Composed.style: {
+    stroke: "#2e7d32"
+}
+
+Names -> Registry -> Factory -> Plan -> Composed

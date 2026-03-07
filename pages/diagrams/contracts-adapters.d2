@@ -1,0 +1,43 @@
+# Contracts and adapters (hexagonal)
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+Application: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+
+    Ops: |md
+        ### Operations
+        Resolve contracts via context
+    |
+}
+
+Infrastructure: {
+    shape: rectangle
+
+    Document: |md
+        Document → Postgres
+    |
+
+    Cache: |md
+        Cache → Redis
+    |
+
+    Blob: |md
+        Blob → S3
+    |
+}
+
+Document -> Application: implements
+Cache -> Application: implements
+Blob -> Application: implements

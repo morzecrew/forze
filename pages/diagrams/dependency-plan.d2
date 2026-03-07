@@ -1,0 +1,42 @@
+# Dependency plan: modules to container
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+ModuleA: |md
+    ### Module A
+    Base dependencies
+|
+ModuleA.shape: rectangle
+
+ModuleB: |md
+    ### Module B
+    Database
+|
+ModuleB.shape: rectangle
+
+ModuleC: |md
+    ### Module C
+    Cache
+|
+ModuleC.shape: rectangle
+
+Container: |md
+    ### Dependency container
+    Clients, ports, services
+|
+Container.shape: rectangle
+Container.style: {
+    stroke: "#2e7d32"
+}
+
+ModuleA -> Container
+ModuleB -> Container
+ModuleC -> Container
