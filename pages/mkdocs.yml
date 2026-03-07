@@ -1,0 +1,43 @@
+site_name: Forze
+site_url: https://morzecrew.github.io/forze
+repo_url: https://github.com/morzecrew/forze
+
+theme:
+  name: shadcn
+  icon: null
+  show_stargazers: false
+  topbar_sections: false
+  show_title: true
+  pygments_style:
+    light: shadcn-light
+    dark: github-dark
+  show_datetime: true
+
+plugins:
+  - search
+  - mermaid2
+  - mkdocstrings
+  - pygments
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - pymdownx.blocks.details
+  - pymdownx.blocks.tab
+  - pymdownx.blocks.caption
+  # - pymdownx.highlight
+  # - pymdownx.superfences
+  # - pymdownx.inlinehilite
+  # - pymdownx.tabbed:
+  #     alternate_style: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Core Concepts: core-concepts.md
+  - Integrations:
+    - Overview: integrations/index.md
+    - FastAPI: integrations/fastapi.md
+    - PostgreSQL: integrations/postgres.md
+    - Redis: integrations/redis.md
+    - S3: integrations/s3.md

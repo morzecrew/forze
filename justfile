@@ -68,3 +68,15 @@ publish username password:
         --publish-url {{ _publish_url }} \
         --username {{ username }} \
         --password {{ password }}
+
+# ----------------------- #
+# Docs
+
+[working-directory("pages")]
+serve-pages:
+    uv run mkdocs serve --livereload
+
+
+[working-directory("pages")]
+build-pages path="../site":
+    uv run mkdocs build -d {{ path }}

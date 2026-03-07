@@ -67,5 +67,8 @@
     },
     "[github-actions-workflow]": {
         "editor.tabSize": 2,
+    },
+    "[markdown]": {
+        "editor.tabSize": 4,
     }
 }
