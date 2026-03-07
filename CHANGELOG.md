@@ -13,11 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `register_scalar_docs`: parameter `version` renamed to `scalar_version`; docs page title now uses `app.title`.
+- ...
 
 ### Fixed
 
 - ...
+
+## [0.1.7] - 2026-03-08
+
+### Changed
+
+- Package is now published on PyPI instead of OCI (ghcr.io).
+- `register_scalar_docs`: parameter `version` renamed to `scalar_version`; docs page title now uses `app.title`.
 
 ## [0.1.6] - 2026-03-04
 
@@ -140,7 +147,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.6...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/morzecrew/forze/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/morzecrew/forze/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/morzecrew/forze/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/morzecrew/forze/compare/v0.1.3...v0.1.4
