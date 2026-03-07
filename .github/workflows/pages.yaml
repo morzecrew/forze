@@ -46,7 +46,7 @@ jobs:
             mkdocs-${{ runner.os }}-
 
       - name: Build site
-        run: just build-pages site
+        run: just pages build "site"
 
       - name: Save site cache
         if: success()
