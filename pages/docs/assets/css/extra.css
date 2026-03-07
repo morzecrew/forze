@@ -34,6 +34,6 @@ article .codehilite td.linenos {
     display: none;
 }
 
-.highlight .gp { /* Generic.Prompt */
-    user-select: none;
+html {
+    scrollbar-gutter: stable;
 }
