@@ -1,0 +1,17 @@
+set quiet
+set shell := ["bash", "-cu"]
+
+# ----------------------- #
+# Paths / constants
+
+_pwd := justfile_directory()
+
+# ----------------------- #
+
+# Serve the documentation with live reload
+serve:
+    uv run mkdocs serve --livereload
+
+# Build the documentation
+build path="site":
+    uv run mkdocs build -d {{ _pwd }}/{{ path }}

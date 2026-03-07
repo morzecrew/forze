@@ -2,6 +2,12 @@ set quiet
 set shell := ["bash", "-cu"]
 
 # ----------------------- #
+# Modules
+
+# Supported commands: serve, build
+mod pages "pages/justfile"
+
+# ----------------------- #
 # Paths / constants
 
 _uv_sync := "uv sync --all-groups --all-extras > /dev/null 2>&1"
@@ -11,8 +17,19 @@ _publish_url := "https://pyoci.com/ghcr.io/morzecrew/"
 # ----------------------- #
 # Default command
 
+[no-exit-message]
 _default:
-    just --list
+    echo "Available commands:"
+    echo
+    just --color=always --list | sed '1d; /^\s*pages\b/d'
+    echo
+    echo "Pages module commands:"
+    echo
+    just --color=always --list pages | sed '1d'
+
+[private]
+help:
+    just
 
 # ----------------------- #
 # Helpers
@@ -68,15 +85,3 @@ publish username password:
         --publish-url {{ _publish_url }} \
         --username {{ username }} \
         --password {{ password }}
-
-# ----------------------- #
-# Docs
-
-[working-directory("pages")]
-serve-pages:
-    uv run mkdocs serve --livereload
-
-
-[working-directory("pages")]
-build-pages path="../site":
-    uv run mkdocs build -d {{ path }}
