@@ -26,6 +26,6 @@ class ActorContextPort(Protocol):
         """
         ...
 
-    def set(self, actor_id: UUID) -> None:
+    def set(self, actor_id: UUID) -> None:  # noqa: F841
         """Bind the current actor identifier for the ambient context."""
         ...

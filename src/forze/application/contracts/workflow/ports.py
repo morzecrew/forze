@@ -20,7 +20,7 @@ class WorkflowPort(Protocol):
         name: str,
         id: str,  # ? UUID?
         args: Sequence[Any],
-        queue: Optional[str] = None,
+        queue: Optional[str] = None,  # noqa: F841
     ) -> Awaitable[None]:
         """Start a new workflow instance.
 
@@ -34,7 +34,7 @@ class WorkflowPort(Protocol):
     def signal(
         self,
         id: str,  # ? UUID?
-        signal: str,
+        signal: str,  # noqa: F841
         data: Sequence[JsonDict],  # ? support for pydantic models ?
     ) -> Awaitable[None]:
         """Send a signal to an existing workflow instance.
