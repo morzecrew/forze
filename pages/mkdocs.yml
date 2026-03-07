@@ -12,14 +12,13 @@ theme:
     light: shadcn-light
     dark: github-dark
   show_datetime: true
-  
+
 extra_css:
   - css/extra.css
 
 plugins:
   - d2
   - search
-  - mermaid2
   - mkdocstrings
   - pygments
 
@@ -29,18 +28,12 @@ markdown_extensions:
   - pymdownx.blocks.details
   - pymdownx.blocks.tab
   - pymdownx.blocks.caption
-  # - pymdownx.highlight
-  # - pymdownx.superfences
-  # - pymdownx.inlinehilite
-  # - pymdownx.tabbed:
-  #     alternate_style: true
 
 nav:
   - Home: index.md
   - Installation: installation.md
   - Core Concepts: core-concepts.md
   - Integrations:
-    - Overview: integrations/index.md
     - FastAPI: integrations/fastapi.md
     - PostgreSQL: integrations/postgres.md
     - Redis: integrations/redis.md

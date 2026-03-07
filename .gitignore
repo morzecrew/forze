@@ -206,3 +206,4 @@ marimo/_lsp/
 __marimo__/
 
 src/forze/_version.py
+pages/docs/diagrams
