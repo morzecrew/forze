@@ -46,7 +46,7 @@ jobs:
             mkdocs-${{ runner.os }}-
 
       - name: Build site
-        run: just pages build "site"
+        run: just pages build site
 
       - name: Save site cache
         if: success()
@@ -59,7 +59,7 @@ jobs:
         id: upload-artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: pages/site
+          path: site
   
   deploy:
     name: Deploy site to GitHub Pages
