@@ -1,0 +1,11 @@
+.d2-diagram .d2-dark {
+    display: none;
+}
+
+html.dark .d2-diagram .d2-light {
+    display: none;
+}
+
+html.dark .d2-diagram .d2-dark {
+    display: block;
+}

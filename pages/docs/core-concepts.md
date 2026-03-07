@@ -17,32 +17,12 @@ The result: you can swap databases, add caching, or change web frameworks withou
 
 ## Layered Architecture
 
+<div class="d2-diagram">
+  <img class="d2-light" src="../diagrams/light/layered-architecture.svg" alt="Architecture">
+  <img class="d2-dark" src="../diagrams/dark/layered-architecture.svg" alt="Architecture">
+</div>
+
 Forze organizes code into three layers. Dependencies flow **inward**: infrastructure depends on application, application depends on domain. The domain layer has no external dependencies.
-
-```mermaid
----
-config:
-  flowchart:
-    subGraphTitleMargin:
-      top: 10
-      bottom: 30
----
-flowchart LR
-    subgraph Infra["<b>Infrastructure</b> (adapters)"]
-        I["Databases, caches, storage, web frameworks, workflows"]
-    end
-
-    subgraph App["<b>Application</b> (operations, orchestration, contracts)"]
-        A["Use cases, execution runtime, dependency resolution"]
-    end
-
-    subgraph Dom["<b>Domain</b> (models, invariants, validation)"]
-        D["Business rules, value objects, no infrastructure"]
-    end
-
-    Infra -->|implements| App
-    App -->|uses| Dom
-```
 
 **Why it matters:** Each layer has a clear responsibility. Domain logic stays pure and testable. Application orchestrates without knowing storage details. Infrastructure can be swapped or extended without touching business rules.
 

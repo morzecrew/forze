@@ -575,6 +575,7 @@ dev = [
 ]
 docs = [
     { name = "mkdocs" },
+    { name = "mkdocs-d2-plugin" },
     { name = "mkdocs-material" },
     { name = "mkdocs-mermaid2-plugin" },
     { name = "mkdocs-pygments" },
@@ -629,6 +630,7 @@ dev = [
 ]
 docs = [
     { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs-d2-plugin", specifier = ">=1.6.0" },
     { name = "mkdocs-material", specifier = ">=9.7.4" },
     { name = "mkdocs-mermaid2-plugin", specifier = ">=1.2.3" },
     { name = "mkdocs-pygments", specifier = ">=0.1.0" },
@@ -1027,6 +1029,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/c0/f641843de3f612a6b48253f39244165acff36657a91cc903633d456ae1ac/mkdocs_autorefs-1.4.4.tar.gz", hash = "sha256:d54a284f27a7346b9c38f1f852177940c222da508e66edc816a0fa55fc6da197", size = 56588, upload-time = "2026-02-10T15:23:55.105Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/28/de/a3e710469772c6a89595fc52816da05c1e164b4c866a89e3cb82fb1b67c5/mkdocs_autorefs-1.4.4-py3-none-any.whl", hash = "sha256:834ef5408d827071ad1bc69e0f39704fa34c7fc05bc8e1c72b227dfdc5c76089", size = 25530, upload-time = "2026-02-10T15:23:53.817Z" },
+]
+
+[[package]]
+name = "mkdocs-d2-plugin"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mkdocs" },
+    { name = "packaging" },
+    { name = "pydantic" },
+    { name = "pymdown-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/5e/633f6898f323e5f032415baf18095bd24958986bfd06e8f23e5588a2af5d/mkdocs_d2_plugin-1.6.0.tar.gz", hash = "sha256:42c1f2dc2ee9fa898c620e011f226de0d90ab4cd2640560199d7f919589a591b", size = 8068, upload-time = "2024-12-16T11:39:49.956Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/e1/a9c15e4c351c9c0a7c35ea0e661df728d419838dcf99b078513f807c188d/mkdocs_d2_plugin-1.6.0-py3-none-any.whl", hash = "sha256:7fef28dee4e01595db712ddc0853418b6834ff955f42b2bd2f9fad15c217c3fc", size = 8547, upload-time = "2024-12-16T11:39:48.784Z" },
 ]
 
 [[package]]

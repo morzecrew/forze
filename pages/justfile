@@ -5,6 +5,13 @@ set shell := ["bash", "-cu"]
 # Paths / constants
 
 _pwd := justfile_directory()
+_cwd := join(_pwd, "pages")
+
+_d2_dir := join(_cwd, "diagrams")
+_d2_light_build_dir := join(_cwd, "docs", "diagrams", "light")
+_d2_dark_build_dir := join(_cwd, "docs", "diagrams", "dark")
+_d2_light_flags := "--center"
+_d2_dark_flags := "--theme 200 --center"
 
 # ----------------------- #
 
@@ -13,5 +20,14 @@ serve:
     uv run mkdocs serve --livereload
 
 # Build the documentation
-build path="site":
+build path="site": diagrams
     uv run mkdocs build -d {{ _pwd }}/{{ path }}
+
+diagrams:
+    mkdir -p {{ _d2_light_build_dir }}
+    mkdir -p {{ _d2_dark_build_dir }}
+
+    for f in {{ _d2_dir }}/*.d2; do \
+        d2 "$f" "{{ _d2_light_build_dir }}/$(basename "${f%.d2}.svg")" {{ _d2_light_flags }}; \
+        d2 "$f" "{{ _d2_dark_build_dir }}/$(basename "${f%.d2}.svg")" {{ _d2_dark_flags }}; \
+    done

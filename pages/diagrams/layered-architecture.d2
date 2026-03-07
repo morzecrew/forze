@@ -1,0 +1,40 @@
+# Config
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+# Diagram
+
+Infra: |md
+    ### Infrastructure (adapters)
+    Databases, caches, storage, web frameworks, workflows
+|
+Infra.shape: rectangle
+
+App: |md
+    ### Application (operations, orchestration, contracts)
+    Use cases, execution runtime, dependency resolution
+|
+App.shape: rectangle
+
+Dom: |md
+    ### Domain (models, invariants, validation)
+    Business rules, value objects, no infrastructure
+|
+Dom.shape: rectangle
+
+Infra -> App: implements
+App -> Dom: uses
+
+# Hidden edges (for better readability)
+# 
+Dom -> Infra: {
+    style.opacity: 0
+}

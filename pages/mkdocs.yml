@@ -12,8 +12,12 @@ theme:
     light: shadcn-light
     dark: github-dark
   show_datetime: true
+  
+extra_css:
+  - css/extra.css
 
 plugins:
+  - d2
   - search
   - mermaid2
   - mkdocstrings
