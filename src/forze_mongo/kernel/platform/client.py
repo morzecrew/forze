@@ -344,7 +344,7 @@ class MongoClient:
         if limit is not None:
             cur = cur.limit(limit)
 
-        docs = await cur.to_list(length=limit or 0)
+        docs = await cur.to_list(length=limit)
         return docs
 
     # ....................... #
@@ -432,3 +432,16 @@ class MongoClient:
         session = self.__current_session()
         res = await coll.delete_many(filter, session=session)
         return int(res.deleted_count)
+
+    # ....................... #
+
+    async def count(
+        self,
+        coll: AsyncCollection[Any],
+        filter: Mapping[str, Any],
+    ) -> int:
+        """Count documents matching ``filter``."""
+
+        session = self.__current_session()
+        res = await coll.count_documents(filter, session=session)
+        return int(res)
