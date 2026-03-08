@@ -1,4 +1,4 @@
-"""Unit tests for document port contracts (DocumentReadPort, DocumentWritePort, DocumentPort).
+"""Unit tests for document port contracts (DocumentReadPort, DocumentWritePort).
 
 Exercises the protocol through InMemoryDocumentPort and through direct protocol
 method calls to improve coverage of ports.py.
@@ -8,8 +8,8 @@ import pytest
 from uuid import uuid4
 
 from forze.application.contracts.document import (
-    DocumentPort,
     DocumentReadPort,
+    DocumentWritePort,
 )
 from forze.application.contracts.query import QueryFilterExpression
 from forze.domain.models import CreateDocumentCmd
@@ -28,11 +28,7 @@ class TestDocumentPortProtocolConformance:
 
     def test_in_memory_port_is_document_write_port(self) -> None:
         port = InMemoryDocumentPort()
-        assert isinstance(port, DocumentPort)
-
-    def test_in_memory_port_is_document_port(self) -> None:
-        port = InMemoryDocumentPort()
-        assert isinstance(port, DocumentPort)
+        assert isinstance(port, DocumentWritePort)
 
 
 class TestDocumentReadPortViaStub:

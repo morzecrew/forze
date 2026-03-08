@@ -129,51 +129,59 @@ class TestExecutionContextConvenienceMethods:
         result = ctx.search(spec)
         assert result is not None
 
-    def test_doc_resolves_without_cache(self) -> None:
-
-        from forze.application.contracts.document import DocumentDepKey, DocumentSpec
+    def test_doc_read_resolves_without_cache(self) -> None:
+        from forze.application.contracts.document import (
+            DocumentReadDepKey,
+            DocumentSpec,
+        )
         from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
         spec = DocumentSpec(
             namespace="test",
-            sources={"read": "r", "write": "w"},
-            models={
-                "read": ReadDocument,
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": CreateDocumentCmd,
+            read={"source": "r", "model": ReadDocument},
+            write={
+                "source": "w",
+                "models": {
+                    "domain": Document,
+                    "create_cmd": CreateDocumentCmd,
+                    "update_cmd": CreateDocumentCmd,
+                },
             },
-            cache=None,
         )
 
-        def doc_factory(ctx, s, cache=None):
+        def doc_read_factory(ctx, s, cache=None):
             return object()
 
-        deps = Deps(deps={DocumentDepKey: doc_factory})
+        deps = Deps(deps={DocumentReadDepKey: doc_read_factory})
         ctx = ExecutionContext(deps=deps)
-        result = ctx.doc(spec)
+        result = ctx.doc_read(spec)
         assert result is not None
 
-    def test_doc_resolves_with_cache_enabled(self) -> None:
+    def test_doc_read_resolves_with_cache_enabled(self) -> None:
         from datetime import timedelta
 
         from forze.application.contracts.cache import CacheDepKey
-        from forze.application.contracts.document import DocumentDepKey, DocumentSpec
+        from forze.application.contracts.document import (
+            DocumentReadDepKey,
+            DocumentSpec,
+        )
         from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
         spec = DocumentSpec(
             namespace="test",
-            sources={"read": "r", "write": "w"},
-            models={
-                "read": ReadDocument,
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": CreateDocumentCmd,
+            read={"source": "r", "model": ReadDocument},
+            write={
+                "source": "w",
+                "models": {
+                    "domain": Document,
+                    "create_cmd": CreateDocumentCmd,
+                    "update_cmd": CreateDocumentCmd,
+                },
             },
             cache={"enabled": True, "ttl": timedelta(seconds=60)},
         )
 
-        def doc_factory(ctx, s, cache=None):
+        def doc_read_factory(ctx, s, cache=None):
             return object()
 
         def cache_factory(ctx, s):
@@ -181,10 +189,10 @@ class TestExecutionContextConvenienceMethods:
 
         deps = Deps(
             deps={
-                DocumentDepKey: doc_factory,
+                DocumentReadDepKey: doc_read_factory,
                 CacheDepKey: cache_factory,
             }
         )
         ctx = ExecutionContext(deps=deps)
-        result = ctx.doc(spec)
+        result = ctx.doc_read(spec)
         assert result is not None

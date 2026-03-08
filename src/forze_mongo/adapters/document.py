@@ -11,7 +11,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.cache import CachePort
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentReadPort, DocumentWritePort
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -34,7 +34,9 @@ U = TypeVar("U", bound=BaseDTO)
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
+class MongoDocumentAdapter(
+    DocumentReadPort[R], DocumentWritePort[R, D, C, U], TxScopedPort
+):
     read_gw: MongoReadGateway[R]
     write_gw: Optional[MongoWriteGateway[D, C, U]] = None
     cache: Optional[CachePort] = None
@@ -45,7 +47,10 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.write_gw is not None and self.write_gw.client is not self.read_gw.client:
+        if (
+            self.write_gw is not None
+            and self.write_gw.client is not self.read_gw.client
+        ):
             raise CoreError("Write and read gateways must use the same client")
 
     # ....................... #

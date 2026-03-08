@@ -4,7 +4,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentWritePort
 from forze.base.primitives import utcnow
 
 from .model import (
@@ -20,7 +20,7 @@ from .model import (
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OutboxService:
-    doc: DocumentPort[
+    doc: DocumentWritePort[
         ReadOutboxEvent, OutboxEvent, CreateOutboxEventCmd, UpdateOutboxEventCmd
     ]
 

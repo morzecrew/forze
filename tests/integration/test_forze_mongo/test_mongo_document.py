@@ -38,17 +38,16 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     ctx = ExecutionContext(deps=deps)
     spec = DocumentSpec(
         namespace="my_docs_ns",
-        sources={
-            "read": collection,
-            "write": collection,
-            "history": history_collection,
+        read={"source": collection, "model": MyReadDoc},
+        write={
+            "source": collection,
+            "models": {
+                "domain": MyDoc,
+                "create_cmd": MyCreateDoc,
+                "update_cmd": MyUpdateDoc,
+            },
         },
-        models={
-            "domain": MyDoc,
-            "read": MyReadDoc,
-            "create_cmd": MyCreateDoc,
-            "update_cmd": MyUpdateDoc,
-        },
+        history={"source": history_collection},
     )
 
     factory = mongo_document_configurable(

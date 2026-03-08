@@ -1,8 +1,9 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Any, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final, runtime_checkable
 
 import attrs
+from pydantic import BaseModel
 
 from ..deps import DepKey, DepRouter
 from .ports import SearchReadPort, SearchWritePort
@@ -13,6 +14,10 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
+M = TypeVar("M", bound=BaseModel)
+
+# ....................... #
+
 
 @runtime_checkable
 class SearchReadDepPort(Protocol):
@@ -21,8 +26,8 @@ class SearchReadDepPort(Protocol):
     def __call__(
         self,
         context: "ExecutionContext",
-        spec: SearchSpec[Any],
-    ) -> SearchReadPort[Any]: ...
+        spec: SearchSpec[M],
+    ) -> SearchReadPort[M]: ...
 
 
 # ....................... #
@@ -35,8 +40,8 @@ class SearchWriteDepPort(Protocol):
     def __call__(
         self,
         context: "ExecutionContext",
-        spec: SearchSpec[Any],
-    ) -> SearchWritePort[Any]: ...
+        spec: SearchSpec[M],
+    ) -> SearchWritePort[M]: ...
 
 
 # ....................... #

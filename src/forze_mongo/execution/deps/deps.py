@@ -4,8 +4,8 @@ from typing import Any, Optional
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
-    DocumentDepPort,
-    DocumentPort,
+    DocumentConformity,
+    DocumentDepConformity,
     DocumentSpec,
 )
 from forze.application.contracts.tx import TxManagerDepPort, TxManagerPort
@@ -27,21 +27,24 @@ def mongo_document_configurable(
 ):
     """Return a :class:`DocumentDepPort` factory with configurable strategies."""
 
-    @conforms_to(DocumentDepPort)
+    @conforms_to(DocumentDepConformity)
     def mongo_document(
         context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: Optional[CachePort] = None,
-    ) -> DocumentPort[Any, Any, Any, Any]:
-        read = read_gw(context, spec.sources["read"], spec.models["read"])
-        write = doc_write_gw(
-            context,
-            spec.sources["write"],
-            spec.models,
-            spec.sources.get("history"),
-            rev_bump_strategy=rev_bump_strategy,
-            history_write_strategy=history_write_strategy,
-        )
+    ) -> DocumentConformity:
+        read = read_gw(context, spec.read)
+
+        write = None
+
+        if spec.write is not None:
+            write = doc_write_gw(
+                context,
+                spec.write,
+                spec.history,
+                rev_bump_strategy=rev_bump_strategy,
+                history_write_strategy=history_write_strategy,
+            )
 
         return MongoDocumentAdapter(read_gw=read, write_gw=write, cache=cache)
 
@@ -55,4 +58,5 @@ def mongo_document_configurable(
 def mongo_txmanager(context: ExecutionContext) -> TxManagerPort:
     """Build a Mongo-backed transaction manager for the execution context."""
     client = context.dep(MongoClientDepKey)
+
     return MongoTxManagerAdapter(client=client)

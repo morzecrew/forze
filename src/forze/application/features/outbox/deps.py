@@ -26,7 +26,7 @@ OutboxBuffer = ContextualBuffer[CreateOutboxEventCmd]()
 
 
 def build_outbox_service(ctx: ExecutionContext, spec: OutboxSpec) -> OutboxService:
-    d = ctx.doc(spec)
+    d = ctx.doc_write(spec)
 
     return OutboxService(doc=d)
 

@@ -4,46 +4,79 @@ require_redis()
 
 # ....................... #
 
-from typing import (
-    AsyncIterator,
-    Final,
-    NotRequired,
-    Optional,
-    Sequence,
-    TypedDict,
-    final,
-)
+from datetime import datetime, timedelta
+from typing import AsyncIterator, Final, Optional, Sequence, final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.stream import StreamEvent, StreamPort
-from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_dump, pydantic_validate
-from forze.utils.codecs import JsonCodec, TextCodec
+from forze.application.contracts.stream import (
+    StreamGroupPort,
+    StreamMessage,
+    StreamReadPort,
+    StreamWritePort,
+)
+from forze.base.errors import CoreError
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
-#! TODO: add tenant context support
 
-# make var names fully private ("__" prefix)
-PAYLOAD_KEY: Final[str] = "data"
-TYPE_KEY: Final[str] = "t"
-TS_KEY: Final[str] = "ts"
-KEY_KEY: Final[str] = "k"
+_F_PAYLOAD: Final[str] = "payload"
+_F_TYPE: Final[str] = "type"
+_F_TIMESTAMP: Final[str] = "timestamp"
+_F_KEY: Final[str] = "key"
 
 # ....................... #
 
 
 @final
-class _Payload(TypedDict):
-    """Payload as sent to Redis (data is serialized bytes)."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisStreamCodec[M: BaseModel]:
+    model: type[M]
 
-    data: bytes
-    t: NotRequired[str]
-    ts: NotRequired[int]
-    k: NotRequired[str]
+    # ....................... #
+
+    def encode(
+        self,
+        payload: M,
+        *,
+        type: Optional[str] = None,
+        key: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> dict[str, str]:
+        data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
+
+        if type is not None:
+            data[_F_TYPE] = type
+
+        if key is not None:
+            data[_F_KEY] = key
+
+        if timestamp is not None:
+            data[_F_TIMESTAMP] = timestamp.isoformat()
+
+        return data
+
+    # ....................... #
+
+    def decode(self, stream: str, id: str, raw_data: dict[bytes, bytes]):
+        decoded = {k.decode("utf-8"): v.decode("utf-8") for k, v in raw_data.items()}
+        payload_raw = decoded.get(_F_PAYLOAD)
+
+        if payload_raw is None:
+            raise CoreError(f"Redis stream message '{id}' in '{stream}' has no payload")
+
+        timestamp_raw = decoded.get(_F_TIMESTAMP)
+
+        return StreamMessage(
+            stream=stream,
+            id=id,
+            payload=self.model.model_validate_json(payload_raw),
+            type=decoded.get(_F_TYPE),
+            key=decoded.get(_F_KEY),
+            timestamp=datetime.fromisoformat(timestamp_raw) if timestamp_raw else None,
+        )
 
 
 # ....................... #
@@ -51,221 +84,123 @@ class _Payload(TypedDict):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamAdapter[M: BaseModel](StreamPort[M]):
+class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
     client: RedisClient
-    model: type[M]
-
-    # Non initable fields
-    json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
-    text_codec: TextCodec = attrs.field(factory=TextCodec, init=False)
-
-    # Defaults (overrideable)
-    maxlen: int = 2000
-    approx: bool = True
-
-    # ....................... #
-
-    async def publish(
-        self,
-        stream: str,
-        payload: M | JsonDict,
-        *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        ts: Optional[int] = None,
-        id: str = "*",
-        maxlen: Optional[int] = None,
-        approx: Optional[bool] = None,
-    ) -> str:
-        if isinstance(payload, BaseModel):
-            payload = pydantic_dump(payload)
-
-        sp = _Payload(data=self.json_codec.dumps(payload))
-
-        if type is not None:
-            sp[TYPE_KEY] = type
-
-        if ts is not None:
-            sp[TS_KEY] = ts
-
-        if key is not None:
-            sp[KEY_KEY] = key
-
-        use_maxlen = maxlen or self.maxlen
-        use_approx = approx or self.approx
-
-        return await self.client.xadd(
-            stream,
-            dict(sp),
-            id=id,
-            maxlen=use_maxlen,
-            approx=use_approx,
-        )
-
-    # ....................... #
-
-    def __raw_to_events(
-        self,
-        raw: list[tuple[str, list[tuple[str, dict[bytes, bytes]]]]],
-    ) -> list[StreamEvent[M]]:
-        events: list[StreamEvent[M]] = []
-
-        key_data = self.text_codec.dumps(PAYLOAD_KEY)
-        key_t = self.text_codec.dumps(TYPE_KEY)
-        key_ts = self.text_codec.dumps(TS_KEY)
-        key_k = self.text_codec.dumps(KEY_KEY)
-
-        for s, msgs in raw:
-            for msg_id, data in msgs:
-                if key_data not in data:
-                    continue
-
-                decoded = self.json_codec.loads(data[key_data])
-                data_model = pydantic_validate(self.model, decoded)
-                type_ = self.text_codec.loads(data[key_t]) if key_t in data else None
-                ts = (
-                    int(self.text_codec.loads(data[key_ts])) if key_ts in data else None
-                )
-                k = self.text_codec.loads(data[key_k]) if key_k in data else None
-
-                events.append(
-                    StreamEvent(
-                        stream=s,
-                        id=msg_id,
-                        type=type_,
-                        timestamp=ts,
-                        key=k,
-                        data=data_model,
-                    )
-                )
-
-        return events
+    codec: RedisStreamCodec[M]
 
     # ....................... #
 
     async def read(
         self,
-        streams: dict[str, str],
+        stream_mapping: dict[str, str],
         *,
-        count: Optional[int] = None,
-        block_ms: Optional[int] = None,  #! use timedelta
-    ) -> list[StreamEvent[M]]:
-        res = await self.client.xread(streams, count=count, block_ms=block_ms)
+        limit: Optional[int] = None,
+        timeout: Optional[timedelta] = None,
+    ) -> list[StreamMessage[M]]:
+        raw = await self.client.xread(
+            stream_mapping,
+            count=limit,
+            block_ms=int(timeout.total_seconds() * 1000) if timeout else None,
+        )
 
-        return self.__raw_to_events(res)
+        out: list[StreamMessage[M]] = []
+
+        for stream, entries in raw:
+            for msg_id, fields in entries:
+                out.append(self.codec.decode(stream, msg_id, fields))
+
+        return out
 
     # ....................... #
 
-    async def subscribe(
+    async def tail(
         self,
-        stream: str,
+        stream_mapping: dict[str, str],
         *,
-        start_id: str = "$",
-        block_ms: int = 5000,  #! use timedelta
-        count: int = 200,
-    ) -> AsyncIterator[StreamEvent[M]]:
-        last_id = start_id
+        timeout: Optional[timedelta] = None,
+    ) -> AsyncIterator[StreamMessage[M]]:
+        cursor = dict(stream_mapping)
 
         while True:
-            events = await self.read(
-                streams={stream: last_id},
-                count=count,
-                block_ms=block_ms,
-            )
+            messages = await self.read(cursor, timeout=timeout)
 
-            if not events:
-                continue
-
-            for ev in events:
-                yield ev
-
-                last_id = ev["id"]
+            for m in messages:
+                cursor[m["stream"]] = m["id"]
+                yield m
 
     # ....................... #
 
-    async def trim(
+    async def append(
         self,
         stream: str,
+        payload: M,
         *,
-        maxlen: int,
-        approx: bool = True,
+        type: Optional[str] = None,
+        key: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> str:
+        data = self.codec.encode(payload, type=type, key=key, timestamp=timestamp)
+
+        return await self.client.xadd(stream, data)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
+    client: RedisClient
+    codec: RedisStreamCodec[M]
+
+    # ....................... #
+
+    async def read(
+        self,
+        group: str,
+        consumer: str,
+        stream_mapping: dict[str, str],
+        *,
         limit: Optional[int] = None,
-    ) -> int:
-        return await self.client.xtrim_maxlen(
-            stream,
-            maxlen,
-            approx=approx,
-            limit=limit,
+        timeout: Optional[timedelta] = None,
+    ) -> list[StreamMessage[M]]:
+        raw = await self.client.xgroup_read(
+            group=group,
+            consumer=consumer,
+            streams=stream_mapping,
+            count=limit,
+            block_ms=int(timeout.total_seconds() * 1000) if timeout else None,
+            noack=True,
         )
 
+        out: list[StreamMessage[M]] = []
+
+        for stream, entries in raw:
+            for msg_id, fields in entries:
+                out.append(self.codec.decode(stream, msg_id, fields))
+
+        return out
+
     # ....................... #
 
-    async def delete(self, stream: str, ids: Sequence[str]) -> int:
-        return await self.client.xdel(stream, ids)
-
-    # ....................... #
-
-    async def ensure_group(
+    async def tail(
         self,
-        stream: str,
-        group: str,
-        *,
-        start_id: str = "0-0",
-        mkstream: bool = True,
-        ignore_busy: bool = True,
-    ) -> bool:
-        try:
-            return await self.client.xgroup_create(
-                stream, group, id=start_id, mkstream=mkstream
-            )
-
-        except Exception as e:
-            msg = str(e)
-
-            if ignore_busy and "busy" in msg.lower():
-                return False
-
-            raise
-
-    # ....................... #
-
-    async def read_group(
-        self,
-        stream: str,
         group: str,
         consumer: str,
+        stream_mapping: dict[str, str],
         *,
-        start_id: str = ">",
-        block_ms: Optional[int] = None,  #! use timedelta
-        count: Optional[int] = None,
-        noack: bool = False,
-    ) -> list[StreamEvent[M]]:
-        res = await self.client.xgroup_read(
-            group,
-            consumer,
-            streams={stream: start_id},
-            count=count,
-            block_ms=block_ms,
-            noack=noack,
-        )
+        timeout: Optional[timedelta] = None,
+    ) -> AsyncIterator[StreamMessage[M]]:
+        cursor = dict(stream_mapping)
 
-        return self.__raw_to_events(res)
+        while True:
+            messages = await self.read(group, consumer, cursor, timeout=timeout)
+
+            for m in messages:
+                cursor[m["stream"]] = m["id"]
+                yield m
 
     # ....................... #
 
-    def subscribe_group(
-        self,
-        stream: str,
-        group: str,
-        consumer: str,
-        *,
-        start_id: str = ">",
-        block_ms: int = 5000,  #! use timedelta
-        count: int = 200,
-    ) -> AsyncIterator[StreamEvent[M]]:
-        raise NotImplementedError("Not implemented")
-
-    # ....................... #
-
-    async def ack(self, stream: str, group: str, ids: Sequence[str]) -> int:
-        return await self.client.xack(stream, group, ids)
+    async def ack(self, group: str, stream: str, ids: Sequence[str]) -> int:
+        return await self.client.xack(group=group, stream=stream, ids=ids)

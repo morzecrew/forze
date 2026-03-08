@@ -1,9 +1,9 @@
-"""In-memory stub for DocumentPort."""
+"""In-memory stub for DocumentReadPort and DocumentWritePort."""
 
 from typing import Any, Optional, Sequence, Type, final
 from uuid import UUID
 
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentReadPort, DocumentWritePort
 from forze.application.contracts.query import (
     QueryFilterExpression,
     QuerySortExpression,
@@ -16,7 +16,8 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 @final
 class InMemoryDocumentPort(
-    DocumentPort[ReadDocument, Any, CreateDocumentCmd, BaseDTO],
+    DocumentReadPort[ReadDocument],
+    DocumentWritePort[ReadDocument, Any, CreateDocumentCmd, BaseDTO],
 ):
     """In-memory document store for unit tests. Stores by UUID."""
 

@@ -34,8 +34,8 @@ class TestDepRouterInitSubclass:
         assert RouterWithKwarg.dep_key is CounterDepKey
 
     def test_dep_key_missing_raises(self) -> None:
-        """Subclass without dep_key raises TypeError."""
-        with pytest.raises(TypeError, match="must specify dep_key"):
+        """Subclass without dep_key raises CoreError."""
+        with pytest.raises(CoreError, match="must specify dep_key"):
 
             class BadRouter(DepRouter[str, CounterDepPort]):
                 pass

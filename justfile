@@ -59,6 +59,24 @@ test *args='':
     {{ _uv_sync }}
 
     uv run pytest {{ args }}
+
+# Run fast tests
+test-fast *args='':
+    {{ _uv_sync }}
+
+    uv run pytest -m "not perf" {{ args }}
+
+# Run performance tests (requires Docker for testcontainers)
+test-perf *args='':
+    {{ _uv_sync }}
+
+    uv run pytest tests/perf \
+        --benchmark-only \
+        --benchmark-columns=min,mean,max \
+        --benchmark-time-unit=ms \
+        --benchmark-max-time=30 \
+        -m perf \
+        {{ args }}
     
 
 # Run all quality checks

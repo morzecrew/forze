@@ -60,12 +60,14 @@ async def test_postgres_document_adapter(
 
     spec = DocumentSpec(
         namespace="my_docs_ns",
-        sources={"read": "my_docs", "write": "my_docs"},
-        models={
-            "domain": MyDoc,
-            "read": MyReadDoc,
-            "create_cmd": MyCreateDoc,
-            "update_cmd": MyUpdateDoc,
+        read={"source": "my_docs", "model": MyReadDoc},
+        write={
+            "source": "my_docs",
+            "models": {
+                "domain": MyDoc,
+                "create_cmd": MyCreateDoc,
+                "update_cmd": MyUpdateDoc,
+            },
         },
     )
 

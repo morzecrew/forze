@@ -1,3 +1,4 @@
+from .conformity import SearchConformity, SearchDepConformity
 from .deps import (
     SearchDepRouter,
     SearchReadDepKey,
@@ -29,4 +30,6 @@ __all__ = [
     "SearchIndexSpec",
     "SearchFieldSpec",
     "parse_search_spec",
+    "SearchConformity",
+    "SearchDepConformity",
 ]

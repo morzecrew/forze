@@ -2,7 +2,7 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
@@ -21,7 +21,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
     as ``number_id`` or ``creator_id`` using execution context.
     """
 
-    doc: DocumentPort[Out, Any, Cmd, Any]
+    doc: DocumentWritePort[Out, Any, Cmd, Any]
     """Document port for create operations."""
 
     mapper: DTOMapper[Cmd]

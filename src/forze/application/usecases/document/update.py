@@ -3,7 +3,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
 from forze.domain.models import BaseDTO, ReadDocument
@@ -38,7 +38,7 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
     to :meth:`DocumentPort.update` with the primary key and optional revision.
     """
 
-    doc: DocumentPort[Out, Any, Any, Cmd]
+    doc: DocumentWritePort[Out, Any, Any, Cmd]
     """Document port for update operations."""
 
     mapper: DTOMapper[Cmd]
