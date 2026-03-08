@@ -1,5 +1,7 @@
 from .types import (
+    RawRedisPubSubMessage,
     RawRedisStreamResponse,
+    RedisPubSubMessage,
     RedisStreamEntry,
     RedisStreamFields,
     RedisStreamResponse,
@@ -62,3 +64,32 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
         out.append((stream, parsed_messages))
 
     return out
+
+
+# ....................... #
+
+
+def parse_pubsub_message(raw: RawRedisPubSubMessage) -> RedisPubSubMessage | None:
+    msg_type = raw.get("type")
+
+    if msg_type not in {"message", b"message"}:
+        return None
+
+    channel_raw = raw.get("channel")
+    data_raw = raw.get("data")
+
+    if channel_raw is None or data_raw is None:
+        return None
+
+    channel = (
+        channel_raw.decode("utf-8")
+        if isinstance(channel_raw, (bytes, bytearray))
+        else str(channel_raw)
+    )
+    data = (
+        data_raw
+        if isinstance(data_raw, bytes)
+        else str(data_raw).encode("utf-8")  # pyright: ignore[reportUnknownArgumentType]
+    )
+
+    return channel, data
