@@ -105,18 +105,28 @@ class PostgresDocumentAdapter[
                 return_fields=return_fields,
             )
 
-        cached = await self.cache.get(str(pk))
+        try:
+            cached = await self.cache.get(str(pk))
+        except Exception:
+            return await self.read_gw.get(
+                pk,
+                for_update=for_update,
+                return_fields=return_fields,
+            )
 
         if cached is not None:
             return pydantic_validate(self.read_gw.model, cached)
 
         res = await self.read_gw.get(pk)
 
-        await self.cache.set_versioned(
-            str(pk),
-            str(res.rev),
-            self._map_to_cache(res),
-        )
+        try:
+            await self.cache.set_versioned(
+                str(pk),
+                str(res.rev),
+                self._map_to_cache(res),
+            )
+        except Exception:
+            pass
 
         return res
 
@@ -147,15 +157,21 @@ class PostgresDocumentAdapter[
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
-        hits, misses = await self.cache.get_many([str(pk) for pk in pks])
+        try:
+            hits, misses = await self.cache.get_many([str(pk) for pk in pks])
+        except Exception:
+            return await self.read_gw.get_many(pks, return_fields=return_fields)
+
         miss_res: list[R] = []
 
-        #! TODO: fallback to read gateway if cache fails
         if misses:
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
-            await self.cache.set_many_versioned(
-                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in miss_res}
-            )
+            try:
+                await self.cache.set_many_versioned(
+                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in miss_res}
+                )
+            except Exception:
+                pass
 
         by_pk: dict[str, R] = {
             k: pydantic_validate(self.read_gw.model, v) for k, v in hits.items()
