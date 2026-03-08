@@ -13,10 +13,52 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - "uv.lock"
+      - ".github/workflows/ci.yml"
 
 jobs:
+  changes:
+    name: Detect relevant changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      force_full: ${{ steps.force.outputs.force_full }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Force full run for manual/called workflows
+        id: force
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ github.event_name }}" == "workflow_call" ]]; then
+            echo "force_full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "force_full=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect path changes
+        id: scope
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - "src/**"
+              - "tests/**"
+              - "pyproject.toml"
+              - "uv.lock"
+              - ".github/workflows/ci.yml"
+
   quality:
     name: Run quality checks and tests
+    needs: changes
+    if: needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,3 +86,39 @@ jobs:
 
       - name: Run tests
         run: just test
+  
+  required-ci:
+    name: Required Continuous Integration
+    needs: [changes, quality]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs
+        shell: bash
+        run: |
+          echo "changes.result=${{ needs.changes.result }}"
+          echo "quality.result=${{ needs.quality.result }}"
+          echo "code=${{ needs.changes.outputs.code }}"
+          echo "force_full=${{ needs.changes.outputs.force_full }}"
+
+          # changes must succeed
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "changes job failed"
+            exit 1
+          fi
+
+          # If quality was supposed to run, it must succeed.
+          if [[ "${{ needs.changes.outputs.force_full }}" == "true" || "${{ needs.changes.outputs.code }}" == "true" ]]; then
+            if [[ "${{ needs.quality.result }}" != "success" ]]; then
+              echo "quality job did not succeed"
+              exit 1
+            fi
+          else
+            # If no relevant changes, quality may be skipped.
+            if [[ "${{ needs.quality.result }}" != "skipped" ]]; then
+              echo "quality was expected to be skipped"
+              exit 1
+            fi
+          fi
+
+          echo "required-ci passed"
