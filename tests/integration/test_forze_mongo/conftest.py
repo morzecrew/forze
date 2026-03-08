@@ -20,7 +20,7 @@ def mongo_container() -> MongoDbContainer:
     if shutil.which("docker") is None:
         pytest.skip("Docker is required for Mongo integration tests")
 
-    with MongoDbContainer(image="mongo:7.0") as mongo:
+    with MongoDbContainer(image="mongo:8.0-noble") as mongo:
         yield mongo
 
 

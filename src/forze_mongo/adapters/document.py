@@ -18,7 +18,7 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
-from forze.application.contracts.tx import TxScopeKey, TxScopedPort
+from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
@@ -27,7 +27,11 @@ from forze.base.errors import (
     ValidationError,
 )
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_dump, pydantic_field_names, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_field_names,
+    pydantic_validate,
+)
 from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
@@ -121,10 +125,15 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
             return str(value)
 
         if isinstance(value, list):
-            return [self._coerce_query_value(x) for x in value]
-
+            return [
+                self._coerce_query_value(x)
+                for x in value  # pyright: ignore[reportUnknownVariableType]
+            ]
         if isinstance(value, dict):
-            return {k: self._coerce_query_value(v) for k, v in value.items()}
+            return {
+                k: self._coerce_query_value(v)
+                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
 
         return value
 
@@ -175,7 +184,9 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
     # ....................... #
 
     async def _get_domain(self, pk: UUID) -> D:
-        raw = await self.client.find_one(self._write_coll(), {"_id": self._storage_pk(pk)})
+        raw = await self.client.find_one(
+            self._write_coll(), {"_id": self._storage_pk(pk)}
+        )
 
         if raw is None:
             raise NotFoundError(f"Record not found: {pk}")
@@ -290,7 +301,9 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
         if cached is not None:
             return pydantic_validate(self.read_model, cached)
 
-        raw = await self.client.find_one(self._read_coll(), {"_id": self._storage_pk(pk)})
+        raw = await self.client.find_one(
+            self._read_coll(), {"_id": self._storage_pk(pk)}
+        )
 
         if raw is None:
             raise NotFoundError(f"Record not found: {pk}")
@@ -298,7 +311,9 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
         res = pydantic_validate(self.read_model, self._from_storage_doc(raw))
 
         with contextlib.suppress(Exception):
-            await self.cache.set_versioned(str(pk), str(res.rev), self._map_to_cache(res))
+            await self.cache.set_versioned(
+                str(pk), str(res.rev), self._map_to_cache(res)
+            )
 
         return res
 
@@ -558,7 +573,9 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
         if matched != 1:
             raise ConcurrencyError("Failed to update record")
 
-        updated = current.model_copy(update={**diff, REV_FIELD: current.rev + 1}, deep=True)
+        updated = current.model_copy(
+            update={**diff, REV_FIELD: current.rev + 1}, deep=True
+        )
 
         return pydantic_validate(self.read_model, pydantic_dump(updated))
 
@@ -605,7 +622,9 @@ class MongoDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
 
         out: list[R] = []
         for i, (pk, dto) in enumerate(zip(pks, dtos, strict=True)):
-            out.append(await self.update(pk, dto, rev=None if revs is None else revs[i]))
+            out.append(
+                await self.update(pk, dto, rev=None if revs is None else revs[i])
+            )
 
         return out
 

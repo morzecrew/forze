@@ -12,11 +12,10 @@ import pytest_asyncio
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
-from testcontainers.core.container import DockerContainer
+from testcontainers.minio import MinioContainer
 
 from forze_s3.kernel.platform.client import S3Client, S3Config
 
-MINIO_IMAGE = "minio/minio:latest"
 MINIO_ROOT_USER = "minioadmin"
 MINIO_ROOT_PASSWORD = "minioadmin"
 
@@ -27,16 +26,13 @@ def minio_container():
     if shutil.which("docker") is None:
         pytest.skip("Docker is required for S3 integration tests")
 
-    with (
-        DockerContainer(MINIO_IMAGE)
-        .with_env("MINIO_ROOT_USER", MINIO_ROOT_USER)
-        .with_env("MINIO_ROOT_PASSWORD", MINIO_ROOT_PASSWORD)
-        .with_command("server /data")
-        .with_exposed_ports(9000)
+    with MinioContainer(
+        image="minio/minio:RELEASE.2025-09-07T16-13-09Z",
+        port=9000,
+        access_key=MINIO_ROOT_USER,
+        secret_key=MINIO_ROOT_PASSWORD,
     ) as container:
-        endpoint = (
-            f"http://{container.get_container_host_ip()}:{container.get_exposed_port(9000)}"
-        )
+        endpoint = f"http://{container.get_container_host_ip()}:{container.get_exposed_port(9000)}"
 
         health_url = f"{endpoint}/minio/health/live"
         deadline = time.time() + 60
