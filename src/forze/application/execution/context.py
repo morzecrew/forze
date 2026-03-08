@@ -18,7 +18,13 @@ from forze.base.errors import CoreError
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
 from ..contracts.deps import DepKey, DepsPort
-from ..contracts.document import DocumentDepKey, DocumentPort, DocumentSpec
+from ..contracts.document import (
+    DocumentReadDepKey,
+    DocumentReadPort,
+    DocumentSpec,
+    DocumentWriteDepKey,
+    DocumentWritePort,
+)
 from ..contracts.search import SearchReadDepKey, SearchReadPort, SearchSpec
 from ..contracts.storage import StorageDepKey, StoragePort
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPort
@@ -162,10 +168,10 @@ class ExecutionContext:
     # ....................... #
     # Convenient namespace methods for resolving ports
 
-    def doc(
+    def doc_read(
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentPort[Any, Any, Any, Any]:
+    ) -> DocumentReadPort[Any]:
         """Resolve a document port for the given spec.
 
         :param spec: Document specification.
@@ -181,7 +187,33 @@ class ExecutionContext:
             )
             cache = self.cache(cache_spec)
 
-        dep = self.dep(DocumentDepKey)(self, spec, cache=cache)
+        dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
+        self.__validate_tx_scope(dep)
+
+        return dep
+
+    # ....................... #
+
+    def doc_write(
+        self,
+        spec: DocumentSpec[Any, Any, Any, Any],
+    ) -> DocumentWritePort[Any, Any, Any, Any]:
+        """Resolve a document port for the given spec.
+
+        :param spec: Document specification.
+        :returns: Document port instance.
+        """
+
+        cache = None
+
+        if spec.cache is not None and spec.cache.get("enabled", False):
+            cache_spec = CacheSpec(
+                namespace=spec.namespace,
+                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
+            )
+            cache = self.cache(cache_spec)
+
+        dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
 
         return dep

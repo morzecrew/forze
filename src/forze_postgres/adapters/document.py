@@ -11,7 +11,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.cache import CachePort
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentReadPort, DocumentWritePort
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -37,7 +37,11 @@ U = TypeVar("U", bound=BaseDTO)
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
+class PostgresDocumentAdapter(
+    DocumentReadPort[R],
+    DocumentWritePort[R, D, C, U],
+    TxScopedPort,
+):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
     cache: Optional[CachePort] = None

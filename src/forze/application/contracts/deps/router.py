@@ -51,7 +51,9 @@ class DepRouter(Generic[SpecT, DepPortT]):
     # ....................... #
 
     def __init_subclass__(
-        cls, dep_key: DepKey[DepPortT] | None = None, **kwargs: Any
+        cls,
+        dep_key: DepKey[DepPortT] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the subclass with the dependency key.
 
@@ -62,10 +64,13 @@ class DepRouter(Generic[SpecT, DepPortT]):
         recreates the class without passing kwargs to the metaclass.
         """
         super().__init_subclass__(**kwargs)
+
         if dep_key is None:
             dep_key = vars(cls).get("dep_key")
+
         if dep_key is None:
-            raise TypeError("DepRouter subclasses must specify dep_key")
+            raise CoreError("DepRouter subclasses must specify dep_key")
+
         cls.dep_key = dep_key
 
     # ....................... #

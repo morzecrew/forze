@@ -4,8 +4,8 @@ from typing import Any, Optional
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
-    DocumentDepPort,
-    DocumentPort,
+    DocumentConformity,
+    DocumentDepConformity,
     DocumentSpec,
 )
 from forze.application.contracts.search import (
@@ -47,12 +47,12 @@ def postgres_document_configurable(
     :returns: Document dep port factory conforming to :class:`DocumentDepPort`.
     """
 
-    @conforms_to(DocumentDepPort)
+    @conforms_to(DocumentDepConformity)
     def postgres_document(
         context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: Optional[CachePort] = None,
-    ) -> DocumentPort[Any, Any, Any, Any]:
+    ) -> DocumentConformity:
         read = read_gw(context, spec.sources["read"], spec.models["read"])
         write = doc_write_gw(
             context,

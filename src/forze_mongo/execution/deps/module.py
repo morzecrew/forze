@@ -4,7 +4,7 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.document import DocumentDepKey
+from forze.application.contracts.document import DocumentReadDepKey, DocumentWriteDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
@@ -38,7 +38,11 @@ class MongoDepsModule(DepsModule):
             {
                 MongoClientDepKey: self.client,
                 TxManagerDepKey: mongo_txmanager,
-                DocumentDepKey: mongo_document_configurable(
+                DocumentReadDepKey: mongo_document_configurable(
+                    rev_bump_strategy=self.rev_bump_strategy,
+                    history_write_strategy=self.history_write_strategy,
+                ),
+                DocumentWriteDepKey: mongo_document_configurable(
                     rev_bump_strategy=self.rev_bump_strategy,
                     history_write_strategy=self.history_write_strategy,
                 ),

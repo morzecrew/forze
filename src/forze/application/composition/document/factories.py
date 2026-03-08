@@ -102,16 +102,16 @@ def build_document_registry(
         {
             DocumentOperation.GET: lambda ctx: GetDocument(
                 ctx=ctx,
-                doc=ctx.doc(spec),
+                doc=ctx.doc_read(spec),
             ),
             DocumentOperation.CREATE: lambda ctx: CreateDocument(
                 ctx=ctx,
-                doc=ctx.doc(spec),
+                doc=ctx.doc_write(spec),
                 mapper=create_mapper,
             ),
             DocumentOperation.KILL: lambda ctx: KillDocument(
                 ctx=ctx,
-                doc=ctx.doc(spec),
+                doc=ctx.doc_write(spec),
             ),
         }
     )
@@ -121,7 +121,7 @@ def build_document_registry(
             DocumentOperation.UPDATE,
             lambda ctx: UpdateDocument[Any, Any, Any](
                 ctx=ctx,
-                doc=ctx.doc(spec),
+                doc=ctx.doc_write(spec),
                 mapper=update_mapper,
             ),
             inplace=True,
@@ -132,11 +132,11 @@ def build_document_registry(
             {
                 DocumentOperation.DELETE: lambda ctx: DeleteDocument(
                     ctx=ctx,
-                    doc=ctx.doc(spec),
+                    doc=ctx.doc_write(spec),
                 ),
                 DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
                     ctx=ctx,
-                    doc=ctx.doc(spec),
+                    doc=ctx.doc_write(spec),
                 ),
             },
             inplace=True,

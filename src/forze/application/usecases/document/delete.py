@@ -3,7 +3,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.document import DocumentPort
+from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
 
@@ -32,7 +32,7 @@ class KillDocument(Usecase[UUID, None]):
     :class:`DeleteDocument` for soft delete when possible.
     """
 
-    doc: DocumentPort[Any, Any, Any, Any]
+    doc: DocumentWritePort[Any, Any, Any, Any]
     """Document port for kill operations."""
 
     # ....................... #
@@ -57,7 +57,7 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
     with deletion metadata. Supports optimistic concurrency via ``rev``.
     """
 
-    doc: DocumentPort[Out, Any, Any, Any]
+    doc: DocumentWritePort[Out, Any, Any, Any]
     """Document port for delete operations."""
 
     # ....................... #
@@ -82,7 +82,7 @@ class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
     Supports optimistic concurrency via ``rev``.
     """
 
-    doc: DocumentPort[Out, Any, Any, Any]
+    doc: DocumentWritePort[Out, Any, Any, Any]
     """Document port for restore operations."""
 
     # ....................... #

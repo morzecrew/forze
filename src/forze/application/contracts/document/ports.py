@@ -253,15 +253,3 @@ class DocumentWritePort[R, D, C, U](Protocol):
     ) -> Awaitable[Sequence[R]]:
         """Restore multiple previously soft-deleted documents."""
         ...  # pragma: no cover
-
-
-# ....................... #
-
-
-@runtime_checkable
-class DocumentPort[R, D, C, U](
-    DocumentReadPort[R],
-    DocumentWritePort[R, D, C, U],
-    Protocol,
-):
-    """Combined port exposing read, search, and write operations for documents."""

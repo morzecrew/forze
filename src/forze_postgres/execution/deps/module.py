@@ -4,7 +4,7 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.document import DocumentDepKey
+from forze.application.contracts.document import DocumentReadDepKey, DocumentWriteDepKey
 from forze.application.contracts.search import SearchReadDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
@@ -51,7 +51,11 @@ class PostgresDepsModule(DepsModule):
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=self.client),
                 TxManagerDepKey: postgres_txmanager,
                 SearchReadDepKey: postgres_search,
-                DocumentDepKey: postgres_document_configurable(
+                DocumentReadDepKey: postgres_document_configurable(
+                    rev_bump_strategy=self.rev_bump_strategy,
+                    history_write_strategy=self.history_write_strategy,
+                ),
+                DocumentWriteDepKey: postgres_document_configurable(
                     rev_bump_strategy=self.rev_bump_strategy,
                     history_write_strategy=self.history_write_strategy,
                 ),
