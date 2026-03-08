@@ -53,15 +53,18 @@ def postgres_document_configurable(
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: Optional[CachePort] = None,
     ) -> DocumentConformity:
-        read = read_gw(context, spec.sources["read"], spec.models["read"])
-        write = doc_write_gw(
-            context,
-            spec.sources["write"],
-            spec.models,
-            spec.sources.get("history"),
-            rev_bump_strategy=rev_bump_strategy,
-            history_write_strategy=history_write_strategy,
-        )
+        read = read_gw(context, spec.read)
+
+        write = None
+
+        if spec.write is not None:
+            write = doc_write_gw(
+                context,
+                spec.write,
+                spec.history,
+                rev_bump_strategy=rev_bump_strategy,
+                history_write_strategy=history_write_strategy,
+            )
 
         return PostgresDocumentAdapter(
             read_gw=read,

@@ -7,10 +7,21 @@ import attrs
 from forze.application.contracts.cache import CacheDepKey
 from forze.application.contracts.counter import CounterDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
+from forze.application.contracts.stream import (
+    StreamGroupDepKey,
+    StreamReadDepKey,
+    StreamWriteDepKey,
+)
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import RedisClient
-from .deps import redis_cache, redis_counter, redis_idempotency
+from .deps import (
+    redis_cache,
+    redis_counter,
+    redis_idempotency,
+    redis_stream,
+    redis_stream_group,
+)
 from .keys import RedisClientDepKey
 
 # ----------------------- #
@@ -19,7 +30,8 @@ from .keys import RedisClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class RedisDepsModule(DepsModule):
-    """Dependency module that registers Redis client, cache, counter, and idempotency ports.
+    """Dependency module that registers Redis client, cache, counter, idempotency,
+    and stream ports.
 
     Invoke to produce a :class:`Deps` container with all Redis-backed
     dependencies. The client must be initialized separately (e.g. via
@@ -34,7 +46,7 @@ class RedisDepsModule(DepsModule):
     def __call__(self) -> Deps:
         """Build a dependency container with Redis-backed ports.
 
-        :returns: Deps with client, cache, counter, and idempotency ports.
+        :returns: Deps with client, cache, counter, idempotency, and stream ports.
         """
 
         return Deps(
@@ -43,5 +55,8 @@ class RedisDepsModule(DepsModule):
                 CacheDepKey: redis_cache,
                 CounterDepKey: redis_counter,
                 IdempotencyDepKey: redis_idempotency,
+                StreamReadDepKey: redis_stream,
+                StreamWriteDepKey: redis_stream,
+                StreamGroupDepKey: redis_stream_group,
             }
         )

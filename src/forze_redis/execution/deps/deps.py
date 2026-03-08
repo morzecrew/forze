@@ -1,16 +1,31 @@
-"""Factory functions for Redis counter, document cache, and idempotency adapters."""
+"""Factory functions for Redis counter, document cache, idempotency, and stream adapters."""
 
 from datetime import timedelta
+from typing import Any
 
 from forze.application.contracts.cache import CacheDepPort, CachePort, CacheSpec
 from forze.application.contracts.counter import CounterDepPort, CounterPort
 from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.contracts.stream import (
+    StreamConformity,
+    StreamDepConformity,
+    StreamGroupDepPort,
+    StreamGroupPort,
+)
+from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tenant.deps import TenantContextDepKey
 from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
 
-from ...adapters import RedisCacheAdapter, RedisCounterAdapter, RedisIdempotencyAdapter
+from ...adapters import (
+    RedisCacheAdapter,
+    RedisCounterAdapter,
+    RedisIdempotencyAdapter,
+    RedisStreamAdapter,
+    RedisStreamCodec,
+    RedisStreamGroupAdapter,
+)
 from .keys import RedisClientDepKey
 
 # ----------------------- #
@@ -73,3 +88,44 @@ def redis_cache(
     return RedisCacheAdapter(
         client=redis_client, key_codec=KeyCodec(namespace=spec.namespace)
     )
+
+
+# ....................... #
+# Stream
+
+
+@conforms_to(StreamDepConformity)
+def redis_stream(
+    context: ExecutionContext,
+    spec: StreamSpec[Any],
+) -> StreamConformity:
+    """Build a Redis-backed stream port (read and write) for the given spec.
+
+    :param context: Execution context for resolving the Redis client.
+    :param spec: Stream specification with namespace and model type.
+    :returns: Stream port backed by :class:`RedisStreamAdapter`.
+    """
+    redis_client = context.dep(RedisClientDepKey)
+    codec = RedisStreamCodec(model=spec.model)
+
+    return RedisStreamAdapter(client=redis_client, codec=codec)
+
+
+# ....................... #
+
+
+@conforms_to(StreamGroupDepPort)
+def redis_stream_group(
+    context: ExecutionContext,
+    spec: StreamSpec[Any],
+) -> StreamGroupPort[Any]:
+    """Build a Redis-backed stream group port for the given spec.
+
+    :param context: Execution context for resolving the Redis client.
+    :param spec: Stream specification with namespace and model type.
+    :returns: Stream group port backed by :class:`RedisStreamGroupAdapter`.
+    """
+    redis_client = context.dep(RedisClientDepKey)
+    codec = RedisStreamCodec(model=spec.model)
+
+    return RedisStreamGroupAdapter(client=redis_client, codec=codec)

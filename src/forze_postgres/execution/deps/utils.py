@@ -2,7 +2,11 @@
 
 from typing import Any, Optional
 
-from forze.application.contracts.document import DocumentModelSpec
+from forze.application.contracts.document import (
+    DocumentHistorySpec,
+    DocumentReadSpec,
+    DocumentWriteSpec,
+)
 from forze.application.execution import ExecutionContext
 
 from ...kernel.gateways import (
@@ -18,21 +22,21 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 # ----------------------- #
 
 
-def read_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
+def read_gw(ctx: ExecutionContext, spec: DocumentReadSpec[Any]):
     """Build a read gateway for a relation and model.
 
     :param ctx: Execution context for resolving client and types provider.
-    :param relation: Table or view name.
-    :param model: Pydantic model for row validation.
+    :param spec: Document read specification.
     :returns: Postgres read gateway.
     """
+
     client = ctx.dep(PostgresClientDepKey)
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresReadGateway(
-        qname=PostgresQualifiedName.from_string(relation),
+        qname=PostgresQualifiedName.from_string(spec["source"]),
         client=client,
-        model=model,
+        model=spec["model"],
         introspector=introspector,
     )
 
@@ -42,9 +46,8 @@ def read_gw(ctx: ExecutionContext, relation: str, model: type[Any]):
 
 def _doc_history_gw(
     ctx: ExecutionContext,
-    relation: str,
-    write_relation: str,
-    model: type[Any],
+    spec: DocumentHistorySpec,
+    write_spec: DocumentWriteSpec[Any, Any, Any],
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
 ):
     """Build a history gateway for document audit trails."""
@@ -53,11 +56,11 @@ def _doc_history_gw(
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresHistoryGateway(
-        qname=PostgresQualifiedName.from_string(relation),
-        target_qname=PostgresQualifiedName.from_string(write_relation),
+        qname=PostgresQualifiedName.from_string(spec["source"]),
+        target_qname=PostgresQualifiedName.from_string(write_spec["source"]),
         strategy=history_write_strategy,
         client=client,
-        model=model,
+        model=write_spec["models"]["domain"],
         introspector=introspector,
     )
 
@@ -67,9 +70,8 @@ def _doc_history_gw(
 
 def doc_write_gw(
     ctx: ExecutionContext,
-    relation: str,
-    models: DocumentModelSpec[Any, Any, Any, Any],
-    history_relation: Optional[str] = None,
+    spec: DocumentWriteSpec[Any, Any, Any],
+    history_spec: Optional[DocumentHistorySpec] = None,
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = "database",
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
@@ -87,26 +89,25 @@ def doc_write_gw(
     client = ctx.dep(PostgresClientDepKey)
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
-    read = read_gw(ctx, relation, models["domain"])
+    read = read_gw(ctx, {"source": spec["source"], "model": spec["models"]["domain"]})
     hist = None
 
-    if history_relation:
+    if history_spec:
         hist = _doc_history_gw(
             ctx,
-            history_relation,
-            relation,
-            models["domain"],
+            history_spec,
+            spec,
             history_write_strategy,
         )
 
     return PostgresWriteGateway(
-        qname=PostgresQualifiedName.from_string(relation),
+        qname=PostgresQualifiedName.from_string(spec["source"]),
         client=client,
         introspector=introspector,
         read=read,
-        model=models["domain"],
-        create_dto=models["create_cmd"],
-        update_dto=models["update_cmd"],
+        model=spec["models"]["domain"],
+        create_dto=spec["models"]["create_cmd"],
+        update_dto=spec["models"]["update_cmd"],
         history=hist,
         rev_bump_strategy=rev_bump_strategy,
     )

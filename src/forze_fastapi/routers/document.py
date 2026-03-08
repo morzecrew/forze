@@ -90,107 +90,109 @@ def build_document_router(
 
     # ....................... #
 
-    if create_dto:
+    if provider.spec.write is not None:
 
-        @router.post(
-            "/create",
-            response_model=read_dto,
-            idempotent=True,
-            idempotency_config={"dto_param": "dto"},
-            operation_id=f"{provider.spec.namespace}.create",
-        )
-        @override_annotations({"dto": create_dto})
-        async def create(  # pyright: ignore[reportUnusedFunction]
-            dto: C = Body(...),
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-        ):
-            """Create a new document from the provided DTO."""
+        if create_dto:
 
-            return await ucs.create()(dto)
-
-    # ....................... #
-
-    if update_dto and provider.spec.supports_update():
-
-        @router.patch(
-            "/update",
-            response_model=read_dto,
-            operation_id=f"{provider.spec.namespace}.update",
-        )
-        @override_annotations({"dto": update_dto})
-        async def update(  # pyright: ignore[reportUnusedFunction]
-            id: UUIDQuery,
-            rev: RevQuery,
-            dto: U = Body(...),
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-        ):
-            """Apply a partial update to an existing document."""
-
-            return await ucs.update()(
-                {
-                    "pk": id,
-                    "dto": dto,
-                    "rev": rev,
-                }
+            @router.post(
+                "/create",
+                response_model=read_dto,
+                idempotent=True,
+                idempotency_config={"dto_param": "dto"},
+                operation_id=f"{provider.spec.namespace}.create",
             )
+            @override_annotations({"dto": create_dto})
+            async def create(  # pyright: ignore[reportUnusedFunction]
+                dto: C = Body(...),
+                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            ):
+                """Create a new document from the provided DTO."""
 
-    # ....................... #
+                return await ucs.create()(dto)
 
-    if provider.spec.supports_soft_delete():
+        # ....................... #
 
-        @router.patch(
-            "/delete",
-            response_model=read_dto,
-            operation_id=f"{provider.spec.namespace}.delete",
+        if update_dto and provider.spec.supports_update():
+
+            @router.patch(
+                "/update",
+                response_model=read_dto,
+                operation_id=f"{provider.spec.namespace}.update",
+            )
+            @override_annotations({"dto": update_dto})
+            async def update(  # pyright: ignore[reportUnusedFunction]
+                id: UUIDQuery,
+                rev: RevQuery,
+                dto: U = Body(...),
+                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            ):
+                """Apply a partial update to an existing document."""
+
+                return await ucs.update()(
+                    {
+                        "pk": id,
+                        "dto": dto,
+                        "rev": rev,
+                    }
+                )
+
+        # ....................... #
+
+        if provider.spec.supports_soft_delete():
+
+            @router.patch(
+                "/delete",
+                response_model=read_dto,
+                operation_id=f"{provider.spec.namespace}.delete",
+            )
+            async def delete(  # pyright: ignore[reportUnusedFunction]
+                id: UUIDQuery,
+                rev: RevQuery,
+                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            ):
+                """Soft-delete a document and return the new representation."""
+
+                return await ucs.delete()(
+                    {
+                        "pk": id,
+                        "rev": rev,
+                    }
+                )
+
+            @router.patch(
+                "/restore",
+                response_model=read_dto,
+                operation_id=f"{provider.spec.namespace}.restore",
+            )
+            async def restore(  # pyright: ignore[reportUnusedFunction]
+                id: UUIDQuery,
+                rev: RevQuery,
+                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            ):
+                """Restore a previously soft-deleted document."""
+
+                return await ucs.restore()(
+                    {
+                        "pk": id,
+                        "rev": rev,
+                    }
+                )
+
+        # ....................... #
+
+        @router.delete(
+            "/kill",
+            response_model=None,
+            status_code=204,
+            operation_id=f"{provider.spec.namespace}.kill",
         )
-        async def delete(  # pyright: ignore[reportUnusedFunction]
+        async def kill(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
-            rev: RevQuery,
             ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
         ):
-            """Soft-delete a document and return the new representation."""
+            """Hard-delete a document without soft-delete semantics."""
 
-            return await ucs.delete()(
-                {
-                    "pk": id,
-                    "rev": rev,
-                }
-            )
-
-        @router.patch(
-            "/restore",
-            response_model=read_dto,
-            operation_id=f"{provider.spec.namespace}.restore",
-        )
-        async def restore(  # pyright: ignore[reportUnusedFunction]
-            id: UUIDQuery,
-            rev: RevQuery,
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-        ):
-            """Restore a previously soft-deleted document."""
-
-            return await ucs.restore()(
-                {
-                    "pk": id,
-                    "rev": rev,
-                }
-            )
-
-    # ....................... #
-
-    @router.delete(
-        "/kill",
-        response_model=None,
-        status_code=204,
-        operation_id=f"{provider.spec.namespace}.kill",
-    )
-    async def kill(  # pyright: ignore[reportUnusedFunction]
-        id: UUIDQuery,
-        ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-    ):
-        """Hard-delete a document without soft-delete semantics."""
-
-        return await ucs.kill()(id)
+            return await ucs.kill()(id)
 
     # ....................... #
 

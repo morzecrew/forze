@@ -18,6 +18,7 @@ from forze.application.usecases.document import (
     RestoreDocument,
     UpdateDocument,
 )
+from forze.base.errors import CoreError
 
 from .operations import DocumentOperation
 
@@ -68,7 +69,11 @@ def build_document_create_mapper(
     :param numbered: Whether to add number_id injection.
     :returns: DTO mapper for create commands.
     """
-    mapper = DTOMapper(out=spec.models["create_cmd"])
+
+    if spec.write is None:
+        raise CoreError("Document specification does not support write operations")
+
+    mapper = DTOMapper(out=spec.write["models"]["create_cmd"])
 
     if numbered:
         mapper = mapper.with_steps(NumberIdStep(namespace=spec.namespace))
@@ -95,8 +100,6 @@ def build_document_registry(
     :param replace_create_mapper: Optional custom create mapper.
     :returns: Usecase registry with all supported operations.
     """
-    create_mapper = replace_create_mapper or DTOMapper(out=spec.models["create_cmd"])
-    update_mapper = DTOMapper(out=spec.models["update_cmd"])
 
     reg = UsecaseRegistry(
         {
@@ -104,42 +107,53 @@ def build_document_registry(
                 ctx=ctx,
                 doc=ctx.doc_read(spec),
             ),
-            DocumentOperation.CREATE: lambda ctx: CreateDocument(
-                ctx=ctx,
-                doc=ctx.doc_write(spec),
-                mapper=create_mapper,
-            ),
-            DocumentOperation.KILL: lambda ctx: KillDocument(
-                ctx=ctx,
-                doc=ctx.doc_write(spec),
-            ),
         }
     )
 
-    if spec.supports_update():
-        reg.register(
-            DocumentOperation.UPDATE,
-            lambda ctx: UpdateDocument[Any, Any, Any](
-                ctx=ctx,
-                doc=ctx.doc_write(spec),
-                mapper=update_mapper,
-            ),
-            inplace=True,
+    if spec.write is not None:
+        create_mapper = replace_create_mapper or DTOMapper(
+            out=spec.write["models"]["create_cmd"]
+        )
+        update_mapper = DTOMapper(out=spec.write["models"]["update_cmd"])
+
+        reg = reg.register_many(
+            {
+                DocumentOperation.CREATE: lambda ctx: CreateDocument(
+                    ctx=ctx,
+                    doc=ctx.doc_write(spec),
+                    mapper=create_mapper,
+                ),
+                DocumentOperation.KILL: lambda ctx: KillDocument(
+                    ctx=ctx,
+                    doc=ctx.doc_write(spec),
+                ),
+            }
         )
 
-    if spec.supports_soft_delete():
-        reg.register_many(
-            {
-                DocumentOperation.DELETE: lambda ctx: DeleteDocument(
+        if spec.supports_update():
+            reg.register(
+                DocumentOperation.UPDATE,
+                lambda ctx: UpdateDocument[Any, Any, Any](
                     ctx=ctx,
                     doc=ctx.doc_write(spec),
+                    mapper=update_mapper,
                 ),
-                DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
-                    ctx=ctx,
-                    doc=ctx.doc_write(spec),
-                ),
-            },
-            inplace=True,
-        )
+                inplace=True,
+            )
+
+        if spec.supports_soft_delete():
+            reg.register_many(
+                {
+                    DocumentOperation.DELETE: lambda ctx: DeleteDocument(
+                        ctx=ctx,
+                        doc=ctx.doc_write(spec),
+                    ),
+                    DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
+                        ctx=ctx,
+                        doc=ctx.doc_write(spec),
+                    ),
+                },
+                inplace=True,
+            )
 
     return reg

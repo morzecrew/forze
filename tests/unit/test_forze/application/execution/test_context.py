@@ -138,14 +138,15 @@ class TestExecutionContextConvenienceMethods:
 
         spec = DocumentSpec(
             namespace="test",
-            sources={"read": "r", "write": "w"},
-            models={
-                "read": ReadDocument,
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": CreateDocumentCmd,
+            read={"source": "r", "model": ReadDocument},
+            write={
+                "source": "w",
+                "models": {
+                    "domain": Document,
+                    "create_cmd": CreateDocumentCmd,
+                    "update_cmd": CreateDocumentCmd,
+                },
             },
-            cache=None,
         )
 
         def doc_read_factory(ctx, s, cache=None):
@@ -168,12 +169,14 @@ class TestExecutionContextConvenienceMethods:
 
         spec = DocumentSpec(
             namespace="test",
-            sources={"read": "r", "write": "w"},
-            models={
-                "read": ReadDocument,
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": CreateDocumentCmd,
+            read={"source": "r", "model": ReadDocument},
+            write={
+                "source": "w",
+                "models": {
+                    "domain": Document,
+                    "create_cmd": CreateDocumentCmd,
+                    "update_cmd": CreateDocumentCmd,
+                },
             },
             cache={"enabled": True, "ttl": timedelta(seconds=60)},
         )

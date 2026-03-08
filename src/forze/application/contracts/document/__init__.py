@@ -8,7 +8,12 @@ from .deps import (
     DocumentWriteDepRouter,
 )
 from .ports import DocumentReadPort, DocumentWritePort
-from .specs import DocumentModelSpec, DocumentSpec
+from .specs import (
+    DocumentHistorySpec,
+    DocumentReadSpec,
+    DocumentSpec,
+    DocumentWriteSpec,
+)
 
 # ----------------------- #
 
@@ -24,5 +29,7 @@ __all__ = [
     "DocumentWriteDepPort",
     "DocumentWriteDepKey",
     "DocumentWriteDepRouter",
-    "DocumentModelSpec",
+    "DocumentReadSpec",
+    "DocumentWriteSpec",
+    "DocumentHistorySpec",
 ]

@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 from datetime import timedelta
-from typing import Generic, NotRequired, Optional, TypedDict, TypeVar, final
+from typing import Generic, Optional, TypedDict, TypeVar, final
 
 import attrs
 
@@ -19,45 +19,6 @@ R = TypeVar("R", bound=ReadDocument)  #! Arbitrary read model (CoreModel or so)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
-
-#! TODO: review and add support for read-only documents (no domain model, only read model)
-
-# ....................... #
-
-
-@final
-class DocumentModelSpec(TypedDict, Generic[R, D, C, U]):
-    """Concrete model classes that make up a document aggregate."""
-
-    read: type[R]
-    """Read model exposed to consumers."""
-
-    domain: type[D]
-    """Domain model used for invariants and business rules."""
-
-    create_cmd: type[C]
-    """Command DTO used to create new domain instances."""
-
-    update_cmd: type[U]
-    """Command DTO used for partial updates of existing instances."""
-
-
-# ....................... #
-
-
-@final
-class DocumentSourceSpec(TypedDict):
-    """Storage-level source names associated with a document aggregate."""
-
-    read: str
-    """Primary readable source (e.g. Postgres view or table name)."""
-
-    write: str
-    """Writable source backing persistence for the aggregate."""
-
-    history: NotRequired[str]
-    """Optional source used to store history or audit events."""
-
 
 # ....................... #
 
@@ -77,29 +38,77 @@ class DocumentCacheSpec(TypedDict, total=False):
 
 
 @final
+class DocumentReadSpec(TypedDict, Generic[R]):
+    """Read specification for a document aggregate."""
+
+    source: str
+    """Source name for the read operations."""
+
+    model: type[R]
+    """Model type for the read operations."""
+
+
+# ....................... #
+
+
+@final
+class DocumentWriteModels(TypedDict, Generic[D, C, U]):
+    """Write models for a document aggregate."""
+
+    domain: type[D]
+    """Model type for the domain model."""
+
+    create_cmd: type[C]
+    """Model type for the create command."""
+
+    update_cmd: type[U]  #! not required ?
+    """Model type for the update command."""
+
+
+# ....................... #
+
+
+@final
+class DocumentWriteSpec(TypedDict, Generic[D, C, U]):
+    """Write specification for a document aggregate."""
+
+    source: str
+    """Source name for the write operations."""
+
+    models: DocumentWriteModels[D, C, U]
+    """Write models for the document aggregate."""
+
+
+# ....................... #
+
+
+@final
+class DocumentHistorySpec(TypedDict):
+    """History specification for a document aggregate."""
+
+    source: str
+    """Source name for the history operations."""
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentSpec(Generic[R, D, C, U]):
-    """Declarative specification for a document aggregate.
-
-    A :class:`DocumentSpec` binds together:
-
-    * namespace used for cache keys
-    * data storage sources
-    * concrete model types for read/domain/commands
-    * optional search configuration
-
-    Implementations of :class:`DocumentPort` and related ports use this spec
-    to configure themselves.
-    """
+    """Declarative specification for a document aggregate."""
 
     namespace: str
-    """Namespace used for cache keys."""
+    """Primary namespace for the document aggregate."""
 
-    sources: DocumentSourceSpec
-    """Data storage sources."""
+    read: DocumentReadSpec[R]
+    """Read specification for the document aggregate."""
 
-    models: DocumentModelSpec[R, D, C, U]
-    """Concrete model types for read/domain/commands."""
+    write: Optional[DocumentWriteSpec[D, C, U]] = None
+    """Write specification for the document aggregate."""
+
+    history: Optional[DocumentHistorySpec] = None
+    """History specification for the document aggregate."""
 
     cache: Optional[DocumentCacheSpec] = None
     """Cache specification for the document aggregate."""
@@ -109,11 +118,17 @@ class DocumentSpec(Generic[R, D, C, U]):
     def supports_soft_delete(self) -> bool:
         """Return ``True`` when the domain model supports soft deletion."""
 
-        return issubclass(self.models["domain"], SoftDeletionMixin)
+        if self.write is None:
+            return False
+
+        return issubclass(self.write["models"]["domain"], SoftDeletionMixin)
 
     # ....................... #
 
     def supports_update(self) -> bool:
         """Return ``True`` when the update command exposes writable fields."""
 
-        return self.models["update_cmd"].model_fields != {}
+        if self.write is None:
+            return False
+
+        return self.write["models"]["update_cmd"].model_fields != {}

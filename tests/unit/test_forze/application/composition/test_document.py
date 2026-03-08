@@ -25,18 +25,20 @@ def _minimal_spec(
 
         title: str | None = None
 
-    models = {
-        "read": ReadDocument,
-        "domain": Document,
-        "create_cmd": CreateDocumentCmd,
-        "update_cmd": (
-            UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
-        ),
-    }
+    update_cmd = (
+        UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
+    )
     return DocumentSpec(
         namespace="test",
-        sources={"read": "test_read", "write": "test_write"},
-        models=models,
+        read={"source": "test_read", "model": ReadDocument},
+        write={
+            "source": "test_write",
+            "models": {
+                "domain": Document,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": update_cmd,
+            },
+        },
     )
 
 
