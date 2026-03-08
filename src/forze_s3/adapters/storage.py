@@ -9,6 +9,8 @@ import re
 from datetime import datetime
 from typing import Optional, final
 
+from forze.application.contracts.tenant import TenantContextPort
+
 import attrs
 import magic
 
@@ -33,6 +35,7 @@ from ..kernel.platform import S3Client
 class S3StorageAdapter(StoragePort):
     client: S3Client
     bucket: str
+    tenant_context: Optional[TenantContextPort] = None
 
     # Non initable fields
     path_codec: PathCodec = attrs.field(factory=PathCodec, init=False)
@@ -43,9 +46,14 @@ class S3StorageAdapter(StoragePort):
     def __build_key(self, prefix: Optional[str] = None) -> str:
         uid = str(uuid7())
 
-        #! tenant context should be here (before prefix, i.e. tenant_id, prefix, uid)
+        parts: list[str] = []
+        if self.tenant_context is not None:
+            parts.append(str(self.tenant_context.get()))
+        if prefix:
+            parts.append(prefix)
+        parts.append(uid)
 
-        return self.path_codec.cond_join(prefix, uid)
+        return self.path_codec.cond_join(*parts)
 
     # ....................... #
 
@@ -141,7 +149,14 @@ class S3StorageAdapter(StoragePort):
         prefix: Optional[str] = None,
     ) -> tuple[list[StoredObject], int]:
         self._validate_prefix(prefix)
-        p = self.path_codec.cond_join(prefix)
+
+        parts: list[str] = []
+        if self.tenant_context is not None:
+            parts.append(str(self.tenant_context.get()))
+        if prefix:
+            parts.append(prefix)
+
+        p = self.path_codec.cond_join(*parts)
 
         async with self.client.client():
             await self.client.ensure_bucket(self.bucket)
