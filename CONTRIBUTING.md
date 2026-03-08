@@ -69,11 +69,12 @@ Commits follow **Conventional Commits** with a **gitmoji** prefix:
 | 💄 | style | formatting or style changes |
 | ♻️ | refactor | internal code restructuring |
 | ⚡️ | perf | performance improvements |
-| ✅ | test | test changes |
+| 🧪 | test | test changes |
 | 🔧 | chore | maintenance tasks |
 | 📦 | build | build system changes |
 | 👷 | ci | CI configuration changes |
 | ⏪ | revert | revert a previous commit |
+| 🔒 | security | security fixes and improvements |
 
 Examples:
 

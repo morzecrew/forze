@@ -33,6 +33,7 @@ It must apply even if the user does not explicitly mention Conventional Commits 
 - build
 - ci
 - revert
+- security
 
 ## Gitmoji Mapping (deterministic)
 
@@ -42,11 +43,12 @@ It must apply even if the user does not explicitly mention Conventional Commits 
 - style    -> 💄
 - refactor -> ♻️
 - perf     -> ⚡️
-- test     -> ✅
+- test     -> 🧪
 - chore    -> 🔧
 - build    -> 📦
 - ci       -> 👷
 - revert   -> ⏪
+- security -> 🔒
 
 If multiple changes exist, pick the PRIMARY change as the `type` and therefore the gitmoji.
 If unclear: prefer fix over feat; feat over refactor; refactor over chore.
@@ -89,11 +91,13 @@ Body format:
 
 Example:
 
+```text
 ✨ feat(auth): add oauth login
 
 - add Google provider
 - add GitHub provider
 - store refresh tokens securely
+```
 
 ## Footer (optional)
 
