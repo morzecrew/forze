@@ -4,6 +4,7 @@ require_psycopg()
 
 # ....................... #
 
+import contextlib
 from typing import Optional, Sequence, final, overload
 from uuid import UUID
 
@@ -119,14 +120,12 @@ class PostgresDocumentAdapter[
 
         res = await self.read_gw.get(pk)
 
-        try:
+        with contextlib.suppress(Exception):
             await self.cache.set_versioned(
                 str(pk),
                 str(res.rev),
                 self._map_to_cache(res),
             )
-        except Exception:
-            pass
 
         return res
 
@@ -166,12 +165,10 @@ class PostgresDocumentAdapter[
 
         if misses:
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
-            try:
+            with contextlib.suppress(Exception):
                 await self.cache.set_many_versioned(
                     {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in miss_res}
                 )
-            except Exception:
-                pass
 
         by_pk: dict[str, R] = {
             k: pydantic_validate(self.read_gw.model, v) for k, v in hits.items()
