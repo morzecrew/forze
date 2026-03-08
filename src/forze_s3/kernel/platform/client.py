@@ -22,7 +22,34 @@ from forze.base.errors import CoreError, NotFoundError
 from .errors import s3_handled
 
 # ----------------------- #
-#! TODO: abstract config class with attrs or typed dict
+
+
+@final
+class S3Config(TypedDict, total=False):
+    """S3 optional configuration (botocore config)."""
+
+    region_name: str
+    signature_version: str
+    user_agent: str
+    user_agent_extra: str
+    connect_timeout: int | float
+    read_timeout: int | float
+    parameter_validation: bool
+    max_pool_connections: int
+    proxies: dict[str, str]
+    proxies_config: dict[str, Any]
+    s3: dict[str, Any]
+    retries: dict[str, Any]
+    client_cert: str | tuple[str, str]
+    inject_host_prefix: bool
+    use_dualstack_endpoint: bool
+    use_fips_endpoint: bool
+    ignore_configured_endpoint_urls: bool
+    tcp_keepalive: bool
+    request_min_compression_size_bytes: int
+
+
+# ....................... #
 
 
 @final
@@ -39,8 +66,8 @@ class S3Head(TypedDict, total=False):
 
 @final
 @attrs.define(frozen=True, slots=True, kw_only=True)
-class S3Config:
-    """S3 configuration."""
+class _S3ConnectionOpts:
+    """S3 connection options."""
 
     endpoint: str
     access_key_id: str
@@ -54,7 +81,7 @@ class S3Config:
 @final
 @attrs.define(slots=True)
 class S3Client:
-    __opts: Optional[S3Config] = attrs.field(default=None, init=False)
+    __opts: Optional[_S3ConnectionOpts] = attrs.field(default=None, init=False)
     __session: Optional[aioboto3.Session] = attrs.field(default=None, init=False)
 
     __ctx_client: ContextVar[Optional[AsyncS3Client]] = attrs.field(
@@ -74,16 +101,18 @@ class S3Client:
         endpoint: str,
         access_key_id: str,
         secret_access_key: str | SecretStr,
-        config: Optional[AioConfig] = None,
+        config: Optional[S3Config] = None,
     ) -> None:
         if self.__session is not None:
             return
 
-        self.__opts = S3Config(
+        aio_config = AioConfig(**config) if config else None  # type: ignore
+
+        self.__opts = _S3ConnectionOpts(
             endpoint=endpoint,
             access_key_id=access_key_id,
             secret_access_key=secret_access_key,
-            config=config,
+            config=aio_config,
         )
         self.__session = aioboto3.Session()
 
