@@ -22,10 +22,10 @@ from ..kernel.platform import RedisClient
 
 # ----------------------- #
 
-__F_PAYLOAD: Final[str] = "payload"
-__F_TYPE: Final[str] = "type"
-__F_TIMESTAMP: Final[str] = "timestamp"
-__F_KEY: Final[str] = "key"
+_F_PAYLOAD: Final[str] = "payload"
+_F_TYPE: Final[str] = "type"
+_F_TIMESTAMP: Final[str] = "timestamp"
+_F_KEY: Final[str] = "key"
 
 # ....................... #
 
@@ -45,16 +45,16 @@ class RedisStreamCodec[M: BaseModel]:
         key: Optional[str] = None,
         timestamp: Optional[datetime] = None,
     ) -> dict[str, str]:
-        data: dict[str, str] = {__F_PAYLOAD: payload.model_dump_json()}
+        data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
 
         if type is not None:
-            data[__F_TYPE] = type
+            data[_F_TYPE] = type
 
         if key is not None:
-            data[__F_KEY] = key
+            data[_F_KEY] = key
 
         if timestamp is not None:
-            data[__F_TIMESTAMP] = timestamp.isoformat()
+            data[_F_TIMESTAMP] = timestamp.isoformat()
 
         return data
 
@@ -62,19 +62,19 @@ class RedisStreamCodec[M: BaseModel]:
 
     def decode(self, stream: str, id: str, raw_data: dict[bytes, bytes]):
         decoded = {k.decode("utf-8"): v.decode("utf-8") for k, v in raw_data.items()}
-        payload_raw = decoded.get(__F_PAYLOAD)
+        payload_raw = decoded.get(_F_PAYLOAD)
 
         if payload_raw is None:
             raise CoreError(f"Redis stream message '{id}' in '{stream}' has no payload")
 
-        timestamp_raw = decoded.get(__F_TIMESTAMP)
+        timestamp_raw = decoded.get(_F_TIMESTAMP)
 
         return StreamMessage(
             stream=stream,
             id=id,
             payload=self.model.model_validate_json(payload_raw),
-            type=decoded.get(__F_TYPE),
-            key=decoded.get(__F_KEY),
+            type=decoded.get(_F_TYPE),
+            key=decoded.get(_F_KEY),
             timestamp=datetime.fromisoformat(timestamp_raw) if timestamp_raw else None,
         )
 

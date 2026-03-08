@@ -1,13 +1,25 @@
 """Pytest configuration for forze_redis integration tests."""
 
+from uuid import uuid4
+
 import pytest
 import pytest_asyncio
 from docker import from_env
 from docker.errors import DockerException
+from pydantic import BaseModel
 from testcontainers.redis import RedisContainer
 
 pytest.importorskip("redis")
 
+from forze.utils.codecs import KeyCodec
+from forze_redis.adapters import (
+    RedisCacheAdapter,
+    RedisCounterAdapter,
+    RedisIdempotencyAdapter,
+    RedisStreamAdapter,
+    RedisStreamCodec,
+    RedisStreamGroupAdapter,
+)
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig
 
 
@@ -47,3 +59,58 @@ async def redis_client(redis_container: RedisContainer) -> RedisClient:
     yield client
 
     await client.close()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_cache(redis_client: RedisClient) -> RedisCacheAdapter:
+    """Provide a RedisCacheAdapter with a unique namespace per test."""
+    namespace = f"it:cache:{uuid4().hex[:12]}"
+    return RedisCacheAdapter(
+        client=redis_client,
+        key_codec=KeyCodec(namespace=namespace),
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_counter(redis_client: RedisClient) -> RedisCounterAdapter:
+    """Provide a RedisCounterAdapter with a unique namespace per test."""
+    namespace = f"it:counter:{uuid4().hex[:12]}"
+    return RedisCounterAdapter(
+        client=redis_client,
+        key_codec=KeyCodec(namespace=namespace),
+        tenant_context=None,
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_idempotency(redis_client: RedisClient) -> RedisIdempotencyAdapter:
+    """Provide a RedisIdempotencyAdapter for integration tests."""
+    return RedisIdempotencyAdapter(client=redis_client)
+
+
+class _StreamPayload(BaseModel):
+    """Minimal payload model for stream integration tests."""
+
+    value: str
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_stream(redis_client: RedisClient) -> RedisStreamAdapter[_StreamPayload]:
+    """Provide a RedisStreamAdapter for integration tests."""
+    codec = RedisStreamCodec(model=_StreamPayload)
+    return RedisStreamAdapter(client=redis_client, codec=codec)
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_stream_group(
+    redis_client: RedisClient,
+) -> RedisStreamGroupAdapter[_StreamPayload]:
+    """Provide a RedisStreamGroupAdapter for integration tests."""
+    codec = RedisStreamCodec(model=_StreamPayload)
+    return RedisStreamGroupAdapter(client=redis_client, codec=codec)
+
+
+@pytest.fixture(scope="function")
+def stream_payload_cls() -> type[_StreamPayload]:
+    """Provide the stream payload model for constructing test messages."""
+    return _StreamPayload
