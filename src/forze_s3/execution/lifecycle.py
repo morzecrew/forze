@@ -3,10 +3,10 @@
 from typing import Optional, final
 
 import attrs
-from botocore.config import Config as AioConfig
 
 from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
 
+from ..kernel.platform import S3Config
 from .deps import S3ClientDepKey
 
 # ----------------------- #
@@ -32,7 +32,7 @@ class S3StartupHook(LifecycleHook):
     secret_access_key: str
     """Secret key for authentication."""
 
-    config: Optional[AioConfig] = None
+    config: Optional[S3Config] = None
     """Optional botocore config for retries, timeouts, etc."""
 
     # ....................... #
@@ -72,7 +72,7 @@ def s3_lifecycle_step(
     endpoint: str,
     access_key_id: str,
     secret_access_key: str,
-    config: Optional[AioConfig] = None,
+    config: Optional[S3Config] = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for S3 client init and shutdown.
 
