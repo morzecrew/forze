@@ -92,6 +92,38 @@ Guidelines:
 
 Async integration tests should be marked with `@pytest.mark.asyncio`.
 
+## Performance Tests
+
+Performance tests measure execution characteristics such as latency, throughput, and overhead.
+
+They are intended to detect performance regressions or compare alternative implementations.
+
+Guidelines:
+
+- Keep performance tests isolated from correctness tests.
+- Avoid strict timing assertions that may be unstable across environments.
+- Prefer statistical measurements over single-run timings.
+- Use dedicated benchmarking tools (e.g. `pytest-benchmark`) when possible.
+- Focus on representative hot paths rather than full system behavior.
+
+Typical targets for performance tests include:
+
+- serialization or deserialization overhead
+- adapter or integration layer overhead
+- frequently executed operations
+- concurrent request handling
+
+Example using `pytest-benchmark`:
+
+```python
+def test_health_endpoint_benchmark(benchmark, client):
+    def run():
+        response = client.get("/health")
+        assert response.status_code == 200
+
+    benchmark(run)
+```
+
 ## Test Markers
 
 Markers should be explicitly registered in project configuration (e.g. `pyproject.toml` or `pytest.ini`).
@@ -100,6 +132,7 @@ Common markers include:
 
 - `unit`
 - `integration`
+- `perf`
 - `slow`
 - `asyncio`
 

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Unit tests for `forze_fastapi`: exception handlers, routing params/forms/router, document and search routers, OpenAPI docs, and router utilities.
+- `httpx` to `forze[fastapi]` extra (required by Starlette TestClient).
 - `strict_content_type` parameter (default True) to `ForzeAPIRouter` and route methods.
 - Tenant context support in S3 storage adapter (`forze_s3`).
 - `S3Config` TypedDict for abstracting botocore configuration in `forze_s3`.

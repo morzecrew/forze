@@ -42,11 +42,13 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "anyio>=4.12.1",
     "bandit>=1.9.3",
     "deptry>=0.24.0",
     "import-linter>=2.10",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.25.0",
+    "pytest-benchmark>=5.2.3",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
     "pytest-xdist>=3.8.0",
@@ -68,7 +70,12 @@ docs = [
 ]
 
 [project.optional-dependencies]
-fastapi = ["fastapi>=0.135.1", "scalar-fastapi>=1.8.0", "starlette>=0.52.1"]
+fastapi = [
+    "fastapi>=0.135.1",
+    "httpx>=0.28.0",
+    "scalar-fastapi>=1.8.0",
+    "starlette>=0.52.1",
+]
 postgres = ["psycopg-pool>=3.3.0", "psycopg[binary]>=3.3.3"]
 redis = ["redis>=7.3.0"]
 temporal = ["temporalio>=1.23.0"]
@@ -140,6 +147,12 @@ python_functions = "test_*"
 pythonpath = ["src"]
 addopts = ["--tb=short", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
+markers = [
+    "perf: Performance test",
+    "integration: Integration test",
+    "unit: Unit test",
+    "asyncio: Async test",
+]
 
 [tool.coverage.run]
 source = ["src"]
@@ -267,6 +280,7 @@ DEP002 = [
     "types-aiobotocore",
     "aiobotocore",
     "temporalio",
+    "httpx",                # required by starlette.testclient.TestClient
 ]
 DEP003 = ["types_aiobotocore_s3", "typing_extensions"]
 
