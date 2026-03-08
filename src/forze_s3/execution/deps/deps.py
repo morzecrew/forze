@@ -5,6 +5,7 @@ from forze.application.contracts.storage import (
     StoragePort,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.contracts.tenant.deps import TenantContextDepKey
 from forze.base.typing import conforms_to
 
 from ...adapters import S3StorageAdapter
@@ -23,4 +24,12 @@ def s3_storage(context: ExecutionContext, bucket: str) -> StoragePort:
     """
     s3_client = context.dep(S3ClientDepKey)
 
-    return S3StorageAdapter(client=s3_client, bucket=bucket)
+    tenant_context = None
+    if context.deps.exists(TenantContextDepKey):
+        tenant_context = context.dep(TenantContextDepKey)
+
+    return S3StorageAdapter(
+        client=s3_client,
+        bucket=bucket,
+        tenant_context=tenant_context,
+    )
