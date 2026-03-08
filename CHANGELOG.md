@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Response body chunk processing in idempotent route (performance).
 - Postgres `__patch_many` loop now uses `asyncio.gather` (performance).
 - Postgres document write operations avoid redundant reads (performance).
+- Mongo integration now mirrors Postgres composition with dedicated read/write/history gateways, configurable rev/history strategies (application-managed), and execution module wiring.
 
 ### Fixed
 
