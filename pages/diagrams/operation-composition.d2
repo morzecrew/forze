@@ -1,5 +1,3 @@
-# Operation composition: guards, middlewares, core, effects
-
 style: {
     fill: transparent
 }
@@ -12,6 +10,30 @@ vars: {
 
 direction: right
 
-Usecase.shape: circle
+Guards: {
+    shape: rectangle
+    label: Guard chain
+}
+
+Middlewares: {
+    shape: rectangle
+    label: Middleware chain
+}
+
+Usecase: {
+    shape: circle
+    label: Core usecase
+}
+
+Effects: {
+    shape: rectangle
+    label: Effect chain
+}
+
+AfterCommit: {
+    shape: rectangle
+    label: Side effects after commit
+}
 
 Guards -> Middlewares -> Usecase -> Effects
+Usecase -> AfterCommit: transactional flow

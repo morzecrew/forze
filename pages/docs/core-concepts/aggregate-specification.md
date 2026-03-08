@@ -20,6 +20,36 @@ A document spec typically includes:
 - **Models** — concrete classes for read, domain, create command, update command
 - **Cache** — optional TTL and enable flag
 
+## Concrete example
+
+    :::python
+    from datetime import timedelta
+    from forze.application.contracts.document import DocumentSpec
+
+    project_spec = DocumentSpec(
+        namespace="projects",
+        sources={
+            "read": "public.projects",
+            "write": "public.projects",
+            "history": "public.projects_history",
+        },
+        models={
+            "read": ProjectReadModel,
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
+        },
+        cache={
+            "enabled": True,
+            "ttl": timedelta(minutes=5),
+        },
+    )
+
+You can then resolve the adapter by spec from context:
+
+    :::python
+    project_port = ctx.doc(project_spec)
+
 ## Why It Matters
 
 - **Single source of truth** — the spec describes the aggregate for all adapters

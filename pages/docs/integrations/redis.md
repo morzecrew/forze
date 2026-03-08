@@ -1,113 +1,108 @@
 # Redis / Valkey Integration
 
-This guide explains how to set up Redis (or Valkey) for Forze document cache, counters, and idempotency. It covers connection configuration, cache wiring, counter namespaces, and idempotency for HTTP request deduplication.
+This guide explains how to use Redis (or Valkey) with Forze for cache, counters, and idempotency.
 
 ## Prerequisites
 
-- Redis 6+ or Valkey (Redis-compatible)
-- `forze[redis]` extra installed
+- `forze[redis]` installed
+- Redis/Valkey reachable from your app
 
-## Connection
+## What this integration provides
 
-The Redis client uses a DSN and optional pool configuration. Use :class:`RedisDepsModule` to register the client and ports, and :func:`redis_lifecycle_step` for startup/shutdown:
+`RedisDepsModule` registers:
 
-```python
-from forze.application.execution import Deps, LifecyclePlan
-from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
+| Dependency key | Capability |
+|----------------|------------|
+| `RedisClientDepKey` | low-level Redis client |
+| `CacheDepKey` | document cache adapter |
+| `CounterDepKey` | namespace counters |
+| `IdempotencyDepKey` | HTTP idempotency adapter |
 
-client = RedisClient()
-deps_module = RedisDepsModule(client=client)
+## Runtime wiring
 
-# Build deps and lifecycle
-deps = deps_module()
-lifecycle = LifecyclePlan.from_steps(
-    redis_lifecycle_step(
-        dsn="redis://localhost:6379/0",
-        config=RedisConfig(max_size=20),
+Use module + lifecycle together:
+
+    :::python
+    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
+
+    redis_client = RedisClient()
+    redis_module = RedisDepsModule(client=redis_client)
+
+    runtime = ExecutionRuntime(
+        deps=DepsPlan.from_modules(redis_module),
+        lifecycle=LifecyclePlan.from_steps(
+            redis_lifecycle_step(
+                dsn="redis://localhost:6379/0",
+                config=RedisConfig(
+                    max_size=20,
+                    socket_timeout=2.0,
+                    connect_timeout=2.0,
+                ),
+            )
+        ),
     )
-)
-```
 
-The client supports connection pooling, pipelining, and configurable timeouts. See :class:`forze_redis.kernel.platform.client.RedisConfig` for pool options.
+## Document cache
 
-## Ports Registered
+If `DocumentSpec.cache.enabled` is true, `ExecutionContext.doc(spec)` resolves and injects a cache adapter automatically.
 
-:class:`RedisDepsModule` registers the following dependency keys:
+    :::python
+    from datetime import timedelta
+    from forze.application.contracts.document import DocumentSpec
 
-| Key | Port | Use case |
-|-----|------|----------|
-| :data:`CacheDepKey` | :class:`CachePort` | Document cache (pointer + body) |
-| :data:`CounterDepKey` | :class:`CounterPort` | Namespace-scoped counters |
-| :data:`IdempotencyDepKey` | :class:`IdempotencyPort` | HTTP request idempotency |
+    spec = DocumentSpec(
+        namespace="projects",
+        sources={"read": "public.projects", "write": "public.projects"},
+        models={...},
+        cache={"enabled": True, "ttl": timedelta(minutes=5)},
+    )
 
-## Document Cache
+## Resolve cache directly
 
-When a :class:`DocumentSpec` has `cache` enabled, the cache port is resolved automatically from the execution context via :data:`CacheDepKey` (directly or through a router) and injected into the document adapter.
+Use this if you need cache outside the document adapter:
 
-### Cache Specification
+    :::python
+    from datetime import timedelta
+    from forze.application.contracts.cache import CacheSpec
 
-Cache is configured per document aggregate via :class:`DocumentCacheSpec` in the document spec:
+    cache = ctx.cache(
+        CacheSpec(
+            namespace="projects",
+            ttl=timedelta(minutes=5),
+        )
+    )
 
-```python
-from forze.application.contracts.document import DocumentSpec, DocumentModelSpec
-from datetime import timedelta
+## Counters
 
-spec = DocumentSpec(
-    namespace="documents",
-    sources={"read": "public.documents", "write": "public.documents"},
-    models=DocumentModelSpec(...),
-    cache={"enabled": True, "ttl": timedelta(seconds=300)},
-)
-```
+Counters are namespace-scoped and useful for number IDs or sequence allocation.
 
-The Redis cache adapter uses the document `namespace` for key prefixing. Keys follow the pattern `{namespace}/cache/{type}/{...}` (pointer, body, kv).
+    :::python
+    counter = ctx.counter("projects")
 
-### CacheSpec
+    one = await counter.incr()
+    batch_end = await counter.incr_batch(10)
+    await counter.decr(by=1)
+    await counter.reset(value=1)
 
-When resolving a cache port directly via :meth:`ExecutionContext.cache`, use :class:`CacheSpec`:
+## Idempotency for FastAPI
 
-```python
-from forze.application.contracts.cache import CacheSpec
-from datetime import timedelta
+Idempotency is auto-registered by `RedisDepsModule`. When a `ForzeAPIRouter` route is declared with `idempotent=True`, the adapter stores request fingerprints and responses by idempotency key.
 
-spec = CacheSpec(
-    namespace="documents",
-    ttl=timedelta(seconds=300),
-)
-cache_port = ctx.cache(spec)
-```
+    :::python
+    @router.post(
+        "/create",
+        idempotent=True,
+        operation_id="projects.create",
+        idempotency_config={"dto_param": "payload"},
+    )
+    async def create(payload: CreatePayload):
+        ...
 
-## Counter
+## Key patterns
 
-Counters are namespace-scoped. Resolve a counter port via :meth:`ExecutionContext.counter`:
-
-```python
-counter = ctx.counter("documents")
-value = await counter.incr()           # increment by 1
-batch = await counter.incr_batch(10)   # reserve a batch of IDs
-await counter.decr(by=1)
-await counter.reset(value=1)
-```
-
-The Redis counter adapter uses `INCR`/`DECR` under the hood. Keys are prefixed with the namespace.
-
-## Idempotency
-
-Idempotency prevents duplicate processing of HTTP requests (e.g. POST retries). Register :data:`IdempotencyDepKey` with a factory (e.g. :func:`redis_idempotency`) that builds an :class:`IdempotencyPort`.
-
-The Redis idempotency adapter stores request fingerprints with a configurable TTL (default 30 seconds). Use :class:`IdempotentRoute` or :func:`make_idempotent_route_class` in FastAPI to apply idempotency at the route level.
-
-```python
-# RedisDepsModule registers redis_idempotency with default ttl=30s
-# Customize by using a router or a wrapper factory
-```
-
-## Key Structure
-
-The Redis adapters use :class:`forze.utils.codecs.KeyCodec` for key construction:
-
-| Adapter | Key pattern |
-|---------|-------------|
-| Cache | `{namespace}/cache/pointer/{key}`, `{namespace}/cache/body/{key}/{version}` |
+| Adapter | Pattern |
+|---------|---------|
+| Cache | `{namespace}/cache/pointer/{key}` and `{namespace}/cache/body/{key}/{version}` |
 | Counter | `{namespace}[/{suffix}]` |
-| Idempotency | `idempotency/{op}/{key}` |
+| Idempotency | `idempotency/{operation}/{idempotency_key}` |
