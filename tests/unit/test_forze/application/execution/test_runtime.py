@@ -52,7 +52,7 @@ class TestExecutionRuntime:
     async def test_scope_resets_context_on_exit(self) -> None:
         from forze.base.errors import CoreError
 
-        rt = ExecutionRuntime(deps=DepsPlan.from_modules(lambda: Deps()))
+        rt = ExecutionRuntime(deps=DepsPlan.from_modules(Deps))
         async with rt.scope():
             ctx = rt.get_context()
             assert ctx is not None

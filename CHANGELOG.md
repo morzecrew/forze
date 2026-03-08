@@ -9,15 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- `strict_content_type` parameter (default True) to `ForzeAPIRouter` and route methods.
+- Tenant context support in S3 storage adapter (`forze_s3`).
+- `S3Config` TypedDict for abstracting botocore configuration in `forze_s3`.
+- Socket and connect timeouts to `RedisConfig` in `forze_redis`.
+- Prefix validation to `S3StorageAdapter`.
 
 ### Changed
 
-- ...
+- Search router: split building and attachment for flexibility.
+- Response body chunk processing in idempotent route (performance).
+- Postgres `__patch_many` loop now uses `asyncio.gather` (performance).
+- Postgres document write operations avoid redundant reads (performance).
 
 ### Fixed
 
-- ...
+- Tenant context dep resolution in S3 storage adapter (invoke dep as factory).
+- Read gateway fallback on cache failure.
+- Deterministic UUID generation now uses SHA-256 instead of MD5 (security).
 
 ## [0.1.7] - 2026-03-08
 

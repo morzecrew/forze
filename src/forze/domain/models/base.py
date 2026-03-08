@@ -22,9 +22,7 @@ class CoreModel(BaseModel):
         model_title_generator=lambda _: "",
         field_title_generator=lambda _, __: "",
         str_strip_whitespace=True,
-        json_encoders={
-            set: lambda v: sorted(v),
-        },
+        json_encoders={set: sorted},
     )
 
 

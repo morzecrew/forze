@@ -74,7 +74,9 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 def make_idem_header_dependency(header_key: str):
     async def dep(idempotency_key: str = Header(..., alias=header_key)) -> None:
         if not idempotency_key:
-            raise HTTPException(400, "Idempotency key is required")
+            raise HTTPException(
+                400, f"Idempotency key is required in header: {header_key}"
+            )
 
     return dep
 
@@ -163,7 +165,7 @@ class ForzeAPIRouter(APIRouter):
         response_model_by_alias: bool = True,
         response_model_exclude_unset: bool = False,
         response_model_exclude_defaults: bool = False,
-        response_model_exclude_none: bool = False,  # overriden below by default `True`
+        response_model_exclude_none: bool = False,  # overridden below by default `True`
         include_in_schema: bool = True,
         response_class: Union[type[Response], DefaultPlaceholder] = Default(
             JSONResponse

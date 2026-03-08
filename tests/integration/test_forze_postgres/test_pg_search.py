@@ -1,17 +1,17 @@
-import pytest
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from forze.application.contracts.search.specs import SearchSpec
-from forze.application.execution import ExecutionContext, Deps
+import pytest
 from pydantic import BaseModel
 
-from forze_postgres.kernel.platform.client import PostgresClient
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze.application.contracts.search.specs import SearchSpec
+from forze.application.execution import Deps, ExecutionContext
+from forze_postgres.execution.deps.deps import postgres_search
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
-from forze_postgres.execution.deps.deps import postgres_search
+from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.platform.client import PostgresClient
 
 
 class SearchableModel(BaseModel):
@@ -56,8 +56,6 @@ async def test_postgres_search_adapter(
         ON search_items USING pgroonga ((ARRAY[title, content]));
         """
     )
-
-    from uuid import uuid4
 
     docs = [
         {
