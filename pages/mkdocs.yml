@@ -58,5 +58,7 @@ nav:
     - PostgreSQL: integrations/postgres.md
     - Redis: integrations/redis.md
     - S3: integrations/s3.md
+    - MongoDB: integrations/mongo.md
+    - Temporal: integrations/temporal.md
   # - API Reference:
   #   - Core: api/core.md

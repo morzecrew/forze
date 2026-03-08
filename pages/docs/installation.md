@@ -29,13 +29,13 @@ Forze provides optional integrations for common infrastructure components. Insta
 /// tab | uv
 
     :::bash
-    uv add 'forze[fastapi,postgres]'
+    uv add 'forze[fastapi,postgres,redis,s3,mongo,temporal]'
 ///
 
 /// tab | pip
 
     :::bash
-    pip install 'forze[fastapi,postgres]'
+    pip install 'forze[fastapi,postgres,redis,s3,mongo,temporal]'
 ///
 
 ## Development Installation
