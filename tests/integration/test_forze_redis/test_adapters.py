@@ -33,9 +33,9 @@ async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:
 
 @pytest.mark.asyncio
 async def test_redis_counter_adapter_operations(redis_client: RedisClient) -> None:
-    counter = RedisCounterAdapter.from_namespace(
+    counter = RedisCounterAdapter(
         client=redis_client,
-        namespace=f"it:redis-counter:{uuid4()}",
+        key_codec=KeyCodec(namespace=f"it:redis-counter:{uuid4()}"),
     )
 
     assert await counter.incr() == 1

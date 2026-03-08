@@ -5,6 +5,7 @@ from datetime import timedelta
 from forze.application.contracts.cache import CacheDepPort, CachePort, CacheSpec
 from forze.application.contracts.counter import CounterDepPort, CounterPort
 from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.contracts.tenant.deps import TenantContextDepKey
 from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
 from forze.utils.codecs import KeyCodec
@@ -47,9 +48,14 @@ def redis_counter(
     """
     redis_client = context.dep(RedisClientDepKey)
 
+    tenant_context = None
+    if context.deps.exists(TenantContextDepKey):
+        tenant_context = context.dep(TenantContextDepKey)()
+
     return RedisCounterAdapter(
         client=redis_client,
         key_codec=KeyCodec(namespace=namespace),
+        tenant_context=tenant_context,
     )
 
 
