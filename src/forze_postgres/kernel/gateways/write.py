@@ -346,7 +346,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         key: tuple[str, ...],
         batch: list[tuple[UUID, int, JsonDict]],
-    ) -> None:
+    ) -> list[D]:
         cols = [ID_FIELD, REV_FIELD] + list(key)
         values_rows: list[sql.Composable] = []
         params: list[Any] = []
@@ -368,7 +368,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             SET {sets}
             FROM (VALUES {vals}) AS v({cols})
             WHERE t.{pk} = v.id AND t.{rev} = v.rev
-            RETURNING t.{pk}
+            RETURNING {ret}
             """
         ).format(
             table=self.qname.ident(),
@@ -377,21 +377,24 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
             pk=self.ident_pk(),
             rev=self._ident_rev(),
+            ret=self.return_clause(),
         )
 
         rows = await self.client.fetch_all(
             stmt,
             params,
-            row_factory="tuple",
+            row_factory="dict",
             commit=True,
         )
-        updated_ids = {r[0] for r in rows}
+        updated_ids = {row[ID_FIELD] for row in rows}
         expected_ids = {_id for _id, _, _ in batch}
 
         missing = expected_ids - updated_ids
 
         if missing:
             raise ConcurrencyError("Failed to update records")
+
+        return [pydantic_validate(self.model, row) for row in rows]
 
     # ....................... #
 
@@ -459,12 +462,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not groups:
             return currents
 
+        updated_models: dict[UUID, D] = {}
+
         for fields_key, rows in groups.items():
             for start in range(0, len(rows), batch_size):
                 batch = rows[start : start + batch_size]
-                await self.__patch_group(fields_key, batch)
+                updated = await self.__patch_group(fields_key, batch)
+                updated_models.update({m.id: m for m in updated})
 
-        res = await self.read.get_many(pks)
+        res = [updated_models.get(c.id, c) for c in currents]
         await self._write_history(*res)
 
         return res
