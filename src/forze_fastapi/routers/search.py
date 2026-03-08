@@ -1,4 +1,3 @@
-from forze.base.errors import CoreError
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -6,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Optional, TypeVar, overload
+from typing import Optional, TypeVar
 
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
@@ -47,59 +46,21 @@ def search_facade_dependency(
 
 
 # ....................... #
-#! TODO: split into "build_*" and "attach_*" functions
 
 
-@overload
-def build_search_router(
+def attach_search_router(
     router: R,
-    prefix: None = ...,
-    tags: None = ...,
     *,
     provider: SearchUsecasesFacadeProvider[M],
     context: ExecutionContextDependencyPort,
-) -> R: ...
-
-
-@overload
-def build_search_router(
-    router: None = ...,
-    prefix: str = ...,
-    tags: Optional[list[str | Enum]] = ...,
-    *,
-    provider: SearchUsecasesFacadeProvider[M],
-    context: ExecutionContextDependencyPort,
-) -> ForzeAPIRouter: ...
-
-
-def build_search_router(
-    router: Optional[R] = None,
-    prefix: Optional[str] = None,
-    tags: Optional[list[str | Enum]] = None,
-    *,
-    provider: SearchUsecasesFacadeProvider[M],
-    context: ExecutionContextDependencyPort,
-):
-    if router is None:
-        if prefix is None:
-            raise CoreError("Prefix is required when router is not provided")
-
-        new_router = ForzeAPIRouter(
-            prefix=prefix,
-            tags=tags,
-            context_dependency=context,
-        )
-
-    else:
-        new_router = router
-
+) -> R:
     read_dto = provider.read_dto
 
     ucs_dep = search_facade_dependency(provider, context)
 
     # ....................... #
 
-    @new_router.post(
+    @router.post(
         "/search",
         response_model=Paginated[read_dto],
         operation_id=f"{provider.spec.namespace}.search",
@@ -121,7 +82,7 @@ def build_search_router(
 
     # ....................... #
 
-    @new_router.post(
+    @router.post(
         "/raw-search",
         response_model=RawPaginated,
         operation_id=f"{provider.spec.namespace}.raw_search",
@@ -143,4 +104,20 @@ def build_search_router(
 
     # ....................... #
 
-    return new_router
+    return router
+
+
+def build_search_router(
+    prefix: str,
+    tags: Optional[list[str | Enum]] = None,
+    *,
+    provider: SearchUsecasesFacadeProvider[M],
+    context: ExecutionContextDependencyPort,
+) -> ForzeAPIRouter:
+    router = ForzeAPIRouter(
+        prefix=prefix,
+        tags=tags,
+        context_dependency=context,
+    )
+
+    return attach_search_router(router, provider=provider, context=context)
