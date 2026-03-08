@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `S3Config` TypedDict for abstracting botocore configuration in `forze_s3`.
 - Socket and connect timeouts to `RedisConfig` in `forze_redis`.
 - Prefix validation to `S3StorageAdapter`.
+- Mongo document adapter with dependency factories and CRUD/query support in `forze_mongo`.
 
 ### Changed
 
