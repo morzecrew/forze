@@ -1,27 +1,44 @@
 ---
-description: The agent must never perform repository state changes automatically.
+description: The agent must require confirmation only for high-risk repository state changes.
 alwaysApply: true
 ---
 
-# Repository State Changes
+# High-Risk Repository State Changes
 
-Before executing or suggesting execution of any command that modifies repository state - including:
+The agent may prepare and execute routine changes in non-protected working branches without explicit confirmation, including:
 
 - `git commit`
-- `git tag`
-- `git push`
-- publishing packages
-- creating GitHub releases
+- `git push` to the current non-protected branch
+- creating or updating a pull request from a non-protected branch
 
-The agent MUST:
+Protected branches include:
+
+- `main`
+- `master`
+- `release/*`
+- `hotfix/*`
+- `prod/*`
+- `develop`   # optional
+- `dev`       # optional
+
+Before executing or suggesting execution of any high-risk command, the agent MUST:
 
 1. Present the exact commands that would be executed.
 2. Clearly explain the consequences.
-3. Wait for explicit user confirmation in the form of:
+3. Wait for explicit user confirmation such as:
+   - "Proceed"
+   - "Confirm"
+   - "Execute"
 
-    - "Proceed"
-    - "Confirm"
-    - "Execute"
-    - or equivalent unambiguous approval.
+High-risk commands include:
 
-Without explicit confirmation, the agent MUST stop at preparation only.
+- `git push` to a protected branch
+- any `--force` push
+- `git tag`
+- `git push --tags`
+- publishing packages
+- creating GitHub releases
+- merging directly into a protected branch
+- destructive commands such as `git reset --hard`, `git clean -fd`, branch/tag deletion
+
+If the target branch cannot be determined reliably, the agent MUST treat the action as high-risk and require confirmation.

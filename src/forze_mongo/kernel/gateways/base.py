@@ -80,10 +80,16 @@ class MongoGateway[M: BaseModel]:
             return str(value)
 
         if isinstance(value, list):
-            return [self._coerce_query_value(x) for x in value]
+            return [
+                self._coerce_query_value(x)
+                for x in value  # pyright: ignore[reportUnknownVariableType]
+            ]
 
         if isinstance(value, dict):
-            return {k: self._coerce_query_value(v) for k, v in value.items()}
+            return {
+                k: self._coerce_query_value(v)
+                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
 
         return value
 

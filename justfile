@@ -11,7 +11,6 @@ mod pages "pages/justfile"
 # Paths / constants
 
 _uv_sync := "uv sync --all-groups --all-extras > /dev/null 2>&1"
-_publish_url := "https://pyoci.com/ghcr.io/morzecrew/"
 
 # ----------------------- #
 # Default command

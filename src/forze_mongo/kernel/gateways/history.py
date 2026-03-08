@@ -11,7 +11,12 @@ import attrs
 
 from forze.base.errors import CoreError, NotFoundError, ValidationError
 from forze.base.serialization import pydantic_dump, pydantic_validate
-from forze.domain.constants import HISTORY_DATA_FIELD, HISTORY_SOURCE_FIELD, ID_FIELD, REV_FIELD
+from forze.domain.constants import (
+    HISTORY_DATA_FIELD,
+    HISTORY_SOURCE_FIELD,
+    ID_FIELD,
+    REV_FIELD,
+)
 from forze.domain.models import Document, DocumentHistory
 
 from .base import MongoGateway
@@ -76,7 +81,11 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             },
         )
         keyed = {
-            (str(row.get(ID_FIELD)), int(row.get(REV_FIELD))): row for row in rows
+            (
+                str(row.get(ID_FIELD)),
+                int(row.get(REV_FIELD)),  # pyright: ignore[reportArgumentType]
+            ): row
+            for row in rows
         }
         ordered: list[D] = []
 
