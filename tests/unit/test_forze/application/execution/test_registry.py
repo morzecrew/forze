@@ -67,9 +67,7 @@ class TestUsecaseRegistry:
 
     def test_register_many_adds_multiple(self) -> None:
         reg = UsecaseRegistry()
-        new = reg.register_many(
-            {"get": _stub_factory, "create": _stub_factory}
-        )
+        new = reg.register_many({"get": _stub_factory, "create": _stub_factory})
         assert new.exists("get")
         assert new.exists("create")
 
@@ -105,9 +103,7 @@ class TestUsecaseRegistry:
 
         reg = UsecaseRegistry().register("get", _stub_factory)
         with pytest.raises(CoreError, match="not registered"):
-            reg.override_many(
-                {"get": _stub_factory, "create": _stub_factory}
-            )
+            reg.override_many({"get": _stub_factory, "create": _stub_factory})
 
     def test_override_many_inplace_mutates(self) -> None:
         reg = UsecaseRegistry().register("get", _stub_factory)
@@ -129,7 +125,9 @@ class TestUsecaseRegistry:
         uc = reg.resolve("get", ctx)
         assert isinstance(uc, StubUsecase)
 
-    def test_resolve_with_debug_plan_prints(self, capsys: pytest.CaptureFixture) -> None:
+    def test_resolve_with_debug_plan_prints(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
         reg = UsecaseRegistry().register("get", _stub_factory)
         ctx = ExecutionContext(deps=Deps())
         reg.resolve("get", ctx, debug_plan=True)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.execution import Deps, ExecutionContext, Usecase
+from forze.application.execution import ExecutionContext, Usecase
 from forze.application.execution.middleware import (
     EffectMiddleware,
     GuardMiddleware,

@@ -3,7 +3,6 @@
 from forze.application.composition.document import (
     DocumentDTOSpec,
     DocumentOperation,
-    DocumentUsecasesFacade,
     DocumentUsecasesFacadeProvider,
     build_document_plan,
     build_document_registry,

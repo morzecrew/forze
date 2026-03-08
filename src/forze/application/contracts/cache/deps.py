@@ -39,6 +39,7 @@ CacheDepKey = DepKey[CacheDepPort]("cache")
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class CacheDepRouter(DepRouter[CacheSpec, CacheDepPort], CacheDepPort):
     dep_key = CacheDepKey
+
     def __call__(
         self,
         context: "ExecutionContext",

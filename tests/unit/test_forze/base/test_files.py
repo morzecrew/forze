@@ -42,4 +42,3 @@ def test_iter_file_from_bytesio() -> None:
     assert len(chunks) >= 2
     assert b"".join(chunks) == data
     assert bio.closed
-

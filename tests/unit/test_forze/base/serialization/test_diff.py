@@ -39,4 +39,3 @@ def test_has_hybrid_patch_conflict_detects_prefix_overlap() -> None:
     b_scalars = {("a", "x"): 2}
     b_containers = set()
     assert has_hybrid_patch_conflict(a_scalars, a_containers, b_scalars, b_containers)
-

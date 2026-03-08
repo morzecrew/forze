@@ -39,4 +39,3 @@ def test_pydantic_model_hash_is_stable_for_same_data() -> None:
     h1 = pydantic_model_hash(m1)
     h2 = pydantic_model_hash(m2)
     assert h1 == h2
-

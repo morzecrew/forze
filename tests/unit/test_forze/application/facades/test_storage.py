@@ -1,6 +1,5 @@
 """Unit tests for StorageOperation (usecases.storage)."""
 
-import pytest
 
 from forze.application.usecases.storage import StorageOperation
 

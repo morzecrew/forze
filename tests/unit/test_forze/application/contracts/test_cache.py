@@ -2,7 +2,6 @@
 
 from datetime import timedelta
 
-import pytest
 
 from forze.application.contracts.cache import CacheDepKey, CacheSpec
 

@@ -130,7 +130,6 @@ class TestExecutionContextConvenienceMethods:
         assert result is not None
 
     def test_doc_resolves_without_cache(self) -> None:
-        from datetime import timedelta
 
         from forze.application.contracts.document import DocumentDepKey, DocumentSpec
         from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
@@ -158,7 +157,7 @@ class TestExecutionContextConvenienceMethods:
     def test_doc_resolves_with_cache_enabled(self) -> None:
         from datetime import timedelta
 
-        from forze.application.contracts.cache import CacheDepKey, CacheSpec
+        from forze.application.contracts.cache import CacheDepKey
         from forze.application.contracts.document import DocumentDepKey, DocumentSpec
         from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 

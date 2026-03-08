@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 from forze.application.composition.search import (
     SearchOperation,
-    SearchUsecasesFacade,
     SearchUsecasesFacadeProvider,
     build_search_plan,
     build_search_registry,

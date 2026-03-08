@@ -23,4 +23,3 @@ def test_base_dto_is_frozen() -> None:
     # frozen DTO should not allow attribute reassignment and must raise ValidationError
     with pytest.raises(Exception):
         dto.value = 2  # type: ignore[misc]
-

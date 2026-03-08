@@ -10,10 +10,9 @@ from uuid import uuid4
 from forze.application.contracts.document import (
     DocumentPort,
     DocumentReadPort,
-    DocumentWritePort,
 )
 from forze.application.contracts.query import QueryFilterExpression
-from forze.domain.models import CreateDocumentCmd, ReadDocument
+from forze.domain.models import CreateDocumentCmd
 
 from .._stubs import InMemoryDocumentPort
 
@@ -166,7 +165,9 @@ class TestDocumentWritePortViaStub:
         class UpdateCmd(BaseDTO):
             title: str | None = None
 
-        result = await port.update_many([c1.id, c2.id], [UpdateCmd(title="a"), UpdateCmd(title="b")])
+        result = await port.update_many(
+            [c1.id, c2.id], [UpdateCmd(title="a"), UpdateCmd(title="b")]
+        )
         assert len(result) == 2
 
     @pytest.mark.asyncio

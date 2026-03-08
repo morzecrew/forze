@@ -74,7 +74,9 @@ class TestDTOMapperInit:
         assert len(mapper.steps) == 2
 
     def test_overlapping_steps_raises(self) -> None:
-        s1 = StubStep(fields=frozenset({"extra", "body"}), patch={"extra": "a", "body": "x"})
+        s1 = StubStep(
+            fields=frozenset({"extra", "body"}), patch={"extra": "a", "body": "x"}
+        )
         s2 = StubStep(fields=frozenset({"body"}), patch={"body": "b"})
         with pytest.raises(CoreError, match="conflict.*body"):
             DTOMapper(out=OutDTO, steps=(s1, s2))
@@ -108,7 +110,9 @@ class TestDTOMapperCall:
     """Tests for DTOMapper __call__ (mapping pipeline)."""
 
     @pytest.mark.asyncio
-    async def test_empty_steps_maps_source_to_out(self, stub_ctx: ExecutionContext) -> None:
+    async def test_empty_steps_maps_source_to_out(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
         mapper = DTOMapper(out=OutDTO)
         source = SourceModel(title="hi", body="world")
         result = await mapper(stub_ctx, source)
@@ -137,7 +141,9 @@ class TestDTOMapperCall:
         assert result.body == "second"
 
     @pytest.mark.asyncio
-    async def test_overwrite_disallowed_raises(self, stub_ctx: ExecutionContext) -> None:
+    async def test_overwrite_disallowed_raises(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
         step = StubStep(fields=frozenset({"title"}), patch={"title": "overwritten"})
         mapper = DTOMapper(out=OutDTO, steps=(step,))
         source = SourceModel(title="original")
@@ -145,7 +151,9 @@ class TestDTOMapperCall:
             await mapper(stub_ctx, source)
 
     @pytest.mark.asyncio
-    async def test_overwrite_allowed_by_policy_succeeds(self, stub_ctx: ExecutionContext) -> None:
+    async def test_overwrite_allowed_by_policy_succeeds(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
         step = StubStep(fields=frozenset({"title"}), patch={"title": "overwritten"})
         policy = MappingPolicy(allow_overwrite=frozenset({"title"}))
         mapper = DTOMapper(out=OutDTO, steps=(step,), policy=policy)
@@ -154,7 +162,9 @@ class TestDTOMapperCall:
         assert result.title == "overwritten"
 
     @pytest.mark.asyncio
-    async def test_same_value_no_overwrite_check(self, stub_ctx: ExecutionContext) -> None:
+    async def test_same_value_no_overwrite_check(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
         """When step produces same value as payload, no overwrite policy check."""
         step = StubStep(fields=frozenset({"title"}), patch={"title": "same"})
         mapper = DTOMapper(out=OutDTO, steps=(step,))

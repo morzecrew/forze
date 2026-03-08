@@ -26,7 +26,9 @@ def test_core_error_str_includes_code_and_message() -> None:
         (ConflictError("c"), ConflictError),
     ],
 )
-def test_subclass_errors_are_core_error(exc: CoreError, expected_type: type[CoreError]) -> None:
+def test_subclass_errors_are_core_error(
+    exc: CoreError, expected_type: type[CoreError]
+) -> None:
     assert isinstance(exc, CoreError)
     assert isinstance(exc, expected_type)
 
@@ -35,7 +37,9 @@ def test_error_handler_wraps_unknown_exception_with_core_error() -> None:
     """Custom error handler should only see exceptions that default handler did not map."""
 
     @error_handler
-    def custom_handler(e: Exception, op: str, **kwargs: object) -> CoreError:  # pragma: no cover - behaviour tested via wrapper
+    def custom_handler(
+        e: Exception, op: str, **kwargs: object
+    ) -> CoreError:  # pragma: no cover - behaviour tested via wrapper
         return CoreError(message=f"{op}: {e}", code="wrapped")
 
     # simulate unknown exception
@@ -394,4 +398,3 @@ def test_handled_iterator_excludes_strings() -> None:
 
     result = fn_returns_str()
     assert result == "abc"
-
