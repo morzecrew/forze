@@ -55,4 +55,5 @@ def mongo_document_configurable(
 def mongo_txmanager(context: ExecutionContext) -> TxManagerPort:
     """Build a Mongo-backed transaction manager for the execution context."""
     client = context.dep(MongoClientDepKey)
+
     return MongoTxManagerAdapter(client=client)

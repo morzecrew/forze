@@ -1,11 +1,29 @@
-from typing import Protocol, runtime_checkable
+from datetime import datetime
+from typing import AsyncIterator, Awaitable, Optional, Protocol, runtime_checkable
+
+from pydantic import BaseModel
+
+from .types import PubSubMessage
 
 # ----------------------- #
 
 
 @runtime_checkable
-class PubSubPublishPort(Protocol): ...
+class PubSubPublishPort[M: BaseModel](Protocol):
+    def publish(
+        self,
+        topic: str,  # noqa: F841
+        payload: M,
+        *,
+        type: Optional[str] = None,
+        key: Optional[str] = None,
+        published_at: Optional[datetime] = None,
+    ) -> Awaitable[None]: ...
+
+
+# ....................... #
 
 
 @runtime_checkable
-class PubSubSubscribePort(Protocol): ...
+class PubSubSubscribePort[M: BaseModel](Protocol):
+    def subscribe(self, *topics: str) -> AsyncIterator[PubSubMessage[M]]: ...  # noqa: F841
