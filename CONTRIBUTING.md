@@ -129,6 +129,13 @@ Mirror the `src` structure when possible:
 src/pkg/foo/bar.py -> tests/unit/test_pkg/foo/test_bar.py
 ```
 
+If there are duplicates in test filenames, use prefixes to distinguish them, for example:
+
+```text
+src/pkg/foo/bar.py -> tests/unit/test_pkg/foo/test_bar.py
+src/pkg/baz/bar.py -> tests/unit/test_pkg/baz/test_baz_bar.py
+```
+
 Conventions:
 
 - Test files: `test_*.py`
