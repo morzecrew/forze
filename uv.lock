@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13, <3.15"
 
 [[package]]
@@ -501,7 +501,7 @@ wheels = [
 
 [[package]]
 name = "fastapi"
-version = "0.131.0"
+version = "0.135.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -510,9 +510,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/32/158cbf685b7d5a26f87131069da286bf10fc9fbf7fc968d169d48a45d689/fastapi-0.131.0.tar.gz", hash = "sha256:6531155e52bee2899a932c746c9a8250f210e3c3303a5f7b9f8a808bfe0548ff", size = 369612, upload-time = "2026-02-22T16:38:11.252Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/7b/f8e0211e9380f7195ba3f3d40c292594fd81ba8ec4629e3854c353aaca45/fastapi-0.135.1.tar.gz", hash = "sha256:d04115b508d936d254cea545b7312ecaa58a7b3a0f84952535b4c9afae7668cd", size = 394962, upload-time = "2026-03-01T18:18:29.369Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/94/b58ec24c321acc2ad1327f69b033cadc005e0f26df9a73828c9e9c7db7ce/fastapi-0.131.0-py3-none-any.whl", hash = "sha256:ed0e53decccf4459de78837ce1b867cd04fa9ce4579497b842579755d20b405a", size = 103854, upload-time = "2026-02-22T16:38:09.814Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/72/42e900510195b23a56bde950d26a51f8b723846bfcaa0286e90287f0422b/fastapi-0.135.1-py3-none-any.whl", hash = "sha256:46e2fc5745924b7c840f71ddd277382af29ce1cdb7d5eab5bf697e3fb9999c9e", size = 116999, upload-time = "2026-03-01T18:18:30.831Z" },
 ]
 
 [[package]]
@@ -1826,11 +1826,11 @@ wheels = [
 
 [[package]]
 name = "redis"
-version = "7.2.0"
+version = "7.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9f/32/6fac13a11e73e1bc67a2ae821a72bfe4c2d8c4c48f0267e4a952be0f1bae/redis-7.2.0.tar.gz", hash = "sha256:4dd5bf4bd4ae80510267f14185a15cba2a38666b941aff68cccf0256b51c1f26", size = 4901247, upload-time = "2026-02-16T17:16:22.797Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/82/4d1a5279f6c1251d3d2a603a798a1137c657de9b12cfc1fba4858232c4d2/redis-7.3.0.tar.gz", hash = "sha256:4d1b768aafcf41b01022410b3cc4f15a07d9b3d6fe0c66fc967da2c88e551034", size = 4928081, upload-time = "2026-03-06T18:18:16.287Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/cf/f6180b67f99688d83e15c84c5beda831d1d341e95872d224f87ccafafe61/redis-7.2.0-py3-none-any.whl", hash = "sha256:01f591f8598e483f1842d429e8ae3a820804566f1c73dca1b80e23af9fba0497", size = 394898, upload-time = "2026-02-16T17:16:20.693Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/28/84e57fce7819e81ec5aa1bd31c42b89607241f4fb1a3ea5b0d2dbeaea26c/redis-7.3.0-py3-none-any.whl", hash = "sha256:9d4fcb002a12a5e3c3fbe005d59c48a2cc231f87fbb2f6b70c2d89bb64fec364", size = 404379, upload-time = "2026-03-06T18:18:14.583Z" },
 ]
 
 [[package]]
@@ -1912,11 +1912,11 @@ wheels = [
 
 [[package]]
 name = "scalar-fastapi"
-version = "1.6.2"
+version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/69/27/4fefc485d6d3b32c59e48cc5d7ba20180dc15984b4b50cbc8a0da18670d6/scalar_fastapi-1.6.2.tar.gz", hash = "sha256:2aea052b8ebd585f8f4a71c2eeb4a7250f4dba1172aa056464ff0fe7ae49bdd5", size = 8069, upload-time = "2026-02-11T21:26:22.766Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/14/cfb20118d1cb720b23bdb09c1f5f636dce1a7929c4aeb7b6cc2531d6af91/scalar_fastapi-1.8.0.tar.gz", hash = "sha256:326e23becdd02d02e063751b27ee55855468d18f6bc2e1a0fe3d7c96d6e74265", size = 8148, upload-time = "2026-03-04T11:02:24.214Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/16/fafcc10900b1d330641444163adac525322628684d04dc24bd8d5ab7109a/scalar_fastapi-1.6.2-py3-none-any.whl", hash = "sha256:922ff1823a5bc5dc6b6df318a468e1a8401babc973e74ccbf79154f50de5e13f", size = 7443, upload-time = "2026-02-11T21:26:21.175Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/02/2e51b96f27850dbf07e9a9885c02af6ec974b5ab80f32788b4fd6c534826/scalar_fastapi-1.8.0-py3-none-any.whl", hash = "sha256:80b573efbc9e9c2a7dc82ffc90e41538def213f862717793ea6ea894de75d955", size = 7527, upload-time = "2026-03-04T11:02:22.288Z" },
 ]
 
 [[package]]
@@ -2041,14 +2041,14 @@ s3 = [
 
 [[package]]
 name = "types-aiobotocore"
-version = "3.1.3"
+version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/51/84/7bac4416719b7b45065495ffce1a6d3d6dec91be27fefc7d4b706b08d7bf/types_aiobotocore-3.1.3.tar.gz", hash = "sha256:e19b3b91d9da46cc5fb4c0ae9e51a6f02e168608db84cbbcbc26a3c419cf386a", size = 86437, upload-time = "2026-02-15T02:44:14.955Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/bc/a176a1a7f81e386c980925615a5bafdbb4296687d1cf14da8507db2eb17f/types_aiobotocore-3.2.1.tar.gz", hash = "sha256:8c6ed545cf8a1ced33bde2912975b606ad0ca23b1960ddb6bcfc9e4bf7dde627", size = 86572, upload-time = "2026-03-06T02:19:04.178Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/63/f7dad2aff2c66efb7bd7e38b116ff0bc40c7223f54eef1cb50b8b265d287/types_aiobotocore-3.1.3-py3-none-any.whl", hash = "sha256:7cc70db11c568ca439f81473d711f16955a10d7289c519d7943f01a8e12ea727", size = 54208, upload-time = "2026-02-15T02:44:09.873Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/d4/5ecb92d17d0e0329330b0dda840078039adf938ade64ebe619f986cc3e75/types_aiobotocore-3.2.1-py3-none-any.whl", hash = "sha256:0e590a151d2a31a68f71123f8c5c152e4d32f818478403d67ce315e12c8d528a", size = 54243, upload-time = "2026-03-06T02:19:00.688Z" },
 ]
 
 [[package]]
