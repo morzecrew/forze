@@ -50,7 +50,9 @@ class DepRouter(Generic[SpecT, DepPortT]):
 
     # ....................... #
 
-    def __init_subclass__(cls, dep_key: DepKey[DepPortT] | None = None, **kwargs: Any) -> None:
+    def __init_subclass__(
+        cls, dep_key: DepKey[DepPortT] | None = None, **kwargs: Any
+    ) -> None:
         """Initialize the subclass with the dependency key.
 
         Subclasses must set ``dep_key`` either as a class-definition kwarg

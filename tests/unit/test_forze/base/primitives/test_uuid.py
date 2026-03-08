@@ -1,6 +1,11 @@
 from datetime import UTC, datetime
 
-from forze.base.primitives.uuid import datetime_to_uuid7, uuid4, uuid7, uuid7_to_datetime
+from forze.base.primitives.uuid import (
+    datetime_to_uuid7,
+    uuid4,
+    uuid7,
+    uuid7_to_datetime,
+)
 
 
 def test_uuid4_random_and_deterministic_from_value() -> None:
@@ -25,4 +30,3 @@ def test_uuid7_and_roundtrip_datetime_high_precision() -> None:
 def test_uuid7_zero_timestamp_returns_nil() -> None:
     u = uuid7(timestamp_ms=0)
     assert str(u) == "00000000-0000-0000-0000-000000000000"
-

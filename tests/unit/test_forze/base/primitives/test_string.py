@@ -15,4 +15,3 @@ def test_normalize_string_removes_invisible_chars() -> None:
     s = "abc\u200b\u2060def"  # contains invisible chars that should be stripped
     normalized = normalize_string(s)
     assert normalized == "abcdef"
-

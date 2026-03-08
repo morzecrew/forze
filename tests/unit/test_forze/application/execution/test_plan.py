@@ -303,7 +303,11 @@ class TestUsecasePlan:
 
             return effect
 
-        plan = UsecasePlan().tx("create").after_commit("create", effect_factory, priority=1)
+        plan = (
+            UsecasePlan()
+            .tx("create")
+            .after_commit("create", effect_factory, priority=1)
+        )
         explain = plan.explain("create")
         text = explain.pretty_format()
         assert "After-commit effects (run after successful commit):" in text
@@ -334,7 +338,9 @@ class TestUsecasePlan:
 
             return guard
 
-        plan = UsecasePlan().tx("create").in_tx_before("create", guard_factory, priority=1)
+        plan = (
+            UsecasePlan().tx("create").in_tx_before("create", guard_factory, priority=1)
+        )
         assert plan.ops["create"].tx is True
         assert len(plan.ops["create"].in_tx_before) == 1
 
@@ -345,7 +351,9 @@ class TestUsecasePlan:
 
             return effect
 
-        plan = UsecasePlan().tx("create").in_tx_after("create", effect_factory, priority=1)
+        plan = (
+            UsecasePlan().tx("create").in_tx_after("create", effect_factory, priority=1)
+        )
         assert len(plan.ops["create"].in_tx_after) == 1
 
     def test_in_tx_wrap_adds_middleware(self) -> None:
@@ -367,13 +375,15 @@ class TestUsecasePlan:
 
             return effect
 
-        plan = UsecasePlan().tx("create").after_commit("create", effect_factory, priority=1)
+        plan = (
+            UsecasePlan()
+            .tx("create")
+            .after_commit("create", effect_factory, priority=1)
+        )
         assert len(plan.ops["create"].after_commit) == 1
 
     @pytest.mark.asyncio
-    async def test_resolve_with_tx_and_after_commit(
-        self, stub_ctx
-    ) -> None:
+    async def test_resolve_with_tx_and_after_commit(self, stub_ctx) -> None:
         seen: list[str] = []
 
         def effect_factory(ctx):
@@ -394,9 +404,7 @@ class TestUsecasePlan:
         assert "after_commit" in seen
 
     @pytest.mark.asyncio
-    async def test_resolve_with_in_tx_chain(
-        self, stub_ctx
-    ) -> None:
+    async def test_resolve_with_in_tx_chain(self, stub_ctx) -> None:
         seen: list[str] = []
 
         def in_tx_guard(ctx):
@@ -424,9 +432,7 @@ class TestUsecasePlan:
         assert "in_tx_before" in seen
         assert "in_tx_after" in seen
 
-    def test_resolve_after_commit_non_effect_middleware_raises(
-        self, stub_ctx
-    ) -> None:
+    def test_resolve_after_commit_non_effect_middleware_raises(self, stub_ctx) -> None:
         from forze.application.execution.middleware import GuardMiddleware
         from forze.base.errors import CoreError
 
@@ -436,13 +442,10 @@ class TestUsecasePlan:
         def bad_factory(ctx):
             return GuardMiddleware(guard=guard)
 
-        op_plan = (
-            OperationPlan(tx=True).add(
-                "after_commit",
-                MiddlewareSpec(priority=1, factory=bad_factory),
-            )
+        op_plan = OperationPlan(tx=True).add(
+            "after_commit",
+            MiddlewareSpec(priority=1, factory=bad_factory),
         )
         plan = UsecasePlan(ops={"create": op_plan})
         with pytest.raises(CoreError, match="Expected EffectMiddleware"):
             plan.resolve("create", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
-

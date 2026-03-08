@@ -1,8 +1,7 @@
 from forze.domain.mixins import NameCreateCmdMixin, NameMixin, NameUpdateCmdMixin
 
 
-class NameDoc(NameMixin):
-    ...
+class NameDoc(NameMixin): ...
 
 
 def test_name_mixin_requires_name() -> None:
@@ -20,4 +19,3 @@ def test_name_update_cmd_mixin_allows_optional_fields() -> None:
     cmd = NameUpdateCmdMixin(name="Updated", description="Desc")
     assert cmd.name == "Updated"
     assert cmd.description == "Desc"
-

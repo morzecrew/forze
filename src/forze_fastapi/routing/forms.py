@@ -26,9 +26,7 @@ def as_form[M: BaseModel](cls: type[M]) -> type[M]:
             field_name,
             inspect.Parameter.POSITIONAL_ONLY,
             default=model_field.default,
-            annotation=Annotated[
-                model_field.annotation, *model_field.metadata, Form()
-            ],
+            annotation=Annotated[model_field.annotation, *model_field.metadata, Form()],
         )
         for field_name, model_field in cls.model_fields.items()
     ]

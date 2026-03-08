@@ -35,4 +35,3 @@ def test_runtime_var_get_raises_if_not_set() -> None:
 
     with pytest.raises(CoreError):
         rv.get()
-

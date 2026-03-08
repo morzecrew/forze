@@ -7,6 +7,7 @@ from forze_postgres.kernel.query.render import PsycopgValueCoercer
 
 # ----------------------- #
 
+
 class TestPsycopgValueCoercer:
     """Tests for PsycopgValueCoercer."""
 
@@ -78,9 +79,13 @@ class TestPsycopgValueCoercer:
         dt_type = PostgresType(base="timestamp", is_array=False, not_null=False)
 
         # ISO string with Z
-        assert coercer.scalar("2023-01-01T12:00:00Z", t=tz_type) == datetime(2023, 1, 1, 12, 0, tzinfo=timezone.utc)
+        assert coercer.scalar("2023-01-01T12:00:00Z", t=tz_type) == datetime(
+            2023, 1, 1, 12, 0, tzinfo=timezone.utc
+        )
         # force_tz=False strips tzinfo
-        assert coercer.scalar("2023-01-01T12:00:00Z", t=dt_type) == datetime(2023, 1, 1, 12, 0)
+        assert coercer.scalar("2023-01-01T12:00:00Z", t=dt_type) == datetime(
+            2023, 1, 1, 12, 0
+        )
 
     def test_scalar_unknown_type(self) -> None:
         coercer = PsycopgValueCoercer()

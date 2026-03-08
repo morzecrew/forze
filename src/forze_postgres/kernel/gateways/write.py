@@ -4,6 +4,7 @@ require_psycopg()
 
 # ....................... #
 
+import asyncio
 from collections import defaultdict
 from typing import Any, Literal, Optional, Sequence, final, get_args
 from uuid import UUID
@@ -422,15 +423,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         )
 
         if updates is None:
-            for c in currents:
+
+            async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                 _, diff = c.touch()
-
                 diff = self.__bump_rev(c, diff)
-                diff = await self.adapt_payload_for_write(diff)
+                return c.id, c.rev, await self.adapt_payload_for_write(diff)
 
+            results = await asyncio.gather(*(_prepare_touch(c) for c in currents))
+            for cid, crev, diff in results:
                 # always the same key so we can handle only one group
                 key = tuple(sorted(diff.keys()))
-                groups[key].append((c.id, c.rev, diff))
+                groups[key].append((cid, crev, diff))
 
         else:
             # if revisions are provided, validate historical consistency
@@ -446,18 +449,25 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 ]
                 await self._validate_history(*data)
 
-            for c, u in zip(currents, updates):
+            async def _prepare_update(
+                c: D, u: JsonDict
+            ) -> Optional[tuple[UUID, int, JsonDict]]:
                 _, diff = c.update(u)
-
                 if not diff:
-                    continue
+                    return None
 
                 diff = self.__bump_rev(c, diff)
-                diff = await self.adapt_payload_for_write(diff)
+                return c.id, c.rev, await self.adapt_payload_for_write(diff)
 
-                # always the same key so we can handle only one group
-                key = tuple(sorted(diff.keys()))
-                groups[key].append((c.id, c.rev, diff))
+            results = await asyncio.gather(
+                *(_prepare_update(c, u) for c, u in zip(currents, updates))
+            )
+            for r in results:
+                if r:
+                    cid, crev, diff = r
+                    # always the same key so we can handle only one group
+                    key = tuple(sorted(diff.keys()))
+                    groups[key].append((cid, crev, diff))
 
         if not groups:
             return currents

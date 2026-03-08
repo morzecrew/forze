@@ -2,7 +2,6 @@
 
 from typing import Any, Optional, Sequence, final
 
-from forze.application.contracts.cache import CachePort
 
 # ----------------------- #
 

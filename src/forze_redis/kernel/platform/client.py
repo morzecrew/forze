@@ -59,15 +59,13 @@ class RedisClient:
         if self.__client is not None:
             return
 
-        self.__pool = (
-            ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
-                dsn,
-                max_connections=config.max_size,
-                socket_timeout=config.socket_timeout,
-                socket_connect_timeout=config.connect_timeout,
-                decode_responses=False,
-                encoding="utf-8",
-            )
+        self.__pool = ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+            dsn,
+            max_connections=config.max_size,
+            socket_timeout=config.socket_timeout,
+            socket_connect_timeout=config.connect_timeout,
+            decode_responses=False,
+            encoding="utf-8",
         )
         self.__client = Redis(connection_pool=self.__pool)
 

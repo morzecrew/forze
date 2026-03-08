@@ -60,5 +60,7 @@ class TestSearchUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: search.typed"):
+        with pytest.raises(
+            CoreError, match="not registered for operation: search.typed"
+        ):
             facade.typed()

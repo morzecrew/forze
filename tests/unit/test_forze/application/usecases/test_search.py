@@ -22,10 +22,13 @@ class TestTypedSearch:
             id: str
             title: str
 
-        stub_search_port.add_hits("foo", [
-            HitModel(id="1", title="a"),
-            HitModel(id="2", title="b"),
-        ])
+        stub_search_port.add_hits(
+            "foo",
+            [
+                HitModel(id="1", title="a"),
+                HitModel(id="2", title="b"),
+            ],
+        )
 
         usecase = TypedSearch(ctx=stub_ctx, search=stub_search_port)
         args: dict = {
@@ -75,10 +78,13 @@ class TestRawSearch:
         stub_ctx,
         stub_search_port,
     ) -> None:
-        stub_search_port.add_hits("bar", [
-            {"id": "1", "title": "x"},
-            {"id": "2", "title": "y"},
-        ])
+        stub_search_port.add_hits(
+            "bar",
+            [
+                {"id": "1", "title": "x"},
+                {"id": "2", "title": "y"},
+            ],
+        )
 
         from forze.application.dto import RawSearchRequestDTO
 
@@ -103,13 +109,16 @@ class TestRawSearch:
         stub_ctx,
         stub_search_port,
     ) -> None:
-        stub_search_port.add_hits("q", [
-            {"a": 1},
-            {"a": 2},
-            {"a": 3},
-            {"a": 4},
-            {"a": 5},
-        ])
+        stub_search_port.add_hits(
+            "q",
+            [
+                {"a": 1},
+                {"a": 2},
+                {"a": 3},
+                {"a": 4},
+                {"a": 5},
+            ],
+        )
 
         from forze.application.dto import RawSearchRequestDTO
 

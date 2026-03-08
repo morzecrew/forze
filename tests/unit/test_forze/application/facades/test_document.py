@@ -6,7 +6,10 @@ from uuid import UUID
 import pytest
 
 from forze.application.execution import ExecutionContext, UsecaseRegistry
-from forze.application.composition.document import DocumentOperation, DocumentUsecasesFacade
+from forze.application.composition.document import (
+    DocumentOperation,
+    DocumentUsecasesFacade,
+)
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -59,7 +62,9 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: document.update"):
+        with pytest.raises(
+            CoreError, match="not registered for operation: document.update"
+        ):
             facade.update()
 
     def test_delete_not_supported_raises(
@@ -70,7 +75,9 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: document.delete"):
+        with pytest.raises(
+            CoreError, match="not registered for operation: document.delete"
+        ):
             facade.delete()
 
     def test_restore_not_supported_raises(
@@ -81,5 +88,7 @@ class TestDocumentUsecasesFacade:
         from forze.base.errors import CoreError
 
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        with pytest.raises(CoreError, match="not registered for operation: document.restore"):
+        with pytest.raises(
+            CoreError, match="not registered for operation: document.restore"
+        ):
             facade.restore()

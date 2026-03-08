@@ -213,9 +213,10 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
-        (where_sql, where_params), (rank_sql, rank_params) = (
-            await self._build_search_parts(query, filters, options=options)
-        )
+        (
+            (where_sql, where_params),
+            (rank_sql, rank_params),
+        ) = await self._build_search_parts(query, filters, options=options)
 
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
             table=self.qname.ident(),
