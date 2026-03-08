@@ -49,25 +49,33 @@ def test_validate_prefix_invalid(storage_adapter):
         assert f"Invalid S3 prefix: {prefix}" in str(excinfo.value)
 
 @pytest.mark.asyncio
-async def test_upload_calls_validation(storage_adapter):
-    with unittest.mock.patch.object(S3StorageAdapter, "_validate_prefix") as mock_validate:
-        # Mocking dependencies for upload
-        storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
-        storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
-        storage_adapter.client.ensure_bucket = AsyncMock()
-        storage_adapter.client.upload_bytes = AsyncMock()
-
-        await storage_adapter.upload("file.txt", b"data", prefix="some/prefix")
-        mock_validate.assert_called_once_with(storage_adapter, "some/prefix")
+async def test_upload_invalid_prefix_raises(storage_adapter):
+    with pytest.raises(ValidationError):
+        await storage_adapter.upload("file.txt", b"data", prefix="invalid prefix")
 
 @pytest.mark.asyncio
-async def test_list_calls_validation(storage_adapter):
-    with unittest.mock.patch.object(S3StorageAdapter, "_validate_prefix") as mock_validate:
-        # Mocking dependencies for list
-        storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
-        storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
-        storage_adapter.client.ensure_bucket = AsyncMock()
-        storage_adapter.client.list_objects = AsyncMock(return_value=([], 0))
+async def test_list_invalid_prefix_raises(storage_adapter):
+    with pytest.raises(ValidationError):
+        await storage_adapter.list(10, 0, prefix="invalid prefix")
 
-        await storage_adapter.list(10, 0, prefix="some/prefix")
-        mock_validate.assert_called_once_with(storage_adapter, "some/prefix")
+@pytest.mark.asyncio
+async def test_upload_valid_prefix_passes_validation(storage_adapter):
+    # Mocking dependencies to ensure it proceeds past validation
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.upload_bytes = AsyncMock()
+
+    # Should not raise ValidationError
+    await storage_adapter.upload("file.txt", b"data", prefix="valid/prefix")
+
+@pytest.mark.asyncio
+async def test_list_valid_prefix_passes_validation(storage_adapter):
+    # Mocking dependencies to ensure it proceeds past validation
+    storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+    storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+    storage_adapter.client.ensure_bucket = AsyncMock()
+    storage_adapter.client.list_objects = AsyncMock(return_value=([], 0))
+
+    # Should not raise ValidationError
+    await storage_adapter.list(10, 0, prefix="valid/prefix")
