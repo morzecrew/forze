@@ -256,7 +256,16 @@ class PostgresDocumentAdapter[
         w = self._require_write()
         domain = await w.create(dto)
 
-        return await self.get(domain.id)
+        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+
+        if self.cache is not None:
+            await self.cache.set_versioned(
+                str(res.id),
+                str(res.rev),
+                self._map_to_cache(res),
+            )
+
+        return res
 
     # ....................... #
 
@@ -264,7 +273,17 @@ class PostgresDocumentAdapter[
         w = self._require_write()
         domains = await w.create_many(dtos)
 
-        return await self.get_many([x.id for x in domains])
+        res = [
+            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
+            for x in domains
+        ]
+
+        if self.cache is not None:
+            await self.cache.set_many_versioned(
+                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+            )
+
+        return res
 
     # ....................... #
 
@@ -280,7 +299,16 @@ class PostgresDocumentAdapter[
 
         await self._clear_cache(pk)
 
-        return await self.get(domain.id)
+        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+
+        if self.cache is not None:
+            await self.cache.set_versioned(
+                str(res.id),
+                str(res.rev),
+                self._map_to_cache(res),
+            )
+
+        return res
 
     # ....................... #
 
@@ -293,30 +321,59 @@ class PostgresDocumentAdapter[
     ) -> Sequence[R]:
         w = self._require_write()
 
-        await w.update_many(pks, dtos, revs=revs)
+        domains = await w.update_many(pks, dtos, revs=revs)
         await self._clear_cache(*pks)
 
-        return await self.get_many(pks)
+        res = [
+            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
+            for x in domains
+        ]
+
+        if self.cache is not None:
+            await self.cache.set_many_versioned(
+                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+            )
+
+        return res
 
     # ....................... #
 
     async def touch(self, pk: UUID) -> R:
         w = self._require_write()
 
-        await w.touch(pk)
+        domain = await w.touch(pk)
         await self._clear_cache(pk)
 
-        return await self.get(pk)
+        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+
+        if self.cache is not None:
+            await self.cache.set_versioned(
+                str(res.id),
+                str(res.rev),
+                self._map_to_cache(res),
+            )
+
+        return res
 
     # ....................... #
 
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
         w = self._require_write()
 
-        await w.touch_many(pks)
+        domains = await w.touch_many(pks)
         await self._clear_cache(*pks)
 
-        return await self.get_many(pks)
+        res = [
+            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
+            for x in domains
+        ]
+
+        if self.cache is not None:
+            await self.cache.set_many_versioned(
+                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+            )
+
+        return res
 
     # ....................... #
 
@@ -339,10 +396,19 @@ class PostgresDocumentAdapter[
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
-        await w.delete(pk, rev=rev)
+        domain = await w.delete(pk, rev=rev)
         await self._clear_cache(pk)
 
-        return await self.get(pk)
+        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+
+        if self.cache is not None:
+            await self.cache.set_versioned(
+                str(res.id),
+                str(res.rev),
+                self._map_to_cache(res),
+            )
+
+        return res
 
     # ....................... #
 
@@ -354,20 +420,39 @@ class PostgresDocumentAdapter[
     ) -> Sequence[R]:
         w = self._require_write()
 
-        await w.delete_many(pks, revs=revs)
+        domains = await w.delete_many(pks, revs=revs)
         await self._clear_cache(*pks)
 
-        return await self.get_many(pks)
+        res = [
+            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
+            for x in domains
+        ]
+
+        if self.cache is not None:
+            await self.cache.set_many_versioned(
+                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+            )
+
+        return res
 
     # ....................... #
 
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
-        await w.restore(pk, rev=rev)
+        domain = await w.restore(pk, rev=rev)
         await self._clear_cache(pk)
 
-        return await self.get(pk)
+        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+
+        if self.cache is not None:
+            await self.cache.set_versioned(
+                str(res.id),
+                str(res.rev),
+                self._map_to_cache(res),
+            )
+
+        return res
 
     # ....................... #
 
@@ -379,7 +464,17 @@ class PostgresDocumentAdapter[
     ) -> Sequence[R]:
         w = self._require_write()
 
-        await w.restore_many(pks, revs=revs)
+        domains = await w.restore_many(pks, revs=revs)
         await self._clear_cache(*pks)
 
-        return await self.get_many(pks)
+        res = [
+            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
+            for x in domains
+        ]
+
+        if self.cache is not None:
+            await self.cache.set_many_versioned(
+                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+            )
+
+        return res
