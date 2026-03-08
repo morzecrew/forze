@@ -1,4 +1,4 @@
-"""Factory functions for Redis counter, document cache, idempotency, and stream adapters."""
+"""Factory functions for Redis cache/counter/idempotency/pubsub/stream adapters."""
 
 from datetime import timedelta
 from typing import Any
@@ -6,6 +6,11 @@ from typing import Any
 from forze.application.contracts.cache import CacheDepPort, CachePort, CacheSpec
 from forze.application.contracts.counter import CounterDepPort, CounterPort
 from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
+from forze.application.contracts.pubsub import (
+    PubSubConformity,
+    PubSubDepConformity,
+    PubSubSpec,
+)
 from forze.application.contracts.stream import (
     StreamConformity,
     StreamDepConformity,
@@ -22,6 +27,8 @@ from ...adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
     RedisIdempotencyAdapter,
+    RedisPubSubAdapter,
+    RedisPubSubCodec,
     RedisStreamAdapter,
     RedisStreamCodec,
     RedisStreamGroupAdapter,
@@ -88,6 +95,27 @@ def redis_cache(
     return RedisCacheAdapter(
         client=redis_client, key_codec=KeyCodec(namespace=spec.namespace)
     )
+
+
+# ....................... #
+# PubSub
+
+
+@conforms_to(PubSubDepConformity)
+def redis_pubsub(
+    context: ExecutionContext,
+    spec: PubSubSpec[Any],
+) -> PubSubConformity:
+    """Build a Redis-backed pubsub port for the given spec.
+
+    :param context: Execution context for resolving the Redis client.
+    :param spec: PubSub specification with namespace and model type.
+    :returns: PubSub port backed by :class:`RedisPubSubAdapter`.
+    """
+    redis_client = context.dep(RedisClientDepKey)
+    codec = RedisPubSubCodec(model=spec.model)
+
+    return RedisPubSubAdapter(client=redis_client, codec=codec)
 
 
 # ....................... #

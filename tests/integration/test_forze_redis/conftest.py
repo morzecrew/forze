@@ -16,6 +16,8 @@ from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
     RedisIdempotencyAdapter,
+    RedisPubSubAdapter,
+    RedisPubSubCodec,
     RedisStreamAdapter,
     RedisStreamCodec,
     RedisStreamGroupAdapter,
@@ -94,6 +96,12 @@ class _StreamPayload(BaseModel):
     value: str
 
 
+class _PubSubPayload(BaseModel):
+    """Minimal payload model for pubsub integration tests."""
+
+    value: str
+
+
 @pytest_asyncio.fixture(scope="function")
 async def redis_stream(redis_client: RedisClient) -> RedisStreamAdapter[_StreamPayload]:
     """Provide a RedisStreamAdapter for integration tests."""
@@ -114,3 +122,16 @@ async def redis_stream_group(
 def stream_payload_cls() -> type[_StreamPayload]:
     """Provide the stream payload model for constructing test messages."""
     return _StreamPayload
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_pubsub(redis_client: RedisClient) -> RedisPubSubAdapter[_PubSubPayload]:
+    """Provide a RedisPubSubAdapter for integration tests."""
+    codec = RedisPubSubCodec(model=_PubSubPayload)
+    return RedisPubSubAdapter(client=redis_client, codec=codec)
+
+
+@pytest.fixture(scope="function")
+def pubsub_payload_cls() -> type[_PubSubPayload]:
+    """Provide the pubsub payload model for constructing test messages."""
+    return _PubSubPayload

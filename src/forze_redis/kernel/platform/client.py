@@ -16,8 +16,8 @@ from forze.base.errors import InfrastructureError
 from forze.base.primitives import JsonDict
 
 from .errors import redis_handled
-from .types import RedisStreamResponse
-from .utils import parse_stream_entries
+from .types import RedisPubSubMessage, RedisStreamResponse
+from .utils import parse_pubsub_message, parse_stream_entries
 
 # ----------------------- #
 
@@ -256,6 +256,46 @@ class RedisClient:
         res = await self.__executor().getset(key, value)
 
         return int(res or 0)
+
+    # ....................... #
+    # PubSub methods
+
+    @redis_handled("redis.publish")
+    async def publish(self, channel: str, message: bytes | str) -> int:
+        res = await self.__executor().publish(channel, message)
+
+        return int(res)
+
+    # ....................... #
+
+    @redis_handled("redis.subscribe")
+    async def subscribe(self, channels: Sequence[str]) -> AsyncIterator[RedisPubSubMessage]:
+        if not channels:
+            return
+
+        pubsub = self.__require_client().pubsub()
+        await pubsub.subscribe(*channels)
+
+        try:
+            while True:
+                raw = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=None,
+                )
+
+                if raw is None:
+                    continue
+
+                parsed = parse_pubsub_message(raw)
+
+                if parsed is None:
+                    continue
+
+                yield parsed
+
+        finally:
+            await pubsub.unsubscribe(*channels)
+            await pubsub.aclose()
 
     # ....................... #
     # Stream methods

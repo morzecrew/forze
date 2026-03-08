@@ -1,4 +1,4 @@
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 # ----------------------- #
 
@@ -14,3 +14,8 @@ RawRedisStreamResponse = Optional[
         ]
     ]
 ]
+
+# ....................... #
+
+RedisPubSubMessage = tuple[str, bytes]
+RawRedisPubSubMessage = Mapping[str, object]

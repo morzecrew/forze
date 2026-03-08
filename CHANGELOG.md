@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Socket and connect timeouts to `RedisConfig` in `forze_redis`.
 - Prefix validation to `S3StorageAdapter`.
 - Mongo document adapter with dependency factories and CRUD/query support in `forze_mongo`.
+- PubSub contracts (`PubSubSpec`, conformity protocols, dep keys/ports) in core and Redis pubsub adapter/execution wiring with publish-subscribe support.
 
 ### Changed
 
