@@ -1,117 +1,123 @@
 # AGENTS.md
 
-This file is a routing guide for AI agents working in this repository.
+Routing guide for AI agents working in this repository.
 
-Do not treat this file as the primary source of truth for project rules.
-Use it to find the correct file for each kind of task.
+This file is not the source of truth for project policy. It tells agents where
+to look first for authoritative rules before editing code, tests, docs, or release assets.
 
-## Purpose
+## Agent workflow (quick checklist)
 
-This repository uses specialized files for contribution rules, architecture constraints,
-testing, documentation, security, and build workflows.
-
-Agents should prefer the most specific source of truth instead of duplicating or inventing rules.
+1. Identify task type (code, tests, docs, release, security, CI).
+2. Open the canonical file(s) from the map below.
+3. Apply the smallest scoped change in existing files when possible.
+4. Run the relevant checks from `justfile`.
+5. Keep tests/docs/changelog aligned when behavior changes.
 
 ## Source of truth map
 
-### General contribution workflow
+### Contribution process and conventions
 
 Read:
 - `CONTRIBUTING.md`
 
 Use it for:
-- commit and PR conventions
-- testing expectations
-- changelog rules
-- contribution workflow
+- branch and contribution flow
+- commit and PR title format
+- test expectations
+- changelog and release preparation
 
-### Project metadata and architectural constraints
+### Architecture, packaging, and tool config
 
 Read:
 - `pyproject.toml`
 
 Use it for:
-- package metadata
-- dependency groups and extras
-- pytest configuration
-- coverage settings
-- import-linter contracts
-- lint/tool configuration
+- Python version and package metadata
+- dependency groups and optional extras
+- pytest and coverage configuration
+- import-linter contracts and layering constraints
+- lint/static-analysis tool configuration
 
-### Common commands and quality checks
+### Commands and local quality gates
 
 Read:
 - `justfile`
 
 Use it for:
-- test commands
-- quality commands
-- security scan command
-- repo-level developer workflows
+- test entrypoints (`just test`, path-scoped tests)
+- quality checks (`just quality`, strict mode)
+- security/dependency/dead-code checks
 
-### Documentation structure and build
+### Documentation structure and docs build
 
 Read:
 - `pages/mkdocs.yml`
 - `pages/justfile`
 
 Use them for:
-- documentation navigation
-- docs page structure
-- mkdocstrings behavior
-- docs build workflow
-- D2 diagram rendering
+- docs navigation and page structure
+- mkdocs/mkdocstrings behavior
+- docs build and serving commands
 
-### Security process
+### Security handling
 
 Read:
 - `SECURITY.md`
 
 Use it for:
-- vulnerability handling
+- vulnerability reporting workflow
 - disclosure expectations
-- security-sensitive changes
+- handling of security-sensitive fixes
 
-### Code and tests
+### Code and tests behavior
 
 Read:
 - `src/`
 - `tests/`
 
 Use them for:
-- public behavior
-- architecture and package boundaries
-- test synchronization
-- examples and API usage
+- runtime behavior and API contracts
+- architecture boundaries in real code
+- fixture conventions and test patterns
 
-## Repository operating rules for agents
+## Repository map (high signal paths)
 
-1. Prefer updating existing files over creating new top-level process documents.
-2. Do not duplicate rules from `CONTRIBUTING.md`, `SECURITY.md`, `pyproject.toml`, or docs config.
-3. When working on code, check `pyproject.toml` for architectural and tooling constraints first.
-4. When working on tests, use `justfile` and pytest configuration from `pyproject.toml`.
-5. When working on docs, use `pages/mkdocs.yml` and `pages/justfile` as the source of truth.
-6. When working on security-sensitive changes, follow `SECURITY.md` and avoid public disclosure of vulnerabilities.
-7. Keep changes small, scoped, and aligned with the repository’s existing structure.
+- `src/forze/`: core framework layers (application/domain/utils/base).
+- `src/forze_fastapi/`: FastAPI integration package.
+- `src/forze_postgres/`: Postgres integration package.
+- `src/forze_redis/`: Redis integration package.
+- `src/forze_s3/`: S3 integration package.
+- `src/forze_temporal/`: Temporal integration package.
+- `src/forze_mongo/`: Mongo integration package.
+- `tests/unit/`: unit tests, typically mirroring `src` layout.
+- `tests/integration/`: integration tests with external dependencies.
+- `specs/`: planning/spec artifacts (guidance context, not runtime truth).
 
-## Agent-specific memory
+## Operating rules for agents
 
-Agent journals live under `.jules/`.
+1. Prefer editing existing files over creating new top-level process documents.
+2. Do not duplicate policy text from canonical files; link and follow it instead.
+3. Validate architecture and tool constraints in `pyproject.toml` before code changes.
+4. Use `justfile` commands as the default way to run tests and quality checks.
+5. For user-visible behavior changes, update tests and docs together.
+6. Record user-facing changes in `CHANGELOG.md` under `[Unreleased]`.
+7. For security-sensitive work, follow `SECURITY.md` and minimize public detail.
 
-Suggested files:
+## Agent memory files
+
+Agent journals live under `.jules/` (memory only, not policy):
+
 - `.jules/atlas.md`
 - `.jules/bolt.md`
 - `.jules/verifier.md`
 - `.jules/steward.md`
 
-These are memory files, not the source of truth for repository rules.
-
 ## Cross-tool compatibility
 
-If additional AI-tool-specific directories exist (for example `.agent/` or `.cursor/`),
-they should point back to the same repository conventions rather than redefining them.
+If tool-specific directories exist (for example `.agent/` or `.cursor/`), they
+should reference this routing file and canonical policy files, not redefine them.
 
 Preferred pattern:
-- central rules and routing live in `AGENTS.md`
-- specialized project policy stays in its canonical file
-- tool-specific files may reference or mirror `AGENTS.md`
+- central routing in `AGENTS.md`
+- authoritative policy in canonical files
+- tool-specific overlays that only point back to those sources
