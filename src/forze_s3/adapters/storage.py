@@ -5,6 +5,7 @@ require_s3()
 # ....................... #
 
 import mimetypes
+import re
 from datetime import datetime
 from typing import Optional, final
 
@@ -17,7 +18,7 @@ from forze.application.contracts.storage import (
     StoragePort,
     StoredObject,
 )
-from forze.base.errors import CoreError
+from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
 from forze.utils.codecs import AsciiB64Codec, PathCodec
 
@@ -47,7 +48,15 @@ class S3StorageAdapter(StoragePort):
         return self.path_codec.cond_join(prefix, uid)
 
     # ....................... #
-    #! TODO: validate prefix against valid S3 path characters
+
+    def _validate_prefix(self, prefix: Optional[str]) -> None:
+        if prefix is None:
+            return
+
+        if not re.match(r"^[a-zA-Z0-9!\-_.*'()/]*$", prefix):
+            raise ValidationError(f"Invalid S3 prefix: {prefix}")
+
+    # ....................... #
 
     async def upload(
         self,
@@ -57,6 +66,7 @@ class S3StorageAdapter(StoragePort):
         *,
         prefix: Optional[str] = None,
     ) -> StoredObject:
+        self._validate_prefix(prefix)
         key = self.__build_key(prefix)
         content_type = self._guess_content_type(filename, data)
         now = utcnow().isoformat()
@@ -130,6 +140,7 @@ class S3StorageAdapter(StoragePort):
         *,
         prefix: Optional[str] = None,
     ) -> tuple[list[StoredObject], int]:
+        self._validate_prefix(prefix)
         p = self.path_codec.cond_join(prefix)
 
         async with self.client.client():
