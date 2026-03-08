@@ -21,9 +21,8 @@ It uses the same query DSL contracts as other integrations.
 
 The package includes `MongoTxManagerAdapter` which implements `TxManagerPort` for managing MongoDB transactions:
 
-```python
-from forze_mongo.adapters.txmanager import MongoTxManagerAdapter
-from forze.application.contracts.tx import TxManagerPort
+    :::python
+    from forze_mongo.adapters.txmanager import MongoTxManagerAdapter
+    from forze.application.contracts.tx import TxManagerPort
 
-# Used as a dependency for transaction scoping
-```
+    # Used as a dependency for transaction scoping

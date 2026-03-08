@@ -4,7 +4,7 @@ set shell := ["bash", "-cu"]
 # ----------------------- #
 # Modules
 
-# Supported commands: serve, build
+# Supported commands: serve, build, diagrams
 mod pages "pages/justfile"
 
 # ----------------------- #
