@@ -1,5 +1,12 @@
 from datetime import datetime
-from typing import AsyncIterator, Awaitable, Optional, Protocol, runtime_checkable
+from typing import (
+    AsyncIterator,
+    Awaitable,
+    Optional,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel
 
@@ -26,4 +33,7 @@ class PubSubPublishPort[M: BaseModel](Protocol):
 
 @runtime_checkable
 class PubSubSubscribePort[M: BaseModel](Protocol):
-    def subscribe(self, *topics: str) -> AsyncIterator[PubSubMessage[M]]: ...  # noqa: F841
+    def subscribe(
+        self,
+        topics: Sequence[str],  # noqa: F841
+    ) -> AsyncIterator[PubSubMessage[M]]: ...
