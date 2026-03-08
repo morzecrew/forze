@@ -20,7 +20,6 @@ from .types import StreamMessage
 from .utils import parse_stream_messages
 
 # ----------------------- #
-#! TODO: declare timeouts etc for redis config
 
 
 @final
@@ -29,6 +28,8 @@ class RedisConfig:
     """Redis configuration."""
 
     max_size: int = 20
+    socket_timeout: Optional[float] = None
+    connect_timeout: Optional[float] = None
 
 
 # ....................... #
@@ -62,6 +63,8 @@ class RedisClient:
             ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
                 dsn,
                 max_connections=config.max_size,
+                socket_timeout=config.socket_timeout,
+                socket_connect_timeout=config.connect_timeout,
                 decode_responses=False,
                 encoding="utf-8",
             )
