@@ -567,6 +567,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     async def kill(self, pk: UUID) -> None:
         stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = {}").format(
+            sql.Placeholder(),
             table=self.qname.ident(),
             pk=self.ident_pk(),
         )
