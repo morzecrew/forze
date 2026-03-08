@@ -1,28 +1,34 @@
 # Core Concepts
 
-This section explains the foundational ideas behind Forze: how it structures backend services, what patterns it uses, and why they matter. It is intended for both **users** integrating Forze into their projects and **contributors** extending or maintaining the library.
+This section explains the architectural model behind Forze: layered boundaries, execution runtime, and port/adapter composition.
 
-The concepts described here are **stable** — they reflect the design philosophy and architectural choices that persist even as the implementation evolves. Specific class names, module paths, or API details may change; the underlying ideas should not.
+## Read this section when you need to
 
-## What Forze Provides
+- understand where business logic should live
+- decide how to wire adapters and runtime hooks
+- add integrations without coupling domain logic to infrastructure
 
-Forze is a **structural foundation** for backend services. It does not impose a specific framework or database. Instead, it provides:
+## What stays stable
 
-| Concept | Description |
-|---------|-------------|
-| **Layered architecture** | Domain, application, and infrastructure with clear boundaries<br>and inward dependency flow |
-| **Contracts and adapters** | Interfaces that decouple business logic from technology choices |
-| **Composable operations** | Business logic as first-class, testable units with guards, effects,<br>and middlewares |
-| **Declarative configuration** | Plans and specs instead of imperative wiring |
+Class names may evolve, but these guarantees are stable:
 
-The result: you can swap databases, add caching, or change web frameworks without rewriting business logic.
+- dependencies flow inward (infra -> application -> domain)
+- usecases resolve dependencies from `ExecutionContext`
+- integrations implement contracts (ports), not the other way around
 
-## Documentation Structure
+## Mental model in one diagram
+
+<div class="d2-diagram">
+  <img class="d2-light" src="../../assets/diagrams/light/layered-architecture.svg" alt="Layered architecture overview">
+  <img class="d2-dark" src="../../assets/diagrams/dark/layered-architecture.svg" alt="Layered architecture overview">
+</div>
+
+## Documentation map
 
 | Document | Contents |
 |----------|----------|
-| [Layered Architecture](layered-architecture.md) | Three-layer structure, dependency flow, and layer responsibilities |
-| [Domain Layer](domain-layer.md) | Versioned entities, value objects, validation, and mixins |
-| [Application Layer](application-layer.md) | Operations, execution runtime, dependency plan, and operation registry |
-| [Contracts and Adapters](contracts-adapters.md) | Hexagonal architecture, ports, and available contracts |
-| [Aggregate Specification](aggregate-specification.md) | Document spec structure and adapter configuration |
+| [Layered Architecture](layered-architecture.md) | Dependency rules and responsibilities by layer |
+| [Domain Layer](domain-layer.md) | Domain model behavior, updates, invariants, mixins |
+| [Application Layer](application-layer.md) | Usecases, plans, runtime scope, composition model |
+| [Contracts and Adapters](contracts-adapters.md) | Ports, adapters, dependency wiring strategy |
+| [Aggregate Specification](aggregate-specification.md) | `DocumentSpec` and how adapters use it |

@@ -1,5 +1,3 @@
-# Contracts and adapters (hexagonal)
-
 style: {
     fill: transparent
 }
@@ -10,34 +8,44 @@ vars: {
     }
 }
 
+direction: right
+
 Application: {
     shape: rectangle
     style: {
         stroke: "#4a90d9"
     }
 
-    Ops: |md
-        ### Operations
-        Resolve contracts via context
-    |
+    usecases: Usecases
+    contracts: {
+        shape: rectangle
+        doc: DocumentPort
+        search: SearchReadPort
+        cache: CachePort
+        idempotency: IdempotencyPort
+        storage: StoragePort
+        workflow: WorkflowPort
+    }
 }
 
 Infrastructure: {
     shape: rectangle
 
-    Document: |md
-        Document → Postgres
-    |
-
-    Cache: |md
-        Cache → Redis
-    |
-
-    Blob: |md
-        Blob → S3
-    |
+    postgres: PostgresDocumentAdapter
+    pg_search: PostgresSearchAdapter
+    redis_cache: RedisCacheAdapter
+    redis_idem: RedisIdempotencyAdapter
+    s3: S3StorageAdapter
+    mongo: MongoDocumentAdapter
+    custom: Custom Temporal adapter
 }
 
-Document -> Application: implements
-Cache -> Application: implements
-Blob -> Application: implements
+Application.usecases -> Application.contracts: resolve via ExecutionContext
+
+Infrastructure.postgres -> Application.contracts.doc: implements
+Infrastructure.pg_search -> Application.contracts.search: implements
+Infrastructure.redis_cache -> Application.contracts.cache: implements
+Infrastructure.redis_idem -> Application.contracts.idempotency: implements
+Infrastructure.s3 -> Application.contracts.storage: implements
+Infrastructure.mongo -> Application.contracts.doc: alternative implementation
+Infrastructure.custom -> Application.contracts.workflow: implements

@@ -2,19 +2,45 @@
 title: Welcome to forze
 ---
 
-**Forze** is a lightweight infrastructure toolkit for building backend services
-with **Domain-Driven Design (DDD)** and **Hexagonal Architecture**.
+**Forze** is a Python toolkit for building backend services with clear boundaries:
+domain-first models, application-level orchestration, and replaceable infrastructure adapters.
 
-It provides a set of reusable primitives, contracts, and structural patterns
-that help organize backend applications into clear, maintainable layers.
+If you are new to the package, start with:
 
-Forze aims to support backend systems that are:
+1. [Installation](installation.md)
+2. [Getting Started](getting-started.md)
+3. [Core Concepts](core-concepts/index.md)
+
+## Why use Forze?
+
+Forze helps you keep business logic stable while storage/framework choices evolve.
 
 - **Layered** — clear separation between domain, application, and infrastructure
-- **Explicit** — well-defined ports, adapters, and boundaries
-- **Testable** — components can be tested in isolation
-- **Composable** — infrastructure pieces can be replaced or extended
-- **Framework-agnostic** — the core does not depend on a specific framework
+- **Explicit** — contracts (ports) describe what the app needs
+- **Composable** — adapters are wired declaratively via dependency plans
+- **Testable** — usecases can run with fake/in-memory dependencies
+- **Framework-agnostic** — core modules are not tied to FastAPI/Postgres/etc.
 
 !!! note ""
-    The library focuses on providing **structure and contracts**, not a full-stack framework.
+    Forze is not a full-stack framework. It provides architecture primitives and integration packages you compose.
+
+## Package layout
+
+| Package | Purpose |
+|---------|---------|
+| `forze` | Core contracts, execution runtime, composition helpers, domain primitives |
+| `forze_fastapi` | HTTP router helpers and idempotent route integration |
+| `forze_postgres` | Postgres-backed document/search/transaction adapters |
+| `forze_redis` | Cache, counters, and idempotency adapters |
+| `forze_s3` | S3-compatible storage adapter |
+| `forze_mongo` | Mongo-backed document/transaction adapters |
+| `forze_temporal` | Temporal integration package (currently minimal) |
+
+## Typical request flow
+
+<div class="d2-diagram">
+  <img class="d2-light" src="assets/diagrams/light/contracts-adapters.svg" alt="Request flow from usecase to adapters">
+  <img class="d2-dark" src="assets/diagrams/dark/contracts-adapters.svg" alt="Request flow from usecase to adapters">
+</div>
+
+In practice: router/handler resolves an `ExecutionContext`, usecases request ports (`ctx.doc(...)`, `ctx.search(...)`, `ctx.storage(...)`), and adapters execute infrastructure work.

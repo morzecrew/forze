@@ -2,6 +2,10 @@
 
 The application layer **orchestrates** domain logic and coordinates infrastructure. It defines *what* happens, not *how* persistence or transport work. Operations receive an execution context and resolve dependencies from it.
 
+## First principle
+
+Usecases should depend on contracts (`ctx.doc(...)`, `ctx.search(...)`, `ctx.storage(...)`), not concrete adapter classes.
+
 ## Operations (Use Cases)
 
 An **operation** (usecase) is a single, well-defined business action. It takes arguments and returns a result. Operations support composition via guards, effects, and middlewares.
@@ -18,6 +22,14 @@ An **operation** (usecase) is a single, well-defined business action. It takes a
 | **Effects** | After execution | Logging, indexing, event publishing |
 
 Composition is **immutable** — adding a guard or effect returns a new operation instance. **Transactional operations** add explicit transaction boundaries and support **side guards/effects** that run outside the transaction (for example, sending a notification only after commit).
+
+    :::python
+    from forze.application.execution import Usecase
+
+    class CreateProject(Usecase[CreateProjectCmd, ProjectReadModel]):
+        async def __call__(self, dto: CreateProjectCmd) -> ProjectReadModel:
+            doc = self.ctx.doc(project_spec)
+            return await doc.create(dto)
 
 ## Execution Runtime
 
@@ -48,6 +60,14 @@ The runtime follows a clear lifecycle:
 | **Teardown** | Run shutdown hooks → reset context → exit scope |
 
 Dependencies and lifecycle are configured once, declaratively. Operations receive a context and resolve what they need. No global state, no hidden coupling.
+
+    :::python
+    runtime = ExecutionRuntime(deps=deps_plan, lifecycle=lifecycle_plan)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        facade = provider(ctx)
+        created = await facade.create()(CreateProjectCmd(title="Roadmap"))
 
 ## Dependency Plan
 
@@ -83,6 +103,14 @@ The **operation registry** maps operation names to factories. The **operation pl
 | **Plan** | Wraps the base operation with guards, effects, transaction middleware |
 
 Plans are keyed by operation name and mergeable. A base plan (wildcard `*`) might add logging to all operations; a specific plan might add authorization to `"create"` only. Per-operation plans extend the base plan. **Priorities** control the order of hooks when merged. Transactional operations support in-tx and after-commit buckets.
+
+    :::python
+    provider = DocumentUsecasesFacadeProvider(
+        spec=project_spec,
+        reg=build_document_registry(project_spec),
+        plan=build_document_plan(),
+        dtos={"read": ProjectReadModel, "create": CreateProjectCmd, "update": UpdateProjectCmd},
+    )
 
 ## Why It Matters
 

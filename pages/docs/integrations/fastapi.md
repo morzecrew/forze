@@ -1,174 +1,176 @@
 # FastAPI Integration
 
-This guide explains how to use Forze with FastAPI. It covers prebuilt routers for documents and search, execution context injection, idempotent routes, exception handlers, and OpenAPI documentation.
+This guide shows how to expose Forze usecases over HTTP with `forze_fastapi`.
 
 ## Prerequisites
 
-- FastAPI
-- `forze[fastapi]` extra installed (includes `fastapi`, `scalar-fastapi`, `starlette`)
+- `forze[fastapi]` installed
+- a prepared `ExecutionRuntime` (or at least a context dependency)
 
-## Overview
+## What `forze_fastapi` gives you
 
-The `forze_fastapi` package provides:
-
-- **Prebuilt routers** — Document CRUD and search endpoints wired to Forze usecases
-- **ForzeAPIRouter** — FastAPI router with execution context injection and idempotency support
-- **Exception handlers** — Mapping of Forze errors (`NotFoundError`, `ConflictError`, `ValidationError`) to HTTP status codes
-- **OpenAPI** — Scalar API reference UI via `register_scalar_docs`
+- Prebuilt document router (`build_document_router`)
+- Prebuilt search router (`build_search_router`)
+- `ForzeAPIRouter` with idempotent POST support
+- Exception handlers for common Forze errors
+- Optional Scalar docs page registration
 
 ## Execution Context Dependency
 
-All Forze-backed routes need an `ExecutionContext` to resolve ports (document, search, cache, etc.). Provide a dependency that returns the context:
+Forze routes resolve ports through `ExecutionContext`. In FastAPI, provide a dependency that returns the current context:
 
     :::python
-    from fastapi import FastAPI, Depends
-    from forze.application.execution import Deps, ExecutionContext
+    from fastapi import FastAPI
+    from forze.application.execution import ExecutionRuntime
 
-    # Build your deps (e.g. from PostgresDepsModule, RedisDepsModule)
-    deps = Deps({...})
-
-    def context_dependency() -> ExecutionContext:
-        return ExecutionContext(deps=deps)
-
+    runtime = ExecutionRuntime(...)
     app = FastAPI()
 
-Pass `context_dependency` to `ForzeAPIRouter` as `context_dependency`.
+    def context_dependency():
+        return runtime.get_context()
 
-## Prebuilt Routers
+Use this function as `context=` (prebuilt routers) or `context_dependency=` (`ForzeAPIRouter`).
 
-### Document Router
+## Document router
 
-`build_document_router` creates a router with CRUD and optional soft-delete endpoints:
+`build_document_router` wires CRUD operations from a `DocumentUsecasesFacadeProvider`:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/medatada` | GET | Metadata for a single document by ID |
-| `/create` | POST | Create document (idempotent when `IdempotencyDepKey` registered) |
-| `/update` | PATCH | Partial update (requires `id`, `rev`, body) |
+| `/medatada` | GET | Metadata by document ID |
+| `/create` | POST | Create document (idempotent when idempotency port exists) |
+| `/update` | PATCH | Partial update (`id`, `rev`, DTO body) |
 | `/delete` | PATCH | Soft-delete (when spec supports it) |
 | `/restore` | PATCH | Restore soft-deleted document |
 | `/kill` | DELETE | Hard-delete |
 
-    :::python
-    from forze_fastapi.routers import (
-        build_document_router, 
-        document_facade_dependency,
-    )
-    from forze.application.composition.document import (
-        build_document_registry,
-        build_document_plan,
-        DocumentUsecasesFacadeProvider,
-    )
+!!! note ""
+    Endpoint `/medatada` is currently spelled this way in the package for backward compatibility.
 
-    # Build provider from spec, registry, plan
+    :::python
+    from forze_fastapi.routers import build_document_router
+    from forze.application.composition.document import (
+        DocumentUsecasesFacadeProvider,
+        build_document_plan,
+        build_document_registry,
+    )
+    from myapp.models import CreateProjectCmd, ProjectReadModel, UpdateProjectCmd
+    from myapp.specs import project_spec
+
     provider = DocumentUsecasesFacadeProvider(
-        spec=doc_spec,
-        reg=build_document_registry(doc_spec),
+        spec=project_spec,
+        reg=build_document_registry(project_spec),
         plan=build_document_plan(),
         dtos={
-            "read": ReadDocument, 
-            "create": CreateDocumentCmd, 
-            "update": UpdateDocumentCmd
+            "read": ProjectReadModel,
+            "create": CreateProjectCmd,
+            "update": UpdateProjectCmd,
         },
     )
 
-    router = build_document_router(
-        prefix="/documents",
-        tags=["documents"],
-        provider=provider,
-        context=context_dependency,
+    app.include_router(
+        build_document_router(
+            prefix="/projects",
+            tags=["projects"],
+            provider=provider,
+            context=context_dependency,
+        )
     )
 
-    app.include_router(router)
+## Search router
 
-### Search Router
-
-`build_search_router` creates a router with typed and raw search endpoints:
+`build_search_router` exposes typed and raw search routes:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/search` | POST | Typed search with pagination |
-| `/raw-search` | POST | Raw search (field projection) |
+| `/search` | POST | Typed search response |
+| `/raw-search` | POST | Raw search response |
 
     :::python
-    from forze_fastapi.routers import (
-        build_search_router, 
-        search_facade_dependency,
-    )
     from forze.application.composition.search import (
-        build_search_registry,
-        build_search_plan,
         SearchUsecasesFacadeProvider,
+        build_search_plan,
+        build_search_registry,
     )
+    from forze_fastapi.routers import build_search_router
+    from myapp.models import ProjectReadModel
+    from myapp.specs import project_search_spec
 
     provider = SearchUsecasesFacadeProvider(
-        spec=search_spec,
-        reg=build_search_registry(search_spec),
+        spec=project_search_spec,
+        reg=build_search_registry(project_search_spec),
         plan=build_search_plan(),
-        read_dto=DocumentReadModel,
+        read_dto=ProjectReadModel,
     )
 
-    router = build_search_router(
-        prefix="/search",
-        tags=["search"],
-        provider=provider,
-        context=context_dependency,
+    app.include_router(
+        build_search_router(
+            prefix="/projects",
+            tags=["projects-search"],
+            provider=provider,
+            context=context_dependency,
+        )
     )
 
-    app.include_router(router)
+## `ForzeAPIRouter` for custom routes
 
-You can also attach search routes to an existing router by passing it as the first argument.
+Use `ForzeAPIRouter` when you need custom endpoints but still want Forze idempotency behavior.
 
-## Forze API Router
+    :::python
+    from fastapi import Body
+    from pydantic import BaseModel
+    from forze_fastapi.routing.router import ForzeAPIRouter
 
-`ForzeAPIRouter` extends `fastapi.APIRouter` with:
+    class CreatePayload(BaseModel):
+        title: str
 
-- **Context dependency** — Required; injects `ExecutionContext` for route handlers
-- **Idempotency** — Per-route or router-level config for POST endpoints
-- **Operation IDs** — Stable OpenAPI operation IDs (required for idempotent routes)
+    router = ForzeAPIRouter(
+        prefix="/custom",
+        tags=["custom"],
+        context_dependency=context_dependency,
+    )
 
-Use it when building custom routers that need Forze ports or idempotency.
+    @router.post(
+        "/create",
+        idempotent=True,
+        operation_id="custom.create",
+        idempotency_config={"dto_param": "payload"},
+    )
+    async def create(payload: CreatePayload = Body(...)):
+        return {"ok": True}
 
 ## Idempotency
 
-Idempotent POST routes deduplicate requests by key. Register `IdempotencyDepKey` (e.g. via Redis) and mark routes with `idempotent=True`:
+Idempotent POST routes require:
 
-    :::python
-    @router.post("/create", idempotent=True, operation_id="documents.create")
-    async def create(dto: CreateDTO = Body(...), ...):
-        ...
+1. `idempotent=True`
+2. stable `operation_id`
+3. an idempotency implementation registered by dependency key (for example via `RedisDepsModule`)
+4. request header `Idempotency-Key` (default name)
 
-The client sends an `Idempotency-Key` header. Duplicate requests with the same key return the cached response. Configure via `idempotency_config`:
+Router-level defaults can be configured with `idempotency_config`.
 
-- `dto_param` — DTO parameter name for payload hashing (default: inferred)
-- `ttl` — Time-to-live for idempotency entries (default: 30 seconds)
-- `header_key` — Header name (default: `Idempotency-Key`)
+## Exception handlers
 
-## Exception Handlers
-
-Register Forze exception handlers to map domain errors to HTTP responses:
+Register built-in handlers to map common Forze errors to HTTP codes:
 
     :::python
     from forze_fastapi.handlers import register_exception_handlers
 
     register_exception_handlers(app)
 
-| Error | Status |
-|-------|--------|
+| Error | HTTP status |
+|-------|-------------|
 | `NotFoundError` | 404 |
 | `ConflictError` | 409 |
 | `ValidationError` | 422 |
 | `CoreError` | 500 |
 
-Responses include `X-Error-Code` header and `detail` body.
-
-## OpenAPI Documentation
-
-Register Scalar API reference UI:
+## Scalar API reference page
 
     :::python
     from forze_fastapi.openapi import register_scalar_docs
 
     register_scalar_docs(app, path="/docs", scalar_version="1.41.0")
 
-Uses `app.title` for the docs page title. Serves at `/docs` by default.
+The page title is derived from `app.title`.

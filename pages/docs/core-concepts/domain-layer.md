@@ -6,6 +6,12 @@ The domain layer holds **business logic and invariants**. It knows nothing about
 
 Aggregates in Forze are **versioned**: each entity has revisions, timestamps, and identity. Updates produce new revisions instead of in-place mutation.
 
+    :::python
+    from forze.domain.models import Document
+
+    class Project(Document):
+        title: str
+
 | Aspect | Behavior |
 |--------|----------|
 | **Revisions** | Each update increments a revision; history is preserved |
@@ -36,6 +42,10 @@ Validation runs on update with access to:
 - **Patch** — the update command or delta
 
 Invariants stay close to the model. Validation hooks are composable and can be extended without modifying core domain logic.
+
+    :::python
+    project = Project(title="Initial")
+    updated, diff = project.update({"title": "Updated"})
 
 ## Mixins
 

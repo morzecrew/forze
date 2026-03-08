@@ -1,40 +1,52 @@
-# Config
-
 style: {
     fill: transparent
 }
 
 vars: {
     d2-config: {
-        pad: 50
+        pad: 48
     }
 }
 
-# Diagram
+direction: down
 
-Infra: |md
-    ### Infrastructure (adapters)
-    Databases, caches, storage, web frameworks, workflows
-|
-Infra.shape: rectangle
+Infrastructure: {
+    shape: rectangle
+    label: |md
+        ## Infrastructure Layer
+        FastAPI / Postgres / Redis / S3 / Mongo / Temporal
+    |
 
-App: |md
-    ### Application (operations, orchestration, contracts)
-    Use cases, execution runtime, dependency resolution
-|
-App.shape: rectangle
-
-Dom: |md
-    ### Domain (models, invariants, validation)
-    Business rules, value objects, no infrastructure
-|
-Dom.shape: rectangle
-
-Infra -> App: implements
-App -> Dom: uses
-
-# Hidden edges (for better readability)
-# 
-Dom -> Infra: {
-    style.opacity: 0
+    routers: HTTP routers
+    adapters: Adapter implementations
+    clients: External clients
 }
+
+Application: {
+    shape: rectangle
+    label: |md
+        ## Application Layer
+        Usecases + contracts + runtime composition
+    |
+
+    usecases: Usecases & facades
+    contracts: Contracts (ports)
+    runtime: ExecutionRuntime
+}
+
+Domain: {
+    shape: rectangle
+    label: |md
+        ## Domain Layer
+        Core models, invariants, pure rules
+    |
+
+    models: Document / value models
+    validation: Validators & invariants
+}
+
+Infrastructure.routers -> Application.usecases: invokes
+Infrastructure.adapters -> Application.contracts: implements
+Application.usecases -> Domain.models: uses
+Application.usecases -> Application.contracts: resolves through context
+Application.runtime -> Infrastructure.clients: initializes via lifecycle

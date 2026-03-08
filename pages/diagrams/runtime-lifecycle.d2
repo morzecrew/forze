@@ -1,5 +1,3 @@
-# Execution runtime lifecycle
-
 style: {
     fill: transparent
 }
@@ -11,5 +9,25 @@ vars: {
 }
 
 direction: right
+
+Setup: {
+    shape: rectangle
+    create_ctx: create ExecutionContext
+    build_deps: build deps from DepsPlan
+    startup: run lifecycle startup hooks
+}
+
+Run: {
+    shape: rectangle
+    handlers: handlers/usecases resolve ports
+    tx: optional transaction scopes
+    effects: middlewares/effects executed
+}
+
+Teardown: {
+    shape: rectangle
+    shutdown: run lifecycle shutdown hooks
+    reset: reset runtime context var
+}
 
 Setup -> Run -> Teardown
