@@ -10,12 +10,12 @@ from typing import Any, Optional, Sequence, final
 import attrs
 
 from forze.application.contracts.cache import CachePort
+from forze.application.contracts.tenant import TenantContextPort
 from forze.utils.codecs import JsonCodec, KeyCodec, TextCodec
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
-#! TODO: add tenant context support
 
 
 @final
@@ -23,6 +23,7 @@ from ..kernel.platform import RedisClient
 class RedisCacheAdapter(CachePort):
     client: RedisClient
     key_codec: KeyCodec
+    tenant_context: Optional[TenantContextPort] = None
 
     # Non initable fields
     json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
@@ -37,12 +38,18 @@ class RedisCacheAdapter(CachePort):
     # Helpers
 
     def __kv_key(self, key: str) -> str:
+        if self.tenant_context is not None:
+            return self.key_codec.join(str(self.tenant_context.get()), "cache", "kv", key)
         return self.key_codec.join("cache", "kv", key)
 
     def __pointer_key(self, key: str) -> str:
+        if self.tenant_context is not None:
+            return self.key_codec.join(str(self.tenant_context.get()), "cache", "pointer", key)
         return self.key_codec.join("cache", "pointer", key)
 
     def __body_key(self, key: str, version: str) -> str:
+        if self.tenant_context is not None:
+            return self.key_codec.join(str(self.tenant_context.get()), "cache", "body", key, version)
         return self.key_codec.join("cache", "body", key, version)
 
     # ....................... #
