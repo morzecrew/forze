@@ -177,7 +177,7 @@ def _hash_from_any(val: Any) -> str:
     else:
         b = orjson.dumps(val)
 
-    hex_string = hashlib.md5(b, usedforsecurity=False).hexdigest()
+    hex_string = hashlib.sha256(b).hexdigest()[:32]
 
     return hex_string
 
