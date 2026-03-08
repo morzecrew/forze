@@ -1,8 +1,7 @@
-from forze.application.contracts.deps import DepKey
+"""Compatibility shim for legacy Mongo dependency keys path."""
 
-from ..kernel.platform import MongoClient
+from ..execution.deps.keys import MongoClientDepKey
 
 # ----------------------- #
 
-MongoClientDepKey: DepKey[MongoClient] = DepKey("mongo_client")
-"""Key used to register the :class:`MongoClient` implementation."""
+__all__ = ["MongoClientDepKey"]

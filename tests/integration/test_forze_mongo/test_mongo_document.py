@@ -2,9 +2,13 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.application.contracts.document.specs import DocumentSpec
 from forze.application.contracts.query import QueryFilterExpression
+from forze.application.execution import Deps, ExecutionContext
+from forze.base.errors import ConflictError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_mongo.adapters.document import MongoDocumentAdapter
+from forze_mongo.execution.deps.deps import mongo_document_configurable
+from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
 
@@ -29,14 +33,29 @@ class MyReadDoc(ReadDocument):
 @pytest.mark.asyncio
 async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> None:
     collection = f"docs_{uuid4().hex[:8]}"
-    adapter = MongoDocumentAdapter(
-        client=mongo_client,
-        read_model=MyReadDoc,
-        domain_model=MyDoc,
-        create_dto=MyCreateDoc,
-        update_dto=MyUpdateDoc,
-        read_source=collection,
+    history_collection = f"{collection}_history"
+    deps = Deps({MongoClientDepKey: mongo_client})
+    ctx = ExecutionContext(deps=deps)
+    spec = DocumentSpec(
+        namespace="my_docs_ns",
+        sources={
+            "read": collection,
+            "write": collection,
+            "history": history_collection,
+        },
+        models={
+            "domain": MyDoc,
+            "read": MyReadDoc,
+            "create_cmd": MyCreateDoc,
+            "update_cmd": MyUpdateDoc,
+        },
     )
+
+    factory = mongo_document_configurable(
+        rev_bump_strategy="application",
+        history_write_strategy="application",
+    )
+    adapter = factory(ctx, spec)
 
     created = await adapter.create(MyCreateDoc(name="alpha"))
     created_2 = await adapter.create(MyCreateDoc(name="beta"))
@@ -59,6 +78,9 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert updated.name == "alpha-2"
     assert updated.rev == 2
 
+    with pytest.raises(ConflictError, match="Historical consistency violation"):
+        await adapter.update(created.id, MyUpdateDoc(name="alpha-3"), rev=1)
+
     touched = await adapter.touch(created.id)
     assert touched.rev == 3
 
@@ -70,6 +92,12 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
 
     await adapter.kill(created_2.id)
     assert await adapter.count() == 1
+
+    history_rows = await mongo_client.find_many(
+        mongo_client.collection(history_collection),
+        {"source": collection, "id": str(created.id)},
+    )
+    assert len(history_rows) >= 3
 
     await adapter.kill(created.id)
     assert await adapter.count() == 0
