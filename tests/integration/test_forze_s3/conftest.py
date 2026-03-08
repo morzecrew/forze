@@ -1,9 +1,9 @@
 """Pytest configuration for forze_s3 integration tests."""
 
+import shutil
 import time
 import urllib.error
 import urllib.request
-import shutil
 from uuid import uuid4
 
 import pytest
@@ -39,14 +39,14 @@ def minio_container():
         )
 
         health_url = f"{endpoint}/minio/health/live"
-        deadline = time.time() + 30
+        deadline = time.time() + 60
 
         while time.time() < deadline:
             try:
                 with urllib.request.urlopen(health_url, timeout=2) as resp:
                     if resp.status == 200:
                         break
-            except urllib.error.URLError:
+            except (urllib.error.URLError, TimeoutError, OSError):
                 time.sleep(0.5)
         else:
             raise RuntimeError("MinIO container did not become healthy in time")
