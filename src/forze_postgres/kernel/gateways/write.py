@@ -213,22 +213,23 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         keys = list(insert_data[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]
 
+        # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
+        # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
+        row_template = (
+            sql.SQL("(")
+            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+            + sql.SQL(")")
+        )
+
         result: list[D] = []
         offset = 0
 
         while offset < len(insert_data):
             batch = insert_data[offset : offset + batch_size]
 
-            value_parts: list[sql.Composable] = []
-            params: list[Any] = []
-
-            for b in batch:
-                value_parts.append(
-                    sql.SQL("(")
-                    + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-                    + sql.SQL(")")
-                )
-                params.extend(b[k] for k in keys)
+            # ⚡ Bolt: Duplicate the precomputed row template
+            value_parts = [row_template] * len(batch)
+            params = [b[k] for b in batch for k in keys]
 
             stmt = sql.SQL(
                 "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
