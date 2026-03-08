@@ -11,15 +11,14 @@ from typing import Final, Optional, TypedDict, final
 import attrs
 
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
+from forze.application.contracts.tenant import TenantContextPort
 from forze.base.errors import ConflictError
 from forze.utils.codecs import JsonCodec, KeyCodec
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
-#! TODO: add tenant context support
 
-# make var names fully private ("__" prefix)
 _PENDING: Final[str] = "P"
 _DONE: Final[str] = "D"
 
@@ -42,6 +41,7 @@ class _Payload(TypedDict, total=False):
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisIdempotencyAdapter(IdempotencyPort):
     client: RedisClient
+    tenant_context: Optional[TenantContextPort] = None
 
     # Non initable fields
     key_codec: KeyCodec = attrs.field(  #! Non initable ????
@@ -56,6 +56,8 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     # ....................... #
 
     def __key(self, op: str, key: str) -> str:
+        if self.tenant_context is not None:
+            return self.key_codec.join(str(self.tenant_context.get()), op, key)
         return self.key_codec.join(op, key)
 
     # ....................... #
