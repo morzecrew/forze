@@ -1,7 +1,10 @@
-import pytest
+import unittest.mock
 from unittest.mock import MagicMock
-from forze_s3.adapters.storage import S3StorageAdapter
+
+import pytest
+
 from forze.base.errors import ValidationError
+from forze_s3.adapters.storage import S3StorageAdapter
 
 @pytest.fixture
 def storage_adapter():
@@ -47,24 +50,22 @@ def test_validate_prefix_invalid(storage_adapter):
 
 @pytest.mark.asyncio
 async def test_upload_calls_validation(storage_adapter):
-    storage_adapter._validate_prefix = MagicMock()
+    with unittest.mock.patch.object(S3StorageAdapter, "_validate_prefix") as mock_validate:
+        # Mocking dependencies for upload
+        storage_adapter.client.client.return_value.__aenter__.return_value = MagicMock()
+        storage_adapter.client.ensure_bucket = MagicMock()
+        storage_adapter.client.upload_bytes = MagicMock()
 
-    # Mocking dependencies for upload
-    storage_adapter.client.client.return_value.__aenter__.return_value = MagicMock()
-    storage_adapter.client.ensure_bucket = MagicMock()
-    storage_adapter.client.upload_bytes = MagicMock()
-
-    await storage_adapter.upload("file.txt", b"data", prefix="some/prefix")
-    storage_adapter._validate_prefix.assert_called_once_with("some/prefix")
+        await storage_adapter.upload("file.txt", b"data", prefix="some/prefix")
+        mock_validate.assert_called_once_with(storage_adapter, "some/prefix")
 
 @pytest.mark.asyncio
 async def test_list_calls_validation(storage_adapter):
-    storage_adapter._validate_prefix = MagicMock()
+    with unittest.mock.patch.object(S3StorageAdapter, "_validate_prefix") as mock_validate:
+        # Mocking dependencies for list
+        storage_adapter.client.client.return_value.__aenter__.return_value = MagicMock()
+        storage_adapter.client.ensure_bucket = MagicMock()
+        storage_adapter.client.list_objects.return_value = ([], 0)
 
-    # Mocking dependencies for list
-    storage_adapter.client.client.return_value.__aenter__.return_value = MagicMock()
-    storage_adapter.client.ensure_bucket = MagicMock()
-    storage_adapter.client.list_objects.return_value = ([], 0)
-
-    await storage_adapter.list(10, 0, prefix="some/prefix")
-    storage_adapter._validate_prefix.assert_called_once_with("some/prefix")
+        await storage_adapter.list(10, 0, prefix="some/prefix")
+        mock_validate.assert_called_once_with(storage_adapter, "some/prefix")
