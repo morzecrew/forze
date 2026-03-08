@@ -113,6 +113,7 @@ class ForzeAPIRouter(APIRouter):
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
         ),
+        strict_content_type: bool = Default(True),
         # extra parameters
         context_dependency: ExecutionContextDependencyPort,
         idempotency_config: Optional[RouterIdempotencyConfig] = None,
@@ -133,6 +134,7 @@ class ForzeAPIRouter(APIRouter):
             deprecated=deprecated,
             include_in_schema=include_in_schema,
             generate_unique_id_function=generate_unique_id_function,
+            strict_content_type=strict_content_type,
         )
 
         self.__idempotency_config = idempotency_config or {}
@@ -173,6 +175,7 @@ class ForzeAPIRouter(APIRouter):
         generate_unique_id_function: Union[
             Callable[[APIRoute], str], DefaultPlaceholder
         ] = Default(generate_unique_id),
+        strict_content_type: bool | DefaultPlaceholder = Default(True),
         # extra parameters
         idempotent: bool = False,
         idempotency_config: Optional[RouteIdempotencyConfig] = None,
@@ -238,6 +241,7 @@ class ForzeAPIRouter(APIRouter):
             callbacks=callbacks,
             openapi_extra=openapi_extra,
             generate_unique_id_function=generate_unique_id_function,
+            strict_content_type=strict_content_type,
         )
 
     # ....................... #

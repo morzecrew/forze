@@ -1,0 +1,14 @@
+paths:
+  - src
+  - tests
+
+paths-ignore:
+  - pages
+  - docs
+  - "**/*.md"
+  - "**/*.d2"
+  - ".cursor"
+  - ".agent"
+  - ".specify"
+  - ".jules"
+  - ".vscode"
