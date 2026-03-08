@@ -1,5 +1,5 @@
 import unittest.mock
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -52,9 +52,10 @@ def test_validate_prefix_invalid(storage_adapter):
 async def test_upload_calls_validation(storage_adapter):
     with unittest.mock.patch.object(S3StorageAdapter, "_validate_prefix") as mock_validate:
         # Mocking dependencies for upload
-        storage_adapter.client.client.return_value.__aenter__.return_value = MagicMock()
-        storage_adapter.client.ensure_bucket = MagicMock()
-        storage_adapter.client.upload_bytes = MagicMock()
+        storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+        storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+        storage_adapter.client.ensure_bucket = AsyncMock()
+        storage_adapter.client.upload_bytes = AsyncMock()
 
         await storage_adapter.upload("file.txt", b"data", prefix="some/prefix")
         mock_validate.assert_called_once_with(storage_adapter, "some/prefix")
@@ -63,9 +64,10 @@ async def test_upload_calls_validation(storage_adapter):
 async def test_list_calls_validation(storage_adapter):
     with unittest.mock.patch.object(S3StorageAdapter, "_validate_prefix") as mock_validate:
         # Mocking dependencies for list
-        storage_adapter.client.client.return_value.__aenter__.return_value = MagicMock()
-        storage_adapter.client.ensure_bucket = MagicMock()
-        storage_adapter.client.list_objects.return_value = ([], 0)
+        storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+        storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+        storage_adapter.client.ensure_bucket = AsyncMock()
+        storage_adapter.client.list_objects = AsyncMock(return_value=([], 0))
 
         await storage_adapter.list(10, 0, prefix="some/prefix")
         mock_validate.assert_called_once_with(storage_adapter, "some/prefix")
