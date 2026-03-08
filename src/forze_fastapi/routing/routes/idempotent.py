@@ -154,13 +154,23 @@ class IdempotentRoute(APIRoute):
         if body_iter is None:
             return b""
 
-        chunks: list[bytes] = []
-        async for chunk in body_iter:
-            if isinstance(chunk, str):
-                chunk = chunk.encode(resp.charset or "utf-8")
-            chunks.append(chunk)
+        chunks = [chunk async for chunk in body_iter]
 
-        new_body = b"".join(chunks)
+        if not chunks:
+            new_body = b""
+
+        else:
+            try:
+                if isinstance(chunks[0], str):
+                    new_body = "".join(chunks).encode(resp.charset or "utf-8")
+                else:
+                    new_body = b"".join(chunks)
+
+            except TypeError:
+                charset = resp.charset or "utf-8"
+                new_body = b"".join(
+                    c.encode(charset) if isinstance(c, str) else c for c in chunks
+                )
 
         new_resp = Response(
             content=new_body,
