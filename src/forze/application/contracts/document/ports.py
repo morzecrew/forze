@@ -1,6 +1,14 @@
 """Ports for document storage and retrieval"""
 
-from typing import Awaitable, Optional, Protocol, Sequence, overload, runtime_checkable
+from typing import (
+    Awaitable,
+    Optional,
+    Protocol,
+    Sequence,
+    TypeVar,
+    overload,
+    runtime_checkable,
+)
 from uuid import UUID
 
 from forze.base.primitives import JsonDict
@@ -10,9 +18,16 @@ from ..query import QueryFilterExpression, QuerySortExpression
 
 # ----------------------- #
 
+R = TypeVar("R", bound=ReadDocument)
+D = TypeVar("D", bound=Document)
+C = TypeVar("C", bound=CreateDocumentCmd)
+U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
+
 
 @runtime_checkable
-class DocumentReadPort[R: ReadDocument](Protocol):
+class DocumentReadPort[R](Protocol):
     """Read-only operations for document aggregates."""
 
     @overload
@@ -172,12 +187,7 @@ class DocumentReadPort[R: ReadDocument](Protocol):
 
 
 @runtime_checkable
-class DocumentWritePort[
-    R: ReadDocument,
-    D: Document,
-    C: CreateDocumentCmd,
-    U: BaseDTO,
-](Protocol):
+class DocumentWritePort[R, D, C, U](Protocol):
     """Write operations for document aggregates."""
 
     def create(self, dto: C) -> Awaitable[R]:
@@ -249,10 +259,9 @@ class DocumentWritePort[
 
 
 @runtime_checkable
-class DocumentPort[
-    R: ReadDocument,
-    D: Document,
-    C: CreateDocumentCmd,
-    U: BaseDTO,
-](DocumentReadPort[R], DocumentWritePort[R, D, C, U], Protocol):
+class DocumentPort[R, D, C, U](
+    DocumentReadPort[R],
+    DocumentWritePort[R, D, C, U],
+    Protocol,
+):
     """Combined port exposing read, search, and write operations for documents."""

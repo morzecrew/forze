@@ -32,6 +32,7 @@ from .txmanager import PostgresTxScopeKey
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+M = TypeVar("M", bound=BaseModel)
 
 # ....................... #
 
@@ -45,7 +46,7 @@ type SearchGateway[M: BaseModel] = Union[
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresSearchAdapter[M: BaseModel](SearchReadPort[M], TxScopedPort):
+class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
     client: PostgresClient
     model: type[M]
     search_spec: SearchSpecInternal[M]

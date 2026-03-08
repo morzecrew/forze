@@ -5,7 +5,7 @@ require_psycopg()
 # ....................... #
 
 import contextlib
-from typing import Optional, Sequence, final, overload
+from typing import Optional, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
@@ -27,15 +27,17 @@ from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
+R = TypeVar("R", bound=ReadDocument)
+D = TypeVar("D", bound=Document)
+C = TypeVar("C", bound=CreateDocumentCmd)
+U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDocumentAdapter[
-    R: ReadDocument,
-    D: Document,
-    C: CreateDocumentCmd,
-    U: BaseDTO,
-](DocumentPort[R, D, C, U], TxScopedPort):
+class PostgresDocumentAdapter(DocumentPort[R, D, C, U], TxScopedPort):
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
     cache: Optional[CachePort] = None
