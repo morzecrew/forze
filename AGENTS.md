@@ -121,3 +121,28 @@ Preferred pattern:
 - central routing in `AGENTS.md`
 - authoritative policy in canonical files
 - tool-specific overlays that only point back to those sources
+
+## Cursor Cloud specific instructions
+
+### Overview
+
+Forze is a Python library (not a runnable application). Development validation means running tests and quality checks, not starting a server.
+
+### Prerequisites
+
+The VM update script installs `uv`, `just`, and Python 3.13 via `uv`. After the update script runs, all dependencies are installed and the environment is ready.
+
+### Key commands
+
+See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
+
+- **Unit tests:** `just test tests/unit`
+- **All tests:** `just test` (integration tests need Docker for testcontainers)
+- **Quality checks (lint/imports/dead-code/deps/security):** `just quality` (or `just quality -s` for strict)
+- **Docs:** `just pages serve`
+
+### Caveats
+
+- Integration tests (`tests/integration/`) require Docker and pull container images for Postgres, Valkey, MinIO, and MongoDB via testcontainers. They will fail without a running Docker daemon.
+- The package version is derived from git tags via `hatch-vcs`; importing `forze.__version__` does not work—use `forze._version.__version__` instead.
+- `uv sync` is called automatically by `justfile` recipes before test/quality commands, so manual re-sync is rarely needed.
