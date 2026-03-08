@@ -1,7 +1,8 @@
 """Fixtures for composition tests.
 
-Composition tests need Deps with factory callables (DocumentDepPort, etc.)
-because build_document_registry uses doc(ctx, spec) which invokes these.
+Composition tests need Deps with factory callables (DocumentReadDepPort,
+DocumentWriteDepPort, etc.) because build_document_registry uses
+doc_read(ctx, spec) and doc_write(ctx, spec) which invoke these.
 """
 
 import pytest
@@ -23,17 +24,25 @@ from .._stubs import (
 
 @pytest.fixture
 def composition_deps() -> Deps:
-    """Deps with factory callables for doc, txmanager, counter, storage."""
+    """Deps with factory callables for doc_read/doc_write, txmanager, counter, storage."""
 
     from forze.application.contracts.cache import CacheDepKey
     from forze.application.contracts.counter import CounterDepKey
-    from forze.application.contracts.document import DocumentDepKey
+    from forze.application.contracts.document import (
+        DocumentReadDepKey,
+        DocumentWriteDepKey,
+    )
     from forze.application.contracts.search import SearchReadDepKey
     from forze.application.contracts.storage import StorageDepKey
     from forze.application.contracts.tx import TxManagerDepKey
 
-    def _doc_port(ctx, spec, cache=None):
-        return InMemoryDocumentPort()
+    _doc_port = InMemoryDocumentPort()
+
+    def _doc_read(ctx, spec, cache=None):
+        return _doc_port
+
+    def _doc_write(ctx, spec, cache=None):
+        return _doc_port
 
     def _cache_port(ctx, spec):
         return InMemoryCachePort()
@@ -52,7 +61,8 @@ def composition_deps() -> Deps:
 
     return Deps(
         deps={
-            DocumentDepKey: _doc_port,
+            DocumentReadDepKey: _doc_read,
+            DocumentWriteDepKey: _doc_write,
             CacheDepKey: _cache_port,
             SearchReadDepKey: _search_port,
             TxManagerDepKey: _tx_port,

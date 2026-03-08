@@ -34,6 +34,20 @@ class QueueReadPort[M: BaseModel](Protocol):
         timeout: Optional[timedelta] = None,  # noqa: F841
     ) -> AsyncIterator[QueueMessage[M]]: ...
 
+    # ....................... #
+
+    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]: ...  # noqa: F841
+
+    # ....................... #
+
+    def nack(
+        self,
+        queue: str,  # noqa: F841
+        ids: Sequence[str],
+        *,
+        requeue: bool = True,  # noqa: F841
+    ) -> Awaitable[int]: ...
+
 
 # ....................... #
 
@@ -49,18 +63,3 @@ class QueueWritePort[M: BaseModel](Protocol):
         key: Optional[str] = None,
         enqueued_at: Optional[datetime] = None,  # noqa: F841
     ) -> Awaitable[str]: ...
-
-
-# ....................... #
-
-
-@runtime_checkable
-class QueueAckPort(Protocol):
-    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]: ...  # noqa: F841
-    def nack(
-        self,
-        queue: str,  # noqa: F841
-        ids: Sequence[str],
-        *,
-        requeue: bool = True,  # noqa: F841
-    ) -> Awaitable[int]: ...

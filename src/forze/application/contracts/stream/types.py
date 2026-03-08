@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import NotRequired, Optional, TypedDict
 
 from pydantic import BaseModel
@@ -5,26 +6,23 @@ from pydantic import BaseModel
 # ----------------------- #
 
 
-class StreamEvent[M: BaseModel](TypedDict):
-    """Event as read from or written to a stream backend.
-
-    Backend-specific identifiers (e.g. Redis stream ID) are in ``id``.
-    """
+class StreamMessage[M: BaseModel](TypedDict):
+    """Message as read from or written to a stream backend."""
 
     stream: str
     """Logical stream name or topic."""
 
     id: str
-    """Backend-specific identifier for the event (e.g. Redis stream ID)."""
+    """Backend-specific identifier for the message."""
+
+    payload: M
+    """Structured payload carried by the message."""
 
     type: NotRequired[Optional[str]]
-    """Optional event type or category."""
+    """Optional message type or category."""
 
-    timestamp: NotRequired[Optional[int]]
-    """Optional timestamp associated with the event."""
+    timestamp: NotRequired[Optional[datetime]]
+    """Optional timestamp associated with the message."""
 
     key: NotRequired[Optional[str]]
-    """Optional partitioning key for the event."""
-
-    data: M
-    """Structured payload carried by the event."""
+    """Optional partitioning key for the message."""

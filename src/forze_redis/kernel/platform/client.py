@@ -16,8 +16,8 @@ from forze.base.errors import InfrastructureError
 from forze.base.primitives import JsonDict
 
 from .errors import redis_handled
-from .types import StreamMessage
-from .utils import parse_stream_messages
+from .types import RedisStreamResponse
+from .utils import parse_stream_entries
 
 # ----------------------- #
 
@@ -54,18 +54,23 @@ class RedisClient:
     # Lifecycle
 
     async def initialize(
-        self, dsn: str, *, config: RedisConfig = RedisConfig()
+        self,
+        dsn: str,
+        *,
+        config: RedisConfig = RedisConfig(),
     ) -> None:
         if self.__client is not None:
             return
 
-        self.__pool = ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
-            dsn,
-            max_connections=config.max_size,
-            socket_timeout=config.socket_timeout,
-            socket_connect_timeout=config.connect_timeout,
-            decode_responses=False,
-            encoding="utf-8",
+        self.__pool = (
+            ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+                dsn,
+                max_connections=config.max_size,
+                socket_timeout=config.socket_timeout,
+                socket_connect_timeout=config.connect_timeout,
+                decode_responses=False,
+                encoding="utf-8",
+            )
         )
         self.__client = Redis(connection_pool=self.__pool)
 
@@ -255,8 +260,6 @@ class RedisClient:
     # ....................... #
     # Stream methods
 
-    #! TODO: refactor and fix types, the same for stream gateway (make is simpler)
-
     @redis_handled("redis.xadd")
     async def xadd(
         self,
@@ -295,14 +298,14 @@ class RedisClient:
         *,
         count: Optional[int] = None,
         block_ms: Optional[int] = None,
-    ) -> list[tuple[str, list[StreamMessage]]]:
+    ) -> RedisStreamResponse:
         res = await self.__executor().xread(
             streams=streams,  # type: ignore[reportUnknownMemberType]
             count=count,
             block=block_ms,
         )
 
-        return parse_stream_messages(res)  #! too much as for low-level client
+        return parse_stream_entries(res)
 
     # ....................... #
 
@@ -387,7 +390,7 @@ class RedisClient:
         count: Optional[int] = None,
         block_ms: Optional[int] = None,
         noack: bool = False,
-    ) -> list[tuple[str, list[StreamMessage]]]:
+    ) -> RedisStreamResponse:
         res = await self.__executor().xreadgroup(
             group,
             consumer,
@@ -397,7 +400,7 @@ class RedisClient:
             noack=noack,
         )
 
-        return parse_stream_messages(res)  #! too much as for low-level client
+        return parse_stream_entries(res)
 
     # ....................... #
 

@@ -1,15 +1,28 @@
-"""Stream contracts for append-only event backends (e.g. Redis Streams).
-
-Provides :class:`StreamPort` and :class:`StreamEvent` for publish, read,
-subscribe, and consumer group operations.
-"""
-
-from .ports import StreamPort
-from .types import StreamEvent
+from .conformity import StreamConformity, StreamDepConformity
+from .deps import (
+    StreamGroupDepKey,
+    StreamGroupDepPort,
+    StreamReadDepKey,
+    StreamReadDepPort,
+    StreamWriteDepKey,
+    StreamWriteDepPort,
+)
+from .ports import StreamGroupPort, StreamReadPort, StreamWritePort
+from .types import StreamMessage
 
 # ----------------------- #
 
 __all__ = [
-    "StreamEvent",
-    "StreamPort",
+    "StreamMessage",
+    "StreamGroupPort",
+    "StreamReadPort",
+    "StreamWritePort",
+    "StreamConformity",
+    "StreamDepConformity",
+    "StreamReadDepKey",
+    "StreamReadDepPort",
+    "StreamWriteDepKey",
+    "StreamWriteDepPort",
+    "StreamGroupDepKey",
+    "StreamGroupDepPort",
 ]

@@ -1,49 +1,64 @@
-from typing import Any, Optional, Sequence
-
-from .types import StreamMessage
+from .types import (
+    RawRedisStreamResponse,
+    RedisStreamEntry,
+    RedisStreamFields,
+    RedisStreamResponse,
+)
 
 # ----------------------- #
-#! very questionable stuff below
-
-KeyT = str | bytes
-MessageT = tuple[KeyT, Any]
-# Redis XREAD returns None on block timeout, else list of (stream_name, [(id, {k:v}), ...])
-RawStreamResponseT = Optional[Sequence[tuple[KeyT, list[MessageT]]]]
-
-# ....................... #
 
 
-def parse_stream_messages(
-    raw: RawStreamResponseT,
-) -> list[tuple[str, list[StreamMessage]]]:
+def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
     if raw is None or not raw:
         return []
 
-    out: list[tuple[str, list[tuple[str, dict[bytes, bytes]]]]] = []
+    out: RedisStreamResponse = []
 
-    for sn_raw, messages in raw:
-        sn = (
-            sn_raw.decode("utf-8")
-            if isinstance(sn_raw, (bytes, bytearray))
-            else str(sn_raw)
+    for stream_raw, messages in raw:
+        stream = (
+            stream_raw.decode("utf-8")
+            if isinstance(stream_raw, (bytes, bytearray))
+            else str(stream_raw)
         )
-        parsed_messages: list[tuple[str, dict[bytes, bytes]]] = []
 
-        for m_raw, data_raw in messages:  # type: ignore[reportUnknownArgumentType]
+        parsed_messages: list[RedisStreamEntry] = []
+
+        for msg_id_raw, data_raw in messages:
             msg_id = (
-                m_raw.decode("utf-8")
-                if isinstance(m_raw, (bytes, bytearray))
-                else str(m_raw)  # type: ignore[reportUnknownArgumentType]
+                msg_id_raw.decode("utf-8")
+                if isinstance(msg_id_raw, (bytes, bytearray))
+                else str(msg_id_raw)
             )
 
             if isinstance(data_raw, dict):
-                data_dict = data_raw  # type: ignore[reportUnknownReturnType]
+                data_dict = data_raw  # pyright: ignore[reportUnknownVariableType]
 
             else:
-                data_dict = dict(data_raw)  # type: ignore[reportUnknownReturnType]
+                data_dict = dict(data_raw)  # type: ignore[arg-type]
 
-            parsed_messages.append((msg_id, data_dict))  # type: ignore[reportUnknownArgumentType]
+            normalized: RedisStreamFields = {}
 
-        out.append((sn, parsed_messages))
+            for k, v in data_dict.items():  # pyright: ignore[reportUnknownVariableType]
+                key = (
+                    k
+                    if isinstance(k, bytes)
+                    else str(k).encode(  # pyright: ignore[reportUnknownArgumentType]
+                        "utf-8"
+                    )
+                )
+
+                if isinstance(v, bytes):
+                    value = v
+
+                else:
+                    value = str(v).encode(  # pyright: ignore[reportUnknownArgumentType]
+                        "utf-8"
+                    )
+
+                normalized[key] = value
+
+            parsed_messages.append((msg_id, normalized))
+
+        out.append((stream, parsed_messages))
 
     return out

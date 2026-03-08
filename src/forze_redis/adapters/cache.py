@@ -39,17 +39,26 @@ class RedisCacheAdapter(CachePort):
 
     def __kv_key(self, key: str) -> str:
         if self.tenant_context is not None:
-            return self.key_codec.join(str(self.tenant_context.get()), "cache", "kv", key)
+            return self.key_codec.join(
+                str(self.tenant_context.get()), "cache", "kv", key
+            )
+
         return self.key_codec.join("cache", "kv", key)
 
     def __pointer_key(self, key: str) -> str:
         if self.tenant_context is not None:
-            return self.key_codec.join(str(self.tenant_context.get()), "cache", "pointer", key)
+            return self.key_codec.join(
+                str(self.tenant_context.get()), "cache", "pointer", key
+            )
+
         return self.key_codec.join("cache", "pointer", key)
 
     def __body_key(self, key: str, version: str) -> str:
         if self.tenant_context is not None:
-            return self.key_codec.join(str(self.tenant_context.get()), "cache", "body", key, version)
+            return self.key_codec.join(
+                str(self.tenant_context.get()), "cache", "body", key, version
+            )
+
         return self.key_codec.join("cache", "body", key, version)
 
     # ....................... #
