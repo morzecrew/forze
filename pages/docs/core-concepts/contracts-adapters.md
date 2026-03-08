@@ -31,6 +31,28 @@ Switching from Postgres to Mongo means changing the plan, not the operations.
 | **Tenant context** | Ambient tenant identity for multi-tenant routing |
 | **Actor context** | Ambient actor identity for audit and creator injection |
 
+## Contract-oriented code example
+
+In application code, resolve only contracts:
+
+    :::python
+    doc_port = ctx.doc(project_spec)
+    search_port = ctx.search(project_search_spec)
+    storage_port = ctx.storage("app-assets")
+
+In infrastructure composition, wire adapters once:
+
+    :::python
+    deps = Deps.merge(
+        PostgresDepsModule(
+            client=pg_client,
+            rev_bump_strategy="database",
+            history_write_strategy="database",
+        )(),
+        RedisDepsModule(client=redis_client)(),
+        S3DepsModule(client=s3_client)(),
+    )
+
 ## Testing
 
 Tests stub contracts with in-memory or fake implementations. Business logic is exercised without real databases or external services. Integration tests wire real adapters when needed.

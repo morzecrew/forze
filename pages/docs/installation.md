@@ -1,14 +1,13 @@
 # Installation
 
-Forze is published on **PyPI** and can be installed using standard Python package managers.
+Forze is published on **PyPI**.
 
 ## Requirements
 
 - Python 3.13+
-- [uv](https://docs.astral.sh/uv/) (development only)
-- [just](https://github.com/casey/just) (development only)
+- `uv` (recommended) or `pip`
 
-## Install
+## Install core package
 
 /// tab | uv
 
@@ -22,9 +21,20 @@ Forze is published on **PyPI** and can be installed using standard Python packag
     pip install forze
 ///
 
-## Optional Integrations
+## Install with integrations
 
-Forze provides optional integrations for common infrastructure components. Install them via extras:
+Install only what you need. Extras map directly to integration packages:
+
+| Extra | Installs |
+|-------|----------|
+| `fastapi` | FastAPI integration (`forze_fastapi`) |
+| `postgres` | Postgres integration (`forze_postgres`) |
+| `redis` | Redis/Valkey integration (`forze_redis`) |
+| `s3` | S3-compatible integration (`forze_s3`) |
+| `mongo` | MongoDB integration (`forze_mongo`) |
+| `temporal` | Temporal integration (`forze_temporal`) |
+
+Common setup:
 
 /// tab | uv
 
@@ -38,6 +48,14 @@ Forze provides optional integrations for common infrastructure components. Insta
     pip install 'forze[fastapi,postgres,redis,s3,mongo,temporal]'
 ///
 
+## Quick sanity check
+
+    :::python
+    from forze.application.execution import ExecutionRuntime
+
+    runtime = ExecutionRuntime()
+    print(type(runtime).__name__)  # ExecutionRuntime
+
 ## Development Installation
 
 To install the project for local development:
@@ -47,4 +65,4 @@ To install the project for local development:
     cd forze
     uv sync --all-groups --all-extras
 
-This installs all development dependencies defined in the project configuration.
+This installs test, quality, docs, and integration extras.

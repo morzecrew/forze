@@ -1,0 +1,45 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 42
+    }
+}
+
+direction: right
+
+DefineModels: {
+    shape: rectangle
+    label: 1. Define domain + DTO models
+}
+
+DocumentSpec: {
+    shape: rectangle
+    label: 2. Declare DocumentSpec
+}
+
+ComposeRuntime: {
+    shape: rectangle
+    label: 3. Compose DepsPlan + LifecyclePlan
+}
+
+ExposeRoutes: {
+    shape: rectangle
+    label: 4. Build FastAPI routers
+}
+
+RunScope: {
+    shape: rectangle
+    label: 5. Run inside ExecutionRuntime.scope()
+}
+
+DefineModels -> DocumentSpec -> ComposeRuntime -> ExposeRoutes -> RunScope
+
+Adapters: {
+    shape: rectangle
+    label: Postgres / Redis / S3 / Mongo adapters
+}
+
+ComposeRuntime -> Adapters: wires contracts
