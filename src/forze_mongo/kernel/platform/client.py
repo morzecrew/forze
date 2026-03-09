@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator, Mapping, Optional, Sequence, TypedDict, f
 
 import attrs
 from bson import ObjectId
+from pymongo import UpdateOne
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
@@ -389,6 +390,32 @@ class MongoClient:
 
         session = self.__current_session()
         res = await coll.update_one(filter, update, upsert=upsert, session=session)
+        return int(res.matched_count)
+
+    # ....................... #
+
+    async def bulk_update(
+        self,
+        coll: AsyncCollection[Any],
+        operations: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]],
+        *,
+        ordered: bool = True,
+    ) -> int:
+        """Execute multiple updates in a single bulk operation.
+
+        :param coll: The collection to update.
+        :param operations: A sequence of ``(filter, update)`` pairs.
+        :param ordered: Whether to execute operations in order.
+        :returns: Total matched count.
+        """
+
+        if not operations:
+            return 0
+
+        requests = [UpdateOne(f, u) for f, u in operations]
+        session = self.__current_session()
+
+        res = await coll.bulk_write(requests, ordered=ordered, session=session)
         return int(res.matched_count)
 
     # ....................... #
