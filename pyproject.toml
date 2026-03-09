@@ -121,6 +121,7 @@ include = [
 packages = [
     "src/forze",
     "src/forze_fastapi",
+    "src/forze_mock",
     "src/forze_postgres",
     "src/forze_redis",
     "src/forze_s3",
@@ -179,6 +180,7 @@ exclude_lines = [
 root_packages = [
     "forze",
     "forze_fastapi",
+    "forze_mock",
     "forze_postgres",
     "forze_redis",
     "forze_s3",
@@ -219,6 +221,7 @@ name = "Protect integration subpackages"
 type = "protected"
 protected_modules = [
     "forze_fastapi",
+    "forze_mock",
     "forze_postgres",
     "forze_redis",
     "forze_s3",
@@ -245,6 +248,7 @@ layers = [
 paths = [
     "src/forze",
     "src/forze_fastapi",
+    "src/forze_mock",
     "src/forze_postgres",
     "src/forze_redis",
     "src/forze_s3",
@@ -270,6 +274,7 @@ mi_min = "B"
 known_first_party = [
     "forze",
     "forze_fastapi",
+    "forze_mock",
     "forze_postgres",
     "forze_redis",
     "forze_s3",
