@@ -4,8 +4,7 @@ require_mongo()
 
 # ....................... #
 
-import asyncio
-from typing import Any, Literal, Optional, Sequence, final, get_args
+from typing import Literal, Optional, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
