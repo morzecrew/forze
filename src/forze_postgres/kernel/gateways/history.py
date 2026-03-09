@@ -72,10 +72,11 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if len(pks) != len(revs):
             raise ValidationError("Length of pks and revs must be the same")
 
-        values_sql = sql.SQL(", ").join(
-            sql.SQL("({}, {})").format(sql.Placeholder(), sql.Placeholder())
-            for _ in revs
-        )
+        # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
+        # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
+        row_template = sql.SQL("({}, {})").format(sql.Placeholder(), sql.Placeholder())
+
+        values_sql = sql.SQL(", ").join(row_template for _ in revs)
 
         where = sql.SQL("{h} = {h_v} AND ({pk}, {rev}) IN ({vals})").format(
             h=sql.Identifier(HISTORY_SOURCE_FIELD),
@@ -144,20 +145,25 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         keys = list(insert_data[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]
 
+        # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
+        # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
+        row_template = (
+            sql.SQL("(")
+            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+            + sql.SQL(")")
+        )
+
         offset = 0
 
         while offset < len(insert_data):
             batch = insert_data[offset : offset + batch_size]
-            value_parts: list[sql.Composable] = []
             params: list[Any] = []
 
             for b in batch:
-                value_parts.append(
-                    sql.SQL("(")
-                    + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-                    + sql.SQL(")")
-                )
                 params.extend(b[k] for k in keys)
+
+            # ⚡ Bolt: Duplicate the precomputed row template
+            value_parts = [row_template] * len(batch)
 
             stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
                 table=self.qname.ident(),
