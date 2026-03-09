@@ -57,7 +57,7 @@ async def test_stream_append_with_metadata(
 
     stream = _stream_name()
     ts = datetime(2025, 1, 15, 12, 0, 0)
-    msg_id = await redis_stream.append(
+    await redis_stream.append(
         stream,
         stream_payload_cls(value="meta"),
         type="event",

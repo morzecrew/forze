@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.tenant import TenantContextDepKey, TenantContextPort
 from forze.application.execution import ExecutionContext, Deps
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.pubsub import RedisPubSubAdapter
 from forze_redis.execution.deps.deps import redis_counter, redis_pubsub

@@ -13,7 +13,7 @@ import attrs
 from pydantic import BaseModel, Field
 
 from forze.base.errors import CoreError
-from forze.utils.debug import get_callable_module, get_callable_name
+from forze.base.introspection import get_callable_module, get_callable_name
 
 from .context import ExecutionContext
 from .middleware import (

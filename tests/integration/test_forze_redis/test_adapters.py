@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 
 from forze.base.errors import ConflictError
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 from forze_redis.adapters.cache import RedisCacheAdapter
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter

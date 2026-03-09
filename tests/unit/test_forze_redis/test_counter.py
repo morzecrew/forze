@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.contracts.tenant import TenantContextPort
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.kernel.platform.client import RedisClient
 

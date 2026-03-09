@@ -11,7 +11,7 @@ import attrs
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.tenant import TenantContextPort
-from forze.utils.codecs import JsonCodec, KeyCodec, TextCodec
+from forze.base.codecs import JsonCodec, KeyCodec, TextCodec
 
 from ..kernel.platform import RedisClient
 

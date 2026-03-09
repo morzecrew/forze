@@ -1,5 +1,5 @@
 from forze_redis.adapters.cache import RedisCacheAdapter
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 
 import attrs
 import uuid

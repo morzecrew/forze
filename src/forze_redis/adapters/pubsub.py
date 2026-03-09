@@ -16,7 +16,7 @@ from forze.application.contracts.pubsub import (
     PubSubSubscribePort,
 )
 from forze.base.errors import CoreError
-from forze.utils.codecs import JsonCodec
+from forze.base.codecs import JsonCodec
 
 from ..kernel.platform import RedisClient
 

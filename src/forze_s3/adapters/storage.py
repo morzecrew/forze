@@ -22,7 +22,7 @@ from forze.application.contracts.storage import (
 )
 from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
-from forze.utils.codecs import AsciiB64Codec, PathCodec
+from forze.base.codecs import AsciiB64Codec, PathCodec
 
 from ..kernel.platform import S3Client
 
