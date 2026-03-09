@@ -8,9 +8,11 @@ on:
 jobs:
   ci:
     name: Run CI before release
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
-    uses: ./.github/workflows/ci.yml
+      checks: write
+      pull-requests: write
 
   build:
     name: Build the package
@@ -69,8 +71,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      checks: write
-      pull-requests: write
 
     steps:
       - name: Checkout code
