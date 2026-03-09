@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mongo document adapter with dependency factories and CRUD/query support in `forze_mongo`.
 - PubSub contracts (`PubSubSpec`, conformity protocols, dep keys/ports) in core and Redis pubsub adapter/execution wiring with publish-subscribe support.
 - RabbitMQ integration package `forze_rabbitmq` with queue contracts wiring, client/adapters, execution module/lifecycle, and unit/integration test coverage.
+- Batch enqueue API for RabbitMQ (`RabbitMQClient.enqueue_many`, `RabbitMQQueueAdapter.enqueue_many`).
 
 ### Changed
 
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Postgres `__patch_many` loop now uses `asyncio.gather` (performance).
 - Postgres document write operations avoid redundant reads (performance).
 - Mongo integration now mirrors Postgres composition with dedicated read/write/history gateways, configurable rev/history strategies (application-managed), and execution module wiring.
+- RabbitMQ batch enqueue now publishes via a single channel scope and queue declaration per batch (performance).
 
 ### Fixed
 

@@ -293,32 +293,70 @@ class RabbitMQClient:
         enqueued_at: Optional[datetime] = None,
         message_id: Optional[str] = None,
     ) -> str:
-        resolved_message_id = message_id or uuid4().hex
-        delivery_mode = (
-            DeliveryMode.PERSISTENT
-            if self.__config.persistent_messages
-            else DeliveryMode.NOT_PERSISTENT
+        return (
+            await self.enqueue_many(
+                queue,
+                [body],
+                type=type,
+                key=key,
+                enqueued_at=enqueued_at,
+                message_ids=[message_id] if message_id is not None else None,
+            )
+        )[0]
+
+    # ....................... #
+
+    @rabbitmq_handled("rabbitmq.enqueue_many")
+    async def enqueue_many(
+        self,
+        queue: str,
+        bodies: Sequence[bytes],
+        *,
+        type: Optional[str] = None,
+        key: Optional[str] = None,
+        enqueued_at: Optional[datetime] = None,
+        message_ids: Optional[Sequence[str]] = None,
+    ) -> list[str]:
+        if not bodies:
+            return []
+
+        if message_ids is not None and len(message_ids) != len(bodies):
+            raise InfrastructureError(
+                "RabbitMQ message_ids size must match batch body size"
+            )
+
+        resolved_ids = (
+            list(message_ids)
+            if message_ids is not None
+            else [uuid4().hex for _ in range(len(bodies))]
         )
         headers = None
 
         if key is not None:
             headers = {_KEY_HEADER: key}
-
-        message = Message(
-            body=body,
-            content_type="application/json",
-            delivery_mode=delivery_mode,
-            message_id=resolved_message_id,
-            timestamp=enqueued_at,
-            type=type,
-            headers=headers,  # pyright: ignore[reportArgumentType]
+        delivery_mode = (
+            DeliveryMode.PERSISTENT
+            if self.__config.persistent_messages
+            else DeliveryMode.NOT_PERSISTENT
         )
 
         async with self.channel() as channel:
             await self.__declare_queue(channel, queue)
-            await channel.default_exchange.publish(message, routing_key=queue)
 
-        return resolved_message_id
+            for body, resolved_message_id in zip(bodies, resolved_ids, strict=True):
+                message = Message(
+                    body=body,
+                    content_type="application/json",
+                    delivery_mode=delivery_mode,
+                    message_id=resolved_message_id,
+                    timestamp=enqueued_at,
+                    type=type,
+                    headers=headers,  # pyright: ignore[reportArgumentType]
+                )
+
+                await channel.default_exchange.publish(message, routing_key=queue)
+
+        return resolved_ids
 
     # ....................... #
 

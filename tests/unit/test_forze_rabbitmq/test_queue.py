@@ -56,6 +56,67 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
 
 
 @pytest.mark.asyncio
+async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
+    client = Mock(spec=RabbitMQClient)
+    client.enqueue_many = AsyncMock(return_value=["msg-1", "msg-2"])
+    codec = RabbitMQQueueCodec(model=_Payload)
+    adapter = RabbitMQQueueAdapter(client=client, codec=codec, namespace="ns")
+
+    message_ids = await adapter.enqueue_many(
+        "jobs",
+        [_Payload(value="hello"), _Payload(value="world")],
+        type="created",
+        key="partition-a",
+    )
+
+    assert message_ids == ["msg-1", "msg-2"]
+    client.enqueue_many.assert_awaited_once()
+    assert client.enqueue_many.await_args.args[0] == "ns:jobs"
+    bodies = client.enqueue_many.await_args.args[1]
+    assert len(bodies) == 2
+    assert codec.decode(
+        "jobs",
+        {
+            "queue": "ns:jobs",
+            "id": "msg-1",
+            "body": bodies[0],
+            "type": None,
+            "enqueued_at": None,
+            "key": None,
+        },
+    )["payload"].value == "hello"
+    assert codec.decode(
+        "jobs",
+        {
+            "queue": "ns:jobs",
+            "id": "msg-2",
+            "body": bodies[1],
+            "type": None,
+            "enqueued_at": None,
+            "key": None,
+        },
+    )["payload"].value == "world"
+    assert client.enqueue_many.await_args.kwargs["type"] == "created"
+    assert client.enqueue_many.await_args.kwargs["key"] == "partition-a"
+
+
+@pytest.mark.asyncio
+async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
+    client = Mock(spec=RabbitMQClient)
+    client.enqueue_many = AsyncMock()
+    adapter = RabbitMQQueueAdapter(
+        client=client,
+        codec=RabbitMQQueueCodec(model=_Payload),
+        namespace="ns",
+    )
+
+    message_ids = await adapter.enqueue_many("jobs", [])
+
+    assert message_ids == []
+    client.enqueue_many.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_queue_adapter_receive_decodes_messages() -> None:
     client = Mock(spec=RabbitMQClient)
     codec = RabbitMQQueueCodec(model=_Payload)

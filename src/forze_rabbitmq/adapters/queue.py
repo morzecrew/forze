@@ -94,6 +94,31 @@ class RabbitMQQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
 
     # ....................... #
 
+    async def enqueue_many(
+        self,
+        queue: str,
+        payloads: Sequence[M],
+        *,
+        type: Optional[str] = None,
+        key: Optional[str] = None,
+        enqueued_at: Optional[datetime] = None,
+    ) -> list[str]:
+        if not payloads:
+            return []
+
+        physical_queue = self.__queue_name(queue)
+        bodies = [self.codec.encode(payload) for payload in payloads]
+
+        return await self.client.enqueue_many(
+            physical_queue,
+            bodies,
+            type=type,
+            key=key,
+            enqueued_at=enqueued_at,
+        )
+
+    # ....................... #
+
     async def receive(
         self,
         queue: str,
