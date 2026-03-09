@@ -11,6 +11,10 @@ from forze.application.contracts.pubsub import (
     PubSubSpec,
     PubSubSubscribeDepKey,
     PubSubSubscribePort,
+    PubSubConformity,
+    PubSubDepConformity,
+    PubSubPublishDepPort,
+    PubSubSubscribeDepPort,
 )
 
 # ----------------------- #
@@ -20,7 +24,9 @@ class _PubSubPayload(BaseModel):
     value: str
 
 
-class _StubPubSub(PubSubPublishPort[_PubSubPayload], PubSubSubscribePort[_PubSubPayload]):
+class _StubPubSub(
+    PubSubPublishPort[_PubSubPayload], PubSubSubscribePort[_PubSubPayload]
+):
     async def publish(
         self,
         topic: str,
@@ -65,3 +71,23 @@ class TestPubSubPorts:
 
         assert isinstance(pubsub, PubSubPublishPort)
         assert isinstance(pubsub, PubSubSubscribePort)
+
+    def test_stub_conforms_to_pubsub_conformity(self) -> None:
+        pubsub = _StubPubSub()
+        assert isinstance(pubsub, PubSubConformity)
+
+
+class _StubPubSubDep(PubSubPublishDepPort, PubSubSubscribeDepPort):
+    def __call__(self, context, spec):
+        return _StubPubSub()
+
+
+class TestPubSubDeps:
+    def test_stub_conforms_to_publish_and_subscribe_dep_ports(self) -> None:
+        dep = _StubPubSubDep()
+        assert isinstance(dep, PubSubPublishDepPort)
+        assert isinstance(dep, PubSubSubscribeDepPort)
+
+    def test_stub_conforms_to_pubsub_dep_conformity(self) -> None:
+        dep = _StubPubSubDep()
+        assert isinstance(dep, PubSubDepConformity)
