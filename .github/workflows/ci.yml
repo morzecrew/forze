@@ -2,6 +2,12 @@ name: Continuous Integration
 
 on:
   workflow_call:
+    inputs:
+      force_full:
+        required: false
+        type: boolean
+        default: false
+
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -33,11 +39,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Force full run for manual/called workflows
+      - name: Force full run
         id: force
-        shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ github.event_name }}" == "workflow_call" ]]; then
+          if [[ "${{ inputs.force_full }}" == "true" ]]; then
             echo "force_full=true" >> "$GITHUB_OUTPUT"
           else
             echo "force_full=false" >> "$GITHUB_OUTPUT"
