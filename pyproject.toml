@@ -188,7 +188,7 @@ exclude_type_checking_imports = true
 [[tool.importlinter.contracts]]
 name = "Layered `forze` package architecture"
 type = "layers"
-layers = ["forze.application", "forze.domain", "forze.utils", "forze.base"]
+layers = ["forze.application", "forze.domain", "forze.base"]
 
 [[tool.importlinter.contracts]]
 name = "Layered `forze.application` module architecture"
