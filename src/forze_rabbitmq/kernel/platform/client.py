@@ -66,6 +66,14 @@ class RabbitMQClient:
         init=False,
     )
     __pending_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __pending_channel: Optional[AbstractRobustChannel] = attrs.field(
+        default=None,
+        init=False,
+    )
+    __pending_channel_lock: asyncio.Lock = attrs.field(
+        factory=asyncio.Lock,
+        init=False,
+    )
 
     # ....................... #
     # Lifecycle
@@ -89,6 +97,10 @@ class RabbitMQClient:
     # ....................... #
 
     async def close(self) -> None:
+        if self.__pending_channel is not None and not self.__pending_channel.is_closed:
+            await self.__pending_channel.close()
+        self.__pending_channel = None
+
         if self.__connection is not None and not self.__connection.is_closed:
             await self.__connection.close()
 
@@ -170,6 +182,22 @@ class RabbitMQClient:
             queue,
             durable=self.__config.queue_durable,
         )
+
+    # ....................... #
+
+    async def __require_pending_channel(self) -> AbstractRobustChannel:
+        async with self.__pending_channel_lock:
+            if self.__pending_channel is not None and not self.__pending_channel.is_closed:
+                return self.__pending_channel
+
+            channel = await self.__require_connection().channel(publisher_confirms=False)
+
+            if self.__config.prefetch_count > 0:
+                await channel.set_qos(prefetch_count=self.__config.prefetch_count)
+
+            self.__pending_channel = channel
+
+            return channel
 
     # ....................... #
 
@@ -303,21 +331,20 @@ class RabbitMQClient:
 
         timeout_seconds = timeout.total_seconds() if timeout is not None else 0
         out: list[RabbitMQQueueMessage] = []
+        channel = await self.__require_pending_channel()
+        declared = await self.__declare_queue(channel, queue)
 
-        async with self.channel() as channel:
-            declared = await self.__declare_queue(channel, queue)
+        while len(out) < max_messages:
+            raw = await declared.get(
+                no_ack=False,
+                fail=False,
+                timeout=timeout_seconds,
+            )
 
-            while len(out) < max_messages:
-                raw = await declared.get(
-                    no_ack=False,
-                    fail=False,
-                    timeout=timeout_seconds,
-                )
+            if raw is None:
+                break
 
-                if raw is None:
-                    break
-
-                out.append(await self.__to_message(queue, raw))
+            out.append(await self.__to_message(queue, raw))
 
         return out
 
@@ -331,21 +358,20 @@ class RabbitMQClient:
         timeout: Optional[timedelta] = None,
     ) -> AsyncIterator[RabbitMQQueueMessage]:
         timeout_seconds = timeout.total_seconds() if timeout is not None else 1.0
+        channel = await self.__require_pending_channel()
+        declared = await self.__declare_queue(channel, queue)
 
-        async with self.channel() as channel:
-            declared = await self.__declare_queue(channel, queue)
+        while True:
+            raw = await declared.get(
+                no_ack=False,
+                fail=False,
+                timeout=timeout_seconds,
+            )
 
-            while True:
-                raw = await declared.get(
-                    no_ack=False,
-                    fail=False,
-                    timeout=timeout_seconds,
-                )
+            if raw is None:
+                continue
 
-                if raw is None:
-                    continue
-
-                yield await self.__to_message(queue, raw)
+            yield await self.__to_message(queue, raw)
 
     # ....................... #
 

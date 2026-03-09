@@ -1,6 +1,6 @@
 """Integration tests for RabbitMQClient."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -26,7 +26,7 @@ async def _receive_until(
 @pytest.mark.asyncio
 async def test_client_enqueue_receive_ack(rabbitmq_client: RabbitMQClient) -> None:
     queue = f"it:rabbitmq-client:{uuid4().hex[:12]}"
-    ts = datetime(2025, 1, 15, 12, 0, 0)
+    ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
     message_id = await rabbitmq_client.enqueue(
         queue,

@@ -1,7 +1,7 @@
 """Integration tests for RabbitMQQueueAdapter."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -30,7 +30,7 @@ async def test_queue_adapter_enqueue_receive_ack(
     queue_payload_cls,
 ) -> None:
     queue = f"jobs-{uuid4().hex[:8]}"
-    ts = datetime(2025, 1, 1, 12, 0, 0)
+    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
     message_id = await rabbitmq_queue.enqueue(
         queue,
