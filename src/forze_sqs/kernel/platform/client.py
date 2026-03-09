@@ -31,6 +31,8 @@ _ENQUEUED_AT_ATTR = "forze_enqueued_at"
 _ENCODING_ATTR = "forze_encoding"
 _ENCODING_B64 = "b64"
 
+# ....................... #
+
 
 @final
 class SQSConfig(TypedDict, total=False):
@@ -265,15 +267,14 @@ class SQSClient:
 
         queue_name = self.__sanitize_queue_name(queue)
         payload: dict[str, Any] = {"QueueName": queue_name}
+
         if attributes:
             payload["Attributes"] = attributes
 
         async with self.__borrow_client() as c:
             resp = await c.create_queue(**payload)
-        queue_url = resp.get("QueueUrl")
 
-        if not isinstance(queue_url, str):
-            raise InfrastructureError("SQS create_queue response does not contain QueueUrl")
+        queue_url = resp.get("QueueUrl")
 
         self.__queue_url_cache[queue] = queue_url
         self.__queue_url_cache[queue_name] = queue_url
@@ -303,10 +304,8 @@ class SQSClient:
 
         async with self.__borrow_client() as c:
             resp = await c.get_queue_url(QueueName=queue_name)
-        queue_url = resp.get("QueueUrl")
 
-        if not isinstance(queue_url, str):
-            raise InfrastructureError("SQS get_queue_url response does not contain QueueUrl")
+        queue_url = resp.get("QueueUrl")
 
         self.__queue_url_cache[queue] = queue_url
         self.__queue_url_cache[queue_name] = queue_url
@@ -489,7 +488,10 @@ class SQSClient:
 
                     entries.append(entry)
 
-                resp = await c.send_message_batch(QueueUrl=queue_url, Entries=entries)
+                resp = await c.send_message_batch(
+                    QueueUrl=queue_url,
+                    Entries=entries,  # pyright: ignore[reportArgumentType]
+                )
                 failed = resp.get("Failed") or []
 
                 if failed:
@@ -538,8 +540,6 @@ class SQSClient:
                 continue
 
             body = raw.get("Body", "")
-            if not isinstance(body, str):
-                raise InfrastructureError("SQS message body is not a string")
 
             attrs = raw.get("MessageAttributes")
             attrs = attrs if isinstance(attrs, dict) else None
@@ -551,10 +551,18 @@ class SQSClient:
                 SQSQueueMessage(
                     queue=queue,
                     id=receipt,
-                    body=self.__decode_body(body, attrs),
-                    type=self.__extract_attr(attrs, _TYPE_ATTR),
-                    enqueued_at=self.__extract_enqueued_at(attrs, system_attrs),
-                    key=self.__extract_attr(attrs, _KEY_ATTR),
+                    body=self.__decode_body(
+                        body, attrs  # pyright: ignore[reportArgumentType]
+                    ),
+                    type=self.__extract_attr(
+                        attrs, _TYPE_ATTR  # pyright: ignore[reportArgumentType]
+                    ),
+                    enqueued_at=self.__extract_enqueued_at(
+                        attrs, system_attrs  # pyright: ignore[reportArgumentType]
+                    ),
+                    key=self.__extract_attr(
+                        attrs, _KEY_ATTR  # pyright: ignore[reportArgumentType]
+                    ),
                 )
             )
 
@@ -595,7 +603,10 @@ class SQSClient:
                     {"Id": f"m{i}", "ReceiptHandle": receipt}
                     for i, receipt in enumerate(chunk)
                 ]
-                resp = await c.delete_message_batch(QueueUrl=queue_url, Entries=entries)
+                resp = await c.delete_message_batch(
+                    QueueUrl=queue_url,
+                    Entries=entries,  # pyright: ignore[reportArgumentType]
+                )
                 failed = resp.get("Failed") or []
 
                 if failed:
@@ -644,7 +655,7 @@ class SQSClient:
                 ]
                 resp = await c.change_message_visibility_batch(
                     QueueUrl=queue_url,
-                    Entries=entries,
+                    Entries=entries,  # pyright: ignore[reportArgumentType]
                 )
                 failed = resp.get("Failed") or []
 

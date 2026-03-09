@@ -35,9 +35,17 @@ from forze.application.contracts.query import (
     QueryOr,
     QuerySortExpression,
 )
-from forze.application.contracts.queue import QueueMessage, QueueReadPort, QueueWritePort
+from forze.application.contracts.queue import (
+    QueueMessage,
+    QueueReadPort,
+    QueueWritePort,
+)
 from forze.application.contracts.search import SearchOptions, SearchReadPort, SearchSpec
-from forze.application.contracts.storage import DownloadedObject, StoragePort, StoredObject
+from forze.application.contracts.storage import (
+    DownloadedObject,
+    StoragePort,
+    StoredObject,
+)
 from forze.application.contracts.stream import (
     StreamGroupPort,
     StreamMessage,
@@ -45,7 +53,7 @@ from forze.application.contracts.stream import (
     StreamWritePort,
 )
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
-from forze.base.errors import ConflictError, ConcurrencyError, CoreError, NotFoundError
+from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.domain.mixins import SoftDeletionMixin
@@ -80,21 +88,25 @@ class MockState:
     cache_kv: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     cache_pointers: dict[str, dict[str, str]] = attrs.field(factory=dict)
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)
-    idempotency: dict[tuple[str, str, str], tuple[str, str, Optional[IdempotencySnapshot]]] = (
-        attrs.field(factory=dict)
-    )
+    idempotency: dict[
+        tuple[str, str, str], tuple[str, str, Optional[IdempotencySnapshot]]
+    ] = attrs.field(factory=dict)
     storage: dict[str, dict[str, StoredObject]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
     queues: dict[str, dict[str, list[QueueMessage[Any]]]] = attrs.field(factory=dict)
     queue_pending: dict[str, dict[str, dict[str, QueueMessage[Any]]]] = attrs.field(
         factory=dict
     )
-    pubsub_logs: dict[str, dict[str, list[PubSubMessage[Any]]]] = attrs.field(factory=dict)
+    pubsub_logs: dict[str, dict[str, list[PubSubMessage[Any]]]] = attrs.field(
+        factory=dict
+    )
     streams: dict[str, dict[str, list[StreamMessage[Any]]]] = attrs.field(factory=dict)
     stream_ack: dict[tuple[str, str, str], set[str]] = attrs.field(factory=dict)
 
     # non-initable
-    __lock: threading.RLock = attrs.field(factory=threading.RLock, init=False, repr=False)
+    __lock: threading.RLock = attrs.field(
+        factory=threading.RLock, init=False, repr=False
+    )
     __seq: int = attrs.field(default=0, init=False, repr=False)
 
     # ....................... #
@@ -126,7 +138,7 @@ def _path_get(obj: Any, path: str) -> Any:
 
         return _MISSING
 
-    return cur
+    return cur  # pyright: ignore[reportUnknownVariableType]
 
 
 def _path_text(obj: Any, path: str) -> str:
@@ -138,7 +150,10 @@ def _path_text(obj: Any, path: str) -> str:
         return value
 
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return " ".join(str(x) for x in value)
+        return " ".join(
+            str(x)  # pyright: ignore[reportUnknownArgumentType]
+            for x in value  # pyright: ignore[reportUnknownVariableType]
+        )
 
     return str(value)
 
@@ -148,14 +163,14 @@ def _value_is_empty(value: Any) -> bool:
         return True
 
     if isinstance(value, (str, bytes, bytearray, list, tuple, dict, set, frozenset)):
-        return len(value) == 0
+        return len(value) == 0  # pyright: ignore[reportUnknownArgumentType]
 
     return False
 
 
 def _coerce_set(value: Any) -> set[Any]:
     if isinstance(value, (list, tuple, set, frozenset)):
-        return set(value)
+        return set(value)  # pyright: ignore[reportUnknownArgumentType]
 
     return {value}
 
@@ -177,7 +192,11 @@ def _memb_contains(field_value: Any, values: Sequence[Any]) -> bool:
     if isinstance(field_value, Sequence) and not isinstance(
         field_value, (str, bytes, bytearray)
     ):
-        return any(_eq(item, candidate) for item in field_value for candidate in values)
+        return any(
+            _eq(item, candidate)
+            for item in field_value  # pyright: ignore[reportUnknownVariableType]
+            for candidate in values
+        )
 
     return any(_eq(field_value, candidate) for candidate in values)
 
@@ -289,8 +308,13 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
 
         case _:
             # QueryAnd and fallback
-            items = getattr(expr, "items", tuple())
-            return all(_match_expr(doc, item) for item in items)
+            items = getattr(  # pyright: ignore[reportUnknownVariableType]
+                expr, "items", tuple()  # pyright: ignore[reportUnknownArgumentType]
+            )
+            return all(
+                _match_expr(doc, item)  # pyright: ignore[reportUnknownArgumentType]
+                for item in items  # pyright: ignore[reportUnknownVariableType]
+            )
 
 
 def _match_filters(doc: JsonDict, filters: Optional[QueryFilterExpression]) -> bool:
@@ -315,7 +339,9 @@ def _project(doc: JsonDict, return_fields: Optional[Sequence[str]]) -> JsonDict:
     return out
 
 
-def _sort_docs(docs: list[JsonDict], sorts: Optional[QuerySortExpression]) -> list[JsonDict]:
+def _sort_docs(
+    docs: list[JsonDict], sorts: Optional[QuerySortExpression]
+) -> list[JsonDict]:
     if not sorts:
         return docs
 
@@ -338,7 +364,9 @@ def _sort_docs(docs: list[JsonDict], sorts: Optional[QuerySortExpression]) -> li
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockDocumentAdapter[R: ReadDocument, D: Document, C: CreateDocumentCmd, U: BaseDTO](
+class MockDocumentAdapter[
+    R: ReadDocument, D: Document, C: CreateDocumentCmd, U: BaseDTO
+](
     DocumentReadPort[R],
     DocumentWritePort[R, D, C, U],
 ):
@@ -461,7 +489,10 @@ class MockDocumentAdapter[R: ReadDocument, D: Document, C: CreateDocumentCmd, U:
                 raise NotFoundError(f"Documents not found: {missing}")
             docs = [dict(store[pk]) for pk in pks]
 
-        return [self._to_read_or_projection(doc, return_fields) for doc in docs]
+        return [
+            self._to_read_or_projection(doc, return_fields)
+            for doc in docs  # pyright: ignore[reportReturnType]
+        ]
 
     # ....................... #
 
@@ -491,7 +522,9 @@ class MockDocumentAdapter[R: ReadDocument, D: Document, C: CreateDocumentCmd, U:
         return_fields: Optional[Sequence[str]] = None,
     ) -> Optional[R | JsonDict]:
         del for_update
-        hits, _ = await self.find_many(filters=filters, limit=1, return_fields=return_fields)
+        hits, _ = await self.find_many(
+            filters=filters, limit=1, return_fields=return_fields
+        )
         if not hits:
             return None
         return hits[0]
@@ -542,7 +575,8 @@ class MockDocumentAdapter[R: ReadDocument, D: Document, C: CreateDocumentCmd, U:
             ordered = ordered[:limit]
 
         out = [self._to_read_or_projection(doc, return_fields) for doc in ordered]
-        return out, total
+
+        return out, total  # pyright: ignore[reportReturnType]
 
     # ....................... #
 
@@ -649,7 +683,9 @@ class MockDocumentAdapter[R: ReadDocument, D: Document, C: CreateDocumentCmd, U:
     # ....................... #
 
     def _supports_soft_delete(self) -> bool:
-        return self.domain_model is not None and issubclass(self.domain_model, SoftDeletionMixin)
+        return self.domain_model is not None and issubclass(
+            self.domain_model, SoftDeletionMixin
+        )
 
     # ....................... #
 
@@ -777,7 +813,9 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
 
         if mode == "prefix":
             words = joined.split()
-            matched = sum(1 for token in tokens if any(w.startswith(token) for w in words))
+            matched = sum(
+                1 for token in tokens if any(w.startswith(token) for w in words)
+            )
             return matched / len(tokens)
 
         # fulltext and phrase use token containment for mock behavior.
@@ -1080,12 +1118,20 @@ class MockIdempotencyAdapter(IdempotencyPort):
         with self.state.lock:
             k = self._key(op, key)
             current = self.state.idempotency.get(k)
+
             if current is None:
                 raise ConflictError("Idempotency commit failed (missing key)")
+
             _, existing_hash, _ = current
+
             if existing_hash != payload_hash:
                 raise ConflictError("Payload hash mismatch")
-            self.state.idempotency[k] = ("done", payload_hash, dict(snapshot))
+
+            self.state.idempotency[k] = (  # pyright: ignore[reportArgumentType]
+                "done",
+                payload_hash,
+                dict(snapshot),
+            )
 
 
 @final
@@ -1392,8 +1438,7 @@ class MockPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[
     ):
         with self.state.lock:
             cursors = {
-                topic: len(self._topic_store().get(topic, []))
-                for topic in topics
+                topic: len(self._topic_store().get(topic, [])) for topic in topics
             }
 
         while True:

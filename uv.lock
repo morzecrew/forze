@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.13, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -680,6 +680,7 @@ s3 = [
 sqs = [
     { name = "aioboto3" },
     { name = "aiobotocore" },
+    { name = "botocore" },
     { name = "types-aioboto3", extra = ["sqs"] },
     { name = "types-aiobotocore" },
 ]
@@ -725,6 +726,7 @@ requires-dist = [
     { name = "aiobotocore", marker = "extra == 'sqs'", specifier = ">=2.25.1" },
     { name = "attrs", specifier = ">=25.4.0" },
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
+    { name = "botocore", marker = "extra == 'sqs'", specifier = ">=1.40.61" },
     { name = "deepdiff", specifier = ">=8.6.1" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.135.1" },
     { name = "httpx", marker = "extra == 'fastapi'", specifier = ">=0.28.0" },

@@ -90,6 +90,7 @@ s3 = [
 sqs = [
     "aioboto3>=15.5.0",
     "aiobotocore>=2.25.1",
+    "botocore>=1.40.61",
     "types-aioboto3[sqs]>=15.5.0",
     "types-aiobotocore>=3.1.3",
 ]

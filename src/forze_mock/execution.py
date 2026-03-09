@@ -7,8 +7,17 @@ from typing import Any, Optional, final
 
 import attrs
 
-from forze.application.contracts.cache import CacheDepKey, CacheDepPort, CachePort, CacheSpec
-from forze.application.contracts.counter import CounterDepKey, CounterDepPort, CounterPort
+from forze.application.contracts.cache import (
+    CacheDepKey,
+    CacheDepPort,
+    CachePort,
+    CacheSpec,
+)
+from forze.application.contracts.counter import (
+    CounterDepKey,
+    CounterDepPort,
+    CounterPort,
+)
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import (
     DocumentConformity,
@@ -36,8 +45,17 @@ from forze.application.contracts.queue import (
     QueueSpec,
     QueueWriteDepKey,
 )
-from forze.application.contracts.search import SearchReadDepKey, SearchReadDepPort, SearchReadPort, SearchSpec
-from forze.application.contracts.storage import StorageDepKey, StorageDepPort, StoragePort
+from forze.application.contracts.search import (
+    SearchReadDepKey,
+    SearchReadDepPort,
+    SearchReadPort,
+    SearchSpec,
+)
+from forze.application.contracts.storage import (
+    StorageDepKey,
+    StorageDepPort,
+    StoragePort,
+)
 from forze.application.contracts.stream import (
     StreamConformity,
     StreamDepConformity,
@@ -48,7 +66,11 @@ from forze.application.contracts.stream import (
     StreamWriteDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
-from forze.application.contracts.tx import TxManagerDepKey, TxManagerDepPort, TxManagerPort
+from forze.application.contracts.tx import (
+    TxManagerDepKey,
+    TxManagerDepPort,
+    TxManagerPort,
+)
 from forze.application.execution import Deps, DepsModule, ExecutionContext
 from forze.base.typing import conforms_to
 
@@ -90,7 +112,7 @@ def mock_document(
     if spec.write is not None:
         domain_model = spec.write["models"]["domain"]
 
-    return MockDocumentAdapter(
+    return MockDocumentAdapter[Any, Any, Any, Any](
         state=state,
         namespace=spec.namespace,
         read_model=spec.read["model"],
@@ -211,4 +233,3 @@ class MockDepsModule(DepsModule):
                 StreamGroupDepKey: mock_stream_group,
             }
         )
-
