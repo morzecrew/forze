@@ -1,9 +1,9 @@
-"""Unit tests for forze.utils.debug."""
+"""Unit tests for forze.base.introspection."""
 
 import functools
 import inspect
 
-from forze.utils.debug import (
+from forze.base.introspection import (
     get_callable_module,
     get_callable_name,
     get_class_module,
@@ -56,11 +56,11 @@ class TestGetCallableModule:
 
     def test_returns_module_for_function(self) -> None:
         mod = get_callable_module(_module_level_func)
-        assert "test_debug" in mod or "forze" in mod
+        assert "test_introspection" in mod or "forze" in mod
 
     def test_returns_module_for_defined_function(self) -> None:
         mod = get_callable_module(_module_level_func)
-        assert "forze" in mod or "test_debug" in mod
+        assert "forze" in mod or "test_introspection" in mod
 
     def test_returns_unknown_when_module_is_none(self) -> None:
         # Dynamically created class has no module in some environments
@@ -87,9 +87,9 @@ class TestGetClassModule:
 
     def test_returns_module_for_class(self) -> None:
         mod = get_class_module(_ModuleLevelClass)
-        assert "forze" in mod or "test_debug" in mod
+        assert "forze" in mod or "test_introspection" in mod
 
     def test_returns_unknown_when_module_is_none(self) -> None:
         dynamic_cls = type("Dynamic", (), {})
         mod = get_class_module(dynamic_cls)
-        assert mod == "<unknown>" or "test_debug" in mod
+        assert mod == "<unknown>" or "test_introspection" in mod

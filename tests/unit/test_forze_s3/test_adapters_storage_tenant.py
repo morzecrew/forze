@@ -20,7 +20,6 @@ def storage_adapter_with_tenant():
 
 @pytest.mark.asyncio
 async def test_upload_with_tenant(storage_adapter_with_tenant, monkeypatch):
-    import uuid
     mock_uuid = UUID("00000000-0000-0000-0000-000000000000")
     monkeypatch.setattr("forze_s3.adapters.storage.uuid7", lambda: mock_uuid)
 

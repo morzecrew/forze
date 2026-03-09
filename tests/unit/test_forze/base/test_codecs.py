@@ -1,6 +1,6 @@
-"""Unit tests for forze.utils.codecs."""
+"""Unit tests for forze.base.codecs."""
 
-from forze.utils.codecs import AsciiB64Codec, JsonCodec, KeyCodec, PathCodec, TextCodec
+from forze.base.codecs import AsciiB64Codec, JsonCodec, KeyCodec, PathCodec, TextCodec
 
 # ----------------------- #
 

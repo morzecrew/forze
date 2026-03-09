@@ -13,7 +13,7 @@ import attrs
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.errors import ConflictError
-from forze.utils.codecs import JsonCodec, KeyCodec
+from forze.base.codecs import JsonCodec, KeyCodec
 
 from ..kernel.platform import RedisClient
 

@@ -11,7 +11,6 @@ from forze.application.composition.document import (
     build_document_registry,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.base.primitives import utcnow, uuid7
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from forze_fastapi.routers.document import (

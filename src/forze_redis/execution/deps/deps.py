@@ -21,7 +21,7 @@ from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tenant.deps import TenantContextDepKey
 from forze.application.execution import ExecutionContext
 from forze.base.typing import conforms_to
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 
 from ...adapters import (
     RedisCacheAdapter,

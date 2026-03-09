@@ -11,7 +11,7 @@ import attrs
 from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.errors import ValidationError
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 
 from ..kernel.platform import RedisClient
 

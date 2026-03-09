@@ -11,7 +11,7 @@ from testcontainers.redis import RedisContainer
 
 pytest.importorskip("redis")
 
-from forze.utils.codecs import KeyCodec
+from forze.base.codecs import KeyCodec
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
