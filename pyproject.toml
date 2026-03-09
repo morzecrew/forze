@@ -87,6 +87,12 @@ s3 = [
     "types-aioboto3[s3]>=15.5.0",
     "types-aiobotocore>=3.1.3",
 ]
+sqs = [
+    "aioboto3>=15.5.0",
+    "aiobotocore>=2.25.1",
+    "types-aioboto3[sqs]>=15.5.0",
+    "types-aiobotocore>=3.1.3",
+]
 mongo = ["pymongo>=4.16.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
 
@@ -128,6 +134,7 @@ packages = [
     "src/forze_temporal",
     "src/forze_mongo",
     "src/forze_rabbitmq",
+    "src/forze_sqs",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -187,6 +194,7 @@ root_packages = [
     "forze_temporal",
     "forze_mongo",
     "forze_rabbitmq",
+    "forze_sqs",
 ]
 exclude_type_checking_imports = true
 
@@ -228,6 +236,7 @@ protected_modules = [
     "forze_temporal",
     "forze_mongo",
     "forze_rabbitmq",
+    "forze_sqs",
 ]
 allowed_importers = []
 as_packages = true
@@ -255,6 +264,7 @@ paths = [
     "src/forze_temporal",
     "src/forze_mongo",
     "src/forze_rabbitmq",
+    "src/forze_sqs",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -281,6 +291,7 @@ known_first_party = [
     "forze_temporal",
     "forze_mongo",
     "forze_rabbitmq",
+    "forze_sqs",
 ]
 ignore_notebooks = true
 
@@ -293,7 +304,7 @@ DEP002 = [
     "temporalio",
     "httpx",                # required by starlette.testclient.TestClient
 ]
-DEP003 = ["types_aiobotocore_s3", "typing_extensions"]
+DEP003 = ["types_aiobotocore_s3", "types_aiobotocore_sqs", "typing_extensions"]
 
 # ....................... #
 # Ruff configuration
