@@ -14,9 +14,9 @@ from uuid import uuid4
 import attrs
 from aio_pika import DeliveryMode, Message, connect_robust
 from aio_pika.abc import (
+    AbstractChannel,
     AbstractIncomingMessage,
     AbstractQueue,
-    AbstractRobustChannel,
     AbstractRobustConnection,
 )
 
@@ -28,6 +28,8 @@ from .types import RabbitMQQueueMessage
 # ----------------------- #
 
 _KEY_HEADER = "forze_key"
+
+# ....................... #
 
 
 @final
@@ -52,7 +54,7 @@ class RabbitMQClient:
     )
     __config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, init=False)
 
-    __ctx_channel: ContextVar[Optional[AbstractRobustChannel]] = attrs.field(
+    __ctx_channel: ContextVar[Optional[AbstractChannel]] = attrs.field(
         factory=lambda: ContextVar("rabbitmq_channel", default=None),
         init=False,
     )
@@ -66,7 +68,7 @@ class RabbitMQClient:
         init=False,
     )
     __pending_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __pending_channel: Optional[AbstractRobustChannel] = attrs.field(
+    __pending_channel: Optional[AbstractChannel] = attrs.field(
         default=None,
         init=False,
     )
@@ -99,6 +101,7 @@ class RabbitMQClient:
     async def close(self) -> None:
         if self.__pending_channel is not None and not self.__pending_channel.is_closed:
             await self.__pending_channel.close()
+
         self.__pending_channel = None
 
         if self.__connection is not None and not self.__connection.is_closed:
@@ -131,14 +134,14 @@ class RabbitMQClient:
     # ....................... #
     # Context helpers
 
-    def __current_channel(self) -> Optional[AbstractRobustChannel]:
+    def __current_channel(self) -> Optional[AbstractChannel]:
         return self.__ctx_channel.get()
 
     # ....................... #
 
     @rabbitmq_handled("rabbitmq.channel")
     @asynccontextmanager
-    async def channel(self) -> AsyncIterator[AbstractRobustChannel]:
+    async def channel(self) -> AsyncIterator[AbstractChannel]:
         depth = self.__ctx_depth.get()
         parent = self.__current_channel()
 
@@ -163,6 +166,7 @@ class RabbitMQClient:
 
         try:
             yield channel
+
         finally:
             self.__ctx_depth.reset(token_depth)
             self.__ctx_channel.reset(token_channel)
@@ -175,7 +179,7 @@ class RabbitMQClient:
 
     async def __declare_queue(
         self,
-        channel: AbstractRobustChannel,
+        channel: AbstractChannel,
         queue: str,
     ) -> AbstractQueue:
         return await channel.declare_queue(
@@ -185,12 +189,17 @@ class RabbitMQClient:
 
     # ....................... #
 
-    async def __require_pending_channel(self) -> AbstractRobustChannel:
+    async def __require_pending_channel(self) -> AbstractChannel:
         async with self.__pending_channel_lock:
-            if self.__pending_channel is not None and not self.__pending_channel.is_closed:
+            if (
+                self.__pending_channel is not None
+                and not self.__pending_channel.is_closed
+            ):
                 return self.__pending_channel
 
-            channel = await self.__require_connection().channel(publisher_confirms=False)
+            channel = await self.__require_connection().channel(
+                publisher_confirms=False
+            )
 
             if self.__config.prefetch_count > 0:
                 await channel.set_qos(prefetch_count=self.__config.prefetch_count)
@@ -235,13 +244,10 @@ class RabbitMQClient:
         queue: str,
         message: AbstractIncomingMessage,
     ) -> str:
-        base = (
-            message.message_id
-            or (
-                f"{queue}:{message.delivery_tag}"
-                if message.delivery_tag is not None
-                else uuid4().hex
-            )
+        base = message.message_id or (
+            f"{queue}:{message.delivery_tag}"
+            if message.delivery_tag is not None
+            else uuid4().hex
         )
         candidate = base
         suffix = 1
@@ -293,10 +299,10 @@ class RabbitMQClient:
             if self.__config.persistent_messages
             else DeliveryMode.NOT_PERSISTENT
         )
-        headers: dict[str, object] = {}
+        headers = None
 
         if key is not None:
-            headers[_KEY_HEADER] = key
+            headers = {_KEY_HEADER: key}
 
         message = Message(
             body=body,
@@ -305,7 +311,7 @@ class RabbitMQClient:
             message_id=resolved_message_id,
             timestamp=enqueued_at,
             type=type,
-            headers=headers or None,
+            headers=headers,  # pyright: ignore[reportArgumentType]
         )
 
         async with self.channel() as channel:

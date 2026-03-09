@@ -10,11 +10,14 @@ from typing import AsyncIterator, Optional, Sequence, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.queue import QueueMessage, QueueReadPort, QueueWritePort
+from forze.application.contracts.queue import (
+    QueueMessage,
+    QueueReadPort,
+    QueueWritePort,
+)
 from forze.base.errors import CoreError
 
-from ..kernel.platform import RabbitMQClient
-from ..kernel.platform.types import RabbitMQQueueMessage
+from ..kernel.platform import RabbitMQClient, RabbitMQQueueMessage
 
 # ----------------------- #
 
@@ -34,7 +37,9 @@ class RabbitMQQueueCodec[M: BaseModel]:
     def decode(self, queue: str, raw: RabbitMQQueueMessage) -> QueueMessage[M]:
         body = raw["body"]
 
-        if not isinstance(body, (bytes, bytearray)):
+        if not isinstance(
+            body, (bytes, bytearray)
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise CoreError(f"RabbitMQ queue message '{raw['id']}' has invalid payload")
 
         return QueueMessage(
