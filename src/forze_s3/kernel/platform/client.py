@@ -32,8 +32,8 @@ class S3Config(TypedDict, total=False):
     signature_version: str
     user_agent: str
     user_agent_extra: str
-    connect_timeout: int | float
-    read_timeout: int | float
+    connect_timeout: int | float  #! TODO: use timedelta
+    read_timeout: int | float  #! TODO: use timedelta
     parameter_validation: bool
     max_pool_connections: int
     proxies: dict[str, str]
@@ -197,10 +197,10 @@ class S3Client:
     # ....................... #
 
     async def health(self) -> tuple[str, bool]:
-        try:
-            async with self.client() as c:
-                await c.list_buckets()
+        c = self.__require_client()
 
+        try:
+            await c.list_buckets()
             return "ok", True
 
         except Exception as e:

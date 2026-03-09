@@ -93,13 +93,14 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         physical_queue = self.__queue_name(queue)
         body = self.codec.encode(payload)
 
-        return await self.client.enqueue(
-            physical_queue,
-            body,
-            type=type,
-            key=key,
-            enqueued_at=enqueued_at,
-        )
+        async with self.client.client():
+            return await self.client.enqueue(
+                physical_queue,
+                body,
+                type=type,
+                key=key,
+                enqueued_at=enqueued_at,
+            )
 
     # ....................... #
 
@@ -118,13 +119,14 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         physical_queue = self.__queue_name(queue)
         bodies = [self.codec.encode(payload) for payload in payloads]
 
-        return await self.client.enqueue_many(
-            physical_queue,
-            bodies,
-            type=type,
-            key=key,
-            enqueued_at=enqueued_at,
-        )
+        async with self.client.client():
+            return await self.client.enqueue_many(
+                physical_queue,
+                bodies,
+                type=type,
+                key=key,
+                enqueued_at=enqueued_at,
+            )
 
     # ....................... #
 
@@ -136,7 +138,12 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         timeout: Optional[timedelta] = None,
     ) -> list[QueueMessage[M]]:
         physical_queue = self.__queue_name(queue)
-        raw = await self.client.receive(physical_queue, limit=limit, timeout=timeout)
+        async with self.client.client():
+            raw = await self.client.receive(
+                physical_queue,
+                limit=limit,
+                timeout=timeout,
+            )
 
         return [self.codec.decode(queue, msg) for msg in raw]
 
@@ -150,14 +157,17 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
     ) -> AsyncIterator[QueueMessage[M]]:
         physical_queue = self.__queue_name(queue)
 
-        async for msg in self.client.consume(physical_queue, timeout=timeout):
-            yield self.codec.decode(queue, msg)
+        async with self.client.client():
+            async for msg in self.client.consume(physical_queue, timeout=timeout):
+                yield self.codec.decode(queue, msg)
 
     # ....................... #
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         physical_queue = self.__queue_name(queue)
-        return await self.client.ack(physical_queue, ids)
+
+        async with self.client.client():
+            return await self.client.ack(physical_queue, ids)
 
     # ....................... #
 
@@ -169,4 +179,5 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         requeue: bool = True,
     ) -> int:
         physical_queue = self.__queue_name(queue)
-        return await self.client.nack(physical_queue, ids, requeue=requeue)
+        async with self.client.client():
+            return await self.client.nack(physical_queue, ids, requeue=requeue)

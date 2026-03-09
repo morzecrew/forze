@@ -42,8 +42,8 @@ class SQSConfig(TypedDict, total=False):
     signature_version: str
     user_agent: str
     user_agent_extra: str
-    connect_timeout: int | float
-    read_timeout: int | float
+    connect_timeout: int | float  #! TODO: use timedelta
+    read_timeout: int | float  #! TODO: use timedelta
     parameter_validation: bool
     max_pool_connections: int
     proxies: dict[str, str]
@@ -67,7 +67,7 @@ class _SQSConnectionOpts:
     """SQS connection options."""
 
     endpoint: str
-    region_name: str
+    region_name: str  #! Should NOT be required
     access_key_id: str
     secret_access_key: str | SecretStr
     config: Optional[AioConfig] = None
@@ -142,16 +142,13 @@ class SQSClient:
 
     # ....................... #
 
-    @asynccontextmanager
-    async def __borrow_client(self) -> AsyncIterator[AsyncSQSClient]:
+    def __require_client(self) -> AsyncSQSClient:
         c = self.__current_client()
 
-        if c is not None:
-            yield c
-            return
+        if c is None:
+            raise CoreError("SQS client is not initialized")
 
-        async with self.client() as scoped:
-            yield scoped
+        return c
 
     # ....................... #
 
@@ -204,6 +201,7 @@ class SQSClient:
 
             try:
                 yield parent
+
             finally:
                 self.__ctx_depth.set(depth)
 
@@ -216,6 +214,7 @@ class SQSClient:
             raise CoreError("SQS client options are not initialized")
 
         sec_key = opts.secret_access_key
+
         if isinstance(sec_key, SecretStr):
             sec_key = sec_key.get_secret_value()
 
@@ -235,6 +234,7 @@ class SQSClient:
 
             try:
                 yield c
+
             finally:
                 self.__ctx_client.reset(token_client)
                 self.__ctx_depth.reset(token_depth)
@@ -244,11 +244,13 @@ class SQSClient:
     @sqs_handled("sqs.health")
     async def health(self) -> tuple[str, bool]:
         """Check SQS client health by listing queues."""
-        try:
-            async with self.client() as c:
-                await c.list_queues(MaxResults=1)
 
+        c = self.__require_client()
+
+        try:
+            await c.list_queues(MaxResults=1)
             return "ok", True
+
         except Exception as e:
             return str(e), False
 
@@ -262,6 +264,7 @@ class SQSClient:
         attributes: Optional[dict[str, str]] = None,
     ) -> str:
         """Create a queue and return its URL."""
+
         if self.__is_queue_url(queue):
             return queue
 
@@ -271,9 +274,9 @@ class SQSClient:
         if attributes:
             payload["Attributes"] = attributes
 
-        async with self.__borrow_client() as c:
-            resp = await c.create_queue(**payload)
+        c = self.__require_client()
 
+        resp = await c.create_queue(**payload)
         queue_url = resp.get("QueueUrl")
 
         self.__queue_url_cache[queue] = queue_url
@@ -286,6 +289,7 @@ class SQSClient:
     @sqs_handled("sqs.get_queue_url")
     async def queue_url(self, queue: str) -> str:
         """Resolve queue name (or URL) to queue URL."""
+
         return await self.__resolve_queue_url(queue)
 
     # ....................... #
@@ -302,9 +306,9 @@ class SQSClient:
         if queue_name in self.__queue_url_cache:
             return self.__queue_url_cache[queue_name]
 
-        async with self.__borrow_client() as c:
-            resp = await c.get_queue_url(QueueName=queue_name)
+        c = self.__require_client()
 
+        resp = await c.get_queue_url(QueueName=queue_name)
         queue_url = resp.get("QueueUrl")
 
         self.__queue_url_cache[queue] = queue_url
@@ -466,39 +470,39 @@ class SQSClient:
             enqueued_at=enqueued_at,
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
+        c = self.__require_client()
 
-        async with self.__borrow_client() as c:
-            for offset in range(0, len(bodies), 10):
-                chunk = bodies[offset : offset + 10]
-                chunk_ids = resolved_ids[offset : offset + 10]
-                entries: list[dict[str, Any]] = []
+        for offset in range(0, len(bodies), 10):
+            chunk = bodies[offset : offset + 10]
+            chunk_ids = resolved_ids[offset : offset + 10]
+            entries: list[dict[str, Any]] = []
 
-                for i, (body, chunk_message_id) in enumerate(
-                    zip(chunk, chunk_ids, strict=True)
-                ):
-                    entry: dict[str, Any] = {
-                        "Id": f"m{i}",
-                        "MessageBody": self.__encode_body(body),
-                        "MessageAttributes": attrs,
-                    }
+            for i, (body, chunk_message_id) in enumerate(
+                zip(chunk, chunk_ids, strict=True)
+            ):
+                entry: dict[str, Any] = {
+                    "Id": f"m{i}",
+                    "MessageBody": self.__encode_body(body),
+                    "MessageAttributes": attrs,
+                }
 
-                    if is_fifo:
-                        entry["MessageGroupId"] = key or "forze"
-                        entry["MessageDeduplicationId"] = chunk_message_id
+                if is_fifo:
+                    entry["MessageGroupId"] = key or "forze"
+                    entry["MessageDeduplicationId"] = chunk_message_id
 
-                    entries.append(entry)
+                entries.append(entry)
 
-                resp = await c.send_message_batch(
-                    QueueUrl=queue_url,
-                    Entries=entries,  # pyright: ignore[reportArgumentType]
+            resp = await c.send_message_batch(
+                QueueUrl=queue_url,
+                Entries=entries,  # pyright: ignore[reportArgumentType]
+            )
+            failed = resp.get("Failed") or []
+
+            if failed:
+                failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
+                raise InfrastructureError(
+                    f"SQS send_message_batch has failed entries: {failed_ids}"
                 )
-                failed = resp.get("Failed") or []
-
-                if failed:
-                    failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
-                    raise InfrastructureError(
-                        f"SQS send_message_batch has failed entries: {failed_ids}"
-                    )
 
         return resolved_ids
 
@@ -523,14 +527,15 @@ class SQSClient:
             wait_time = int(max(0, min(timeout.total_seconds(), 20)))
 
         queue_url = await self.__resolve_queue_url(queue)
-        async with self.__borrow_client() as c:
-            resp = await c.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=max_messages,
-                WaitTimeSeconds=wait_time,
-                MessageAttributeNames=["All"],
-                AttributeNames=["SentTimestamp"],
-            )
+        c = self.__require_client()
+
+        resp = await c.receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=max_messages,
+            WaitTimeSeconds=wait_time,
+            MessageAttributeNames=["All"],
+            AttributeNames=["SentTimestamp"],
+        )
         raw_messages = resp.get("Messages") or []
         out: list[SQSQueueMessage] = []
 
@@ -578,6 +583,7 @@ class SQSClient:
         timeout: Optional[timedelta] = None,
     ) -> AsyncIterator[SQSQueueMessage]:
         """Yield queue messages continuously using long polling."""
+
         while True:
             messages = await self.receive(queue, limit=1, timeout=timeout)
 
@@ -597,25 +603,26 @@ class SQSClient:
         queue_url = await self.__resolve_queue_url(queue)
         acked = 0
 
-        async with self.__borrow_client() as c:
-            for chunk in self.__chunked_ids(ids):
-                entries = [
-                    {"Id": f"m{i}", "ReceiptHandle": receipt}
-                    for i, receipt in enumerate(chunk)
-                ]
-                resp = await c.delete_message_batch(
-                    QueueUrl=queue_url,
-                    Entries=entries,  # pyright: ignore[reportArgumentType]
+        c = self.__require_client()
+
+        for chunk in self.__chunked_ids(ids):
+            entries = [
+                {"Id": f"m{i}", "ReceiptHandle": receipt}
+                for i, receipt in enumerate(chunk)
+            ]
+            resp = await c.delete_message_batch(
+                QueueUrl=queue_url,
+                Entries=entries,  # pyright: ignore[reportArgumentType]
+            )
+            failed = resp.get("Failed") or []
+
+            if failed:
+                failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
+                raise InfrastructureError(
+                    f"SQS delete_message_batch has failed entries: {failed_ids}"
                 )
-                failed = resp.get("Failed") or []
 
-                if failed:
-                    failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
-                    raise InfrastructureError(
-                        f"SQS delete_message_batch has failed entries: {failed_ids}"
-                    )
-
-                acked += len(resp.get("Successful") or [])
+            acked += len(resp.get("Successful") or [])
 
         return acked
 
@@ -643,29 +650,30 @@ class SQSClient:
         queue_url = await self.__resolve_queue_url(queue)
         nacked = 0
 
-        async with self.__borrow_client() as c:
-            for chunk in self.__chunked_ids(ids):
-                entries = [
-                    {
-                        "Id": f"m{i}",
-                        "ReceiptHandle": receipt,
-                        "VisibilityTimeout": 0,
-                    }
-                    for i, receipt in enumerate(chunk)
-                ]
-                resp = await c.change_message_visibility_batch(
-                    QueueUrl=queue_url,
-                    Entries=entries,  # pyright: ignore[reportArgumentType]
+        c = self.__require_client()
+
+        for chunk in self.__chunked_ids(ids):
+            entries = [
+                {
+                    "Id": f"m{i}",
+                    "ReceiptHandle": receipt,
+                    "VisibilityTimeout": 0,
+                }
+                for i, receipt in enumerate(chunk)
+            ]
+            resp = await c.change_message_visibility_batch(
+                QueueUrl=queue_url,
+                Entries=entries,  # pyright: ignore[reportArgumentType]
+            )
+            failed = resp.get("Failed") or []
+
+            if failed:
+                failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
+                raise InfrastructureError(
+                    "SQS change_message_visibility_batch has failed entries: "
+                    f"{failed_ids}"
                 )
-                failed = resp.get("Failed") or []
 
-                if failed:
-                    failed_ids = ", ".join(f.get("Id", "unknown") for f in failed)
-                    raise InfrastructureError(
-                        "SQS change_message_visibility_batch has failed entries: "
-                        f"{failed_ids}"
-                    )
-
-                nacked += len(resp.get("Successful") or [])
+            nacked += len(resp.get("Successful") or [])
 
         return nacked

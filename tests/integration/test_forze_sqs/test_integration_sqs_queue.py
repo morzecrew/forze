@@ -58,10 +58,10 @@ async def _ensure_queue(
     sqs_queue: SQSQueueAdapter,
     queue: str,
 ) -> None:
-    physical_queue = (
-        f"{sqs_queue.namespace}-{queue}" if sqs_queue.namespace else queue
-    )
     async with sqs_client.client():
+        physical_queue = (
+            f"{sqs_queue.namespace}-{queue}" if sqs_queue.namespace else queue
+        )
         await sqs_client.create_queue(physical_queue)
 
 

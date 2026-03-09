@@ -22,8 +22,10 @@ def _ensure_docker_available() -> None:
     try:
         client = from_env()
         client.ping()
+
     except DockerException as exc:
         pytest.skip(f"Docker is required for SQS integration tests: {exc}")
+
     finally:
         if client is not None:
             client.close()
@@ -53,9 +55,7 @@ async def sqs_client(localstack_container: LocalStackContainer) -> SQSClient:
         secret_access_key="test",
     )
 
-    yield client
-
-    client.close()
+    return client
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -86,4 +86,5 @@ async def sqs_queue(sqs_client: SQSClient) -> SQSQueueAdapter[_QueuePayload]:
 @pytest.fixture(scope="function")
 def queue_payload_cls() -> type[_QueuePayload]:
     """Provide the queue payload model for constructing test messages."""
+
     return _QueuePayload

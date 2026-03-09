@@ -34,6 +34,7 @@ class LifecycleHook(Protocol):
 
 async def noop_hook(ctx: ExecutionContext) -> None:
     """No-op startup/shutdown hook."""
+
     return
 
 

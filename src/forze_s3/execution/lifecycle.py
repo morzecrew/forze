@@ -39,6 +39,7 @@ class S3StartupHook(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         s3_client = ctx.dep(S3ClientDepKey)
+
         await s3_client.initialize(
             self.endpoint,
             self.access_key_id,

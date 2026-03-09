@@ -9,8 +9,6 @@ import re
 from datetime import datetime
 from typing import Optional, final
 
-from forze.application.contracts.tenant import TenantContextPort
-
 import attrs
 import magic
 
@@ -20,9 +18,10 @@ from forze.application.contracts.storage import (
     StoragePort,
     StoredObject,
 )
+from forze.application.contracts.tenant import TenantContextPort
+from forze.base.codecs import AsciiB64Codec, PathCodec
 from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
-from forze.base.codecs import AsciiB64Codec, PathCodec
 
 from ..kernel.platform import S3Client
 
@@ -47,10 +46,13 @@ class S3StorageAdapter(StoragePort):
         uid = str(uuid7())
 
         parts: list[str] = []
+
         if self.tenant_context is not None:
             parts.append(str(self.tenant_context.get()))
+
         if prefix:
             parts.append(prefix)
+
         parts.append(uid)
 
         return self.path_codec.cond_join(*parts)
@@ -151,8 +153,10 @@ class S3StorageAdapter(StoragePort):
         self._validate_prefix(prefix)
 
         parts: list[str] = []
+
         if self.tenant_context is not None:
             parts.append(str(self.tenant_context.get()))
+
         if prefix:
             parts.append(prefix)
 

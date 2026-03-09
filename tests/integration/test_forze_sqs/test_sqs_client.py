@@ -23,7 +23,9 @@ async def _receive_until(
 
 
 @pytest.mark.asyncio
-async def test_client_enqueue_receive_ack(sqs_client: SQSClient, sqs_queue_url: str) -> None:
+async def test_client_enqueue_receive_ack(
+    sqs_client: SQSClient, sqs_queue_url: str
+) -> None:
     ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
     async with sqs_client.client():

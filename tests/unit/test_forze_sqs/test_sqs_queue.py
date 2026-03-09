@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from pydantic import BaseModel
@@ -41,6 +41,7 @@ def test_queue_codec_encode_decode_roundtrip() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
     client = Mock(spec=SQSClient)
+    client.client = MagicMock(return_value=AsyncMock())
     client.enqueue = AsyncMock(return_value="msg-1")
     adapter = SQSQueueAdapter(
         client=client,
@@ -58,6 +59,7 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
     client = Mock(spec=SQSClient)
+    client.client = MagicMock(return_value=AsyncMock())
     client.enqueue_many = AsyncMock(return_value=["msg-1", "msg-2"])
     codec = SQSQueueCodec(model=_Payload)
     adapter = SQSQueueAdapter(client=client, codec=codec, namespace="ns:primary")
@@ -119,6 +121,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_receive_decodes_messages() -> None:
     client = Mock(spec=SQSClient)
+    client.client = MagicMock(return_value=AsyncMock())
     codec = SQSQueueCodec(model=_Payload)
     ts = datetime(2025, 1, 1, 12, 0, 0)
     client.receive = AsyncMock(
@@ -150,6 +153,7 @@ async def test_queue_adapter_receive_decodes_messages() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_consume_decodes_messages() -> None:
     client = Mock(spec=SQSClient)
+    client.client = MagicMock(return_value=AsyncMock())
     codec = SQSQueueCodec(model=_Payload)
     captured: dict[str, object] = {}
 
@@ -185,6 +189,7 @@ async def test_queue_adapter_consume_decodes_messages() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_ack_and_nack_use_namespaced_queue() -> None:
     client = Mock(spec=SQSClient)
+    client.client = MagicMock(return_value=AsyncMock())
     client.ack = AsyncMock(return_value=1)
     client.nack = AsyncMock(return_value=1)
     adapter = SQSQueueAdapter(

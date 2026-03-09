@@ -27,6 +27,7 @@ class SQSStartupHook(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         sqs_client = ctx.dep(SQSClientDepKey)
+
         await sqs_client.initialize(
             endpoint=self.endpoint,
             region_name=self.region_name,
