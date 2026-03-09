@@ -196,7 +196,7 @@ def uuid4(val: Any | None = None) -> UUID:
     """Return a UUIDv4, optionally derived from an arbitrary value.
 
     When ``val`` is provided, a deterministic UUIDv4 is generated from the
-    MD5 hash of ``val``. When omitted, a random UUIDv4 is returned.
+    SHA-256 hash of ``val``. When omitted, a random UUIDv4 is returned.
     """
 
     return _uuid4_from_any(val) if val else uuid4_func()

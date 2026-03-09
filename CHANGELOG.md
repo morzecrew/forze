@@ -9,8 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Unit tests for `forze_fastapi`: exception handlers, routing params/forms/router, document and search routers, OpenAPI docs, and router utilities.
-- `httpx` to `forze[fastapi]` extra (required by Starlette TestClient).
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.8] - 2026-03-10
+
+### Added
+
 - `strict_content_type` parameter (default True) to `ForzeAPIRouter` and route methods.
 - Tenant context support in S3 storage adapter (`forze_s3`).
 - `S3Config` TypedDict for abstracting botocore configuration in `forze_s3`.
@@ -19,7 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mongo document adapter with dependency factories and CRUD/query support in `forze_mongo`.
 - PubSub contracts (`PubSubSpec`, conformity protocols, dep keys/ports) in core and Redis pubsub adapter/execution wiring with publish-subscribe support.
 - RabbitMQ integration package `forze_rabbitmq` with queue contracts wiring, client/adapters, execution module/lifecycle, and unit/integration test coverage.
-- Batch enqueue API for RabbitMQ (`RabbitMQClient.enqueue_many`, `RabbitMQQueueAdapter.enqueue_many`).
 - In-memory integration package `forze_mock` with shared-state adapters/deps for document, search, counter, and additional contracts (cache, idempotency, storage, queue, pubsub, stream, tx manager) for local mock backends without external services.
 - SQS integration package `forze_sqs` with async aioboto3 client/adapters, execution module/lifecycle, optional `forze[sqs]` extras, and unit/integration coverage via LocalStack.
 
@@ -166,7 +177,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.7...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/morzecrew/forze/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/morzecrew/forze/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/morzecrew/forze/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/morzecrew/forze/compare/v0.1.4...v0.1.5
