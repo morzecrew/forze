@@ -24,7 +24,9 @@ def _perf_namespace(prefix: str) -> str:
 
 
 @pytest_asyncio.fixture
-async def rabbitmq_queue(rabbitmq_client: RabbitMQClient) -> RabbitMQQueueAdapter[_QueuePayload]:
+async def rabbitmq_queue(
+    rabbitmq_client: RabbitMQClient,
+) -> RabbitMQQueueAdapter[_QueuePayload]:
     """Provide a RabbitMQQueueAdapter with a unique namespace per test."""
     return RabbitMQQueueAdapter(
         client=rabbitmq_client,
@@ -73,9 +75,7 @@ async def test_adapter_enqueue_receive_ack_benchmark(
 
     async def run() -> None:
         queue = f"jobs-{uuid4().hex[:8]}"
-        msg_id = await rabbitmq_queue.enqueue(
-            queue, _QueuePayload(value="roundtrip")
-        )
+        msg_id = await rabbitmq_queue.enqueue(queue, _QueuePayload(value="roundtrip"))
         messages = await rabbitmq_queue.receive(
             queue, limit=1, timeout=timedelta(seconds=2)
         )

@@ -42,10 +42,10 @@ class QueueReadPort[M: BaseModel](Protocol):
 
     def nack(
         self,
-        queue: str,  # noqa: F841
+        queue: str,
         ids: Sequence[str],
         *,
-        requeue: bool = True,  # noqa: F841
+        requeue: bool = True,
     ) -> Awaitable[int]: ...
 
 
@@ -56,10 +56,22 @@ class QueueReadPort[M: BaseModel](Protocol):
 class QueueWritePort[M: BaseModel](Protocol):
     def enqueue(
         self,
-        queue: str,  # noqa: F841
+        queue: str,
         payload: M,
         *,
         type: Optional[str] = None,
         key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,  # noqa: F841
+        enqueued_at: Optional[datetime] = None,
     ) -> Awaitable[str]: ...
+
+    # ....................... #
+
+    def enqueue_many(
+        self,
+        queue: str,
+        payloads: Sequence[M],
+        *,
+        type: Optional[str] = None,
+        key: Optional[str] = None,
+        enqueued_at: Optional[datetime] = None,
+    ) -> Awaitable[list[str]]: ...
