@@ -353,14 +353,18 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         values_rows: list[sql.Composable] = []
         params: list[Any] = []
 
+        # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
+        # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
+        row_template = (
+            sql.SQL("(")
+            + sql.SQL(", ").join(sql.Placeholder() for _ in cols)
+            + sql.SQL(")")
+        )
+
         for _id, _rev, d in batch:
             row_params = [_id, _rev] + [d[k] for k in key]
             params.extend(row_params)
-            values_rows.append(
-                sql.SQL("(")
-                + sql.SQL(", ").join(sql.Placeholder() for _ in row_params)
-                + sql.SQL(")")
-            )
+            values_rows.append(row_template)
 
         set_parts = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
 
