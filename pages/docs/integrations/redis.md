@@ -17,6 +17,11 @@ This guide explains how to use Redis (or Valkey) with Forze for cache, counters,
 | `CacheDepKey` | document cache adapter |
 | `CounterDepKey` | namespace counters |
 | `IdempotencyDepKey` | HTTP idempotency adapter |
+| `PubSubPublishDepKey` | Pub/Sub publish adapter |
+| `PubSubSubscribeDepKey` | Pub/Sub subscribe adapter |
+| `StreamReadDepKey` | Redis stream read adapter |
+| `StreamWriteDepKey` | Redis stream write adapter |
+| `StreamGroupDepKey` | Redis stream consumer group adapter |
 
 ## Runtime wiring
 
@@ -84,6 +89,32 @@ Counters are namespace-scoped and useful for number IDs or sequence allocation.
     batch_end = await counter.incr_batch(10)
     await counter.decr(by=1)
     await counter.reset(value=1)
+
+## Pub/Sub and Streams
+
+`RedisDepsModule` provides ready-to-use ports for Redis Pub/Sub and Redis Streams. Since `ExecutionContext` does not provide direct shorthand methods for these contracts, you resolve them via dependency keys.
+
+    :::python
+    from pydantic import BaseModel
+    from forze.application.contracts.pubsub import (
+        PubSubPublishDepKey,
+        PubSubSubscribeDepKey,
+        PubSubSpec,
+    )
+
+    class OrderPayload(BaseModel):
+        order_id: str
+
+    spec = PubSubSpec(namespace="orders", model=OrderPayload)
+
+    # Resolve publish port
+    publish_port = ctx.dep(PubSubPublishDepKey)(ctx, spec)
+    await publish_port.publish("orders.created", OrderPayload(order_id="123"))
+
+    # Resolve subscribe port
+    subscribe_port = ctx.dep(PubSubSubscribeDepKey)(ctx, spec)
+    async for message in subscribe_port.subscribe(["orders.created"]):
+        print(message["payload"].order_id)
 
 ## Idempotency for FastAPI
 
