@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - ...
+- Documentation section **Core Package** with a practical core usage overview and a dedicated query syntax guide.
 
 ### Changed
 
