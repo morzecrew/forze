@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -677,6 +677,12 @@ s3 = [
     { name = "types-aioboto3", extra = ["s3"] },
     { name = "types-aiobotocore" },
 ]
+sqs = [
+    { name = "aioboto3" },
+    { name = "aiobotocore" },
+    { name = "types-aioboto3", extra = ["sqs"] },
+    { name = "types-aiobotocore" },
+]
 temporal = [
     { name = "temporalio" },
 ]
@@ -714,7 +720,9 @@ docs = [
 requires-dist = [
     { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9.6.1" },
     { name = "aioboto3", marker = "extra == 's3'", specifier = ">=15.5.0" },
+    { name = "aioboto3", marker = "extra == 'sqs'", specifier = ">=15.5.0" },
     { name = "aiobotocore", marker = "extra == 's3'", specifier = ">=2.25.1" },
+    { name = "aiobotocore", marker = "extra == 'sqs'", specifier = ">=2.25.1" },
     { name = "attrs", specifier = ">=25.4.0" },
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
     { name = "deepdiff", specifier = ">=8.6.1" },
@@ -737,9 +745,11 @@ requires-dist = [
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.23.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "types-aioboto3", extras = ["s3"], marker = "extra == 's3'", specifier = ">=15.5.0" },
+    { name = "types-aioboto3", extras = ["sqs"], marker = "extra == 'sqs'", specifier = ">=15.5.0" },
     { name = "types-aiobotocore", marker = "extra == 's3'", specifier = ">=3.1.3" },
+    { name = "types-aiobotocore", marker = "extra == 'sqs'", specifier = ">=3.1.3" },
 ]
-provides-extras = ["fastapi", "mongo", "postgres", "rabbitmq", "redis", "s3", "temporal"]
+provides-extras = ["fastapi", "mongo", "postgres", "rabbitmq", "redis", "s3", "sqs", "temporal"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2295,6 +2305,9 @@ wheels = [
 s3 = [
     { name = "types-aiobotocore-s3" },
 ]
+sqs = [
+    { name = "types-aiobotocore-sqs" },
+]
 
 [[package]]
 name = "types-aiobotocore"
@@ -2315,6 +2328,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a7/c6/9bb91a44eed1114690edb15d8251f32392e355dfa0a5b8e1c190b4cf89a4/types_aiobotocore_s3-2.25.2.tar.gz", hash = "sha256:678aa425491af19bd6d011d59ecdbbb7ae7e95800efddcf4fd559ab72c94e194", size = 75955, upload-time = "2025-11-12T01:52:06.536Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/0a/d0d9faefd7caa8536eb97647c38c711e73ab83341a65119d08c2cb20957d/types_aiobotocore_s3-2.25.2-py3-none-any.whl", hash = "sha256:151301e84bb2f1cbf30f0d1ef791bb75c141cfbfe47b93fd317b7f1ba3eb35e4", size = 83626, upload-time = "2025-11-12T01:52:04.763Z" },
+]
+
+[[package]]
+name = "types-aiobotocore-sqs"
+version = "2.25.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/35/e2f2216c8f7a8897df05dd9f5475e623a65791d8ed8496de5dd920caf9de/types_aiobotocore_sqs-2.25.2.tar.gz", hash = "sha256:60b38f4ede6d83cc6bd82db2b0721a983cd5010f1cfa78edaa8e5b380917b077", size = 23372, upload-time = "2025-11-12T01:52:55.566Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/06/f8d12215ace746f7e5282f0c5c89d04c1e380176a408aa26f99264d80e55/types_aiobotocore_sqs-2.25.2-py3-none-any.whl", hash = "sha256:04c5f20bc8da8f02d6db20d2369fedf8012596829a61aa40c68ff83d3970bcb3", size = 34098, upload-time = "2025-11-12T01:52:53.667Z" },
 ]
 
 [[package]]
