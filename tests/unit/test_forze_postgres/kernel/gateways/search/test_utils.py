@@ -1,7 +1,7 @@
 
 import logging
 import pytest
-from forze.application.contracts.search.internal import (
+from forze.application.contracts.search.internal.specs import (
     SearchIndexSpecInternal,
     SearchGroupSpecInternal,
     SearchFieldSpecInternal,
