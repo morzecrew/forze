@@ -1,8 +1,11 @@
+import logging
 from typing import Literal, Optional
 
 from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
 
 # ----------------------- #
+
+_logger = logging.getLogger(__name__)
 
 FtsGroupLetter = Literal["A", "B", "C", "D"]
 
@@ -14,7 +17,11 @@ def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
     ordered = sorted(spec.groups, key=lambda g: g.weight, reverse=True)
 
     if len(ordered) > 4:
-        #! TODO: add warning
+        _logger.warning(
+            "FTS index spec contains %d groups, but Postgres only supports 4 weights (A, B, C, D). "
+            "Groups after the first 4 (by weight) will be ignored.",
+            len(ordered),
+        )
         ordered = ordered[:4]
 
     letters: list[FtsGroupLetter] = ["A", "B", "C", "D"]
