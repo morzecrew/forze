@@ -52,14 +52,14 @@ async def test_enqueue_benchmark(
 async def test_enqueue_batch_benchmark(
     async_benchmark, rabbitmq_client: RabbitMQClient
 ) -> None:
-    """Benchmark enqueue of 10 messages to the same queue."""
+    """Benchmark batch enqueue of 10 messages to the same queue."""
     queue = _perf_queue("enq_batch")
 
     async def run() -> None:
-        for i in range(10):
-            await rabbitmq_client.enqueue(
-                queue, f'{{"value":"bench-{i}"}}'.encode()
-            )
+        await rabbitmq_client.enqueue_many(
+            queue,
+            [f'{{"value":"bench-{i}"}}'.encode() for i in range(10)],
+        )
 
     await async_benchmark(run)
 

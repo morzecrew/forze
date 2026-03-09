@@ -52,14 +52,14 @@ async def test_adapter_enqueue_benchmark(
 async def test_adapter_enqueue_batch_benchmark(
     async_benchmark, rabbitmq_queue: RabbitMQQueueAdapter[_QueuePayload]
 ) -> None:
-    """Benchmark adapter enqueue of 10 messages."""
+    """Benchmark adapter batch enqueue of 10 messages."""
     queue = f"jobs-{uuid4().hex[:8]}"
 
     async def run() -> None:
-        for i in range(10):
-            await rabbitmq_queue.enqueue(
-                queue, _QueuePayload(value=f"bench-{i}")
-            )
+        await rabbitmq_queue.enqueue_many(
+            queue,
+            [_QueuePayload(value=f"bench-{i}") for i in range(10)],
+        )
 
     await async_benchmark(run)
 
