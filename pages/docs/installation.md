@@ -33,19 +33,20 @@ Install only what you need. Extras map directly to integration packages:
 | `s3` | S3-compatible integration (`forze_s3`) |
 | `mongo` | MongoDB integration (`forze_mongo`) |
 | `temporal` | Temporal integration (`forze_temporal`) |
+| `socketio` | Socket.IO integration (`forze_socketio`) |
 
 Common setup:
 
 /// tab | uv
 
     :::bash
-    uv add 'forze[fastapi,postgres,redis,s3,mongo,temporal]'
+    uv add 'forze[fastapi,postgres,redis,s3,mongo,temporal,socketio]'
 ///
 
 /// tab | pip
 
     :::bash
-    pip install 'forze[fastapi,postgres,redis,s3,mongo,temporal]'
+    pip install 'forze[fastapi,postgres,redis,s3,mongo,temporal,socketio]'
 ///
 
 ## Quick sanity check

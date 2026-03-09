@@ -34,6 +34,7 @@ Forze helps you keep business logic stable while storage/framework choices evolv
 | `forze_redis` | Cache, counters, and idempotency adapters |
 | `forze_s3` | S3-compatible storage adapter |
 | `forze_mongo` | Mongo-backed document/transaction adapters |
+| `forze_socketio` | Socket.IO transport adapter for typed realtime events |
 | `forze_temporal` | Temporal integration package (currently minimal) |
 
 ## Typical request flow

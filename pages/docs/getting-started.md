@@ -183,6 +183,7 @@ For document adapters, table fields should match core domain fields (`id`, `rev`
 - Read [Core Concepts](core-concepts/index.md) for architecture and execution details
 - Pick an integration guide:
   - [FastAPI](integrations/fastapi.md)
+  - [Socket.IO](integrations/socketio.md)
   - [PostgreSQL](integrations/postgres.md)
   - [Redis](integrations/redis.md)
   - [S3](integrations/s3.md)

@@ -59,6 +59,7 @@ nav:
     - Query Syntax: core-package/query-syntax.md
   - Integrations:
     - FastAPI: integrations/fastapi.md
+    - Socket.IO: integrations/socketio.md
     - PostgreSQL: integrations/postgres.md
     - Redis: integrations/redis.md
     - S3: integrations/s3.md
