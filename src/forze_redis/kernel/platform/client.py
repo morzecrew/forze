@@ -6,6 +6,7 @@ require_redis()
 
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import AsyncIterator, Mapping, Optional, Sequence, final
 
 import attrs
@@ -262,31 +263,44 @@ class RedisClient:
 
     @redis_handled("redis.publish")
     async def publish(self, channel: str, message: bytes | str) -> int:
-        res = await self.__executor().publish(channel, message)
+        res = (
+            await self.__executor().publish(  # pyright: ignore[reportUnknownMemberType]
+                channel, message
+            )
+        )
 
         return int(res)
 
     # ....................... #
 
     @redis_handled("redis.subscribe")
-    async def subscribe(self, channels: Sequence[str]) -> AsyncIterator[RedisPubSubMessage]:
+    async def subscribe(
+        self,
+        channels: Sequence[str],
+        *,
+        timeout: Optional[timedelta] = None,
+    ) -> AsyncIterator[RedisPubSubMessage]:
         if not channels:
             return
 
-        pubsub = self.__require_client().pubsub()
-        await pubsub.subscribe(*channels)
+        pubsub = (
+            self.__require_client().pubsub()  # pyright: ignore[reportUnknownMemberType]
+        )
+        await pubsub.subscribe(*channels)  # pyright: ignore[reportUnknownMemberType]
 
         try:
             while True:
-                raw = await pubsub.get_message(
+                raw = await pubsub.get_message(  # pyright: ignore[reportUnknownVariableType]
                     ignore_subscribe_messages=True,
-                    timeout=None,
+                    timeout=timeout.total_seconds() if timeout else None,
                 )
 
                 if raw is None:
                     continue
 
-                parsed = parse_pubsub_message(raw)
+                parsed = parse_pubsub_message(
+                    raw  # pyright: ignore[reportUnknownArgumentType]
+                )
 
                 if parsed is None:
                     continue
@@ -294,7 +308,9 @@ class RedisClient:
                 yield parsed
 
         finally:
-            await pubsub.unsubscribe(*channels)
+            await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
+                *channels
+            )
             await pubsub.aclose()
 
     # ....................... #

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import (
     AsyncIterator,
     Awaitable,
@@ -19,7 +19,7 @@ from .types import PubSubMessage
 class PubSubPublishPort[M: BaseModel](Protocol):
     def publish(
         self,
-        topic: str,  # noqa: F841
+        topic: str,
         payload: M,
         *,
         type: Optional[str] = None,
@@ -35,5 +35,7 @@ class PubSubPublishPort[M: BaseModel](Protocol):
 class PubSubSubscribePort[M: BaseModel](Protocol):
     def subscribe(
         self,
-        topics: Sequence[str],  # noqa: F841
+        topics: Sequence[str],
+        *,
+        timeout: Optional[timedelta] = None,
     ) -> AsyncIterator[PubSubMessage[M]]: ...

@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -20,7 +20,7 @@ async def _publish_until_received(
     payload,
     **kwargs,
 ):
-    stream = redis_pubsub.subscribe([topic])
+    stream = redis_pubsub.subscribe([topic], timeout=timedelta(seconds=2))
     recv_task = asyncio.create_task(anext(stream))
 
     try:

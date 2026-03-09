@@ -85,7 +85,51 @@ jobs:
         run: just quality -s
 
       - name: Run tests
-        run: just test-fast
+        run: |
+          mkdir -p test-results
+          mkdir -p report-meta
+          just test-fast --junit-xml=test-results/pytest.xml
+          echo "true" > report-meta/ran-tests.txt
+
+      - name: Upload test results
+        if: ${{ !cancelled() && github.event_name == 'pull_request'}}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: test-results/*.xml
+          if-no-files-found: error
+          retention-days: 1
+      
+      - name: Upload test report metadata
+        if: ${{ !cancelled() && github.event_name == 'pull_request'}}
+        uses: actions/upload-artifact@v7
+        with:
+          name: report-meta
+          path: report-meta/ran-tests.txt
+          if-no-files-found: error
+          retention-days: 1
+      
+  report-meta-skipped:
+    name: Publish skipped-test metadata
+    needs: changes
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' &&
+      !(needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true')
+    
+    steps:
+      - name: Create skipped metadata
+        run: |
+          mkdir -p report-meta
+          echo "false" > report-meta/ran-tests.txt
+
+      - name: Upload skipped metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: report-meta
+          path: report-meta/ran-tests.txt
+          if-no-files-found: error
+          retention-days: 1
   
   required-ci:
     name: Required Continuous Integration

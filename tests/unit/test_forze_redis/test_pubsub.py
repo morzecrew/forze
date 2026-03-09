@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -60,8 +61,9 @@ async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
     async def _iter():
         yield ("orders", codec.encode(_Payload(value="hello")))
 
-    def _subscribe(topics):
+    def _subscribe(topics, timeout: Optional[timedelta] = None):
         captured["topics"] = topics
+        captured["timeout"] = timeout
         return _iter()
 
     client.subscribe = Mock(side_effect=_subscribe)
@@ -72,5 +74,33 @@ async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
     await stream.aclose()
 
     assert captured["topics"] == ["orders"]
+    assert captured["timeout"] is None
     assert msg["topic"] == "orders"
+    assert msg["payload"].value == "hello"
+
+
+@pytest.mark.asyncio
+async def test_pubsub_adapter_subscribe_passes_timeout() -> None:
+    client = Mock(spec=RedisClient)
+    codec = RedisPubSubCodec(model=_Payload)
+    captured: dict[str, object] = {}
+
+    async def _iter():
+        yield ("orders", codec.encode(_Payload(value="hello")))
+
+    def _subscribe(topics, timeout: Optional[timedelta] = None):
+        captured["topics"] = topics
+        captured["timeout"] = timeout
+        return _iter()
+
+    client.subscribe = Mock(side_effect=_subscribe)
+    adapter = RedisPubSubAdapter(client=client, codec=codec)
+
+    timeout = timedelta(seconds=5)
+    stream = adapter.subscribe(["orders"], timeout=timeout)
+    msg = await anext(stream)
+    await stream.aclose()
+
+    assert captured["topics"] == ["orders"]
+    assert captured["timeout"] == timeout
     assert msg["payload"].value == "hello"

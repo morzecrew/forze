@@ -1,0 +1,69 @@
+name: Test Report
+
+on:
+  workflow_run:
+    workflows: 
+      - Continuous Integration
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+jobs:
+  decide:
+    name: Decide whether to publish report
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+
+    outputs:
+      ran_tests: ${{ steps.meta.outputs.ran_tests }}
+
+    steps:
+      - name: Download metadata artifact
+        uses: dawidd6/action-download-artifact@v16
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: report-meta
+          path: report-meta
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          if_no_artifact_found: fail
+
+      - name: Read metadata
+        id: meta
+        shell: bash
+        run: |
+          value="$(cat report-meta/ran-tests.txt)"
+          echo "ran_tests=$value" >> "$GITHUB_OUTPUT"
+          echo "ran_tests=$value"
+
+  report:
+    name: Publish pytest report
+    needs: decide
+    if: needs.decide.outputs.ran_tests == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Publish test report
+        uses: dorny/test-reporter@v2
+        with:
+          artifact: test-results
+          name: Pytest Results
+          path: "*.xml"
+          reporter: python-xunit
+          fail-on-error: true
+          fail-on-empty: true
+
+  no-tests:
+    name: No tests were run
+    needs: decide
+    if: needs.decide.outputs.ran_tests != 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Skip reporting
+        run: echo "No relevant changes; test report was intentionally skipped."

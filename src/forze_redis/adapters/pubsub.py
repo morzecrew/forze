@@ -4,7 +4,7 @@ require_redis()
 
 # ....................... #
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import AsyncIterator, Final, Optional, Sequence, final
 
 import attrs
@@ -15,8 +15,8 @@ from forze.application.contracts.pubsub import (
     PubSubPublishPort,
     PubSubSubscribePort,
 )
-from forze.base.errors import CoreError
 from forze.base.codecs import JsonCodec
+from forze.base.errors import CoreError
 
 from ..kernel.platform import RedisClient
 
@@ -68,14 +68,22 @@ class RedisPubSubCodec[M: BaseModel]:
         if not isinstance(decoded, dict):
             raise CoreError(f"Redis pubsub message in '{topic}' has invalid payload")
 
-        payload_raw = decoded.get(_F_PAYLOAD)
+        payload_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            _F_PAYLOAD
+        )
 
         if not isinstance(payload_raw, str):
             raise CoreError(f"Redis pubsub message in '{topic}' has no payload")
 
-        type_raw = decoded.get(_F_TYPE)
-        key_raw = decoded.get(_F_KEY)
-        published_at_raw = decoded.get(_F_PUBLISHED_AT)
+        type_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            _F_TYPE
+        )
+        key_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            _F_KEY
+        )
+        published_at_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            _F_PUBLISHED_AT
+        )
 
         return PubSubMessage(
             topic=topic,
@@ -120,6 +128,11 @@ class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort
 
     # ....................... #
 
-    async def subscribe(self, topics: Sequence[str]) -> AsyncIterator[PubSubMessage[M]]:
-        async for topic, raw_data in self.client.subscribe(topics):
+    async def subscribe(
+        self,
+        topics: Sequence[str],
+        *,
+        timeout: Optional[timedelta] = None,
+    ) -> AsyncIterator[PubSubMessage[M]]:
+        async for topic, raw_data in self.client.subscribe(topics, timeout=timeout):
             yield self.codec.decode(topic, raw_data)
