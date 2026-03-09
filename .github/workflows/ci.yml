@@ -9,6 +9,12 @@ on:
         default: false
 
   workflow_dispatch:
+    inputs:
+      force_full:
+        required: false
+        type: boolean
+        default: true
+        
   pull_request:
     types: [opened, synchronize, reopened]
   push:
