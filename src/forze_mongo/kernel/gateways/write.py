@@ -160,7 +160,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    def __bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
+    def _bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
         if self.rev_bump_strategy == "application":
             diff[REV_FIELD] = current.rev + 1
 
@@ -189,7 +189,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if not diff:
             return current
 
-        diff = self.__bump_rev(current, diff)
+        diff = self._bump_rev(current, diff)
 
         matched = await self.client.update_one(
             self.coll(),
@@ -207,6 +207,75 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    async def _patch_many(
+        self,
+        pks: Sequence[UUID],
+        updates: Optional[Sequence[JsonDict]] = None,
+        *,
+        revs: Optional[Sequence[int]] = None,
+    ) -> Sequence[D]:
+        if not pks:
+            return []
+
+        currents = await self.read.get_many(pks)
+
+        # 1. Validation and preparation
+        to_patch: list[tuple[int, D, JsonDict]] = []
+
+        if updates is not None:
+            if revs is not None:
+                await self._validate_history(
+                    *[
+                        (c, r, u)
+                        for c, r, u in zip(currents, revs, updates, strict=True)
+                    ]
+                )
+
+            for i, (current, update) in enumerate(zip(currents, updates, strict=True)):
+                _, diff = current.update(update)
+                if diff:
+                    to_patch.append((i, current, diff))
+        else:
+            for i, current in enumerate(currents):
+                _, diff = current.touch()
+                if diff:
+                    to_patch.append((i, current, diff))
+
+        if not to_patch:
+            return currents
+
+        # 2. Execution (Bulk)
+        operations: list[tuple[JsonDict, JsonDict]] = []
+        for _, current, diff in to_patch:
+            bumped = self._bump_rev(current, diff)
+            operations.append(
+                (
+                    {"_id": self._storage_pk(current.id), REV_FIELD: current.rev},
+                    {"$set": self._coerce_query_value(bumped)},
+                )
+            )
+
+        matched = await self.client.bulk_update(self.coll(), operations)
+        if matched != len(to_patch):
+            raise ConcurrencyError("Failed to update one or more records")
+
+        # 3. Finalization
+        updated_models: list[D] = []
+        updated_map: dict[int, D] = {}
+
+        for i, current, diff in to_patch:
+            bumped = self._bump_rev(current, diff)
+            model = current.model_copy(update=bumped, deep=True)
+            updated_models.append(model)
+            updated_map[i] = model
+
+        out = [updated_map.get(idx, currents[idx]) for idx in range(len(currents))]
+        await self._write_history(*updated_models)
+
+        return out
+
+    # ....................... #
+
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> D:
         update_data = pydantic_dump(dto, exclude={"unset": True})
         return await self._patch(pk, update_data, rev=rev)
@@ -220,9 +289,6 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[D]:
-        if not pks:
-            return []
-
         if len(pks) != len(dtos):
             raise CoreError("Length mismatch between primary keys and updates")
 
@@ -232,11 +298,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if revs is not None and len(revs) != len(pks):
             raise CoreError("Length mismatch between primary keys and revisions")
 
-        out: list[D] = []
-        for i, (pk, dto) in enumerate(zip(pks, dtos, strict=True)):
-            out.append(await self.update(pk, dto, rev=None if revs is None else revs[i]))
-
-        return out
+        updates = [pydantic_dump(d, exclude={"unset": True}) for d in dtos]
+        return await self._patch_many(pks, updates, revs=revs)
 
     # ....................... #
 
@@ -246,17 +309,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[D]:
-        if not pks:
-            return []
-
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        out: list[D] = []
-        for pk in pks:
-            out.append(await self.touch(pk))
-
-        return out
+        return await self._patch_many(pks)
 
     # ....................... #
 
@@ -296,20 +352,14 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        if not pks:
-            return []
-
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
         if revs is not None and len(revs) != len(pks):
             raise CoreError("Length mismatch between primary keys and revisions")
 
-        out: list[D] = []
-        for i, pk in enumerate(pks):
-            out.append(await self.delete(pk, rev=None if revs is None else revs[i]))
-
-        return out
+        updates = [{SOFT_DELETE_FIELD: True} for _ in pks]
+        return await self._patch_many(pks, updates, revs=revs)
 
     # ....................... #
 
@@ -330,17 +380,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        if not pks:
-            return []
-
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
         if revs is not None and len(revs) != len(pks):
             raise CoreError("Length mismatch between primary keys and revisions")
 
-        out: list[D] = []
-        for i, pk in enumerate(pks):
-            out.append(await self.restore(pk, rev=None if revs is None else revs[i]))
-
-        return out
+        updates = [{SOFT_DELETE_FIELD: False} for _ in pks]
+        return await self._patch_many(pks, updates, revs=revs)
