@@ -249,7 +249,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             if len(rows) != len(batch):
                 raise ConcurrencyError(
-                    "Failed to create records (mismatch in number of rows)",
+                    message="Failed to create records (mismatch in number of rows)",
                     code="create_many_mismatch",
                 )
 
