@@ -6,6 +6,7 @@ import pytest
 
 from forze.application.contracts.document import DocumentReadPort
 from forze.application.usecases.document import GetDocument
+from forze.base.errors import NotFoundError
 from forze.domain.models import CreateDocumentCmd
 
 # ----------------------- #
@@ -38,5 +39,5 @@ class TestGetDocument:
         stub_document_port: DocumentReadPort,
     ) -> None:
         usecase = GetDocument(ctx=stub_ctx, doc=stub_document_port)
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(NotFoundError, match="not found"):
             await usecase(uuid4())

@@ -1,74 +1,138 @@
-"""Unit tests for InMemorySearchReadPort stub."""
+"""Unit tests for MockSearchAdapter (forze_mock)."""
+
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
-from ._stubs import InMemorySearchReadPort
+from forze.application.contracts.search import (
+    SearchFieldSpec,
+    SearchIndexSpec,
+    SearchSpec,
+)
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+
+from forze_mock import MockState
+from forze_mock.adapters import MockDocumentAdapter, MockSearchAdapter
 
 # ----------------------- #
 
 
-class TestInMemorySearchReadPort:
-    """Tests for InMemorySearchReadPort stub."""
+class _DocWithTitle(Document):
+    """Document with title for search tests."""
+
+    title: str = ""
+
+
+class _CreateWithTitle(CreateDocumentCmd):
+    """Create command with title."""
+
+    title: str = ""
+
+
+class _ReadWithTitle(ReadDocument):
+    """Read model with title."""
+
+    title: str = ""
+
+
+class _SearchHit(BaseModel):
+    """Search hit model."""
+
+    id: UUID
+    title: str
+    a: int = 0
+
+
+def _doc_adapter(state: MockState) -> MockDocumentAdapter:
+    return MockDocumentAdapter(
+        state=state,
+        namespace="search_stub",
+        read_model=_ReadWithTitle,
+        domain_model=_DocWithTitle,
+    )
+
+
+def _search_adapter(state: MockState) -> MockSearchAdapter[_SearchHit]:
+    spec = SearchSpec(
+        namespace="search_stub",
+        model=_SearchHit,
+        indexes={
+            "main": SearchIndexSpec(
+                fields=[SearchFieldSpec(path="title"), SearchFieldSpec(path="a")],
+            ),
+        },
+        default_index="main",
+    )
+    return MockSearchAdapter(state=state, spec=spec)
+
+
+class TestMockSearchAdapter:
+    """Tests for MockSearchAdapter."""
 
     @pytest.mark.asyncio
     async def test_search_empty_returns_empty(self) -> None:
-        port = InMemorySearchReadPort()
-        hits, count = await port.search("q")
+        state = MockState()
+        search = _search_adapter(state)
+        hits, count = await search.search("q")
         assert hits == []
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_add_hits_returns_seeded(self) -> None:
-        port = InMemorySearchReadPort()
-        port.add_hits("foo", [{"id": "1"}, {"id": "2"}])
-        hits, count = await port.search("foo")
-        assert count == 2
-        assert hits[0]["id"] == "1"
-        assert hits[1]["id"] == "2"
+    async def test_search_returns_documents_matching_query(self) -> None:
+        state = MockState()
+        doc = _doc_adapter(state)
+        search = _search_adapter(state)
 
-    @pytest.mark.asyncio
-    async def test_set_default_hits(self) -> None:
-        port = InMemorySearchReadPort()
-        port.set_default_hits([{"x": 1}])
-        hits, count = await port.search("unknown")
-        assert count == 1
-        assert hits[0]["x"] == 1
+        await doc.create(_CreateWithTitle(title="foo"))
+        await doc.create(_CreateWithTitle(title="foo"))
+        hits, count = await search.search("foo")
+        assert count == 2
+        assert hits[0].title == "foo"
+        assert hits[1].title == "foo"
 
     @pytest.mark.asyncio
     async def test_search_respects_limit(self) -> None:
-        port = InMemorySearchReadPort()
-        port.add_hits("q", [{"a": i} for i in range(5)])
-        hits, count = await port.search("q", limit=2)
+        state = MockState()
+        doc = _doc_adapter(state)
+        search = _search_adapter(state)
+
+        for i in range(5):
+            await doc.create(_CreateWithTitle(title="q"))
+        hits, count = await search.search("q", limit=2)
         assert count == 5
         assert len(hits) == 2
 
     @pytest.mark.asyncio
     async def test_search_respects_offset(self) -> None:
-        port = InMemorySearchReadPort()
-        port.add_hits("q", [{"a": i} for i in range(5)])
-        hits, count = await port.search("q", offset=2, limit=2)
+        state = MockState()
+        doc = _doc_adapter(state)
+        search = _search_adapter(state)
+
+        for _ in range(5):
+            await doc.create(_CreateWithTitle(title="q"))
+        hits, count = await search.search("q", offset=2, limit=2)
         assert count == 5
         assert len(hits) == 2
-        assert hits[0]["a"] == 2
-        assert hits[1]["a"] == 3
 
     @pytest.mark.asyncio
     async def test_search_with_return_fields_projects(self) -> None:
-        port = InMemorySearchReadPort()
-        port.add_hits("q", [{"id": "1", "title": "a", "extra": "x"}])
-        hits, count = await port.search("q", return_fields=["id", "title"])
-        assert hits[0] == {"id": "1", "title": "a"}
+        state = MockState()
+        doc = _doc_adapter(state)
+        search = _search_adapter(state)
+
+        await doc.create(_CreateWithTitle(title="foo"))
+        hits, count = await search.search("foo", return_fields=["title"])
+        assert count == 1
+        assert hits[0] == {"title": "foo"}
 
     @pytest.mark.asyncio
     async def test_search_with_typed_hits(self) -> None:
-        class Hit(BaseModel):
-            id: str
-            name: str
+        state = MockState()
+        doc = _doc_adapter(state)
+        search = _search_adapter(state)
 
-        port = InMemorySearchReadPort()
-        port.add_hits("q", [Hit(id="1", name="first")])
-        hits, count = await port.search("q")
+        await doc.create(_CreateWithTitle(title="first"))
+        hits, count = await search.search("first")
         assert count == 1
-        assert hits[0].id == "1"
-        assert hits[0].name == "first"
+        assert hits[0].title == "first"

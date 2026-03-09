@@ -2,97 +2,116 @@
 
 import pytest
 
-from forze.application.execution import Deps
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.search import (
+    SearchFieldSpec,
+    SearchIndexSpec,
+    SearchSpec,
+)
+from forze.application.execution import Deps, ExecutionContext
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
-from ._stubs import (
-    InMemoryCachePort,
-    InMemoryCounterPort,
-    InMemoryDocumentPort,
-    InMemorySearchReadPort,
-    InMemoryStoragePort,
-    InMemoryTxManagerPort,
+from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters import (
+    MockCacheAdapter,
+    MockCounterAdapter,
+    MockDocumentAdapter,
+    MockSearchAdapter,
+    MockStorageAdapter,
 )
 
 # ----------------------- #
 
 
 @pytest.fixture
-def stub_document_port() -> InMemoryDocumentPort:
-    """In-memory document port for usecase tests."""
-    return InMemoryDocumentPort()
+def mock_state() -> MockState:
+    """Shared mock state for test adapters."""
+    return MockState()
 
 
 @pytest.fixture
-def stub_storage_port() -> InMemoryStoragePort:
-    """In-memory storage port for usecase tests."""
-    return InMemoryStoragePort()
+def mock_deps_module(mock_state: MockState) -> MockDepsModule:
+    """MockDepsModule with shared state for test isolation."""
+    return MockDepsModule(state=mock_state)
 
 
 @pytest.fixture
-def stub_tx_manager() -> InMemoryTxManagerPort:
-    """No-op transaction manager for usecase tests."""
-    return InMemoryTxManagerPort()
-
-
-@pytest.fixture
-def stub_counter() -> InMemoryCounterPort:
-    """In-memory counter for usecase tests."""
-    return InMemoryCounterPort()
-
-
-@pytest.fixture
-def stub_search_port() -> InMemorySearchReadPort:
-    """In-memory search port for usecase tests."""
-    return InMemorySearchReadPort()
-
-
-@pytest.fixture
-def stub_deps() -> Deps:
-    """Deps container with stub ports registered."""
-
-    from forze.application.contracts.cache import CacheDepKey
-    from forze.application.contracts.counter import CounterDepKey
-    from forze.application.contracts.document import (
-        DocumentReadDepKey,
-        DocumentWriteDepKey,
-    )
-    from forze.application.contracts.search import SearchReadDepKey
-    from forze.application.contracts.storage import StorageDepKey
-    from forze.application.contracts.tx import TxManagerDepKey
-
-    _doc_port = InMemoryDocumentPort()
-
-    def _doc_read(ctx, spec, cache=None):
-        return _doc_port
-
-    def _doc_write(ctx, spec, cache=None):
-        return _doc_port
-
-    def _cache_port(ctx, spec):
-        return InMemoryCachePort()
-
-    def _search_port(ctx, spec):
-        return InMemorySearchReadPort()
-
-    def _tx_port(ctx):
-        return InMemoryTxManagerPort()
-
-    return Deps(
-        deps={
-            DocumentReadDepKey: _doc_read,
-            DocumentWriteDepKey: _doc_write,
-            CacheDepKey: _cache_port,
-            SearchReadDepKey: _search_port,
-            StorageDepKey: InMemoryStoragePort(),
-            TxManagerDepKey: _tx_port,
-            CounterDepKey: InMemoryCounterPort(),
-        }
-    )
+def stub_deps(mock_deps_module: MockDepsModule) -> Deps:
+    """Deps container with forze_mock adapters registered."""
+    return mock_deps_module()
 
 
 @pytest.fixture
 def stub_ctx(stub_deps: Deps) -> ExecutionContext:
-    """ExecutionContext with stub-based Deps."""
-
+    """ExecutionContext with forze_mock-based Deps."""
     return ExecutionContext(deps=stub_deps)
+
+
+def _minimal_document_spec() -> DocumentSpec:
+    """Minimal DocumentSpec for document port fixtures."""
+    return DocumentSpec(
+        namespace="test",
+        read={"source": "test_read", "model": ReadDocument},
+        write={
+            "source": "test_write",
+            "models": {
+                "domain": Document,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": CreateDocumentCmd,
+            },
+        },
+    )
+
+
+def _minimal_search_spec() -> SearchSpec[ReadDocument]:
+    """Minimal SearchSpec for search port fixtures."""
+    return SearchSpec(
+        namespace="test",
+        model=ReadDocument,
+        indexes={
+            "default": SearchIndexSpec(
+                fields=[SearchFieldSpec(path="id")],
+            ),
+        },
+        default_index="default",
+    )
+
+
+@pytest.fixture
+def stub_document_port(stub_ctx: ExecutionContext) -> MockDocumentAdapter:
+    """Document port for usecase tests (shares state with stub_ctx)."""
+    spec = _minimal_document_spec()
+    return stub_ctx.doc_read(spec)
+
+
+@pytest.fixture
+def stub_search_port(stub_ctx: ExecutionContext) -> MockSearchAdapter:
+    """Search port for usecase tests (shares state with stub_ctx)."""
+    spec = _minimal_search_spec()
+    return stub_ctx.search(spec)
+
+
+@pytest.fixture
+def stub_storage_port(stub_ctx: ExecutionContext) -> MockStorageAdapter:
+    """Storage port for usecase tests."""
+    return stub_ctx.storage("test-bucket")
+
+
+@pytest.fixture
+def stub_tx_manager(stub_ctx: ExecutionContext):
+    """Transaction manager for usecase tests."""
+    return stub_ctx.txmanager()
+
+
+@pytest.fixture
+def stub_counter(stub_ctx: ExecutionContext) -> MockCounterAdapter:
+    """Counter port for usecase tests."""
+    return stub_ctx.counter("test")
+
+
+@pytest.fixture
+def stub_cache_port(stub_ctx: ExecutionContext) -> MockCacheAdapter:
+    """Cache port for usecase tests."""
+    from forze.application.contracts.cache import CacheSpec
+
+    return stub_ctx.cache(CacheSpec(namespace="test"))

@@ -177,10 +177,13 @@ class TestDTOMapperCall:
         """NumberIdStep implements MappingStep and injects number_id."""
         from forze.application.contracts.counter import CounterDepKey
 
-        from .._stubs import InMemoryCounterPort
+        from forze_mock import MockState
+        from forze_mock.adapters import MockCounterAdapter
+
+        state = MockState()
 
         def counter_factory(ctx, namespace):
-            return InMemoryCounterPort()
+            return MockCounterAdapter(state=state, namespace=namespace)
 
         deps = Deps(deps={CounterDepKey: counter_factory})
         ctx = ExecutionContext(deps=deps)

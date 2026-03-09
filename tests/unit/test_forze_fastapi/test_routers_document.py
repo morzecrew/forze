@@ -108,8 +108,10 @@ class TestBuildDocumentRouter:
         self,
         composition_ctx,
     ) -> None:
-        """GET /medatada invokes get usecase; stub raises KeyError for missing doc."""
+        """GET /medatada invokes get usecase; mock raises NotFoundError for missing doc."""
         from uuid import uuid4
+
+        from forze.base.errors import NotFoundError
 
         spec = _minimal_spec()
         reg = build_document_registry(spec)
@@ -134,7 +136,6 @@ class TestBuildDocumentRouter:
         app.include_router(router)
         client = TestClient(app)
 
-        # InMemoryDocumentPort raises KeyError for missing doc; TestClient propagates
         pk = uuid4()
-        with pytest.raises(KeyError, match="Document not found"):
+        with pytest.raises(NotFoundError, match="not found"):
             client.get(f"/docs/medatada?id={pk}")
