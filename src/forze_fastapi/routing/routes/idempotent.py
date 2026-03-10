@@ -21,26 +21,42 @@ from forze.application.execution import ExecutionContext
 # ----------------------- #
 
 ExecutionContextDependencyPort = Callable[[], ExecutionContext]
+"""Callable that returns an :class:`ExecutionContext` (used as a FastAPI dependency)."""
 
 # ....................... #
 
 
 class IdempotentRouteConfig(TypedDict):
+    """Configuration for an idempotent route."""
+
     operation: str
+    """Operation identifier used as the idempotency scope."""
+
     ttl: timedelta
+    """Time-to-live for the idempotency snapshot."""
+
     header_key: str
+    """HTTP header name carrying the idempotency key."""
+
     adapter: TypeAdapter[Any]
+    """Adapter used to validate and hash the request payload."""
+
     dto_param: NotRequired[Optional[str]]
+    """Name of the DTO parameter in the endpoint signature."""
 
 
 # ....................... #
 
 
 class _EmptyStub(BaseModel):
+    """Stub model for hashing requests with empty bodies."""
+
     empty: bool = True
 
 
 class _RawStub(BaseModel):
+    """Stub model for hashing non-JSON request bodies."""
+
     raw: str
 
 
@@ -48,6 +64,13 @@ class _RawStub(BaseModel):
 
 
 class IdempotentRoute(APIRoute):
+    """Custom :class:`APIRoute` that adds idempotency semantics to POST routes.
+
+    Before executing the endpoint, checks for an existing idempotency
+    snapshot and returns it if present. After execution, commits the
+    response as a snapshot for future replay.
+    """
+
     def __init__(
         self,
         *args: Any,
@@ -63,6 +86,8 @@ class IdempotentRoute(APIRoute):
     # ....................... #
 
     def get_route_handler(self):  # type: ignore[no-untyped-def]
+        """Return a handler that wraps the original with idempotency logic."""
+
         orig_handler = super().get_route_handler()
 
         async def handler(request: Request) -> Response:
@@ -123,6 +148,8 @@ class IdempotentRoute(APIRoute):
     # ....................... #
 
     def _hash_payload(self, raw_body: bytes) -> str:
+        """Hash the request body into a stable payload fingerprint."""
+
         if not raw_body:
             return pydantic_model_hash(_EmptyStub())
 
@@ -144,6 +171,8 @@ class IdempotentRoute(APIRoute):
     # ....................... #
 
     async def _response_body_bytes(self, resp: Response) -> bytes:
+        """Extract raw bytes from a response, consuming streaming iterators if needed."""
+
         body = getattr(resp, "body", None)
 
         if isinstance(body, (bytes, bytearray)):
@@ -195,6 +224,8 @@ def make_idempotent_route_class(
     adapter: TypeAdapter[Any],
     dto_param: Optional[str] = None,
 ) -> type[IdempotentRoute]:
+    """Create a route class pre-configured with idempotency settings."""
+
     cfg = IdempotentRouteConfig(
         operation=operation,
         ttl=ttl,

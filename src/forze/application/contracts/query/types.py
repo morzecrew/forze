@@ -39,6 +39,8 @@ Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp
 
 
 class QueryOp:
+    """Namespace grouping all filter-operator type aliases."""
+
     Unary = UnaryOp
     Ord = OrdOp
     Eq = EqOp
@@ -51,6 +53,8 @@ class QueryOp:
 
 
 class QueryValue:
+    """Namespace grouping all filter-value type aliases."""
+
     Scalar = Scalar
     Array = Array
     Numeric = Numeric

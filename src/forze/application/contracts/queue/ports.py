@@ -17,13 +17,17 @@ from .types import QueueMessage
 
 @runtime_checkable
 class QueueReadPort[M: BaseModel](Protocol):
+    """Contract for reading and acknowledging messages from a queue backend."""
+
     def receive(
         self,
         queue: str,  # noqa: F841
         *,
         limit: Optional[int] = None,
         timeout: Optional[timedelta] = None,  # noqa: F841
-    ) -> Awaitable[list[QueueMessage[M]]]: ...
+    ) -> Awaitable[list[QueueMessage[M]]]:
+        """Fetch a batch of messages from *queue*."""
+        ...
 
     # ....................... #
 
@@ -32,11 +36,15 @@ class QueueReadPort[M: BaseModel](Protocol):
         queue: str,  # noqa: F841
         *,
         timeout: Optional[timedelta] = None,  # noqa: F841
-    ) -> AsyncIterator[QueueMessage[M]]: ...
+    ) -> AsyncIterator[QueueMessage[M]]:
+        """Yield messages continuously from *queue* until *timeout* elapses."""
+        ...
 
     # ....................... #
 
-    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]: ...  # noqa: F841
+    def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]:  # noqa: F841
+        """Acknowledge processed messages, returning the count acknowledged."""
+        ...
 
     # ....................... #
 
@@ -46,7 +54,9 @@ class QueueReadPort[M: BaseModel](Protocol):
         ids: Sequence[str],
         *,
         requeue: bool = True,
-    ) -> Awaitable[int]: ...
+    ) -> Awaitable[int]:
+        """Negatively acknowledge messages, optionally requeuing them."""
+        ...
 
 
 # ....................... #
@@ -54,6 +64,8 @@ class QueueReadPort[M: BaseModel](Protocol):
 
 @runtime_checkable
 class QueueWritePort[M: BaseModel](Protocol):
+    """Contract for publishing messages to a queue backend."""
+
     def enqueue(
         self,
         queue: str,
@@ -62,7 +74,9 @@ class QueueWritePort[M: BaseModel](Protocol):
         type: Optional[str] = None,
         key: Optional[str] = None,
         enqueued_at: Optional[datetime] = None,
-    ) -> Awaitable[str]: ...
+    ) -> Awaitable[str]:
+        """Enqueue a single message and return its identifier."""
+        ...
 
     # ....................... #
 
@@ -74,4 +88,6 @@ class QueueWritePort[M: BaseModel](Protocol):
         type: Optional[str] = None,
         key: Optional[str] = None,
         enqueued_at: Optional[datetime] = None,
-    ) -> Awaitable[list[str]]: ...
+    ) -> Awaitable[list[str]]:
+        """Enqueue multiple messages and return their identifiers."""
+        ...

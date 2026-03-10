@@ -15,6 +15,8 @@ from ..constants import ERROR_CODE_HEADER
 
 
 def _status_code_mapper(exc: CoreError) -> int:
+    """Map a :class:`CoreError` subclass to the appropriate HTTP status code."""
+
     match exc:
         case NotFoundError():
             return 404
@@ -33,6 +35,8 @@ def _status_code_mapper(exc: CoreError) -> int:
 
 
 async def forze_exception_handler(request: Request, exc: CoreError) -> JSONResponse:
+    """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
+
     return JSONResponse(
         status_code=_status_code_mapper(exc),
         content={"detail": exc.message},
@@ -44,4 +48,6 @@ async def forze_exception_handler(request: Request, exc: CoreError) -> JSONRespo
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    """Register the :func:`forze_exception_handler` for :class:`CoreError` on *app*."""
+
     app.exception_handler(CoreError)(forze_exception_handler)

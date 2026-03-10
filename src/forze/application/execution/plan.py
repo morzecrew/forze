@@ -62,6 +62,8 @@ PlanBucket = Literal[
 
 
 class _ExplainItem(BaseModel):
+    """Single entry in a plan explanation, representing one middleware slot."""
+
     bucket: PlanBucket
     priority: int
     factory: str
@@ -69,6 +71,8 @@ class _ExplainItem(BaseModel):
 
 
 class _Explain(BaseModel):
+    """Human-readable explanation of a resolved plan for a single operation."""
+
     op: str
     tx: bool
     chain: list[_ExplainItem] = Field(default_factory=list)

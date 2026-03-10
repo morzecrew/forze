@@ -102,6 +102,8 @@ class QueryValueCaster:
 
     @staticmethod
     def _to_seconds(v: Any) -> float:
+        """Normalize a numeric timestamp to seconds, handling ms/µs/ns magnitudes."""
+
         a = abs(v)
 
         if a < 10**11:
@@ -119,6 +121,8 @@ class QueryValueCaster:
 
     @staticmethod
     def _like_num(x: Any) -> bool:
+        """Return ``True`` if *x* can be converted to a float."""
+
         try:
             float(x)
             return True

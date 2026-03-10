@@ -42,6 +42,8 @@ class CacheDepRouter(
     CacheDepPort,
     dep_key=CacheDepKey,
 ):
+    """Router that dispatches :class:`CacheDepPort` calls by :class:`CacheSpec`."""
+
     def __call__(
         self,
         context: "ExecutionContext",

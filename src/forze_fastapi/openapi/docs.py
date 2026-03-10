@@ -18,15 +18,7 @@ from scalar_fastapi import (
 
 
 def _is_valid_dns(address: str) -> bool:
-    """
-    Check if the address is a valid DNS
-
-    Args:
-        address (str): The address to check
-
-    Returns:
-        res (bool): True if the address is a valid DNS, False otherwise
-    """
+    """Return ``True`` if *address* matches a valid DNS hostname pattern."""
 
     dns_pattern = re.compile(r"^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$")
 
@@ -42,6 +34,8 @@ def scalar_docs(
     favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     version: str = "1.41.0",
 ) -> HTMLResponse:
+    """Return a Scalar API reference HTML page for the current OpenAPI spec."""
+
     root_path = request.scope.get("root_path")
     host = request.headers.get("x-forwarded-host")
 
@@ -89,6 +83,8 @@ def register_scalar_docs(
     favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     scalar_version: str = "1.41.0",
 ) -> None:
+    """Register a Scalar docs route on *app* at *path*."""
+
     @app.get(path, include_in_schema=False)
     def docs_route(  # pyright: ignore[reportUnusedFunction]
         request: Request,

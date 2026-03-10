@@ -37,6 +37,8 @@ class CounterDepRouter(
     CounterDepPort,
     dep_key=CounterDepKey,
 ):
+    """Router that dispatches :class:`CounterDepPort` calls by namespace."""
+
     def __call__(self, context: "ExecutionContext", namespace: str) -> CounterPort:
         route = self._select(namespace)
 

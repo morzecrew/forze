@@ -1,3 +1,5 @@
+"""Thread-safe runtime variables for application-wide singletons."""
+
 from threading import RLock
 from typing import Optional
 
