@@ -8,7 +8,7 @@ exceptions into structured core errors in a consistent way.
 import asyncio
 import inspect
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
-from functools import wraps
+from functools import lru_cache, wraps
 from typing import (
     Any,
     AsyncContextManager,
@@ -193,7 +193,7 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-@attrs.define
+@attrs.define(slots=True)
 class _CmWrapper[R](ContextManager[R]):  # pragma: no cover
     cm: ContextManager[R]
     h: ErrorHandler
@@ -226,7 +226,7 @@ class _CmWrapper[R](ContextManager[R]):  # pragma: no cover
 # ....................... #
 
 
-@attrs.define
+@attrs.define(slots=True)
 class _AsyncCmWrapper[R](AsyncContextManager[R]):  # pragma: no cover
     cm: AsyncContextManager[R]
     h: ErrorHandler
@@ -299,13 +299,18 @@ async def _wrap_async_iterator(  # pragma: no cover
 # ....................... #
 
 
+@lru_cache(maxsize=256)
+def _cached_signature(fn: Callable[..., Any]) -> inspect.Signature:
+    return inspect.signature(fn)
+
+
 def _prepare_fn(  # pragma: no cover
     fn: Callable[P, Any],
     op: Optional[str],
     *args: P.args,
     **kwargs: P.kwargs,
 ) -> tuple[str, dict[str, Any]]:
-    sig = inspect.signature(fn)
+    sig = _cached_signature(fn)
     bound = sig.bind_partial(*args, **kwargs)
     bound.apply_defaults()
 

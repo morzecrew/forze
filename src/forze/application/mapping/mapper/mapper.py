@@ -37,10 +37,14 @@ class DTOMapper[Out: BaseDTO]:
     policy: MappingPolicy = attrs.field(factory=MappingPolicy)
     """Policy for allowing field overwrites."""
 
+    _step_fields: tuple[frozenset[str], ...] = attrs.field(init=False, eq=False, repr=False)
+    """Pre-computed produces() results per step."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         used: set[str] = set()
+        step_fields: list[frozenset[str]] = []
 
         for step in self.steps:
             produces = step.produces()
@@ -53,6 +57,9 @@ class DTOMapper[Out: BaseDTO]:
                 )
 
             used.update(produces)
+            step_fields.append(frozenset(produces))
+
+        object.__setattr__(self, "_step_fields", tuple(step_fields))
 
     # ....................... #
 
@@ -81,10 +88,10 @@ class DTOMapper[Out: BaseDTO]:
         """
         payload = pydantic_dump(source, exclude={"unset": True})
 
-        for step in self.steps:
+        for step, fields in zip(self.steps, self._step_fields, strict=True):
             patch = await step(ctx, source, payload)
 
-            for k in step.produces():
+            for k in fields:
                 if k in payload and payload.get(k) != patch.get(k):
                     if not self.policy.can_overwrite(k):
                         raise CoreError(f"Field {k} is not allowed to be overwritten")

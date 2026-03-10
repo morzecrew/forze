@@ -1,4 +1,5 @@
 import inspect
+from functools import lru_cache
 from typing import Any, Callable
 
 # ----------------------- #
@@ -17,12 +18,16 @@ def get_callable_name(fn: Callable[..., Any]) -> str:
 # ....................... #
 
 
-def get_callable_module(fn: Callable[..., Any]) -> str:
-    mod = inspect.getmodule(fn)
+@lru_cache(maxsize=256)
+def _module_name(obj: object) -> str:
+    mod = inspect.getmodule(obj)
     if mod is None:
         return "<unknown>"
-
     return mod.__name__
+
+
+def get_callable_module(fn: Callable[..., Any]) -> str:
+    return _module_name(fn)  # type: ignore[arg-type]
 
 
 # ....................... #
@@ -39,8 +44,4 @@ def get_class_name(cls: type[Any]) -> str:
 
 
 def get_class_module(cls: type[Any]) -> str:
-    mod = inspect.getmodule(cls)
-    if mod is None:
-        return "<unknown>"
-
-    return mod.__name__
+    return _module_name(cls)  # type: ignore[arg-type]

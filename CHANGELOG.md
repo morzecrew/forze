@@ -7,17 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- ...
-
 ### Changed
 
-- ...
-
-### Fixed
-
-- ...
+- Replaced `DeepDiff`-based dict diff with a lightweight recursive implementation, yielding 50–250× speedup on `calculate_dict_difference` and 10–150× speedup on `apply_dict_patch`.
+- Removed `deepdiff` and `mergedeep` runtime dependencies from the core package.
+- Cached middleware chain in `Usecase.__call__` to avoid rebuilding closures on every invocation.
+- Cached `inspect.signature` lookups in error-handling decorators via `lru_cache`.
+- Cached `inspect.getmodule` lookups in introspection helpers via `lru_cache`.
+- Cached `TypeAdapter` instances per payload type in `SocketIOEventEmitter` to avoid repeated construction.
+- Pre-computed `MappingStep.produces()` results in `DTOMapper` to avoid redundant calls per mapping pass.
+- `Document._apply_update` now uses `model_copy(deep=False)` for scalar-only diffs.
+- S3 storage adapter `list` now fetches object metadata concurrently via `asyncio.gather` instead of sequential `head_object` calls.
+- Used `list.extend` over `+=` for middleware chain construction in `UsecasesPlanRegistry`.
+- Added `slots=True` to `_CmWrapper` and `_AsyncCmWrapper` in error utilities.
 
 ## [0.1.9] - 2026-03-10
 

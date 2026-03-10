@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import Any, final
 
 import attrs
@@ -15,6 +16,11 @@ import socketio as socketio
 
 SocketIOSkipSid = str | list[str] | None
 """Socket.IO recipient exclusion selector passed as ``skip_sid``."""
+
+
+@lru_cache(maxsize=128)
+def _get_type_adapter(payload_type: Any) -> TypeAdapter[Any]:
+    return TypeAdapter[Any](payload_type)
 
 
 # ....................... #
@@ -67,7 +73,7 @@ class SocketIOEventEmitter:
         :param room: Optional recipient room.
         :param skip_sid: Optional sid (or list of sids) to exclude.
         """
-        adapter = TypeAdapter[Any](event.payload_type)
+        adapter = _get_type_adapter(event.payload_type)
         validated = adapter.validate_python(payload)
         data = adapter.dump_python(validated, mode="json")
 

@@ -359,13 +359,12 @@ def _sort_docs(
     out = list(docs)
     for field, direction in reversed(list(sorts.items())):
         reverse = direction == "desc"
-        out.sort(
-            key=lambda d: (
-                _path_get(d, field) is _MISSING,
-                str(_path_get(d, field)),
-            ),
-            reverse=reverse,
-        )
+
+        def _sort_key(d: JsonDict, _f: str = field) -> tuple[bool, str]:
+            v = _path_get(d, _f)
+            return (v is _MISSING, str(v))
+
+        out.sort(key=_sort_key, reverse=reverse)
     return out
 
 

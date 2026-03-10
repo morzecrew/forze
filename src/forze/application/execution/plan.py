@@ -494,18 +494,18 @@ class UsecasePlan:
 
         chain: list[Middleware[Any, Any]] = []
 
-        chain += [s.factory(ctx) for s in outer_before]
-        chain += [s.factory(ctx) for s in outer_wrap]
+        chain.extend(s.factory(ctx) for s in outer_before)
+        chain.extend(s.factory(ctx) for s in outer_wrap)
 
         if plan.tx:
             chain.append(
                 TxMiddleware[Any, Any](ctx=ctx).with_after_commit(*after_commit_effects)
             )
-            chain += [s.factory(ctx) for s in in_tx_before]
-            chain += [s.factory(ctx) for s in in_tx_wrap]
-            chain += [s.factory(ctx) for s in in_tx_after]
+            chain.extend(s.factory(ctx) for s in in_tx_before)
+            chain.extend(s.factory(ctx) for s in in_tx_wrap)
+            chain.extend(s.factory(ctx) for s in in_tx_after)
 
-        chain += [s.factory(ctx) for s in outer_after]
+        chain.extend(s.factory(ctx) for s in outer_after)
 
         uc = factory(ctx)
 
@@ -560,15 +560,15 @@ class UsecasePlan:
         after_commit = plan.build("after_commit")
 
         chain: list[_ExplainItem] = []
-        chain += pack("outer_before", outer_before)
-        chain += pack("outer_wrap", outer_wrap)
+        chain.extend(pack("outer_before", outer_before))
+        chain.extend(pack("outer_wrap", outer_wrap))
 
         if plan.tx:
-            chain += pack("in_tx_before", in_tx_before)
-            chain += pack("in_tx_wrap", in_tx_wrap)
-            chain += pack("in_tx_after", in_tx_after)
+            chain.extend(pack("in_tx_before", in_tx_before))
+            chain.extend(pack("in_tx_wrap", in_tx_wrap))
+            chain.extend(pack("in_tx_after", in_tx_after))
 
-        chain += pack("outer_after", outer_after)
+        chain.extend(pack("outer_after", outer_after))
 
         return _Explain(
             op=op,
