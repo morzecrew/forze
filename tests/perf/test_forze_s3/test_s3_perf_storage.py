@@ -1,6 +1,5 @@
 """Performance tests for S3 storage adapter."""
 
-from uuid import uuid4
 
 import pytest
 

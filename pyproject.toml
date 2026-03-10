@@ -297,6 +297,12 @@ known_first_party = [
 ignore_notebooks = true
 
 [tool.deptry.per_rule_ignores]
+DEP001 = [
+    "bson",
+    "magic",
+    "types_aiobotocore_s3",
+    "types_aiobotocore_sqs"
+]
 DEP002 = [
     "pydantic-extra-types",
     "types-aioboto3",
@@ -304,6 +310,7 @@ DEP002 = [
     "aiobotocore",
     "temporalio",
     "httpx",                # required by starlette.testclient.TestClient
+    "python-magic",
 ]
 DEP003 = ["types_aiobotocore_s3", "types_aiobotocore_sqs", "typing_extensions"]
 
