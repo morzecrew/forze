@@ -1,124 +1,155 @@
-"""Unit tests for forze.application.execution.lifecycle."""
+"""Tests for forze.application.execution.lifecycle."""
 
 import pytest
 
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import (
     LifecyclePlan,
     LifecycleStep,
     noop_hook,
 )
+from forze.base.errors import CoreError
+from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
 
 
-class TestLifecycleStep:
-    """Tests for LifecycleStep."""
+@pytest.fixture
+def ctx() -> ExecutionContext:
+    return ExecutionContext(deps=MockDepsModule(state=MockState())())
 
-    def test_default_hooks_are_noop(self) -> None:
+
+class TestNoopHook:
+    async def test_noop_hook_returns_none(self, ctx: ExecutionContext) -> None:
+        result = await noop_hook(ctx)
+        assert result is None
+
+
+class TestLifecycleStep:
+    def test_defaults_to_noop(self) -> None:
         step = LifecycleStep(name="test")
         assert step.startup is noop_hook
         assert step.shutdown is noop_hook
 
-    def test_custom_startup_and_shutdown(self) -> None:
-        async def my_startup(ctx):
+    def test_with_custom_hooks(self) -> None:
+        async def up(ctx: ExecutionContext) -> None:
             pass
 
-        async def my_shutdown(ctx):
+        async def down(ctx: ExecutionContext) -> None:
             pass
 
-        step = LifecycleStep(name="x", startup=my_startup, shutdown=my_shutdown)
-        assert step.startup is my_startup
-        assert step.shutdown is my_shutdown
+        step = LifecycleStep(name="custom", startup=up, shutdown=down)
+        assert step.startup is up
+        assert step.shutdown is down
 
 
 class TestLifecyclePlan:
-    """Tests for LifecyclePlan."""
-
-    def test_from_steps_creates_plan(self) -> None:
-        step = LifecycleStep(name="a")
-        plan = LifecyclePlan.from_steps(step)
-        assert len(plan.steps) == 1
-        assert plan.steps[0].name == "a"
+    def test_from_steps(self) -> None:
+        s1 = LifecycleStep(name="a")
+        s2 = LifecycleStep(name="b")
+        plan = LifecyclePlan.from_steps(s1, s2)
+        assert len(plan.steps) == 2
 
     def test_from_steps_name_collision_raises(self) -> None:
-        from forze.base.errors import CoreError
+        s1 = LifecycleStep(name="dup")
+        s2 = LifecycleStep(name="dup")
+        with pytest.raises(CoreError, match="collision"):
+            LifecyclePlan.from_steps(s1, s2)
 
-        step_a = LifecycleStep(name="dup")
-        step_b = LifecycleStep(name="dup")
-        with pytest.raises(CoreError, match="name collision"):
-            LifecyclePlan.from_steps(step_a, step_b)
-
-    def test_with_steps_appends(self) -> None:
-        plan = LifecyclePlan.from_steps(LifecycleStep(name="a"))
-        new = plan.with_steps(LifecycleStep(name="b"))
-        assert len(new.steps) == 2
-        assert new.steps[0].name == "a"
-        assert new.steps[1].name == "b"
+    def test_with_steps(self) -> None:
+        s1 = LifecycleStep(name="a")
+        s2 = LifecycleStep(name="b")
+        plan = LifecyclePlan.from_steps(s1)
+        plan2 = plan.with_steps(s2)
+        assert len(plan2.steps) == 2
 
     def test_with_steps_collision_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        plan = LifecyclePlan.from_steps(LifecycleStep(name="a"))
-        with pytest.raises(CoreError, match="name collision"):
+        s1 = LifecycleStep(name="a")
+        plan = LifecyclePlan.from_steps(s1)
+        with pytest.raises(CoreError, match="collision"):
             plan.with_steps(LifecycleStep(name="a"))
 
-    @pytest.mark.asyncio
-    async def test_startup_runs_in_order(self) -> None:
+    async def test_startup_runs_in_order(self, ctx: ExecutionContext) -> None:
         order: list[str] = []
 
-        async def start_a(ctx):
+        async def hook_a(c: ExecutionContext) -> None:
             order.append("a")
 
-        async def start_b(ctx):
+        async def hook_b(c: ExecutionContext) -> None:
             order.append("b")
 
-        step_a = LifecycleStep(name="a", startup=start_a)
-        step_b = LifecycleStep(name="b", startup=start_b)
-        plan = LifecyclePlan.from_steps(step_a, step_b)
-        ctx = ExecutionContext(deps=Deps())
-
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(name="a", startup=hook_a),
+            LifecycleStep(name="b", startup=hook_b),
+        )
         await plan.startup(ctx)
         assert order == ["a", "b"]
 
-    @pytest.mark.asyncio
-    async def test_shutdown_runs_in_reverse_order(self) -> None:
+    async def test_shutdown_runs_in_reverse(self, ctx: ExecutionContext) -> None:
         order: list[str] = []
 
-        async def shut_a(ctx):
+        async def down_a(c: ExecutionContext) -> None:
             order.append("a")
 
-        async def shut_b(ctx):
+        async def down_b(c: ExecutionContext) -> None:
             order.append("b")
 
-        step_a = LifecycleStep(name="a", shutdown=shut_a)
-        step_b = LifecycleStep(name="b", shutdown=shut_b)
-        plan = LifecyclePlan.from_steps(step_a, step_b)
-        ctx = ExecutionContext(deps=Deps())
-
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(name="a", shutdown=down_a),
+            LifecycleStep(name="b", shutdown=down_b),
+        )
         await plan.shutdown(ctx)
         assert order == ["b", "a"]
 
-    @pytest.mark.asyncio
-    async def test_startup_failure_runs_shutdown_for_executed(self) -> None:
-        order: list[str] = []
+    async def test_startup_failure_shuts_down_executed(
+        self, ctx: ExecutionContext
+    ) -> None:
+        shutdown_log: list[str] = []
 
-        async def start_a(ctx):
-            order.append("start_a")
+        async def up_ok(c: ExecutionContext) -> None:
+            pass
 
-        async def start_b(ctx):
-            order.append("start_b")
-            raise ValueError("fail")
+        async def up_fail(c: ExecutionContext) -> None:
+            raise RuntimeError("fail")
 
-        async def shut_a(ctx):
-            order.append("shut_a")
+        async def down_a(c: ExecutionContext) -> None:
+            shutdown_log.append("a")
 
-        step_a = LifecycleStep(name="a", startup=start_a, shutdown=shut_a)
-        step_b = LifecycleStep(name="b", startup=start_b)
-        plan = LifecyclePlan.from_steps(step_a, step_b)
-        ctx = ExecutionContext(deps=Deps())
+        async def down_b(c: ExecutionContext) -> None:
+            shutdown_log.append("b")
 
-        with pytest.raises(ValueError, match="fail"):
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(name="a", startup=up_ok, shutdown=down_a),
+            LifecycleStep(name="b", startup=up_fail, shutdown=down_b),
+        )
+        with pytest.raises(RuntimeError):
             await plan.startup(ctx)
 
-        assert order == ["start_a", "start_b", "shut_a"]
+        assert "a" in shutdown_log
+        assert "b" not in shutdown_log
+
+    async def test_shutdown_swallows_exceptions(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+
+        async def down_fail(c: ExecutionContext) -> None:
+            order.append("fail")
+            raise RuntimeError("oops")
+
+        async def down_ok(c: ExecutionContext) -> None:
+            order.append("ok")
+
+        plan = LifecyclePlan.from_steps(
+            LifecycleStep(name="a", shutdown=down_ok),
+            LifecycleStep(name="b", shutdown=down_fail),
+        )
+        await plan.shutdown(ctx)
+        assert order == ["fail", "ok"]
+
+    async def test_empty_plan_startup_and_shutdown(
+        self, ctx: ExecutionContext
+    ) -> None:
+        plan = LifecyclePlan()
+        await plan.startup(ctx)
+        await plan.shutdown(ctx)

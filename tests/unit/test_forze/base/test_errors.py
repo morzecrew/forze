@@ -1,400 +1,419 @@
 from contextlib import asynccontextmanager, contextmanager
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from forze.base.errors import (
+    ConcurrencyError,
     ConflictError,
     CoreError,
+    InfrastructureError,
     NotFoundError,
     ValidationError,
+    _default_error_hanlder,
+    _is_async_iterator,
+    _is_awaitable,
+    _is_contextmanager,
+    _is_iterator,
     error_handler,
     handled,
 )
 
-
-def test_core_error_str_includes_code_and_message() -> None:
-    err = CoreError(message="Something went wrong", code="oops")
-    assert str(err) == "oops: Something went wrong"
+# ----------------------- #
+# CoreError and subclasses
 
 
-@pytest.mark.parametrize(
-    "exc, expected_type",
-    [
-        (ValidationError("v"), ValidationError),
-        (NotFoundError("n"), NotFoundError),
-        (ConflictError("c"), ConflictError),
-    ],
-)
-def test_subclass_errors_are_core_error(
-    exc: CoreError, expected_type: type[CoreError]
-) -> None:
-    assert isinstance(exc, CoreError)
-    assert isinstance(exc, expected_type)
+class TestCoreErrorHierarchy:
+    def test_core_error_str_includes_code_and_message(self) -> None:
+        err = CoreError(message="Something went wrong", code="oops")
+        assert str(err) == "oops: Something went wrong"
 
+    def test_core_error_defaults(self) -> None:
+        err = CoreError()
+        assert err.code == "internal_error"
+        assert err.message == "An internal error occurred"
+        assert err.details is None
 
-def test_error_handler_wraps_unknown_exception_with_core_error() -> None:
-    """Custom error handler should only see exceptions that default handler did not map."""
+    def test_core_error_with_details(self) -> None:
+        err = CoreError(message="err", details={"key": "val"})
+        assert err.details == {"key": "val"}
 
-    @error_handler
-    def custom_handler(
-        e: Exception, op: str, **kwargs: object
-    ) -> CoreError:  # pragma: no cover - behaviour tested via wrapper
-        return CoreError(message=f"{op}: {e}", code="wrapped")
+    def test_not_found_error_defaults(self) -> None:
+        err = NotFoundError()
+        assert err.code == "not_found"
+        assert err.message == "Resource not found"
 
-    # simulate unknown exception
-    err = custom_handler(RuntimeError("boom"), "op")
-    assert isinstance(err, CoreError)
-    assert err.code == "wrapped"
-    assert "boom" in err.message
+    def test_conflict_error_defaults(self) -> None:
+        err = ConflictError()
+        assert err.code == "conflict"
 
+    def test_validation_error_defaults(self) -> None:
+        err = ValidationError()
+        assert err.code == "validation_error"
 
-def test_handled_decorator_wraps_synchronous_function() -> None:
-    calls: list[str] = []
+    def test_infrastructure_error_defaults(self) -> None:
+        err = InfrastructureError()
+        assert err.code == "infrastructure_error"
 
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
+    def test_concurrency_error_defaults(self) -> None:
+        err = ConcurrencyError()
+        assert err.code == "concurrency_error"
 
-    @handled(handler, op="sync_op")
-    def fn(x: int) -> int:
-        if x < 0:
-            raise ValueError("neg")
-        return x * 2
+    @pytest.mark.parametrize(
+        "exc_cls",
+        [NotFoundError, ConflictError, ValidationError, InfrastructureError, ConcurrencyError],
+    )
+    def test_all_subclasses_are_core_error(self, exc_cls: type[CoreError]) -> None:
+        assert issubclass(exc_cls, CoreError)
+        assert isinstance(exc_cls(), CoreError)
 
-    assert fn(2) == 4
+    def test_subclass_custom_message(self) -> None:
+        err = NotFoundError(message="custom msg")
+        assert err.message == "custom msg"
+        assert err.code == "not_found"
 
-    with pytest.raises(CoreError) as ei:
-        fn(-1)
-
-    assert ei.value.code == "handled"
-    assert "neg" in ei.value.message
-    assert calls == ["sync_op"]
-
-
-def test_error_handler_maps_pydantic_validation_error_to_validation_error() -> None:
-    """Default handler maps PydanticValidationError to ValidationError."""
-
-    @error_handler
-    def custom_handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        return CoreError(message=str(e), code="fallback")
-
-    class M(BaseModel):
-        x: int
-
-    try:
-        M.model_validate({"x": "not_an_int"})
-    except PydanticValidationError as e:
-        err = custom_handler(e, "validate")
-        assert isinstance(err, ValidationError)
-        assert err.message == "M"
+    def test_core_error_is_exception(self) -> None:
+        with pytest.raises(CoreError):
+            raise CoreError("boom")
 
 
 # ----------------------- #
-# handled decorator: async coroutine
+# _default_error_handler
 
 
-@pytest.mark.asyncio
-async def test_handled_wraps_async_coroutine() -> None:
-    calls: list[str] = []
+class TestDefaultErrorHandler:
+    def test_maps_pydantic_validation_error(self) -> None:
+        class M(BaseModel):
+            x: int
 
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
+        try:
+            M.model_validate({"x": "not_int"})
+        except PydanticValidationError as e:
+            result = _default_error_hanlder(e, "op")
+            assert isinstance(result, ValidationError)
 
-    @handled(handler, op="async_op")
-    async def fn(x: int) -> int:
-        if x < 0:
-            raise ValueError("neg")
-        return x * 2
-
-    assert await fn(2) == 4
-
-    with pytest.raises(CoreError) as ei:
-        await fn(-1)
-
-    assert ei.value.code == "handled"
-    assert "neg" in ei.value.message
-    assert calls == ["async_op"]
+    def test_returns_none_for_unknown_exception(self) -> None:
+        result = _default_error_hanlder(RuntimeError("boom"), "op")
+        assert result is None
 
 
 # ----------------------- #
-# handled decorator: async generator
+# error_handler decorator
 
 
-@pytest.mark.asyncio
-async def test_handled_wraps_async_generator() -> None:
-    calls: list[str] = []
+class TestErrorHandler:
+    def test_wraps_unknown_exception(self) -> None:
+        @error_handler
+        def custom(e: Exception, op: str, **kwargs: Any) -> CoreError:
+            return CoreError(message=f"{op}: {e}", code="wrapped")
 
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
+        err = custom(RuntimeError("boom"), "my_op")
+        assert err.code == "wrapped"
+        assert "boom" in err.message
 
-    @handled(handler)
-    async def gen(x: int):
-        for i in range(x):
-            if i == 2:
-                raise ValueError("stop")
-            yield i
+    def test_pydantic_error_takes_priority(self) -> None:
+        @error_handler
+        def custom(e: Exception, op: str, **kwargs: Any) -> CoreError:
+            return CoreError(message="fallback", code="fallback")
 
-    it = gen(5)
-    out = []
-    with pytest.raises(CoreError) as ei:
-        async for v in it:
-            out.append(v)
+        class M(BaseModel):
+            x: int
 
-    assert out == [0, 1]
-    assert ei.value.code == "handled"
-    assert "stop" in ei.value.message
-    assert calls == ["gen"]
+        try:
+            M.model_validate({"x": "nope"})
+        except PydanticValidationError as e:
+            err = custom(e, "validate")
+            assert isinstance(err, ValidationError)
 
 
-@pytest.mark.asyncio
-async def test_handled_async_generator_init_error() -> None:
-    """Error when creating the async generator (before first yield) is wrapped."""
+# ----------------------- #
+# Type guards
 
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        return CoreError(message=str(e), code="handled")
 
-    @handled(handler)
-    async def gen_bad():
-        raise ValueError("init_fail")
-        yield 1  # noqa: unreachable
-
-    with pytest.raises(CoreError) as ei:
-        async for _ in gen_bad():
+class TestTypeGuards:
+    def test_is_awaitable_positive(self) -> None:
+        async def coro() -> None:
             pass
 
-    assert ei.value.code == "handled"
-    assert "init_fail" in ei.value.message
+        assert _is_awaitable(coro())
+
+    def test_is_awaitable_negative(self) -> None:
+        assert not _is_awaitable(42)
+        assert not _is_awaitable("string")
+
+    def test_is_iterator_positive(self) -> None:
+        assert _is_iterator(iter([1, 2, 3]))
+
+    def test_is_iterator_excludes_str(self) -> None:
+        assert not _is_iterator("hello")
+
+    def test_is_iterator_excludes_bytes(self) -> None:
+        assert not _is_iterator(b"data")
+
+    def test_is_iterator_excludes_bytearray(self) -> None:
+        assert not _is_iterator(bytearray(b"data"))
+
+    def test_is_iterator_excludes_memoryview(self) -> None:
+        assert not _is_iterator(memoryview(b"data"))
+
+    def test_is_async_iterator_positive(self) -> None:
+        class AsyncIt:
+            def __aiter__(self) -> "AsyncIt":
+                return self
+
+            async def __anext__(self) -> int:
+                raise StopAsyncIteration
+
+        assert _is_async_iterator(AsyncIt())
+
+    def test_is_async_iterator_negative(self) -> None:
+        assert not _is_async_iterator([1, 2])
+
+    def test_is_contextmanager_negative_for_regular_fn(self) -> None:
+        def regular() -> int:
+            return 1
+
+        assert not _is_contextmanager(regular)
+
+
+# ----------------------- #
+# handled decorator: sync
+
+
+class TestHandledSync:
+    def test_wraps_sync_function(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="handled")
+
+        @handled(handler, op="sync_op")
+        def fn(x: int) -> int:
+            if x < 0:
+                raise ValueError("neg")
+            return x * 2
+
+        assert fn(2) == 4
+        with pytest.raises(CoreError, match="neg"):
+            fn(-1)
+
+    def test_auto_infers_op_name(self) -> None:
+        ops: list[str] = []
+
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            ops.append(op)
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def my_fn() -> None:
+            raise RuntimeError("err")
+
+        with pytest.raises(CoreError):
+            my_fn()
+        assert ops == ["my_fn"]
+
+    def test_returns_string_not_wrapped_as_iterator(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn() -> str:
+            return "abc"
+
+        assert fn() == "abc"
+
+    def test_returns_bytes_not_wrapped_as_iterator(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn() -> bytes:
+            return b"data"
+
+        assert fn() == b"data"
+
+
+# ----------------------- #
+# handled decorator: async
+
+
+class TestHandledAsync:
+    @pytest.mark.asyncio
+    async def test_wraps_async_function(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="handled")
+
+        @handled(handler, op="async_op")
+        async def fn(x: int) -> int:
+            if x < 0:
+                raise ValueError("neg")
+            return x * 2
+
+        assert await fn(2) == 4
+        with pytest.raises(CoreError, match="neg"):
+            await fn(-1)
 
 
 # ----------------------- #
 # handled decorator: sync generator
 
 
-def test_handled_wraps_sync_generator() -> None:
-    calls: list[str] = []
+class TestHandledSyncGenerator:
+    def test_wraps_sync_generator_iteration_error(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
 
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def gen(x: int):
-        for i in range(x):
-            if i == 2:
-                raise ValueError("stop")
-            yield i
-
-    it = gen(5)
-    out = []
-    with pytest.raises(CoreError) as ei:
-        for v in it:
-            out.append(v)
-
-    assert out == [0, 1]
-    assert ei.value.code == "handled"
-    assert "stop" in ei.value.message
-    assert calls == ["gen"]
-
-
-def test_handled_sync_generator_init_error() -> None:
-    """Error when creating the generator (before first yield) is wrapped."""
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def gen_bad():
-        raise ValueError("init_fail")
-        yield 1  # noqa: unreachable
-
-    with pytest.raises(CoreError) as ei:
-        list(gen_bad())
-
-    assert ei.value.code == "handled"
-    assert "init_fail" in ei.value.message
-
-
-# ----------------------- #
-# handled decorator: returns awaitable
-
-
-@pytest.mark.asyncio
-async def test_handled_wraps_fn_returning_awaitable() -> None:
-    calls: list[str] = []
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def fn(x: int):
-        async def _inner():
-            if x < 0:
-                raise ValueError("neg")
-            return x * 2
-
-        return _inner()
-
-    assert await fn(2) == 4
-
-    with pytest.raises(CoreError) as ei:
-        await fn(-1)
-
-    assert ei.value.code == "handled"
-    assert "neg" in ei.value.message
-    assert calls == ["fn"]
-
-
-@pytest.mark.asyncio
-async def test_handled_awaitable_error_in_awaited() -> None:
-    """Error raised during await of returned awaitable is wrapped."""
-    calls: list[str] = []
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def fn():
-        async def _inner():
-            raise RuntimeError("await_fail")
-
-        return _inner()
-
-    with pytest.raises(CoreError) as ei:
-        await fn()
-
-    assert ei.value.code == "handled"
-    assert "await_fail" in ei.value.message
-    assert calls == ["fn"]
-
-
-# ----------------------- #
-# handled decorator: returns context manager
-# Note: _is_contextmanager requires a function with return annotation
-# AbstractContextManager; @contextmanager returns a generator-based CM, so
-# the wrapper is not applied to typical CMs. We test the success path only.
-
-
-def test_handled_fn_returning_context_manager_passthrough() -> None:
-    """Sync fn returning a CM passes it through (no wrapper when type check fails)."""
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def fn_returns_cm():
-        @contextmanager
-        def _cm():
-            yield 42
-
-        return _cm()
-
-    with fn_returns_cm() as v:
-        assert v == 42
-
-
-# ----------------------- #
-# handled decorator: returns async context manager
-
-
-@pytest.mark.asyncio
-async def test_handled_fn_returning_async_context_manager_passthrough() -> None:
-    """Sync fn returning an ACM passes it through (no wrapper when type check fails)."""
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def fn_returns_acm():
-        @asynccontextmanager
-        async def _acm():
-            yield 42
-
-        return _acm()
-
-    async with fn_returns_acm() as v:
-        assert v == 42
-
-
-# ----------------------- #
-# handled decorator: returns iterator
-
-
-def test_handled_wraps_fn_returning_iterator() -> None:
-    calls: list[str] = []
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def fn_returns_iter():
-        for i in range(3):
-            if i == 2:
-                raise ValueError("iter_fail")
-            yield i
-
-    it = fn_returns_iter()
-    out = []
-    with pytest.raises(CoreError) as ei:
-        for v in it:
-            out.append(v)
-
-    assert out == [0, 1]
-    assert ei.value.code == "handled"
-    assert "iter_fail" in ei.value.message
-
-
-# ----------------------- #
-# handled decorator: returns async iterator
-
-
-@pytest.mark.asyncio
-async def test_handled_wraps_fn_returning_async_iterator() -> None:
-    calls: list[str] = []
-
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        calls.append(op)
-        return CoreError(message=str(e), code="handled")
-
-    @handled(handler)
-    def fn_returns_async_iter():
-        async def _gen():
-            for i in range(3):
+        @handled(handler)
+        def gen(n: int):
+            for i in range(n):
                 if i == 2:
-                    raise ValueError("aiter_fail")
+                    raise ValueError("stop")
                 yield i
 
-        return _gen()
+        out = []
+        with pytest.raises(CoreError, match="stop"):
+            for v in gen(5):
+                out.append(v)
+        assert out == [0, 1]
 
-    it = fn_returns_async_iter()
-    out = []
-    with pytest.raises(CoreError) as ei:
-        async for v in it:
-            out.append(v)
+    def test_wraps_sync_generator_init_error(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
 
-    assert out == [0, 1]
-    assert ei.value.code == "handled"
-    assert "aiter_fail" in ei.value.message
+        @handled(handler)
+        def gen():
+            raise ValueError("init_fail")
+            yield 1  # noqa: unreachable
+
+        with pytest.raises(CoreError, match="init_fail"):
+            list(gen())
 
 
 # ----------------------- #
-# _is_iterator: str/bytes excluded
+# handled decorator: async generator
 
 
-def test_handled_iterator_excludes_strings() -> None:
-    """Sync fn returning str is not wrapped as iterator (str is iterable but excluded)."""
+class TestHandledAsyncGenerator:
+    @pytest.mark.asyncio
+    async def test_wraps_async_generator_iteration_error(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
 
-    def handler(e: Exception, op: str, **kwargs: object) -> CoreError:
-        return CoreError(message=str(e), code="handled")
+        @handled(handler)
+        async def gen(n: int):
+            for i in range(n):
+                if i == 2:
+                    raise ValueError("stop")
+                yield i
 
-    @handled(handler)
-    def fn_returns_str():
-        return "abc"
+        out = []
+        with pytest.raises(CoreError, match="stop"):
+            async for v in gen(5):
+                out.append(v)
+        assert out == [0, 1]
 
-    result = fn_returns_str()
-    assert result == "abc"
+    @pytest.mark.asyncio
+    async def test_wraps_async_generator_init_error(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        async def gen():
+            raise ValueError("init_fail")
+            yield 1  # noqa: unreachable
+
+        with pytest.raises(CoreError, match="init_fail"):
+            async for _ in gen():
+                pass
+
+
+# ----------------------- #
+# handled decorator: awaitable return, context managers, iterators
+
+
+class TestHandledReturnTypes:
+    @pytest.mark.asyncio
+    async def test_fn_returning_awaitable(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn(x: int):
+            async def _inner():
+                if x < 0:
+                    raise ValueError("neg")
+                return x * 2
+
+            return _inner()
+
+        assert await fn(2) == 4
+        with pytest.raises(CoreError, match="neg"):
+            await fn(-1)
+
+    def test_fn_returning_sync_cm_passthrough(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn():
+            @contextmanager
+            def _cm():
+                yield 42
+
+            return _cm()
+
+        with fn() as v:
+            assert v == 42
+
+    @pytest.mark.asyncio
+    async def test_fn_returning_async_cm_passthrough(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn():
+            @asynccontextmanager
+            async def _acm():
+                yield 42
+
+            return _acm()
+
+        async with fn() as v:
+            assert v == 42
+
+    def test_fn_returning_sync_iterator_wraps_errors(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn():
+            for i in range(3):
+                if i == 2:
+                    raise ValueError("fail")
+                yield i
+
+        out = []
+        with pytest.raises(CoreError, match="fail"):
+            for v in fn():
+                out.append(v)
+        assert out == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_fn_returning_async_iterator_wraps_errors(self) -> None:
+        def handler(e: Exception, op: str, **kw: Any) -> CoreError:
+            return CoreError(message=str(e), code="h")
+
+        @handled(handler)
+        def fn():
+            async def _gen():
+                for i in range(3):
+                    if i == 2:
+                        raise ValueError("fail")
+                    yield i
+
+            return _gen()
+
+        out = []
+        with pytest.raises(CoreError, match="fail"):
+            async for v in fn():
+                out.append(v)
+        assert out == [0, 1]

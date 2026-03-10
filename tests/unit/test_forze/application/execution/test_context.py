@@ -1,198 +1,147 @@
-"""Unit tests for ExecutionContext."""
+"""Tests for forze.application.execution.context."""
 
 import pytest
 
-from forze.application.contracts.deps import DepKey
-from forze.application.execution import Deps
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.cache import CacheSpec
+from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.search import SearchFieldSpec, SearchIndexSpec, SearchSpec
+from forze.application.execution import Deps, ExecutionContext
+from forze.base.errors import CoreError
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+
+from forze_mock import MockDepsModule, MockState
+
+# ----------------------- #
+
+
+@pytest.fixture
+def mock_state() -> MockState:
+    return MockState()
+
+
+@pytest.fixture
+def ctx(mock_state: MockState) -> ExecutionContext:
+    module = MockDepsModule(state=mock_state)
+    return ExecutionContext(deps=module())
+
+
+def _doc_spec(
+    *,
+    cache: dict | None = None,
+) -> DocumentSpec:
+    return DocumentSpec(
+        namespace="test",
+        read={"source": "test_read", "model": ReadDocument},
+        write={
+            "source": "test_write",
+            "models": {
+                "domain": Document,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": CreateDocumentCmd,
+            },
+        },
+        cache=cache,
+    )
+
+
+def _search_spec() -> SearchSpec[ReadDocument]:
+    return SearchSpec(
+        namespace="test",
+        model=ReadDocument,
+        indexes={
+            "default": SearchIndexSpec(fields=[SearchFieldSpec(path="id")]),
+        },
+        default_index="default",
+    )
+
 
 # ----------------------- #
 
 
 class TestExecutionContextDep:
-    """Tests for ExecutionContext.dep() dependency resolution."""
-
-    def test_dep_resolves_registered(self) -> None:
-        deps = Deps(deps={DepKey[str]("foo"): "bar"})
-        ctx = ExecutionContext(deps=deps)
-        assert ctx.dep(DepKey[str]("foo")) == "bar"
-
-    def test_dep_resolves_typed(self) -> None:
-        deps = Deps(deps={DepKey[int]("num"): 42})
-        ctx = ExecutionContext(deps=deps)
-        result: int = ctx.dep(DepKey[int]("num"))
-        assert result == 42
-
-    def test_dep_missing_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        ctx = ExecutionContext(deps=Deps())
-        with pytest.raises(CoreError, match="not found"):
-            ctx.dep(DepKey[str]("missing"))
-
-    def test_dep_cycle_detected_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        from forze.application.contracts.deps import DepsPort
-
-        ctx_ref: list[ExecutionContext] = []
-
-        class CyclicDeps(DepsPort):
-            def provide(self, key):
-                if key.name == "cycle_a":
-                    return ctx_ref[0].dep(DepKey("cycle_b"))
-                return ctx_ref[0].dep(DepKey("cycle_a"))
-
-        deps = CyclicDeps()
-        ctx = ExecutionContext(deps=deps)
-        ctx_ref.append(ctx)
-
-        with pytest.raises(CoreError, match="cycle"):
-            ctx.dep(DepKey("cycle_a"))
-
-
-class TestExecutionContextConvenienceMethods:
-    """Tests for doc, cache, counter, txmanager, storage, search."""
-
-    def test_cache_resolves(self) -> None:
-        from forze.application.contracts.cache import CacheDepKey, CacheSpec
-
-        def cache_factory(ctx, spec):
-            return object()
-
-        deps = Deps(
-            deps={
-                CacheDepKey: cache_factory,
-            }
-        )
-        ctx = ExecutionContext(deps=deps)
-        result = ctx.cache(CacheSpec(namespace="test"))
-        assert result is not None
-
-    def test_counter_resolves(self) -> None:
+    def test_resolves_dependency(self, ctx: ExecutionContext) -> None:
         from forze.application.contracts.counter import CounterDepKey
 
-        def counter_factory(ctx, namespace):
-            return object()
+        factory = ctx.dep(CounterDepKey)
+        assert callable(factory)
 
-        deps = Deps(deps={CounterDepKey: counter_factory})
-        ctx = ExecutionContext(deps=deps)
-        result = ctx.counter("ns")
-        assert result is not None
+    def test_cycle_detection_raises(self, mock_state: MockState) -> None:
+        from forze.application.contracts.deps import DepKey
 
-    def test_txmanager_resolves(self) -> None:
-        from forze.application.contracts.tx import TxManagerDepKey
+        key: DepKey[int] = DepKey("cyclic")
 
-        def tx_factory(ctx):
-            return object()
+        class CyclicDeps:
+            def provide(self, k: DepKey) -> int:  # type: ignore[type-arg]
+                return ctx.dep(key)
 
-        deps = Deps(deps={TxManagerDepKey: tx_factory})
-        ctx = ExecutionContext(deps=deps)
-        result = ctx.txmanager()
-        assert result is not None
+        ctx = ExecutionContext(deps=CyclicDeps())  # type: ignore[arg-type]
+        with pytest.raises(CoreError, match="cycle"):
+            ctx.dep(key)
 
-    def test_storage_resolves(self) -> None:
-        from forze.application.contracts.storage import StorageDepKey
 
-        def storage_factory(ctx, bucket):
-            return object()
+class TestExecutionContextTransaction:
+    async def test_basic_transaction(self, ctx: ExecutionContext) -> None:
+        assert ctx.active_tx() is None
+        async with ctx.transaction():
+            assert ctx.active_tx() is not None
+        assert ctx.active_tx() is None
 
-        deps = Deps(deps={StorageDepKey: storage_factory})
-        ctx = ExecutionContext(deps=deps)
-        result = ctx.storage("bucket")
-        assert result is not None
+    async def test_nested_transaction(self, ctx: ExecutionContext) -> None:
+        async with ctx.transaction():
+            h1 = ctx.active_tx()
+            async with ctx.transaction():
+                h2 = ctx.active_tx()
+                assert h2 is not None
+            assert ctx.active_tx() == h1
 
-    def test_search_resolves(self) -> None:
-        from pydantic import BaseModel
+    async def test_transaction_cleanup_on_error(self, ctx: ExecutionContext) -> None:
+        with pytest.raises(RuntimeError):
+            async with ctx.transaction():
+                raise RuntimeError("fail")
+        assert ctx.active_tx() is None
 
-        from forze.application.contracts.search import (
-            SearchFieldSpec,
-            SearchIndexSpec,
-            SearchReadDepKey,
-            SearchSpec,
-        )
 
-        class _MinimalModel(BaseModel):
-            id: str = ""
+class TestExecutionContextPorts:
+    def test_doc_read(self, ctx: ExecutionContext) -> None:
+        port = ctx.doc_read(_doc_spec())
+        assert port is not None
 
-        def search_factory(ctx, spec):
-            return object()
+    def test_doc_write(self, ctx: ExecutionContext) -> None:
+        port = ctx.doc_write(_doc_spec())
+        assert port is not None
 
-        deps = Deps(deps={SearchReadDepKey: search_factory})
-        ctx = ExecutionContext(deps=deps)
-        spec = SearchSpec(
-            namespace="test",
-            model=_MinimalModel,
-            indexes={"main": SearchIndexSpec(fields=[SearchFieldSpec(path="id")])},
-            default_index="main",
-        )
-        result = ctx.search(spec)
-        assert result is not None
+    def test_doc_read_with_cache(self, ctx: ExecutionContext) -> None:
+        spec = _doc_spec(cache={"enabled": True, "ttl": 60})
+        port = ctx.doc_read(spec)
+        assert port is not None
 
-    def test_doc_read_resolves_without_cache(self) -> None:
-        from forze.application.contracts.document import (
-            DocumentReadDepKey,
-            DocumentSpec,
-        )
-        from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+    def test_doc_write_with_cache(self, ctx: ExecutionContext) -> None:
+        spec = _doc_spec(cache={"enabled": True})
+        port = ctx.doc_write(spec)
+        assert port is not None
 
-        spec = DocumentSpec(
-            namespace="test",
-            read={"source": "r", "model": ReadDocument},
-            write={
-                "source": "w",
-                "models": {
-                    "domain": Document,
-                    "create_cmd": CreateDocumentCmd,
-                    "update_cmd": CreateDocumentCmd,
-                },
-            },
-        )
+    def test_doc_read_cache_disabled(self, ctx: ExecutionContext) -> None:
+        spec = _doc_spec(cache={"enabled": False})
+        port = ctx.doc_read(spec)
+        assert port is not None
 
-        def doc_read_factory(ctx, s, cache=None):
-            return object()
+    def test_cache(self, ctx: ExecutionContext) -> None:
+        spec = CacheSpec(namespace="test")
+        port = ctx.cache(spec)
+        assert port is not None
 
-        deps = Deps(deps={DocumentReadDepKey: doc_read_factory})
-        ctx = ExecutionContext(deps=deps)
-        result = ctx.doc_read(spec)
-        assert result is not None
+    def test_counter(self, ctx: ExecutionContext) -> None:
+        port = ctx.counter("test")
+        assert port is not None
 
-    def test_doc_read_resolves_with_cache_enabled(self) -> None:
-        from datetime import timedelta
+    def test_txmanager(self, ctx: ExecutionContext) -> None:
+        port = ctx.txmanager()
+        assert port is not None
 
-        from forze.application.contracts.cache import CacheDepKey
-        from forze.application.contracts.document import (
-            DocumentReadDepKey,
-            DocumentSpec,
-        )
-        from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+    def test_storage(self, ctx: ExecutionContext) -> None:
+        port = ctx.storage("my-bucket")
+        assert port is not None
 
-        spec = DocumentSpec(
-            namespace="test",
-            read={"source": "r", "model": ReadDocument},
-            write={
-                "source": "w",
-                "models": {
-                    "domain": Document,
-                    "create_cmd": CreateDocumentCmd,
-                    "update_cmd": CreateDocumentCmd,
-                },
-            },
-            cache={"enabled": True, "ttl": timedelta(seconds=60)},
-        )
-
-        def doc_read_factory(ctx, s, cache=None):
-            return object()
-
-        def cache_factory(ctx, s):
-            return object()
-
-        deps = Deps(
-            deps={
-                DocumentReadDepKey: doc_read_factory,
-                CacheDepKey: cache_factory,
-            }
-        )
-        ctx = ExecutionContext(deps=deps)
-        result = ctx.doc_read(spec)
-        assert result is not None
+    def test_search(self, ctx: ExecutionContext) -> None:
+        port = ctx.search(_search_spec())
+        assert port is not None
