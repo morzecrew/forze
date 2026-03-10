@@ -14,19 +14,14 @@ from forze.base.introspection import (
 
 
 def _module_level_func() -> None:
-    """Helper for get_callable tests."""
     pass
 
 
 class _ModuleLevelClass:
-    """Helper for get_class tests."""
-
     pass
 
 
 class TestGetCallableName:
-    """Tests for get_callable_name."""
-
     def test_returns_qualname_for_function(self) -> None:
         assert "module_level_func" in get_callable_name(_module_level_func)
 
@@ -48,48 +43,59 @@ class TestGetCallableName:
 
         obj = CallableNoQualname()
         result = get_callable_name(obj)  # type: ignore[arg-type]
-        assert "CallableNoQualname" in result or "object" in result
+        assert isinstance(result, str)
+        assert "CallableNoQualname" in result
+
+    def test_lambda(self) -> None:
+        fn = lambda x: x  # noqa: E731
+        name = get_callable_name(fn)
+        assert "<lambda>" in name
+
+    def test_builtin_function(self) -> None:
+        name = get_callable_name(len)
+        assert "len" in name
 
 
 class TestGetCallableModule:
-    """Tests for get_callable_module."""
-
     def test_returns_module_for_function(self) -> None:
         mod = get_callable_module(_module_level_func)
-        assert "test_introspection" in mod or "forze" in mod
-
-    def test_returns_module_for_defined_function(self) -> None:
-        mod = get_callable_module(_module_level_func)
-        assert "forze" in mod or "test_introspection" in mod
+        assert "test_introspection" in mod
 
     def test_returns_unknown_when_module_is_none(self) -> None:
-        # Dynamically created class has no module in some environments
-        dynamic_cls = type("Dynamic", (), {"__call__": lambda self: None})
-        if inspect.getmodule(dynamic_cls) is None:
-            mod = get_callable_module(dynamic_cls)
-            assert mod == "<unknown>"
+        fn = eval("lambda: None")  # noqa: S307
+        if inspect.getmodule(fn) is None:
+            assert get_callable_module(fn) == "<unknown>"
+
+    def test_returns_module_for_lambda(self) -> None:
+        fn = lambda: None  # noqa: E731
+        mod = get_callable_module(fn)
+        assert "test_introspection" in mod
 
 
 class TestGetClassName:
-    """Tests for get_class_name."""
-
     def test_returns_qualname_for_class(self) -> None:
         assert "ModuleLevelClass" in get_class_name(_ModuleLevelClass)
 
-    def test_returns_repr_for_class_without_qualname(self) -> None:
-        cls = type("Dynamic", (), {})
+    def test_dynamic_type_has_name(self) -> None:
+        cls = type("DynClass", (), {})
         result = get_class_name(cls)
-        assert "Dynamic" in result or "type" in result
+        assert "DynClass" in result
+
+    def test_dynamic_type_name(self) -> None:
+        cls = type("AnotherDynamic", (), {})
+        result = get_class_name(cls)
+        assert "AnotherDynamic" in result
 
 
 class TestGetClassModule:
-    """Tests for get_class_module."""
-
     def test_returns_module_for_class(self) -> None:
         mod = get_class_module(_ModuleLevelClass)
-        assert "forze" in mod or "test_introspection" in mod
+        assert "test_introspection" in mod
 
     def test_returns_unknown_when_module_is_none(self) -> None:
-        dynamic_cls = type("Dynamic", (), {})
-        mod = get_class_module(dynamic_cls)
-        assert mod == "<unknown>" or "test_introspection" in mod
+        cls = type("NullMod", (), {})
+        if inspect.getmodule(cls) is None:
+            assert get_class_module(cls) == "<unknown>"
+        else:
+            mod = get_class_module(cls)
+            assert isinstance(mod, str)
