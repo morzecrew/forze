@@ -57,7 +57,14 @@ nav:
     - Usecase Composition: core-concepts/usecase-composition.md
   - Core Package:
     - Overview: core-package/index.md
+    - Base Layer: core-package/base-layer.md
+    - Domain Models: core-package/domain-models.md
+    - Contracts: core-package/contracts.md
+    - Execution: core-package/execution.md
+    - Middleware & Plans: core-package/middleware-plans.md
+    - Composition & Mapping: core-package/composition.md
     - Query Syntax: core-package/query-syntax.md
+    - Outbox: core-package/outbox.md
   - Integrations:
     - FastAPI: integrations/fastapi.md
     - Socket.IO: integrations/socketio.md
