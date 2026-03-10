@@ -72,3 +72,8 @@ class TestSocketIOServerBuilders:
         assert isinstance(app, StubASGIApp)
         assert app.args == (server,)
         assert app.kwargs == {"other_asgi_app": "app", "socketio_path": "ws"}
+
+    def test_build_server_without_redis_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(server_module.socketio, "AsyncServer", StubAsyncServer)
+        server = server_module.build_socketio_server()
+        assert server.kwargs.get("client_manager") is None
