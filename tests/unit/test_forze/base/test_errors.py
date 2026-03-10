@@ -1,8 +1,10 @@
+import warnings
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError as PydanticValidationError
+from pydantic import BaseModel
+from pydantic import ValidationError as PydanticValidationError
 
 from forze.base.errors import (
     ConcurrencyError,
@@ -62,7 +64,13 @@ class TestCoreErrorHierarchy:
 
     @pytest.mark.parametrize(
         "exc_cls",
-        [NotFoundError, ConflictError, ValidationError, InfrastructureError, ConcurrencyError],
+        [
+            NotFoundError,
+            ConflictError,
+            ValidationError,
+            InfrastructureError,
+            ConcurrencyError,
+        ],
     )
     def test_all_subclasses_are_core_error(self, exc_cls: type[CoreError]) -> None:
         assert issubclass(exc_cls, CoreError)
@@ -136,7 +144,13 @@ class TestTypeGuards:
         async def coro() -> None:
             pass
 
-        assert _is_awaitable(coro())
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=RuntimeWarning,
+                message="coroutine .* was never awaited",
+            )
+            assert _is_awaitable(coro())
 
     def test_is_awaitable_negative(self) -> None:
         assert not _is_awaitable(42)
