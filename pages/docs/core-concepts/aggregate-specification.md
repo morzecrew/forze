@@ -33,7 +33,7 @@ Specifications are the bridge between your domain models and infrastructure adap
 |-------|------|----------|---------|
 | `namespace` | `str` | Yes | Logical name and cache key prefix |
 | `read` | `DocumentReadSpec` | Yes | Source relation and read model type |
-| `write` | `DocumentWriteSpec` | No | Source relation and write model types (domain, create cmd, update cmd) |
+| `write` | `DocumentWriteSpec` | No | Source relation and write model types<br>(domain, create cmd, update cmd) |
 | `history` | `DocumentHistorySpec` | No | Source relation for revision audit trail |
 | `cache` | `DocumentCacheSpec` | No | Enable flag and TTL for document caching |
 
@@ -119,7 +119,7 @@ Search is configured separately from document storage. A `SearchSpec` describes 
 | `namespace` | `str` | Yes | Logical name for the search domain |
 | `model` | `type[BaseModel]` | Yes | Result model for typed search |
 | `indexes` | `dict[str, SearchIndexSpec]` | Yes | Index name to index configuration |
-| `default_index` | `str` | No | Which index to use when not specified |
+| `default_index` | `str` | No | Which index to use when<br>not specified |
 
 ### Index specification
 
@@ -128,7 +128,7 @@ Each index entry is a `SearchIndexSpec` dict:
 | Field | Type | Required | Purpose |
 |-------|------|----------|---------|
 | `fields` | `list[SearchFieldSpec]` | Yes | Fields included in the index |
-| `source` | `str` | No | Source relation containing the indexed data |
+| `source` | `str` | No | Source relation containing<br>the indexed data |
 | `groups` | `list[SearchGroupSpec]` | No | Weight groups for FTS ranking |
 | `default_group` | `str` | No | Default weight group |
 | `mode` | `SearchIndexMode` | No | Override the auto-detected search mode |

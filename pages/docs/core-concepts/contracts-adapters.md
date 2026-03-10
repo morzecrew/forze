@@ -1,20 +1,15 @@
 # Contracts and Adapters
 
-Forze follows **hexagonal architecture** (ports and adapters). The core idea is simple: the application layer declares *what* capabilities it needs through protocol interfaces (contracts), and infrastructure packages provide *how* those capabilities are implemented (adapters). The application never depends on a specific adapter.
+Forze follows **hexagonal architecture** (ports and adapters). The core idea is simple: the application layer declares **what** capabilities it needs through protocol interfaces (contracts), and infrastructure packages provide **how** those capabilities are implemented (adapters). The application never depends on a specific adapter.
 
 ## How it works
 
-1. The application layer defines **contracts**: Python `Protocol` classes describing required capabilities
+1. The application layer defines **contracts**: protocol interfaces describing required capabilities
 2. Infrastructure packages provide **adapters**: concrete implementations of those protocols
 3. A **dependency plan** wires adapters to contracts at startup
-4. Usecases resolve contracts from `ExecutionContext`; they never import adapter classes
+4. Usecases resolve contracts from execution context; they never import adapter classes
 
 Switching from Postgres to Mongo means changing the dependency plan, not the usecase code.
-
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/contracts-adapters.svg" alt="Contracts and adapters">
-  <img class="d2-dark" src="../../assets/diagrams/dark/contracts-adapters.svg" alt="Contracts and adapters">
-</div>
 
 ## Contract catalog
 
@@ -26,9 +21,9 @@ Split into read and write ports for CQRS flexibility:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `get` | `(pk, *, for_update?, return_fields?) -> R \| JsonDict` | Fetch one document by ID |
-| `get_many` | `(pks, *, return_fields?) -> Sequence[R] \| Sequence[JsonDict]` | Fetch multiple by IDs |
-| `find` | `(filters, *, for_update?, return_fields?) -> R \| None` | Find one by filter |
+| `get` | `(pk, *, for_update?, return_fields?) -> R | JsonDict` | Fetch one document by ID |
+| `get_many` | `(pks, *, return_fields?) -> Sequence[R] | Sequence[JsonDict]` | Fetch multiple by IDs |
+| `find` | `(filters, *, for_update?, return_fields?) -> R | None` | Find one by filter |
 | `find_many` | `(filters?, limit?, offset?, sorts?, *, return_fields?) -> (list[R], int)` | Paginated query |
 | `count` | `(filters?) -> int` | Count matching documents |
 
@@ -230,8 +225,8 @@ Tests stub contracts with in-memory or fake implementations. Build a `Deps` cont
     :::python
     from forze.application.execution import Deps, ExecutionContext
 
-    deps = Deps(deps={
-        DocumentReadDepKey: lambda ctx, spec, cache=None: FakeDocumentReadAdapter(),
+    deps = Deps({
+        DocumentReadDepKey: lambda ctx, spec, cache=None: FakeDocReadAdapter(),
     })
     ctx = ExecutionContext(deps=deps)
 

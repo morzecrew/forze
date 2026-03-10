@@ -7,15 +7,15 @@ The application layer **orchestrates** domain logic and coordinates infrastructu
 The application layer is built around a few core concepts:
 
 - **Execution context**: the single point through which usecases resolve all dependencies. No usecase ever imports an adapter directly.
-- **Usecases**: self-contained operations that implement one business action. Each usecase receives an `ExecutionContext` and resolves typed ports from it.
+- **Usecases**: self-contained operations that implement one business action. Each usecase receives an execution context and resolves typed ports from it.
 - **Middleware**: composable wrappers (guards, effects, transaction boundaries) that run before, around, or after a usecase without modifying its core logic.
 - **Runtime**: the container that manages dependency injection, lifecycle hooks, and context creation.
 
 Together these ensure that business logic remains independent of infrastructure choices.
 
 <div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/execution-runtime.svg" alt="Execution runtime overview">
-  <img class="d2-dark" src="../../assets/diagrams/dark/execution-runtime.svg" alt="Execution runtime overview">
+  <img class="d2-light" src="/forze/assets/diagrams/light/execution-runtime.svg" alt="Execution runtime overview">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/execution-runtime.svg" alt="Execution runtime overview">
 </div>
 
 ## Execution context
@@ -44,9 +44,7 @@ A **usecase** is a single, well-defined business action. It subclasses `Usecase[
 
     :::python
     from uuid import UUID
-
     from forze.application.execution import Usecase
-
 
     class GetProject(Usecase[UUID, ProjectReadModel]):
         async def main(self, args: UUID) -> ProjectReadModel:
@@ -74,11 +72,11 @@ Middlewares wrap the usecase call chain. Three protocol types exist:
     :::python
     from forze.application.execution import Guard
 
-
     class RequireActiveProject(Guard[UUID]):
         async def __call__(self, args: UUID) -> None:
             doc = self.ctx.doc_read(project_spec)
             project = await doc.get(args)
+
             if project.is_deleted:
                 raise ValidationError("Project is archived.")
 
@@ -87,10 +85,11 @@ Middlewares wrap the usecase call chain. Three protocol types exist:
     :::python
     from forze.application.execution import Effect
 
-
     class LogCreation(Effect[CreateProjectCmd, ProjectReadModel]):
         async def __call__(
-            self, args: CreateProjectCmd, res: ProjectReadModel
+            self, 
+            args: CreateProjectCmd, 
+            res: ProjectReadModel,
         ) -> ProjectReadModel:
             logger.info("Created project %s", res.id)
             return res
@@ -100,13 +99,13 @@ Middlewares wrap the usecase call chain. Three protocol types exist:
     :::python
     from forze.application.execution import Middleware, NextCall
 
-
     class TimingMiddleware(Middleware[Any, Any]):
         async def __call__(self, next: NextCall, args: Any) -> Any:
             start = time.monotonic()
             result = await next(args)
             elapsed = time.monotonic() - start
             logger.info("Elapsed: %.3fs", elapsed)
+
             return result
 
 Built-in middleware implementations:
@@ -122,7 +121,11 @@ Built-in middleware implementations:
 The `ExecutionRuntime` combines the dependency plan, lifecycle plan, and execution context into a scoped runtime:
 
     :::python
-    from forze.application.execution import ExecutionRuntime, DepsPlan, LifecyclePlan
+    from forze.application.execution import (
+        ExecutionRuntime, 
+        DepsPlan, 
+        LifecyclePlan,
+    )
 
     runtime = ExecutionRuntime(
         deps=deps_plan,

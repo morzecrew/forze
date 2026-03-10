@@ -4,7 +4,7 @@ style: {
 
 vars: {
     d2-config: {
-        pad: 48
+        pad: 24
     }
 }
 
@@ -12,10 +12,7 @@ direction: down
 
 Interface: {
     shape: rectangle
-    label: |md
-        ## Interface Layer
-        FastAPI / Socket.IO
-    |
+    label: Interface
 
     routers: HTTP routers
     ws: WebSocket handlers
@@ -23,40 +20,34 @@ Interface: {
 
 Infrastructure: {
     shape: rectangle
-    label: |md
-        ## Infrastructure Layer
-        Postgres / Redis / S3 / Mongo / Temporal
-    |
+    label: Infrastructure
 
-    adapters: Adapter implementations
+    adapters: Adapters
     clients: External clients
 }
 
 Application: {
     shape: rectangle
-    label: |md
-        ## Application Layer
-        Usecases + contracts + runtime composition
-    |
+    label: Application
 
     usecases: Usecases & facades
-    contracts: Contracts (ports)
-    runtime: ExecutionRuntime
+    contracts: Contracts
+    context: Execution context
 }
 
 Domain: {
     shape: rectangle
-    label: |md
-        ## Domain Layer
-        Core models, invariants, pure rules
-    |
+    label: Domain
 
-    models: Document / value models
+    models: Domain / value models
     validation: Validators & invariants
 }
 
-Interface.routers -> Application.usecases: invokes
-Infrastructure.adapters -> Application.contracts: implements
-Application.usecases -> Domain.models: uses
-Application.usecases -> Application.contracts: resolves through context
-Application.runtime -> Infrastructure.clients: initializes via lifecycle
+Interface.routers -> Application.usecases: invoke
+Interface.ws -> Application.usecases: invoke
+Infrastructure.adapters -> Application.contracts: implement
+Application.usecases -> Domain.models: use
+Application.context -> Application.contracts
+Application.usecases -> Application.context: resolve dependencies
+Infrastructure.adapters -> Infrastructure.clients: use
+Domain.models -> Domain.validation: check

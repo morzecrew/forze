@@ -47,7 +47,7 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Getting Started: getting-started.md
-  - Core Concepts:
+  - Concepts:
     - Overview: core-concepts/index.md
     - Layered Architecture: core-concepts/layered-architecture.md
     - Domain Layer: core-concepts/domain-layer.md
@@ -64,7 +64,6 @@ nav:
     - Middleware & Plans: core-package/middleware-plans.md
     - Composition & Mapping: core-package/composition.md
     - Query Syntax: core-package/query-syntax.md
-    - Outbox: core-package/outbox.md
   - Integrations:
     - FastAPI: integrations/fastapi.md
     - Socket.IO: integrations/socketio.md

@@ -63,7 +63,7 @@ _uv_cmd name strict *command:
 fetch-dependencies:
     mkdir -p {{ _mod_cache_dir }}
     mkdir -p {{ _import_cache_dir }}
-    curl -sL https://raw.githubusercontent.com/morzecrew/agent-registry/main/module.just -o {{ _import_cache_dir }}/areg.just
+    curl -sL https://raw.githubusercontent.com/morzecrew/agent-artifacts/main/module.just -o {{ _import_cache_dir }}/areg.just
 
 # ----------------------- #
 # CI

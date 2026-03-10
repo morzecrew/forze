@@ -15,8 +15,8 @@ Every aggregate in Forze is built from a small family of types:
 The domain layer is the most stable part of the system. Changing a database engine or web framework never requires changes here.
 
 <div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/domain-models.svg" alt="Domain model family">
-  <img class="d2-dark" src="../../assets/diagrams/dark/domain-models.svg" alt="Domain model family">
+  <img class="d2-light" src="/forze/assets/diagrams/light/domain-models.svg" alt="Domain model family">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/domain-models.svg" alt="Domain model family">
 </div>
 
 ## Base models
@@ -32,7 +32,6 @@ Forze provides two base classes for all domain types:
 
     :::python
     from forze.domain.models import Document
-
 
     class Project(Document):
         title: str
@@ -83,7 +82,10 @@ The `touch()` method updates only `last_update_at` without changing any other fi
 The `validate_historical_consistency()` method checks whether a concurrent update would conflict with the current document state. This is used by adapters that reconstruct state from history:
 
     :::python
-    is_safe = current.validate_historical_consistency(old_state, incoming_patch)
+    is_safe = current.validate_historical_consistency(
+        old_state, 
+        incoming_patch,
+    )
 
 It returns `True` when the incoming patch does not touch the same fields that changed between `old_state` and `current`.
 
@@ -93,7 +95,6 @@ Commands and read models are frozen DTOs that travel across layer boundaries:
 
     :::python
     from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
-
 
     class CreateProjectCmd(CreateDocumentCmd):
         title: str
@@ -112,10 +113,10 @@ Commands and read models are frozen DTOs that travel across layer boundaries:
 
 | Type | Purpose |
 |------|---------|
-| `CreateDocumentCmd` | Base for create commands. Optionally accepts `id` and `created_at` for imports/migrations. |
-| `BaseDTO` | Base for update commands. All fields should be optional to allow partial updates. |
+| `CreateDocumentCmd` | Base for create commands. Optionally accepts `id` and `created_at`<br>for imports/migrations. |
+| `BaseDTO` | Base for update commands. All fields should be optional<br>to allow partial updates. |
 | `ReadDocument` | Base for read models. Includes `id`, `rev`, `created_at`, `last_update_at`. |
-| `DocumentHistory[D]` | Stores a snapshot of a document at a given revision. |
+| `DocumentHistory` | Stores a snapshot of a document at a given revision. |
 
 ## Update validators
 
@@ -124,7 +125,6 @@ Validators enforce business rules during `Document.update()`. They have access t
     :::python
     from forze.domain.validation import update_validator
     from forze.base.errors import ValidationError
-
 
     class Project(Document):
         title: str
@@ -145,6 +145,7 @@ You can restrict a validator to specific fields using the `fields` parameter:
     @update_validator(fields={"status"})
     def _validate_status_transition(before, after, diff):
         allowed = {"draft": {"active"}, "active": {"archived"}}
+
         if after.status not in allowed.get(before.status, set()):
             raise ValidationError("Invalid status transition.")
 
@@ -159,7 +160,6 @@ Adds an `is_deleted` boolean field and an update validator that blocks updates t
     :::python
     from forze.domain.mixins import SoftDeletionMixin
 
-
     class Project(SoftDeletionMixin, Document):
         title: str
 
@@ -170,19 +170,15 @@ Once `is_deleted` is `True`, any update that modifies fields other than `is_dele
 Adds `name` (required), `display_name`, `short_name`, and `description` (all optional). Companion mixins `NameCreateCmdMixin` and `NameUpdateCmdMixin` mirror the fields for command DTOs:
 
     :::python
-    from forze.domain.mixins import NameMixin, NameCreateCmdMixin, NameUpdateCmdMixin
+    from forze.domain.mixins import (
+        NameMixin, 
+        NameCreateCmdMixin, 
+        NameUpdateCmdMixin,
+    )
 
-
-    class Workspace(NameMixin, Document):
-        pass
-
-
-    class CreateWorkspaceCmd(NameCreateCmdMixin, CreateDocumentCmd):
-        pass
-
-
-    class UpdateWorkspaceCmd(NameUpdateCmdMixin, BaseDTO):
-        pass
+    class Workspace(NameMixin, Document): ...
+    class CreateWorkspaceCmd(NameCreateCmdMixin, CreateDocumentCmd): ...
+    class UpdateWorkspaceCmd(NameUpdateCmdMixin, BaseDTO): ...
 
 ### NumberMixin
 

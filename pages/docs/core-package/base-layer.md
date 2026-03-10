@@ -28,7 +28,7 @@ Every error carries three fields:
 |-------|------|---------|
 | `message` | `str` | Human-readable description |
 | `code` | `str` | Machine-readable error code |
-| `details` | `Mapping[str, Any] \| None` | Optional structured context |
+| `details` | `Mapping[str, Any] | None` | Optional structured context |
 
 ### Error handling
 
@@ -42,6 +42,7 @@ The `handled` decorator converts raw exceptions into `CoreError` instances using
     def pg_error_handler(e: Exception, op: str, **kwargs) -> CoreError:
         if isinstance(e, UniqueViolationError):
             return ConflictError(f"Duplicate in {op}")
+
         return InfrastructureError(f"DB error in {op}: {e}")
 
 
@@ -269,10 +270,10 @@ Helpers for dict diffing, merging, and Pydantic model utilities. Import from `fo
 
 | Function | Purpose |
 |----------|---------|
-| `calculate_dict_difference(before, after, *, deletions_as_none=True)` | Compute a JSON-merge-style patch from `before` to `after` |
-| `apply_dict_patch(before, patch)` | Apply a merge patch to a dict |
-| `split_touches_from_merge_patch(patch)` | Separate a patch into scalar changes and container replacements |
-| `has_hybrid_patch_conflict(a_scalars, a_containers, b_scalars, b_containers)` | Check if two patches conflict |
+| `calculate_dict_difference(...)` | Compute a JSON-merge-style patch<br>from `before` to `after` |
+| `apply_dict_patch(...)` | Apply a merge patch to a dict |
+| `split_touches_from_merge_patch(...)` | Separate a patch into scalar changes and<br>container replacements |
+| `has_hybrid_patch_conflict(...)` | Check if two patches conflict |
 
 These are used internally by `Document.update()` to compute minimal diffs and by `validate_historical_consistency()` to detect concurrent update conflicts.
 
@@ -288,10 +289,10 @@ These are used internally by `Document.update()` to compute minimal diffs and by
 
 | Function | Purpose |
 |----------|---------|
-| `pydantic_validate(cls, data, *, forbid_extra=True)` | Validate raw data into a model instance |
-| `pydantic_dump(obj, *, mode="python", exclude={})` | Dump a model to a dict with fine-grained exclusion |
-| `pydantic_field_names(cls, *, include_computed=True)` | Return the set of field names on a model class |
-| `pydantic_model_hash(model, *, exclude={})` | Compute a stable SHA-256 hash of a serialized model |
+| `pydantic_validate(...)` | Validate raw data into a model instance |
+| `pydantic_dump(...)` | Dump a model to a dict with fine-grained exclusion |
+| `pydantic_field_names(...)` | Return the set of field names on a model class |
+| `pydantic_model_hash(...)` | Compute a stable SHA-256 hash of a serialized model |
 
 The `exclude` parameter for `pydantic_dump` accepts a `TypedDict` with optional keys: `unset`, `none`, `defaults`, `computed_fields` (all `bool`).
 

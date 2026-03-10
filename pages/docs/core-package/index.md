@@ -1,4 +1,7 @@
-# Core Package
+---
+title: Overview
+summary: The foundation for building backend services with clean architecture
+---
 
 The `forze` core package provides the foundation for building backend services with clean architecture. It contains everything you need to define domain models, declare contracts, compose usecases, and wire dependencies — without depending on any specific database, queue, or web framework.
 
@@ -6,9 +9,9 @@ The `forze` core package provides the foundation for building backend services w
 
 | Layer | Module | What it provides |
 |-------|--------|------------------|
-| **Base** | `forze.base` | Error hierarchy, codecs, primitives (UUID, datetime, types), serialization, file I/O, introspection |
-| **Domain** | `forze.domain` | `Document`, `CoreModel`, `BaseDTO`, mixins, update validators, field constants |
-| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middleware, usecase plans, composition, mapping, DTOs, outbox |
+| **Base** | `forze.base` | Error hierarchy, codecs, primitives (UUID, datetime, types),<br>serialization, file I/O, introspection |
+| **Domain** | `forze.domain` | `Document`, `CoreModel`, `BaseDTO`, mixins,<br>update validators, field constants |
+| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middlewares,<br>usecase plans, composition, mapping, DTOs |
 
 Dependencies flow inward: Application → Domain → Base. No layer imports from an outer one.
 
@@ -40,7 +43,12 @@ These pages cover the orchestration layer:
 A minimal aggregate definition using the core package:
 
     :::python
-    from forze.domain.models import Document, CreateDocumentCmd, ReadDocument, BaseDTO
+    from forze.domain.models import (
+        Document, 
+        CreateDocumentCmd, 
+        ReadDocument, 
+        BaseDTO,
+    )
     from forze.domain.mixins import SoftDeletionMixin
     from forze.application.contracts.document import DocumentSpec
 

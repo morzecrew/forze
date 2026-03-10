@@ -1,4 +1,7 @@
-# Core Concepts
+---
+title: Overview
+summary: Architectural model behind Forze
+---
 
 This section explains the architectural model behind Forze: layered boundaries, domain primitives, the execution runtime, and port/adapter composition.
 
@@ -14,15 +17,8 @@ This section explains the architectural model behind Forze: layered boundaries, 
 Class names may evolve, but these invariants are stable:
 
 - Dependencies flow **inward**: interface and infrastructure depend on application, application depends on domain
-- Usecases resolve dependencies from `ExecutionContext`, never by importing adapters
+- Usecases resolve dependencies from execution context, never by importing adapters
 - Integrations implement contracts (ports); the application depends only on abstractions
-
-## Mental model
-
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/layered-architecture.svg" alt="Layered architecture overview">
-  <img class="d2-dark" src="../../assets/diagrams/dark/layered-architecture.svg" alt="Layered architecture overview">
-</div>
 
 ## Section contents
 
@@ -30,7 +26,7 @@ Class names may evolve, but these invariants are stable:
 |------|---------------|
 | [Layered Architecture](layered-architecture.md) | Four layers, dependency rules, and responsibilities |
 | [Domain Layer](domain-layer.md) | Document model, versioning, update semantics, mixins, validation |
-| [Application Layer](application-layer.md) | Usecases, middleware chains, execution runtime, dependency and lifecycle plans |
+| [Application Layer](application-layer.md) | Usecases, middleware chains, execution runtime, dependency<br>and lifecycle plans |
 | [Contracts and Adapters](contracts-adapters.md) | Port protocols, adapter implementations, dependency wiring |
-| [Aggregate Specification](aggregate-specification.md) | `DocumentSpec`, `SearchSpec`, and how adapters consume them |
+| [Aggregate Specification](aggregate-specification.md) | How to define aggregates and how adapters consume them |
 | [Usecase Composition](usecase-composition.md) | Registries, plans, guards, effects, transaction middleware |

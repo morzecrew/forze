@@ -13,8 +13,8 @@ The composition model has three parts:
 When a request arrives, the facade resolves the usecase factory from the registry, wraps it with the middleware chain from the plan, and returns a callable ready to execute.
 
 <div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/operation-registry.svg" alt="Operation registry and plan resolution">
-  <img class="d2-dark" src="../../assets/diagrams/dark/operation-registry.svg" alt="Operation registry and plan resolution">
+  <img class="d2-light" src="/forze/assets/diagrams/light/operation-registry.svg" alt="Operation registry and plan resolution">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/operation-registry.svg" alt="Operation registry and plan resolution">
 </div>
 
 ## Operation registry
@@ -36,8 +36,8 @@ For document aggregates, `build_document_registry(spec)` creates a registry pre-
 The `UsecasePlan` describes how each operation is composed with middleware. It maps operation keys to middleware buckets that run at specific stages.
 
 <div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/operation-composition.svg" alt="Operation composition flow">
-  <img class="d2-dark" src="../../assets/diagrams/dark/operation-composition.svg" alt="Operation composition flow">
+  <img class="d2-light" src="/forze/assets/diagrams/light/operation-composition.svg" alt="Operation composition flow">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/operation-composition.svg" alt="Operation composition flow">
 </div>
 
 ### Plan buckets

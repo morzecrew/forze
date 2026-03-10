@@ -219,7 +219,7 @@ class S3StorageAdapter(StoragePort):
 
             heads = await asyncio.gather(
                 *(
-                    self.client.head_object(bucket=self.bucket, key=o["Key"])
+                    self.client.head_object(bucket=self.bucket, key=o["Key"])  # type: ignore[typeddict-item]
                     for o in objects
                 )
             )
@@ -238,7 +238,7 @@ class S3StorageAdapter(StoragePort):
 
                 out.append(
                     StoredObject(
-                        key=o["Key"],
+                        key=o["Key"],  # type: ignore[typeddict-item]
                         filename=self.ascii_b64_codec.loads(meta["filename"]),
                         description=(
                             self.ascii_b64_codec.loads(meta["description"])

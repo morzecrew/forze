@@ -1,11 +1,14 @@
-# Installation
-
-Forze is published on **PyPI**.
+---
+title: Installation
+summary: Install the Forze core package and integrations
+external_links:
+    pypi: https://pypi.org/project/forze/
+---
 
 ## Requirements
 
 - Python 3.13+
-- `uv` (recommended) or `pip`
+- [uv](https://docs.astral.sh/uv/) or another PEP 517-compatible package manager
 
 ## Install core package
 
@@ -69,3 +72,24 @@ To install the project for local development:
     uv sync --all-groups --all-extras
 
 This installs test, quality, docs, and integration extras.
+
+Then use [just](https://github.com/casey/just) to run necessary commands:
+
+    :::bash
+    # Run unit and integration tests
+    just test-fast
+
+    # Run performance tests
+    just test-perf
+
+    # Run all quality checks
+    just quality
+
+    # Run all quality checks in strict mode (fail on any issue)
+    just quality -s
+
+    # Serve documentation
+    just pages serve
+
+    # Build diagrams
+    just pages diagrams

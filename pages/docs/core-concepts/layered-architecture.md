@@ -7,20 +7,20 @@ Forze organizes code into four layers with strict dependency rules. Each layer h
 At the center sits the **domain**: pure business logic with no external dependencies. The **application** layer wraps it with orchestration, contracts, and composition. **Infrastructure** provides concrete implementations of application contracts. The **interface** layer is the user-facing entry point that ties everything together.
 
 <div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/layered-architecture.svg" alt="Layered architecture">
-  <img class="d2-dark" src="../../assets/diagrams/dark/layered-architecture.svg" alt="Layered architecture">
+  <img class="d2-light" src="/forze/assets/diagrams/light/layered-architecture.svg" alt="Layered architecture">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/layered-architecture.svg" alt="Layered architecture">
 </div>
 
 | Layer | Responsibility | Depends on |
 |-------|----------------|------------|
-| **Domain** | Business logic, invariants, validation rules, model behavior | Nothing |
-| **Application** | Orchestration, usecases, contracts (ports), composition, execution runtime | Domain |
-| **Infrastructure** | Databases, caches, external services, adapter implementations | Application, Domain |
-| **Interface** | HTTP routes, WebSocket handlers, user-facing entry points | Application, Infrastructure |
+| **Domain** | Business logic, invariants,<br>validation rules, model behavior | - |
+| **Application** | Orchestration, usecases,<br>contracts, composition, execution runtime | Domain |
+| **Infrastructure** | Databases, caches,<br>external services, adapter implementations | Application, Domain |
+| **Interface** | HTTP routes, WebSocket handlers,<br>user-facing entry points | Application, Domain,<br>Infrastructure |
 
 ## Domain layer
 
-The domain layer holds pure business logic. It defines entities (`Document`), value objects (`BaseDTO`), commands (`CreateDocumentCmd`), and validation rules. Domain code never imports from any other layer. This means:
+The domain layer holds pure business logic. It defines entities, value objects, commands, and validation rules. Domain code never imports from any other layer. This means:
 
 - No database drivers or HTTP frameworks
 - No adapter classes or dependency containers
@@ -33,7 +33,7 @@ The domain layer is the most stable part of the system. Changing a database engi
 The application layer defines **what** happens without knowing **how**. It contains:
 
 - **Contracts (ports)**: protocol interfaces describing capabilities the application needs (document storage, cache, transactions, search, queues, etc.)
-- **Usecases**: single-purpose operations that receive an `ExecutionContext` and resolve ports from it
+- **Usecases**: single-purpose operations that receive an execution context and resolve ports from it
 - **Composition**: facade providers, registries, and plans that wire usecases with middleware
 - **Execution runtime**: dependency injection container, lifecycle hooks, and transaction management
 
@@ -59,14 +59,9 @@ The interface layer is the outermost, user-facing boundary of the backend. It ha
 
 Interface packages depend on the application layer (to invoke usecases and resolve contexts) and on infrastructure (for runtime wiring and lifecycle management). They never contain business logic.
 
-## Dependency rule
+## Dependency rules
 
-The dependency rule is enforced by design and by import-linter contracts defined in `pyproject.toml`:
-
-    :::text
-    Domain  ←  Application  ←  Infrastructure
-                    ↑
-                Interface ──→ Infrastructure
+The dependency rules are enforced by design:
 
 - Domain imports nothing from other layers
 - Application imports from domain only
@@ -79,8 +74,8 @@ This means you can swap Postgres for Mongo by changing the dependency plan, not 
 
 | Scenario | What changes | What stays the same |
 |----------|-------------|-------------------|
-| Switch from Postgres to Mongo | Dependency module, lifecycle step | Domain models, usecases, specs |
-| Add Redis caching | Dependency module, lifecycle step, cache flag on spec | Domain models, usecases |
-| Replace FastAPI with gRPC | Interface/transport layer | Domain models, usecases, specs, adapters |
-| Add a new business rule | Domain model validation | Infrastructure adapters, routing |
+| Switch from Postgres to Mongo | Dependency module, lifecycle step | Domain models, usecases,<br>specs |
+| Add Redis caching | Dependency module, lifecycle step,<br>cache flag on spec | Domain models, usecases |
+| Replace FastAPI with gRPC | Interface/transport layer | Domain models, usecases,<br>specs, adapters |
+| Add a new business rule | Domain model validation | Infrastructure adapters,<br>routing |
 | Add audit logging to all operations | Usecase plan (add an effect) | Domain models, adapters |

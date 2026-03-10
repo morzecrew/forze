@@ -1,5 +1,6 @@
 ---
 title: Welcome to forze
+summary: Domain-Driven Design and Hexagonal Architecture for backend services
 ---
 
 **Forze** is a Python toolkit for building backend services with clear boundaries:

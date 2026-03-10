@@ -1,7 +1,7 @@
 """Dict-diff and merge helpers used by higher-level composition logic."""
 
 from copy import deepcopy
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from ..primitives.types import JsonDict
 
@@ -74,26 +74,40 @@ def _diff_recursive(
     """Walk *before* and *after* recursively, collecting changes into *patch*."""
 
     if isinstance(before, dict) and isinstance(after, dict):
+        after = cast(dict[str, Any], after)
+        before = cast(dict[str, Any], before)
+
         for k in after:
             child_path = path + (k,)
             if k not in before:
                 _set_nested(patch, child_path, deepcopy(after[k]))
             else:
-                _diff_recursive(before[k], after[k], patch, child_path, deletions_as_none)
+                _diff_recursive(
+                    before[k], after[k], patch, child_path, deletions_as_none
+                )
 
         if deletions_as_none:
             for k in before:
                 if k not in after:
                     _set_nested(patch, path + (k,), None)
+
         return
 
     if isinstance(before, list) and isinstance(after, list):
+        before = cast(list[Any], before)  # type: ignore[redundant-cast]
+        after = cast(list[Any], after)  # type: ignore[redundant-cast]
+
         if before != after:
             _set_nested(patch, path, deepcopy(after))
+
         return
 
     if before != after:
-        _set_nested(patch, path, deepcopy(after) if isinstance(after, (dict, list, set, tuple)) else after)
+        _set_nested(
+            patch,
+            path,
+            deepcopy(after) if isinstance(after, (dict, list, set, tuple)) else after,  # type: ignore[arg-type]
+        )
 
 
 def calculate_dict_difference(

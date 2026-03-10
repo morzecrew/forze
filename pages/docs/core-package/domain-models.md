@@ -12,6 +12,8 @@ Base for all domain models. Extends Pydantic's `BaseModel` with:
 - Stripped string fields
 - Sorted set serialization for stable JSON output
 
+For example:
+
     :::python
     from forze.domain.models import CoreModel
 
@@ -85,7 +87,10 @@ Update only `last_update_at` without changing other fields:
 Check whether applying a patch to an older state would conflict with the current state:
 
     :::python
-    is_safe = current.validate_historical_consistency(old_state, incoming_patch)
+    is_safe = current.validate_historical_consistency(
+        old_state, 
+        incoming_patch,
+    )
 
 Returns `True` when the incoming patch does not touch fields that changed between `old_state` and `current`. Used by adapters reconstructing state from history to prevent conflicting concurrent merges.
 
@@ -104,7 +109,7 @@ Base for create commands. Frozen DTO that optionally accepts `id` and `created_a
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `id` | `UUID \| None` | `None` | Override the auto-generated ID |
+| `id` | `UUID | None` | `None` | Override the auto-generated ID |
 | `created_at` | `datetime \| None` | `None` | Override the auto-generated timestamp |
 
 ### ReadDocument
@@ -239,9 +244,9 @@ Adds a required `name` and optional `display_name`, `short_name`, and `descripti
 | Field | Type | Required in model | Required in create | Required in update |
 |-------|------|------|------|------|
 | `name` | `String` | Yes | Yes | No (optional) |
-| `display_name` | `String \| None` | No | No | No |
-| `short_name` | `String \| None` | No | No | No |
-| `description` | `LongString \| None` | No | No | No |
+| `display_name` | `String | None` | No | No | No |
+| `short_name` | `String | None` | No | No | No |
+| `description` | `LongString | None` | No | No | No |
 
 ### NumberMixin
 

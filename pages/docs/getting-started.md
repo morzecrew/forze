@@ -1,4 +1,7 @@
-# Getting Started
+---
+title: Getting Started
+summary: Build a working CRUD service with Forze from scratch
+---
 
 This guide walks through building a working CRUD service with Forze from scratch. By the end you will have domain models, a document specification, a runtime with Postgres and Redis, and a FastAPI app serving HTTP endpoints.
 
@@ -10,8 +13,8 @@ This guide walks through building a working CRUD service with Forze from scratch
 - A FastAPI application exposing standard document operations
 
 <div class="d2-diagram">
-  <img class="d2-light" src="assets/diagrams/light/getting-started-flow.svg" alt="Getting started flow">
-  <img class="d2-dark" src="assets/diagrams/dark/getting-started-flow.svg" alt="Getting started flow">
+  <img class="d2-light" src="/forze/assets/diagrams/light/getting-started-flow.svg" alt="Getting started flow">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/getting-started-flow.svg" alt="Getting started flow">
 </div>
 
 ## Step 1: Define domain models
@@ -20,7 +23,12 @@ Every aggregate starts with four model types: a **domain model**, a **read model
 
     :::python
     from forze.domain.mixins import SoftDeletionMixin
-    from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+    from forze.domain.models import (
+        BaseDTO, 
+        CreateDocumentCmd, 
+        Document, 
+        ReadDocument,
+    )
 
 
     class Project(SoftDeletionMixin, Document):
@@ -85,7 +93,12 @@ The specification is the single source of truth that binds your models to storag
 The runtime has two parts: a **dependency plan** that assembles the container and a **lifecycle plan** that manages startup and shutdown of infrastructure clients.
 
     :::python
-    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import (
+        Deps, 
+        DepsPlan, 
+        ExecutionRuntime, 
+        LifecyclePlan,
+    )
     from forze_postgres import (
         PostgresClient,
         PostgresConfig,
@@ -245,9 +258,19 @@ Optionally add a history table for audit trails:
         build_document_registry,
     )
     from forze.application.contracts.document import DocumentSpec
-    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze.application.execution import (
+        Deps, 
+        DepsPlan, 
+        ExecutionRuntime, 
+        LifecyclePlan,
+    )
     from forze.domain.mixins import SoftDeletionMixin
-    from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+    from forze.domain.models import (
+        BaseDTO, 
+        CreateDocumentCmd, 
+        Document, 
+        ReadDocument,
+    )
     from forze_fastapi.routers import build_document_router
     from forze_postgres import (
         PostgresClient,
@@ -286,7 +309,10 @@ Optionally add a history table for audit trails:
 
     project_spec = DocumentSpec(
         namespace="projects",
-        read={"source": "public.projects", "model": ProjectReadModel},
+        read={
+            "source": "public.projects", 
+            "model": ProjectReadModel,
+        },
         write={
             "source": "public.projects",
             "models": {
