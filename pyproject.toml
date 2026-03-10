@@ -96,6 +96,9 @@ sqs = [
 ]
 mongo = ["pymongo>=4.16.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
+socketio = [
+    "python-socketio>=5.16.1",
+]
 
 # ....................... #
 
@@ -132,6 +135,7 @@ packages = [
     "src/forze_postgres",
     "src/forze_redis",
     "src/forze_s3",
+    "src/forze_socketio",
     "src/forze_temporal",
     "src/forze_mongo",
     "src/forze_rabbitmq",
@@ -192,6 +196,7 @@ root_packages = [
     "forze_postgres",
     "forze_redis",
     "forze_s3",
+    "forze_socketio",
     "forze_temporal",
     "forze_mongo",
     "forze_rabbitmq",
@@ -234,6 +239,7 @@ protected_modules = [
     "forze_postgres",
     "forze_redis",
     "forze_s3",
+    "forze_socketio",
     "forze_temporal",
     "forze_mongo",
     "forze_rabbitmq",
@@ -262,6 +268,7 @@ paths = [
     "src/forze_postgres",
     "src/forze_redis",
     "src/forze_s3",
+    "src/forze_socketio",
     "src/forze_temporal",
     "src/forze_mongo",
     "src/forze_rabbitmq",
@@ -289,6 +296,7 @@ known_first_party = [
     "forze_postgres",
     "forze_redis",
     "forze_s3",
+    "forze_socketio",
     "forze_temporal",
     "forze_mongo",
     "forze_rabbitmq",

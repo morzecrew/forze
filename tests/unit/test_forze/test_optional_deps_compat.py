@@ -6,6 +6,7 @@ from types import ModuleType
 import pytest
 
 from forze_rabbitmq._compat import require_rabbitmq
+from forze_socketio._compat import require_socketio
 from forze_sqs._compat import require_sqs
 from forze_temporal._compat import require_temporal
 
@@ -84,5 +85,24 @@ def test_require_sqs_raises_clear_error_when_missing(
 
     with pytest.raises(RuntimeError, match=r"forze_sqs requires 'forze\[sqs\]' extra") as exc:
         require_sqs()
+
+    assert isinstance(exc.value.__cause__, ImportError)
+
+
+def test_require_socketio_succeeds_when_module_is_importable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_import(monkeypatch, module_name="socketio", raises=False)
+
+    require_socketio()
+
+
+def test_require_socketio_raises_clear_error_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_import(monkeypatch, module_name="socketio", raises=True)
+
+    with pytest.raises(RuntimeError, match=r"forze_socketio requires 'forze\[socketio\]' extra") as exc:
+        require_socketio()
 
     assert isinstance(exc.value.__cause__, ImportError)
