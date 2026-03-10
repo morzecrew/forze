@@ -29,7 +29,7 @@ uv add forze
 Install with optional integrations:
 
 ```bash
-uv add 'forze[fastapi,postgres]'
+uv add 'forze[fastapi,postgres,socketio]'
 ```
 
 ## Versioning
