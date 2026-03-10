@@ -1,3 +1,5 @@
+"""Redis-backed :class:`~forze.application.contracts.cache.CachePort` adapter."""
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -21,6 +23,19 @@ from ..kernel.platform import RedisClient
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisCacheAdapter(CachePort):
+    """Redis implementation of :class:`~forze.application.contracts.cache.CachePort`.
+
+    Supports two caching strategies:
+
+    * **Plain key-value** — a single Redis key per cache entry.
+    * **Versioned** — a pointer key that maps to a version-tagged body key,
+      enabling atomic cache invalidation without deleting the body.
+
+    Keys are namespaced via :class:`~forze.base.codecs.KeyCodec` and optionally
+    prefixed with a tenant identifier when a
+    :class:`~forze.application.contracts.tenant.TenantContextPort` is provided.
+    """
+
     client: RedisClient
     key_codec: KeyCodec
     tenant_context: Optional[TenantContextPort] = None

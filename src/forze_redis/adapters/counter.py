@@ -1,3 +1,5 @@
+"""Redis-backed :class:`~forze.application.contracts.counter.CounterPort` adapter."""
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -21,6 +23,13 @@ from ..kernel.platform import RedisClient
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisCounterAdapter(CounterPort):
+    """Redis implementation of :class:`~forze.application.contracts.counter.CounterPort`.
+
+    Uses ``INCRBY`` / ``DECRBY`` / ``GETSET`` for atomic counter operations.
+    Keys are namespaced via :class:`~forze.base.codecs.KeyCodec` and optionally
+    prefixed with a tenant identifier.
+    """
+
     client: RedisClient
     key_codec: KeyCodec
     tenant_context: Optional[TenantContextPort] = None

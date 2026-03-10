@@ -1,3 +1,5 @@
+"""Parsing utilities that normalise raw ``redis-py`` responses into typed structures."""
+
 from .types import (
     RawRedisPubSubMessage,
     RawRedisStreamResponse,
@@ -11,6 +13,16 @@ from .types import (
 
 
 def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
+    """Normalise a raw ``XREAD``/``XREADGROUP`` response into :data:`RedisStreamResponse`.
+
+    Decodes byte stream names and message IDs to strings, and coerces field
+    keys and values to ``bytes``.  Returns an empty list when *raw* is
+    ``None`` or empty.
+
+    :param raw: Raw response from ``redis-py``.
+    :returns: Parsed list of stream batches.
+    """
+
     if raw is None or not raw:
         return []
 
@@ -70,6 +82,16 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
 
 
 def parse_pubsub_message(raw: RawRedisPubSubMessage) -> RedisPubSubMessage | None:
+    """Extract channel and payload from a raw pub/sub message dict.
+
+    Only messages whose ``type`` is ``"message"`` are considered valid.
+    Returns ``None`` for subscribe/unsubscribe confirmations, missing
+    fields, or unrecognised message types.
+
+    :param raw: Raw message dict from ``redis-py``.
+    :returns: A ``(channel, data)`` tuple or ``None``.
+    """
+
     msg_type = raw.get("type")
 
     if msg_type not in {"message", b"message"}:
