@@ -1,3 +1,5 @@
+"""S3-backed implementation of :class:`~forze.application.contracts.storage.StoragePort`."""
+
 from forze_s3._compat import require_s3
 
 require_s3()
@@ -33,6 +35,15 @@ from ..kernel.platform import S3Client
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class S3StorageAdapter(StoragePort):
+    """Storage adapter that persists files in an S3-compatible bucket.
+
+    Implements :class:`~forze.application.contracts.storage.StoragePort`.
+    Object keys are built from an optional tenant prefix, a user-supplied
+    prefix, and a UUID v7 to guarantee uniqueness. File names and
+    descriptions are base-64 encoded into S3 user metadata so they survive
+    round-trips through S3 ``HeadObject``.
+    """
+
     client: S3Client
     bucket: str
     tenant_context: Optional[TenantContextPort] = None
@@ -77,6 +88,15 @@ class S3StorageAdapter(StoragePort):
         *,
         prefix: Optional[str] = None,
     ) -> StoredObject:
+        """Upload a file to S3 and return its stored representation.
+
+        :param filename: Original file name (preserved in metadata).
+        :param data: Raw file bytes.
+        :param description: Optional human-readable description.
+        :param prefix: Optional key prefix segment.
+        :returns: A :class:`StoredObject` with the generated key and metadata.
+        """
+
         self._validate_prefix(prefix)
         key = self.__build_key(prefix)
         content_type = self._guess_content_type(filename, data)
@@ -116,6 +136,13 @@ class S3StorageAdapter(StoragePort):
     # ....................... #
 
     async def download(self, key: str) -> DownloadedObject:
+        """Download an object by key and return its data with metadata.
+
+        :param key: Object key.
+        :returns: A :class:`DownloadedObject` with content, type, and filename.
+        :raises CoreError: If the object metadata is missing or malformed.
+        """
+
         async with self.client.client():
             h = await self.client.head_object(bucket=self.bucket, key=key)
 
@@ -139,6 +166,11 @@ class S3StorageAdapter(StoragePort):
     # ....................... #
 
     async def delete(self, key: str) -> None:
+        """Delete an object from the bucket by key.
+
+        :param key: Object key to delete.
+        """
+
         async with self.client.client():
             await self.client.delete_object(bucket=self.bucket, key=key)
 
@@ -151,6 +183,17 @@ class S3StorageAdapter(StoragePort):
         *,
         prefix: Optional[str] = None,
     ) -> tuple[list[StoredObject], int]:
+        """List stored objects with pagination.
+
+        Fetches object keys via :meth:`S3Client.list_objects` and enriches each
+        entry with head metadata in parallel.
+
+        :param limit: Maximum number of objects to return.
+        :param offset: Number of objects to skip.
+        :param prefix: Optional key prefix filter.
+        :returns: A tuple of ``(objects, total_count)``.
+        """
+
         self._validate_prefix(prefix)
 
         parts: list[str] = []

@@ -1,3 +1,5 @@
+"""Renderer that translates abstract query expressions into Mongo filter dicts."""
+
 from typing import Any
 
 import attrs
@@ -18,8 +20,19 @@ from forze.base.primitives import JsonDict
 
 @attrs.define(slots=True, frozen=True)
 class MongoQueryRenderer:
+    """Translate abstract :class:`QueryExpr` trees into Mongo query dicts.
+
+    Supports equality, ordering, membership, set-relation, null, and empty
+    operators.  Behaviour for ``null``/``not-null`` checks is configurable via
+    :attr:`null_matches_missing` and :attr:`require_exists_for_not_null`.
+    """
+
     null_matches_missing: bool = True
+    """When ``True``, a ``$null`` check matches both explicit ``None`` and
+    missing fields."""
+
     require_exists_for_not_null: bool = True
+    """When ``True``, a not-null check adds an ``$exists: true`` guard."""
 
     # non initable fields
     caster: QueryValueCaster = attrs.field(factory=QueryValueCaster, init=False)
@@ -27,6 +40,12 @@ class MongoQueryRenderer:
     # ....................... #
 
     def render(self, expr: QueryExpr) -> JsonDict:
+        """Render a parsed query expression into a Mongo filter dict.
+
+        :param expr: Root expression node.
+        :returns: Mongo-compatible filter dictionary.
+        """
+
         return self._render_expr(expr)
 
     # ....................... #

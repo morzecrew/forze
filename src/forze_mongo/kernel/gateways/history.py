@@ -1,3 +1,5 @@
+"""Mongo gateway for document revision history storage and retrieval."""
+
 from forze_mongo._compat import require_mongo
 
 require_mongo()
@@ -30,8 +32,18 @@ MongoHistoryWriteStrategy = Literal["application"]
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoHistoryGateway[D: Document](MongoGateway[D]):
+    """Gateway for persisting and querying document revision history in Mongo.
+
+    Each history record wraps a full document snapshot keyed by the document's
+    ID and revision number, scoped to a :attr:`target_source` collection. Used
+    by :class:`MongoWriteGateway` to enable historical consistency checks.
+    """
+
     strategy: MongoHistoryWriteStrategy = "application"
+    """Strategy for writing history records."""
+
     target_source: str
+    """Name of the primary collection this history tracks."""
 
     # ....................... #
 
@@ -42,6 +54,13 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     # ....................... #
 
     async def read(self, pk: UUID, rev: int) -> D:
+        """Retrieve a single historical snapshot by primary key and revision.
+
+        :param pk: Document primary key.
+        :param rev: Revision number.
+        :raises NotFoundError: If the history record or its payload is missing.
+        """
+
         raw = await self.client.find_one(
             self.coll(),
             {
@@ -63,6 +82,16 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     # ....................... #
 
     async def read_many(self, pks: Sequence[UUID], revs: Sequence[int]) -> Sequence[D]:
+        """Retrieve multiple historical snapshots by primary key and revision pairs.
+
+        Results are returned in the same order as the inputs. Pairs that
+        cannot be found are silently omitted.
+
+        :param pks: Document primary keys.
+        :param revs: Corresponding revision numbers (same length as *pks*).
+        :raises ValidationError: If the lengths of *pks* and *revs* differ.
+        """
+
         if len(pks) != len(revs):
             raise ValidationError("Length of pks and revs must be the same")
 
@@ -115,6 +144,11 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     # ....................... #
 
     async def write(self, data: D) -> None:
+        """Persist a single document snapshot as a history record.
+
+        :param data: Document to snapshot.
+        """
+
         record = self._from_data(data)
         payload = pydantic_dump(record)
         await self.client.insert_one(self.coll(), self._coerce_query_value(payload))
@@ -122,6 +156,11 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     # ....................... #
 
     async def write_many(self, data: Sequence[D]) -> None:
+        """Persist multiple document snapshots as history records in bulk.
+
+        :param data: Documents to snapshot. No-ops when empty.
+        """
+
         if not data:
             return
 
