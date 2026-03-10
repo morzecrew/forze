@@ -10,23 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - ...
-- Documentation section **Core Package** with a practical core usage overview and a dedicated query syntax guide.
-- Socket.IO integration package `forze_socketio` with typed command-event routing, usecase dispatch through `ExecutionContext`, typed server-event emitter, ASGI/server builders, and optional `forze[socketio]` extra.
 
 ### Changed
 
-- Documentation: replaced markdown code blocks with `:::lang` fenced blocks for proper syntax highlighting.
-- Documentation: corrected architecture to four layers (domain, application, infrastructure, interface) with FastAPI/Socket.IO in interface layer.
-- Documentation: restructured core concept pages to introduce concepts before code specifics.
-- Documentation: simplified home page by removing complex diagram and low-level details.
-- Documentation: added D2 diagrams for domain models, execution runtime, operation registry, and composition flow.
-- Documentation: reduced complete examples using collapsible sections.
-- Documentation: renamed "Amazon SQS" to "SQS" in navigation and page titles.
-- Documentation: replaced double-dash separators with colons in step headings.
+- ...
 
 ### Fixed
 
 - ...
+
+## [0.1.9] - 2026-03-10
+
+### Added
+
+- Socket.IO integration package `forze_socketio` with typed command-event routing, usecase dispatch through `ExecutionContext`, typed server-event emitter, ASGI/server builders, and optional `forze[socketio]` extra.
+
+### Changed
+
+- **Contracts refactor:** Removed conformity protocols (`DocumentConformity`, `PubSubConformity`, `QueueConformity`, `SearchConformity`, `StreamConformity` and their dep variants). Port protocols remain the source of truth for contract conformance.
+- Removed `forze.base.typing`; type checking now enforced via mypy strict mode.
 
 ## [0.1.8] - 2026-03-10
 
@@ -186,7 +188,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.8...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/morzecrew/forze/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/morzecrew/forze/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/morzecrew/forze/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/morzecrew/forze/compare/v0.1.5...v0.1.6
