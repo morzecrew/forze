@@ -1,81 +1,91 @@
 # Core Package
 
-This section explains what the `forze` core package provides and how to use it in day-to-day application code, before choosing specific infrastructure integrations.
+The `forze` core package provides the foundation for building backend services with clean architecture. It contains everything you need to define domain models, declare contracts, compose usecases, and wire dependencies — without depending on any specific database, queue, or web framework.
 
-## What core gives you
+## Package structure
 
-- **Contracts**: protocol interfaces for documents, search, storage, cache, transactions, queues, pub/sub, streams, idempotency, and workflows
-- **Specifications**: `DocumentSpec`, `SearchSpec`, `QueueSpec`, `PubSubSpec`, `StreamSpec`, and `CacheSpec` that describe your aggregates and messaging
-- **Execution model**: `ExecutionContext`, `ExecutionRuntime` for dependency resolution and lifecycle management
-- **Usecase composition**: registries, plans, facades, and middleware for building and wiring operations
-- **Domain primitives**: `Document`, `BaseDTO`, mixins, validation, and shared constants
-- **Shared query DSL**: filters, sorts, and operators that work across all adapters
+| Layer | Module | What it provides |
+|-------|--------|------------------|
+| **Base** | `forze.base` | Error hierarchy, codecs, primitives (UUID, datetime, types), serialization, file I/O, introspection |
+| **Domain** | `forze.domain` | `Document`, `CoreModel`, `BaseDTO`, mixins, update validators, field constants |
+| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middleware, usecase plans, composition, mapping, DTOs, outbox |
 
-## Practical workflow
+Dependencies flow inward: Application → Domain → Base. No layer imports from an outer one.
 
-1. Define your aggregate domain model and DTOs
-2. Declare a `DocumentSpec` (and optional `SearchSpec`) as the contract for adapters
-3. Build runtime and dependency plans using integration modules
-4. Resolve ports from `ExecutionContext` in usecases
-5. Pass filters and sorts using the shared query syntax
+## Section guide
+
+### Foundations
+
+Start here to understand the building blocks:
+
+- [Base Layer](base-layer.md) — error types, codecs, UUID generation, serialization helpers, and other shared utilities
+- [Domain Models](domain-models.md) — `Document`, commands, read models, mixins, and update validation
+
+### Application machinery
+
+These pages cover the orchestration layer:
+
+- [Contracts](contracts.md) — protocol ports, specs, and dependency keys for all infrastructure concerns
+- [Execution](execution.md) — `ExecutionContext`, dependency injection, runtime lifecycle
+- [Middleware & Plans](middleware-plans.md) — guards, effects, transaction wrapping, usecase plans, and the registry
+- [Composition & Mapping](composition.md) — facades, providers, DTO mapping pipelines, and paginated responses
+
+### Reference
+
+- [Query Syntax](query-syntax.md) — filter and sort DSL used across all adapters
+- [Outbox](outbox.md) — transactional outbox pattern for reliable event publishing
+
+## Quick example
+
+A minimal aggregate definition using the core package:
 
     :::python
+    from forze.domain.models import Document, CreateDocumentCmd, ReadDocument, BaseDTO
+    from forze.domain.mixins import SoftDeletionMixin
     from forze.application.contracts.document import DocumentSpec
-    from forze.application.contracts.search import SearchSpec
 
-    project_spec = DocumentSpec(
-        namespace="projects",
-        read={"source": "public.projects", "model": ProjectReadModel},
+
+    # Domain model
+    class Task(SoftDeletionMixin, Document):
+        title: str
+        done: bool = False
+
+
+    # Commands and read model
+    class CreateTaskCmd(CreateDocumentCmd):
+        title: str
+
+
+    class UpdateTaskCmd(BaseDTO):
+        title: str | None = None
+        done: bool | None = None
+
+
+    class TaskRead(ReadDocument):
+        title: str
+        done: bool
+        is_deleted: bool = False
+
+
+    # Specification
+    task_spec = DocumentSpec(
+        namespace="tasks",
+        read={"source": "public.tasks", "model": TaskRead},
         write={
-            "source": "public.projects",
+            "source": "public.tasks",
             "models": {
-                "domain": Project,
-                "create_cmd": CreateProjectCmd,
-                "update_cmd": UpdateProjectCmd,
+                "domain": Task,
+                "create_cmd": CreateTaskCmd,
+                "update_cmd": UpdateTaskCmd,
             },
         },
-        history={"source": "public.projects_history"},
         cache={"enabled": True},
     )
 
-    project_search_spec = SearchSpec(
-        namespace="projects",
-        model=ProjectReadModel,
-        indexes={
-            "public.idx_projects_title": {
-                "source": "public.projects",
-                "fields": [{"path": "title"}],
-            },
-        },
-        default_index="public.idx_projects_title",
-    )
+With this in place, adapters (Postgres, Mongo, etc.) know how to store and retrieve tasks, usecases can be composed with middleware, and the entire aggregate is testable without any infrastructure.
 
-## In-use examples
+## Related sections
 
-Once you have an execution context, all operations stay contract-driven:
-
-    :::python
-    doc = ctx.doc_read(project_spec)
-    rows, total = await doc.find_many(
-        filters={"$fields": {"is_deleted": False}},
-        sorts={"created_at": "desc"},
-        limit=20,
-        offset=0,
-    )
-
-    search = ctx.search(project_search_spec)
-    hits, total = await search.search(
-        query="roadmap",
-        filters={"$fields": {"is_deleted": False}},
-        limit=20,
-        offset=0,
-    )
-
-    doc_w = ctx.doc_write(project_spec)
-    created = await doc_w.create(CreateProjectCmd(title="New", description="..."))
-
-## Read next
-
-- [Query Syntax](query-syntax.md): full filter and sort DSL reference
-- [Core Concepts](../core-concepts/index.md): architecture, layers, and execution model
-- Integration guides: [PostgreSQL](../integrations/postgres.md) | [MongoDB](../integrations/mongo.md) | [Redis](../integrations/redis.md)
+- [Core Concepts](../core-concepts/index.md) — architectural overview, layered architecture, and design rationale
+- [Getting Started](../getting-started.md) — end-to-end walkthrough of building a service with Forze
+- [Integrations](../integrations/postgres.md) — adapter packages for Postgres, Redis, S3, MongoDB, and more
