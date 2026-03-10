@@ -54,6 +54,7 @@ nav:
     - Application Layer: core-concepts/application-layer.md
     - Contracts and Adapters: core-concepts/contracts-adapters.md
     - Aggregate Specification: core-concepts/aggregate-specification.md
+    - Usecase Composition: core-concepts/usecase-composition.md
   - Core Package:
     - Overview: core-package/index.md
     - Query Syntax: core-package/query-syntax.md
@@ -65,5 +66,7 @@ nav:
     - S3: integrations/s3.md
     - MongoDB: integrations/mongo.md
     - Temporal: integrations/temporal.md
+    - Amazon SQS: integrations/sqs.md
+    - RabbitMQ: integrations/rabbitmq.md
   # - API Reference:
   #   - Core: api/core.md

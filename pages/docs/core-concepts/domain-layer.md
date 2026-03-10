@@ -2,66 +2,225 @@
 
 The domain layer holds **business logic and invariants**. It knows nothing about databases, HTTP, or external services. All domain code is pure: it operates on data structures and enforces rules without side effects.
 
-## Versioned Entities
+## Base models
 
-Aggregates in Forze are **versioned**: each entity has revisions, timestamps, and identity. Updates produce new revisions instead of in-place mutation.
+Forze provides two base classes for all domain types:
 
-    :::python
-    from forze.domain.models import Document
+```python
+from forze.domain.models import CoreModel, BaseDTO
+```
 
-    class Project(Document):
-        title: str
+**`CoreModel`** is the base for all domain models. It configures Pydantic with field docstrings for schema generation, sorted set serialization, and stripped string fields.
 
-| Aspect | Behavior |
-|--------|----------|
-| **Revisions** | Each update increments a revision; history is preserved |
-| **Timestamps** | Creation and modification times are tracked |
-| **Identity** | Each aggregate has a stable identifier (typically UUID) |
-| **Optimistic concurrency** | Revision checks prevent lost updates |
-| **Audit trails** | History relations store prior states |
+**`BaseDTO`** extends `CoreModel` with frozen-by-default semantics. Use it for command DTOs, update payloads, and read projections where immutability is desired.
 
-## Value Objects and Commands
+## Document model
 
-Domain inputs and outputs are **immutable** value objects and commands:
+`Document` is the base class for versioned aggregates. It provides identity, revision tracking, timestamps, and a structured update mechanism.
 
-| Concept | Purpose |
-|---------|---------|
-| **Value objects** | Immutable data structures representing domain concepts |
-| **Commands** | Create and update DTOs passed to operations |
-| **Read models** | Projections for queries; may differ from domain models |
-| **CQRS** | Read models evolve independently from write models |
+```python
+from forze.domain.models import Document
 
-Commands are validated before they reach the domain. Read models are optimized for query patterns and may denormalize or join data that the domain model keeps separate.
 
-## Pluggable Validation
+class Project(Document):
+    title: str
+    description: str
+```
 
-Validation runs on update with access to:
+Every `Document` includes these built-in fields:
 
-- **Previous state** — the aggregate before the change
-- **New state** — the result of applying the patch
-- **Patch** — the update command or delta
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `id` | `UUID` | `uuid7()` | Unique identifier (frozen after creation) |
+| `rev` | `int` | `1` | Revision number (frozen, incremented by adapters) |
+| `created_at` | `datetime` | `utcnow()` | Creation timestamp (frozen) |
+| `last_update_at` | `datetime` | `utcnow()` | Last modification timestamp |
 
-Invariants stay close to the model. Validation hooks are composable and can be extended without modifying core domain logic.
+Fields marked as frozen raise `ValidationError` if an update attempts to change them.
 
-    :::python
-    project = Project(title="Initial")
-    updated, diff = project.update({"title": "Updated"})
+## Update semantics
+
+The `update()` method applies a validated patch and returns the new document state plus the computed diff:
+
+```python
+project = Project(title="Alpha", description="First project")
+
+updated, diff = project.update({"title": "Beta"})
+
+# updated.title == "Beta"
+# updated.last_update_at > project.last_update_at
+# diff == {"title": "Beta", "last_update_at": <new timestamp>}
+```
+
+The update flow:
+
+1. **Validate** -- reject unknown fields and frozen fields
+2. **Compute diff** -- apply the patch to a JSON dump and calculate the minimal merge patch
+3. **Bump timestamp** -- set `last_update_at` to now
+4. **Run validators** -- execute registered `@update_validator` hooks
+5. **Return** -- produce a new immutable copy and the diff
+
+If the patch produces no changes (the values are identical to the current state), `update()` returns the original instance and an empty diff.
+
+The `touch()` method updates only `last_update_at` without changing any other fields:
+
+```python
+touched, diff = project.touch()
+# diff == {"last_update_at": <new timestamp>}
+```
+
+## Historical consistency
+
+The `validate_historical_consistency()` method checks whether a concurrent update would conflict with the current document state. This is used by adapters that reconstruct state from history:
+
+```python
+is_safe = current.validate_historical_consistency(old_state, incoming_patch)
+```
+
+It returns `True` when the incoming patch does not touch the same fields that changed between `old_state` and `current`.
+
+## Commands and read models
+
+Commands and read models are frozen DTOs that travel across layer boundaries:
+
+```python
+from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
+
+
+class CreateProjectCmd(CreateDocumentCmd):
+    title: str
+    description: str
+
+
+class UpdateProjectCmd(BaseDTO):
+    title: str | None = None
+    description: str | None = None
+
+
+class ProjectReadModel(ReadDocument):
+    title: str
+    description: str
+    is_deleted: bool = False
+```
+
+| Type | Purpose |
+|------|---------|
+| `CreateDocumentCmd` | Base for create commands. Optionally accepts `id` and `created_at` for imports/migrations. |
+| `BaseDTO` | Base for update commands. All fields should be optional to allow partial updates. |
+| `ReadDocument` | Base for read models. Includes `id`, `rev`, `created_at`, `last_update_at`. |
+| `DocumentHistory[D]` | Stores a snapshot of a document at a given revision. |
+
+## Update validators
+
+Validators run during `Document.update()` and have access to the before state, after state, and the diff. Decorate a static method with `@update_validator`:
+
+```python
+from forze.domain.validation import update_validator
+from forze.base.errors import ValidationError
+
+
+class Project(Document):
+    title: str
+    status: str = "draft"
+
+    @update_validator
+    def _no_title_change_when_published(before, after, diff):
+        if before.status == "published" and "title" in diff:
+            raise ValidationError(
+                "Cannot change title of a published project."
+            )
+```
+
+Validators are collected from the class hierarchy at class definition time. They run only when the diff touches relevant fields. Multiple validators compose -- they all run on every matching update.
+
+You can restrict a validator to specific fields using the `fields` parameter:
+
+```python
+@update_validator(fields={"status"})
+def _validate_status_transition(before, after, diff):
+    allowed = {"draft": {"active"}, "active": {"archived"}}
+    if after.status not in allowed.get(before.status, set()):
+        raise ValidationError("Invalid status transition.")
+```
 
 ## Mixins
 
-Reusable concerns are composed via **mixins** instead of deep inheritance:
+Reusable domain concerns are composed via mixins. Each mixin adds a focused capability without deep inheritance chains.
 
-| Mixin | Purpose |
-|-------|---------|
-| **Soft delete** | Mark entities as deleted without physical removal |
-| **Naming** | Name/slug fields and validation |
-| **Numbering** | Sequence numbers or human-readable IDs |
-| **Creator** | Track who created or last modified an entity |
+### SoftDeletionMixin
 
-Mixins are composed without deep inheritance chains. Each mixin adds a focused capability.
+Adds an `is_deleted` boolean field and an update validator that blocks updates to soft-deleted documents (except toggling the deletion flag itself):
 
-## Why It Matters
+```python
+from forze.domain.mixins import SoftDeletionMixin
 
-- **Business rules live in one place** — the domain is the single source of truth
-- **Domain is testable in isolation** — no mocks for databases or HTTP
-- **Infrastructure changes do not ripple** — swap storage without touching business logic
+
+class Project(SoftDeletionMixin, Document):
+    title: str
+```
+
+Once `is_deleted` is `True`, any update that modifies fields other than `is_deleted` raises `ValidationError`.
+
+### NameMixin
+
+Adds `name` (required), `display_name`, `short_name`, and `description` (all optional). Companion mixins `NameCreateCmdMixin` and `NameUpdateCmdMixin` mirror the fields for command DTOs:
+
+```python
+from forze.domain.mixins import NameMixin, NameCreateCmdMixin, NameUpdateCmdMixin
+
+
+class Workspace(NameMixin, Document):
+    pass
+
+
+class CreateWorkspaceCmd(NameCreateCmdMixin, CreateDocumentCmd):
+    pass
+
+
+class UpdateWorkspaceCmd(NameUpdateCmdMixin, BaseDTO):
+    pass
+```
+
+### NumberMixin
+
+Adds a required `number_id` field (positive integer) for human-readable identifiers. Typically populated by a counter adapter during the create mapping step:
+
+```python
+from forze.domain.mixins import NumberMixin, NumberCreateCmdMixin
+
+
+class Ticket(NumberMixin, Document):
+    title: str
+
+
+class CreateTicketCmd(NumberCreateCmdMixin, CreateDocumentCmd):
+    title: str
+```
+
+### CreatorMixin
+
+Adds a frozen `creator_id` field (UUID). Typically injected by a mapping step that reads the current actor context:
+
+```python
+from forze.domain.mixins import CreatorMixin, CreatorCreateCmdMixin
+
+
+class Comment(CreatorMixin, Document):
+    body: str
+
+
+class CreateCommentCmd(CreatorCreateCmdMixin, CreateDocumentCmd):
+    body: str
+```
+
+## Domain constants
+
+Field name constants used across layers for consistent serialization:
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `ID_FIELD` | `"id"` | Document identifier |
+| `REV_FIELD` | `"rev"` | Revision number |
+| `SOFT_DELETE_FIELD` | `"is_deleted"` | Soft deletion flag |
+| `NUMBER_ID_FIELD` | `"number_id"` | Human-readable number |
+| `CREATOR_ID_FIELD` | `"creator_id"` | Creator reference |

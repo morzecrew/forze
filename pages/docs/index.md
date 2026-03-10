@@ -36,6 +36,8 @@ Forze helps you keep business logic stable while storage/framework choices evolv
 | `forze_mongo` | Mongo-backed document/transaction adapters |
 | `forze_socketio` | Socket.IO transport adapter for typed realtime events |
 | `forze_temporal` | Temporal integration package (currently minimal) |
+| `forze_sqs` | Amazon SQS message queue adapter |
+| `forze_rabbitmq` | RabbitMQ message queue adapter |
 
 ## Typical request flow
 
@@ -44,4 +46,4 @@ Forze helps you keep business logic stable while storage/framework choices evolv
   <img class="d2-dark" src="assets/diagrams/dark/contracts-adapters.svg" alt="Request flow from usecase to adapters">
 </div>
 
-In practice: router/handler resolves an `ExecutionContext`, usecases request ports (`ctx.doc(...)`, `ctx.search(...)`, `ctx.storage(...)`), and adapters execute infrastructure work.
+In practice: router/handler resolves an `ExecutionContext`, usecases request ports (`ctx.doc_read(...)`, `ctx.doc_write(...)`, `ctx.search(...)`, `ctx.storage(...)`), and adapters execute infrastructure work.
