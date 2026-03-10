@@ -35,6 +35,7 @@
         "dist/": true,
         ".jules/": true,
         // temporarily excluded (for readability)
+        "**/.devcontainer/": true,
         "**/.venv/": true,
         // ".specify": true,
         // ".agent": true,
