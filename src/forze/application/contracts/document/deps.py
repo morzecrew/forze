@@ -15,20 +15,29 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 DocSpec = DocumentSpec[Any, Any, Any, Any]
+"""Type-erased document specification."""
+
 DocReadPort = DocumentReadPort[Any]
+"""Type-erased document read port."""
+
 DocWritePort = DocumentWritePort[Any, Any, Any, Any]
+"""Type-erased document write port."""
 
 # ....................... #
 
 
 @runtime_checkable
 class DocumentReadDepPort(Protocol):
+    """Factory protocol for building :class:`DocumentReadPort` instances."""
+
     def __call__(
         self,
         context: "ExecutionContext",
         spec: DocSpec,
         cache: Optional[CachePort] = None,
-    ) -> DocReadPort: ...
+    ) -> DocReadPort:
+        """Build a document read port, optionally backed by a cache."""
+        ...
 
 
 # ....................... #
@@ -36,18 +45,25 @@ class DocumentReadDepPort(Protocol):
 
 @runtime_checkable
 class DocumentWriteDepPort(Protocol):
+    """Factory protocol for building :class:`DocumentWritePort` instances."""
+
     def __call__(
         self,
         context: "ExecutionContext",
         spec: DocSpec,
         cache: Optional[CachePort] = None,
-    ) -> DocWritePort: ...
+    ) -> DocWritePort:
+        """Build a document write port, optionally backed by a cache."""
+        ...
 
 
 # ....................... #
 
 DocumentReadDepKey = DepKey[DocumentReadDepPort]("document_read")
+"""Key used to register the :class:`DocumentReadDepPort` implementation."""
+
 DocumentWriteDepKey = DepKey[DocumentWriteDepPort]("document_write")
+"""Key used to register the :class:`DocumentWriteDepPort` implementation."""
 
 # ....................... #
 
@@ -59,6 +75,8 @@ class DocumentReadDepRouter(
     DocumentReadDepPort,
     dep_key=DocumentReadDepKey,
 ):
+    """Router that dispatches :class:`DocumentReadDepPort` calls by spec."""
+
     def __call__(
         self,
         context: "ExecutionContext",
@@ -80,6 +98,8 @@ class DocumentWriteDepRouter(
     DocumentWriteDepPort,
     dep_key=DocumentWriteDepKey,
 ):
+    """Router that dispatches :class:`DocumentWriteDepPort` calls by spec."""
+
     def __call__(
         self,
         context: "ExecutionContext",

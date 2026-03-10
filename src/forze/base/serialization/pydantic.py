@@ -30,10 +30,19 @@ def pydantic_validate[M: BaseModel](
 
 
 class _PydanticDumpExcludeOptions(TypedDict, total=False):
+    """Options controlling which fields to exclude from :func:`pydantic_dump`."""
+
     unset: bool
+    """Exclude fields that were never explicitly set."""
+
     none: bool
+    """Exclude fields whose value is ``None``."""
+
     defaults: bool
+    """Exclude fields still equal to their default value."""
+
     computed_fields: bool
+    """Exclude computed (derived) fields."""
 
 
 def pydantic_dump(

@@ -1,3 +1,5 @@
+"""Gateway for reading and writing document history records in Postgres."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -25,6 +27,7 @@ from .base import PostgresGateway, PostgresQualifiedName
 # ----------------------- #
 
 PostgresHistoryWriteStrategy = Literal["database", "application"]
+"""Strategy for persisting history: ``"database"`` (trigger) or ``"application"`` (explicit insert)."""
 
 # ....................... #
 
@@ -32,6 +35,12 @@ PostgresHistoryWriteStrategy = Literal["database", "application"]
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
+    """Gateway for document revision history backed by a dedicated Postgres table.
+
+    When *strategy* is ``"database"``, writes are expected to be handled by a
+    database trigger and :meth:`write` / :meth:`write_many` become no-ops.
+    """
+
     strategy: PostgresHistoryWriteStrategy = "database"
     target_qname: PostgresQualifiedName
 

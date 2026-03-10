@@ -1,3 +1,5 @@
+"""Mongo-backed document adapter implementing read and write port contracts."""
+
 from forze_mongo._compat import require_mongo
 
 require_mongo()
@@ -37,9 +39,23 @@ U = TypeVar("U", bound=BaseDTO)
 class MongoDocumentAdapter(
     DocumentReadPort[R], DocumentWritePort[R, D, C, U], TxScopedPort
 ):
+    """Mongo adapter bridging domain document ports to gateway operations.
+
+    Implements :class:`~forze.application.contracts.document.DocumentReadPort`
+    and :class:`~forze.application.contracts.document.DocumentWritePort`.
+    Read operations support an optional :class:`CachePort` for transparent
+    caching with versioned invalidation. Write operations delegate to a
+    :class:`MongoWriteGateway` and refresh the cache after mutation.
+    """
+
     read_gw: MongoReadGateway[R]
+    """Gateway used for all read queries."""
+
     write_gw: Optional[MongoWriteGateway[D, C, U]] = None
+    """Optional gateway for mutations; ``None`` disables write operations."""
+
     cache: Optional[CachePort] = None
+    """Optional cache layer for read-through caching."""
 
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=MongoTxScopeKey, init=False)
@@ -82,7 +98,9 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> JsonDict: ...
+    ) -> JsonDict:
+        """Fetch a document projected to *return_fields*."""
+        ...
 
     @overload
     async def get(
@@ -91,7 +109,9 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> R: ...
+    ) -> R:
+        """Fetch a document as the read model."""
+        ...
 
     async def get(
         self,
@@ -100,6 +120,17 @@ class MongoDocumentAdapter(
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
     ) -> R | JsonDict:
+        """Fetch a single document by primary key, using the cache when available.
+
+        Cache is bypassed when *return_fields* is set or when no cache is
+        configured.  On a cache miss the result is fetched from Mongo and
+        written back to the cache with versioned invalidation.
+
+        :param pk: Document primary key.
+        :param for_update: Require a transaction context.
+        :param return_fields: Optional field subset to project.
+        """
+
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get(
                 pk,
@@ -138,7 +169,9 @@ class MongoDocumentAdapter(
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str],
-    ) -> Sequence[JsonDict]: ...
+    ) -> Sequence[JsonDict]:
+        """Fetch multiple documents projected to *return_fields*."""
+        ...
 
     @overload
     async def get_many(
@@ -146,7 +179,9 @@ class MongoDocumentAdapter(
         pks: Sequence[UUID],
         *,
         return_fields: None = ...,
-    ) -> Sequence[R]: ...
+    ) -> Sequence[R]:
+        """Fetch multiple documents as the read model."""
+        ...
 
     async def get_many(
         self,
@@ -154,6 +189,15 @@ class MongoDocumentAdapter(
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Sequence[R] | Sequence[JsonDict]:
+        """Fetch multiple documents by primary key with cache-aware batching.
+
+        Cached entries are returned from the cache; misses are fetched from
+        Mongo and back-filled into the cache.
+
+        :param pks: Primary keys to fetch.
+        :param return_fields: Optional field subset to project.
+        """
+
         if not pks:
             return []
 
@@ -190,7 +234,9 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> Optional[JsonDict]: ...
+    ) -> Optional[JsonDict]:
+        """Find one document matching filters projected to *return_fields*."""
+        ...
 
     @overload
     async def find(
@@ -199,7 +245,9 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> Optional[R]: ...
+    ) -> Optional[R]:
+        """Find one document matching filters as the read model."""
+        ...
 
     async def find(
         self,
@@ -208,6 +256,14 @@ class MongoDocumentAdapter(
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Optional[R | JsonDict]:
+        """Find a single document matching the given filters.
+
+        :param filters: Query filter expression.
+        :param for_update: Require a transaction context.
+        :param return_fields: Optional field subset to project.
+        :returns: The matching document or ``None``.
+        """
+
         return await self.read_gw.find(
             filters,
             for_update=for_update,
@@ -225,7 +281,9 @@ class MongoDocumentAdapter(
         sorts: Optional[QuerySortExpression] = ...,
         *,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+    ) -> tuple[list[JsonDict], int]:
+        """Find documents projected to *return_fields* with total count."""
+        ...
 
     @overload
     async def find_many(
@@ -236,7 +294,9 @@ class MongoDocumentAdapter(
         sorts: Optional[QuerySortExpression] = ...,
         *,
         return_fields: None = ...,
-    ) -> tuple[list[R], int]: ...
+    ) -> tuple[list[R], int]:
+        """Find documents as the read model with total count."""
+        ...
 
     async def find_many(
         self,
@@ -247,6 +307,18 @@ class MongoDocumentAdapter(
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
+        """Find documents with pagination and return the total matching count.
+
+        Issues a count query first; if zero, returns early with an empty list.
+
+        :param filters: Optional filter expression.
+        :param limit: Maximum number of results.
+        :param offset: Number of results to skip.
+        :param sorts: Sort expression.
+        :param return_fields: Optional field subset to project.
+        :returns: A tuple of ``(results, total_count)``.
+        """
+
         cnt = await self.read_gw.count(filters)
 
         if not cnt:
@@ -265,11 +337,22 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
+        """Count documents matching the given filters.
+
+        :param filters: Optional filter expression.
+        """
+
         return await self.read_gw.count(filters)
 
     # ....................... #
 
     async def create(self, dto: C) -> R:
+        """Create a new document and populate the cache.
+
+        :param dto: Creation payload.
+        :returns: The created document as the read model.
+        """
+
         w = self._require_write()
         domain = await w.create(dto)
 
@@ -287,6 +370,11 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
+        """Bulk-create documents and populate the cache.
+
+        :param dtos: Creation payloads.
+        """
+
         w = self._require_write()
         domains = await w.create_many(dtos)
 
@@ -311,6 +399,13 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
+        """Update a document and refresh the cache.
+
+        :param pk: Document primary key.
+        :param dto: Update payload.
+        :param rev: Expected revision for historical consistency validation.
+        """
+
         w = self._require_write()
         domain = await w.update(pk, dto, rev=rev)
 
@@ -335,6 +430,13 @@ class MongoDocumentAdapter(
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[R]:
+        """Bulk-update documents and refresh the cache.
+
+        :param pks: Document primary keys.
+        :param dtos: Update payloads matching *pks* by position.
+        :param revs: Optional expected revisions for history validation.
+        """
+
         w = self._require_write()
         domains = await w.update_many(pks, dtos, revs=revs)
 
@@ -354,6 +456,11 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def touch(self, pk: UUID) -> R:
+        """Touch a document (bump revision) and refresh the cache.
+
+        :param pk: Document primary key.
+        """
+
         w = self._require_write()
         domain = await w.touch(pk)
 
@@ -372,6 +479,11 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
+        """Touch multiple documents and refresh the cache.
+
+        :param pks: Document primary keys.
+        """
+
         w = self._require_write()
         domains = await w.touch_many(pks)
 
@@ -391,6 +503,11 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
+        """Hard-delete a document and evict it from the cache.
+
+        :param pk: Document primary key.
+        """
+
         w = self._require_write()
         await w.kill(pk)
         await self._clear_cache(pk)
@@ -398,6 +515,11 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
+        """Hard-delete multiple documents and evict them from the cache.
+
+        :param pks: Document primary keys.
+        """
+
         w = self._require_write()
         await w.kill_many(pks)
         await self._clear_cache(*pks)
@@ -405,6 +527,12 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+        """Soft-delete a document and refresh the cache.
+
+        :param pk: Document primary key.
+        :param rev: Expected revision for historical consistency validation.
+        """
+
         w = self._require_write()
         domain = await w.delete(pk, rev=rev)
 
@@ -428,6 +556,12 @@ class MongoDocumentAdapter(
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[R]:
+        """Soft-delete multiple documents and refresh the cache.
+
+        :param pks: Document primary keys.
+        :param revs: Optional expected revisions for history validation.
+        """
+
         w = self._require_write()
         domains = await w.delete_many(pks, revs=revs)
 
@@ -447,6 +581,12 @@ class MongoDocumentAdapter(
     # ....................... #
 
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+        """Restore a soft-deleted document and refresh the cache.
+
+        :param pk: Document primary key.
+        :param rev: Expected revision for historical consistency validation.
+        """
+
         w = self._require_write()
         domain = await w.restore(pk, rev=rev)
 
@@ -470,6 +610,12 @@ class MongoDocumentAdapter(
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[R]:
+        """Restore multiple soft-deleted documents and refresh the cache.
+
+        :param pks: Document primary keys.
+        :param revs: Optional expected revisions for history validation.
+        """
+
         w = self._require_write()
         domains = await w.restore_many(pks, revs=revs)
 

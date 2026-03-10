@@ -54,11 +54,22 @@ class S3Config(TypedDict, total=False):
 
 @final
 class S3Head(TypedDict, total=False):
+    """Metadata returned by an S3 ``HeadObject`` call."""
+
     content_type: str
+    """MIME type of the object."""
+
     metadata: dict[str, str]
+    """User-defined metadata key-value pairs."""
+
     size: int
+    """Content length in bytes."""
+
     last_modified: datetime
+    """Timestamp of the last modification."""
+
     etag: str
+    """Entity tag with surrounding quotes stripped."""
 
 
 # ....................... #
@@ -81,6 +92,13 @@ class _S3ConnectionOpts:
 @final
 @attrs.define(slots=True)
 class S3Client:
+    """Async S3 client with context-scoped connection reuse.
+
+    Must be :meth:`initialize`d with endpoint credentials before use. The
+    :meth:`client` context manager creates an ``aioboto3`` S3 client for the
+    current context; nested entries reuse the same client via context variables.
+    """
+
     __opts: Optional[_S3ConnectionOpts] = attrs.field(default=None, init=False)
     __session: Optional[aioboto3.Session] = attrs.field(default=None, init=False)
 
@@ -103,6 +121,16 @@ class S3Client:
         secret_access_key: str | SecretStr,
         config: Optional[S3Config] = None,
     ) -> None:
+        """Configure the client with S3 credentials and create a session.
+
+        No-ops if the session is already initialized.
+
+        :param endpoint: S3-compatible endpoint URL.
+        :param access_key_id: AWS access key identifier.
+        :param secret_access_key: AWS secret access key (plain or :class:`SecretStr`).
+        :param config: Optional botocore configuration overrides.
+        """
+
         if self.__session is not None:
             return
 
@@ -119,6 +147,8 @@ class S3Client:
     # ....................... #
 
     def close(self) -> None:
+        """Release the session and connection options."""
+
         self.__session = None
         self.__opts = None
 
@@ -149,6 +179,13 @@ class S3Client:
 
     @asynccontextmanager
     async def client(self) -> AsyncIterator[AsyncS3Client]:
+        """Yield a context-scoped S3 client.
+
+        On first entry a new ``aioboto3`` client is created; nested calls reuse
+        the existing client and increment a depth counter so the underlying
+        connection is only closed when the outermost context exits.
+        """
+
         depth = self.__ctx_depth.get()
         parent = self.__current_client()
 
@@ -197,6 +234,12 @@ class S3Client:
     # ....................... #
 
     async def health(self) -> tuple[str, bool]:
+        """Check S3 connectivity by listing buckets.
+
+        :returns: A tuple of ``("ok", True)`` on success, or
+            ``(error_message, False)`` on failure.
+        """
+
         c = self.__require_client()
 
         try:
@@ -210,6 +253,11 @@ class S3Client:
 
     @s3_handled("s3.bucket_exists")  # type: ignore[untyped-decorator]
     async def bucket_exists(self, bucket: str) -> bool:
+        """Return whether the given bucket exists.
+
+        :param bucket: Bucket name to probe.
+        """
+
         c = self.__require_client()
 
         try:
@@ -228,6 +276,11 @@ class S3Client:
 
     @s3_handled("s3.create_bucket")  # type: ignore[untyped-decorator]
     async def create_bucket(self, bucket: str) -> None:
+        """Create a bucket, silently succeeding if it already exists.
+
+        :param bucket: Bucket name to create.
+        """
+
         c = self.__require_client()
 
         try:
@@ -245,6 +298,12 @@ class S3Client:
 
     @s3_handled("s3.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
+        """Assert that the bucket exists.
+
+        :param bucket: Bucket name to verify.
+        :raises NotFoundError: If the bucket does not exist.
+        """
+
         if not await self.bucket_exists(bucket):
             raise NotFoundError("Bucket does not exist")
 
@@ -252,6 +311,12 @@ class S3Client:
 
     @s3_handled("s3.object_exists")  # type: ignore[untyped-decorator]
     async def object_exists(self, bucket: str, key: str) -> bool:
+        """Return whether the given object key exists in the bucket.
+
+        :param bucket: Bucket name.
+        :param key: Object key to probe.
+        """
+
         c = self.__require_client()
 
         try:
@@ -279,6 +344,16 @@ class S3Client:
         metadata: Optional[dict[str, str]] = None,
         tags: Optional[dict[str, str]] = None,
     ) -> None:
+        """Upload raw bytes to an S3 object.
+
+        :param bucket: Target bucket name.
+        :param key: Object key.
+        :param data: Raw bytes to upload.
+        :param content_type: Optional MIME type.
+        :param metadata: Optional user-defined metadata.
+        :param tags: Optional object tags, encoded as URL query parameters.
+        """
+
         c = self.__require_client()
 
         extra: dict[str, Any] = {}
@@ -304,6 +379,13 @@ class S3Client:
 
     @s3_handled("s3.download_bytes")  # type: ignore[untyped-decorator]
     async def download_bytes(self, bucket: str, key: str) -> bytes:
+        """Download the full content of an S3 object as bytes.
+
+        :param bucket: Bucket name.
+        :param key: Object key.
+        :returns: Raw object bytes.
+        """
+
         c = self.__require_client()
 
         resp = await c.get_object(Bucket=bucket, Key=key)
@@ -315,6 +397,12 @@ class S3Client:
 
     @s3_handled("s3.delete_object")  # type: ignore[untyped-decorator]
     async def delete_object(self, bucket: str, key: str) -> None:
+        """Delete an object from the bucket.
+
+        :param bucket: Bucket name.
+        :param key: Object key to delete.
+        """
+
         c = self.__require_client()
 
         await c.delete_object(Bucket=bucket, Key=key)
@@ -330,6 +418,20 @@ class S3Client:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
     ) -> tuple[list[ObjectTypeDef], int]:
+        """List objects in a bucket with optional pagination.
+
+        Streams all pages from the ``list_objects_v2`` paginator and applies
+        the requested offset/limit window in memory.
+
+        :param bucket: Bucket name.
+        :param prefix: Key prefix filter.
+        :param limit: Maximum number of objects to return.
+        :param offset: Number of objects to skip before collecting results.
+        :returns: A tuple of ``(items, total_count)`` where *total_count*
+            reflects the full (unpaginated) result set.
+        :raises CoreError: If *limit* is non-positive or *offset* is negative.
+        """
+
         c = self.__require_client()
 
         paginator = c.get_paginator("list_objects_v2")
@@ -372,6 +474,14 @@ class S3Client:
 
     @s3_handled("s3.head_object")  # type: ignore[untyped-decorator]
     async def head_object(self, bucket: str, key: str) -> S3Head:
+        """Retrieve object metadata without downloading the body.
+
+        :param bucket: Bucket name.
+        :param key: Object key.
+        :returns: An :class:`S3Head` with content type, metadata, size, last
+            modified timestamp, and ETag.
+        """
+
         c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)
 

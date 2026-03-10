@@ -1,3 +1,5 @@
+"""Redis error handler that maps ``redis-py`` exceptions to :class:`~forze.base.errors.CoreError` subtypes."""
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -16,6 +18,13 @@ from forze.base.errors import CoreError, InfrastructureError, error_handler, han
 
 @error_handler
 def _redis_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
+    """Convert a ``redis-py`` exception into an :class:`~forze.base.errors.InfrastructureError`.
+
+    Connection, timeout, authentication, and data errors are mapped to specific
+    messages. Unrecognised exceptions fall back to a generic infrastructure error
+    that includes the operation name.
+    """
+
     match e:
         case CoreError():
             return e

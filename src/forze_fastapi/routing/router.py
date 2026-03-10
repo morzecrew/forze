@@ -39,6 +39,7 @@ from .routes import make_idempotent_route_class
 # ----------------------- #
 
 ExecutionContextDependencyPort = Callable[[], ExecutionContext]
+"""Callable that returns an :class:`ExecutionContext` (used as a FastAPI dependency)."""
 
 # ....................... #
 
@@ -72,6 +73,8 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 
 
 def make_idem_header_dependency(header_key: str):  # type: ignore[no-untyped-def]
+    """Create a FastAPI dependency that validates the idempotency header is present."""
+
     async def dep(idempotency_key: str = Header(..., alias=header_key)) -> None:
         if not idempotency_key:
             raise HTTPException(
@@ -182,6 +185,8 @@ class ForzeAPIRouter(APIRouter):
         idempotent: bool = False,
         idempotency_config: Optional[RouteIdempotencyConfig] = None,
     ) -> None:
+        """Register a route with optional idempotency wrapping for POST methods."""
+
         idempotency_config = idempotency_config or self.__idempotency_config
         deps = list(dependencies or [])
 
@@ -321,6 +326,8 @@ class ForzeAPIRouter(APIRouter):
     # ....................... #
 
     def __guess_dto_param(self, endpoint: Callable[..., Any]) -> str:
+        """Infer the name of the first Pydantic-model parameter in *endpoint*."""
+
         sig = inspect.signature(endpoint)
 
         for name, p in sig.parameters.items():
@@ -338,6 +345,8 @@ class ForzeAPIRouter(APIRouter):
     def __get_request_model_adapter(
         self, endpoint: Callable[..., Any], dto_param: str
     ) -> TypeAdapter[Any]:
+        """Build a :class:`TypeAdapter` for the Pydantic DTO parameter."""
+
         sig = inspect.signature(endpoint)
         p = sig.parameters.get(dto_param)
 

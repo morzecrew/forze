@@ -17,13 +17,17 @@ from .types import StreamMessage
 
 @runtime_checkable
 class StreamReadPort[M: BaseModel](Protocol):
+    """Contract for reading messages from one or more streams."""
+
     def read(
         self,
         stream_mapping: dict[str, str],
         *,
         limit: Optional[int] = None,
         timeout: Optional[timedelta] = None,
-    ) -> Awaitable[list[StreamMessage[M]]]: ...
+    ) -> Awaitable[list[StreamMessage[M]]]:
+        """Read a batch of messages from the streams in *stream_mapping*."""
+        ...
 
     # ....................... #
 
@@ -32,7 +36,9 @@ class StreamReadPort[M: BaseModel](Protocol):
         stream_mapping: dict[str, str],
         *,
         timeout: Optional[timedelta] = None,
-    ) -> AsyncIterator[StreamMessage[M]]: ...
+    ) -> AsyncIterator[StreamMessage[M]]:
+        """Continuously yield new messages from the mapped streams."""
+        ...
 
 
 # ....................... #
@@ -40,6 +46,8 @@ class StreamReadPort[M: BaseModel](Protocol):
 
 @runtime_checkable
 class StreamGroupPort[M: BaseModel](Protocol):
+    """Contract for consumer-group-based stream reads and acknowledgments."""
+
     def read(
         self,
         group: str,
@@ -48,7 +56,9 @@ class StreamGroupPort[M: BaseModel](Protocol):
         *,
         limit: Optional[int] = None,
         timeout: Optional[timedelta] = None,
-    ) -> Awaitable[list[StreamMessage[M]]]: ...
+    ) -> Awaitable[list[StreamMessage[M]]]:
+        """Read pending messages for *consumer* in *group*."""
+        ...
 
     # ....................... #
 
@@ -59,11 +69,15 @@ class StreamGroupPort[M: BaseModel](Protocol):
         stream_mapping: dict[str, str],
         *,
         timeout: Optional[timedelta] = None,
-    ) -> AsyncIterator[StreamMessage[M]]: ...
+    ) -> AsyncIterator[StreamMessage[M]]:
+        """Continuously yield new messages for *consumer* in *group*."""
+        ...
 
     # ....................... #
 
-    def ack(self, group: str, stream: str, ids: Sequence[str]) -> Awaitable[int]: ...
+    def ack(self, group: str, stream: str, ids: Sequence[str]) -> Awaitable[int]:
+        """Acknowledge processed messages within *group*."""
+        ...
 
 
 # ....................... #
@@ -71,6 +85,8 @@ class StreamGroupPort[M: BaseModel](Protocol):
 
 @runtime_checkable
 class StreamWritePort[M: BaseModel](Protocol):
+    """Contract for appending messages to a stream backend."""
+
     def append(
         self,
         stream: str,
@@ -79,4 +95,6 @@ class StreamWritePort[M: BaseModel](Protocol):
         type: Optional[str] = None,
         key: Optional[str] = None,
         timestamp: Optional[datetime] = None,
-    ) -> Awaitable[str]: ...
+    ) -> Awaitable[str]:
+        """Append a message to *stream* and return its identifier."""
+        ...

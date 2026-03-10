@@ -13,6 +13,8 @@ def _set_nested(
     path: Iterable[Any],
     value: Any,
 ) -> None:
+    """Set a deeply nested key in *dst* following *path*."""
+
     cur = dst
     parts = list(path)
 
@@ -34,6 +36,8 @@ def _set_nested(
 
 
 def _shallow_merge(base: JsonDict, patch: JsonDict) -> JsonDict:
+    """Recursively merge *patch* into *base*, returning a new dict."""
+
     out = dict(base)
     for k, v in patch.items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -67,6 +71,8 @@ def _diff_recursive(
     path: tuple[str, ...],
     deletions_as_none: bool,
 ) -> None:
+    """Walk *before* and *after* recursively, collecting changes into *patch*."""
+
     if isinstance(before, dict) and isinstance(after, dict):
         for k in after:
             child_path = path + (k,)
@@ -120,6 +126,8 @@ DictPath = tuple[str, ...]
 
 
 def _is_prefix(a: DictPath, b: DictPath) -> bool:
+    """Return ``True`` if *a* is a prefix of *b*."""
+
     if len(a) > len(b):
         return False
 
@@ -127,6 +135,8 @@ def _is_prefix(a: DictPath, b: DictPath) -> bool:
 
 
 def is_prefix(a: DictPath, b: DictPath) -> bool:
+    """Return ``True`` if either path is a prefix of the other."""
+
     return _is_prefix(a, b) or _is_prefix(b, a)
 
 
@@ -136,6 +146,12 @@ def is_prefix(a: DictPath, b: DictPath) -> bool:
 def split_touches_from_merge_patch(
     patch: JsonDict,
 ) -> tuple[dict[DictPath, Any], set[DictPath]]:
+    """Split a merge patch into scalar and container path sets.
+
+    :param patch: JSON-merge-style patch dictionary.
+    :returns: A tuple of scalar-path→value mapping and a set of container paths.
+    """
+
     scalar_map: dict[DictPath, Any] = {}
     container_paths: set[DictPath] = set()
 
@@ -173,6 +189,12 @@ def has_hybrid_patch_conflict(
     b_scalars: dict[DictPath, Any],
     b_containers: set[DictPath],
 ) -> bool:
+    """Return ``True`` if two patches touch overlapping paths.
+
+    Used to detect merge-patch conflicts where concurrent patches modify
+    the same or ancestor/descendant key paths.
+    """
+
     all_a = set(a_containers) | set(a_scalars.keys())
     all_b = set(b_containers) | set(b_scalars.keys())
 

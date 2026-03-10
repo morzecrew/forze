@@ -16,17 +16,29 @@ from forze.domain.models import (
 
 
 class OutboxEventImmutableFields(CoreModel):
+    """Immutable fields shared across outbox event models."""
+
     topic: str
+    """Target topic for the outbox event."""
+
     payload: JsonDict
+    """Serialized event payload."""
+
     key: Optional[str] = None
+    """Optional partitioning key."""
+
     headers: Mapping[str, str] = Field(default_factory=dict)
+    """Arbitrary string headers attached to the event."""
 
 
 # ....................... #
 
 
 class OutboxEventMutableFields(CoreModel):
+    """Mutable fields shared across outbox event models."""
+
     published_at: Optional[datetime] = None
+    """Timestamp when the event was published; ``None`` while unpublished."""
 
 
 # ....................... #

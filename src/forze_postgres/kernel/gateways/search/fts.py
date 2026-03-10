@@ -1,3 +1,5 @@
+"""Full-text search gateway using Postgres built-in ``tsvector``/``tsquery``."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -30,6 +32,8 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
+    """Search gateway that builds ``tsvector @@ tsquery`` queries with ``ts_rank_cd`` ordering."""
+
     async def _resolve_tsvector_expr(
         self,
         index: str,

@@ -1,3 +1,5 @@
+"""Base gateway classes for Postgres-backed CRUD operations."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -31,6 +33,7 @@ from ..query import PsycopgQueryRenderer
 # ----------------------- #
 
 DEFAULT_SCHEMA: Final[str] = "public"
+"""Default Postgres schema used when none is specified."""
 
 # ....................... #
 
@@ -38,6 +41,12 @@ DEFAULT_SCHEMA: Final[str] = "public"
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresQualifiedName:
+    """Immutable schema-qualified Postgres identifier.
+
+    Provides helpers to produce :mod:`psycopg.sql` composables for safe
+    query interpolation.
+    """
+
     schema: str
     name: str
 
@@ -74,6 +83,12 @@ class PostgresQualifiedName:
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresGateway[M: BaseModel]:
+    """Base gateway providing shared query-building helpers for a single Postgres relation.
+
+    Subclasses implement read, write, search, or history operations.
+    Automatically appends a tenant filter when :attr:`tenant_context` is set.
+    """
+
     qname: PostgresQualifiedName
     client: PostgresClient
     model: type[M]

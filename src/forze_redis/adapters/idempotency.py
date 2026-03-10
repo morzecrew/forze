@@ -1,3 +1,5 @@
+"""Redis-backed :class:`~forze.application.contracts.idempotency.IdempotencyPort` adapter."""
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -27,6 +29,13 @@ _DONE: Final[str] = "D"
 
 @final
 class _Payload(TypedDict, total=False):
+    """Internal JSON envelope stored in Redis for each idempotency record.
+
+    All fields are optional so that a minimal pending record (only ``st`` and
+    ``ph``) can be written on :meth:`RedisIdempotencyAdapter.begin`, then
+    enriched with response data on :meth:`RedisIdempotencyAdapter.commit`.
+    """
+
     st: str
     ph: str
     code: int
@@ -40,6 +49,17 @@ class _Payload(TypedDict, total=False):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisIdempotencyAdapter(IdempotencyPort):
+    """Redis implementation of :class:`~forze.application.contracts.idempotency.IdempotencyPort`.
+
+    Stores a JSON :class:`_Payload` per ``(op, key)`` pair using ``SET NX``
+    with a configurable TTL.  :meth:`begin` acquires the slot (pending state)
+    and returns a cached snapshot when the operation was already completed.
+    :meth:`commit` overwrites the slot with the final response snapshot.
+
+    :raises ~forze.base.errors.ConflictError: On payload-hash mismatch or
+        concurrent in-progress operations.
+    """
+
     client: RedisClient
     tenant_context: Optional[TenantContextPort] = None
 

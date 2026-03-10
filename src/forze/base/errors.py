@@ -158,10 +158,14 @@ def error_handler(fn: ErrorHandler) -> ErrorHandler:
 
 
 def _is_awaitable(obj: Any) -> TypeGuard[Awaitable[Any]]:
+    """Return ``True`` if *obj* is an awaitable (has ``__await__``)."""
+
     return hasattr(obj, "__await__")
 
 
 def _is_contextmanager(obj: Any) -> TypeGuard[ContextManager[Any]]:
+    """Return ``True`` if *obj* is a synchronous context-manager function."""
+
     return (
         inspect.isfunction(obj)
         and obj.__annotations__.get("return") is AbstractContextManager
@@ -169,6 +173,8 @@ def _is_contextmanager(obj: Any) -> TypeGuard[ContextManager[Any]]:
 
 
 def _is_async_contextmanager(obj: Any) -> TypeGuard[AsyncContextManager[Any]]:
+    """Return ``True`` if *obj* is an async context-manager function."""
+
     return (
         inspect.isfunction(obj)
         and obj.__annotations__.get("return") is AbstractAsyncContextManager
@@ -176,10 +182,18 @@ def _is_async_contextmanager(obj: Any) -> TypeGuard[AsyncContextManager[Any]]:
 
 
 def _is_async_iterator(obj: Any) -> TypeGuard[AsyncIterator[Any]]:
+    """Return ``True`` if *obj* implements the async-iterator protocol."""
+
     return hasattr(obj, "__aiter__") and hasattr(obj, "__anext__")
 
 
 def _is_iterator(obj: Any) -> TypeGuard[Iterator[Any]]:
+    """Return ``True`` if *obj* implements the iterator protocol.
+
+    Excludes ``str``, ``bytes``, ``bytearray``, and ``memoryview`` which
+    are iterable but not considered iterators in this context.
+    """
+
     if isinstance(obj, (str, bytes, bytearray, memoryview)):
         return False
 
@@ -195,6 +209,8 @@ R = TypeVar("R")
 
 @attrs.define(slots=True)
 class _CmWrapper[R](ContextManager[R]):  # pragma: no cover
+    """Wrapper that intercepts exceptions from a sync context manager and converts them via an :class:`ErrorHandler`."""
+
     cm: ContextManager[R]
     h: ErrorHandler
     op: str
@@ -228,6 +244,8 @@ class _CmWrapper[R](ContextManager[R]):  # pragma: no cover
 
 @attrs.define(slots=True)
 class _AsyncCmWrapper[R](AsyncContextManager[R]):  # pragma: no cover
+    """Wrapper that intercepts exceptions from an async context manager and converts them via an :class:`ErrorHandler`."""
+
     cm: AsyncContextManager[R]
     h: ErrorHandler
     op: str
@@ -265,6 +283,8 @@ def _wrap_iterator(  # pragma: no cover
     op: str,
     **kwargs: Any,
 ) -> Iterator[R]:
+    """Wrap a sync iterator so exceptions are converted via *h*."""
+
     try:
         for x in it:
             yield x
@@ -285,6 +305,8 @@ async def _wrap_async_iterator(  # pragma: no cover
     op: str,
     **kwargs: Any,
 ) -> AsyncIterator[R]:
+    """Wrap an async iterator so exceptions are converted via *h*."""
+
     try:
         async for x in it:
             yield x
@@ -301,6 +323,8 @@ async def _wrap_async_iterator(  # pragma: no cover
 
 @lru_cache(maxsize=256)
 def _cached_signature(fn: Callable[..., Any]) -> inspect.Signature:
+    """Return a cached :class:`inspect.Signature` for *fn*."""
+
     return inspect.signature(fn)
 
 
@@ -310,6 +334,8 @@ def _prepare_fn(  # pragma: no cover
     *args: P.args,
     **kwargs: P.kwargs,
 ) -> tuple[str, dict[str, Any]]:
+    """Resolve the operation name and bound arguments for error context."""
+
     sig = _cached_signature(fn)
     bound = sig.bind_partial(*args, **kwargs)
     bound.apply_defaults()
@@ -327,6 +353,16 @@ def _prepare_fn(  # pragma: no cover
 
 
 def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyped-def]
+    """Decorator that wraps a callable to convert exceptions via *h*.
+
+    Handles coroutines, sync/async generators, context managers, and plain
+    callables. :class:`CoreError` instances are re-raised without conversion.
+
+    :param h: Error handler used to convert non-:class:`CoreError` exceptions.
+    :param op: Optional operation name passed to the handler; defaults to the
+        callable's ``__name__``.
+    """
+
     @overload  # is_awaitable
     def decorator(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]: ...
 

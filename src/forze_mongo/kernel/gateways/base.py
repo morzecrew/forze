@@ -1,3 +1,5 @@
+"""Base Mongo gateway with shared collection access, query rendering, and document mapping."""
+
 from forze_mongo._compat import require_mongo
 
 require_mongo()
@@ -29,31 +31,56 @@ from ..query import MongoQueryRenderer
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoGateway[M: BaseModel]:
+    """Base gateway providing collection access, query rendering, and document mapping.
+
+    Subclasses (e.g. :class:`MongoReadGateway`, :class:`MongoWriteGateway`)
+    inherit shared helpers for translating between domain models and Mongo
+    storage documents.  All documents are stored with ``_id`` equal to the
+    domain :data:`~forze.domain.constants.ID_FIELD` as a string.
+    """
+
     source: str
+    """Mongo collection name."""
+
     client: MongoClient
+    """Shared :class:`MongoClient` instance."""
+
     model: type[M]
+    """Pydantic model used for deserialization."""
+
     db_name: Optional[str] = None
+    """Override database name; ``None`` uses the client default."""
+
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
+    """Query expression renderer."""
 
     # ....................... #
 
     @cached_property
     def read_fields(self) -> set[str]:
+        """Field names exposed by the model, cached for repeated access."""
+
         return pydantic_field_names(self.model)
 
     # ....................... #
 
     def coll(self) -> AsyncCollection[JsonDict]:
+        """Return the async Mongo collection handle for this gateway's source."""
+
         return self.client.collection(self.source, db_name=self.db_name)
 
     # ....................... #
 
     def _storage_pk(self, pk: UUID) -> str:
+        """Convert a domain primary key to its Mongo string representation."""
+
         return str(pk)
 
     # ....................... #
 
     def _storage_doc(self, data: JsonDict) -> JsonDict:
+        """Map a domain dict to a Mongo document with ``_id`` set."""
+
         out = dict(data)
         out[ID_FIELD] = str(out[ID_FIELD])
         out["_id"] = out[ID_FIELD]
@@ -62,6 +89,8 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     def _from_storage_doc(self, raw: JsonDict) -> JsonDict:
+        """Map a Mongo document back to a domain dict, restoring the ID field."""
+
         out = dict(raw)
         storage_id = out.pop("_id", None)
 
@@ -76,6 +105,8 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     def _coerce_query_value(self, value: Any) -> Any:
+        """Recursively coerce domain values (e.g. UUIDs) to Mongo-safe types."""
+
         if isinstance(value, UUID):
             return str(value)
 
@@ -96,6 +127,8 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     def _render_filters(self, filters: Optional[QueryFilterExpression]) -> JsonDict:  # type: ignore[valid-type]
+        """Parse and render a filter expression into a Mongo query dict."""
+
         if not filters:
             return {}
 
@@ -107,6 +140,11 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     def _sorts(self, sorts: Optional[QuerySortExpression]) -> list[tuple[str, int]]:
+        """Convert a sort expression to Mongo ``(field, direction)`` pairs.
+
+        Defaults to descending by ID when no sorts are provided.
+        """
+
         if not sorts:
             sorts = {ID_FIELD: "desc"}
 
@@ -121,6 +159,8 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     def _projection(self, return_fields: Optional[Sequence[str]]) -> Optional[JsonDict]:
+        """Build a Mongo projection dict, excluding ``_id``."""
+
         if return_fields is None:
             return None
 
@@ -129,4 +169,6 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     def _return_subset(self, raw: JsonDict, return_fields: Sequence[str]) -> JsonDict:
+        """Extract only the requested fields from a document dict."""
+
         return {k: raw.get(k, None) for k in return_fields}

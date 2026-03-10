@@ -75,7 +75,12 @@ def redis_cache(
     context: ExecutionContext,
     spec: CacheSpec,
 ) -> CachePort:
-    """Build a Redis-backed cache port for the given spec."""
+    """Build a Redis-backed cache port for the given spec.
+
+    :param context: Execution context for resolving the Redis client.
+    :param spec: Cache specification with namespace.
+    :returns: Cache port backed by :class:`RedisCacheAdapter`.
+    """
     redis_client = context.dep(RedisClientDepKey)
 
     return RedisCacheAdapter(

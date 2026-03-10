@@ -1,3 +1,5 @@
+"""Postgres catalog introspection with in-memory caching."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -31,6 +33,13 @@ from .utils import extract_index_expr_from_indexdef, normalize_pg_type
 @final
 @attrs.define(slots=True, kw_only=True)
 class PostgresIntrospector:
+    """Cached introspector that queries Postgres system catalogs.
+
+    Results for relations, columns, and indexes are cached in-memory
+    and can be selectively invalidated via :meth:`invalidate_relation`,
+    :meth:`invalidate_index`, or fully cleared with :meth:`clear`.
+    """
+
     client: PostgresClient = attrs.field(on_setattr=attrs.setters.frozen)
 
     # Non initable fields
@@ -52,6 +61,14 @@ class PostgresIntrospector:
         schema: Optional[str],
         relation: str,
     ) -> PostgresRelationKind:
+        """Return the :data:`PostgresRelationKind` of a relation, using the cache when available.
+
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :param relation: Relation (table/view) name.
+        :returns: Classified relation kind.
+        :raises CoreError: If the relation does not exist.
+        """
+
         schema = self.__normalize_schema(schema)
         key = (schema, relation)
 
@@ -110,6 +127,15 @@ class PostgresIntrospector:
             "partitioned_table",
         ),
     ) -> PostgresRelationKind:
+        """Assert that a relation exists and its kind is in *allow*.
+
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :param relation: Relation name.
+        :param allow: Acceptable relation kinds.
+        :returns: The validated relation kind.
+        :raises CoreError: If the relation kind is not in *allow*.
+        """
+
         kind = await self.get_relation(schema=schema, relation=relation)
 
         if kind not in allow:
@@ -129,6 +155,14 @@ class PostgresIntrospector:
         schema: Optional[str],
         relation: str,
     ) -> PostgresColumnTypes:
+        """Return the column type map for a relation, using the cache when available.
+
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :param relation: Relation name.
+        :returns: Mapping of column names to :class:`PostgresType`.
+        :raises CoreError: If the relation does not exist or has no columns.
+        """
+
         schema = self.__normalize_schema(schema)
         key = (schema, relation)
 
@@ -202,6 +236,14 @@ class PostgresIntrospector:
     # ....................... #
 
     async def get_index_def(self, *, index: str, schema: Optional[str] = None) -> str:
+        """Return the raw ``CREATE INDEX`` definition for an index.
+
+        :param index: Index name.
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :returns: The full index definition string.
+        :raises CoreError: If the index does not exist.
+        """
+
         schema = self.__normalize_schema(schema)
         key = (schema, index)
 
@@ -237,6 +279,16 @@ class PostgresIntrospector:
         index: str,
         schema: Optional[str] = None,
     ) -> PostgresIndexInfo:
+        """Return full :class:`PostgresIndexInfo` for an index, classifying its engine.
+
+        Populates both the index cache and the index definition cache.
+
+        :param index: Index name.
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :returns: Index metadata with classified engine.
+        :raises CoreError: If the index does not exist.
+        """
+
         schema = self.__normalize_schema(schema)
         key = (schema, index)
 
@@ -334,6 +386,8 @@ class PostgresIntrospector:
     # ....................... #
 
     def invalidate_relation(self, *, schema: Optional[str], relation: str) -> None:
+        """Evict cached relation kind and column types for a specific relation."""
+
         schema = self.__normalize_schema(schema)
         self.__relation_cache.pop((schema, relation), None)
         self.__column_cache.pop((schema, relation), None)
@@ -341,6 +395,8 @@ class PostgresIntrospector:
     # ....................... #
 
     def invalidate_index(self, *, schema: Optional[str], index: str) -> None:
+        """Evict cached index info and definition for a specific index."""
+
         schema = self.__normalize_schema(schema)
         key = (schema, index)
         self.__index_cache.pop(key, None)
@@ -349,6 +405,8 @@ class PostgresIntrospector:
     # ....................... #
 
     def clear(self) -> None:
+        """Clear all introspection caches."""
+
         self.__relation_cache.clear()
         self.__column_cache.clear()
         self.__index_cache.clear()

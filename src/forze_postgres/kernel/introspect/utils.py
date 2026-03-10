@@ -1,3 +1,5 @@
+"""Utilities for normalizing Postgres type names and parsing index definitions."""
+
 import re
 from typing import Optional
 
@@ -5,6 +7,15 @@ from typing import Optional
 
 
 def normalize_pg_type(base: str) -> str:
+    """Normalize a verbose Postgres type name to its canonical short form.
+
+    For example, ``"timestamp with time zone"`` becomes ``"timestamptz"``
+    and ``"character varying"`` becomes ``"varchar"``.
+
+    :param base: Raw type name from ``format_type()``.
+    :returns: Canonical short type name.
+    """
+
     b = base.strip().lower()
 
     # timestamptz

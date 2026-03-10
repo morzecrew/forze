@@ -14,8 +14,13 @@ from .service import OutboxService
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FlushOutboxEffect[Args, R](Effect[Args, R]):
+    """After-commit effect that flushes buffered outbox events to storage."""
+
     buf: ContextualBuffer[CreateOutboxEventCmd]
+    """Buffer holding outbox event drafts accumulated during the request."""
+
     outbox: OutboxService
+    """Service used to persist the buffered events."""
 
     # ....................... #
 

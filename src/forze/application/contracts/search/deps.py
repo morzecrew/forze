@@ -1,4 +1,4 @@
-"""Document dependency keys and routers."""
+"""Search dependency keys and routers."""
 
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final, runtime_checkable
 
@@ -58,6 +58,8 @@ SearchWriteDepKey = DepKey[SearchWriteDepPort]("search_write")
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class SearchDepRouter(DepRouter[SearchSpec[Any], SearchReadDepPort], SearchReadDepPort):
+    """Router that dispatches :class:`SearchReadDepPort` calls by spec."""
+
     dep_key = SearchReadDepKey
 
     def __call__(
@@ -78,6 +80,8 @@ class SearchDepRouter(DepRouter[SearchSpec[Any], SearchReadDepPort], SearchReadD
 class SearchWriteDepRouter(
     DepRouter[SearchSpec[Any], SearchWriteDepPort], SearchWriteDepPort
 ):
+    """Router that dispatches :class:`SearchWriteDepPort` calls by spec."""
+
     dep_key = SearchWriteDepKey
 
     def __call__(

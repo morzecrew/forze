@@ -1,3 +1,5 @@
+"""Redis Streams adapters implementing read, write, and consumer-group ports."""
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -33,6 +35,14 @@ _F_KEY: Final[str] = "key"
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamCodec[M: BaseModel]:
+    """JSON codec for Redis Stream entries.
+
+    :meth:`encode` converts a Pydantic model into a ``dict[str, str]`` suitable
+    for ``XADD``.  :meth:`decode` reconstructs a
+    :class:`~forze.application.contracts.stream.StreamMessage` from the raw
+    bytes-keyed field map returned by ``XREAD`` / ``XREADGROUP``.
+    """
+
     model: type[M]
 
     # ....................... #
@@ -87,6 +97,12 @@ class RedisStreamCodec[M: BaseModel]:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
+    """Redis implementation of :class:`~forze.application.contracts.stream.StreamReadPort` and :class:`~forze.application.contracts.stream.StreamWritePort`.
+
+    Reads via ``XREAD`` and appends via ``XADD``.  :meth:`tail` polls
+    continuously, advancing the per-stream cursor after each message.
+    """
+
     client: RedisClient
     codec: RedisStreamCodec[M]
 
@@ -152,6 +168,13 @@ class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
+    """Redis implementation of :class:`~forze.application.contracts.stream.StreamGroupPort`.
+
+    Reads via ``XREADGROUP`` with ``noack=True`` and acknowledges messages
+    explicitly through :meth:`ack`.  :meth:`tail` polls continuously,
+    advancing the per-stream cursor after each message.
+    """
+
     client: RedisClient
     codec: RedisStreamCodec[M]
 

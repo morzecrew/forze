@@ -37,6 +37,8 @@ def search_facade_dependency(
     provider: SearchUsecasesFacadeProvider[M],
     ctx: ExecutionContextDependencyPort,
 ) -> Callable[[ExecutionContext], SearchUsecasesFacade[M]]:
+    """Create a FastAPI dependency that resolves a :class:`SearchUsecasesFacade`."""
+
     def facade(
         context: ExecutionContext = Depends(ctx),
     ) -> SearchUsecasesFacade[M]:
@@ -54,6 +56,8 @@ def attach_search_router(
     provider: SearchUsecasesFacadeProvider[M],
     context: ExecutionContextDependencyPort,
 ) -> R:
+    """Attach typed and raw search endpoints to an existing *router*."""
+
     read_dto = provider.read_dto
 
     ucs_dep = search_facade_dependency(provider, context)
@@ -114,6 +118,8 @@ def build_search_router(
     provider: SearchUsecasesFacadeProvider[M],
     context: ExecutionContextDependencyPort,
 ) -> ForzeAPIRouter:
+    """Build a standalone :class:`ForzeAPIRouter` with search endpoints."""
+
     router = ForzeAPIRouter(
         prefix=prefix,
         tags=tags,

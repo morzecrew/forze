@@ -1,3 +1,5 @@
+"""Mongo gateway for document write operations (create, update, delete, restore)."""
+
 from forze_mongo._compat import require_mongo
 
 require_mongo()
@@ -34,11 +36,29 @@ MongoRevBumpStrategy = Literal["application"]
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGateway[D]):
+    """Write gateway for Mongo documents with optimistic concurrency and optional history.
+
+    Uses a :class:`MongoReadGateway` for read-before-write patterns and
+    delegates history snapshots to an optional :class:`MongoHistoryGateway`.
+    Revision bumps are controlled by :attr:`rev_bump_strategy`; concurrent
+    writes to the same revision are detected and raise
+    :exc:`~forze.base.errors.ConcurrencyError`.
+    """
+
     read: MongoReadGateway[D]
+    """Companion read gateway; must share the same client, source, and database."""
+
     create_dto: type[C]
+    """Pydantic model for creation payloads."""
+
     update_dto: type[U]
+    """Pydantic model for update payloads."""
+
     history: Optional[MongoHistoryGateway[D]] = None
+    """Optional history gateway for revision snapshots."""
+
     rev_bump_strategy: MongoRevBumpStrategy = "application"
+    """Strategy used to increment the document revision on writes."""
 
     # ....................... #
 
@@ -125,6 +145,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     def supports_soft_delete(self) -> bool:
+        """Return whether the underlying model declares a soft-delete field."""
+
         return SOFT_DELETE_FIELD in pydantic_field_names(self.read.model)
 
     # ....................... #
@@ -136,6 +158,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def create(self, dto: C) -> D:
+        """Insert a new document from a creation DTO and record its history.
+
+        :param dto: Creation payload.
+        :returns: The persisted domain document.
+        """
+
         model = self._from_cdto(dto)
         data = pydantic_dump(model)
 
@@ -147,6 +175,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def create_many(self, dtos: Sequence[C]) -> Sequence[D]:
+        """Bulk-insert documents from creation DTOs and record their history.
+
+        :param dtos: Creation payloads. No-ops when empty.
+        """
+
         if not dtos:
             return []
 
@@ -277,6 +310,14 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> D:
+        """Apply an update DTO to an existing document.
+
+        :param pk: Document primary key.
+        :param dto: Update payload.
+        :param rev: Expected revision for historical consistency validation.
+        :returns: The updated domain document.
+        """
+
         update_data = pydantic_dump(dto, exclude={"unset": True})
         return await self._patch(pk, update_data, rev=rev)
 
@@ -289,6 +330,15 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[D]:
+        """Bulk-update documents with corresponding DTOs.
+
+        :param pks: Document primary keys (must be unique).
+        :param dtos: Update payloads matching *pks* by position.
+        :param revs: Optional expected revisions for history validation.
+        :raises CoreError: If lengths of *pks* and *dtos* (or *revs*) differ.
+        :raises ValidationError: If *pks* contains duplicates.
+        """
+
         if len(pks) != len(dtos):
             raise CoreError("Length mismatch between primary keys and updates")
 
@@ -304,11 +354,22 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def touch(self, pk: UUID) -> D:
+        """Bump a document's revision without changing its data.
+
+        :param pk: Document primary key.
+        """
+
         return await self._patch(pk)
 
     # ....................... #
 
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[D]:
+        """Bump revisions for multiple documents without changing their data.
+
+        :param pks: Document primary keys (must be unique).
+        :raises ValidationError: If *pks* contains duplicates.
+        """
+
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
@@ -317,11 +378,22 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
+        """Hard-delete a document from the collection.
+
+        :param pk: Document primary key.
+        """
+
         await self.client.delete_one(self.coll(), {"_id": self._storage_pk(pk)})
 
     # ....................... #
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
+        """Hard-delete multiple documents from the collection.
+
+        :param pks: Document primary keys (must be unique). No-ops when empty.
+        :raises ValidationError: If *pks* contains duplicates.
+        """
+
         if not pks:
             return
 
@@ -336,6 +408,13 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> D:
+        """Soft-delete a document by setting the deleted flag.
+
+        :param pk: Document primary key.
+        :param rev: Expected revision for historical consistency validation.
+        :raises CoreError: If the model does not support soft deletion.
+        """
+
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -349,6 +428,14 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[D]:
+        """Soft-delete multiple documents.
+
+        :param pks: Document primary keys (must be unique).
+        :param revs: Optional expected revisions for history validation.
+        :raises CoreError: If the model does not support soft deletion.
+        :raises ValidationError: If *pks* contains duplicates.
+        """
+
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -364,6 +451,13 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> D:
+        """Restore a soft-deleted document by clearing the deleted flag.
+
+        :param pk: Document primary key.
+        :param rev: Expected revision for historical consistency validation.
+        :raises CoreError: If the model does not support soft deletion.
+        """
+
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -377,6 +471,14 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         *,
         revs: Optional[Sequence[int]] = None,
     ) -> Sequence[D]:
+        """Restore multiple soft-deleted documents.
+
+        :param pks: Document primary keys (must be unique).
+        :param revs: Optional expected revisions for history validation.
+        :raises CoreError: If the model does not support soft deletion.
+        :raises ValidationError: If *pks* contains duplicates.
+        """
+
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 

@@ -1,3 +1,5 @@
+"""Postgres adapter implementing the document read/write port contracts."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -42,6 +44,13 @@ class PostgresDocumentAdapter(
     DocumentWritePort[R, D, C, U],
     TxScopedPort,
 ):
+    """Postgres-backed implementation of :class:`DocumentReadPort` and :class:`DocumentWritePort`.
+
+    Delegates to :class:`PostgresReadGateway` and :class:`PostgresWriteGateway` for
+    database access. Supports optional :class:`CachePort` integration for
+    read-through caching with versioned invalidation.
+    """
+
     read_gw: PostgresReadGateway[R]
     write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
     cache: Optional[CachePort] = None

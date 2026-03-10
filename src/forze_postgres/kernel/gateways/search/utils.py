@@ -1,3 +1,5 @@
+"""Utilities for mapping search spec groups to Postgres FTS weight letters."""
+
 import logging
 from typing import Literal, Optional
 
@@ -8,9 +10,19 @@ from forze.application.contracts.search import SearchIndexSpecInternal, SearchOp
 _logger = logging.getLogger(__name__)
 
 FtsGroupLetter = Literal["A", "B", "C", "D"]
+"""One of the four Postgres FTS weight labels."""
 
 
 def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
+    """Map search spec group names to FTS weight letters ordered by descending weight.
+
+    Postgres supports at most four weight letters (``A``–``D``).  Groups beyond
+    the first four are dropped with a warning.
+
+    :param spec: Internal search index specification.
+    :returns: Mapping of group name to weight letter.
+    """
+
     if not spec.groups:
         return {"__default__": "A"}
 
@@ -36,6 +48,16 @@ def fts_rank_weights_array(
     spec: SearchIndexSpecInternal,
     options: Optional[SearchOptions] = None,
 ) -> list[float]:
+    """Build the four-element weight array for ``ts_rank_cd`` in ``[D, C, B, A]`` order.
+
+    Base weights come from the spec groups; per-request overrides in *options*
+    take precedence.
+
+    :param spec: Internal search index specification.
+    :param options: Optional per-request search options with weight overrides.
+    :returns: Four-element float list ordered ``[D, C, B, A]``.
+    """
+
     options = options or {}
     group_letters = fts_map_groups(spec)
 

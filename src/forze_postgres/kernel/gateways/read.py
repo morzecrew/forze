@@ -1,3 +1,5 @@
+"""Read-only gateway for fetching documents from a Postgres relation."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -27,6 +29,8 @@ T = TypeVar("T", bound=BaseModel)
 
 @final
 class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
+    """Read-only gateway providing single/batch lookups, filtered queries, and counting."""
+
     @overload
     async def get(
         self,

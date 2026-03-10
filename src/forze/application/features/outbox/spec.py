@@ -1,3 +1,5 @@
+"""Pre-built :class:`~forze.application.contracts.document.DocumentSpec` for outbox events."""
+
 from forze.application.contracts.document import DocumentSpec
 
 from .model import (
@@ -15,3 +17,4 @@ OutboxSpec = DocumentSpec[
     CreateOutboxEventCmd,
     UpdateOutboxEventCmd,
 ]
+"""Document specification wired for outbox event models."""

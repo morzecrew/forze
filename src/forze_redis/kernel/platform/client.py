@@ -39,6 +39,14 @@ class RedisConfig:
 @final
 @attrs.define(slots=True)
 class RedisClient:
+    """Async Redis client with connection pooling and context-bound pipelines.
+
+    Must be initialised via :meth:`initialize` with a DSN before use.  Uses
+    context variables to share a single pipeline per logical request, so nested
+    :meth:`pipeline` blocks reuse the parent pipeline and increment a depth
+    counter instead of creating a new one.
+    """
+
     __pool: Optional[ConnectionPool] = attrs.field(default=None, init=False)
     __client: Optional[Redis] = attrs.field(default=None, init=False)
 

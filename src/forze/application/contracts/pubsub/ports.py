@@ -17,6 +17,8 @@ from .types import PubSubMessage
 
 @runtime_checkable
 class PubSubPublishPort[M: BaseModel](Protocol):
+    """Contract for publishing messages to a pubsub backend."""
+
     def publish(
         self,
         topic: str,
@@ -25,7 +27,9 @@ class PubSubPublishPort[M: BaseModel](Protocol):
         type: Optional[str] = None,
         key: Optional[str] = None,
         published_at: Optional[datetime] = None,
-    ) -> Awaitable[None]: ...
+    ) -> Awaitable[None]:
+        """Publish a single message to *topic*."""
+        ...
 
 
 # ....................... #
@@ -33,9 +37,13 @@ class PubSubPublishPort[M: BaseModel](Protocol):
 
 @runtime_checkable
 class PubSubSubscribePort[M: BaseModel](Protocol):
+    """Contract for subscribing to messages from a pubsub backend."""
+
     def subscribe(
         self,
         topics: Sequence[str],
         *,
         timeout: Optional[timedelta] = None,
-    ) -> AsyncIterator[PubSubMessage[M]]: ...
+    ) -> AsyncIterator[PubSubMessage[M]]:
+        """Yield messages from the given *topics* until *timeout* elapses."""
+        ...

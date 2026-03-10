@@ -31,6 +31,8 @@ StorageDepKey = DepKey[StorageDepPort]("storage")
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class StorageDepRouter(DepRouter[str, StorageDepPort], StorageDepPort):
+    """Router that dispatches :class:`StorageDepPort` calls by bucket name."""
+
     dep_key = StorageDepKey
 
     def __call__(self, context: "ExecutionContext", bucket: str) -> StoragePort:

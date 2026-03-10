@@ -1,3 +1,5 @@
+"""Base search gateway with index selection logic."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -23,6 +25,8 @@ from ..base import PostgresGateway
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
+    """Abstract search gateway that holds a :class:`SearchSpecInternal` and picks the target index."""
+
     search_spec: SearchSpecInternal[M]
 
     # ....................... #
