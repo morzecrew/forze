@@ -1,4 +1,3 @@
-from .conformity import QueueConformity, QueueDepConformity
 from .deps import (
     QueueReadDepKey,
     QueueReadDepPort,
@@ -15,8 +14,6 @@ __all__ = [
     "QueueMessage",
     "QueueReadPort",
     "QueueWritePort",
-    "QueueConformity",
-    "QueueDepConformity",
     "QueueSpec",
     "QueueReadDepPort",
     "QueueReadDepKey",

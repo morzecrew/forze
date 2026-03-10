@@ -168,7 +168,7 @@ class PsycopgQueryRenderer:
     def _render_field(
         self,
         col: sql.Composable,
-        op: QueryOp.All,
+        op: QueryOp.All,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
@@ -199,7 +199,7 @@ class PsycopgQueryRenderer:
     def _render_unary(
         self,
         col: sql.Composable,
-        op: QueryOp.Unary,
+        op: QueryOp.Unary,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
@@ -248,12 +248,12 @@ class PsycopgQueryRenderer:
     def _render_ord(
         self,
         col: sql.Composable,
-        op: QueryOp.Ord,
+        op: QueryOp.Ord,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        op_map: dict[QueryOp.Ord, str] = {
+        op_map: dict[QueryOp.Ord, str] = {  # type: ignore[valid-type]
             "$gt": ">",
             "$gte": ">=",
             "$lt": "<",
@@ -269,12 +269,12 @@ class PsycopgQueryRenderer:
     def _render_eq(
         self,
         col: sql.Composable,
-        op: QueryOp.Eq,
+        op: QueryOp.Eq,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        op_map: dict[QueryOp.Eq, str] = {
+        op_map: dict[QueryOp.Eq, str] = {  # type: ignore[valid-type]
             "$eq": "=",
             "$neq": "<>",
         }
@@ -288,7 +288,7 @@ class PsycopgQueryRenderer:
     def _render_memb(
         self,
         col: sql.Composable,
-        op: QueryOp.Memb,
+        op: QueryOp.Memb,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
@@ -303,12 +303,12 @@ class PsycopgQueryRenderer:
     def _render_set_rel(
         self,
         col: sql.Composable,
-        op: QueryOp.SetRel,
+        op: QueryOp.SetRel,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
     ) -> sql.Composable:
-        op_map: dict[QueryOp.SetRel, str] = {
+        op_map: dict[QueryOp.SetRel, str] = {  # type: ignore[valid-type]
             "$superset": "@>",
             "$subset": "<@",
             "$overlaps": "&&",
@@ -328,11 +328,11 @@ class PsycopgQueryRenderer:
 
     @staticmethod
     def _normalize_op(
-        op: QueryOp.All,
+        op: QueryOp.All,  # type: ignore[valid-type]
         value: Any,
         *,
         t: Optional[PostgresType],
-    ) -> tuple[QueryOp.All, Any]:
+    ) -> tuple[QueryOp.All, Any]:  # type: ignore[valid-type]
         if t is not None and t.is_array:
             if op == "$eq":
                 if isinstance(value, QueryValue.Scalar):

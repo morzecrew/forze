@@ -139,7 +139,7 @@ class RabbitMQClient:
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.channel")
+    @rabbitmq_handled("rabbitmq.channel")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def channel(self) -> AsyncIterator[AbstractChannel]:
         depth = self.__ctx_depth.get()
@@ -282,7 +282,7 @@ class RabbitMQClient:
     # ....................... #
     # Canonical queue methods
 
-    @rabbitmq_handled("rabbitmq.enqueue")
+    @rabbitmq_handled("rabbitmq.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,
         queue: str,
@@ -306,7 +306,7 @@ class RabbitMQClient:
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.enqueue_many")
+    @rabbitmq_handled("rabbitmq.enqueue_many")  # type: ignore[untyped-decorator]
     async def enqueue_many(
         self,
         queue: str,
@@ -351,7 +351,7 @@ class RabbitMQClient:
                     message_id=resolved_message_id,
                     timestamp=enqueued_at,
                     type=type,
-                    headers=headers,  # pyright: ignore[reportArgumentType]
+                    headers=headers,  # type: ignore[arg-type]
                 )
 
                 await channel.default_exchange.publish(message, routing_key=queue)
@@ -360,7 +360,7 @@ class RabbitMQClient:
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.receive")
+    @rabbitmq_handled("rabbitmq.receive")  # type: ignore[untyped-decorator]
     async def receive(
         self,
         queue: str,
@@ -394,7 +394,7 @@ class RabbitMQClient:
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.consume")
+    @rabbitmq_handled("rabbitmq.consume")  # type: ignore[untyped-decorator]
     async def consume(
         self,
         queue: str,
@@ -450,7 +450,7 @@ class RabbitMQClient:
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.ack")
+    @rabbitmq_handled("rabbitmq.ack")  # type: ignore[untyped-decorator]
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         if not ids:
             return 0
@@ -467,7 +467,7 @@ class RabbitMQClient:
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.nack")
+    @rabbitmq_handled("rabbitmq.nack")  # type: ignore[untyped-decorator]
     async def nack(
         self,
         queue: str,

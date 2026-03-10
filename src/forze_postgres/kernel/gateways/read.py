@@ -178,7 +178,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -188,7 +188,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -198,7 +198,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -208,7 +208,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -217,7 +217,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
         return_model: Optional[type[T]] = None,
@@ -253,7 +253,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -265,7 +265,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -277,7 +277,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -289,7 +289,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -300,7 +300,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -343,7 +343,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
         where, params = await self.where_clause(filters)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(

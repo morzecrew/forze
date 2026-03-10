@@ -24,7 +24,7 @@ from .keys import MongoClientDepKey
 def read_gw(
     ctx: ExecutionContext,
     spec: DocumentReadSpec[Any],
-):
+) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
     client = ctx.dep(MongoClientDepKey)
 
@@ -39,7 +39,7 @@ def _doc_history_gw(
     spec: DocumentHistorySpec,
     write_spec: DocumentWriteSpec[Any, Any, Any],
     history_write_strategy: MongoHistoryWriteStrategy = "application",
-):
+) -> MongoHistoryGateway[Any]:
     """Build a history gateway for document audit trails."""
     client = ctx.dep(MongoClientDepKey)
 
@@ -62,7 +62,7 @@ def doc_write_gw(
     *,
     rev_bump_strategy: MongoRevBumpStrategy = "application",
     history_write_strategy: MongoHistoryWriteStrategy = "application",
-):
+) -> MongoWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history."""
     client = ctx.dep(MongoClientDepKey)
     read = read_gw(ctx, {"source": spec["source"], "model": spec["models"]["domain"]})

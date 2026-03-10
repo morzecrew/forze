@@ -122,7 +122,7 @@ class S3StorageAdapter(StoragePort):
                 raise CoreError("Invalid object metadata")
 
             try:
-                meta = ObjectMetadata(**h["metadata"])
+                meta = ObjectMetadata(**h["metadata"])  # type: ignore[typeddict-item]
 
             except Exception as e:
                 raise CoreError("Invalid object metadata") from e
@@ -181,7 +181,7 @@ class S3StorageAdapter(StoragePort):
                     raise CoreError("Invalid object metadata")
 
                 try:
-                    meta = ObjectMetadata(**h["metadata"])
+                    meta = ObjectMetadata(**h["metadata"])  # type: ignore[typeddict-item]
 
                 except Exception as e:
                     raise CoreError("Invalid object metadata") from e
@@ -208,17 +208,17 @@ class S3StorageAdapter(StoragePort):
     @staticmethod
     def _guess_content_type(filename: str, data: bytes) -> str:
         try:
-            ct = magic.from_buffer(data, mime=True)
+            ct_magic = magic.from_buffer(data, mime=True)
 
-            if ct:
-                return ct
+            if ct_magic:
+                return ct_magic
 
         except Exception:  # nosec B110
             pass
 
-        ct, _ = mimetypes.guess_type(filename)
+        ct_mimetypes, _ = mimetypes.guess_type(filename)
 
-        if ct:
-            return ct
+        if ct_mimetypes:
+            return ct_mimetypes
 
         return "application/octet-stream"

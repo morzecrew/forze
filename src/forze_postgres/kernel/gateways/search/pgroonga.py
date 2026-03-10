@@ -4,7 +4,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Never, Optional, Sequence, TypeVar, overload
+from typing import Any, Optional, Sequence, TypeVar, overload
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -99,14 +99,14 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         r_ph = sql.Placeholder()
         w_ph = sql.Placeholder()
 
-        q = PostgresQualifiedName.from_string(index)
+        qualified_name = PostgresQualifiedName.from_string(index)
         index_info = await self.introspector.get_index_info(
-            index=q.name, schema=q.schema
+            index=qualified_name.name, schema=qualified_name.schema
         )
 
         if index_info.engine != "pgroonga":
             raise CoreError(
-                f"Index {q.string()} has unsupported engine: {index_info.engine} (required: pgroonga)"
+                f"Index {qualified_name.string()} has unsupported engine: {index_info.engine} (required: pgroonga)"
             )
 
         # check expression for array or single field
@@ -155,7 +155,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
     def _pgroonga_order(
         self,
-        sorts: Optional[QuerySortExpression] = None,
+        sorts: Optional[QuerySortExpression] = None,  # type: ignore[valid-type]
     ) -> sql.Composable:
         parts: list[sql.Composable] = [sql.SQL("pgroonga_score(tableoid, ctid) DESC")]
 
@@ -174,7 +174,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def _where_clause(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         *,
         options: Optional[SearchOptions] = None,
     ) -> tuple[sql.Composable, list[Any]]:
@@ -194,7 +194,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -208,7 +208,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -222,7 +222,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -232,24 +232,10 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
 
-    @overload
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[SearchOptions] = ...,
-        return_model: type[T] = ...,
-        return_fields: Sequence[str] = ...,
-    ) -> Never: ...
-
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,

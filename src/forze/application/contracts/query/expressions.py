@@ -48,11 +48,11 @@ QueryPredicate = TypedDict("QueryPredicate", {"$fields": QueryFieldMap})
 """Predicate with ``$fields`` mapping."""
 
 QueryConjunction = TypedDict(
-    "QueryConjunction", {"$and": list["QueryFilterExpression"]}
+    "QueryConjunction", {"$and": list["QueryFilterExpression"]}  # type: ignore[valid-type]
 )
 """Conjunction of filter expressions."""
 
-QueryDisjunction = TypedDict("QueryDisjunction", {"$or": list["QueryFilterExpression"]})
+QueryDisjunction = TypedDict("QueryDisjunction", {"$or": list["QueryFilterExpression"]})  # type: ignore[valid-type]
 """Disjunction of filter expressions."""
 
 QueryFilterExpression = QueryPredicate | QueryConjunction | QueryDisjunction

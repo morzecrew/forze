@@ -32,7 +32,7 @@ def _status_code_mapper(exc: CoreError) -> int:
 # ....................... #
 
 
-async def forze_exception_handler(request: Request, exc: CoreError):
+async def forze_exception_handler(request: Request, exc: CoreError) -> JSONResponse:
     return JSONResponse(
         status_code=_status_code_mapper(exc),
         content={"detail": exc.message},
@@ -43,5 +43,5 @@ async def forze_exception_handler(request: Request, exc: CoreError):
 # ....................... #
 
 
-def register_exception_handlers(app: FastAPI):
+def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(CoreError)(forze_exception_handler)

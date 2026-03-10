@@ -235,7 +235,7 @@ class PostgresClient:
 
     # ....................... #
 
-    @psycopg_handled("postgres.transaction")
+    @psycopg_handled("postgres.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(
         self,
@@ -394,7 +394,7 @@ class PostgresClient:
         return_rowcount: Literal[True],
     ) -> int: ...
 
-    @psycopg_handled("postgres.execute")
+    @psycopg_handled("postgres.execute")  # type: ignore[untyped-decorator]
     async def execute(
         self,
         query: QueryNoTemplate,
@@ -429,7 +429,7 @@ class PostgresClient:
 
     # ....................... #
 
-    @psycopg_handled("postgres.execute_many")
+    @psycopg_handled("postgres.execute_many")  # type: ignore[untyped-decorator]
     async def execute_many(
         self, query: QueryNoTemplate, params: Sequence[Params]
     ) -> None:
@@ -468,7 +468,7 @@ class PostgresClient:
         commit: bool = False,
     ) -> list[tuple[Any, ...]]: ...
 
-    @psycopg_handled("postgres.fetch_all")
+    @psycopg_handled("postgres.fetch_all")  # type: ignore[untyped-decorator]
     async def fetch_all(
         self,
         query: QueryNoTemplate,
@@ -494,6 +494,7 @@ class PostgresClient:
                 await cur.execute(query, params)
 
                 rows = await cur.fetchall()
+                res: list[JsonDict] | list[tuple[Any, ...]]
 
                 if row_factory == "tuple":
                     res = list(rows)
@@ -528,7 +529,7 @@ class PostgresClient:
         commit: bool = False,
     ) -> Optional[tuple[Any, ...]]: ...
 
-    @psycopg_handled("postgres.fetch_one")
+    @psycopg_handled("postgres.fetch_one")  # type: ignore[untyped-decorator]
     async def fetch_one(
         self,
         query: QueryNoTemplate,
@@ -554,6 +555,7 @@ class PostgresClient:
                 await cur.execute(query, params)
 
                 row = await cur.fetchone()
+                res: Optional[JsonDict | tuple[Any, ...]]
 
                 if row is None:
                     res = None
@@ -571,7 +573,7 @@ class PostgresClient:
 
     # ....................... #
 
-    @psycopg_handled("postgres.fetch_value")
+    @psycopg_handled("postgres.fetch_value")  # type: ignore[untyped-decorator]
     async def fetch_value(
         self,
         query: QueryNoTemplate,

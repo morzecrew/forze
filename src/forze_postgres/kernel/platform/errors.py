@@ -64,12 +64,15 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
 
         case errors.DeadlockDetected():
             # usually safe to retry
-            return ConcurrencyError("Deadlock detected. Please retry.", code="deadlock")
+            return ConcurrencyError(
+                message="Deadlock detected. Please retry.",
+                code="deadlock",
+            )
 
         case errors.SerializationFailure():
             # SERIALIZABLE / REPEATABLE READ conflicts
             return ConcurrencyError(
-                "Transaction serialization failure. Please retry.",
+                message="Transaction serialization failure. Please retry.",
                 code="serialization_failure",
             )
 
@@ -78,7 +81,7 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
         case errors.LockNotAvailable():
             # NOWAIT lock couldn't be acquired
             return ConcurrencyError(
-                "Lock not available. Please retry.",
+                message="Lock not available. Please retry.",
                 code="lock_not_available",
             )
 

@@ -1,4 +1,4 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast, final
 from uuid import UUID
 
 import attrs
@@ -92,7 +92,8 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentUsecasesFacadeProvider(
-    BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U]], Generic[R, C, U]
+    BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U]],
+    Generic[R, C, U],
 ):
     """Factory that produces a document usecases facade for a given context."""
 
@@ -104,7 +105,7 @@ class DocumentUsecasesFacadeProvider(
 
     # Non initable fields
     facade: type[DocumentUsecasesFacade[R, C, U]] = attrs.field(
-        default=DocumentUsecasesFacade,
+        default=cast(type[DocumentUsecasesFacade[R, C, U]], DocumentUsecasesFacade),
         init=False,
     )
     """Facade type to produce."""

@@ -92,7 +92,7 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
-            return
+            return None
 
         else:
             new_instance = type(self)(defaults=new)
@@ -150,7 +150,7 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
-            return
+            return None
 
         else:
             new_instance = type(self)(defaults=new)
@@ -215,7 +215,7 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
-            return
+            return None
 
         else:
             new_instance = type(self)(defaults=new)
@@ -283,7 +283,7 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
-            return
+            return None
 
         else:
             new_instance = type(self)(defaults=new)
@@ -337,7 +337,7 @@ class UsecaseRegistry:
 
         if inplace:
             self.__plan = merged
-            return
+            return None
 
         else:
             new_instance = type(self)(defaults=self.defaults)

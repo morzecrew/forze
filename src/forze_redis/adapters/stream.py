@@ -60,7 +60,9 @@ class RedisStreamCodec[M: BaseModel]:
 
     # ....................... #
 
-    def decode(self, stream: str, id: str, raw_data: dict[bytes, bytes]):
+    def decode(
+        self, stream: str, id: str, raw_data: dict[bytes, bytes]
+    ) -> StreamMessage[M]:
         decoded = {k.decode("utf-8"): v.decode("utf-8") for k, v in raw_data.items()}
         payload_raw = decoded.get(_F_PAYLOAD)
 

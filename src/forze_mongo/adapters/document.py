@@ -186,7 +186,7 @@ class MongoDocumentAdapter(
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
@@ -195,7 +195,7 @@ class MongoDocumentAdapter(
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: None = ...,
@@ -203,7 +203,7 @@ class MongoDocumentAdapter(
 
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -219,7 +219,7 @@ class MongoDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -230,7 +230,7 @@ class MongoDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -240,7 +240,7 @@ class MongoDocumentAdapter(
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -252,19 +252,19 @@ class MongoDocumentAdapter(
         if not cnt:
             return [], 0
 
-        res = await self.read_gw.find_many(
+        res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,
             limit=limit,
             offset=offset,
             sorts=sorts,
-            return_fields=return_fields,
+            return_fields=return_fields,  # type: ignore[arg-type]
         )
 
         return res, cnt
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
         return await self.read_gw.count(filters)
 
     # ....................... #

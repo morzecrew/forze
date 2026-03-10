@@ -12,7 +12,16 @@ import mimetypes
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Any, Optional, Sequence, TypeVar, cast, final, overload
+from typing import (
+    Any,
+    AsyncIterator,
+    Optional,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+    overload,
+)
 from uuid import UUID
 
 import attrs
@@ -66,6 +75,7 @@ D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
 M = TypeVar("M", bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 _MISSING = object()
 
@@ -317,7 +327,7 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
             )
 
 
-def _match_filters(doc: JsonDict, filters: Optional[QueryFilterExpression]) -> bool:
+def _match_filters(doc: JsonDict, filters: Optional[QueryFilterExpression]) -> bool:  # type: ignore[valid-type]
     if filters is None:
         return True
 
@@ -340,7 +350,8 @@ def _project(doc: JsonDict, return_fields: Optional[Sequence[str]]) -> JsonDict:
 
 
 def _sort_docs(
-    docs: list[JsonDict], sorts: Optional[QuerySortExpression]
+    docs: list[JsonDict],
+    sorts: Optional[QuerySortExpression],
 ) -> list[JsonDict]:
     if not sorts:
         return docs
@@ -420,7 +431,9 @@ class MockDocumentAdapter[
     # ....................... #
 
     def _to_read_or_projection(
-        self, doc: JsonDict, return_fields: Optional[Sequence[str]]
+        self,
+        doc: JsonDict,
+        return_fields: Optional[Sequence[str]],
     ) -> R | JsonDict:
         if return_fields is not None:
             return _project(doc, return_fields)
@@ -489,17 +502,14 @@ class MockDocumentAdapter[
                 raise NotFoundError(f"Documents not found: {missing}")
             docs = [dict(store[pk]) for pk in pks]
 
-        return [
-            self._to_read_or_projection(doc, return_fields)
-            for doc in docs  # pyright: ignore[reportReturnType]
-        ]
+        return [self._to_read_or_projection(doc, return_fields) for doc in docs]  # type: ignore[return-value]
 
     # ....................... #
 
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
@@ -508,7 +518,7 @@ class MockDocumentAdapter[
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: None = ...,
@@ -516,7 +526,7 @@ class MockDocumentAdapter[
 
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -534,7 +544,7 @@ class MockDocumentAdapter[
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -545,7 +555,7 @@ class MockDocumentAdapter[
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -555,7 +565,7 @@ class MockDocumentAdapter[
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -576,11 +586,11 @@ class MockDocumentAdapter[
 
         out = [self._to_read_or_projection(doc, return_fields) for doc in ordered]
 
-        return out, total  # pyright: ignore[reportReturnType]
+        return out, total  # type: ignore[return-value]
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type, return-value]
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
         return sum(1 for doc in docs if _match_filters(doc, filters))
@@ -692,6 +702,7 @@ class MockDocumentAdapter[
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
+
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
@@ -794,7 +805,11 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
     # ....................... #
 
     def _text_score(
-        self, query: str, doc: JsonDict, field_paths: Sequence[str], mode: str
+        self,
+        query: str,
+        doc: JsonDict,
+        field_paths: Sequence[str],
+        mode: str,
     ) -> float:
         q = query.strip().lower()
         if not q:
@@ -828,39 +843,56 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
         options: Optional[SearchOptions] = ...,
-        return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_model: None = ...,
+        return_fields: None = ...,
+    ) -> tuple[list[M], int]: ...
 
     @overload
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
         *,
         options: Optional[SearchOptions] = ...,
+        return_model: type[T],
         return_fields: None = ...,
-    ) -> tuple[list[M], int]: ...
+    ) -> tuple[list[T], int]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
+        limit: Optional[int] = ...,
+        offset: Optional[int] = ...,
+        sorts: Optional[QuerySortExpression] = ...,
+        *,
+        options: Optional[SearchOptions] = ...,
+        return_model: None = ...,
+        return_fields: Sequence[str],
+    ) -> tuple[list[JsonDict], int]: ...
 
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
-        options: Optional[SearchOptions] = None,
         *,
+        options: Optional[SearchOptions] = None,
+        return_model: Optional[type[T]] = None,
         return_fields: Optional[Sequence[str]] = None,
-    ) -> tuple[list[M] | list[JsonDict], int]:
+    ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         options = options or {}
         index_name = options.get("use_index", self.spec.default_index)
         if index_name is None:
@@ -898,8 +930,12 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
         if return_fields is not None:
             return [_project(doc, return_fields) for doc in ordered], total
 
+        if return_model is not None:
+            return [pydantic_validate(return_model, doc) for doc in ordered], total
+
         allowed = set(self.spec.model.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
+
         return [pydantic_validate(self.spec.model, doc) for doc in typed_docs], total
 
 
@@ -1127,7 +1163,7 @@ class MockIdempotencyAdapter(IdempotencyPort):
             if existing_hash != payload_hash:
                 raise ConflictError("Payload hash mismatch")
 
-            self.state.idempotency[k] = (  # pyright: ignore[reportArgumentType]
+            self.state.idempotency[k] = (  # type: ignore[assignment]
                 "done",
                 payload_hash,
                 dict(snapshot),
@@ -1229,9 +1265,9 @@ class MockTxManagerAdapter(TxManagerPort):
 
     # ....................... #
 
-    def transaction(self):
+    def transaction(self):  # type: ignore[no-untyped-def]
         @asynccontextmanager
-        async def _noop():
+        async def _noop():  # type: ignore[no-untyped-def]
             yield
 
         return _noop()
@@ -1347,7 +1383,7 @@ class MockQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         queue: str,
         *,
         timeout: Optional[timedelta] = None,
-    ):
+    ) -> AsyncIterator[QueueMessage[M]]:
         while True:
             batch = await self.receive(queue, limit=1, timeout=timeout)
             if batch:
@@ -1435,7 +1471,7 @@ class MockPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[
         topics: Sequence[str],
         *,
         timeout: Optional[timedelta] = None,
-    ):
+    ) -> AsyncIterator[PubSubMessage[M]]:
         with self.state.lock:
             cursors = {
                 topic: len(self._topic_store().get(topic, [])) for topic in topics
@@ -1541,7 +1577,7 @@ class MockStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
         stream_mapping: dict[str, str],
         *,
         timeout: Optional[timedelta] = None,
-    ):
+    ) -> AsyncIterator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
         while True:
             messages = await self.read(cursor, timeout=timeout)
@@ -1588,7 +1624,7 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
         stream_mapping: dict[str, str],
         *,
         timeout: Optional[timedelta] = None,
-    ):
+    ) -> AsyncIterator[StreamMessage[M]]:
         del group, consumer
         async for item in self.stream.tail(stream_mapping, timeout=timeout):
             yield item

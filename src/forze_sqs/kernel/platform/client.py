@@ -47,13 +47,10 @@ class SQSConfig(TypedDict, total=False):
     parameter_validation: bool
     max_pool_connections: int
     proxies: dict[str, str]
-    proxies_config: dict[str, Any]
-    retries: dict[str, Any]
     client_cert: str | tuple[str, str]
     inject_host_prefix: bool
     use_dualstack_endpoint: bool
     use_fips_endpoint: bool
-    ignore_configured_endpoint_urls: bool
     tcp_keepalive: bool
     request_min_compression_size_bytes: int
 
@@ -109,7 +106,7 @@ class SQSClient:
         if self.__session is not None:
             return
 
-        aio_config = AioConfig(**config) if config else None  # type: ignore[arg-type]
+        aio_config = AioConfig(**config) if config else None
         self.__opts = _SQSConnectionOpts(
             endpoint=endpoint,
             region_name=region_name,
@@ -241,7 +238,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.health")
+    @sqs_handled("sqs.health")  # type: ignore[untyped-decorator]
     async def health(self) -> tuple[str, bool]:
         """Check SQS client health by listing queues."""
 
@@ -256,7 +253,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.create_queue")
+    @sqs_handled("sqs.create_queue")  # type: ignore[untyped-decorator]
     async def create_queue(
         self,
         queue: str,
@@ -286,7 +283,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.get_queue_url")
+    @sqs_handled("sqs.get_queue_url")  # type: ignore[untyped-decorator]
     async def queue_url(self, queue: str) -> str:
         """Resolve queue name (or URL) to queue URL."""
 
@@ -415,7 +412,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.enqueue")
+    @sqs_handled("sqs.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,
         queue: str,
@@ -440,7 +437,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.enqueue_many")
+    @sqs_handled("sqs.enqueue_many")  # type: ignore[untyped-decorator]
     async def enqueue_many(
         self,
         queue: str,
@@ -494,7 +491,7 @@ class SQSClient:
 
             resp = await c.send_message_batch(
                 QueueUrl=queue_url,
-                Entries=entries,  # pyright: ignore[reportArgumentType]
+                Entries=entries,  # type: ignore[arg-type]
             )
             failed = resp.get("Failed") or []
 
@@ -508,7 +505,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.receive")
+    @sqs_handled("sqs.receive")  # type: ignore[untyped-decorator]
     async def receive(
         self,
         queue: str,
@@ -556,18 +553,10 @@ class SQSClient:
                 SQSQueueMessage(
                     queue=queue,
                     id=receipt,
-                    body=self.__decode_body(
-                        body, attrs  # pyright: ignore[reportArgumentType]
-                    ),
-                    type=self.__extract_attr(
-                        attrs, _TYPE_ATTR  # pyright: ignore[reportArgumentType]
-                    ),
-                    enqueued_at=self.__extract_enqueued_at(
-                        attrs, system_attrs  # pyright: ignore[reportArgumentType]
-                    ),
-                    key=self.__extract_attr(
-                        attrs, _KEY_ATTR  # pyright: ignore[reportArgumentType]
-                    ),
+                    body=self.__decode_body(body, attrs),  # type: ignore[arg-type]
+                    type=self.__extract_attr(attrs, _TYPE_ATTR),  # type: ignore[arg-type]
+                    enqueued_at=self.__extract_enqueued_at(attrs, system_attrs),  # type: ignore[arg-type]
+                    key=self.__extract_attr(attrs, _KEY_ATTR),  # type: ignore[arg-type]
                 )
             )
 
@@ -575,7 +564,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.consume")
+    @sqs_handled("sqs.consume")  # type: ignore[untyped-decorator]
     async def consume(
         self,
         queue: str,
@@ -594,7 +583,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.ack")
+    @sqs_handled("sqs.ack")  # type: ignore[untyped-decorator]
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         """Acknowledge messages by deleting them from the queue."""
         if not ids:
@@ -612,7 +601,7 @@ class SQSClient:
             ]
             resp = await c.delete_message_batch(
                 QueueUrl=queue_url,
-                Entries=entries,  # pyright: ignore[reportArgumentType]
+                Entries=entries,  # type: ignore[arg-type]
             )
             failed = resp.get("Failed") or []
 
@@ -628,7 +617,7 @@ class SQSClient:
 
     # ....................... #
 
-    @sqs_handled("sqs.nack")
+    @sqs_handled("sqs.nack")  # type: ignore[untyped-decorator]
     async def nack(
         self,
         queue: str,
@@ -663,7 +652,7 @@ class SQSClient:
             ]
             resp = await c.change_message_visibility_batch(
                 QueueUrl=queue_url,
-                Entries=entries,  # pyright: ignore[reportArgumentType]
+                Entries=entries,  # type: ignore[arg-type]
             )
             failed = resp.get("Failed") or []
 

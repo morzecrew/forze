@@ -6,6 +6,8 @@ and :class:`MiddlewareSpec` (priority + factory). Plans are merged and resolved
 into composed usecases via :class:`UsecaseRegistry`.
 """
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
@@ -178,7 +180,7 @@ class OperationPlan:
             raise CoreError(f"Invalid bucket: {bucket}")
 
         cur = getattr(self, bucket)
-        return attrs.evolve(self, **{bucket: (*cur, spec)})
+        return attrs.evolve(self, **{bucket: (*cur, spec)})  # type: ignore[arg-type, misc]
 
     # ....................... #
 
@@ -200,7 +202,10 @@ class OperationPlan:
     # ....................... #
 
     def __ensure_no_collisions(
-        self, specs: Iterable[MiddlewareSpec], *, bucket: PlanBucket
+        self,
+        specs: Iterable[MiddlewareSpec],
+        *,
+        bucket: PlanBucket,
     ) -> None:
         used: set[int] = set()
 
@@ -238,7 +243,10 @@ class OperationPlan:
     # ....................... #
 
     def __sort(
-        self, specs: Iterable[MiddlewareSpec], *, reverse: bool
+        self,
+        specs: Iterable[MiddlewareSpec],
+        *,
+        reverse: bool,
     ) -> tuple[MiddlewareSpec, ...]:
         return tuple(sorted(specs, key=lambda s: s.priority, reverse=reverse))
 
@@ -260,7 +268,7 @@ class OperationPlan:
     # ....................... #
 
     @classmethod
-    def merge(cls, *plans: Self):
+    def merge(cls, *plans: Self) -> OperationPlan:
         """Merge multiple plans into a single aggregate plan.
 
         :param plans: Plans to merge.
@@ -303,7 +311,7 @@ class UsecasePlan:
     # ....................... #
     # Helpers
 
-    def _base(self):
+    def _base(self) -> OperationPlan:
         return self.ops.get(WILDCARD, OperationPlan())
 
     def _op(self, op: OpKey) -> OperationPlan:
@@ -333,7 +341,7 @@ class UsecasePlan:
     # ....................... #
 
     def before(self, op: OpKey, guard: GuardFactory, *, priority: int = 0) -> Self:
-        def factory(ctx: ExecutionContext):
+        def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
 
         return self._add(
@@ -345,7 +353,7 @@ class UsecasePlan:
     # ....................... #
 
     def after(self, op: OpKey, effect: EffectFactory, *, priority: int = 0) -> Self:
-        def factory(ctx: ExecutionContext):
+        def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
 
         return self._add(
@@ -378,7 +386,7 @@ class UsecasePlan:
         *,
         priority: int = 0,
     ) -> Self:
-        def factory(ctx: ExecutionContext):
+        def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
 
         return self._add(
@@ -396,7 +404,7 @@ class UsecasePlan:
         *,
         priority: int = 0,
     ) -> Self:
-        def factory(ctx: ExecutionContext):
+        def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
 
         return self._add(
@@ -429,7 +437,7 @@ class UsecasePlan:
         *,
         priority: int = 0,
     ) -> Self:
-        def factory(ctx: ExecutionContext):
+        def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
 
         return self._add(
@@ -505,7 +513,7 @@ class UsecasePlan:
 
     # ....................... #
 
-    def explain(self, op: OpKey):
+    def explain(self, op: OpKey) -> _Explain:
         """Return a human-readable explanation of the middleware chain for an op.
 
         :param op: Operation key.

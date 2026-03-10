@@ -71,7 +71,7 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_field(self, field: str, op: QueryOp.All, value: Any) -> JsonDict:
+    def _render_field(self, field: str, op: QueryOp.All, value: Any) -> JsonDict:  # type: ignore[valid-type]
         match op:
             case "$null" | "$empty":
                 return self._render_unary(field, op, value)
@@ -93,7 +93,7 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_unary(self, field: str, op: QueryOp.Unary, value: Any) -> JsonDict:
+    def _render_unary(self, field: str, op: QueryOp.Unary, value: Any) -> JsonDict:  # type: ignore[valid-type]
         v = self.caster.as_bool(value)
 
         match op:
@@ -132,14 +132,14 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_ord(self, field: str, op: QueryOp.Ord, value: Any) -> JsonDict:
+    def _render_ord(self, field: str, op: QueryOp.Ord, value: Any) -> JsonDict:  # type: ignore[valid-type]
         v = self.caster.pass_through(value)
 
         return {field: {op: v}}
 
     # ....................... #
 
-    def _render_eq(self, field: str, op: QueryOp.Eq, value: Any) -> JsonDict:
+    def _render_eq(self, field: str, op: QueryOp.Eq, value: Any) -> JsonDict:  # type: ignore[valid-type]
         v = self.caster.pass_through(value)
 
         match op:
@@ -151,7 +151,7 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_memb(self, field: str, op: QueryOp.Memb, value: Any) -> JsonDict:
+    def _render_memb(self, field: str, op: QueryOp.Memb, value: Any) -> JsonDict:  # type: ignore[valid-type]
         if isinstance(value, QueryValue.Scalar | None):
             raise ValueError(f"{field}: {op} expects list")
 
@@ -166,7 +166,7 @@ class MongoQueryRenderer:
 
     # ....................... #
 
-    def _render_set_rel(self, field: str, op: QueryOp.SetRel, value: Any) -> JsonDict:
+    def _render_set_rel(self, field: str, op: QueryOp.SetRel, value: Any) -> JsonDict:  # type: ignore[valid-type]
         if isinstance(value, QueryValue.Scalar | None):
             raise ValueError(f"{field}: {op} expects list")
 

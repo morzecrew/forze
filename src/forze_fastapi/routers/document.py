@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Optional, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from fastapi import Body, Depends
 
@@ -32,7 +32,7 @@ U = TypeVar("U", bound=BaseDTO)
 def document_facade_dependency(
     provider: DocumentUsecasesFacadeProvider[R, C, U],
     ctx: ExecutionContextDependencyPort,
-):
+) -> Callable[[ExecutionContext], DocumentUsecasesFacade[R, C, U]]:
     """Build a FastAPI dependency that resolves :class:`DocumentUsecasesFacade`."""
 
     def facade(
@@ -52,7 +52,7 @@ def build_document_router(
     *,
     provider: DocumentUsecasesFacadeProvider[R, C, U],
     context: ExecutionContextDependencyPort,
-):
+) -> ForzeAPIRouter:
     """Construct a router exposing CRUD and search endpoints for a document spec.
 
     The resulting router wires HTTP routes to the corresponding document
@@ -83,7 +83,7 @@ def build_document_router(
     async def metadata(  # pyright: ignore[reportUnusedFunction]
         id: UUIDQuery,
         ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-    ):
+    ) -> R:
         """Return metadata for a single document by identifier."""
 
         return await ucs.get()(id)
@@ -105,7 +105,7 @@ def build_document_router(
             async def create(  # pyright: ignore[reportUnusedFunction]
                 dto: C = Body(...),
                 ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-            ):
+            ) -> R:
                 """Create a new document from the provided DTO."""
 
                 return await ucs.create()(dto)
@@ -125,7 +125,7 @@ def build_document_router(
                 rev: RevQuery,
                 dto: U = Body(...),
                 ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-            ):
+            ) -> R:
                 """Apply a partial update to an existing document."""
 
                 return await ucs.update()(
@@ -149,7 +149,7 @@ def build_document_router(
                 id: UUIDQuery,
                 rev: RevQuery,
                 ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-            ):
+            ) -> R:
                 """Soft-delete a document and return the new representation."""
 
                 return await ucs.delete()(
@@ -168,7 +168,7 @@ def build_document_router(
                 id: UUIDQuery,
                 rev: RevQuery,
                 ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-            ):
+            ) -> R:
                 """Restore a previously soft-deleted document."""
 
                 return await ucs.restore()(
@@ -189,7 +189,7 @@ def build_document_router(
         async def kill(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
             ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-        ):
+        ) -> None:
             """Hard-delete a document without soft-delete semantics."""
 
             return await ucs.kill()(id)

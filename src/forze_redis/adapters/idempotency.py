@@ -12,8 +12,8 @@ import attrs
 
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.tenant import TenantContextPort
-from forze.base.errors import ConflictError
 from forze.base.codecs import JsonCodec, KeyCodec
+from forze.base.errors import ConflictError
 
 from ..kernel.platform import RedisClient
 
@@ -89,13 +89,13 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         payload_hash: str,
     ) -> IdempotencySnapshot | None:
         if not key:
-            return
+            return None
 
         k = self.__key(op, key)
         idem_p = _Payload(st=_PENDING, ph=payload_hash)
 
         if await self.__acuire(k, idem_p):
-            return
+            return None
 
         raw = await self.client.get(k)
 
@@ -141,7 +141,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         snapshot: IdempotencySnapshot,
     ) -> None:
         if not key:
-            return
+            return None
 
         k = self.__key(op, key)
         idem_p = _Payload(

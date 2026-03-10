@@ -188,7 +188,7 @@ class PostgresDocumentAdapter(
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
@@ -197,7 +197,7 @@ class PostgresDocumentAdapter(
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: None = ...,
@@ -205,7 +205,7 @@ class PostgresDocumentAdapter(
 
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -221,7 +221,7 @@ class PostgresDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -232,7 +232,7 @@ class PostgresDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -242,7 +242,7 @@ class PostgresDocumentAdapter(
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -254,19 +254,19 @@ class PostgresDocumentAdapter(
         if not cnt:
             return [], 0
 
-        res = await self.read_gw.find_many(
+        res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,
             limit=limit,
             offset=offset,
             sorts=sorts,
-            return_fields=return_fields,
+            return_fields=return_fields,  # type: ignore[arg-type]
         )
 
         return res, cnt
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
         return await self.read_gw.count(filters)
 
     # ....................... #

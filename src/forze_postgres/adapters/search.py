@@ -4,7 +4,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Never, Optional, Sequence, TypeVar, Union, final, overload
+from typing import Optional, Sequence, TypeVar, Union, final, overload
 
 import attrs
 from pydantic import BaseModel
@@ -76,6 +76,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
             raise CoreError("Postgres search adapter cannot be used without a source")
 
         q_source = PostgresQualifiedName.from_string(spec.source)
+        gw: SearchGateway[M]
 
         match index_info.engine:
             case "pgroonga":
@@ -109,7 +110,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -123,7 +124,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -137,7 +138,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -147,24 +148,10 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
 
-    @overload
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[SearchOptions] = ...,
-        return_model: type[T] = ...,
-        return_fields: Sequence[str] = ...,
-    ) -> Never: ...
-
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -176,13 +163,13 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         index, spec = self.search_spec.pick_index(options)
         gw = await self._pick_gateway(index, spec)
 
-        return await gw.search(
+        return await gw.search(  # type: ignore[misc]
             query=query,
             filters=filters,
             limit=limit,
             offset=offset,
             sorts=sorts,
             options=options,
-            return_model=return_model,
-            return_fields=return_fields,
+            return_model=return_model,  # type: ignore[arg-type]
+            return_fields=return_fields,  # type: ignore[arg-type]
         )

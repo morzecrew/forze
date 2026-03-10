@@ -36,7 +36,7 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
                 data_dict = data_raw  # pyright: ignore[reportUnknownVariableType]
 
             else:
-                data_dict = dict(data_raw)  # type: ignore[arg-type]
+                data_dict = dict(data_raw)  # type: ignore[call-overload]
 
             normalized: RedisStreamFields = {}
 

@@ -95,7 +95,7 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _render_filters(self, filters: Optional[QueryFilterExpression]) -> JsonDict:
+    def _render_filters(self, filters: Optional[QueryFilterExpression]) -> JsonDict:  # type: ignore[valid-type]
         if not filters:
             return {}
 

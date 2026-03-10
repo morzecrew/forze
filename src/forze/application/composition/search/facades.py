@@ -1,4 +1,4 @@
-from typing import Any, Generic, TypeVar, final
+from typing import Any, Generic, TypeVar, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -55,7 +55,7 @@ class SearchUsecasesFacadeProvider(
 
     # Non initable fields
     facade: type[SearchUsecasesFacade[M]] = attrs.field(
-        default=SearchUsecasesFacade,
+        default=cast(type[SearchUsecasesFacade[M]], SearchUsecasesFacade),
         init=False,
     )
     """Facade type to produce."""

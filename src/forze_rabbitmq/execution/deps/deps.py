@@ -2,13 +2,8 @@
 
 from typing import Any
 
-from forze.application.contracts.queue import (
-    QueueConformity,
-    QueueDepConformity,
-    QueueSpec,
-)
+from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import ExecutionContext
-from forze.base.typing import conforms_to
 
 from ...adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from .keys import RabbitMQClientDepKey
@@ -16,11 +11,10 @@ from .keys import RabbitMQClientDepKey
 # ----------------------- #
 
 
-@conforms_to(QueueDepConformity)
 def rabbitmq_queue(
     context: ExecutionContext,
     spec: QueueSpec[Any],
-) -> QueueConformity:
+) -> RabbitMQQueueAdapter[Any]:
     """Build a RabbitMQ-backed queue port for the given spec."""
     rabbitmq_client = context.dep(RabbitMQClientDepKey)
     codec = RabbitMQQueueCodec(model=spec.model)

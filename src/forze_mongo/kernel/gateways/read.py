@@ -173,7 +173,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -183,7 +183,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -193,7 +193,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: None = ...,
@@ -203,7 +203,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_model: type[T],
@@ -212,7 +212,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
     async def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
         return_model: Optional[type[T]] = None,
@@ -246,7 +246,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -258,7 +258,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -270,7 +270,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -282,7 +282,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -293,7 +293,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -325,6 +325,6 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:
+    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
         query = self._render_filters(filters)
         return await self.client.count(self.coll(), query)

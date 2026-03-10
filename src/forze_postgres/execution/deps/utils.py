@@ -22,7 +22,9 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 # ----------------------- #
 
 
-def read_gw(ctx: ExecutionContext, spec: DocumentReadSpec[Any]):
+def read_gw(
+    ctx: ExecutionContext, spec: DocumentReadSpec[Any]
+) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
     :param ctx: Execution context for resolving client and types provider.
@@ -49,7 +51,7 @@ def _doc_history_gw(
     spec: DocumentHistorySpec,
     write_spec: DocumentWriteSpec[Any, Any, Any],
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
-):
+) -> PostgresHistoryGateway[Any]:
     """Build a history gateway for document audit trails."""
 
     client = ctx.dep(PostgresClientDepKey)
@@ -75,7 +77,7 @@ def doc_write_gw(
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = "database",
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
-):
+) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
     :param ctx: Execution context.

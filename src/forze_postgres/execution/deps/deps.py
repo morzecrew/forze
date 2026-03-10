@@ -3,20 +3,14 @@
 from typing import Any, Optional
 
 from forze.application.contracts.cache import CachePort
-from forze.application.contracts.document import (
-    DocumentConformity,
-    DocumentDepConformity,
-    DocumentSpec,
-)
+from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import (
-    SearchReadDepPort,
     SearchReadPort,
     SearchSpec,
     parse_search_spec,
 )
-from forze.application.contracts.tx import TxManagerDepPort, TxManagerPort
+from forze.application.contracts.tx import TxManagerPort
 from forze.application.execution import ExecutionContext
-from forze.base.typing import conforms_to
 
 from ...adapters import (
     PostgresDocumentAdapter,
@@ -30,7 +24,7 @@ from .utils import doc_write_gw, read_gw
 # ----------------------- #
 
 
-def postgres_document_configurable(
+def postgres_document_configurable(  # type: ignore[no-untyped-def]
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = "database",
     history_write_strategy: PostgresHistoryWriteStrategy = "database",
@@ -47,12 +41,11 @@ def postgres_document_configurable(
     :returns: Document dep port factory conforming to :class:`DocumentDepPort`.
     """
 
-    @conforms_to(DocumentDepConformity)
     def postgres_document(
         context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: Optional[CachePort] = None,
-    ) -> DocumentConformity:
+    ) -> PostgresDocumentAdapter[Any, Any, Any, Any]:
         read = read_gw(context, spec.read)
 
         write = None
@@ -79,7 +72,6 @@ def postgres_document_configurable(
 #! Need to set transaction options on usecase level rather than here.
 
 
-@conforms_to(TxManagerDepPort)
 def postgres_txmanager(context: ExecutionContext) -> TxManagerPort:
     """Build a Postgres-backed transaction manager for the execution context.
 
@@ -94,7 +86,6 @@ def postgres_txmanager(context: ExecutionContext) -> TxManagerPort:
 # ....................... #
 
 
-@conforms_to(SearchReadDepPort)
 def postgres_search(
     context: ExecutionContext,
     spec: SearchSpec[Any],

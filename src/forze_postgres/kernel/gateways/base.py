@@ -102,7 +102,7 @@ class PostgresGateway[M: BaseModel]:
 
     async def where_clause(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
     ) -> tuple[sql.Composable, list[Any]]:
         if not filters:
             return sql.SQL("TRUE"), []

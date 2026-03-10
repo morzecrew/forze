@@ -26,18 +26,18 @@ class QueryFilterExpressionParser:
     """Parser that converts :class:`FilterExpression` dicts into AST nodes."""
 
     @classmethod
-    def parse(cls, expr: QueryFilterExpression) -> QueryExpr:
+    def parse(cls, expr: QueryFilterExpression) -> QueryExpr:  # type: ignore[valid-type]
         if is_query_predicate(expr):
             return cls._parse_predicate(expr)
 
         elif is_query_conjunction(expr):
-            items = expr["$and"]
+            items = expr["$and"]  # type: ignore[index]
             nodes = [cls.parse(item) for item in items]
 
             return QueryAnd(tuple(nodes))
 
         elif is_query_disjunction(expr):
-            items = expr["$or"]
+            items = expr["$or"]  # type: ignore[index]
             nodes = [cls.parse(item) for item in items]
 
             return QueryOr(tuple(nodes))
@@ -118,7 +118,7 @@ class QueryFilterExpressionParser:
     #! maybe not really necessary to validate single operator
 
     @staticmethod
-    def _validate_op(field: str, op: str, value: Any):
+    def _validate_op(field: str, op: str, value: Any) -> QueryField:
         if op in get_args(EqOp):
             if not isinstance(value, Scalar):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
@@ -142,8 +142,4 @@ class QueryFilterExpressionParser:
         else:
             raise ValueError(f"Invalid operator: {op!r}")
 
-        return QueryField(
-            field,
-            op,  # pyright: ignore[reportArgumentType]
-            value,  # pyright: ignore[reportUnknownArgumentType]
-        )
+        return QueryField(field, op, value)  # type: ignore[arg-type]

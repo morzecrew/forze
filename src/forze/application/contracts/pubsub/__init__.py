@@ -1,4 +1,3 @@
-from .conformity import PubSubConformity, PubSubDepConformity
 from .deps import (
     PubSubPublishDepKey,
     PubSubPublishDepPort,
@@ -15,8 +14,6 @@ __all__ = [
     "PubSubMessage",
     "PubSubPublishPort",
     "PubSubSubscribePort",
-    "PubSubConformity",
-    "PubSubDepConformity",
     "PubSubSpec",
     "PubSubPublishDepKey",
     "PubSubPublishDepPort",

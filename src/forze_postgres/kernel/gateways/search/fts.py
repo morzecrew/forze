@@ -4,7 +4,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Never, Optional, Sequence, TypeVar, overload
+from typing import Any, Optional, Sequence, TypeVar, overload
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -111,7 +111,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def _build_search_parts(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression],
+        filters: Optional[QueryFilterExpression],  # type: ignore[valid-type]
         *,
         options: Optional[SearchOptions] = None,
     ) -> tuple[tuple[sql.Composable, list[Any]], tuple[sql.Composable, list[Any]]]:
@@ -149,7 +149,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -163,7 +163,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -177,7 +177,7 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -187,24 +187,10 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
 
-    @overload
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
-        *,
-        options: Optional[SearchOptions] = ...,
-        return_model: type[T] = ...,
-        return_fields: Sequence[str] = ...,
-    ) -> Never: ...
-
-    async def search(
-        self,
-        query: str,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,

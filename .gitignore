@@ -208,3 +208,5 @@ __marimo__/
 src/forze/_version.py
 pages/docs/assets/diagrams
 pages/site/
+
+.benchmarks

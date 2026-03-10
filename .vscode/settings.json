@@ -39,6 +39,7 @@
         // ".specify": true,
         // ".agent": true,
         ".cursor": true,
+        ".benchmarks": true,
         // "specs/**": true,
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",

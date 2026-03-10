@@ -41,7 +41,7 @@ def scalar_docs(
     title: Optional[str] = None,
     favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     version: str = "1.41.0",
-):
+) -> HTMLResponse:
     root_path = request.scope.get("root_path")
     host = request.headers.get("x-forwarded-host")
 
@@ -88,7 +88,7 @@ def register_scalar_docs(
     path: str = "/docs",
     favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     scalar_version: str = "1.41.0",
-):
+) -> None:
     @app.get(path, include_in_schema=False)
     def docs_route(  # pyright: ignore[reportUnusedFunction]
         request: Request,

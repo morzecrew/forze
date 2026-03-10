@@ -1,4 +1,3 @@
-from .conformity import StreamConformity, StreamDepConformity
 from .deps import (
     StreamGroupDepKey,
     StreamGroupDepPort,
@@ -8,6 +7,7 @@ from .deps import (
     StreamWriteDepPort,
 )
 from .ports import StreamGroupPort, StreamReadPort, StreamWritePort
+from .specs import StreamSpec
 from .types import StreamMessage
 
 # ----------------------- #
@@ -17,12 +17,11 @@ __all__ = [
     "StreamGroupPort",
     "StreamReadPort",
     "StreamWritePort",
-    "StreamConformity",
-    "StreamDepConformity",
     "StreamReadDepKey",
     "StreamReadDepPort",
     "StreamWriteDepKey",
     "StreamWriteDepPort",
     "StreamGroupDepKey",
     "StreamGroupDepPort",
+    "StreamSpec",
 ]

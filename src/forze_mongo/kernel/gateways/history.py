@@ -83,7 +83,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         keyed = {
             (
                 str(row.get(ID_FIELD)),
-                int(row.get(REV_FIELD)),  # pyright: ignore[reportArgumentType]
+                int(row.get(REV_FIELD)),  # type: ignore[arg-type]
             ): row
             for row in rows
         }

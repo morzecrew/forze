@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Optional, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
@@ -36,7 +36,7 @@ R = TypeVar("R", bound=APIRouter | ForzeAPIRouter)
 def search_facade_dependency(
     provider: SearchUsecasesFacadeProvider[M],
     ctx: ExecutionContextDependencyPort,
-):
+) -> Callable[[ExecutionContext], SearchUsecasesFacade[M]]:
     def facade(
         context: ExecutionContext = Depends(ctx),
     ) -> SearchUsecasesFacade[M]:
@@ -62,14 +62,14 @@ def attach_search_router(
 
     @router.post(
         "/search",
-        response_model=Paginated[read_dto],
+        response_model=Paginated[read_dto],  # type: ignore[valid-type]
         operation_id=f"{provider.spec.namespace}.search",
     )
     async def search(  # pyright: ignore[reportUnusedFunction]
         body: SearchRequestDTO = Body(...),
         pagi: Pagination = Depends(pagination),
         ucs: SearchUsecasesFacade[M] = Depends(ucs_dep),
-    ):
+    ) -> Paginated[M]:
         """Search documents using a typed search request body."""
 
         return await ucs.typed()(
@@ -91,7 +91,7 @@ def attach_search_router(
         body: RawSearchRequestDTO = Body(...),
         pagi: Pagination = Depends(pagination),
         ucs: SearchUsecasesFacade[M] = Depends(ucs_dep),
-    ):
+    ) -> RawPaginated:
         """Search documents using a raw (untyped) search body."""
 
         return await ucs.raw()(

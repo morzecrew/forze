@@ -47,7 +47,7 @@ class Usecase[Args, R]:
 
     # ....................... #
 
-    def _build_chain(self):
+    def _build_chain(self) -> NextCall[Args, R]:
         async def last(args: Args) -> R:
             return await self.main(args)
 

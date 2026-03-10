@@ -71,7 +71,7 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 # ....................... #
 
 
-def make_idem_header_dependency(header_key: str):
+def make_idem_header_dependency(header_key: str):  # type: ignore[no-untyped-def]
     async def dep(idempotency_key: str = Header(..., alias=header_key)) -> None:
         if not idempotency_key:
             raise HTTPException(

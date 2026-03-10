@@ -118,7 +118,7 @@ class QueryValueCaster:
     # ....................... #
 
     @staticmethod
-    def _like_num(x: Any):
+    def _like_num(x: Any) -> bool:
         try:
             float(x)
             return True

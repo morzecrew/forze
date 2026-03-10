@@ -62,7 +62,7 @@ class IdempotentRoute(APIRoute):
 
     # ....................... #
 
-    def get_route_handler(self):
+    def get_route_handler(self):  # type: ignore[no-untyped-def]
         orig_handler = super().get_route_handler()
 
         async def handler(request: Request) -> Response:

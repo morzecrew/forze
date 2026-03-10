@@ -1,12 +1,8 @@
 """Factory function for S3 storage port adapter."""
 
-from forze.application.contracts.storage import (
-    StorageDepPort,
-    StoragePort,
-)
+from forze.application.contracts.storage import StoragePort
 from forze.application.contracts.tenant.deps import TenantContextDepKey
 from forze.application.execution import ExecutionContext
-from forze.base.typing import conforms_to
 
 from ...adapters import S3StorageAdapter
 from .keys import S3ClientDepKey
@@ -14,7 +10,6 @@ from .keys import S3ClientDepKey
 # ----------------------- #
 
 
-@conforms_to(StorageDepPort)
 def s3_storage(context: ExecutionContext, bucket: str) -> StoragePort:
     """Build a S3-backed storage port for the given bucket.
 

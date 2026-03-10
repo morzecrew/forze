@@ -104,7 +104,7 @@ class DocumentReadPort[R](Protocol):
     @overload
     def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
@@ -115,7 +115,7 @@ class DocumentReadPort[R](Protocol):
     @overload
     def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = ...,
         return_fields: None = ...,
@@ -125,7 +125,7 @@ class DocumentReadPort[R](Protocol):
 
     def find(
         self,
-        filters: QueryFilterExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
@@ -138,7 +138,7 @@ class DocumentReadPort[R](Protocol):
     @overload
     def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -151,7 +151,7 @@ class DocumentReadPort[R](Protocol):
     @overload
     def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,
+        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
         limit: Optional[int] = ...,
         offset: Optional[int] = ...,
         sorts: Optional[QuerySortExpression] = ...,
@@ -163,7 +163,7 @@ class DocumentReadPort[R](Protocol):
 
     def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,
+        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sorts: Optional[QuerySortExpression] = None,
@@ -178,7 +178,7 @@ class DocumentReadPort[R](Protocol):
 
     # ....................... #
 
-    def count(self, filters: Optional[QueryFilterExpression] = None) -> Awaitable[int]:
+    def count(self, filters: Optional[QueryFilterExpression] = None) -> Awaitable[int]:  # type: ignore[valid-type]
         """Count documents by filters."""
         ...  # pragma: no cover
 

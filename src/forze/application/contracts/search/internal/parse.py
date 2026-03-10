@@ -24,7 +24,7 @@ def _parse_group_spec(spec: SearchGroupSpec) -> SearchGroupSpecInternal:
     return SearchGroupSpecInternal(
         name=spec["name"],
         weight=spec.get("weight", 1.0),
-        hints=spec.get("hints", {}),
+        hints=spec.get("hints", {}),  # type: ignore[arg-type]
     )
 
 
@@ -36,7 +36,7 @@ def _parse_field_spec(spec: SearchFieldSpec) -> SearchFieldSpecInternal:
         path=spec["path"],
         group=spec.get("group"),
         weight=spec.get("weight"),
-        hints=spec.get("hints", {}),
+        hints=spec.get("hints", {}),  # type: ignore[arg-type]
     )
 
 
@@ -48,7 +48,7 @@ def _parse_fuzzy_spec(spec: SearchFuzzySpec) -> SearchFuzzySpecInternal:
         enabled=spec.get("enabled", False),
         max_distance_ratio=spec.get("max_distance_ratio"),
         prefix_length=spec.get("prefix_length"),
-        hints=spec.get("hints", {}),
+        hints=spec.get("hints", {}),  # type: ignore[arg-type]
     )
 
 
@@ -75,7 +75,7 @@ def _parse_index_spec(
         mode=spec.get("mode", "fulltext"),
         fuzzy=fuzzy,
         source=source,
-        hints=spec.get("hints", {}),
+        hints=spec.get("hints", {}),  # type: ignore[arg-type]
     )
 
 

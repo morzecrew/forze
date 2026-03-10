@@ -1,4 +1,3 @@
-from .conformity import DocumentConformity, DocumentDepConformity
 from .deps import (
     DocumentReadDepKey,
     DocumentReadDepPort,
@@ -21,8 +20,6 @@ __all__ = [
     "DocumentReadPort",
     "DocumentWritePort",
     "DocumentSpec",
-    "DocumentConformity",
-    "DocumentDepConformity",
     "DocumentReadDepPort",
     "DocumentReadDepKey",
     "DocumentReadDepRouter",

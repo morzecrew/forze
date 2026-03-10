@@ -1,11 +1,3 @@
-"""Search request DTOs for document search usecases.
-
-Provides :class:`SearchRequestDTO` (typed search) and :class:`RawSearchRequestDTO`
-(field-projected search with required ``return_fields``). Used by
-:class:`forze.application.usecases.document.SearchDocument` and
-:class:`forze.application.usecases.document.RawSearchDocument`.
-"""
-
 from typing import Optional
 
 from pydantic import Field
@@ -28,7 +20,7 @@ class SearchRequestDTO(BaseDTO):
     query: str = ""
     """Full-text search query; empty string for filter-only mode."""
 
-    filters: Optional[QueryFilterExpression] = None
+    filters: Optional[QueryFilterExpression] = None  # type: ignore[valid-type]
     """Optional filter expression (predicates, conjunctions, disjunctions)."""
 
     sorts: Optional[QuerySortExpression] = None

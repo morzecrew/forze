@@ -41,7 +41,7 @@ PostgresRevBumpStrategy = Literal["database", "application"]
 # ....................... #
 
 
-def optimistic_retry(*, attempts: int = 3):
+def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
     return retry(
         retry=retry_if_exception_type(ConcurrencyError),
         stop=stop_after_attempt(attempts),
@@ -165,7 +165,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
         insert_data_raw = pydantic_dump(model)  #! mode=python ??????
@@ -187,7 +187,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
 
         if row is None:
-            raise ConcurrencyError("Failed to create a record", code="create_failed")
+            raise ConcurrencyError(
+                message="Failed to create a record",
+                code="create_failed",
+            )
 
         res = pydantic_validate(self.model, row)
         await self._write_history(res)
@@ -196,7 +199,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create_many(
         self,
         dtos: Sequence[C],
@@ -273,7 +276,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def __patch(
         self,
         pk: UUID,
@@ -343,7 +346,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    @optimistic_retry()
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def __patch_group(
         self,
         key: tuple[str, ...],
@@ -464,7 +467,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 diff = self.__bump_rev(c, diff)
                 return c.id, c.rev, await self.adapt_payload_for_write(diff)
 
-            results = await asyncio.gather(
+            results = await asyncio.gather(  # type: ignore[assignment]
                 *(_prepare_update(c, u) for c, u in zip(currents, updates))
             )
             for r in results:

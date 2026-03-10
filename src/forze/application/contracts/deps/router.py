@@ -75,7 +75,7 @@ class DepRouter(Generic[SpecT, DepPortT]):
 
     # ....................... #
 
-    def __attrs_post_init__(self):
+    def __attrs_post_init__(self) -> None:
         if self.default not in self.routes:
             raise CoreError(f"Default routing key `{self.default}` not found")
 

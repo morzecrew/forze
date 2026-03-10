@@ -208,7 +208,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.bucket_exists")
+    @s3_handled("s3.bucket_exists")  # type: ignore[untyped-decorator]
     async def bucket_exists(self, bucket: str) -> bool:
         c = self.__require_client()
 
@@ -226,7 +226,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.create_bucket")
+    @s3_handled("s3.create_bucket")  # type: ignore[untyped-decorator]
     async def create_bucket(self, bucket: str) -> None:
         c = self.__require_client()
 
@@ -243,14 +243,14 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.ensure_bucket")
+    @s3_handled("s3.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
         if not await self.bucket_exists(bucket):
             raise NotFoundError("Bucket does not exist")
 
     # ....................... #
 
-    @s3_handled("s3.object_exists")
+    @s3_handled("s3.object_exists")  # type: ignore[untyped-decorator]
     async def object_exists(self, bucket: str, key: str) -> bool:
         c = self.__require_client()
 
@@ -268,7 +268,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.upload_bytes")
+    @s3_handled("s3.upload_bytes")  # type: ignore[untyped-decorator]
     async def upload_bytes(
         self,
         bucket: str,
@@ -302,7 +302,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.download_bytes")
+    @s3_handled("s3.download_bytes")  # type: ignore[untyped-decorator]
     async def download_bytes(self, bucket: str, key: str) -> bytes:
         c = self.__require_client()
 
@@ -313,7 +313,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.delete_object")
+    @s3_handled("s3.delete_object")  # type: ignore[untyped-decorator]
     async def delete_object(self, bucket: str, key: str) -> None:
         c = self.__require_client()
 
@@ -321,7 +321,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.list_objects")
+    @s3_handled("s3.list_objects")  # type: ignore[untyped-decorator]
     async def list_objects(
         self,
         bucket: str,
@@ -370,7 +370,7 @@ class S3Client:
 
     # ....................... #
 
-    @s3_handled("s3.head_object")
+    @s3_handled("s3.head_object")  # type: ignore[untyped-decorator]
     async def head_object(self, bucket: str, key: str) -> S3Head:
         c = self.__require_client()
         head = await c.head_object(Bucket=bucket, Key=key)

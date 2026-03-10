@@ -3,24 +3,13 @@
 from datetime import timedelta
 from typing import Any
 
-from forze.application.contracts.cache import CacheDepPort, CachePort, CacheSpec
-from forze.application.contracts.counter import CounterDepPort, CounterPort
-from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencyPort
-from forze.application.contracts.pubsub import (
-    PubSubConformity,
-    PubSubDepConformity,
-    PubSubSpec,
-)
-from forze.application.contracts.stream import (
-    StreamConformity,
-    StreamDepConformity,
-    StreamGroupDepPort,
-    StreamGroupPort,
-)
-from forze.application.contracts.stream.specs import StreamSpec
+from forze.application.contracts.cache import CachePort, CacheSpec
+from forze.application.contracts.counter import CounterPort
+from forze.application.contracts.idempotency import IdempotencyPort
+from forze.application.contracts.pubsub import PubSubSpec
+from forze.application.contracts.stream import StreamGroupPort, StreamSpec
 from forze.application.contracts.tenant.deps import TenantContextDepKey
 from forze.application.execution import ExecutionContext
-from forze.base.typing import conforms_to
 from forze.base.codecs import KeyCodec
 
 from ...adapters import (
@@ -38,7 +27,6 @@ from .keys import RedisClientDepKey
 # ----------------------- #
 
 
-@conforms_to(IdempotencyDepPort)  #! use spec ?
 def redis_idempotency(
     context: ExecutionContext,
     ttl: timedelta = timedelta(seconds=30),
@@ -57,7 +45,6 @@ def redis_idempotency(
 # ....................... #
 
 
-@conforms_to(CounterDepPort)  #! use spec ?
 def redis_counter(
     context: ExecutionContext,
     namespace: str,
@@ -84,7 +71,6 @@ def redis_counter(
 # ....................... #
 
 
-@conforms_to(CacheDepPort)
 def redis_cache(
     context: ExecutionContext,
     spec: CacheSpec,
@@ -101,11 +87,10 @@ def redis_cache(
 # PubSub
 
 
-@conforms_to(PubSubDepConformity)
 def redis_pubsub(
     context: ExecutionContext,
     spec: PubSubSpec[Any],
-) -> PubSubConformity:
+) -> RedisPubSubAdapter[Any]:
     """Build a Redis-backed pubsub port for the given spec.
 
     :param context: Execution context for resolving the Redis client.
@@ -122,11 +107,10 @@ def redis_pubsub(
 # Stream
 
 
-@conforms_to(StreamDepConformity)
 def redis_stream(
     context: ExecutionContext,
     spec: StreamSpec[Any],
-) -> StreamConformity:
+) -> RedisStreamAdapter[Any]:
     """Build a Redis-backed stream port (read and write) for the given spec.
 
     :param context: Execution context for resolving the Redis client.
@@ -142,7 +126,6 @@ def redis_stream(
 # ....................... #
 
 
-@conforms_to(StreamGroupDepPort)
 def redis_stream_group(
     context: ExecutionContext,
     spec: StreamSpec[Any],

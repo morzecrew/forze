@@ -117,7 +117,7 @@ class ConcurrencyError(CoreError):
 class ErrorHandler(Protocol):
     """Callable protocol for converting exceptions into :class:`CoreError`."""
 
-    def __call__(self, e: Exception, op: str, /, **kwargs: Any) -> CoreError: ...
+    def __call__(self, e: Exception, op: str, **kwargs: Any) -> CoreError: ...
 
 
 def _default_error_hanlder(e: Exception, op: str, **kwargs: Any) -> Optional[CoreError]:
@@ -148,7 +148,7 @@ def error_handler(fn: ErrorHandler) -> ErrorHandler:
 
             return fn(e, op, **kwargs)
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator(fn)
 
@@ -304,7 +304,7 @@ def _prepare_fn(  # pragma: no cover
     op: Optional[str],
     *args: P.args,
     **kwargs: P.kwargs,
-):
+) -> tuple[str, dict[str, Any]]:
     sig = inspect.signature(fn)
     bound = sig.bind_partial(*args, **kwargs)
     bound.apply_defaults()
@@ -321,7 +321,7 @@ def _prepare_fn(  # pragma: no cover
 # ....................... #
 
 
-def handled(h: ErrorHandler, op: Optional[str] = None):
+def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyped-def]
     @overload  # is_awaitable
     def decorator(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]: ...
 
