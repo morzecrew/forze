@@ -132,6 +132,7 @@ When you need custom endpoints that still leverage Forze idempotency behavior, u
         prefix="/custom",
         tags=["custom"],
         context_dependency=context_dependency,
+        strict_content_type=True,
     )
 
 
@@ -151,6 +152,7 @@ When you need custom endpoints that still leverage Forze idempotency behavior, u
 - `context_dependency` : a callable that returns the `ExecutionContext`
 - `idempotent` flag on routes for automatic deduplication
 - `idempotency_config` for per-route or router-level idempotency settings
+- `strict_content_type` parameter (default `True`) that ensures FastAPI rejects requests with missing or incorrect content types
 
 ## Idempotency
 
@@ -178,6 +180,7 @@ Router-level defaults:
     router = ForzeAPIRouter(
         prefix="/api",
         context_dependency=context_dependency,
+        strict_content_type=True,
         idempotency_config={
             "key_header": "Idempotency-Key",
             "dto_param": "payload",
