@@ -293,17 +293,17 @@ class RedisCacheAdapter(CachePort):
     # ....................... #
 
     async def delete(self, key: str, *, hard: bool) -> None:
-        # Remove plain KV always
-        await self.__mdelete_kv([key])
-
         if hard:
-            # If there is a pointer, delete its body
             pointers = await self.__mget_pointers([key])
-            if pointers:
-                await self.__mdelete_bodies(pointers)
-
-        # Remove pointer always (soft delete of "current version")
-        await self.__mdelete_pointers([key])
+            async with self.client.pipeline(transaction=False):
+                await self.__mdelete_kv([key])
+                if pointers:
+                    await self.__mdelete_bodies(pointers)
+                await self.__mdelete_pointers([key])
+        else:
+            async with self.client.pipeline(transaction=False):
+                await self.__mdelete_kv([key])
+                await self.__mdelete_pointers([key])
 
     # ....................... #
 
@@ -311,13 +311,14 @@ class RedisCacheAdapter(CachePort):
         if not keys:
             return
 
-        # Remove plain KV always
-        await self.__mdelete_kv(keys)
-
         if hard:
             pointers = await self.__mget_pointers(keys)
-            if pointers:
-                await self.__mdelete_bodies(pointers)
-
-        # Remove pointers always
-        await self.__mdelete_pointers(keys)
+            async with self.client.pipeline(transaction=False):
+                await self.__mdelete_kv(keys)
+                if pointers:
+                    await self.__mdelete_bodies(pointers)
+                await self.__mdelete_pointers(keys)
+        else:
+            async with self.client.pipeline(transaction=False):
+                await self.__mdelete_kv(keys)
+                await self.__mdelete_pointers(keys)

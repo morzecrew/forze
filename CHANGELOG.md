@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Error handler for `forze_mongo` (`mongo_handled`) that maps PyMongo exceptions to `CoreError` subtypes, bringing Mongo in line with Postgres, Redis, S3, SQS, and RabbitMQ error handling.
+
 ### Changed
 
 - Replaced `DeepDiff`-based dict diff with a lightweight recursive implementation, yielding 50–250× speedup on `calculate_dict_difference` and 10–150× speedup on `apply_dict_patch`.
@@ -20,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - S3 storage adapter `list` now fetches object metadata concurrently via `asyncio.gather` instead of sequential `head_object` calls.
 - Used `list.extend` over `+=` for middleware chain construction in `UsecasesPlanRegistry`.
 - Added `slots=True` to `_CmWrapper` and `_AsyncCmWrapper` in error utilities.
+- Eliminated per-call `inspect.signature().bind_partial()` overhead from error-handling decorators; operation name is now resolved once at decoration time.
+- Postgres `fetch_one` with dict row factory uses a dedicated `_row_to_dict` method instead of wrapping in a list.
+- SQS queue name sanitization uses pre-compiled regex patterns.
+- Redis cache adapter `delete`/`delete_many` now batch deletion commands in a single pipeline round-trip.
+- RabbitMQ `ack`/`nack` now acquire the pending-messages lock once per batch instead of per message.
 
 ## [0.1.9] - 2026-03-10
 

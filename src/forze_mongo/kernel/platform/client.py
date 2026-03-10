@@ -30,6 +30,8 @@ from pymongo.write_concern import WriteConcern
 from forze.base.errors import InfrastructureError
 from forze.base.primitives import JsonDict
 
+from .errors import mongo_handled
+
 # ----------------------- #
 
 
@@ -249,6 +251,7 @@ class MongoClient:
     # ....................... #
     # Transaction API
 
+    @mongo_handled("mongo.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(
         self,
@@ -300,6 +303,7 @@ class MongoClient:
     # ....................... #
     # Query API (minimal)
 
+    @mongo_handled("mongo.find_one")  # type: ignore[untyped-decorator]
     async def find_one(
         self,
         coll: AsyncCollection[JsonDict],
@@ -324,6 +328,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.find_many")  # type: ignore[untyped-decorator]
     async def find_many(
         self,
         coll: AsyncCollection[JsonDict],
@@ -350,6 +355,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.insert_one")  # type: ignore[untyped-decorator]
     async def insert_one(
         self,
         coll: AsyncCollection[Any],
@@ -363,6 +369,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.insert_many")  # type: ignore[untyped-decorator]
     async def insert_many(
         self,
         coll: AsyncCollection[Any],
@@ -378,6 +385,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.update_one")  # type: ignore[untyped-decorator]
     async def update_one(
         self,
         coll: AsyncCollection[Any],
@@ -394,6 +402,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.bulk_update")  # type: ignore[untyped-decorator]
     async def bulk_update(
         self,
         coll: AsyncCollection[Any],
@@ -420,6 +429,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.update_many")  # type: ignore[untyped-decorator]
     async def update_many(
         self,
         coll: AsyncCollection[Any],
@@ -436,6 +446,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.delete_one")  # type: ignore[untyped-decorator]
     async def delete_one(
         self,
         coll: AsyncCollection[Any],
@@ -449,6 +460,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.delete_many")  # type: ignore[untyped-decorator]
     async def delete_many(
         self,
         coll: AsyncCollection[Any],
@@ -462,6 +474,7 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.count")  # type: ignore[untyped-decorator]
     async def count(
         self,
         coll: AsyncCollection[Any],

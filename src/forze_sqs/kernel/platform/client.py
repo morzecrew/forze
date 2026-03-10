@@ -7,6 +7,7 @@ require_sqs()
 import base64
 import re
 from contextlib import asynccontextmanager
+from re import Pattern
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Optional, Sequence, TypedDict, cast, final
@@ -30,6 +31,9 @@ _KEY_ATTR = "forze_key"
 _ENQUEUED_AT_ATTR = "forze_enqueued_at"
 _ENCODING_ATTR = "forze_encoding"
 _ENCODING_B64 = "b64"
+
+_RE_UNSUPPORTED_CHARS: Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
+_RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
 
 # ....................... #
 
@@ -163,8 +167,8 @@ class SQSClient:
         """
         is_fifo = queue.endswith(".fifo")
         base = queue[:-5] if is_fifo else queue
-        base = re.sub(r"[^A-Za-z0-9_-]", "_", base)
-        base = re.sub(r"_+", "_", base).strip("_")
+        base = _RE_UNSUPPORTED_CHARS.sub("_", base)
+        base = _RE_MULTI_UNDERSCORE.sub("_", base).strip("_")
 
         if not base:
             base = "queue"
