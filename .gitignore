@@ -210,3 +210,6 @@ pages/docs/assets/diagrams
 pages/site/
 
 .benchmarks
+
+# just cache (modules, fetched imports)
+.just/

@@ -33,6 +33,7 @@
         "**/__marimo__": true,
         "**/.coverage": true,
         "dist/": true,
+        ".just/": true,
         // temporarily excluded (for readability)
         "**/.devcontainer/": true,
         "**/.venv/": true,
