@@ -1,3 +1,5 @@
+"""Postgres adapter implementing the search read port contract."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -40,6 +42,7 @@ type SearchGateway[M: BaseModel] = Union[
     PostgresPGroongaSearchGateway[M],
     PostgresFTSSearchGateway[M],
 ]
+"""Union of concrete search gateway types used internally by :class:`PostgresSearchAdapter`."""
 
 # ....................... #
 
@@ -47,6 +50,13 @@ type SearchGateway[M: BaseModel] = Union[
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
+    """Postgres-backed :class:`SearchReadPort` that auto-selects between FTS and PGroonga gateways.
+
+    The concrete gateway is chosen at runtime based on the index engine
+    detected by :class:`~forze_postgres.kernel.introspect.PostgresIntrospector`
+    and cached for subsequent calls.
+    """
+
     client: PostgresClient
     model: type[M]
     search_spec: SearchSpecInternal[M]

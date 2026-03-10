@@ -1,3 +1,5 @@
+"""Postgres adapter implementing the transaction manager port."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -24,6 +26,8 @@ PostgresTxScopeKey = TxScopeKey("postgres")
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresTxManagerAdapter(TxManagerPort):
+    """Postgres-backed :class:`TxManagerPort` that delegates to :meth:`PostgresClient.transaction`."""
+
     client: PostgresClient
     options: PostgresTransactionOptions = attrs.field(
         factory=PostgresTransactionOptions

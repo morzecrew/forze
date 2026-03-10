@@ -24,6 +24,8 @@ from forze.base.errors import (
 
 @error_handler
 def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
+    """Translate psycopg exceptions into domain :class:`~forze.base.errors.CoreError` subtypes."""
+
     match e:
         case CoreError():
             return e

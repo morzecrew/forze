@@ -1,3 +1,5 @@
+"""Render parsed query expressions into psycopg SQL composables."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -101,6 +103,12 @@ class PsycopgValueCoercer:
 
 @attrs.define(slots=True)
 class PsycopgQueryRenderer:
+    """Render :class:`QueryExpr` trees into psycopg :class:`~psycopg.sql.Composable` SQL with positional parameters.
+
+    When *types* is provided, values are coerced to match the Postgres column
+    type and array operators are normalized automatically.
+    """
+
     types: Optional[PostgresColumnTypes] = None
 
     # Non initable fields

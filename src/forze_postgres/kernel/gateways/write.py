@@ -1,3 +1,5 @@
+"""Write gateway for creating, updating, soft-deleting, and hard-deleting Postgres documents."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -37,11 +39,19 @@ from .read import PostgresReadGateway
 # ----------------------- #
 
 PostgresRevBumpStrategy = Literal["database", "application"]
+"""Strategy for incrementing the document revision: ``"database"`` (trigger) or ``"application"``."""
 
 # ....................... #
 
 
 def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
+    """Return a tenacity retry decorator for :exc:`~forze.base.errors.ConcurrencyError`.
+
+    Uses exponential back-off and re-raises the error after *attempts* failures.
+
+    :param attempts: Maximum number of attempts before re-raising.
+    """
+
     return retry(
         retry=retry_if_exception_type(ConcurrencyError),
         stop=stop_after_attempt(attempts),
@@ -58,6 +68,13 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
 class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     PostgresGateway[D]
 ):
+    """Write gateway for document mutations with optimistic concurrency control.
+
+    Requires a companion :class:`PostgresReadGateway` sharing the same client.
+    Optionally writes revision history via :class:`PostgresHistoryGateway`.
+    All mutating operations are decorated with :func:`optimistic_retry`.
+    """
+
     read: PostgresReadGateway[D]
     create_dto: type[C]
     update_dto: type[U]

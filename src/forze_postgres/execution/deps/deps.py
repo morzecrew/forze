@@ -90,6 +90,17 @@ def postgres_search(
     context: ExecutionContext,
     spec: SearchSpec[Any],
 ) -> SearchReadPort[Any]:
+    """Build a Postgres-backed search read port for the execution context.
+
+    Parses the provided :class:`SearchSpec` and constructs a
+    :class:`PostgresSearchAdapter` using the client and introspector
+    resolved from *context*.
+
+    :param context: Execution context for resolving dependencies.
+    :param spec: Search specification describing model, indexes, and fields.
+    :returns: Search read port backed by :class:`PostgresSearchAdapter`.
+    """
+
     client = context.dep(PostgresClientDepKey)
     introspector = context.dep(PostgresIntrospectorDepKey)
 

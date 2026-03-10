@@ -1,3 +1,5 @@
+"""PGroonga-based search gateway using the ``&@~`` operator."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -26,6 +28,8 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
+    """Search gateway that builds PGroonga ``&@~`` queries with per-field weighting and optional fuzzy matching."""
+
     def _effective_field_weights(
         self,
         spec: SearchIndexSpecInternal,

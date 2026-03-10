@@ -1,3 +1,5 @@
+"""Psycopg query-building helpers."""
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
