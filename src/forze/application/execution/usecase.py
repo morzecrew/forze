@@ -23,6 +23,10 @@ class Usecase[Args, R]:
     middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
     """Middlewares wrapping the usecase; first added runs outermost."""
 
+    _chain: NextCall[Args, R] | None = attrs.field(
+        default=None, init=False, eq=False, repr=False, alias="_chain"
+    )
+
     # ....................... #
 
     def with_middlewares(self, *middlewares: Middleware[Args, R]) -> Self:
@@ -73,8 +77,11 @@ class Usecase[Args, R]:
     async def __call__(self, args: Args) -> R:
         """Execute the usecase with the configured middlewares.
 
-        Builds the middleware chain and runs it with the given args.
+        Builds the middleware chain on first call and caches it for reuse.
         """
-        chain = self._build_chain()
+        chain = self._chain
+        if chain is None:
+            chain = self._build_chain()
+            object.__setattr__(self, "_chain", chain)
 
         return await chain(args)

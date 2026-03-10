@@ -1,19 +1,14 @@
 """Dict-diff and merge helpers used by higher-level composition logic."""
 
 from copy import deepcopy
-from itertools import chain
-from typing import Any, Iterable, cast
-
-from deepdiff import DeepDiff
-from deepdiff.model import DiffLevel
-from mergedeep import merge  # type: ignore[import-untyped]
+from typing import Any, Iterable
 
 from ..primitives.types import JsonDict
 
 # ----------------------- #
 
 
-def _set_nested(  # pragma: no cover
+def _set_nested(
     dst: JsonDict,
     path: Iterable[Any],
     value: Any,
@@ -38,42 +33,14 @@ def _set_nested(  # pragma: no cover
 # ....................... #
 
 
-def _maybe_deepcopy(x: Any) -> Any:
-    return deepcopy(x) if isinstance(x, (dict, list, set, tuple)) else x  # type: ignore[report-untyped-call]
-
-
-# ....................... #
-
-
-def _get_by_path(obj: Any, path: Iterable[Any]) -> Any:
-    cur = obj
-
-    for p in path:
-        cur = cur[p]
-
-    return cur
-
-
-# ....................... #
-
-
-def _iterate_deepdiff(dd: DeepDiff, group_name: str) -> tuple[DiffLevel, ...]:
-    grp = dd.get(group_name) or ()  # type: ignore[report-untyped-call]
-    grp = cast(tuple[DiffLevel, ...], grp)
-
-    return grp
-
-
-# ....................... #
-
-
-def _parent_list_path(node: DiffLevel) -> list[str | int]:
-    p = list(node.path(output_format="list"))
-
-    while p and isinstance(p[-1], int):
-        p.pop()
-
-    return p
+def _shallow_merge(base: JsonDict, patch: JsonDict) -> JsonDict:
+    out = dict(base)
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _shallow_merge(out[k], v)  # type: ignore[arg-type]
+        else:
+            out[k] = v
+    return out
 
 
 # ....................... #
@@ -87,13 +54,40 @@ def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
     :returns: New dictionary with the patch applied.
     """
 
-    before_copy = deepcopy(before)
-    res = merge(before_copy, patch)  # type: ignore[report-untyped-call]
-
-    return cast(JsonDict, res)
+    return _shallow_merge(before, patch)
 
 
 # ....................... #
+
+
+def _diff_recursive(
+    before: Any,
+    after: Any,
+    patch: JsonDict,
+    path: tuple[str, ...],
+    deletions_as_none: bool,
+) -> None:
+    if isinstance(before, dict) and isinstance(after, dict):
+        for k in after:
+            child_path = path + (k,)
+            if k not in before:
+                _set_nested(patch, child_path, deepcopy(after[k]))
+            else:
+                _diff_recursive(before[k], after[k], patch, child_path, deletions_as_none)
+
+        if deletions_as_none:
+            for k in before:
+                if k not in after:
+                    _set_nested(patch, path + (k,), None)
+        return
+
+    if isinstance(before, list) and isinstance(after, list):
+        if before != after:
+            _set_nested(patch, path, deepcopy(after))
+        return
+
+    if before != after:
+        _set_nested(patch, path, deepcopy(after) if isinstance(after, (dict, list, set, tuple)) else after)
 
 
 def calculate_dict_difference(
@@ -114,49 +108,8 @@ def calculate_dict_difference(
         as ``None`` values in the patch instead of being omitted.
     :returns: Merge patch that transforms ``before`` into ``after``.
     """
-    dd = DeepDiff(
-        before,
-        after,
-        ignore_order=True,
-        report_repetition=True,
-        view="tree",
-    )
     patch: JsonDict = {}
-
-    for node in chain(
-        _iterate_deepdiff(dd, "values_changed"),
-        _iterate_deepdiff(dd, "type_changes"),
-    ):
-        p = list(node.path(output_format="list"))
-
-        if any(isinstance(x, int) for x in p):
-            lp = _parent_list_path(node)
-            lst = _get_by_path(after, lp)
-
-            _set_nested(patch, lp, _maybe_deepcopy(lst))
-
-        _set_nested(patch, p, _maybe_deepcopy(node.t2))
-
-    for node in _iterate_deepdiff(dd, "dictionary_item_added"):
-        p = list(node.path(output_format="list"))
-        _set_nested(patch, p, _maybe_deepcopy(_get_by_path(after, p)))
-
-    if deletions_as_none:
-        for node in _iterate_deepdiff(dd, "dictionary_item_removed"):
-            p = list(node.path(output_format="list"))
-            _set_nested(patch, p, None)
-
-    for kind in (
-        "iterable_item_added",
-        "iterable_item_removed",
-        "iterable_item_moved",
-        "iterable_item_repetition_change",
-    ):
-        for node in _iterate_deepdiff(dd, kind):
-            lp = _parent_list_path(node)
-            lst = _get_by_path(after, lp)
-            _set_nested(patch, lp, _maybe_deepcopy(lst))
-
+    _diff_recursive(before, after, patch, (), deletions_as_none)
     return patch
 
 
@@ -220,26 +173,16 @@ def has_hybrid_patch_conflict(
     b_scalars: dict[DictPath, Any],
     b_containers: set[DictPath],
 ) -> bool:
-    for pa in a_containers:
-        for pb in b_containers:
-            if is_prefix(pa, pb):
-                return True
+    all_a = set(a_containers) | set(a_scalars.keys())
+    all_b = set(b_containers) | set(b_scalars.keys())
 
-        for pb in b_scalars.keys():
-            if is_prefix(pa, pb):
-                return True
-
-    for pb in b_containers:
-        for pa in a_scalars.keys():
-            if is_prefix(pb, pa):
-                return True
-
-    for pa, va in a_scalars.items():
-        for pb, vb in b_scalars.items():
-            if not is_prefix(pb, pa):
+    for pa in all_a:
+        for pb in all_b:
+            if not is_prefix(pa, pb):
                 continue
 
-            if pa == pb and va == vb:
+            is_both_scalar = pa in a_scalars and pb in b_scalars
+            if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
                 continue
 
             return True

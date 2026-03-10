@@ -1,14 +1,10 @@
 from copy import deepcopy
-from typing import Any
 
 import pytest
 
 from forze.base.primitives import JsonDict
 from forze.base.serialization.diff import (
-    _get_by_path,
     _is_prefix,
-    _maybe_deepcopy,
-    _parent_list_path,
     apply_dict_patch,
     calculate_dict_difference,
     has_hybrid_patch_conflict,
@@ -116,62 +112,6 @@ class TestCalculateDictDifference:
         diff = calculate_dict_difference(before, after, deletions_as_none=False)
         restored = apply_dict_patch(before, diff)
         assert restored == after
-
-
-# ----------------------- #
-# _maybe_deepcopy
-
-
-class TestMaybeDeepCopy:
-    def test_deepcopies_dict(self) -> None:
-        d: dict[str, Any] = {"a": [1]}
-        result = _maybe_deepcopy(d)
-        assert result == d
-        assert result is not d
-
-    def test_deepcopies_list(self) -> None:
-        lst = [1, [2]]
-        result = _maybe_deepcopy(lst)
-        assert result == lst
-        assert result is not lst
-
-    def test_deepcopies_set(self) -> None:
-        s = {1, 2}
-        result = _maybe_deepcopy(s)
-        assert result == s
-        assert result is not s
-
-    def test_deepcopies_tuple(self) -> None:
-        t = (1, [2])
-        result = _maybe_deepcopy(t)
-        assert result == t
-
-    def test_returns_scalar_directly(self) -> None:
-        assert _maybe_deepcopy(42) == 42
-        assert _maybe_deepcopy("hello") == "hello"
-        assert _maybe_deepcopy(None) is None
-
-
-# ----------------------- #
-# _get_by_path
-
-
-class TestGetByPath:
-    def test_simple_path(self) -> None:
-        obj = {"a": {"b": 42}}
-        assert _get_by_path(obj, ["a", "b"]) == 42
-
-    def test_empty_path_returns_root(self) -> None:
-        obj = {"x": 1}
-        assert _get_by_path(obj, []) == obj
-
-    def test_list_index_path(self) -> None:
-        obj = {"items": [10, 20, 30]}
-        assert _get_by_path(obj, ["items", 1]) == 20
-
-    def test_missing_key_raises(self) -> None:
-        with pytest.raises(KeyError):
-            _get_by_path({"a": 1}, ["b"])
 
 
 # ----------------------- #

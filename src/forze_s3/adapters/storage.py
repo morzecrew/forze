@@ -4,6 +4,7 @@ require_s3()
 
 # ....................... #
 
+import asyncio
 import mimetypes
 import re
 from datetime import datetime
@@ -169,14 +170,20 @@ class S3StorageAdapter(StoragePort):
                 bucket=self.bucket, prefix=p, limit=limit, offset=offset
             )
 
-            out: list[StoredObject] = []
-
             for o in objects:
                 if "Key" not in o:
                     raise CoreError("Invalid object key")
 
-                h = await self.client.head_object(bucket=self.bucket, key=o["Key"])
+            heads = await asyncio.gather(
+                *(
+                    self.client.head_object(bucket=self.bucket, key=o["Key"])
+                    for o in objects
+                )
+            )
 
+            out: list[StoredObject] = []
+
+            for o, h in zip(objects, heads, strict=True):
                 if "metadata" not in h:
                     raise CoreError("Invalid object metadata")
 

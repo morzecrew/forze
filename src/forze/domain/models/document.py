@@ -103,7 +103,8 @@ class Document(CoreModel):
         if not diff:
             return self
 
-        return self.model_copy(update=diff, deep=True)
+        needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
+        return self.model_copy(update=diff, deep=needs_deep)
 
     # ....................... #
 
