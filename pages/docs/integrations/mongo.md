@@ -4,34 +4,32 @@
 
 ## Installation
 
-```bash
-uv add 'forze[mongo]'
-```
+    :::bash
+    uv add 'forze[mongo]'
 
 ## Runtime wiring
 
-```python
-from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
-from forze_mongo import MongoClient, MongoConfig, MongoDepsModule, mongo_lifecycle_step
+    :::python
+    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze_mongo import MongoClient, MongoConfig, MongoDepsModule, mongo_lifecycle_step
 
-client = MongoClient()
-module = MongoDepsModule(
-    client=client,
-    rev_bump_strategy="application",
-    history_write_strategy="application",
-)
+    client = MongoClient()
+    module = MongoDepsModule(
+        client=client,
+        rev_bump_strategy="application",
+        history_write_strategy="application",
+    )
 
-runtime = ExecutionRuntime(
-    deps=DepsPlan.from_modules(module),
-    lifecycle=LifecyclePlan.from_steps(
-        mongo_lifecycle_step(
-            uri="mongodb://localhost:27017",
-            db_name="app",
-            config=MongoConfig(max_pool_size=100, min_pool_size=5),
-        )
-    ),
-)
-```
+    runtime = ExecutionRuntime(
+        deps=DepsPlan.from_modules(module),
+        lifecycle=LifecyclePlan.from_steps(
+            mongo_lifecycle_step(
+                uri="mongodb://localhost:27017",
+                db_name="app",
+                config=MongoConfig(max_pool_size=100, min_pool_size=5),
+            )
+        ),
+    )
 
 ### MongoConfig options
 
@@ -52,7 +50,7 @@ Both strategies are currently application-managed in the Mongo integration. The 
 ### What gets registered
 
 | Key | Capability |
-|-----|-----------|
+|-----|------------|
 | `MongoClientDepKey` | Raw Mongo client for direct queries |
 | `DocumentReadDepKey` | Document read adapter factory |
 | `DocumentWriteDepKey` | Document write adapter factory |
@@ -62,44 +60,43 @@ Both strategies are currently application-managed in the Mongo integration. The 
 
 Define your models the same way as for Postgres. The only difference is the source naming: MongoDB uses collection names without a schema prefix.
 
-```python
-from forze.application.contracts.document import DocumentSpec
-from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+    :::python
+    from forze.application.contracts.document import DocumentSpec
+    from forze.domain.mixins import SoftDeletionMixin
+    from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 
-class Project(SoftDeletionMixin, Document):
-    title: str
-    is_deleted: bool = False
+    class Project(SoftDeletionMixin, Document):
+        title: str
+        is_deleted: bool = False
 
 
-class CreateProjectCmd(CreateDocumentCmd):
-    title: str
+    class CreateProjectCmd(CreateDocumentCmd):
+        title: str
 
 
-class UpdateProjectCmd(BaseDTO):
-    title: str | None = None
+    class UpdateProjectCmd(BaseDTO):
+        title: str | None = None
 
 
-class ProjectReadModel(ReadDocument):
-    title: str
-    is_deleted: bool = False
+    class ProjectReadModel(ReadDocument):
+        title: str
+        is_deleted: bool = False
 
 
-project_spec = DocumentSpec(
-    namespace="projects",
-    read={"source": "projects", "model": ProjectReadModel},
-    write={
-        "source": "projects",
-        "models": {
-            "domain": Project,
-            "create_cmd": CreateProjectCmd,
-            "update_cmd": UpdateProjectCmd,
+    project_spec = DocumentSpec(
+        namespace="projects",
+        read={"source": "projects", "model": ProjectReadModel},
+        write={
+            "source": "projects",
+            "models": {
+                "domain": Project,
+                "create_cmd": CreateProjectCmd,
+                "update_cmd": UpdateProjectCmd,
+            },
         },
-    },
-    history={"source": "projects_history"},
-)
-```
+        history={"source": "projects_history"},
+    )
 
 Note that MongoDB sources use plain collection names (e.g. `"projects"`) rather than `schema.table` format.
 
@@ -107,64 +104,61 @@ Note that MongoDB sources use plain collection names (e.g. `"projects"`) rather 
 
 Resolve document ports from the execution context identically to the Postgres integration:
 
-```python
-doc_read = ctx.doc_read(project_spec)
-doc_write = ctx.doc_write(project_spec)
+    :::python
+    doc_read = ctx.doc_read(project_spec)
+    doc_write = ctx.doc_write(project_spec)
 
-# Create
-created = await doc_write.create(CreateProjectCmd(title="Alpha"))
+    # Create
+    created = await doc_write.create(CreateProjectCmd(title="Alpha"))
 
-# Read
-fetched = await doc_read.get(created.id)
+    # Read
+    fetched = await doc_read.get(created.id)
 
-# Update with optimistic concurrency
-updated = await doc_write.update(
-    created.id,
-    UpdateProjectCmd(title="Beta"),
-    rev=created.rev,
-)
+    # Update with optimistic concurrency
+    updated = await doc_write.update(
+        created.id,
+        UpdateProjectCmd(title="Beta"),
+        rev=created.rev,
+    )
 
-# Touch (bump last_update_at)
-touched = await doc_write.touch(created.id)
+    # Touch (bump last_update_at)
+    touched = await doc_write.touch(created.id)
 
-# Soft delete / restore
-await doc_write.delete(created.id)
-await doc_write.restore(created.id)
+    # Soft delete / restore
+    await doc_write.delete(created.id)
+    await doc_write.restore(created.id)
 
-# Hard delete
-await doc_write.kill(created.id)
-```
+    # Hard delete
+    await doc_write.kill(created.id)
 
 ### Batch operations
 
 All write operations have batch variants:
 
-```python
-created_many = await doc_write.create_many([
-    CreateProjectCmd(title="Project A"),
-    CreateProjectCmd(title="Project B"),
-])
-```
+    :::python
+    created_many = await doc_write.create_many([
+        CreateProjectCmd(title="Project A"),
+        CreateProjectCmd(title="Project B"),
+    ])
 
 ## Query and filter behavior
 
 The Mongo adapter uses the same shared query DSL as the Postgres adapter. Filters and sorts use the same expression syntax:
 
-```python
-projects, total = await doc_read.find_many(
-    filters={
-        "$and": [
-            {"$fields": {"is_deleted": False}},
-            {"$fields": {"title": {"$neq": ""}}},
-        ]
-    },
-    sorts={"created_at": "desc"},
-    limit=20,
-    offset=0,
-)
+    :::python
+    projects, total = await doc_read.find_many(
+        filters={
+            "$and": [
+                {"$fields": {"is_deleted": False}},
+                {"$fields": {"title": {"$neq": ""}}},
+            ]
+        },
+        sorts={"created_at": "desc"},
+        limit=20,
+        offset=0,
+    )
 
-count = await doc_read.count({"$fields": {"is_deleted": False}})
-```
+    count = await doc_read.count({"$fields": {"is_deleted": False}})
 
 The query DSL is rendered into MongoDB query syntax by the adapter's query renderer. See [Query Syntax](../core-package/query-syntax.md) for the full filter and sort reference.
 
@@ -178,11 +172,10 @@ The query DSL is rendered into MongoDB query syntax by the adapter's query rende
 
 MongoDB transactions require a replica set or sharded cluster. The Mongo adapter uses `pymongo` sessions for transaction management.
 
-```python
-async with ctx.transaction():
-    await doc_write.create(CreateProjectCmd(title="In transaction"))
-    await doc_write.update(existing_id, UpdateProjectCmd(title="Also in tx"))
-```
+    :::python
+    async with ctx.transaction():
+        await doc_write.create(CreateProjectCmd(title="In transaction"))
+        await doc_write.update(existing_id, UpdateProjectCmd(title="Also in tx"))
 
 Within a transaction scope, all document operations share the same MongoDB session. Nested `transaction()` calls are tracked by the execution context for consistent scope management.
 
@@ -201,46 +194,43 @@ The Mongo adapter increments `rev` in application code before writing the update
 
 When history is configured, the adapter inserts a snapshot into the history collection after each update:
 
-```json
-{
-    "source": "projects",
-    "id": "uuid-value",
-    "rev": 1,
-    "data": { /* full document snapshot */ }
-}
-```
+    :::json
+    {
+        "source": "projects",
+        "id": "uuid-value",
+        "rev": 1,
+        "data": { /* full document snapshot */ }
+    }
 
 ## Combining with Redis
 
 Add Redis for caching, counters, and idempotency:
 
-```python
-deps_plan = DepsPlan.from_modules(
-    lambda: Deps.merge(
-        MongoDepsModule(client=mongo, rev_bump_strategy="application", history_write_strategy="application")(),
-        RedisDepsModule(client=redis)(),
-    ),
-)
+    :::python
+    deps_plan = DepsPlan.from_modules(
+        lambda: Deps.merge(
+            MongoDepsModule(client=mongo, rev_bump_strategy="application", history_write_strategy="application")(),
+            RedisDepsModule(client=redis)(),
+        ),
+    )
 
-lifecycle = LifecyclePlan.from_steps(
-    mongo_lifecycle_step(uri="mongodb://localhost:27017", db_name="app", config=MongoConfig()),
-    redis_lifecycle_step(dsn="redis://localhost:6379/0", config=RedisConfig()),
-)
-```
+    lifecycle = LifecyclePlan.from_steps(
+        mongo_lifecycle_step(uri="mongodb://localhost:27017", db_name="app", config=MongoConfig()),
+        redis_lifecycle_step(dsn="redis://localhost:6379/0", config=RedisConfig()),
+    )
 
 With both modules, enable caching in your document spec:
 
-```python
-project_spec = DocumentSpec(
-    namespace="projects",
-    read={"source": "projects", "model": ProjectReadModel},
-    write={
-        "source": "projects",
-        "models": {"domain": Project, "create_cmd": CreateProjectCmd, "update_cmd": UpdateProjectCmd},
-    },
-    cache={"enabled": True},
-)
-```
+    :::python
+    project_spec = DocumentSpec(
+        namespace="projects",
+        read={"source": "projects", "model": ProjectReadModel},
+        write={
+            "source": "projects",
+            "models": {"domain": Project, "create_cmd": CreateProjectCmd, "update_cmd": UpdateProjectCmd},
+        },
+        cache={"enabled": True},
+    )
 
 ## Differences from Postgres integration
 

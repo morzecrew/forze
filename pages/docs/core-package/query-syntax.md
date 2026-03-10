@@ -24,15 +24,14 @@ Inside `"$fields"`, each field value can use a shortcut or an explicit operator 
 
 Example:
 
-```python
-filters = {
-    "$fields": {
-        "status": "active",         # == {"$eq": "active"}
-        "tags": ["backend", "api"], # == {"$in": [...]}
-        "deleted_at": None,         # == {"$null": True}
+    :::python
+    filters = {
+        "$fields": {
+            "status": "active",
+            "tags": ["backend", "api"],
+            "deleted_at": None,
+        }
     }
-}
-```
 
 ## Operators
 
@@ -79,41 +78,38 @@ filters = {
 
 ### Nested AND/OR
 
-```python
-filters = {
-    "$and": [
-        {"$fields": {"is_deleted": False}},
-        {
-            "$or": [
-                {"$fields": {"priority": {"$gte": 5}}},
-                {"$fields": {"status": {"$in": ["new", "in_progress"]}}},
-            ]
-        },
-    ]
-}
-```
+    :::python
+    filters = {
+        "$and": [
+            {"$fields": {"is_deleted": False}},
+            {
+                "$or": [
+                    {"$fields": {"priority": {"$gte": 5}}},
+                    {"$fields": {"status": {"$in": ["new", "in_progress"]}}},
+                ]
+            },
+        ]
+    }
 
 ### Range + set relation
 
-```python
-filters = {
-    "$fields": {
-        "created_at": {"$gte": "2026-01-01T00:00:00Z"},
-        "labels": {"$overlaps": ["urgent", "customer"]},
+    :::python
+    filters = {
+        "$fields": {
+            "created_at": {"$gte": "2026-01-01T00:00:00Z"},
+            "labels": {"$overlaps": ["urgent", "customer"]},
+        }
     }
-}
-```
 
 ## Sorting syntax
 
 Sort expression is a map of field name to direction:
 
-```python
-sorts = {
-    "created_at": "desc",
-    "id": "asc",
-}
-```
+    :::python
+    sorts = {
+        "created_at": "desc",
+        "id": "asc",
+    }
 
 Supported directions:
 
@@ -126,30 +122,28 @@ If `sorts` is omitted, adapters default to sorting by `id` descending.
 
 ### Document port usage
 
-```python
-doc = ctx.doc_read(project_spec)
+    :::python
+    doc = ctx.doc_read(project_spec)
 
-rows, total = await doc.find_many(
-    filters=filters,
-    sorts=sorts,
-    limit=20,
-    offset=0,
-)
-```
+    rows, total = await doc.find_many(
+        filters=filters,
+        sorts=sorts,
+        limit=20,
+        offset=0,
+    )
 
 ### Search request usage
 
-```python
-search = ctx.search(project_search_spec)
+    :::python
+    search = ctx.search(project_search_spec)
 
-hits, total = await search.search(
-    query="roadmap",
-    filters=filters,
-    sorts=sorts,
-    limit=20,
-    offset=0,
-)
-```
+    hits, total = await search.search(
+        query="roadmap",
+        filters=filters,
+        sorts=sorts,
+        limit=20,
+        offset=0,
+    )
 
 ## Validation rules
 

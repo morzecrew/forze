@@ -1,32 +1,31 @@
 # Aggregate Specification
 
-Specifications are the bridge between your domain models and infrastructure adapters. You declare a spec once; adapters read it to configure themselves. Switching backends means changing the adapter, not the spec.
+Specifications are the bridge between your domain models and infrastructure adapters. A spec is a declarative description of an aggregate's storage, caching, and search needs. You declare a spec once; adapters read it to configure themselves. Switching backends means changing the adapter, not the spec.
 
 ## DocumentSpec
 
 `DocumentSpec` binds together everything an adapter needs to store and retrieve a document aggregate:
 
-```python
-from datetime import timedelta
+    :::python
+    from datetime import timedelta
 
-from forze.application.contracts.document import DocumentSpec
+    from forze.application.contracts.document import DocumentSpec
 
 
-project_spec = DocumentSpec(
-    namespace="projects",
-    read={"source": "public.projects", "model": ProjectReadModel},
-    write={
-        "source": "public.projects",
-        "models": {
-            "domain": Project,
-            "create_cmd": CreateProjectCmd,
-            "update_cmd": UpdateProjectCmd,
+    project_spec = DocumentSpec(
+        namespace="projects",
+        read={"source": "public.projects", "model": ProjectReadModel},
+        write={
+            "source": "public.projects",
+            "models": {
+                "domain": Project,
+                "create_cmd": CreateProjectCmd,
+                "update_cmd": UpdateProjectCmd,
+            },
         },
-    },
-    history={"source": "public.projects_history"},
-    cache={"enabled": True, "ttl": timedelta(minutes=5)},
-)
-```
+        history={"source": "public.projects_history"},
+        cache={"enabled": True, "ttl": timedelta(minutes=5)},
+    )
 
 ### Spec fields
 
@@ -40,46 +39,42 @@ project_spec = DocumentSpec(
 
 ### Read specification
 
-```python
-read={"source": "public.projects", "model": ProjectReadModel}
-```
+    :::python
+    read={"source": "public.projects", "model": ProjectReadModel}
 
-- `source` -- the table, view, or collection used for read queries (e.g. `"public.projects"` for Postgres, `"projects"` for Mongo)
-- `model` -- the `ReadDocument` subclass used to deserialize query results
+- `source`: the table, view, or collection used for read queries (e.g. `"public.projects"` for Postgres, `"projects"` for Mongo)
+- `model`: the `ReadDocument` subclass used to deserialize query results
 
 ### Write specification
 
-```python
-write={
-    "source": "public.projects",
-    "models": {
-        "domain": Project,
-        "create_cmd": CreateProjectCmd,
-        "update_cmd": UpdateProjectCmd,
-    },
-}
-```
+    :::python
+    write={
+        "source": "public.projects",
+        "models": {
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
+        },
+    }
 
-- `source` -- the table or collection for write operations
-- `models.domain` -- the `Document` subclass holding business logic
-- `models.create_cmd` -- the `CreateDocumentCmd` subclass for creation
-- `models.update_cmd` -- the `BaseDTO` subclass for partial updates
+- `source`: the table or collection for write operations
+- `models.domain`: the `Document` subclass holding business logic
+- `models.create_cmd`: the `CreateDocumentCmd` subclass for creation
+- `models.update_cmd`: the `BaseDTO` subclass for partial updates
 
 When `write` is `None`, the spec is read-only. Adapters skip mutation operations.
 
 ### History specification
 
-```python
-history={"source": "public.projects_history"}
-```
+    :::python
+    history={"source": "public.projects_history"}
 
 Stores previous document revisions for audit trails and historical consistency checks. The source can be a dedicated table (Postgres) or collection (Mongo).
 
 ### Cache specification
 
-```python
-cache={"enabled": True, "ttl": timedelta(minutes=5)}
-```
+    :::python
+    cache={"enabled": True, "ttl": timedelta(minutes=5)}
 
 When enabled, `ExecutionContext.doc_read()` and `doc_write()` automatically resolve a `CachePort` and inject it into the adapter. The TTL defaults to 300 seconds if not specified.
 
@@ -87,36 +82,35 @@ When enabled, `ExecutionContext.doc_read()` and `doc_write()` automatically reso
 
 `DocumentSpec` provides two convenience methods:
 
-- `supports_soft_delete()` -- returns `True` when the domain model inherits from `SoftDeletionMixin`
-- `supports_update()` -- returns `True` when the update command has writable fields
+- `supports_soft_delete()`: returns `True` when the domain model inherits from `SoftDeletionMixin`
+- `supports_update()`: returns `True` when the update command has writable fields
 
 ## SearchSpec
 
 Search is configured separately from document storage. A `SearchSpec` describes the full-text search indexes for an aggregate:
 
-```python
-from forze.application.contracts.search import SearchSpec
+    :::python
+    from forze.application.contracts.search import SearchSpec
 
 
-project_search_spec = SearchSpec(
-    namespace="projects",
-    model=ProjectReadModel,
-    indexes={
-        "public.idx_projects_title": {
-            "fields": [{"path": "title"}],
-            "source": "public.projects",
+    project_search_spec = SearchSpec(
+        namespace="projects",
+        model=ProjectReadModel,
+        indexes={
+            "public.idx_projects_title": {
+                "fields": [{"path": "title"}],
+                "source": "public.projects",
+            },
+            "public.idx_projects_content": {
+                "fields": [
+                    {"path": "title", "weight": 2.0},
+                    {"path": "description", "weight": 1.0},
+                ],
+                "source": "public.projects",
+            },
         },
-        "public.idx_projects_content": {
-            "fields": [
-                {"path": "title", "weight": 2.0},
-                {"path": "description", "weight": 1.0},
-            ],
-            "source": "public.projects",
-        },
-    },
-    default_index="public.idx_projects_title",
-)
-```
+        default_index="public.idx_projects_title",
+    )
 
 ### Spec fields
 
@@ -154,41 +148,37 @@ Each field in an index:
 
 ### QueueSpec
 
-```python
-from forze.application.contracts.queue import QueueSpec
+    :::python
+    from forze.application.contracts.queue import QueueSpec
 
-order_queue = QueueSpec(namespace="orders", model=OrderPayload)
-```
+    order_queue = QueueSpec(namespace="orders", model=OrderPayload)
 
 Binds a queue namespace to a Pydantic model type. Used when resolving queue read/write ports.
 
 ### PubSubSpec
 
-```python
-from forze.application.contracts.pubsub import PubSubSpec
+    :::python
+    from forze.application.contracts.pubsub import PubSubSpec
 
-events_pubsub = PubSubSpec(namespace="events", model=EventPayload)
-```
+    events_pubsub = PubSubSpec(namespace="events", model=EventPayload)
 
 Binds a pub/sub namespace to a message model type.
 
 ### StreamSpec
 
-```python
-from forze.application.contracts.stream import StreamSpec
+    :::python
+    from forze.application.contracts.stream import StreamSpec
 
-audit_stream = StreamSpec(namespace="audit", model=AuditEntry)
-```
+    audit_stream = StreamSpec(namespace="audit", model=AuditEntry)
 
 Binds a stream namespace to an entry model type.
 
 ### CacheSpec
 
-```python
-from forze.application.contracts.cache import CacheSpec
+    :::python
+    from forze.application.contracts.cache import CacheSpec
 
-cache_spec = CacheSpec(namespace="projects", ttl=timedelta(minutes=10))
-```
+    cache_spec = CacheSpec(namespace="projects", ttl=timedelta(minutes=10))
 
 Used when resolving cache ports directly (outside of automatic document cache).
 
@@ -196,20 +186,18 @@ Used when resolving cache ports directly (outside of automatic document cache).
 
 All specs are consumed by `ExecutionContext` methods:
 
-```python
-doc_read  = ctx.doc_read(project_spec)
-doc_write = ctx.doc_write(project_spec)
-search    = ctx.search(project_search_spec)
-cache     = ctx.cache(cache_spec)
-counter   = ctx.counter("tickets")
-storage   = ctx.storage("attachments")
-```
+    :::python
+    doc_read  = ctx.doc_read(project_spec)
+    doc_write = ctx.doc_write(project_spec)
+    search    = ctx.search(project_search_spec)
+    cache     = ctx.cache(cache_spec)
+    counter   = ctx.counter("tickets")
+    storage   = ctx.storage("attachments")
 
 For contracts without a dedicated context method, resolve via dependency key:
 
-```python
-from forze.application.contracts.queue import QueueWriteDepKey
+    :::python
+    from forze.application.contracts.queue import QueueWriteDepKey
 
-queue = ctx.dep(QueueWriteDepKey)(ctx, order_queue)
-await queue.enqueue("orders", OrderPayload(order_id="123"))
-```
+    queue = ctx.dep(QueueWriteDepKey)(ctx, order_queue)
+    await queue.enqueue("orders", OrderPayload(order_id="123"))

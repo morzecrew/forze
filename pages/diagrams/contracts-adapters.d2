@@ -22,30 +22,24 @@ Application: {
         doc: DocumentPort
         search: SearchReadPort
         cache: CachePort
-        idempotency: IdempotencyPort
         storage: StoragePort
-        workflow: WorkflowPort
     }
 }
 
 Infrastructure: {
     shape: rectangle
 
-    postgres: PostgresDocumentAdapter
-    pg_search: PostgresSearchAdapter
-    redis_cache: RedisCacheAdapter
-    redis_idem: RedisIdempotencyAdapter
-    s3: S3StorageAdapter
-    mongo: MongoDocumentAdapter
-    custom: Custom Temporal adapter
+    postgres: Postgres adapter
+    pg_search: Postgres search adapter
+    redis_cache: Redis cache adapter
+    s3: S3 storage adapter
+    mongo: Mongo adapter
 }
 
-Application.usecases -> Application.contracts: resolve via ExecutionContext
+Application.usecases -> Application.contracts: resolve via context
 
 Infrastructure.postgres -> Application.contracts.doc: implements
 Infrastructure.pg_search -> Application.contracts.search: implements
 Infrastructure.redis_cache -> Application.contracts.cache: implements
-Infrastructure.redis_idem -> Application.contracts.idempotency: implements
 Infrastructure.s3 -> Application.contracts.storage: implements
-Infrastructure.mongo -> Application.contracts.doc: alternative implementation
-Infrastructure.custom -> Application.contracts.workflow: implements
+Infrastructure.mongo -> Application.contracts.doc: implements

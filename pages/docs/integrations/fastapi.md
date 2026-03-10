@@ -4,25 +4,23 @@
 
 ## Installation
 
-```bash
-uv add 'forze[fastapi]'
-```
+    :::bash
+    uv add 'forze[fastapi]'
 
 ## Execution context dependency
 
 All Forze routes resolve ports through `ExecutionContext`. In FastAPI, provide a callable dependency that returns the current context:
 
-```python
-from fastapi import FastAPI
-from forze.application.execution import ExecutionRuntime
+    :::python
+    from fastapi import FastAPI
+    from forze.application.execution import ExecutionRuntime
 
-runtime = ExecutionRuntime(...)
-app = FastAPI()
+    runtime = ExecutionRuntime(...)
+    app = FastAPI()
 
 
-def context_dependency():
-    return runtime.get_context()
-```
+    def context_dependency():
+        return runtime.get_context()
 
 This function is passed as `context=` to prebuilt routers or `context_dependency=` to `ForzeAPIRouter`.
 
@@ -49,34 +47,33 @@ The endpoint is spelled `/medatada` (not `/metadata`) for backward compatibility
 
 ### Setup
 
-```python
-from forze.application.composition.document import (
-    DocumentUsecasesFacadeProvider,
-    build_document_plan,
-    build_document_registry,
-)
-from forze_fastapi.routers import build_document_router
-
-provider = DocumentUsecasesFacadeProvider(
-    spec=project_spec,
-    reg=build_document_registry(project_spec),
-    plan=build_document_plan(),
-    dtos={
-        "read": ProjectReadModel,
-        "create": CreateProjectCmd,
-        "update": UpdateProjectCmd,
-    },
-)
-
-app.include_router(
-    build_document_router(
-        prefix="/projects",
-        tags=["projects"],
-        provider=provider,
-        context=context_dependency,
+    :::python
+    from forze.application.composition.document import (
+        DocumentUsecasesFacadeProvider,
+        build_document_plan,
+        build_document_registry,
     )
-)
-```
+    from forze_fastapi.routers import build_document_router
+
+    provider = DocumentUsecasesFacadeProvider(
+        spec=project_spec,
+        reg=build_document_registry(project_spec),
+        plan=build_document_plan(),
+        dtos={
+            "read": ProjectReadModel,
+            "create": CreateProjectCmd,
+            "update": UpdateProjectCmd,
+        },
+    )
+
+    app.include_router(
+        build_document_router(
+            prefix="/projects",
+            tags=["projects"],
+            provider=provider,
+            context=context_dependency,
+        )
+    )
 
 The router automatically detects whether the spec supports soft-delete and update operations and only generates applicable endpoints.
 
@@ -91,30 +88,29 @@ The router automatically detects whether the spec supports soft-delete and updat
 
 ### Setup
 
-```python
-from forze.application.composition.search import (
-    SearchUsecasesFacadeProvider,
-    build_search_plan,
-    build_search_registry,
-)
-from forze_fastapi.routers import build_search_router
-
-search_provider = SearchUsecasesFacadeProvider(
-    spec=project_search_spec,
-    reg=build_search_registry(project_search_spec),
-    plan=build_search_plan(),
-    read_dto=ProjectReadModel,
-)
-
-app.include_router(
-    build_search_router(
-        prefix="/projects",
-        tags=["projects-search"],
-        provider=search_provider,
-        context=context_dependency,
+    :::python
+    from forze.application.composition.search import (
+        SearchUsecasesFacadeProvider,
+        build_search_plan,
+        build_search_registry,
     )
-)
-```
+    from forze_fastapi.routers import build_search_router
+
+    search_provider = SearchUsecasesFacadeProvider(
+        spec=project_search_spec,
+        reg=build_search_registry(project_search_spec),
+        plan=build_search_plan(),
+        read_dto=ProjectReadModel,
+    )
+
+    app.include_router(
+        build_search_router(
+            prefix="/projects",
+            tags=["projects-search"],
+            provider=search_provider,
+            context=context_dependency,
+        )
+    )
 
 You can also attach a search router to an existing document router using `attach_search_router()` for a combined endpoint group.
 
@@ -122,38 +118,37 @@ You can also attach a search router to an existing document router using `attach
 
 When you need custom endpoints that still leverage Forze idempotency behavior, use `ForzeAPIRouter`:
 
-```python
-from fastapi import Body
-from pydantic import BaseModel
-from forze_fastapi.routing.router import ForzeAPIRouter
+    :::python
+    from fastapi import Body
+    from pydantic import BaseModel
+    from forze_fastapi.routing.router import ForzeAPIRouter
 
 
-class CreatePayload(BaseModel):
-    title: str
+    class CreatePayload(BaseModel):
+        title: str
 
 
-router = ForzeAPIRouter(
-    prefix="/custom",
-    tags=["custom"],
-    context_dependency=context_dependency,
-)
+    router = ForzeAPIRouter(
+        prefix="/custom",
+        tags=["custom"],
+        context_dependency=context_dependency,
+    )
 
 
-@router.post(
-    "/create",
-    idempotent=True,
-    operation_id="custom.create",
-    idempotency_config={"dto_param": "payload"},
-)
-async def create(payload: CreatePayload = Body(...)):
-    ctx = router.resolve_context()
-    doc = ctx.doc_write(project_spec)
-    return await doc.create(payload)
-```
+    @router.post(
+        "/create",
+        idempotent=True,
+        operation_id="custom.create",
+        idempotency_config={"dto_param": "payload"},
+    )
+    async def create(payload: CreatePayload = Body(...)):
+        ctx = router.resolve_context()
+        doc = ctx.doc_write(project_spec)
+        return await doc.create(payload)
 
 `ForzeAPIRouter` extends FastAPI's `APIRouter` with:
 
-- `context_dependency` -- a callable that returns the `ExecutionContext`
+- `context_dependency` : a callable that returns the `ExecutionContext`
 - `idempotent` flag on routes for automatic deduplication
 - `idempotency_config` for per-route or router-level idempotency settings
 
@@ -179,39 +174,36 @@ When a duplicate request arrives (same operation, same key, same payload hash), 
 
 Router-level defaults:
 
-```python
-router = ForzeAPIRouter(
-    prefix="/api",
-    context_dependency=context_dependency,
-    idempotency_config={
-        "key_header": "Idempotency-Key",
-        "dto_param": "payload",
-    },
-)
-```
+    :::python
+    router = ForzeAPIRouter(
+        prefix="/api",
+        context_dependency=context_dependency,
+        idempotency_config={
+            "key_header": "Idempotency-Key",
+            "dto_param": "payload",
+        },
+    )
 
 Per-route overrides:
 
-```python
-@router.post(
-    "/create",
-    idempotent=True,
-    operation_id="resource.create",
-    idempotency_config={"dto_param": "body"},
-)
-async def create(body: CreatePayload = Body(...)):
-    ...
-```
+    :::python
+    @router.post(
+        "/create",
+        idempotent=True,
+        operation_id="resource.create",
+        idempotency_config={"dto_param": "body"},
+    )
+    async def create(body: CreatePayload = Body(...)):
+        ...
 
 ## Exception handlers
 
 Register built-in handlers to map Forze errors to appropriate HTTP status codes:
 
-```python
-from forze_fastapi.handlers import register_exception_handlers
+    :::python
+    from forze_fastapi.handlers import register_exception_handlers
 
-register_exception_handlers(app)
-```
+    register_exception_handlers(app)
 
 | Forze error | HTTP status | When |
 |-------------|-------------|------|
@@ -226,11 +218,10 @@ The response body includes the error message and, when available, a machine-read
 
 Register Scalar docs page for interactive API exploration:
 
-```python
-from forze_fastapi.openapi import register_scalar_docs
+    :::python
+    from forze_fastapi.openapi import register_scalar_docs
 
-register_scalar_docs(app, path="/docs", scalar_version="1.41.0")
-```
+    register_scalar_docs(app, path="/docs", scalar_version="1.41.0")
 
 The page title is derived from `app.title`. The Scalar docs page replaces the default Swagger UI with a more modern interface.
 
@@ -250,107 +241,109 @@ These are also available for custom routes when building your own endpoints.
 
 Use the runtime scope as a FastAPI lifespan context manager:
 
-```python
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
+    :::python
+    from contextlib import asynccontextmanager
+    from fastapi import FastAPI
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with runtime.scope():
-        yield
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with runtime.scope():
+            yield
 
 
-app = FastAPI(title="My API", lifespan=lifespan)
-```
+    app = FastAPI(title="My API", lifespan=lifespan)
 
 This ensures infrastructure clients are connected during the application lifetime and properly shut down when the application stops.
 
 ## Complete example
 
-```python
-import asyncio
-from contextlib import asynccontextmanager
+/// details | Complete example
+    type: note
 
-import uvicorn
-from fastapi import FastAPI
+    :::python
+    import asyncio
+    from contextlib import asynccontextmanager
 
-from forze.application.composition.document import (
-    DocumentUsecasesFacadeProvider,
-    build_document_plan,
-    build_document_registry,
-)
-from forze.application.composition.search import (
-    SearchUsecasesFacadeProvider,
-    build_search_plan,
-    build_search_registry,
-)
-from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
-from forze_fastapi.handlers import register_exception_handlers
-from forze_fastapi.openapi import register_scalar_docs
-from forze_fastapi.routers import build_document_router, build_search_router
-from forze_postgres import (
-    PostgresClient,
-    PostgresConfig,
-    PostgresDepsModule,
-    postgres_lifecycle_step,
-)
-from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
+    import uvicorn
+    from fastapi import FastAPI
 
-# Runtime setup
-pg = PostgresClient()
-redis = RedisClient()
+    from forze.application.composition.document import (
+        DocumentUsecasesFacadeProvider,
+        build_document_plan,
+        build_document_registry,
+    )
+    from forze.application.composition.search import (
+        SearchUsecasesFacadeProvider,
+        build_search_plan,
+        build_search_registry,
+    )
+    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze_fastapi.handlers import register_exception_handlers
+    from forze_fastapi.openapi import register_scalar_docs
+    from forze_fastapi.routers import build_document_router, build_search_router
+    from forze_postgres import (
+        PostgresClient,
+        PostgresConfig,
+        PostgresDepsModule,
+        postgres_lifecycle_step,
+    )
+    from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
 
-runtime = ExecutionRuntime(
-    deps=DepsPlan.from_modules(
-        lambda: Deps.merge(
-            PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
-            RedisDepsModule(client=redis)(),
+    # Runtime setup
+    pg = PostgresClient()
+    redis = RedisClient()
+
+    runtime = ExecutionRuntime(
+        deps=DepsPlan.from_modules(
+            lambda: Deps.merge(
+                PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
+                RedisDepsModule(client=redis)(),
+            ),
         ),
-    ),
-    lifecycle=LifecyclePlan.from_steps(
-        postgres_lifecycle_step(dsn="postgresql://app:app@localhost:5432/app", config=PostgresConfig()),
-        redis_lifecycle_step(dsn="redis://localhost:6379/0", config=RedisConfig()),
-    ),
-)
+        lifecycle=LifecyclePlan.from_steps(
+            postgres_lifecycle_step(dsn="postgresql://app:app@localhost:5432/app", config=PostgresConfig()),
+            redis_lifecycle_step(dsn="redis://localhost:6379/0", config=RedisConfig()),
+        ),
+    )
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with runtime.scope():
-        yield
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with runtime.scope():
+            yield
 
 
-app = FastAPI(title="Projects API", lifespan=lifespan)
-register_exception_handlers(app)
-register_scalar_docs(app)
+    app = FastAPI(title="Projects API", lifespan=lifespan)
+    register_exception_handlers(app)
+    register_scalar_docs(app)
 
-ctx_dep = lambda: runtime.get_context()
+    ctx_dep = lambda: runtime.get_context()
 
-# Document routes
-doc_provider = DocumentUsecasesFacadeProvider(
-    spec=project_spec,
-    reg=build_document_registry(project_spec),
-    plan=build_document_plan(),
-    dtos={"read": ProjectReadModel, "create": CreateProjectCmd, "update": UpdateProjectCmd},
-)
-app.include_router(build_document_router(prefix="/projects", tags=["projects"], provider=doc_provider, context=ctx_dep))
+    # Document routes
+    doc_provider = DocumentUsecasesFacadeProvider(
+        spec=project_spec,
+        reg=build_document_registry(project_spec),
+        plan=build_document_plan(),
+        dtos={"read": ProjectReadModel, "create": CreateProjectCmd, "update": UpdateProjectCmd},
+    )
+    app.include_router(build_document_router(prefix="/projects", tags=["projects"], provider=doc_provider, context=ctx_dep))
 
-# Search routes
-search_provider = SearchUsecasesFacadeProvider(
-    spec=project_search_spec,
-    reg=build_search_registry(project_search_spec),
-    plan=build_search_plan(),
-    read_dto=ProjectReadModel,
-)
-app.include_router(build_search_router(prefix="/projects", tags=["search"], provider=search_provider, context=ctx_dep))
-
-
-async def main():
-    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000))
-    await server.serve()
+    # Search routes
+    search_provider = SearchUsecasesFacadeProvider(
+        spec=project_search_spec,
+        reg=build_search_registry(project_search_spec),
+        plan=build_search_plan(),
+        read_dto=ProjectReadModel,
+    )
+    app.include_router(build_search_router(prefix="/projects", tags=["search"], provider=search_provider, context=ctx_dep))
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+    async def main():
+        server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000))
+        await server.serve()
+
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+///

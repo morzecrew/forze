@@ -13,9 +13,9 @@ This section explains the architectural model behind Forze: layered boundaries, 
 
 Class names may evolve, but these invariants are stable:
 
-- Dependencies flow **inward** -- infrastructure depends on application, application depends on domain
+- Dependencies flow **inward**: interface and infrastructure depend on application, application depends on domain
 - Usecases resolve dependencies from `ExecutionContext`, never by importing adapters
-- Integrations implement contracts (ports); the application depends on abstractions
+- Integrations implement contracts (ports); the application depends only on abstractions
 
 ## Mental model
 
@@ -28,7 +28,7 @@ Class names may evolve, but these invariants are stable:
 
 | Page | What it covers |
 |------|---------------|
-| [Layered Architecture](layered-architecture.md) | Dependency rules and responsibilities by layer |
+| [Layered Architecture](layered-architecture.md) | Four layers, dependency rules, and responsibilities |
 | [Domain Layer](domain-layer.md) | Document model, versioning, update semantics, mixins, validation |
 | [Application Layer](application-layer.md) | Usecases, middleware chains, execution runtime, dependency and lifecycle plans |
 | [Contracts and Adapters](contracts-adapters.md) | Port protocols, adapter implementations, dependency wiring |
