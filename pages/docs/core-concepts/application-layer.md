@@ -1,119 +1,226 @@
 # Application Layer
 
-The application layer **orchestrates** domain logic and coordinates infrastructure. It defines *what* happens, not *how* persistence or transport work. Operations receive an execution context and resolve dependencies from it.
+The application layer **orchestrates** domain logic and coordinates infrastructure. It defines *what* happens, not *how* persistence or transport work. Every operation receives an `ExecutionContext` and resolves dependencies from it.
 
-## First principle
+## Execution context
 
-Usecases should depend on contracts (`ctx.doc(...)`, `ctx.search(...)`, `ctx.storage(...)`), not concrete adapter classes.
+`ExecutionContext` is the central dependency resolution point. Usecases and factories receive it and use its methods to obtain typed ports:
 
-## Operations (Use Cases)
+```python
+from forze.application.execution import ExecutionContext
+```
 
-An **operation** (usecase) is a single, well-defined business action. It takes arguments and returns a result. Operations support composition via guards, effects, and middlewares.
+| Method | Returns | Purpose |
+|--------|---------|---------|
+| `dep(key)` | `T` | Resolve any dependency by typed key |
+| `doc_read(spec)` | `DocumentReadPort` | Read-only document port |
+| `doc_write(spec)` | `DocumentWritePort` | Read-write document port |
+| `cache(spec)` | `CachePort` | Cache port for a namespace |
+| `counter(namespace)` | `CounterPort` | Namespace-scoped counter |
+| `txmanager()` | `TxManagerPort` | Transaction manager |
+| `storage(bucket)` | `StoragePort` | Object storage for a bucket |
+| `search(spec)` | `SearchReadPort` | Full-text search port |
+| `transaction()` | async context manager | Enter a transaction scope |
 
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/operation-composition.svg" alt="Operation composition">
-  <img class="d2-dark" src="../../assets/diagrams/dark/operation-composition.svg" alt="Operation composition">
-</div>
+When a `DocumentSpec` has `cache.enabled = True`, `doc_read()` and `doc_write()` automatically resolve and inject a cache adapter.
 
-| Hook | When | Purpose |
-|------|------|---------|
-| **Guards** | Before execution | Validate or enrich arguments |
-| **Middlewares** | Around execution | Retries, metrics, cross-cutting concerns |
-| **Effects** | After execution | Logging, indexing, event publishing |
+Nested `transaction()` calls reuse the same transaction with savepoints when the backend supports them.
 
-Composition is **immutable** — adding a guard or effect returns a new operation instance. **Transactional operations** add explicit transaction boundaries and support **side guards/effects** that run outside the transaction (for example, sending a notification only after commit).
+## Usecases
 
-    :::python
-    from forze.application.execution import Usecase
+A **usecase** is a single, well-defined business action. It subclasses `Usecase[Args, R]`, implements `main()`, and is invoked via `__call__()` which runs the full middleware chain:
 
-    class CreateProject(Usecase[CreateProjectCmd, ProjectReadModel]):
-        async def __call__(self, dto: CreateProjectCmd) -> ProjectReadModel:
-            doc = self.ctx.doc(project_spec)
-            return await doc.create(dto)
+```python
+from uuid import UUID
 
-## Execution Runtime
+from forze.application.execution import Usecase
 
-The **execution runtime** is the runnable scope where operations run. It combines three elements:
 
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/execution-runtime.svg" alt="Execution runtime">
-  <img class="d2-dark" src="../../assets/diagrams/dark/execution-runtime.svg" alt="Execution runtime">
-</div>
+class GetProject(Usecase[UUID, ProjectReadModel]):
+    async def main(self, args: UUID) -> ProjectReadModel:
+        doc = self.ctx.doc_read(project_spec)
+        return await doc.get(args)
 
-| Element | Purpose |
-|---------|---------|
-| **Deps plan** | Describes how to build the dependency container |
-| **Lifecycle plan** | Startup and shutdown hooks |
-| **Execution context** | Deps and transactions passed to operations |
 
-The runtime follows a clear lifecycle:
+class CreateProject(Usecase[CreateProjectCmd, ProjectReadModel]):
+    async def main(self, args: CreateProjectCmd) -> ProjectReadModel:
+        doc = self.ctx.doc_write(project_spec)
+        return await doc.create(args)
+```
 
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/runtime-lifecycle.svg" alt="Runtime lifecycle">
-  <img class="d2-dark" src="../../assets/diagrams/dark/runtime-lifecycle.svg" alt="Runtime lifecycle">
-</div>
+Every usecase has:
 
-| Phase | Actions |
+- `ctx` -- the execution context for resolving ports
+- `middlewares` -- a tuple of middleware wrappers (guards, effects, transaction)
+- `with_middlewares(*mw)` -- returns a new usecase with additional middlewares appended
+
+## Middleware system
+
+Middlewares wrap the usecase call chain. Three protocol types exist:
+
+**Guard** -- runs before the usecase. Raises to abort:
+
+```python
+from forze.application.execution import Guard
+
+
+class RequireActiveProject(Guard[UUID]):
+    async def __call__(self, args: UUID) -> None:
+        doc = self.ctx.doc_read(project_spec)
+        project = await doc.get(args)
+        if project.is_deleted:
+            raise ValidationError("Project is archived.")
+```
+
+**Effect** -- runs after the usecase returns. May transform the result:
+
+```python
+from forze.application.execution import Effect
+
+
+class LogCreation(Effect[CreateProjectCmd, ProjectReadModel]):
+    async def __call__(
+        self, args: CreateProjectCmd, res: ProjectReadModel
+    ) -> ProjectReadModel:
+        logger.info("Created project %s", res.id)
+        return res
+```
+
+**Middleware** -- wraps the next call with full control:
+
+```python
+from forze.application.execution import Middleware, NextCall
+
+
+class TimingMiddleware(Middleware[Any, Any]):
+    async def __call__(self, next: NextCall, args: Any) -> Any:
+        start = time.monotonic()
+        result = await next(args)
+        elapsed = time.monotonic() - start
+        logger.info("Elapsed: %.3fs", elapsed)
+        return result
+```
+
+Built-in middleware implementations:
+
+| Class | Purpose |
 |-------|---------|
-| **Setup** | Enter scope → create context → run startup hooks |
-| **Run** | Execute operations |
-| **Teardown** | Run shutdown hooks → reset context → exit scope |
+| `GuardMiddleware` | Wraps a `Guard` -- runs it before `next` |
+| `EffectMiddleware` | Wraps an `Effect` -- runs it after `next` |
+| `TxMiddleware` | Wraps `next` inside `ctx.transaction()`, supports after-commit effects |
 
-Dependencies and lifecycle are configured once, declaratively. Operations receive a context and resolve what they need. No global state, no hidden coupling.
+## Execution runtime
 
-    :::python
-    runtime = ExecutionRuntime(deps=deps_plan, lifecycle=lifecycle_plan)
+The `ExecutionRuntime` combines the dependency plan, lifecycle plan, and execution context into a scoped runtime:
 
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        facade = provider(ctx)
-        created = await facade.create()(CreateProjectCmd(title="Roadmap"))
+```python
+from forze.application.execution import ExecutionRuntime, DepsPlan, LifecyclePlan
 
-## Dependency Plan
+runtime = ExecutionRuntime(
+    deps=deps_plan,
+    lifecycle=lifecycle_plan,
+)
+```
 
-The **dependency plan** describes how to build the dependency container. Modules produce dependencies; plans compose them (for example, base + database + cache). The runtime builds the container before any operation runs.
+Use `scope()` as an async context manager:
 
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/dependency-plan.svg" alt="Dependency plan">
-  <img class="d2-dark" src="../../assets/diagrams/dark/dependency-plan.svg" alt="Dependency plan">
-</div>
+```python
+async with runtime.scope():
+    ctx = runtime.get_context()
+    # ctx is ready -- clients are connected, pools are open
+```
 
-Dependencies are **not** limited to contracts. The container can hold:
+The scope lifecycle:
 
-- Raw clients (database connections, HTTP clients)
-- Contract implementations (adapters)
-- Custom services
-- Parameterized factories
+1. **Create context** -- build the dependency container from the deps plan
+2. **Startup** -- run all lifecycle startup hooks in order
+3. **Yield** -- the application runs
+4. **Shutdown** -- run all lifecycle shutdown hooks in reverse order
+5. **Reset** -- clear the context
 
-**Dependency routers** select the right implementation when resolution depends on a parameter (for example, aggregate type) or when multiple adapters exist for the same contract.
+If a startup hook fails, already-executed steps are shut down in reverse before the exception propagates.
 
-## Operation Registry and Plan
+## Dependency plan
 
-The **operation registry** maps operation names to factories. The **operation plan** describes how each operation is composed (guards, effects, middlewares). Resolution applies both: the registry provides the base operation, the plan wraps it.
+The `DepsPlan` collects `DepsModule` callables and merges them into a single `Deps` container on build:
 
-<div class="d2-diagram">
-  <img class="d2-light" src="../../assets/diagrams/light/operation-registry.svg" alt="Operation registry">
-  <img class="d2-dark" src="../../assets/diagrams/dark/operation-registry.svg" alt="Operation registry">
-</div>
+```python
+from forze.application.execution import Deps, DepsPlan, DepsModule
 
-| Concept | Purpose |
-|---------|---------|
-| **Registry** | Maps operation keys (e.g. `"get"`, `"create"`) to factories |
-| **Factory** | Builds the base operation from execution context |
-| **Plan** | Wraps the base operation with guards, effects, transaction middleware |
+deps_plan = DepsPlan.from_modules(
+    lambda: Deps.merge(postgres_module(), redis_module()),
+)
+```
 
-Plans are keyed by operation name and mergeable. A base plan (wildcard `*`) might add logging to all operations; a specific plan might add authorization to `"create"` only. Per-operation plans extend the base plan. **Priorities** control the order of hooks when merged. Transactional operations support in-tx and after-commit buckets.
+`Deps` is an in-memory container keyed by `DepKey[T]`. Each integration package provides a `DepsModule` that registers its adapters and clients. `Deps.merge()` combines multiple containers and raises `CoreError` on key conflicts.
 
-    :::python
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={"read": ProjectReadModel, "create": CreateProjectCmd, "update": UpdateProjectCmd},
-    )
+You can also build plans incrementally:
 
-## Why It Matters
+```python
+plan = DepsPlan.from_modules(base_module)
+plan = plan.with_modules(cache_module, search_module)
+```
 
-- **Operations are registered once** — composition is declared in plans
-- **Add auditing, idempotency, or custom behavior** — extend the plan without touching the core operation
-- **Testability** — stub the context with in-memory implementations
+## Lifecycle plan
+
+The `LifecyclePlan` manages startup and shutdown hooks for infrastructure clients:
+
+```python
+from forze.application.execution import LifecyclePlan, LifecycleStep
+
+lifecycle = LifecyclePlan.from_steps(
+    postgres_lifecycle_step(dsn="postgresql://..."),
+    redis_lifecycle_step(dsn="redis://..."),
+)
+```
+
+Each `LifecycleStep` has a unique name, a startup hook, and a shutdown hook. Steps run in order at startup and in reverse order at shutdown. Name collisions raise `CoreError`.
+
+Integration packages provide factory functions (e.g. `postgres_lifecycle_step()`) that create pre-configured steps.
+
+## Document operations
+
+Forze ships built-in usecases for standard document CRUD:
+
+| Operation | Usecase class | Args | Returns |
+|-----------|--------------|------|---------|
+| `GET` | `GetDocument` | `UUID` | `R` (read model) |
+| `CREATE` | `CreateDocument` | `C` (create cmd) | `R` |
+| `UPDATE` | `UpdateDocument` | `UpdateArgs[U]` | `R` |
+| `KILL` | `KillDocument` | `UUID` | `None` |
+| `DELETE` | `DeleteDocument` | `SoftDeleteArgs` | `R` |
+| `RESTORE` | `RestoreDocument` | `SoftDeleteArgs` | `R` |
+
+These are wired automatically by `build_document_registry()` and composed with middleware via `build_document_plan()`.
+
+## Facade providers
+
+A `DocumentUsecasesFacadeProvider` ties together the spec, registry, plan, and DTO types. When called with an execution context, it produces a typed `DocumentUsecasesFacade`:
+
+```python
+from forze.application.composition.document import (
+    DocumentUsecasesFacadeProvider,
+    build_document_plan,
+    build_document_registry,
+)
+
+provider = DocumentUsecasesFacadeProvider(
+    spec=project_spec,
+    reg=build_document_registry(project_spec),
+    plan=build_document_plan(),
+    dtos={
+        "read": ProjectReadModel,
+        "create": CreateProjectCmd,
+        "update": UpdateProjectCmd,
+    },
+)
+
+# Resolve at request time
+facade = provider(ctx)
+project = await facade.create()(CreateProjectCmd(title="New"))
+fetched = await facade.get()(project.id)
+```
+
+The facade exposes typed methods: `get()`, `create()`, `update()`, `kill()`, `delete()`, `restore()`. Each returns a composed `Usecase` ready to call.
+
+Similarly, `SearchUsecasesFacadeProvider` builds facades for full-text search operations with `typed_search()` and `raw_search()` methods.

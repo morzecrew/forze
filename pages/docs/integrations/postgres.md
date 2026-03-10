@@ -1,310 +1,403 @@
 # PostgreSQL Integration
 
-This guide explains how to set up PostgreSQL for Forze document adapters and full-text search. It covers schema requirements, source naming, revision handling, history tables, search (PGroonga and native FTS), and connection configuration.
+`forze_postgres` provides document storage, full-text search, and transaction management backed by PostgreSQL. It implements `DocumentReadPort`, `DocumentWritePort`, `SearchReadPort`, and `TxManagerPort` using async `psycopg` with connection pooling.
 
-## Prerequisites
+## Installation
 
-- PostgreSQL 14+ (or compatible)
-- `forze[postgres]` extra installed
+```bash
+uv add 'forze[postgres]'
+```
 
-## Connection
+Requires PostgreSQL 14 or later.
 
-The Postgres client uses a DSN and optional pool configuration. Initialize before running operations. Use `PostgresDepsModule` to register the client and ports, and `postgres_lifecycle_step` for startup/shutdown:
+## Runtime wiring
 
-    :::python
-    from forze.application.execution import Deps, LifecyclePlan
-    from forze_postgres import (
-        PostgresClient, 
-        PostgresConfig, 
-        PostgresDepsModule, 
-        postgres_lifecycle_step,
-    )
+Create a client, register it via the dependency module, and add a lifecycle step for pool management:
 
-    client = PostgresClient()
-    deps_module = PostgresDepsModule(
-        client=client,
-        rev_bump_strategy="database",
-        history_write_strategy="database",
-    )
+```python
+from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
+from forze_postgres import (
+    PostgresClient,
+    PostgresConfig,
+    PostgresDepsModule,
+    postgres_lifecycle_step,
+)
 
-    # Build deps and lifecycle
-    deps = deps_module()
-    lifecycle = LifecyclePlan.from_steps(
+client = PostgresClient()
+
+module = PostgresDepsModule(
+    client=client,
+    rev_bump_strategy="database",
+    history_write_strategy="database",
+)
+
+runtime = ExecutionRuntime(
+    deps=DepsPlan.from_modules(module),
+    lifecycle=LifecyclePlan.from_steps(
         postgres_lifecycle_step(
             dsn="postgresql://user:pass@localhost:5432/mydb",
             config=PostgresConfig(min_size=2, max_size=15),
         )
-    )
+    ),
+)
+```
 
-The client supports connection pooling, context-bound transactions (including nested savepoints), and configurable timeouts. See `forze_postgres.kernel.platform.client.PostgresConfig` for pool options.
+### PostgresConfig options
 
-## Document Sources
+| Option | Type | Default | Purpose |
+|--------|------|---------|---------|
+| `min_size` | `int` | `2` | Minimum connections in the pool |
+| `max_size` | `int` | `10` | Maximum connections in the pool |
+| `timeout` | `float` | `30.0` | Connection acquisition timeout (seconds) |
 
-Document specs use **source names** in `schema.table` format. The read, write, and optional history sources must follow this convention:
+### DepsModule options
 
-| Source | Purpose | Example |
-|--------|---------|---------|
-| `read` | Table or view used for reads | `public.documents` |
-| `write` | Table used for writes | `public.documents` |
-| `history` | Optional audit table | `public.documents_history` |
+| Option | Type | Values | Purpose |
+|--------|------|--------|---------|
+| `rev_bump_strategy` | `str` | `"database"`, `"application"` | Who increments `rev` on update |
+| `history_write_strategy` | `str` | `"database"`, `"application"` | Who writes to the history table |
 
-Read and write can point to the same table or to different relations (e.g. a view for reads, a table for writes). Both must use `schema.table`; splitting on `.` yields schema and table name.
+### What gets registered
 
-## Document Table Schema
+`PostgresDepsModule` registers these dependency keys:
 
-Every document table must include the core fields expected by the domain model. Column names must match the domain constants.
+| Key | Capability |
+|-----|-----------|
+| `PostgresClientDepKey` | Raw Postgres client for direct queries |
+| `DocumentReadDepKey` | Document read adapter factory |
+| `DocumentWriteDepKey` | Document write adapter factory |
+| `TxManagerDepKey` | Transaction manager adapter |
+| `SearchReadDepKey` | Full-text search adapter factory |
 
-### Required Columns
+## Document sources
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| `id` | `uuid` | Primary key, document identifier |
-| `rev` | `integer` | Revision number for optimistic concurrency |
-| `created_at` | `timestamp with time zone` | Creation timestamp |
-| `last_update_at` | `timestamp with time zone` | Last update timestamp |
+Document specs use **source names** in `schema.table` format. The adapter splits on `.` to derive the schema and table name.
 
-### Optional Columns
+```python
+from forze.application.contracts.document import DocumentSpec
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| `is_deleted` | `boolean` | Soft delete flag (default `false`) |
-| `number_id` | `bigint` | Human-readable sequence number |
-| `creator_id` | `uuid` | Creator reference |
-| `tenant_id` | `uuid` | Tenant for multi-tenancy |
+spec = DocumentSpec(
+    namespace="projects",
+    read={"source": "public.projects", "model": ProjectReadModel},
+    write={
+        "source": "public.projects",
+        "models": {
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
+        },
+    },
+    history={"source": "public.projects_history"},
+    cache={"enabled": True},
+)
+```
 
-Add any domain-specific columns as needed. Column names must match the Pydantic model field names (snake_case by default).
+Read and write can point to the same table or different relations (e.g. a view for reads, a table for writes).
+
+## Document table schema
+
+Every document table must include core columns matching the domain model fields.
+
+### Required columns
+
+| Column | Type | Default | Purpose |
+|--------|------|---------|---------|
+| `id` | `uuid` | `gen_random_uuid()` | Primary key |
+| `rev` | `integer` | `1` | Revision counter |
+| `created_at` | `timestamptz` | `now()` | Creation timestamp |
+| `last_update_at` | `timestamptz` | `now()` | Last update timestamp |
+
+### Optional columns (by mixin)
+
+| Column | Type | Mixin | Purpose |
+|--------|------|-------|---------|
+| `is_deleted` | `boolean` | `SoftDeletionMixin` | Soft delete flag |
+| `number_id` | `bigint` | `NumberMixin` | Human-readable sequence |
+| `creator_id` | `uuid` | `CreatorMixin` | Creator reference |
+| `tenant_id` | `uuid` | Multi-tenancy | Tenant partition |
+
+Add domain-specific columns as needed. Column names must match Pydantic model field names (snake_case).
 
 ### Example DDL
 
-    :::sql
-    CREATE TABLE public.documents (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        rev integer NOT NULL DEFAULT 1,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        last_update_at timestamptz NOT NULL DEFAULT now(),
-        is_deleted boolean NOT NULL DEFAULT false,
-        -- domain-specific columns
-        title text,
-        body text
-    );
+```sql
+CREATE TABLE public.projects (
+    id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    rev             integer     NOT NULL DEFAULT 1,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    last_update_at  timestamptz NOT NULL DEFAULT now(),
+    is_deleted      boolean     NOT NULL DEFAULT false,
+    title           text        NOT NULL,
+    description     text        NOT NULL
+);
+```
 
-## Revision Strategy
+## Revision strategy
 
-The write gateway supports two strategies for bumping `rev` on update:
+The write adapter supports two strategies for bumping `rev` on update:
 
 | Strategy | Behavior |
 |----------|----------|
-| `"database"` | A trigger increments `rev` on update. The application does not set `rev`. |
-| `"application"` | The application computes and sets `rev + 1` in the update payload. |
+| `"database"` | A database trigger increments `rev`. The application does not set it. |
+| `"application"` | The application computes `rev + 1` in the update payload. |
 
-Use `"database"` when you want the database to own revision bumps (e.g. via trigger). Use `"application"` when you prefer application-side control.
+### Database trigger for revision bumping
 
-### Trigger for `"database"` Strategy
+When using `rev_bump_strategy="database"`, create a trigger:
 
-When using `rev_bump_strategy="database"`, create a trigger that increments `rev` and updates `last_update_at`:
+```sql
+CREATE OR REPLACE FUNCTION bump_rev()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.rev := OLD.rev + 1;
+    NEW.last_update_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-    :::sql
-    -- Create the function
-    CREATE OR REPLACE FUNCTION bump_rev()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        NEW.rev := OLD.rev + 1;
-        NEW.last_update_at := now();
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
+CREATE TRIGGER projects_bump_rev
+BEFORE UPDATE ON public.projects
+FOR EACH ROW EXECUTE FUNCTION bump_rev();
+```
 
-    -- Create the trigger
-    CREATE TRIGGER documents_bump_rev
-    BEFORE UPDATE ON public.documents
-    FOR EACH ROW
-    EXECUTE FUNCTION bump_rev();
+The trigger also updates `last_update_at` to ensure consistency between application and database timestamps.
 
-## History Table (Audit Trail)
+## History table (audit trail)
 
-When using historical consistency validation, configure an optional history table. The history table stores snapshots of document state per revision.
+When `history` is specified in the document spec, the adapter stores previous document revisions for audit and historical consistency checks.
 
-### History Table Schema
+### History table schema
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `source` | `text` | Source relation (e.g. `public.documents`) |
+| `source` | `text` | Source relation name (e.g. `public.projects`) |
 | `id` | `uuid` | Document identifier |
 | `rev` | `integer` | Revision number |
-| `data` | `jsonb` | Full document snapshot |
+| `data` | `jsonb` | Full document snapshot at that revision |
 
 ### Example DDL
 
-    :::sql
-    CREATE TABLE public.documents_history (
-        source text NOT NULL,
-        id uuid NOT NULL,
-        rev integer NOT NULL,
-        data jsonb NOT NULL,
-        PRIMARY KEY (source, id, rev)
-    );
+```sql
+CREATE TABLE public.projects_history (
+    source  text    NOT NULL,
+    id      uuid    NOT NULL,
+    rev     integer NOT NULL,
+    data    jsonb   NOT NULL,
+    PRIMARY KEY (source, id, rev)
+);
 
-    CREATE INDEX idx_documents_history_lookup
-    ON public.documents_history (source, id, rev);
+CREATE INDEX idx_projects_history_lookup
+ON public.projects_history (source, id, rev);
+```
 
-### History Write Strategy
+### History write strategy
 
 | Strategy | Behavior |
 |----------|----------|
-| `"database"` | A trigger on the write table inserts into the history table.<br>The gateway does not write history. |
-| `"application"` | The gateway inserts history rows after each update. |
+| `"database"` | A trigger copies the old row into the history table before each update |
+| `"application"` | The adapter inserts history rows after each update |
 
-For `"database"`, create a trigger that copies the previous row into the history table before update:
+### Database trigger for history
 
-    :::sql
-    CREATE OR REPLACE FUNCTION write_document_history()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        INSERT INTO public.documents_history (source, id, rev, data)
-        VALUES ('public.documents', OLD.id, OLD.rev, to_jsonb(OLD));
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
+```sql
+CREATE OR REPLACE FUNCTION write_document_history()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.projects_history (source, id, rev, data)
+    VALUES ('public.projects', OLD.id, OLD.rev, to_jsonb(OLD));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-    CREATE TRIGGER documents_history_trigger
-    BEFORE UPDATE ON public.documents
-    FOR EACH ROW
-    EXECUTE FUNCTION write_document_history();
+CREATE TRIGGER projects_history_trigger
+BEFORE UPDATE ON public.projects
+FOR EACH ROW EXECUTE FUNCTION write_document_history();
+```
 
-For `"application"`, no trigger is needed; the gateway writes history directly.
+## Transactions
 
-## Full-Text Search
+The Postgres adapter uses `psycopg` async connections with context-variable scoping. Within an `ExecutionContext.transaction()` scope, all document operations share the same connection and participate in the same database transaction.
 
-The Postgres search adapter supports two engines:
+Nested `transaction()` calls create savepoints:
 
-| Engine | Extension | Use case |
+```python
+async with ctx.transaction():
+    await doc.create(cmd_1)
+
+    async with ctx.transaction():
+        await doc.create(cmd_2)
+        # This uses a savepoint inside the outer transaction
+```
+
+If the inner block raises, only the savepoint is rolled back. The outer transaction can still commit successfully.
+
+## Document operations
+
+Once wired, resolve and use document ports from the execution context:
+
+```python
+doc_read = ctx.doc_read(project_spec)
+doc_write = ctx.doc_write(project_spec)
+
+# Read operations
+project = await doc_read.get(project_id)
+projects, total = await doc_read.find_many(
+    filters={"$fields": {"is_deleted": False}},
+    sorts={"created_at": "desc"},
+    limit=20,
+    offset=0,
+)
+count = await doc_read.count({"$fields": {"is_deleted": False}})
+
+# Write operations
+created = await doc_write.create(CreateProjectCmd(title="New", description="..."))
+updated = await doc_write.update(project_id, UpdateProjectCmd(title="Updated"), rev=1)
+await doc_write.delete(project_id)
+await doc_write.restore(project_id)
+await doc_write.kill(project_id)
+```
+
+The adapter automatically handles:
+
+- Revision checking for optimistic concurrency (when `rev` is passed)
+- Cache invalidation (when cache is enabled in the spec)
+- History recording (when history is configured)
+- Query filter/sort rendering using the shared query DSL
+
+## Full-text search
+
+The Postgres search adapter supports two full-text search engines:
+
+| Engine | Extension | Best for |
 |--------|-----------|----------|
-| **PGroonga** | `pgroonga` | Japanese/CJK, fuzzy search, array fields |
-| **fts** | Built-in | Native PostgreSQL GIN + tsvector |
+| **PGroonga** | `pgroonga` | CJK languages, fuzzy matching, array field search |
+| **Native FTS** | Built-in | Standard PostgreSQL GIN + tsvector search |
 
-The adapter introspects index definitions to detect the engine and routes queries accordingly.
+The adapter introspects index definitions from the PostgreSQL catalog to auto-detect which engine to use.
 
-### Search Specification
+### Search specification
 
-Search is configured via :class:`SearchSpec`, separate from :class:`DocumentSpec`. Each index has a **source** (the table being indexed) and **fields** (column paths). Index names in the spec must match the actual PostgreSQL index names (use `schema.indexname` when the index is not in `public`).
+Search is configured via `SearchSpec`, separate from `DocumentSpec`:
 
-    :::python
-    from forze.application.contracts.search import SearchSpec
-    from pydantic import BaseModel
+```python
+from forze.application.contracts.search import SearchSpec
 
-    class DocumentReadModel(BaseModel):
-        id: str
-        title: str
-        body: str
-
-    search_spec = SearchSpec(
-        namespace="documents",
-        model=DocumentReadModel,
-        indexes={
-            "public.idx_title": {
-                "fields": [{"path": "title"}],
-                "source": "public.documents",
-            },
-            "public.idx_content": {
-                "fields": [
-                    {"path": "title", "weight": 2.0},
-                    {"path": "body", "weight": 1.0},
-                ],
-                "source": "public.documents",
-            },
+project_search = SearchSpec(
+    namespace="projects",
+    model=ProjectReadModel,
+    indexes={
+        "public.idx_projects_title": {
+            "fields": [{"path": "title"}],
+            "source": "public.projects",
         },
-        default_index="public.idx_title",
-    )
+        "public.idx_projects_content": {
+            "fields": [
+                {"path": "title", "weight": 2.0},
+                {"path": "description", "weight": 1.0},
+            ],
+            "source": "public.projects",
+        },
+    },
+    default_index="public.idx_projects_title",
+)
+```
 
-### PGroonga
+Index names in the spec must match the actual PostgreSQL index names. Use `schema.indexname` when the index is not in the `public` schema.
 
-Install and create indexes:
+### PGroonga indexes
 
-    :::sql
-    CREATE EXTENSION IF NOT EXISTS pgroonga;
+Install the extension and create indexes:
 
-**Single field:**
+```sql
+CREATE EXTENSION IF NOT EXISTS pgroonga;
 
-    :::sql
-    CREATE INDEX idx_title ON public.documents
-    USING pgroonga (title pgroonga_text_full_text_search_ops);
+-- Single field index
+CREATE INDEX idx_projects_title ON public.projects
+USING pgroonga (title pgroonga_text_full_text_search_ops);
 
-**Multiple fields (array expression):**
+-- Multi-field index using array expression
+CREATE INDEX idx_projects_content ON public.projects
+USING pgroonga (
+    (ARRAY[title::text, description::text])
+    pgroonga_text_array_full_text_search_ops
+);
+```
 
-    :::sql
-    CREATE INDEX idx_title_body ON public.documents
-    USING pgroonga (
-        (ARRAY[title::text, body::text]) 
-        pgroonga_text_array_full_text_search_ops
-    );
+### Native FTS indexes (GIN + tsvector)
 
-Ensure index names and field order match your index specification. Each index must specify `source` (the table) in the spec.
+No extension required. Create a generated tsvector column or an expression index:
 
-### Native FTS (GIN + tsvector)
+```sql
+-- Option 1: Generated tsvector column
+ALTER TABLE public.projects
+ADD COLUMN title_tsv tsvector
+GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(title, ''))
+) STORED;
 
-No extension required. Create a tsvector column or expression index:
+CREATE INDEX idx_projects_fts ON public.projects
+USING gin (title_tsv);
 
-    :::sql
-    -- Option 1: tsvector column
-    ALTER TABLE public.documents ADD COLUMN title_tsv tsvector
-    GENERATED ALWAYS AS (
-        to_tsvector('english', coalesce(title, ''))
-    ) STORED;
-    CREATE INDEX idx_documents_fts ON public.documents USING gin (title_tsv);
+-- Option 2: Expression index
+CREATE INDEX idx_projects_fts ON public.projects
+USING gin (
+    to_tsvector('english',
+        coalesce(title, '') || ' ' || coalesce(description, ''))
+);
+```
 
-    -- Option 2: expression index
-    CREATE INDEX idx_documents_fts ON public.documents
-    USING gin (
-        to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, ''))
-    );
+### Search groups (FTS ranking)
 
-For expression indexes, the adapter infers the tsvector expression from the catalog. For generated columns, you can pass `hints={"tsvector_col": "title_tsv"}` in the field spec or index hints.
+For native FTS, define weight groups to control `ts_rank` weighting:
 
-### Search Groups (FTS ranking)
-
-For FTS, you can define **groups** (ordered by weight) to map fields to ts_rank weights A–D. Groups are part of the index specification:
-
-    :::python
-    # index specification
-    {
+```python
+indexes={
+    "public.idx_projects_weighted": {
         "fields": [
             {"path": "title", "group": "title"},
-            {"path": "body", "group": "body"},
+            {"path": "description", "group": "body"},
         ],
         "groups": [
             {"name": "title", "weight": 1.0},
             {"name": "body", "weight": 0.4},
         ],
         "default_group": "title",
-        "source": "public.documents",
-    }
+        "source": "public.projects",
+    },
+}
+```
 
-## Document Specification
+### Using the search port
 
-Wire the schema into a `DocumentSpec`:
+```python
+search = ctx.search(project_search)
 
-    :::python
-    from forze.application.contracts.document import (
-        DocumentSpec, 
-        DocumentModelSpec,
-    )
+hits, total = await search.search(
+    query="roadmap",
+    filters={"$fields": {"is_deleted": False}},
+    limit=20,
+    offset=0,
+)
+```
 
-    spec = DocumentSpec(
-        namespace="documents",
-        sources={
-            "read": "public.documents",
-            "write": "public.documents",
-            "history": "public.documents_history",  # optional
-        },
-        models=DocumentModelSpec(
-            read=DocumentReadModel,
-            domain=DocumentModel,
-            create_cmd=CreateDocumentCmd,
-            update_cmd=UpdateDocumentCmd,
-        ),
-        cache=None,  # or DocumentCacheSpec for caching
-    )
+The search port supports all the same filter and sort expressions as document ports (see [Query Syntax](../core-package/query-syntax.md)).
 
-When `cache` is enabled, the cache port is wired automatically from the execution context: it is resolved via `CacheDepKey` (directly or through a router) and injected into the document adapter when the document port is resolved.
+## Combining with other modules
 
-Search is configured separately via `SearchSpec` and resolved from the execution context via `SearchReadDepKey`.
+Postgres is typically combined with Redis for caching and idempotency:
+
+```python
+deps_plan = DepsPlan.from_modules(
+    lambda: Deps.merge(
+        PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
+        RedisDepsModule(client=redis)(),
+    ),
+)
+
+lifecycle = LifecyclePlan.from_steps(
+    postgres_lifecycle_step(dsn="postgresql://...", config=PostgresConfig()),
+    redis_lifecycle_step(dsn="redis://...", config=RedisConfig()),
+)
+```
+
+When both modules are registered and the document spec has `cache.enabled = True`, the document adapter automatically uses Redis for caching reads.
