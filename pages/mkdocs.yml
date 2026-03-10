@@ -66,7 +66,7 @@ nav:
     - S3: integrations/s3.md
     - MongoDB: integrations/mongo.md
     - Temporal: integrations/temporal.md
-    - Amazon SQS: integrations/sqs.md
+    - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md
   # - API Reference:
   #   - Core: api/core.md

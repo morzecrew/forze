@@ -15,7 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- Documentation: replaced markdown code blocks with `:::lang` fenced blocks for proper syntax highlighting.
+- Documentation: corrected architecture to four layers (domain, application, infrastructure, interface) with FastAPI/Socket.IO in interface layer.
+- Documentation: restructured core concept pages to introduce concepts before code specifics.
+- Documentation: simplified home page by removing complex diagram and low-level details.
+- Documentation: added D2 diagrams for domain models, execution runtime, operation registry, and composition flow.
+- Documentation: reduced complete examples using collapsible sections.
+- Documentation: renamed "Amazon SQS" to "SQS" in navigation and page titles.
+- Documentation: replaced double-dash separators with colons in step headings.
 
 ### Fixed
 

@@ -1,20 +1,20 @@
 # Contracts and Adapters
 
-Forze follows **hexagonal architecture** (ports and adapters). **Contracts** (ports) are protocol interfaces defined by the application layer. **Adapters** are concrete implementations provided by infrastructure packages. The application depends on contracts, never on adapters.
+Forze follows **hexagonal architecture** (ports and adapters). The core idea is simple: the application layer declares *what* capabilities it needs through protocol interfaces (contracts), and infrastructure packages provide *how* those capabilities are implemented (adapters). The application never depends on a specific adapter.
+
+## How it works
+
+1. The application layer defines **contracts**: Python `Protocol` classes describing required capabilities
+2. Infrastructure packages provide **adapters**: concrete implementations of those protocols
+3. A **dependency plan** wires adapters to contracts at startup
+4. Usecases resolve contracts from `ExecutionContext`; they never import adapter classes
+
+Switching from Postgres to Mongo means changing the dependency plan, not the usecase code.
 
 <div class="d2-diagram">
   <img class="d2-light" src="../../assets/diagrams/light/contracts-adapters.svg" alt="Contracts and adapters">
   <img class="d2-dark" src="../../assets/diagrams/dark/contracts-adapters.svg" alt="Contracts and adapters">
 </div>
-
-## How it works
-
-1. The application layer defines **contracts** -- Python `Protocol` classes describing required capabilities
-2. Infrastructure packages provide **adapters** -- concrete implementations of those protocols
-3. A **dependency plan** wires adapters to contracts at startup
-4. Usecases resolve contracts from `ExecutionContext`; they never import adapter classes
-
-Switching from Postgres to Mongo means changing the dependency plan, not the usecase code.
 
 ## Contract catalog
 
@@ -22,7 +22,7 @@ Switching from Postgres to Mongo means changing the dependency plan, not the use
 
 Split into read and write ports for CQRS flexibility:
 
-**`DocumentReadPort[R]`** -- read-only operations:
+**`DocumentReadPort[R]`**: read-only operations:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
@@ -32,7 +32,7 @@ Split into read and write ports for CQRS flexibility:
 | `find_many` | `(filters?, limit?, offset?, sorts?, *, return_fields?) -> (list[R], int)` | Paginated query |
 | `count` | `(filters?) -> int` | Count matching documents |
 
-**`DocumentWritePort[R, D, C, U]`** -- mutation operations:
+**`DocumentWritePort[R, D, C, U]`**: mutation operations:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
@@ -49,18 +49,18 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Transaction management
 
-**`TxManagerPort`** -- manages transaction boundaries:
+**`TxManagerPort`**: manages transaction boundaries:
 
 | Method | Purpose |
 |--------|---------|
 | `transaction()` | Returns an async context manager for a transaction scope |
 | `scope_key()` | Returns the scope key identifying this tx manager kind |
 
-**`TxScopedPort`** -- marks a port as transaction-aware. The execution context validates that scoped ports match the active transaction kind.
+**`TxScopedPort`**: marks a port as transaction-aware. The execution context validates that scoped ports match the active transaction kind.
 
 ### Cache
 
-**`CachePort`** -- document-level caching with read and write sub-protocols:
+**`CachePort`**: document-level caching with read and write sub-protocols:
 
 | Method | Purpose |
 |--------|---------|
@@ -72,7 +72,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Counter
 
-**`CounterPort`** -- namespace-scoped atomic counters:
+**`CounterPort`**: namespace-scoped atomic counters:
 
 | Method | Purpose |
 |--------|---------|
@@ -83,7 +83,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Search
 
-**`SearchReadPort[R]`** -- full-text search:
+**`SearchReadPort[R]`**: full-text search:
 
 | Method | Purpose |
 |--------|---------|
@@ -91,7 +91,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Object storage
 
-**`StoragePort`** -- S3-style blob storage:
+**`StoragePort`**: S3-style blob storage:
 
 | Method | Purpose |
 |--------|---------|
@@ -102,7 +102,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Queue (message queue)
 
-**`QueueReadPort[M]`** -- consume messages from a queue:
+**`QueueReadPort[M]`**: consume messages from a queue:
 
 | Method | Purpose |
 |--------|---------|
@@ -111,7 +111,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 | `ack(queue, ids)` | Acknowledge processed messages |
 | `nack(queue, ids, *, requeue?)` | Reject messages, optionally re-queue |
 
-**`QueueWritePort[M]`** -- produce messages to a queue:
+**`QueueWritePort[M]`**: produce messages to a queue:
 
 | Method | Purpose |
 |--------|---------|
@@ -120,13 +120,13 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Pub/Sub
 
-**`PubSubPublishPort[M]`** -- publish to a topic:
+**`PubSubPublishPort[M]`**: publish to a topic:
 
 | Method | Purpose |
 |--------|---------|
 | `publish(topic, payload, *, type?, key?, published_at?)` | Publish a message |
 
-**`PubSubSubscribePort[M]`** -- subscribe to topics:
+**`PubSubSubscribePort[M]`**: subscribe to topics:
 
 | Method | Purpose |
 |--------|---------|
@@ -134,14 +134,14 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Stream
 
-**`StreamReadPort[M]`** -- read from an append-only log:
+**`StreamReadPort[M]`**: read from an append-only log:
 
 | Method | Purpose |
 |--------|---------|
 | `read(stream_mapping, *, limit?, timeout?)` | Read entries from streams |
 | `tail(stream_mapping, *, timeout?)` | Async iterator that follows new entries |
 
-**`StreamGroupPort[M]`** -- consumer group reads:
+**`StreamGroupPort[M]`**: consumer group reads:
 
 | Method | Purpose |
 |--------|---------|
@@ -149,7 +149,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 | `tail(group, consumer, stream_mapping, *, timeout?)` | Group tail |
 | `ack(group, stream, ids)` | Acknowledge entries |
 
-**`StreamWritePort[M]`** -- append to a stream:
+**`StreamWritePort[M]`**: append to a stream:
 
 | Method | Purpose |
 |--------|---------|
@@ -157,7 +157,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Idempotency
 
-**`IdempotencyPort`** -- deduplicate HTTP requests:
+**`IdempotencyPort`**: deduplicate HTTP requests:
 
 | Method | Purpose |
 |--------|---------|
@@ -166,7 +166,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Workflow
 
-**`WorkflowPort`** -- orchestrate long-running processes:
+**`WorkflowPort`**: orchestrate long-running processes:
 
 | Method | Purpose |
 |--------|---------|
@@ -175,14 +175,14 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Context ports
 
-**`TenantContextPort`** -- ambient tenant identity for multi-tenant routing:
+**`TenantContextPort`**: ambient tenant identity for multi-tenant routing:
 
 | Method | Purpose |
 |--------|---------|
 | `get()` | Return current tenant ID |
 | `set(tenant_id)` | Bind tenant for the current context |
 
-**`ActorContextPort`** -- ambient actor identity for audit trails:
+**`ActorContextPort`**: ambient actor identity for audit trails:
 
 | Method | Purpose |
 |--------|---------|
@@ -193,39 +193,33 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 Each contract has a corresponding `DepKey` for registration and resolution. Integration modules register adapters under these keys; the execution context resolves them.
 
-Example resolution flow:
-
-```python
-# In a usecase
-doc = self.ctx.doc_read(project_spec)     # resolves DocumentReadDepKey
-cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
-counter = self.ctx.counter("tickets")      # resolves CounterDepKey
-storage = self.ctx.storage("attachments")  # resolves StorageDepKey
-```
+    :::python
+    doc = self.ctx.doc_read(project_spec)     # resolves DocumentReadDepKey
+    cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
+    counter = self.ctx.counter("tickets")      # resolves CounterDepKey
+    storage = self.ctx.storage("attachments")  # resolves StorageDepKey
 
 For contracts without convenience methods on `ExecutionContext`, use `dep()` directly:
 
-```python
-from forze.application.contracts.pubsub import PubSubPublishDepKey
+    :::python
+    from forze.application.contracts.pubsub import PubSubPublishDepKey
 
-publish = ctx.dep(PubSubPublishDepKey)(ctx, spec)
-```
+    publish = ctx.dep(PubSubPublishDepKey)(ctx, spec)
 
 ## Wiring adapters
 
 Integration modules register their adapters at dependency plan build time:
 
-```python
-from forze.application.execution import Deps, DepsPlan
+    :::python
+    from forze.application.execution import Deps, DepsPlan
 
-deps_plan = DepsPlan.from_modules(
-    lambda: Deps.merge(
-        PostgresDepsModule(client=pg_client, ...)(),
-        RedisDepsModule(client=redis_client)(),
-        S3DepsModule(client=s3_client)(),
-    ),
-)
-```
+    deps_plan = DepsPlan.from_modules(
+        lambda: Deps.merge(
+            PostgresDepsModule(client=pg_client, ...)(),
+            RedisDepsModule(client=redis_client)(),
+            S3DepsModule(client=s3_client)(),
+        ),
+    )
 
 `Deps.merge()` combines containers and raises `CoreError` if any key is registered twice. This catches misconfigured plans early.
 
@@ -233,19 +227,15 @@ deps_plan = DepsPlan.from_modules(
 
 Tests stub contracts with in-memory or fake implementations. Build a `Deps` container with only the ports your test needs:
 
-```python
-from forze.application.execution import Deps, ExecutionContext
-from forze.application.contracts.deps import DepKey
+    :::python
+    from forze.application.execution import Deps, ExecutionContext
 
-# Register a fake adapter
-deps = Deps(deps={
-    DocumentReadDepKey: lambda ctx, spec, cache=None: FakeDocumentReadAdapter(),
-})
-ctx = ExecutionContext(deps=deps)
+    deps = Deps(deps={
+        DocumentReadDepKey: lambda ctx, spec, cache=None: FakeDocumentReadAdapter(),
+    })
+    ctx = ExecutionContext(deps=deps)
 
-# Use in test
-doc = ctx.doc_read(project_spec)
-result = await doc.get(some_uuid)
-```
+    doc = ctx.doc_read(project_spec)
+    result = await doc.get(some_uuid)
 
 No real databases or external services are needed for unit testing business logic.

@@ -34,7 +34,7 @@ Install only what you need. Extras map directly to integration packages:
 | `mongo` | MongoDB integration (`forze_mongo`) |
 | `temporal` | Temporal integration (`forze_temporal`) |
 | `socketio` | Socket.IO integration (`forze_socketio`) |
-| `sqs` | Amazon SQS integration (`forze_sqs`) |
+| `sqs` | SQS integration (`forze_sqs`) |
 | `rabbitmq` | RabbitMQ integration (`forze_rabbitmq`) |
 
 Common setup:

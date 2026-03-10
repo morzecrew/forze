@@ -1,13 +1,29 @@
-# Execution runtime scope
-
 style: {
     fill: transparent
 }
 
 vars: {
     d2-config: {
-        pad: 50
+        pad: 40
     }
+}
+
+direction: right
+
+DepsPlan: {
+    shape: rectangle
+    label: |md
+        ### Deps Plan
+        What to build
+    |
+}
+
+LifecyclePlan: {
+    shape: rectangle
+    label: |md
+        ### Lifecycle Plan
+        Startup / shutdown
+    |
 }
 
 Runtime: {
@@ -15,19 +31,22 @@ Runtime: {
     style: {
         stroke: "#4a90d9"
     }
-
-    DepsPlan: |md
-        ### Deps plan
-        What to build
-    |
-
-    LifecyclePlan: |md
-        ### Lifecycle plan
-        Startup / shutdown
-    |
-
-    ExecutionContext: |md
-        ### Execution context
-        Deps + transactions passed to operations
+    label: |md
+        ### ExecutionRuntime
     |
 }
+
+Context: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: |md
+        ### ExecutionContext
+        Resolve ports for usecases
+    |
+}
+
+DepsPlan -> Runtime
+LifecyclePlan -> Runtime
+Runtime -> Context: scope() creates

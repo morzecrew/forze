@@ -10,14 +10,24 @@ vars: {
 
 direction: down
 
+Interface: {
+    shape: rectangle
+    label: |md
+        ## Interface Layer
+        FastAPI / Socket.IO
+    |
+
+    routers: HTTP routers
+    ws: WebSocket handlers
+}
+
 Infrastructure: {
     shape: rectangle
     label: |md
         ## Infrastructure Layer
-        FastAPI / Postgres / Redis / S3 / Mongo / Temporal
+        Postgres / Redis / S3 / Mongo / Temporal
     |
 
-    routers: HTTP routers
     adapters: Adapter implementations
     clients: External clients
 }
@@ -45,7 +55,7 @@ Domain: {
     validation: Validators & invariants
 }
 
-Infrastructure.routers -> Application.usecases: invokes
+Interface.routers -> Application.usecases: invokes
 Infrastructure.adapters -> Application.contracts: implements
 Application.usecases -> Domain.models: uses
 Application.usecases -> Application.contracts: resolves through context

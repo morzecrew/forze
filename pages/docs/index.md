@@ -13,16 +13,30 @@ If you are new to the package, start with:
 
 ## Why use Forze?
 
-Forze helps you keep business logic stable while storage/framework choices evolve.
+Forze helps you keep business logic stable while storage and framework choices evolve.
 
-- **Layered** — clear separation between domain, application, and infrastructure
-- **Explicit** — contracts (ports) describe what the app needs
+- **Layered** — four clean layers (domain, application, infrastructure, interface) with strict dependency rules
+- **Explicit** — contracts (ports) describe what the app needs; adapters deliver it
 - **Composable** — adapters are wired declaratively via dependency plans
-- **Testable** — usecases can run with fake/in-memory dependencies
-- **Framework-agnostic** — core modules are not tied to FastAPI/Postgres/etc.
+- **Testable** — usecases run with fake or in-memory dependencies
+- **Framework-agnostic** — core modules are not tied to any web framework, database, or cloud service
 
-!!! note ""
-    Forze is not a full-stack framework. It provides architecture primitives and integration packages you compose.
+/// note
+Forze is not a full-stack framework. It provides architecture primitives and integration packages you compose.
+///
+
+## Architecture at a glance
+
+Forze organizes code into four layers. Dependencies flow **inward**: the interface and infrastructure layers depend on the application layer, which depends on the domain layer.
+
+| Layer | Responsibility | Examples |
+|-------|----------------|----------|
+| **Domain** | Business logic, invariants, validation | Models, commands, value objects |
+| **Application** | Orchestration, contracts, composition | Usecases, ports, execution runtime |
+| **Infrastructure** | Concrete adapter implementations | Postgres, Redis, S3, MongoDB |
+| **Interface** | User-facing entry points | FastAPI routes, Socket.IO handlers |
+
+Read more in [Layered Architecture](core-concepts/layered-architecture.md).
 
 ## Package layout
 
@@ -30,20 +44,11 @@ Forze helps you keep business logic stable while storage/framework choices evolv
 |---------|---------|
 | `forze` | Core contracts, execution runtime, composition helpers, domain primitives |
 | `forze_fastapi` | HTTP router helpers and idempotent route integration |
-| `forze_postgres` | Postgres-backed document/search/transaction adapters |
-| `forze_redis` | Cache, counters, and idempotency adapters |
+| `forze_postgres` | Postgres-backed document, search, and transaction adapters |
+| `forze_redis` | Cache, counters, idempotency, pub/sub, and stream adapters |
 | `forze_s3` | S3-compatible storage adapter |
-| `forze_mongo` | Mongo-backed document/transaction adapters |
+| `forze_mongo` | Mongo-backed document and transaction adapters |
 | `forze_socketio` | Socket.IO transport adapter for typed realtime events |
-| `forze_temporal` | Temporal integration package (currently minimal) |
-| `forze_sqs` | Amazon SQS message queue adapter |
+| `forze_temporal` | Temporal workflow integration (scaffolding) |
+| `forze_sqs` | SQS message queue adapter |
 | `forze_rabbitmq` | RabbitMQ message queue adapter |
-
-## Typical request flow
-
-<div class="d2-diagram">
-  <img class="d2-light" src="assets/diagrams/light/contracts-adapters.svg" alt="Request flow from usecase to adapters">
-  <img class="d2-dark" src="assets/diagrams/dark/contracts-adapters.svg" alt="Request flow from usecase to adapters">
-</div>
-
-In practice: router/handler resolves an `ExecutionContext`, usecases request ports (`ctx.doc_read(...)`, `ctx.doc_write(...)`, `ctx.search(...)`, `ctx.storage(...)`), and adapters execute infrastructure work.
