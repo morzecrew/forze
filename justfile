@@ -84,7 +84,8 @@ test-perf *args='tests/perf':
 quality strict="false":
     {{ _uv_sync }}
 
-    just _uv_cmd "Types" {{ strict }} ruff check "src"
+    just _uv_cmd "Linting" {{ strict }} ruff check "src"
+    just _uv_cmd "Types" {{ strict }} mypy "src"
     just _uv_cmd "Imports" {{ strict }} lint-imports
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .

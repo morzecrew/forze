@@ -2,7 +2,6 @@
 
 import pytest
 
-from forze.application.contracts.cache import CacheSpec
 from forze_mock import MockState
 from forze_mock.adapters import MockCacheAdapter
 

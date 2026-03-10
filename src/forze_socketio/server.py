@@ -1,16 +1,15 @@
-from typing import Any
-
-from forze.base.errors import CoreError
-
 from ._compat import require_socketio
 
 require_socketio()
 
 # ....................... #
 
-import socketio as socketio
-from socketio.base_manager import BaseManager
+from typing import Any, Optional
 
+import socketio as socketio
+from socketio.async_manager import AsyncManager
+
+from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -20,7 +19,7 @@ def build_socketio_server(
     redis_url: str | None = None,
     redis_channel: str = "socketio",
     redis_write_only: bool = False,
-    client_manager: BaseManager | None = None,
+    client_manager: Optional[AsyncManager] = None,
     **kwargs: Any,
 ) -> socketio.AsyncServer:
     """Build an :class:`socketio.AsyncServer` with optional Redis backplane.
@@ -35,6 +34,7 @@ def build_socketio_server(
     :returns: Configured Socket.IO server instance.
     :raises CoreError: If both ``redis_url`` and ``client_manager`` are provided.
     """
+
     if redis_url is not None and client_manager is not None:
         raise CoreError("Pass either `redis_url` or `client_manager`, not both")
 

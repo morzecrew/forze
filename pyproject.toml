@@ -101,6 +101,7 @@ mongo = ["pymongo>=4.16.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
 socketio = [
     "python-socketio>=5.16.1",
+    "python-socketio-stubs>=5.16.1.0.20260211",
 ]
 
 # ....................... #
@@ -322,7 +323,8 @@ DEP002 = [
     "types-aiobotocore",
     "aiobotocore",
     "temporalio",
-    "httpx",                # required by starlette.testclient.TestClient
+    "httpx",                 # required by starlette.testclient.TestClient
+    "python-socketio-stubs",
 ]
 DEP003 = ["types_aiobotocore_s3", "types_aiobotocore_sqs", "typing_extensions"]
 

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.13, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -688,6 +688,7 @@ s3 = [
 ]
 socketio = [
     { name = "python-socketio" },
+    { name = "python-socketio-stubs" },
 ]
 sqs = [
     { name = "aioboto3" },
@@ -756,6 +757,7 @@ requires-dist = [
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-magic", marker = "extra == 's3'", specifier = ">=0.4.27" },
     { name = "python-socketio", marker = "extra == 'socketio'", specifier = ">=5.16.1" },
+    { name = "python-socketio-stubs", marker = "extra == 'socketio'", specifier = ">=5.16.1.0.20260211" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=7.3.0" },
     { name = "scalar-fastapi", marker = "extra == 'fastapi'", specifier = ">=1.8.0" },
@@ -2136,6 +2138,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/59/81/cf8284f45e32efa18d3848ed82cdd4dcc1b657b082458fbe01ad3e1f2f8d/python_socketio-5.16.1.tar.gz", hash = "sha256:f863f98eacce81ceea2e742f6388e10ca3cdd0764be21d30d5196470edf5ea89", size = 128508, upload-time = "2026-02-06T23:42:07Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/c7/deb8c5e604404dbf10a3808a858946ca3547692ff6316b698945bb72177e/python_socketio-5.16.1-py3-none-any.whl", hash = "sha256:a3eb1702e92aa2f2b5d3ba00261b61f062cce51f1cfb6900bf3ab4d1934d2d35", size = 82054, upload-time = "2026-02-06T23:42:05.772Z" },
+]
+
+[[package]]
+name = "python-socketio-stubs"
+version = "5.16.1.0.20260211"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-socketio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/05/c5f95c84174a94a02cb44d6ccb0e30f66e9b60b730a4d3f09b99491f015d/python_socketio_stubs-5.16.1.0.20260211.tar.gz", hash = "sha256:90bf79e7955b808386b614d7edd42e712ef99b0dedbcee6ab7ce51b3f16ac831", size = 13463, upload-time = "2026-02-11T14:54:51.241Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/9b/d7b8b36b05a7261d3a5d60f25fce6eb428235bc274282a41ed7f34beece5/python_socketio_stubs-5.16.1.0.20260211-py3-none-any.whl", hash = "sha256:ce6f5c47d2f788759538b55cfee46aeb8db4102f0901b2f460680a6964d8059e", size = 26900, upload-time = "2026-02-11T14:54:51.996Z" },
 ]
 
 [[package]]

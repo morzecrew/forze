@@ -5,7 +5,13 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from forze.application.execution import Deps, ExecutionContext, Usecase, UsecasePlan, UsecaseRegistry
+from forze.application.execution import (
+    Deps,
+    ExecutionContext,
+    Usecase,
+    UsecasePlan,
+    UsecaseRegistry,
+)
 from forze.base.errors import CoreError
 from forze_socketio.routing import (
     ForzeSocketIOAdapter,
@@ -13,7 +19,6 @@ from forze_socketio.routing import (
     SocketIORequest,
     make_registry_usecase_resolver,
 )
-
 
 # ----------------------- #
 
@@ -69,7 +74,9 @@ class TestSocketIORouting:
     @pytest.mark.asyncio
     async def test_event_dispatch_validates_and_runs_usecase_with_plan(self) -> None:
         sio = StubSocketIOServer()
-        registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
+        registry = UsecaseRegistry().register(
+            "chat.echo", lambda ctx: EchoUsecase(ctx=ctx)
+        )
 
         request_log: list[SocketIORequest] = []
         guard_log: list[str] = []
@@ -131,7 +138,9 @@ class TestSocketIORouting:
         def context_factory(request: SocketIORequest) -> ExecutionContext:
             return ExecutionContext(deps=Deps())
 
-        registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
+        registry = UsecaseRegistry().register(
+            "chat.echo", lambda ctx: EchoUsecase(ctx=ctx)
+        )
         resolver = make_registry_usecase_resolver(registry)
 
         adapter = ForzeSocketIOAdapter(
@@ -157,3 +166,102 @@ class TestSocketIORouting:
                     ack_type=EchoAck,
                 )
             )
+
+
+@pytest.mark.asyncio
+async def test_event_dispatch_without_ack_type_returns_raw_value() -> None:
+    sio = StubSocketIOServer()
+    registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
+    resolver = make_registry_usecase_resolver(registry)
+
+    def context_factory(request: SocketIORequest) -> ExecutionContext:
+        return ExecutionContext(deps=Deps())
+
+    router = SocketIONamespaceRouter(namespace="/chat").command(
+        event="echo",
+        operation="chat.echo",
+        payload_type=EchoPayload,
+        ack_type=None,
+    )
+    adapter = ForzeSocketIOAdapter(
+        sio=sio,  # pyright: ignore[reportArgumentType]
+        context_factory=context_factory,
+        usecase_resolver=resolver,
+    )
+    adapter.include_router(router)
+
+    handler = sio.handlers[("/chat", "echo")]
+    result = await handler("sid-1", {"text": "hello"})
+
+    # Should return raw EchoAck object since ack_type is None
+    assert isinstance(result, EchoAck)
+    assert result.echoed == "hello"
+
+
+def test_adapter_routers_property() -> None:
+    sio = StubSocketIOServer()
+
+    def context_factory(request: SocketIORequest) -> ExecutionContext:
+        return ExecutionContext(deps=Deps())
+
+    adapter = ForzeSocketIOAdapter(
+        sio=sio,  # pyright: ignore[reportArgumentType]
+        context_factory=context_factory,
+        usecase_resolver=make_registry_usecase_resolver(UsecaseRegistry()),
+    )
+
+    router1 = SocketIONamespaceRouter(namespace="/chat1")
+    router2 = SocketIONamespaceRouter(namespace="/chat2")
+
+    adapter.include_router(router1)
+    adapter.include_router(router2)
+
+    assert adapter.routers == (router1, router2)
+
+
+def test_adapter_include_routers() -> None:
+    sio = StubSocketIOServer()
+
+    def context_factory(request: SocketIORequest) -> ExecutionContext:
+        return ExecutionContext(deps=Deps())
+
+    adapter = ForzeSocketIOAdapter(
+        sio=sio,  # pyright: ignore[reportArgumentType]
+        context_factory=context_factory,
+        usecase_resolver=make_registry_usecase_resolver(UsecaseRegistry()),
+    )
+
+    router1 = SocketIONamespaceRouter(namespace="/chat1")
+    router2 = SocketIONamespaceRouter(namespace="/chat2")
+
+    adapter.include_routers(router1, router2)
+
+    assert adapter.routers == (router1, router2)
+
+
+@pytest.mark.asyncio
+async def test_async_context_factory() -> None:
+    sio = StubSocketIOServer()
+    registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
+    resolver = make_registry_usecase_resolver(registry)
+
+    async def async_context_factory(request: SocketIORequest) -> ExecutionContext:
+        return ExecutionContext(deps=Deps())
+
+    router = SocketIONamespaceRouter(namespace="/chat").command(
+        event="echo",
+        operation="chat.echo",
+        payload_type=EchoPayload,
+        ack_type=EchoAck,
+    )
+    adapter = ForzeSocketIOAdapter(
+        sio=sio,  # pyright: ignore[reportArgumentType]
+        context_factory=async_context_factory,
+        usecase_resolver=resolver,
+    )
+    adapter.include_router(router)
+
+    handler = sio.handlers[("/chat", "echo")]
+    result = await handler("sid-1", {"text": "hello"})
+
+    assert result == {"echoed": "hello"}

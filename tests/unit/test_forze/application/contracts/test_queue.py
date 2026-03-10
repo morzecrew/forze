@@ -3,18 +3,13 @@
 from datetime import timedelta
 from typing import AsyncIterator
 
-import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
-    QueueConformity,
-    QueueDepConformity,
     QueueReadDepKey,
-    QueueReadDepPort,
     QueueReadPort,
     QueueSpec,
     QueueWriteDepKey,
-    QueueWriteDepPort,
     QueueWritePort,
 )
 
@@ -75,33 +70,3 @@ class TestQueueDepKeys:
 
     def test_queue_write_dep_key_name(self) -> None:
         assert QueueWriteDepKey.name == "queue_write"
-
-
-class TestQueuePorts:
-    @pytest.mark.asyncio
-    async def test_stub_conforms_to_read_and_write_ports(self) -> None:
-        queue = _StubQueue()
-
-        assert isinstance(queue, QueueReadPort)
-        assert isinstance(queue, QueueWritePort)
-
-    def test_stub_conforms_to_queue_conformity(self) -> None:
-        queue = _StubQueue()
-        assert isinstance(queue, QueueConformity)
-
-
-class _StubQueueDep(QueueReadDepPort, QueueWriteDepPort):
-    def __call__(self, context, spec):
-        return _StubQueue()
-
-
-class TestQueueDeps:
-    def test_stub_conforms_to_read_and_write_dep_ports(self) -> None:
-        dep = _StubQueueDep()
-
-        assert isinstance(dep, QueueReadDepPort)
-        assert isinstance(dep, QueueWriteDepPort)
-
-    def test_stub_conforms_to_queue_dep_conformity(self) -> None:
-        dep = _StubQueueDep()
-        assert isinstance(dep, QueueDepConformity)

@@ -5,7 +5,6 @@ import pytest
 from forze.base.errors import CoreError
 from forze_socketio import server as server_module
 
-
 # ----------------------- #
 
 
@@ -36,8 +35,12 @@ class StubASGIApp:
 class TestSocketIOServerBuilders:
     """Tests for Socket.IO server helper builders."""
 
-    def test_build_server_configures_redis_manager(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(server_module.socketio, "AsyncRedisManager", StubRedisManager)
+    def test_build_server_configures_redis_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            server_module.socketio, "AsyncRedisManager", StubRedisManager
+        )
         monkeypatch.setattr(server_module.socketio, "AsyncServer", StubAsyncServer)
 
         server = server_module.build_socketio_server(
@@ -72,3 +75,10 @@ class TestSocketIOServerBuilders:
         assert isinstance(app, StubASGIApp)
         assert app.args == (server,)
         assert app.kwargs == {"other_asgi_app": "app", "socketio_path": "ws"}
+
+    def test_build_server_without_redis_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(server_module.socketio, "AsyncServer", StubAsyncServer)
+        server = server_module.build_socketio_server()
+        assert server.kwargs.get("client_manager") is None

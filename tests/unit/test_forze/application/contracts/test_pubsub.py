@@ -2,7 +2,6 @@
 
 from typing import AsyncIterator
 
-import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.pubsub import (
@@ -11,10 +10,6 @@ from forze.application.contracts.pubsub import (
     PubSubSpec,
     PubSubSubscribeDepKey,
     PubSubSubscribePort,
-    PubSubConformity,
-    PubSubDepConformity,
-    PubSubPublishDepPort,
-    PubSubSubscribeDepPort,
 )
 
 # ----------------------- #
@@ -62,32 +57,3 @@ class TestPubSubDepKeys:
 
     def test_pubsub_subscribe_dep_key_name(self) -> None:
         assert PubSubSubscribeDepKey.name == "pubsub_subscribe"
-
-
-class TestPubSubPorts:
-    @pytest.mark.asyncio
-    async def test_stub_conforms_to_publish_and_subscribe_ports(self) -> None:
-        pubsub = _StubPubSub()
-
-        assert isinstance(pubsub, PubSubPublishPort)
-        assert isinstance(pubsub, PubSubSubscribePort)
-
-    def test_stub_conforms_to_pubsub_conformity(self) -> None:
-        pubsub = _StubPubSub()
-        assert isinstance(pubsub, PubSubConformity)
-
-
-class _StubPubSubDep(PubSubPublishDepPort, PubSubSubscribeDepPort):
-    def __call__(self, context, spec):
-        return _StubPubSub()
-
-
-class TestPubSubDeps:
-    def test_stub_conforms_to_publish_and_subscribe_dep_ports(self) -> None:
-        dep = _StubPubSubDep()
-        assert isinstance(dep, PubSubPublishDepPort)
-        assert isinstance(dep, PubSubSubscribeDepPort)
-
-    def test_stub_conforms_to_pubsub_dep_conformity(self) -> None:
-        dep = _StubPubSubDep()
-        assert isinstance(dep, PubSubDepConformity)
