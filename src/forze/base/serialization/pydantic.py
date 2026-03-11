@@ -1,6 +1,7 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
+from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Literal, TypedDict
 
@@ -109,6 +110,22 @@ def _pydantic_field_names_cached(
 # ....................... #
 
 
+def _normalize_for_hashing(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _normalize_for_hashing(v) for k, v in value.items()}  # type: ignore[return-value]
+
+    if isinstance(value, list | tuple | set):
+        return [_normalize_for_hashing(v) for v in value]  # type: ignore[arg-type]
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    return value
+
+
+# ....................... #
+
+
 def pydantic_model_hash(
     model: BaseModel,
     *,
@@ -122,6 +139,7 @@ def pydantic_model_hash(
     """
 
     data = pydantic_dump(model, exclude=exclude)
-    raw = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
+    norm_data = _normalize_for_hashing(data)
+    raw = orjson.dumps(norm_data, option=orjson.OPT_SORT_KEYS)
 
     return hashlib.sha256(raw).hexdigest()

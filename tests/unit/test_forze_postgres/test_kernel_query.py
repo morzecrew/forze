@@ -1,7 +1,9 @@
 """Unit tests for forze_postgres.kernel.query."""
 
 from datetime import date, datetime, timezone
+
 import pytest
+
 from forze_postgres.kernel.introspect import PostgresType
 from forze_postgres.kernel.query.render import PsycopgValueCoercer
 
@@ -110,11 +112,17 @@ class TestPsycopgValueCoercer:
         coercer = PsycopgValueCoercer()
         assert coercer.array(["val", 123], t=None) == ["val", 123]
 
-    def test_array_t_not_array_raises(self) -> None:
+    def test_array_t_not_array_raise_on_scalar_t_true_raises(self) -> None:
         coercer = PsycopgValueCoercer()
         t = PostgresType(base="text", is_array=False, not_null=False)
+
         with pytest.raises(ValueError, match="Expected array column, got scalar"):
-            coercer.array(["val"], t=t)
+            coercer.array(["val"], t=t, raise_on_scalar_t=True)
+
+    def test_array_t_not_array_raise_on_scalar_t_false_passes(self) -> None:
+        coercer = PsycopgValueCoercer()
+        t = PostgresType(base="text", is_array=False, not_null=False)
+        assert coercer.array(["val"], t=t, raise_on_scalar_t=False) == ["val"]
 
     def test_array_valid_t_maps_scalar(self) -> None:
         coercer = PsycopgValueCoercer()

@@ -4,6 +4,8 @@
 :class:`BaseDTO` extends it with frozen-by-default semantics for data transfer.
 """
 
+from decimal import Decimal
+
 from pydantic import BaseModel, ConfigDict
 
 # ----------------------- #
@@ -13,7 +15,7 @@ class CoreModel(BaseModel):
     """Base model for domain entities.
 
     Configures field docstrings for schema generation, stable JSON encoders
-    (e.g. sorted sets), and stripped string fields. All domain models inherit
+    (e.g. sorted sets, stringified decimals), and stripped string fields. All domain models inherit
     from this.
     """
 
@@ -22,7 +24,7 @@ class CoreModel(BaseModel):
         model_title_generator=lambda _: "",
         field_title_generator=lambda _, __: "",
         str_strip_whitespace=True,
-        json_encoders={set: sorted},
+        json_encoders={set: sorted, Decimal: str},
     )
 
 
