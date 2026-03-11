@@ -6,9 +6,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.errors import CoreError
+from forze.base.errors import ConcurrencyError, CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_mongo.kernel.gateways import MongoWriteGateway
+from forze_mongo.kernel.gateways.write import optimistic_retry
 from forze_mongo.kernel.platform import MongoClient
 
 
@@ -89,3 +90,59 @@ class TestMongoWriteGateway:
                 update_dto=MyUpdateDoc,
                 rev_bump_strategy="database",  # pyright: ignore[reportArgumentType]
             )
+
+    @pytest.mark.asyncio
+    async def test_update_retries_on_concurrency_error(self) -> None:
+        pk = uuid4()
+        current = _domain_doc(pk, rev=1, name="before")
+        client = _build_client()
+        client.update_one.side_effect = [
+            ConcurrencyError("Failed to update record"),
+            1,
+        ]
+        read = _build_read(client)
+        read.get.return_value = current
+
+        gw = MongoWriteGateway(
+            source="docs",
+            client=client,
+            model=MyDoc,
+            read=read,
+            create_dto=MyCreateDoc,
+            update_dto=MyUpdateDoc,
+            rev_bump_strategy="application",
+        )
+        updated = await gw.update(pk, MyUpdateDoc(name="after"))
+
+        assert updated.name == "after"
+        assert client.update_one.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_update_exhausts_retries_and_raises(self) -> None:
+        pk = uuid4()
+        current = _domain_doc(pk, rev=1, name="before")
+        client = _build_client()
+        client.update_one.side_effect = ConcurrencyError("Failed to update record")
+        read = _build_read(client)
+        read.get.return_value = current
+
+        gw = MongoWriteGateway(
+            source="docs",
+            client=client,
+            model=MyDoc,
+            read=read,
+            create_dto=MyCreateDoc,
+            update_dto=MyUpdateDoc,
+            rev_bump_strategy="application",
+        )
+
+        with pytest.raises(ConcurrencyError, match="Failed to update record"):
+            await gw.update(pk, MyUpdateDoc(name="after"))
+
+        assert client.update_one.await_count == 3
+
+
+class TestOptimisticRetry:
+    def test_optimistic_retry_returns_tenacity_decorator(self) -> None:
+        decorator = optimistic_retry(attempts=5)
+        assert callable(decorator)

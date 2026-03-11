@@ -1,11 +1,13 @@
 """Utilities for normalizing Postgres type names and parsing index definitions."""
 
 import re
+from functools import lru_cache
 from typing import Optional
 
 # ----------------------- #
 
 
+@lru_cache(maxsize=128)
 def normalize_pg_type(base: str) -> str:
     """Normalize a verbose Postgres type name to its canonical short form.
 

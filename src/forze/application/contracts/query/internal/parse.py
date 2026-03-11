@@ -21,6 +21,14 @@ from .nodes import QueryAnd, QueryExpr, QueryField, QueryOr
 
 # ----------------------- #
 
+_EQ_OPS: frozenset[str] = frozenset(get_args(EqOp))
+_ORD_OPS: frozenset[str] = frozenset(get_args(OrdOp))
+_MEMB_OPS: frozenset[str] = frozenset(get_args(MembOp))
+_UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
+_SET_REL_OPS: frozenset[str] = frozenset(get_args(SetRelOp))
+
+# ----------------------- #
+
 
 class QueryFilterExpressionParser:
     """Parser that converts :class:`FilterExpression` dicts into AST nodes."""
@@ -119,23 +127,23 @@ class QueryFilterExpressionParser:
 
     @staticmethod
     def _validate_op(field: str, op: str, value: Any) -> QueryField:
-        if op in get_args(EqOp):
+        if op in _EQ_OPS:
             if not isinstance(value, Scalar):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
-        elif op in get_args(OrdOp):
+        elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
-        elif op in get_args(MembOp):
+        elif op in _MEMB_OPS:
             if not isinstance(value, list):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
-        elif op in get_args(UnaryOp):
+        elif op in _UNARY_OPS:
             if not isinstance(value, bool):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
-        elif op in get_args(SetRelOp):
+        elif op in _SET_REL_OPS:
             if not isinstance(value, list):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 

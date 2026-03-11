@@ -33,6 +33,17 @@ def test_pydantic_field_names_includes_fields() -> None:
     assert "b" in fields
 
 
+def test_pydantic_field_names_returns_frozenset() -> None:
+    fields = pydantic_field_names(SampleModel)
+    assert isinstance(fields, frozenset)
+
+
+def test_pydantic_field_names_caching_returns_same_object() -> None:
+    fields1 = pydantic_field_names(SampleModel)
+    fields2 = pydantic_field_names(SampleModel)
+    assert fields1 is fields2
+
+
 def test_pydantic_model_hash_is_stable_for_same_data() -> None:
     m1 = SampleModel(a=1, b=2)
     m2 = SampleModel(a=1, b=2)

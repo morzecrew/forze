@@ -10,6 +10,12 @@ from typing import Literal, Optional, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from forze.base.errors import (
     ConcurrencyError,
@@ -31,6 +37,26 @@ from .read import MongoReadGateway
 
 MongoRevBumpStrategy = Literal["application"]
 """Supported revision bump strategies for Mongo document writes."""
+
+
+def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
+    """Return a tenacity retry decorator for :exc:`~forze.base.errors.ConcurrencyError`.
+
+    Mirrors the Postgres retry strategy: exponential back-off with re-raise
+    after *attempts* failures.
+
+    :param attempts: Maximum number of attempts before re-raising.
+    """
+
+    return retry(
+        retry=retry_if_exception_type(ConcurrencyError),
+        stop=stop_after_attempt(attempts),
+        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
+        reraise=True,
+    )
+
+
+# ....................... #
 
 
 @final
@@ -157,6 +183,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         """Insert a new document from a creation DTO and record its history.
 
@@ -174,6 +201,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create_many(self, dtos: Sequence[C]) -> Sequence[D]:
         """Bulk-insert documents from creation DTOs and record their history.
 
@@ -201,6 +229,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def _patch(
         self,
         pk: UUID,
@@ -240,6 +269,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
     async def _patch_many(
         self,
         pks: Sequence[UUID],
