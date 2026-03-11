@@ -57,7 +57,7 @@ class MongoGateway[M: BaseModel]:
     # ....................... #
 
     @cached_property
-    def read_fields(self) -> set[str]:
+    def read_fields(self) -> frozenset[str]:
         """Field names exposed by the model, cached for repeated access."""
 
         return pydantic_field_names(self.model)

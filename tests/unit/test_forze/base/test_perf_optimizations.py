@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError, handled
-from forze.base.serialization.pydantic import pydantic_model_hash
+from forze.base.serialization.pydantic import pydantic_field_names, pydantic_model_hash
 
 
 # ----------------------- #
@@ -152,6 +152,79 @@ class TestRowToDictPerf:
 
         avg_us = elapsed_ns / iterations / 1_000
         assert avg_us < 500, f"100-row batch avg {avg_us:.1f}us exceeds 500us"
+
+
+# ----------------------- #
+# pydantic_field_names caching
+
+
+class TestPydanticFieldNamesPerf:
+    @pytest.mark.perf
+    def test_pydantic_field_names_caching_speedup(self) -> None:
+        """Verify that repeated calls to ``pydantic_field_names`` benefit from LRU cache."""
+
+        iterations = 50_000
+
+        # Warm the cache
+        pydantic_field_names(_SampleModel)
+
+        start = time.perf_counter_ns()
+        for _ in range(iterations):
+            pydantic_field_names(_SampleModel)
+        cached_ns = time.perf_counter_ns() - start
+
+        cached_avg = cached_ns / iterations
+        assert cached_avg < 1_000, (
+            f"Cached pydantic_field_names avg {cached_avg:.0f}ns exceeds 1us budget"
+        )
+
+    @pytest.mark.perf
+    def test_pydantic_field_names_returns_frozenset(self) -> None:
+        """Verify ``pydantic_field_names`` returns a frozenset for safe caching."""
+
+        result = pydantic_field_names(_SampleModel)
+        assert isinstance(result, frozenset)
+        assert "id" in result
+        assert "name" in result
+
+
+# ----------------------- #
+# Query operator set pre-computation
+
+
+class TestQueryOperatorSetsPerf:
+    @pytest.mark.perf
+    def test_operator_validation_throughput(self) -> None:
+        """Measure operator validation with pre-computed frozensets vs get_args."""
+
+        from forze.application.contracts.query.internal.parse import (
+            QueryFilterExpressionParser,
+        )
+
+        iterations = 10_000
+        ops_and_values = [
+            ("$eq", 42),
+            ("$neq", "foo"),
+            ("$gt", 10),
+            ("$gte", 20),
+            ("$lt", 30),
+            ("$lte", 40),
+            ("$in", [1, 2, 3]),
+            ("$nin", [4, 5]),
+            ("$null", True),
+            ("$empty", False),
+            ("$superset", ["a"]),
+            ("$subset", ["b"]),
+        ]
+
+        start = time.perf_counter_ns()
+        for _ in range(iterations):
+            for op, val in ops_and_values:
+                QueryFilterExpressionParser._validate_op("field", op, val)
+        elapsed_ns = time.perf_counter_ns() - start
+
+        avg_us = elapsed_ns / (iterations * len(ops_and_values)) / 1_000
+        assert avg_us < 10, f"Operator validation avg {avg_us:.1f}us exceeds 10us budget"
 
 
 # ----------------------- #

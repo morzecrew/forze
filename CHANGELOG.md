@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Error handler for `forze_mongo` (`mongo_handled`) that maps PyMongo exceptions to `CoreError` subtypes, bringing Mongo in line with Postgres, Redis, S3, SQS, and RabbitMQ error handling.
+- Optimistic retry with tenacity on `MongoWriteGateway` write operations (`create`, `create_many`, `_patch`, `_patch_many`), mirroring the existing Postgres retry strategy for `ConcurrencyError`.
+- Default adaptive retry configuration (3 attempts) for S3 client when no explicit retries config is provided.
 
 ### Changed
 
@@ -28,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Postgres `fetch_one` with dict row factory uses a dedicated `_row_to_dict` method instead of wrapping in a list.
 - SQS queue name sanitization uses pre-compiled regex patterns.
 - RabbitMQ `ack`/`nack` now acquire the pending-messages lock once per batch instead of per message.
+- Cached `pydantic_field_names` via `lru_cache`; return type narrowed to `frozenset[str]` for immutability.
+- Cached `normalize_pg_type` in Postgres introspection utilities via `lru_cache`.
+- Pre-computed query operator sets as module-level `frozenset` constants in the filter expression parser, replacing per-call `get_args()` lookups.
+- S3 `list_objects` now exits pagination early when the requested limit window has been fully collected.
 
 ## [0.1.9] - 2026-03-10
 

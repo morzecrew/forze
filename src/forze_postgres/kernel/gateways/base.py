@@ -100,7 +100,7 @@ class PostgresGateway[M: BaseModel]:
     # ....................... #
 
     @cached_property
-    def read_fields(self) -> set[str]:
+    def read_fields(self) -> frozenset[str]:
         return pydantic_field_names(self.model)
 
     # ....................... #

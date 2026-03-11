@@ -123,7 +123,9 @@ class S3Client:
     ) -> None:
         """Configure the client with S3 credentials and create a session.
 
-        No-ops if the session is already initialized.
+        No-ops if the session is already initialized. When no ``retries``
+        key is present in *config*, a default adaptive retry strategy with
+        up to 3 attempts is applied automatically.
 
         :param endpoint: S3-compatible endpoint URL.
         :param access_key_id: AWS access key identifier.
@@ -134,7 +136,12 @@ class S3Client:
         if self.__session is not None:
             return
 
-        aio_config = AioConfig(**config) if config else None  # type: ignore
+        if config is None:
+            config = S3Config(retries={"max_attempts": 3, "mode": "adaptive"})
+        elif "retries" not in config:
+            config = {**config, "retries": {"max_attempts": 3, "mode": "adaptive"}}
+
+        aio_config = AioConfig(**config)  # type: ignore
 
         self.__opts = _S3ConnectionOpts(
             endpoint=endpoint,
@@ -455,6 +462,7 @@ class S3Client:
         end = _offset + _limit  # exclusive
 
         iterator = paginator.paginate(Bucket=bucket, Prefix=_prefix)
+        collected_enough = False
 
         async for page in iterator:
             contents = page.get("Contents") or []
@@ -462,11 +470,16 @@ class S3Client:
                 continue
 
             for obj in contents:
-                idx = total_count  # current object's index in the full sequence
+                idx = total_count
                 total_count += 1
 
                 if start <= idx < end:
                     items.append(obj)
+                    if len(items) >= _limit:
+                        collected_enough = True
+
+            if collected_enough and limit is not None:
+                break
 
         return items, total_count
 

@@ -1,6 +1,7 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
+from functools import lru_cache
 from typing import Any, Literal, TypedDict
 
 import orjson
@@ -75,20 +76,34 @@ def pydantic_field_names(
     cls: type[BaseModel],
     *,
     include_computed: bool = True,
-) -> set[str]:
+) -> frozenset[str]:
     """Return the set of field names defined on a Pydantic model class.
+
+    Results are cached per ``(cls, include_computed)`` combination via
+    :func:`_pydantic_field_names_cached` to avoid repeated introspection of
+    the same model class.
 
     :param cls: Pydantic model class.
     :param include_computed: Whether to include computed fields.
-    :returns: Set of field names on the model.
+    :returns: Frozen set of field names on the model.
     """
+
+    return _pydantic_field_names_cached(cls, include_computed)
+
+
+@lru_cache(maxsize=256)
+def _pydantic_field_names_cached(
+    cls: type[BaseModel],
+    include_computed: bool,
+) -> frozenset[str]:
+    """Cached implementation of :func:`pydantic_field_names`."""
 
     model_fields = set(cls.model_fields.keys())
 
     if include_computed:
         model_fields |= set(cls.model_computed_fields.keys())
 
-    return model_fields
+    return frozenset(model_fields)
 
 
 # ....................... #
