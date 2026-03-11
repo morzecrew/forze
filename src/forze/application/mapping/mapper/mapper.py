@@ -37,7 +37,11 @@ class DTOMapper[Out: BaseDTO]:
     policy: MappingPolicy = attrs.field(factory=MappingPolicy)
     """Policy for allowing field overwrites."""
 
-    _step_fields: tuple[frozenset[str], ...] = attrs.field(init=False, eq=False, repr=False)
+    _step_fields: tuple[frozenset[str], ...] = attrs.field(
+        init=False,
+        eq=False,
+        repr=False,
+    )
     """Pre-computed produces() results per step."""
 
     # ....................... #
@@ -98,4 +102,4 @@ class DTOMapper[Out: BaseDTO]:
 
             payload = apply_dict_patch(payload, patch)
 
-        return pydantic_validate(self.out, payload, forbid_extra=True)
+        return pydantic_validate(self.out, payload)
