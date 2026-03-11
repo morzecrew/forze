@@ -34,7 +34,7 @@ from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze_fastapi.constants import IDEMPOTENCY_KEY_HEADER
 
-from .routes import make_idempotent_route_class
+from .routes import ETagProvider, make_etag_route_class, make_idempotent_route_class
 
 # ----------------------- #
 
@@ -67,6 +67,38 @@ class RouterIdempotencyConfig(RouteIdempotencyConfig, TypedDict, total=False):
 
     header_key: str
     """Name of the header key to be used for the idempotency key."""
+
+
+# ....................... #
+
+
+class RouteETagConfig(TypedDict, total=False):
+    """Per-route ETag configuration.
+
+    Overrides router-level defaults when supplied to individual route
+    registrations.
+    """
+
+    enabled: bool
+    """Enable or disable ETag generation for this route."""
+
+    provider: ETagProvider
+    """Strategy used to generate the tag value."""
+
+    auto_304: bool
+    """Automatically return *304 Not Modified* when ``If-None-Match`` matches."""
+
+
+# ....................... #
+
+
+@final
+class RouterETagConfig(RouteETagConfig, TypedDict, total=False):
+    """Router-level default ETag configuration.
+
+    Applied to every ETag-enabled route unless overridden via per-route
+    :class:`RouteETagConfig`.
+    """
 
 
 # ....................... #
@@ -122,6 +154,7 @@ class ForzeAPIRouter(APIRouter):
         # extra parameters
         context_dependency: ExecutionContextDependencyPort,
         idempotency_config: Optional[RouterIdempotencyConfig] = None,
+        etag_config: Optional[RouterETagConfig] = None,
     ) -> None:
         super().__init__(
             prefix=prefix,
@@ -143,6 +176,7 @@ class ForzeAPIRouter(APIRouter):
         )
 
         self.__idempotency_config = idempotency_config or {}
+        self.__etag_config: RouterETagConfig = etag_config or {}
         self.__context_dependency = context_dependency
 
     # ....................... #
@@ -184,8 +218,10 @@ class ForzeAPIRouter(APIRouter):
         # extra parameters
         idempotent: bool = False,
         idempotency_config: Optional[RouteIdempotencyConfig] = None,
+        etag: bool = False,
+        etag_config: Optional[RouteETagConfig] = None,
     ) -> None:
-        """Register a route with optional idempotency wrapping for POST methods."""
+        """Register a route with optional idempotency and/or ETag wrapping."""
 
         idempotency_config = idempotency_config or self.__idempotency_config
         deps = list(dependencies or [])
@@ -220,6 +256,22 @@ class ForzeAPIRouter(APIRouter):
                 dto_param=dto_param,
             )
             deps.append(Depends(make_idem_header_dependency(header_key)))
+
+        if etag:
+            merged: RouteETagConfig = {**self.__etag_config, **(etag_config or {})}
+            provider: Optional[ETagProvider] = merged.get("provider")
+
+            if provider is None:
+                raise CoreError(
+                    "ETag provider is required when ETag is enabled"
+                )
+
+            auto_304: bool = merged.get("auto_304", True)
+
+            route_class_override = make_etag_route_class(
+                provider=provider,
+                auto_304=auto_304,
+            )
 
         return super().add_api_route(
             path,
@@ -318,6 +370,76 @@ class ForzeAPIRouter(APIRouter):
                 generate_unique_id_function=generate_unique_id_function,
                 idempotent=idempotent,
                 idempotency_config=idempotency_config,
+            )
+            return func
+
+        return decorator
+
+    # ....................... #
+
+    def get(
+        self,
+        path: str,
+        *,
+        response_model: Any = Default(None),
+        status_code: Optional[int] = None,
+        tags: Optional[list[Union[str, Enum]]] = None,
+        dependencies: Optional[Sequence[Depends]] = None,
+        summary: Optional[str] = None,
+        description: Optional[str] = None,
+        response_description: str = "Successful Response",
+        responses: Optional[dict[Union[int, str], dict[str, Any]]] = None,
+        deprecated: Optional[bool] = None,
+        operation_id: Optional[str] = None,
+        response_model_include: Optional[IncEx] = None,
+        response_model_exclude: Optional[IncEx] = None,
+        response_model_by_alias: bool = True,
+        response_model_exclude_unset: bool = False,
+        response_model_exclude_defaults: bool = False,
+        response_model_exclude_none: bool = False,
+        include_in_schema: bool = True,
+        response_class: type[Response] = Default(JSONResponse),
+        name: Optional[str] = None,
+        callbacks: Optional[list[BaseRoute]] = None,
+        openapi_extra: Optional[dict[str, Any]] = None,
+        generate_unique_id_function: Callable[[APIRoute], str] = Default(
+            generate_unique_id
+        ),
+        # extra parameters
+        etag: bool = False,
+        etag_config: Optional[RouteETagConfig] = None,
+    ) -> Callable[[DecoratedCallable], DecoratedCallable]:
+        """Add a *path operation* using an HTTP GET operation."""
+
+        def decorator(func: DecoratedCallable) -> DecoratedCallable:
+            self.add_api_route(
+                path,
+                func,
+                response_model=response_model,
+                status_code=status_code,
+                tags=tags,
+                dependencies=dependencies,
+                summary=summary,
+                description=description,
+                response_description=response_description,
+                responses=responses,
+                deprecated=deprecated,
+                methods=["GET"],
+                operation_id=operation_id,
+                response_model_include=response_model_include,
+                response_model_exclude=response_model_exclude,
+                response_model_by_alias=response_model_by_alias,
+                response_model_exclude_unset=response_model_exclude_unset,
+                response_model_exclude_defaults=response_model_exclude_defaults,
+                response_model_exclude_none=response_model_exclude_none,
+                include_in_schema=include_in_schema,
+                response_class=response_class,
+                name=name,
+                callbacks=callbacks,
+                openapi_extra=openapi_extra,
+                generate_unique_id_function=generate_unique_id_function,
+                etag=etag,
+                etag_config=etag_config,
             )
             return func
 

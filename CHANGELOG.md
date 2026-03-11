@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- Route-level HTTP ETag support in `forze_fastapi` with `ETagProvider` protocol, `ETagRoute`, and `make_etag_route_class` for reusable conditional GET handling.
+- `RouteETagConfig` and `RouterETagConfig` for per-route and per-router ETag configuration (enabled, provider, auto_304).
+- `DocumentETagProvider` that derives ETag values from document `id:rev` for stable version identity without response hashing.
+- ETag and `If-None-Match` / 304 Not Modified support on the document metadata endpoint.
+- `get()` override on `ForzeAPIRouter` with `etag` and `etag_config` parameters.
 
 ### Changed
 
