@@ -456,6 +456,7 @@ class MongoClient:
 
         session = self.__current_session()
         res = await coll.delete_one(filter, session=session)
+
         return int(res.deleted_count)
 
     # ....................... #

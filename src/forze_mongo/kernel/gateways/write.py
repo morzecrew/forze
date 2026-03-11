@@ -25,7 +25,11 @@ from forze.base.errors import (
     ValidationError,
 )
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_dump, pydantic_field_names, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_field_names,
+    pydantic_validate,
+)
 from forze.domain.constants import REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -519,4 +523,5 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise CoreError("Length mismatch between primary keys and revisions")
 
         updates = [{SOFT_DELETE_FIELD: False} for _ in pks]
+
         return await self._patch_many(pks, updates, revs=revs)

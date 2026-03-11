@@ -159,9 +159,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
     #! TODO: get rid of this or replace with mixin check (subclass or so)
 
-    def supports_soft_delete(
-        self,
-    ) -> bool:
+    def supports_soft_delete(self) -> bool:
         return SOFT_DELETE_FIELD in self.read_fields
 
     # ....................... #
@@ -394,12 +392,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             UPDATE {table} AS t
             SET {sets}
             FROM (VALUES {vals}) AS v({cols})
-            WHERE t.{pk} = v.id AND t.{rev} = v.rev
+            WHERE t.{pk} = v.{pk} AND t.{rev} = v.{rev}
             RETURNING {ret}
             """
         ).format(
             table=self.qname.ident(),
-            sets=set_parts,
+            sets=sql.SQL(", ").join(set_parts),
             vals=sql.SQL(", ").join(values_rows),
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
             pk=self.ident_pk(),

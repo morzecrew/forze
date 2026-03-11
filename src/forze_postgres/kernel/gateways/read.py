@@ -93,7 +93,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         row = await self.client.fetch_one(stmt, (pk,), row_factory="dict")
 
         if row is None:
-            raise NotFoundError(f"Запись не найдена: {pk}")
+            raise NotFoundError(f"Record not found: {pk}")
 
         if return_model is not None:
             return pydantic_validate(return_model, row)
@@ -167,7 +167,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         missing = [x for x in pks if x not in m]
 
         if missing:
-            raise NotFoundError(f"Некоторые записи не найдены: {missing}")
+            raise NotFoundError(f"Some records not found: {missing}")
 
         if return_model is not None:
             return [pydantic_validate(return_model, row) for row in ordered]
@@ -313,7 +313,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         return_fields: Optional[Sequence[str]] = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         if not filters and limit is None:
-            raise ValidationError("Фильтры или лимит должны быть предоставлены")
+            raise ValidationError("Filters or limit must be provided")
 
         where, params = await self.where_clause(filters)
         sort = self.sort_clause(sorts)
