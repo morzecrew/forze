@@ -26,11 +26,7 @@ class SoftDeleteArgs(TypedDict):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class KillDocument(Usecase[UUID, None]):
-    """Usecase that permanently deletes a document (hard delete).
-
-    Delegates to :meth:`DocumentPort.kill`. Irreversible; use
-    :class:`DeleteDocument` for soft delete when possible.
-    """
+    """Usecase that permanently deletes a document (hard delete)."""
 
     doc: DocumentWritePort[Any, Any, Any, Any]
     """Document port for kill operations."""
@@ -51,11 +47,7 @@ class KillDocument(Usecase[UUID, None]):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
-    """Usecase that soft-deletes a document.
-
-    Delegates to :meth:`DocumentPort.delete`. Returns the updated read model
-    with deletion metadata. Supports optimistic concurrency via ``rev``.
-    """
+    """Usecase that soft-deletes a document."""
 
     doc: DocumentWritePort[Out, Any, Any, Any]
     """Document port for delete operations."""
@@ -76,11 +68,7 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
-    """Usecase that restores a soft-deleted document.
-
-    Delegates to :meth:`DocumentPort.restore`. Returns the updated read model.
-    Supports optimistic concurrency via ``rev``.
-    """
+    """Usecase that restores a soft-deleted document."""
 
     doc: DocumentWritePort[Out, Any, Any, Any]
     """Document port for restore operations."""

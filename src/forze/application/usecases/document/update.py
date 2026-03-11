@@ -32,11 +32,7 @@ class UpdateArgs[In: BaseDTO](TypedDict):
 class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
     Usecase[UpdateArgs[In], Out]
 ):
-    """Usecase that updates an existing document from a mapped command.
-
-    Maps the input DTO to an update command via :attr:`mapper`, then delegates
-    to :meth:`DocumentPort.update` with the primary key and optional revision.
-    """
+    """Usecase that updates an existing document from a mapped command."""
 
     doc: DocumentWritePort[Out, Any, Any, Cmd]
     """Document port for update operations."""

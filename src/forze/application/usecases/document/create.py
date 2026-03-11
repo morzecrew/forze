@@ -17,7 +17,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
     """Usecase that creates a new document from a mapped command.
 
     Maps the input DTO to a :class:`CreateDocumentCmd` via :attr:`mapper`, then
-    delegates to :meth:`DocumentPort.create`. The mapper may inject fields such
+    delegates to :meth:`DocumentWritePort.create`. The mapper may inject fields such
     as ``number_id`` or ``creator_id`` using execution context.
     """
 

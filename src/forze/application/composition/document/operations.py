@@ -31,3 +31,9 @@ class DocumentOperation(StrEnum):
 
     RESTORE = "document.restore"
     """Restore a soft-deleted document."""
+
+    LIST = "document.list"
+    """List documents."""
+
+    RAW_LIST = "document.raw_list"
+    """List documents with raw results."""

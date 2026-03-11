@@ -14,7 +14,7 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
     """Usecase that fetches a single document by primary key.
 
     Delegates to :meth:`DocumentReadPort.get`. Read-only; uses the lighter
-    :class:`DocumentReadPort` instead of the full :class:`DocumentPort`.
+    :class:`DocumentReadPort`.
     """
 
     doc: DocumentReadPort[Out]

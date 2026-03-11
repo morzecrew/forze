@@ -4,6 +4,12 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.dto import (
+    ListRequestDTO,
+    Paginated,
+    RawListRequestDTO,
+    RawPaginated,
+)
 from forze.application.execution import Usecase
 from forze.application.usecases.document import SoftDeleteArgs, UpdateArgs
 from forze.domain.models import BaseDTO, ReadDocument
@@ -28,6 +34,20 @@ class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U]):
         """Return the get-document usecase."""
 
         return self.resolve(DocumentOperation.GET)
+
+    # ....................... #
+
+    def list(self) -> Usecase[ListRequestDTO, Paginated[R]]:
+        """Return the list documents usecase."""
+
+        return self.resolve(DocumentOperation.LIST)
+
+    # ....................... #
+
+    def raw_list(self) -> Usecase[RawListRequestDTO, RawPaginated]:
+        """Return the raw list documents usecase."""
+
+        return self.resolve(DocumentOperation.RAW_LIST)
 
     # ....................... #
 

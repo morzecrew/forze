@@ -84,10 +84,28 @@ def build_document_create_mapper(
 # ....................... #
 
 
+def build_document_update_mapper(
+    spec: DocumentSpec[Any, Any, Any, Any],
+) -> DTOMapper[Any]:
+    """Build a DTO mapper for update commands.
+
+    :param spec: Document specification.
+    :returns: DTO mapper for update commands.
+    """
+    if spec.write is None:
+        raise CoreError("Document specification does not support write operations")
+
+    return DTOMapper(out=spec.write["models"]["update_cmd"])
+
+
+# ....................... #
+
+
 def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     *,
     replace_create_mapper: Optional[DTOMapper[Any]] = None,
+    replace_update_mapper: Optional[DTOMapper[Any]] = None,
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec.
 
@@ -98,6 +116,7 @@ def build_document_registry(
 
     :param spec: Document specification.
     :param replace_create_mapper: Optional custom create mapper.
+    :param replace_update_mapper: Optional custom update mapper.
     :returns: Usecase registry with all supported operations.
     """
 
@@ -111,10 +130,8 @@ def build_document_registry(
     )
 
     if spec.write is not None:
-        create_mapper = replace_create_mapper or DTOMapper(
-            out=spec.write["models"]["create_cmd"]
-        )
-        update_mapper = DTOMapper(out=spec.write["models"]["update_cmd"])
+        create_mapper = replace_create_mapper or build_document_create_mapper(spec)
+        update_mapper = replace_update_mapper or build_document_update_mapper(spec)
 
         reg = reg.register_many(
             {

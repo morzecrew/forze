@@ -14,6 +14,12 @@ from forze.application.composition.document import (
     DocumentUsecasesFacade,
     DocumentUsecasesFacadeProvider,
 )
+from forze.application.dto import (
+    ListRequestDTO,
+    Paginated,
+    RawListRequestDTO,
+    RawPaginated,
+)
 from forze.application.execution import ExecutionContext
 from forze.domain.models import BaseDTO, ReadDocument
 
@@ -84,6 +90,9 @@ def build_document_router(
     *,
     provider: DocumentUsecasesFacadeProvider[R, C, U],
     context: ExecutionContextDependencyPort,
+    include_get_endpoint: bool = True,
+    include_list_endpoints: bool = False,
+    include_write_endpoints: bool = True,
 ) -> ForzeAPIRouter:
     """Construct a router exposing CRUD and search endpoints for a document spec.
 
@@ -107,24 +116,58 @@ def build_document_router(
 
     # ....................... #
 
-    @router.get(
-        "/metadata",
-        response_model=read_dto,
-        operation_id=f"{provider.spec.namespace}.metadata",
-        etag=True,
-        etag_config={"provider": DocumentETagProvider()},
-    )
-    async def metadata(  # pyright: ignore[reportUnusedFunction]
-        id: UUIDQuery,
-        ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
-    ) -> R:
-        """Return metadata for a single document by identifier."""
+    if include_get_endpoint:
 
-        return await ucs.get()(id)
+        @router.get(
+            "/metadata",
+            response_model=read_dto,
+            operation_id=f"{provider.spec.namespace}.metadata",
+            etag=True,
+            etag_config={"provider": DocumentETagProvider()},
+        )
+        async def metadata(  # pyright: ignore[reportUnusedFunction]
+            id: UUIDQuery,
+            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+        ) -> R:
+            """Return metadata for a single document by identifier."""
+
+            return await ucs.get()(id)
 
     # ....................... #
 
-    if provider.spec.write is not None:
+    if include_list_endpoints:
+
+        @router.get(
+            "/list",
+            response_model=Paginated[read_dto],
+            operation_id=f"{provider.spec.namespace}.list",
+        )
+        async def list(  # pyright: ignore[reportUnusedFunction]
+            body: ListRequestDTO = Body(...),
+            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+        ) -> Paginated[R]:
+            """List documents by filters and sorts."""
+
+            return await ucs.list()(body)
+
+        # ....................... #
+
+        @router.get(
+            "/raw-list",
+            response_model=RawPaginated,
+            operation_id=f"{provider.spec.namespace}.raw_list",
+        )
+        async def raw_list(  # pyright: ignore[reportUnusedFunction]
+            body: RawListRequestDTO = Body(...),
+            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+        ) -> RawPaginated:
+            """List documents with raw results by filters and sorts."""
+
+            return await ucs.raw_list()(body)
+
+    # ....................... #
+
+    if provider.spec.write is not None and include_write_endpoints:
 
         if create_dto:
 

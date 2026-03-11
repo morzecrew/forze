@@ -1,4 +1,4 @@
-from typing import Any, TypedDict, final
+from typing import Any, Optional, TypedDict, final
 
 import attrs
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ from forze.application.dto import (
     SearchRequestDTO,
 )
 from forze.application.execution import Usecase
+from forze.application.mapping import DTOMapper
 
 # ----------------------- #
 
@@ -56,6 +57,9 @@ class TypedSearch[Out: BaseModel](Usecase[TypedSearchArgs, Paginated[Out]]):
     search: SearchReadPort[Out]
     """Search port for search operations."""
 
+    mapper: Optional[DTOMapper[SearchRequestDTO]] = None
+    """Optional mapper to transform incoming request DTO"""
+
     # ....................... #
 
     async def main(self, args: TypedSearchArgs) -> Paginated[Out]:
@@ -70,6 +74,9 @@ class TypedSearch[Out: BaseModel](Usecase[TypedSearchArgs, Paginated[Out]]):
 
         limit = size
         offset = (page - 1) * limit
+
+        if self.mapper:
+            body = await self.mapper(self.ctx, body)
 
         hits, count = await self.search.search(
             query=body.query,
@@ -93,6 +100,9 @@ class RawSearch(Usecase[RawSearchArgs, RawPaginated]):
     search: SearchReadPort[Any]
     """Search port for search operations."""
 
+    mapper: Optional[DTOMapper[RawSearchRequestDTO]] = None
+    """Optional mapper to transform incoming request DTO"""
+
     # ....................... #
 
     async def main(self, args: RawSearchArgs) -> RawPaginated:
@@ -107,6 +117,9 @@ class RawSearch(Usecase[RawSearchArgs, RawPaginated]):
 
         limit = size
         offset = (page - 1) * limit
+
+        if self.mapper:
+            body = await self.mapper(self.ctx, body)
 
         hits, count = await self.search.search(
             query=body.query,
