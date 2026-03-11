@@ -34,7 +34,13 @@ from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze_fastapi.constants import IDEMPOTENCY_KEY_HEADER
 
-from .routes import ETagProvider, make_etag_route_class, make_idempotent_route_class
+from .routes import (
+    ETagFeature,
+    ETagProvider,
+    IdempotencyFeature,
+    RouteFeature,
+    compose_route_class,
+)
 
 # ----------------------- #
 
@@ -121,13 +127,14 @@ def make_idem_header_dependency(header_key: str):  # type: ignore[no-untyped-def
 
 @final
 class ForzeAPIRouter(APIRouter):
-    """FastAPI router with idempotency integration.
+    """FastAPI router with composable route feature integration.
 
     The router extends :class:`fastapi.APIRouter` with support for:
 
-    * injecting an :class:`AppRuntimePort` via dependency
+    * injecting an :class:`ExecutionContext` via dependency
     * per-router and per-route idempotency configuration
-    * automatic wrapping of idempotent POST routes.
+    * per-router and per-route ETag configuration
+    * composable :class:`~.routes.RouteFeature` stacking on a single route
     """
 
     def __init__(
@@ -220,11 +227,20 @@ class ForzeAPIRouter(APIRouter):
         idempotency_config: Optional[RouteIdempotencyConfig] = None,
         etag: bool = False,
         etag_config: Optional[RouteETagConfig] = None,
+        route_features: Optional[Sequence[RouteFeature]] = None,
     ) -> None:
-        """Register a route with optional idempotency and/or ETag wrapping."""
+        """Register a route with optional composable feature wrapping.
+
+        Features activated via ``idempotent``/``etag`` flags and any
+        explicit *route_features* are composed into a single
+        :class:`~fastapi.routing.APIRoute` subclass.  The composition
+        order is: explicit *route_features* first, then built-in
+        features (idempotency before ETag).
+        """
 
         idempotency_config = idempotency_config or self.__idempotency_config
         deps = list(dependencies or [])
+        features: list[RouteFeature] = list(route_features or [])
 
         if idempotent and methods and "POST" in methods:
             if operation_id is None:
@@ -247,15 +263,25 @@ class ForzeAPIRouter(APIRouter):
             )
             request_adapter = self.__get_request_model_adapter(endpoint, dto_param)
 
-            route_class_override = make_idempotent_route_class(
-                ctx_dep=self.__context_dependency,
+            from .routes.idempotent import IdempotentRouteConfig
+
+            cfg = IdempotentRouteConfig(
                 operation=operation_id,
                 ttl=idempotency_config.get("ttl", timedelta(seconds=30)),
                 header_key=header_key,
                 adapter=request_adapter,
                 dto_param=dto_param,
             )
-            deps.append(Depends(make_idem_header_dependency(header_key)))
+
+            features.append(
+                IdempotencyFeature(
+                    ctx_dep=self.__context_dependency,
+                    config=cfg,
+                    extra_dependencies=(
+                        Depends(make_idem_header_dependency(header_key)),
+                    ),
+                )
+            )
 
         if etag:
             merged: RouteETagConfig = {**self.__etag_config, **(etag_config or {})}
@@ -268,10 +294,20 @@ class ForzeAPIRouter(APIRouter):
 
             auto_304: bool = merged.get("auto_304", True)
 
-            route_class_override = make_etag_route_class(
-                provider=provider,
-                auto_304=auto_304,
+            from .routes.etag import ETagRouteConfig
+
+            features.append(
+                ETagFeature(
+                    config=ETagRouteConfig(provider=provider, auto_304=auto_304),
+                )
             )
+
+        for feature in features:
+            deps.extend(feature.extra_dependencies)
+
+        if features:
+            base = route_class_override or APIRoute
+            route_class_override = compose_route_class(*features, base=base)
 
         return super().add_api_route(
             path,
@@ -336,10 +372,9 @@ class ForzeAPIRouter(APIRouter):
         # extra parameters
         idempotent: bool = False,
         idempotency_config: Optional[RouteIdempotencyConfig] = None,
+        route_features: Optional[Sequence[RouteFeature]] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
-        """
-        Add a *path operation* using an HTTP POST operation.
-        """
+        """Add a *path operation* using an HTTP POST operation."""
 
         def decorator(func: DecoratedCallable) -> DecoratedCallable:
             self.add_api_route(
@@ -370,6 +405,7 @@ class ForzeAPIRouter(APIRouter):
                 generate_unique_id_function=generate_unique_id_function,
                 idempotent=idempotent,
                 idempotency_config=idempotency_config,
+                route_features=route_features,
             )
             return func
 
@@ -408,6 +444,7 @@ class ForzeAPIRouter(APIRouter):
         # extra parameters
         etag: bool = False,
         etag_config: Optional[RouteETagConfig] = None,
+        route_features: Optional[Sequence[RouteFeature]] = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """Add a *path operation* using an HTTP GET operation."""
 
@@ -440,6 +477,7 @@ class ForzeAPIRouter(APIRouter):
                 generate_unique_id_function=generate_unique_id_function,
                 etag=etag,
                 etag_config=etag_config,
+                route_features=route_features,
             )
             return func
 

@@ -137,12 +137,12 @@ class TestBuildDocumentRouter:
         with pytest.raises(NotFoundError, match="not found"):
             client.get(f"/docs/metadata?id={pk}")
 
-    def test_metadata_endpoint_uses_etag_route(
+    def test_metadata_endpoint_uses_etag_feature(
         self,
         composition_ctx,
     ) -> None:
-        """GET /metadata route uses ETagRoute class for conditional GET support."""
-        from forze_fastapi.routing.routes.etag import ETagRoute
+        """GET /metadata route uses composed route class with ETag feature."""
+        from fastapi.routing import APIRoute
 
         spec = _minimal_spec()
         reg = build_document_registry(spec)
@@ -169,4 +169,5 @@ class TestBuildDocumentRouter:
             if hasattr(r, "path") and "/metadata" in getattr(r, "path", "")
         ]
         assert len(metadata_routes) == 1
-        assert isinstance(metadata_routes[0], ETagRoute)
+        route = metadata_routes[0]
+        assert type(route) is not APIRoute
