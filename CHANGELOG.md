@@ -14,10 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DocumentETagProvider` that derives ETag values from document `id:rev` for stable version identity without response hashing.
 - ETag and `If-None-Match` / 304 Not Modified support on the document metadata endpoint.
 - `get()` override on `ForzeAPIRouter` with `etag` and `etag_config` parameters.
+- `RouteFeature` protocol and `compose_route_class` engine in `forze_fastapi.routing.routes.feature` for composable route-level behaviors (ETag, idempotency, tracing, etc.) without subclass conflicts.
+- `ETagFeature` and `IdempotencyFeature` as standalone `RouteFeature` implementations, decoupled from their `APIRoute` subclasses.
+- `route_features` parameter on `ForzeAPIRouter.add_api_route`, `.get()`, and `.post()` for explicit feature composition on individual routes.
 
 ### Changed
 
-- ...
+- `ForzeAPIRouter` now composes idempotency, ETag, and custom `RouteFeature` instances into a single route class via `compose_route_class`, replacing the sequential `route_class_override` pattern that only supported one feature per route.
 
 ### Fixed
 

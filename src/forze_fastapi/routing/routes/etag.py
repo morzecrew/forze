@@ -11,10 +11,14 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Protocol, TypedDict, runtime_checkable
+from collections.abc import Sequence
+from typing import Any, Protocol, TypedDict, final, runtime_checkable
 
 from fastapi import Request, Response
+from fastapi.params import Depends
 from fastapi.routing import APIRoute
+
+from .feature import RouteHandler
 
 # ----------------------- #
 
@@ -95,6 +99,71 @@ def _etag_matches(current: str, if_none_match: str) -> bool:
 # ....................... #
 
 
+@final
+class ETagFeature:
+    """Composable :class:`~.feature.RouteFeature` that injects ETag headers.
+
+    When wrapped around a route handler, generates an ``ETag`` from the
+    response body via the configured :class:`ETagProvider` and optionally
+    returns *304 Not Modified* for matching ``If-None-Match`` requests.
+    """
+
+    __slots__ = ("_config",)
+
+    def __init__(self, *, config: ETagRouteConfig) -> None:
+        self._config = config
+
+    # ....................... #
+
+    def wrap(self, handler: RouteHandler) -> RouteHandler:
+        """Wrap *handler* with ETag generation and conditional response logic.
+
+        :param handler: The next handler in the chain.
+        :returns: A handler that adds ``ETag`` headers to responses.
+        """
+
+        config = self._config
+
+        async def wrapped(request: Request) -> Response:
+            resp = await handler(request)
+
+            body = getattr(resp, "body", None)
+
+            if not isinstance(body, (bytes, bytearray)):
+                return resp
+
+            raw_tag = config["provider"].generate(bytes(body))
+
+            if raw_tag is None:
+                return resp
+
+            etag = _ensure_quoted(raw_tag)
+            resp.headers["ETag"] = etag
+
+            if config["auto_304"]:
+                if_none_match = request.headers.get("if-none-match")
+
+                if if_none_match and _etag_matches(etag, if_none_match):
+                    return Response(
+                        status_code=304,
+                        headers={"ETag": etag},
+                    )
+
+            return resp
+
+        return wrapped
+
+    # ....................... #
+
+    @property
+    def extra_dependencies(self) -> Sequence[Depends]:
+        """ETag requires no extra dependencies."""
+        return ()
+
+
+# ....................... #
+
+
 class ETagRoute(APIRoute):
     """Custom :class:`APIRoute` that injects ``ETag`` headers and handles conditional GET.
 
@@ -110,7 +179,7 @@ class ETagRoute(APIRoute):
         etag_config: ETagRouteConfig,
         **kwargs: Any,
     ) -> None:
-        self._etag_config = etag_config
+        self._feature = ETagFeature(config=etag_config)
         super().__init__(*args, **kwargs)
 
     # ....................... #
@@ -118,36 +187,7 @@ class ETagRoute(APIRoute):
     def get_route_handler(self):  # type: ignore[no-untyped-def]
         """Return a handler that wraps the original with ETag logic."""
 
-        orig_handler = super().get_route_handler()
-
-        async def handler(request: Request) -> Response:
-            resp = await orig_handler(request)
-
-            body = getattr(resp, "body", None)
-
-            if not isinstance(body, (bytes, bytearray)):
-                return resp
-
-            raw_tag = self._etag_config["provider"].generate(bytes(body))
-
-            if raw_tag is None:
-                return resp
-
-            etag = _ensure_quoted(raw_tag)
-            resp.headers["ETag"] = etag
-
-            if self._etag_config["auto_304"]:
-                if_none_match = request.headers.get("if-none-match")
-
-                if if_none_match and _etag_matches(etag, if_none_match):
-                    return Response(
-                        status_code=304,
-                        headers={"ETag": etag},
-                    )
-
-            return resp
-
-        return handler
+        return self._feature.wrap(super().get_route_handler())
 
 
 # ....................... #

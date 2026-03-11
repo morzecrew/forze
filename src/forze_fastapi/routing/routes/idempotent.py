@@ -11,12 +11,16 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Callable, NotRequired, Optional, TypedDict
+from collections.abc import Sequence
+from typing import Any, Callable, NotRequired, Optional, TypedDict, final
 
 from fastapi import HTTPException, Request, Response
+from fastapi.params import Depends
 from fastapi.routing import APIRoute
 
 from forze.application.execution import ExecutionContext
+
+from .feature import RouteHandler
 
 # ----------------------- #
 
@@ -63,6 +67,175 @@ class _RawStub(BaseModel):
 # ....................... #
 
 
+def _hash_payload(config: IdempotentRouteConfig, raw_body: bytes) -> str:
+    """Hash the request body into a stable payload fingerprint."""
+
+    if not raw_body:
+        return pydantic_model_hash(_EmptyStub())
+
+    try:
+        data = orjson.loads(raw_body)
+
+    except Exception:
+        return pydantic_model_hash(_RawStub(raw=raw_body.hex()))
+
+    dto_param = config.get("dto_param")
+
+    if dto_param and isinstance(data, dict) and dto_param in data:
+        data = data[dto_param]  # pyright: ignore[reportUnknownVariableType]
+
+    validated = config["adapter"].validate_python(data)
+
+    return pydantic_model_hash(validated)
+
+
+async def _response_body_bytes(resp: Response) -> bytes:
+    """Extract raw bytes from a response, consuming streaming iterators if needed."""
+
+    body = getattr(resp, "body", None)
+
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body)
+
+    body_iter = getattr(resp, "body_iterator", None)
+
+    if body_iter is None:
+        return b""
+
+    chunks = [chunk async for chunk in body_iter]
+
+    if not chunks:
+        new_body = b""
+
+    else:
+        try:
+            if isinstance(chunks[0], str):
+                new_body = "".join(chunks).encode(resp.charset or "utf-8")
+            else:
+                new_body = b"".join(chunks)
+
+        except TypeError:
+            charset = resp.charset or "utf-8"
+            new_body = b"".join(
+                c.encode(charset) if isinstance(c, str) else c for c in chunks
+            )
+
+    new_resp = Response(
+        content=new_body,
+        status_code=resp.status_code,
+        headers=dict(resp.headers),
+        media_type=resp.media_type,
+    )
+    resp.__dict__.update(new_resp.__dict__)
+
+    return new_body
+
+
+# ....................... #
+
+
+@final
+class IdempotencyFeature:
+    """Composable :class:`~.feature.RouteFeature` that adds idempotency semantics.
+
+    Before executing the endpoint, checks for an existing idempotency
+    snapshot and returns it if present. After execution, commits the
+    response as a snapshot for future replay.
+    """
+
+    __slots__ = ("_ctx_dep", "_config", "_extra_dependencies")
+
+    def __init__(
+        self,
+        *,
+        ctx_dep: ExecutionContextDependencyPort,
+        config: IdempotentRouteConfig,
+        extra_dependencies: Sequence[Depends] = (),
+    ) -> None:
+        self._ctx_dep = ctx_dep
+        self._config = config
+        self._extra_dependencies = tuple(extra_dependencies)
+
+    # ....................... #
+
+    def wrap(self, handler: RouteHandler) -> RouteHandler:
+        """Wrap *handler* with idempotency check-and-commit logic.
+
+        :param handler: The next handler in the chain.
+        :returns: A handler that replays cached responses or commits new ones.
+        """
+
+        ctx_dep = self._ctx_dep
+        config = self._config
+
+        async def wrapped(request: Request) -> Response:
+            idem_key = request.headers.get(config["header_key"])
+
+            if not idem_key:
+                raise HTTPException(
+                    status_code=400, detail="Idempotency key is required"
+                )
+
+            ctx = ctx_dep()
+            idem_f = ctx.dep(IdempotencyDepKey)
+            idem = idem_f(context=ctx, ttl=config["ttl"])
+
+            raw_body = await request.body()
+            payload_hash: str
+
+            try:
+                payload_hash = _hash_payload(config, raw_body)
+
+            except Exception:
+                return await handler(request)
+
+            snap = await idem.begin(
+                config["operation"], idem_key, payload_hash
+            )
+
+            if snap is not None:
+                return Response(
+                    content=snap["body"],
+                    status_code=int(snap.get("code", 200)),
+                    media_type=snap.get("content_type", "application/json"),
+                )
+
+            resp = await handler(request)
+
+            try:
+                body_bytes = await _response_body_bytes(resp)
+                await idem.commit(
+                    config["operation"],
+                    idem_key,
+                    payload_hash,
+                    {
+                        "code": int(resp.status_code),
+                        "content_type": resp.media_type
+                        or resp.headers.get(
+                            "content-type", "application/octet-stream"
+                        ),
+                        "body": body_bytes,
+                    },
+                )
+
+            except Exception:  # nosec: B110
+                pass
+
+            return resp
+
+        return wrapped
+
+    # ....................... #
+
+    @property
+    def extra_dependencies(self) -> Sequence[Depends]:
+        """Header-validation dependency for the idempotency key."""
+        return self._extra_dependencies
+
+
+# ....................... #
+
+
 class IdempotentRoute(APIRoute):
     """Custom :class:`APIRoute` that adds idempotency semantics to POST routes.
 
@@ -78,8 +251,7 @@ class IdempotentRoute(APIRoute):
         idempotency_config: IdempotentRouteConfig,
         **kwargs: Any,
     ) -> None:
-        self._ctx_dep = ctx_dep
-        self._idempotency_config = idempotency_config
+        self._feature = IdempotencyFeature(ctx_dep=ctx_dep, config=idempotency_config)
 
         super().__init__(*args, **kwargs)
 
@@ -88,128 +260,7 @@ class IdempotentRoute(APIRoute):
     def get_route_handler(self):  # type: ignore[no-untyped-def]
         """Return a handler that wraps the original with idempotency logic."""
 
-        orig_handler = super().get_route_handler()
-
-        async def handler(request: Request) -> Response:
-            idem_key = request.headers.get(self._idempotency_config["header_key"])
-
-            if not idem_key:
-                raise HTTPException(
-                    status_code=400, detail="Idempotency key is required"
-                )
-
-            ctx = self._ctx_dep()
-            idem_f = ctx.dep(IdempotencyDepKey)
-            idem = idem_f(context=ctx, ttl=self._idempotency_config["ttl"])
-
-            raw_body = await request.body()
-            payload_hash: str
-
-            try:
-                payload_hash = self._hash_payload(raw_body)
-
-            except Exception:
-                return await orig_handler(request)
-
-            snap = await idem.begin(
-                self._idempotency_config["operation"], idem_key, payload_hash
-            )
-
-            if snap is not None:
-                return Response(
-                    content=snap["body"],
-                    status_code=int(snap.get("code", 200)),
-                    media_type=snap.get("content_type", "application/json"),
-                )
-
-            resp = await orig_handler(request)
-
-            try:
-                body_bytes = await self._response_body_bytes(resp)
-                await idem.commit(
-                    self._idempotency_config["operation"],
-                    idem_key,
-                    payload_hash,
-                    {
-                        "code": int(resp.status_code),
-                        "content_type": resp.media_type
-                        or resp.headers.get("content-type", "application/octet-stream"),
-                        "body": body_bytes,
-                    },
-                )
-
-            except Exception:  # nosec: B110
-                pass
-
-            return resp
-
-        return handler
-
-    # ....................... #
-
-    def _hash_payload(self, raw_body: bytes) -> str:
-        """Hash the request body into a stable payload fingerprint."""
-
-        if not raw_body:
-            return pydantic_model_hash(_EmptyStub())
-
-        try:
-            data = orjson.loads(raw_body)
-
-        except Exception:
-            return pydantic_model_hash(_RawStub(raw=raw_body.hex()))
-
-        dto_param = self._idempotency_config.get("dto_param")
-
-        if dto_param and isinstance(data, dict) and dto_param in data:
-            data = data[dto_param]  # pyright: ignore[reportUnknownVariableType]
-
-        validated = self._idempotency_config["adapter"].validate_python(data)
-
-        return pydantic_model_hash(validated)
-
-    # ....................... #
-
-    async def _response_body_bytes(self, resp: Response) -> bytes:
-        """Extract raw bytes from a response, consuming streaming iterators if needed."""
-
-        body = getattr(resp, "body", None)
-
-        if isinstance(body, (bytes, bytearray)):
-            return bytes(body)
-
-        body_iter = getattr(resp, "body_iterator", None)
-
-        if body_iter is None:
-            return b""
-
-        chunks = [chunk async for chunk in body_iter]
-
-        if not chunks:
-            new_body = b""
-
-        else:
-            try:
-                if isinstance(chunks[0], str):
-                    new_body = "".join(chunks).encode(resp.charset or "utf-8")
-                else:
-                    new_body = b"".join(chunks)
-
-            except TypeError:
-                charset = resp.charset or "utf-8"
-                new_body = b"".join(
-                    c.encode(charset) if isinstance(c, str) else c for c in chunks
-                )
-
-        new_resp = Response(
-            content=new_body,
-            status_code=resp.status_code,
-            headers=dict(resp.headers),
-            media_type=resp.media_type,
-        )
-        resp.__dict__.update(new_resp.__dict__)
-
-        return new_body
+        return self._feature.wrap(super().get_route_handler())
 
 
 # ....................... #
