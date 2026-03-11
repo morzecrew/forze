@@ -167,6 +167,8 @@ class PostgresGateway[M: BaseModel]:
         self,
         return_model: Optional[type[BaseModel]] = None,
         return_fields: Optional[Sequence[str]] = None,
+        *,
+        table_alias: Optional[str] = None,
     ) -> sql.Composable:
         if return_fields is not None and return_model is not None:
             raise CoreError(
@@ -188,7 +190,10 @@ class PostgresGateway[M: BaseModel]:
         if bad:
             raise CoreError(f"Invalid fields: {bad}")
 
-        return sql.SQL(", ").join(sql.Identifier(f) for f in use)
+        return sql.SQL(", ").join(
+            sql.Identifier(f) if table_alias is None else sql.Identifier(table_alias, f)
+            for f in use
+        )
 
     # ....................... #
 

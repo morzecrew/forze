@@ -402,7 +402,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
             pk=self.ident_pk(),
             rev=self._ident_rev(),
-            ret=self.return_clause(),
+            ret=self.return_clause(table_alias="t"),
         )
 
         rows = await self.client.fetch_all(

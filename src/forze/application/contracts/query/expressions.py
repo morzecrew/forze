@@ -1,6 +1,6 @@
 """Filter and sort expression types for document queries."""
 
-from typing import Literal, Mapping, TypedDict
+from typing import Literal, Mapping, Sequence, TypedDict
 
 from .types import Array, Numeric, Scalar
 
@@ -48,11 +48,11 @@ QueryPredicate = TypedDict("QueryPredicate", {"$fields": QueryFieldMap})
 """Predicate with ``$fields`` mapping."""
 
 QueryConjunction = TypedDict(
-    "QueryConjunction", {"$and": list["QueryFilterExpression"]}  # type: ignore[valid-type]
+    "QueryConjunction", {"$and": Sequence["QueryFilterExpression"]}  # type: ignore[valid-type]
 )
 """Conjunction of filter expressions."""
 
-QueryDisjunction = TypedDict("QueryDisjunction", {"$or": list["QueryFilterExpression"]})  # type: ignore[valid-type]
+QueryDisjunction = TypedDict("QueryDisjunction", {"$or": Sequence["QueryFilterExpression"]})  # type: ignore[valid-type]
 """Disjunction of filter expressions."""
 
 QueryFilterExpression = QueryPredicate | QueryConjunction | QueryDisjunction

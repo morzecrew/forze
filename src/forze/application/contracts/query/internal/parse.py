@@ -136,7 +136,7 @@ class QueryFilterExpressionParser:
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _MEMB_OPS:
-            if not isinstance(value, list):
+            if not isinstance(value, list | tuple | set):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _UNARY_OPS:
@@ -144,7 +144,7 @@ class QueryFilterExpressionParser:
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _SET_REL_OPS:
-            if not isinstance(value, list):
+            if not isinstance(value, list | tuple | set):
                 raise ValueError(f"Invalid value for {op} operator: {value!r}")
 
         else:
