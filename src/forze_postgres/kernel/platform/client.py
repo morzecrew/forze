@@ -370,9 +370,20 @@ class PostgresClient:
     ) -> list[JsonDict]:
         """Builds a list of column-keyed dicts from cursor description and rows."""
 
-        cols = [d.name for d in (description or [])]
+        cols = tuple(d.name for d in description) if description else ()
 
         return [dict(zip(cols, row)) for row in rows]
+
+    @staticmethod
+    def _row_to_dict(
+        description: Optional[Sequence[Column]],
+        row: Sequence[Any],
+    ) -> JsonDict:
+        """Builds a single column-keyed dict from cursor description and a row."""
+
+        cols = tuple(d.name for d in description) if description else ()
+
+        return dict(zip(cols, row))
 
     # ....................... #
 
@@ -564,7 +575,7 @@ class PostgresClient:
                     res = tuple(row)
 
                 else:
-                    res = self._rows_to_dicts(cur.description, [row])[0]
+                    res = self._row_to_dict(cur.description, row)
 
             if commit and self.__current_conn() is None:
                 await conn.commit()

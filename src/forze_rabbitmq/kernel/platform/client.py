@@ -448,6 +448,11 @@ class RabbitMQClient:
         async with self.__pending_lock:
             self.__pending.pop(message_id, None)
 
+    async def __drop_pending_many(self, message_ids: Sequence[str]) -> None:
+        async with self.__pending_lock:
+            for mid in message_ids:
+                self.__pending.pop(mid, None)
+
     # ....................... #
 
     @rabbitmq_handled("rabbitmq.ack")  # type: ignore[untyped-decorator]
@@ -456,14 +461,16 @@ class RabbitMQClient:
             return 0
 
         messages = await self.__pending_by_ids(queue, ids)
-        acked = 0
+        acked_ids: list[str] = []
 
         for message_id, message in messages:
             await message.ack()
-            await self.__drop_pending(message_id)
-            acked += 1
+            acked_ids.append(message_id)
 
-        return acked
+        if acked_ids:
+            await self.__drop_pending_many(acked_ids)
+
+        return len(acked_ids)
 
     # ....................... #
 
@@ -479,11 +486,13 @@ class RabbitMQClient:
             return 0
 
         messages = await self.__pending_by_ids(queue, ids)
-        nacked = 0
+        nacked_ids: list[str] = []
 
         for message_id, message in messages:
             await message.nack(requeue=requeue)
-            await self.__drop_pending(message_id)
-            nacked += 1
+            nacked_ids.append(message_id)
 
-        return nacked
+        if nacked_ids:
+            await self.__drop_pending_many(nacked_ids)
+
+        return len(nacked_ids)

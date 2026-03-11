@@ -328,6 +328,12 @@ def _cached_signature(fn: Callable[..., Any]) -> inspect.Signature:
     return inspect.signature(fn)
 
 
+def _resolve_op(fn: Callable[..., Any], op: Optional[str]) -> str:
+    """Return the operation name, falling back to the callable's ``__name__``."""
+
+    return op or fn.__name__
+
+
 def _prepare_fn(  # pragma: no cover
     fn: Callable[P, Any],
     op: Optional[str],
@@ -390,11 +396,10 @@ def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyp
     def decorator(fn: Callable[P, Any]) -> Callable[P, Any]:
 
         if asyncio.iscoroutinefunction(fn):
+            operation = _resolve_op(fn, op)
 
             @wraps(fn)
             async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Any:
-                operation, _ = _prepare_fn(fn, op, *args, **kwargs)
-
                 try:
                     return await fn(*args, **kwargs)
 
@@ -404,13 +409,12 @@ def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyp
             return async_wrapper
 
         if inspect.isasyncgenfunction(fn):
+            operation = _resolve_op(fn, op)
 
             @wraps(fn)
             async def async_gen_wrapper(
                 *args: P.args, **kwargs: P.kwargs
             ) -> AsyncIterator[Any]:
-                operation, _ = _prepare_fn(fn, op, *args, **kwargs)
-
                 try:
                     it = fn(*args, **kwargs)
 
@@ -427,11 +431,10 @@ def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyp
             return async_gen_wrapper
 
         if inspect.isgeneratorfunction(fn):
+            operation = _resolve_op(fn, op)
 
             @wraps(fn)
             def gen_wrapper(*args: P.args, **kwargs: P.kwargs) -> Iterator[Any]:
-                operation, _ = _prepare_fn(fn, op, *args, **kwargs)
-
                 try:
                     it = fn(*args, **kwargs)
 
@@ -447,9 +450,10 @@ def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyp
 
             return gen_wrapper
 
+        operation = _resolve_op(fn, op)
+
         @wraps(fn)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> Any:
-            operation, _ = _prepare_fn(fn, op, *args, **kwargs)
 
             try:
                 res = fn(*args, **kwargs)
