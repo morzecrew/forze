@@ -1,7 +1,6 @@
 """Unit tests for forze_fastapi.routers.document."""
 
 import pytest
-
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
@@ -12,13 +11,11 @@ from forze.application.composition.document import (
 )
 from forze.application.contracts.document import DocumentSpec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-
 from forze_fastapi.routers.document import (
     build_document_router,
     document_facade_dependency,
 )
 from forze_fastapi.routing.router import ForzeAPIRouter
-
 
 # ----------------------- #
 
@@ -80,7 +77,7 @@ class TestBuildDocumentRouter:
         self,
         composition_ctx,
     ) -> None:
-        """build_document_router returns a router with /medatada route."""
+        """build_document_router returns a router with /metadata route."""
         spec = _minimal_spec()
         reg = build_document_registry(spec)
         plan = build_document_plan()
@@ -102,13 +99,13 @@ class TestBuildDocumentRouter:
 
         assert isinstance(router, ForzeAPIRouter)
         paths = {r.path for r in router.routes}
-        assert "/medatada" in paths or any("/medatada" in str(r) for r in router.routes)
+        assert "/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
 
     def test_metadata_endpoint_invokes_get_usecase(
         self,
         composition_ctx,
     ) -> None:
-        """GET /medatada invokes get usecase; mock raises NotFoundError for missing doc."""
+        """GET /metadata invokes get usecase; mock raises NotFoundError for missing doc."""
         from uuid import uuid4
 
         from forze.base.errors import NotFoundError
@@ -138,13 +135,13 @@ class TestBuildDocumentRouter:
 
         pk = uuid4()
         with pytest.raises(NotFoundError, match="not found"):
-            client.get(f"/docs/medatada?id={pk}")
+            client.get(f"/docs/metadata?id={pk}")
 
     def test_metadata_endpoint_uses_etag_route(
         self,
         composition_ctx,
     ) -> None:
-        """GET /medatada route uses ETagRoute class for conditional GET support."""
+        """GET /metadata route uses ETagRoute class for conditional GET support."""
         from forze_fastapi.routing.routes.etag import ETagRoute
 
         spec = _minimal_spec()
@@ -166,6 +163,10 @@ class TestBuildDocumentRouter:
             context=ctx_dep,
         )
 
-        metadata_routes = [r for r in router.routes if hasattr(r, "path") and "/medatada" in getattr(r, "path", "")]
+        metadata_routes = [
+            r
+            for r in router.routes
+            if hasattr(r, "path") and "/metadata" in getattr(r, "path", "")
+        ]
         assert len(metadata_routes) == 1
         assert isinstance(metadata_routes[0], ETagRoute)

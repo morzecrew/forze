@@ -32,18 +32,12 @@ This function is passed as `context=` to prebuilt routers or `context_dependency
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/medatada` | GET | Fetch document metadata by ID |
+| `/metadata` | GET | Fetch document metadata by ID |
 | `/create` | POST | Create a document (idempotent when configured) |
 | `/update` | PATCH | Partial update with `id`, `rev`, and DTO body |
 | `/delete` | PATCH | Soft-delete (when the spec supports it) |
 | `/restore` | PATCH | Restore a soft-deleted document |
 | `/kill` | DELETE | Hard-delete a document |
-
-/// details | Note on `/medatada` endpoint
-    type: note
-
-The endpoint is spelled `/medatada` (not `/metadata`) for backward compatibility. This may be corrected in a future major version.
-///
 
 ### Setup
 

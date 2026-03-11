@@ -148,12 +148,12 @@ class Document(CoreModel):
     # ....................... #
 
     def touch(self) -> tuple[Self, JsonDict]:
-        """Update only ``last_update_at`` and return the instance and diff."""
+        """Update only ``last_update_at`` and return a new instance and diff."""
 
-        now = utcnow()
-        self.last_update_at = now
+        diff = {"last_update_at": utcnow()}
+        model_copy = self.model_copy(update=diff)
 
-        return self, {"last_update_at": now}
+        return model_copy, diff
 
     # ....................... #
 
