@@ -108,7 +108,7 @@ def build_document_router(
     # ....................... #
 
     @router.get(
-        "/medatada",
+        "/metadata",
         response_model=read_dto,
         operation_id=f"{provider.spec.namespace}.metadata",
         etag=True,
