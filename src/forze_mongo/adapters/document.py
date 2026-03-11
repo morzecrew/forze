@@ -87,6 +87,7 @@ class MongoDocumentAdapter(
                 "defaults": True,
                 "computed_fields": True,
             },
+            mode="json",
         )
 
     # ....................... #
@@ -359,11 +360,12 @@ class MongoDocumentAdapter(
         res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
 
         if self.cache is not None:
-            await self.cache.set_versioned(
-                str(res.id),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_versioned(
+                    str(res.id),
+                    str(res.rev),
+                    self._map_to_cache(res),
+                )
 
         return res
 
@@ -384,9 +386,10 @@ class MongoDocumentAdapter(
         ]
 
         if self.cache is not None:
-            await self.cache.set_many_versioned(
-                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_many_versioned(
+                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+                )
 
         return res
 
@@ -394,7 +397,8 @@ class MongoDocumentAdapter(
 
     async def _clear_cache(self, *pks: UUID) -> None:
         if self.cache is not None:
-            await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+            with contextlib.suppress(Exception):
+                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
 
     # ....................... #
 
@@ -413,11 +417,12 @@ class MongoDocumentAdapter(
         res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
 
         if self.cache is not None:
-            await self.cache.set_versioned(
-                str(res.id),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_versioned(
+                    str(res.id),
+                    str(res.rev),
+                    self._map_to_cache(res),
+                )
 
         return res
 
@@ -447,9 +452,10 @@ class MongoDocumentAdapter(
         ]
 
         if self.cache is not None:
-            await self.cache.set_many_versioned(
-                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_many_versioned(
+                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+                )
 
         return res
 
@@ -468,11 +474,12 @@ class MongoDocumentAdapter(
         res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
 
         if self.cache is not None:
-            await self.cache.set_versioned(
-                str(res.id),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_versioned(
+                    str(res.id),
+                    str(res.rev),
+                    self._map_to_cache(res),
+                )
 
         return res
 
@@ -494,9 +501,10 @@ class MongoDocumentAdapter(
         ]
 
         if self.cache is not None:
-            await self.cache.set_many_versioned(
-                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_many_versioned(
+                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+                )
 
         return res
 
@@ -540,11 +548,12 @@ class MongoDocumentAdapter(
         res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
 
         if self.cache is not None:
-            await self.cache.set_versioned(
-                str(res.id),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_versioned(
+                    str(res.id),
+                    str(res.rev),
+                    self._map_to_cache(res),
+                )
 
         return res
 
@@ -572,9 +581,10 @@ class MongoDocumentAdapter(
         ]
 
         if self.cache is not None:
-            await self.cache.set_many_versioned(
-                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_many_versioned(
+                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+                )
 
         return res
 
@@ -594,11 +604,12 @@ class MongoDocumentAdapter(
         res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
 
         if self.cache is not None:
-            await self.cache.set_versioned(
-                str(res.id),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_versioned(
+                    str(res.id),
+                    str(res.rev),
+                    self._map_to_cache(res),
+                )
 
         return res
 
@@ -626,8 +637,9 @@ class MongoDocumentAdapter(
         ]
 
         if self.cache is not None:
-            await self.cache.set_many_versioned(
-                {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-            )
+            with contextlib.suppress(Exception):
+                await self.cache.set_many_versioned(
+                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
+                )
 
         return res
