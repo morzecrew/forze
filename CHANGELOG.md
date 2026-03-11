@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.11] - 2026-03-11
+
+### Added
+
 - Route-level HTTP ETag support in `forze_fastapi` with `ETagProvider` protocol, `ETagRoute`, and `make_etag_route_class` for reusable conditional GET handling.
 - `RouteETagConfig` and `RouterETagConfig` for per-route and per-router ETag configuration (enabled, provider, auto_304).
 - `DocumentETagProvider` that derives ETag values from document `id:rev` for stable version identity without response hashing.
@@ -17,14 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RouteFeature` protocol and `compose_route_class` engine in `forze_fastapi.routing.routes.feature` for composable route-level behaviors (ETag, idempotency, tracing, etc.) without subclass conflicts.
 - `ETagFeature` and `IdempotencyFeature` as standalone `RouteFeature` implementations, decoupled from their `APIRoute` subclasses.
 - `route_features` parameter on `ForzeAPIRouter.add_api_route`, `.get()`, and `.post()` for explicit feature composition on individual routes.
+- Document update validators now run even when the update produces an empty diff.
+- `pydantic_model_hash` normalizes `Decimal` values for stable hashing; `CoreModel` adds `Decimal` to `json_encoders` for consistent serialization.
 
 ### Changed
 
 - `ForzeAPIRouter` now composes idempotency, ETag, and custom `RouteFeature` instances into a single route class via `compose_route_class`, replacing the sequential `route_class_override` pattern that only supported one feature per route.
+- `pydantic_validate` default `forbid_extra` changed from `True` to `False`; extra keys are now ignored by default.
+- `Document.touch()` now returns a new instance via `model_copy` instead of mutating in place.
+- Postgres document gateway: revision mismatch now raises `ConflictError` with `code="revision_mismatch"` when history is disabled.
+- Postgres query renderer: array operators (`$subset`, `$disjoint`, `$overlaps`) now require array column types via `raise_on_scalar_t`.
 
 ### Fixed
 
-- ...
+- Document metadata endpoint path corrected from `/medatada` to `/metadata`.
+- Cache operations in Postgres and Mongo document adapters are now non-fatal; failures are suppressed so primary operations succeed when cache is unavailable.
 
 ## [0.1.10] - 2026-03-11
 
@@ -225,7 +246,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.10...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/morzecrew/forze/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/morzecrew/forze/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/morzecrew/forze/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/morzecrew/forze/compare/v0.1.7...v0.1.8
