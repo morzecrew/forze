@@ -7,6 +7,7 @@ require_fastapi()
 from enum import Enum
 from typing import Callable, Optional, TypeVar
 
+import orjson
 from fastapi import Body, Depends
 
 from forze.application.composition.document import (
@@ -25,6 +26,37 @@ from ._utils import override_annotations
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
+
+
+class DocumentETagProvider:
+    """ETag provider that derives the tag from document ``id`` and ``rev``.
+
+    Produces tags of the form ``{id}:{rev}`` for stable version identity
+    without hashing the full response body.
+    """
+
+    def generate(self, response_body: bytes) -> str | None:
+        """Extract ``id`` and ``rev`` from the JSON body to build the tag.
+
+        :param response_body: Serialized JSON response payload.
+        :returns: Tag string ``"{id}:{rev}"`` or ``None`` when fields are absent.
+        """
+
+        try:
+            data = orjson.loads(response_body)
+        except Exception:
+            return None
+
+        id_val = data.get("id")
+        rev_val = data.get("rev")
+
+        if id_val is None or rev_val is None:
+            return None
+
+        return f"{id_val}:{rev_val}"
+
 
 # ....................... #
 
@@ -79,6 +111,8 @@ def build_document_router(
         "/medatada",
         response_model=read_dto,
         operation_id=f"{provider.spec.namespace}.metadata",
+        etag=True,
+        etag_config={"provider": DocumentETagProvider()},
     )
     async def metadata(  # pyright: ignore[reportUnusedFunction]
         id: UUIDQuery,

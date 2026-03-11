@@ -139,3 +139,33 @@ class TestBuildDocumentRouter:
         pk = uuid4()
         with pytest.raises(NotFoundError, match="not found"):
             client.get(f"/docs/medatada?id={pk}")
+
+    def test_metadata_endpoint_uses_etag_route(
+        self,
+        composition_ctx,
+    ) -> None:
+        """GET /medatada route uses ETagRoute class for conditional GET support."""
+        from forze_fastapi.routing.routes.etag import ETagRoute
+
+        spec = _minimal_spec()
+        reg = build_document_registry(spec)
+        plan = build_document_plan()
+        provider = DocumentUsecasesFacadeProvider(
+            spec=spec,
+            reg=reg,
+            plan=plan,
+            dtos={"read": ReadDocument, "create": CreateDocumentCmd},
+        )
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = build_document_router(
+            prefix="/docs",
+            provider=provider,
+            context=ctx_dep,
+        )
+
+        metadata_routes = [r for r in router.routes if hasattr(r, "path") and "/medatada" in getattr(r, "path", "")]
+        assert len(metadata_routes) == 1
+        assert isinstance(metadata_routes[0], ETagRoute)
