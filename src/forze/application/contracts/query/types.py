@@ -1,7 +1,7 @@
 """Scalar and operator types for filter expressions."""
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Literal, Sequence
 from uuid import UUID
 
 # ----------------------- #
@@ -12,7 +12,7 @@ Numeric = int | float | datetime | date
 Scalar = Numeric | bool | str | UUID
 """Scalar value types for filter expressions."""
 
-Array = list[Scalar]
+Array = Sequence[Scalar]
 """Array of scalars for membership and set operators."""
 
 # ....................... #

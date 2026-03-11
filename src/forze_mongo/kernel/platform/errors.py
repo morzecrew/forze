@@ -20,8 +20,8 @@ from pymongo.errors import (
     NotPrimaryError,
     OperationFailure,
     ServerSelectionTimeoutError,
-    WTimeoutError,
     WriteError,
+    WTimeoutError,
 )
 
 from forze.base.errors import (
@@ -50,10 +50,12 @@ def _mongo_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             return ConflictError("Duplicate key violation.")
 
         case BulkWriteError():
-            details = getattr(e, "details", None) or {}
+            details: dict[str, Any] = getattr(e, "details", None) or {}
             write_errors = details.get("writeErrors", [])
+
             if any(err.get("code") == 11000 for err in write_errors):
                 return ConflictError("Bulk write duplicate key violation.")
+
             return InfrastructureError(f"Bulk write error during {op}.")
 
         case WriteError():
@@ -111,9 +113,7 @@ def _mongo_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             msg = str(e)
             if "not authorized" in msg.lower() or "unauthorized" in msg.lower():
                 return InfrastructureError("Mongo authorization error.")
-            return InfrastructureError(
-                f"Mongo operation failure during {op}: {msg}"
-            )
+            return InfrastructureError(f"Mongo operation failure during {op}: {msg}")
 
         # --- fallback ---
 

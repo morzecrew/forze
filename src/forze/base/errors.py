@@ -334,7 +334,7 @@ def _resolve_op(fn: Callable[..., Any], op: Optional[str]) -> str:
     return op or fn.__name__
 
 
-def _prepare_fn(  # pragma: no cover
+def _prepare_fn(  # pragma: no cover  # pyright: ignore[reportUnusedFunction]
     fn: Callable[P, Any],
     op: Optional[str],
     *args: P.args,

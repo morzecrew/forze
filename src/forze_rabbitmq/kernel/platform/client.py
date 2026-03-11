@@ -444,10 +444,6 @@ class RabbitMQClient:
 
     # ....................... #
 
-    async def __drop_pending(self, message_id: str) -> None:
-        async with self.__pending_lock:
-            self.__pending.pop(message_id, None)
-
     async def __drop_pending_many(self, message_ids: Sequence[str]) -> None:
         async with self.__pending_lock:
             for mid in message_ids:
