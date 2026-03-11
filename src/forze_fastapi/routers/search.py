@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Callable, Optional, TypeVar
+from typing import Callable, Optional, TypedDict, TypeVar
 
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
@@ -50,11 +50,25 @@ def search_facade_dependency(
 # ....................... #
 
 
+class OverrideSearchEndpointNames(TypedDict, total=False):
+    """Override the default operation IDs and endpoint paths for search routes."""
+
+    typed_search: str
+    """Operation ID suffix and endpoint path for the typed search endpoint. Defaults to "search"""
+
+    raw_search: str
+    """Operation ID suffix and endpoint path for the raw search endpoint. Defaults to "raw-search"""
+
+
+# ....................... #
+
+
 def attach_search_routes(
     router: R,
     *,
     provider: SearchUsecasesFacadeProvider[M],
     context: ExecutionContextDependencyPort,
+    name_overrides: OverrideSearchEndpointNames = {},
 ) -> R:
     """Attach typed and raw search endpoints to an existing router."""
 
@@ -64,10 +78,15 @@ def attach_search_routes(
 
     # ....................... #
 
+    search_path = name_overrides.get("typed_search", "search")
+    raw_search_path = name_overrides.get("raw_search", "raw-search")
+
+    # ....................... #
+
     @router.post(
-        "/search",
+        f"/{search_path}",
         response_model=Paginated[read_dto],  # type: ignore[valid-type]
-        operation_id=f"{provider.spec.namespace}.search",
+        operation_id=f"{provider.spec.namespace}.{search_path}",
     )
     async def search(  # pyright: ignore[reportUnusedFunction]
         body: SearchRequestDTO = Body(...),
@@ -87,9 +106,9 @@ def attach_search_routes(
     # ....................... #
 
     @router.post(
-        "/raw-search",
+        f"/{raw_search_path}",
         response_model=RawPaginated,
-        operation_id=f"{provider.spec.namespace}.raw_search",
+        operation_id=f"{provider.spec.namespace}.{raw_search_path}",
     )
     async def raw_search(  # pyright: ignore[reportUnusedFunction]
         body: RawSearchRequestDTO = Body(...),
@@ -117,6 +136,7 @@ def build_search_router(
     *,
     provider: SearchUsecasesFacadeProvider[M],
     context: ExecutionContextDependencyPort,
+    name_overrides: OverrideSearchEndpointNames = {},
 ) -> ForzeAPIRouter:
     """Build a standalone :class:`ForzeAPIRouter` with search endpoints."""
 
@@ -126,6 +146,11 @@ def build_search_router(
         context_dependency=context,
     )
 
-    attach_search_routes(router, provider=provider, context=context)
+    attach_search_routes(
+        router,
+        provider=provider,
+        context=context,
+        name_overrides=name_overrides,
+    )
 
     return router

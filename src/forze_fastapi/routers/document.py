@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Callable, Optional, TypeVar
+from typing import Callable, Optional, TypedDict, TypeVar
 
 import orjson
 from fastapi import Body, Depends
@@ -52,6 +52,7 @@ class DocumentETagProvider:
 
         try:
             data = orjson.loads(response_body)
+
         except Exception:
             return None
 
@@ -84,6 +85,37 @@ def document_facade_dependency(
 # ....................... #
 
 
+class OverrideDocumentEndpointNames(TypedDict, total=False):
+    """Override the default operation IDs and endpoint paths for document routes."""
+
+    get: str
+    """Operation ID suffix and endpoint path for the get endpoint. Defaults to "get"""
+
+    typed_list: str
+    """Operation ID suffix and endpoint path for the list endpoint. Defaults to "list"""
+
+    raw_list: str
+    """Operation ID suffix and endpoint path for the raw list endpoint. Defaults to "raw-list"""
+
+    create: str
+    """Operation ID suffix and endpoint path for the create endpoint. Defaults to "create"""
+
+    update: str
+    """Operation ID suffix and endpoint path for the update endpoint. Defaults to "update"""
+
+    delete: str
+    """Operation ID suffix and endpoint path for the delete endpoint. Defaults to "delete"""
+
+    restore: str
+    """Operation ID suffix and endpoint path for the restore endpoint. Defaults to "restore"""
+
+    kill: str
+    """Operation ID suffix and endpoint path for the kill endpoint. Defaults to "kill"""
+
+
+# ....................... #
+
+
 def attach_document_routes(
     router: ForzeAPIRouter,
     *,
@@ -92,6 +124,7 @@ def attach_document_routes(
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
+    name_overrides: OverrideDocumentEndpointNames = {},
 ) -> ForzeAPIRouter:
     """Attach document endpoints to an existing router."""
 
@@ -103,12 +136,23 @@ def attach_document_routes(
 
     # ....................... #
 
+    get_path = name_overrides.get("get", "metadata")
+    list_path = name_overrides.get("typed_list", "list")
+    raw_list_path = name_overrides.get("raw_list", "raw-list")
+    create_path = name_overrides.get("create", "create")
+    update_path = name_overrides.get("update", "update")
+    delete_path = name_overrides.get("delete", "delete")
+    restore_path = name_overrides.get("restore", "restore")
+    kill_path = name_overrides.get("kill", "kill")
+
+    # ....................... #
+
     if include_get_endpoint:
 
         @router.get(
-            "/metadata",
+            f"/{get_path}",
             response_model=read_dto,
-            operation_id=f"{provider.spec.namespace}.metadata",
+            operation_id=f"{provider.spec.namespace}.{get_path}",
             etag=True,
             etag_config={"provider": DocumentETagProvider()},
         )
@@ -125,9 +169,9 @@ def attach_document_routes(
     if include_list_endpoints:
 
         @router.get(
-            "/list",
+            f"/{list_path}",
             response_model=Paginated[read_dto],
-            operation_id=f"{provider.spec.namespace}.list",
+            operation_id=f"{provider.spec.namespace}.{list_path}",
         )
         async def list(  # pyright: ignore[reportUnusedFunction]
             body: ListRequestDTO = Body(...),
@@ -140,9 +184,9 @@ def attach_document_routes(
         # ....................... #
 
         @router.get(
-            "/raw-list",
+            f"/{raw_list_path}",
             response_model=RawPaginated,
-            operation_id=f"{provider.spec.namespace}.raw_list",
+            operation_id=f"{provider.spec.namespace}.{raw_list_path}",
         )
         async def raw_list(  # pyright: ignore[reportUnusedFunction]
             body: RawListRequestDTO = Body(...),
@@ -159,11 +203,11 @@ def attach_document_routes(
         if create_dto:
 
             @router.post(
-                "/create",
+                f"/{create_path}",
                 response_model=read_dto,
                 idempotent=True,
                 idempotency_config={"dto_param": "dto"},
-                operation_id=f"{provider.spec.namespace}.create",
+                operation_id=f"{provider.spec.namespace}.{create_path}",
             )
             @override_annotations({"dto": create_dto})
             async def create(  # pyright: ignore[reportUnusedFunction]
@@ -179,9 +223,9 @@ def attach_document_routes(
         if update_dto and provider.spec.supports_update():
 
             @router.patch(
-                "/update",
+                f"/{update_path}",
                 response_model=read_dto,
-                operation_id=f"{provider.spec.namespace}.update",
+                operation_id=f"{provider.spec.namespace}.{update_path}",
             )
             @override_annotations({"dto": update_dto})
             async def update(  # pyright: ignore[reportUnusedFunction]
@@ -205,9 +249,9 @@ def attach_document_routes(
         if provider.spec.supports_soft_delete():
 
             @router.patch(
-                "/delete",
+                f"/{delete_path}",
                 response_model=read_dto,
-                operation_id=f"{provider.spec.namespace}.delete",
+                operation_id=f"{provider.spec.namespace}.{delete_path}",
             )
             async def delete(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
@@ -224,9 +268,9 @@ def attach_document_routes(
                 )
 
             @router.patch(
-                "/restore",
+                f"/{restore_path}",
                 response_model=read_dto,
-                operation_id=f"{provider.spec.namespace}.restore",
+                operation_id=f"{provider.spec.namespace}.{restore_path}",
             )
             async def restore(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
@@ -245,10 +289,10 @@ def attach_document_routes(
         # ....................... #
 
         @router.delete(
-            "/kill",
+            f"/{kill_path}",
             response_model=None,
             status_code=204,
-            operation_id=f"{provider.spec.namespace}.kill",
+            operation_id=f"{provider.spec.namespace}.{kill_path}",
         )
         async def kill(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
@@ -275,6 +319,7 @@ def build_document_router(
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
+    name_overrides: OverrideDocumentEndpointNames = {},
 ) -> ForzeAPIRouter:
     """Construct a router exposing CRUD and search endpoints for a document spec.
 
@@ -297,6 +342,7 @@ def build_document_router(
         include_get_endpoint=include_get_endpoint,
         include_list_endpoints=include_list_endpoints,
         include_write_endpoints=include_write_endpoints,
+        name_overrides=name_overrides,
     )
 
     return router
