@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.10] - 2026-03-11
+
+### Added
+
 - Error handler for `forze_mongo` (`mongo_handled`) that maps PyMongo exceptions to `CoreError` subtypes, bringing Mongo in line with Postgres, Redis, S3, SQS, and RabbitMQ error handling.
 - Optimistic retry with tenacity on `MongoWriteGateway` write operations (`create`, `create_many`, `_patch`, `_patch_many`), mirroring the existing Postgres retry strategy for `ConcurrencyError`.
 - Default adaptive retry configuration (3 attempts) for S3 client when no explicit retries config is provided.
@@ -204,7 +218,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.9...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/morzecrew/forze/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/morzecrew/forze/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/morzecrew/forze/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/morzecrew/forze/compare/v0.1.6...v0.1.7
