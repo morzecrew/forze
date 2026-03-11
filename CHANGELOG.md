@@ -9,15 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- Paginated list documents endpoint in `forze_fastapi` document router with typed (`list`) and raw (`raw-list`) variants, `ListRequestDTO`, `RawListRequestDTO`, and `ListDocument` usecase.
+- `name_overrides` on document and search routers: `OverrideDocumentEndpointNames` and `OverrideSearchEndpointNames` for customizing operation IDs and endpoint paths.
+- `attach_document_routes` and `attach_search_routes` for attaching document/search routes to existing routers.
 
 ### Changed
 
-- ...
+- `attach_search_router` renamed to `attach_search_routes` in `forze_fastapi.routers.search`. Update imports accordingly.
 
 ### Fixed
 
-- ...
+- Postgres bulk update: correct table alias in RETURNING clause; use English error messages for consistency errors.
 
 ## [0.1.11] - 2026-03-11
 
