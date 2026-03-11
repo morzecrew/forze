@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.1.12] - 2026-03-11
+
+### Added
+
 - Paginated list documents endpoint in `forze_fastapi` document router with typed (`list`) and raw (`raw-list`) variants, `ListRequestDTO`, `RawListRequestDTO`, and `ListDocument` usecase.
 - `name_overrides` on document and search routers: `OverrideDocumentEndpointNames` and `OverrideSearchEndpointNames` for customizing operation IDs and endpoint paths.
 - `attach_document_routes` and `attach_search_routes` for attaching document/search routes to existing routers.
@@ -248,7 +262,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.11...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/morzecrew/forze/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/morzecrew/forze/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/morzecrew/forze/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/morzecrew/forze/compare/v0.1.8...v0.1.9
