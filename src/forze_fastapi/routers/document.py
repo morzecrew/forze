@@ -170,7 +170,7 @@ def attach_document_routes(
 
         @router.get(
             f"/{list_path}",
-            response_model=Paginated[read_dto],
+            response_model=Paginated[read_dto],  # type: ignore[valid-type]
             operation_id=f"{provider.spec.namespace}.{list_path}",
         )
         async def list(  # pyright: ignore[reportUnusedFunction]
