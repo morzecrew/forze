@@ -27,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Eliminated per-call `inspect.signature().bind_partial()` overhead from error-handling decorators; operation name is now resolved once at decoration time.
 - Postgres `fetch_one` with dict row factory uses a dedicated `_row_to_dict` method instead of wrapping in a list.
 - SQS queue name sanitization uses pre-compiled regex patterns.
-- Redis cache adapter `delete`/`delete_many` now batch deletion commands in a single pipeline round-trip.
 - RabbitMQ `ack`/`nack` now acquire the pending-messages lock once per batch instead of per message.
 
 ## [0.1.9] - 2026-03-10
