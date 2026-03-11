@@ -109,9 +109,6 @@ class Document(CoreModel):
     # ....................... #
 
     def _run_update_validators(self, after: Self, diff: JsonDict) -> None:
-        if not diff:
-            return
-
         keys = diff.keys()
         cls = type(self)
 
@@ -137,12 +134,13 @@ class Document(CoreModel):
 
         diff = self._calculate_update_diff(data)
 
-        if not diff:
-            return self, {}
+        if diff:
+            diff["last_update_at"] = utcnow()
+            after = self._apply_update(diff)
 
-        diff["last_update_at"] = utcnow()
+        else:
+            after = self
 
-        after = self._apply_update(diff)
         self._run_update_validators(after, diff)
 
         return after, diff

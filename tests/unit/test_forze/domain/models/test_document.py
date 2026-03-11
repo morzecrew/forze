@@ -7,9 +7,13 @@ import pytest
 
 from forze.base.errors import ValidationError
 from forze.base.primitives import JsonDict
-from forze.domain.models import CreateDocumentCmd, Document, DocumentHistory, ReadDocument
+from forze.domain.models import (
+    CreateDocumentCmd,
+    Document,
+    DocumentHistory,
+    ReadDocument,
+)
 from forze.domain.validation import update_validator
-
 
 # ----------------------- #
 
@@ -115,7 +119,7 @@ class TestDocumentUpdateValidators:
         assert len(calls) == 1
         assert calls[0] == "old->new"
 
-    def test_validators_not_run_on_empty_diff(self) -> None:
+    def test_validators_run_on_empty_diff(self) -> None:
         calls: list[str] = []
 
         class ValidatedDoc(Document):
@@ -127,7 +131,7 @@ class TestDocumentUpdateValidators:
 
         doc = ValidatedDoc(name="same")
         doc.update({"name": "same"})
-        assert calls == []
+        assert calls == ["called"]
 
     def test_field_scoped_validator_only_fires_for_relevant_fields(self) -> None:
         calls: list[str] = []
