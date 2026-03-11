@@ -84,9 +84,8 @@ def document_facade_dependency(
 # ....................... #
 
 
-def build_document_router(
-    prefix: str,
-    tags: Optional[list[str | Enum]] = None,
+def attach_document_routes(
+    router: ForzeAPIRouter,
     *,
     provider: DocumentUsecasesFacadeProvider[R, C, U],
     context: ExecutionContextDependencyPort,
@@ -94,19 +93,7 @@ def build_document_router(
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
 ) -> ForzeAPIRouter:
-    """Construct a router exposing CRUD and search endpoints for a document spec.
-
-    The resulting router wires HTTP routes to the corresponding document
-    usecases via :class:`DocumentUsecasesFacade`, including optional support for
-    idempotent create operations and soft-delete/restore when the spec
-    supports them.
-    """
-
-    router = ForzeAPIRouter(
-        prefix=prefix,
-        tags=tags,
-        context_dependency=context,
-    )
+    """Attach document endpoints to an existing router."""
 
     read_dto = provider.dtos["read"]
     create_dto = provider.dtos.get("create")
@@ -272,5 +259,44 @@ def build_document_router(
             return await ucs.kill()(id)
 
     # ....................... #
+
+    return router
+
+
+# ....................... #
+
+
+def build_document_router(
+    prefix: str,
+    tags: Optional[list[str | Enum]] = None,
+    *,
+    provider: DocumentUsecasesFacadeProvider[R, C, U],
+    context: ExecutionContextDependencyPort,
+    include_get_endpoint: bool = True,
+    include_list_endpoints: bool = False,
+    include_write_endpoints: bool = True,
+) -> ForzeAPIRouter:
+    """Construct a router exposing CRUD and search endpoints for a document spec.
+
+    The resulting router wires HTTP routes to the corresponding document
+    usecases via :class:`DocumentUsecasesFacade`, including optional support for
+    idempotent create operations and soft-delete/restore when the spec
+    supports them.
+    """
+
+    router = ForzeAPIRouter(
+        prefix=prefix,
+        tags=tags,
+        context_dependency=context,
+    )
+
+    attach_document_routes(
+        router,
+        provider=provider,
+        context=context,
+        include_get_endpoint=include_get_endpoint,
+        include_list_endpoints=include_list_endpoints,
+        include_write_endpoints=include_write_endpoints,
+    )
 
     return router

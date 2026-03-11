@@ -50,13 +50,13 @@ def search_facade_dependency(
 # ....................... #
 
 
-def attach_search_router(
+def attach_search_routes(
     router: R,
     *,
     provider: SearchUsecasesFacadeProvider[M],
     context: ExecutionContextDependencyPort,
 ) -> R:
-    """Attach typed and raw search endpoints to an existing *router*."""
+    """Attach typed and raw search endpoints to an existing router."""
 
     read_dto = provider.read_dto
 
@@ -126,4 +126,6 @@ def build_search_router(
         context_dependency=context,
     )
 
-    return attach_search_router(router, provider=provider, context=context)
+    attach_search_routes(router, provider=provider, context=context)
+
+    return router

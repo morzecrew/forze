@@ -10,14 +10,12 @@ from forze.application.composition.search import (
     build_search_registry,
 )
 from forze.application.contracts.search import SearchSpec
-
 from forze_fastapi.routers.search import (
-    attach_search_router,
+    attach_search_routes,
     build_search_router,
     search_facade_dependency,
 )
 from forze_fastapi.routing.router import ForzeAPIRouter
-
 
 # ----------------------- #
 
@@ -88,7 +86,7 @@ class TestAttachSearchRouter:
             prefix="/api",
             context_dependency=ctx_dep,
         )
-        result = attach_search_router(router, provider=provider, context=ctx_dep)
+        result = attach_search_routes(router, provider=provider, context=ctx_dep)
 
         assert result is router
         paths = {r.path for r in router.routes}
@@ -117,7 +115,7 @@ class TestAttachSearchRouter:
             prefix="/api",
             context_dependency=ctx_dep,
         )
-        attach_search_router(router, provider=provider, context=ctx_dep)
+        attach_search_routes(router, provider=provider, context=ctx_dep)
 
         app = FastAPI()
         app.include_router(router)
