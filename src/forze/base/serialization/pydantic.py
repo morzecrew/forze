@@ -14,13 +14,13 @@ def pydantic_validate[M: BaseModel](
     cls: type[M],
     data: dict[str, Any],
     *,
-    forbid_extra: bool = True,
+    forbid_extra: bool = False,
 ) -> M:
     """Validate raw ``data`` into a Pydantic model instance.
 
     :param cls: Pydantic model class to validate against.
     :param data: Raw input mapping.
-    :param forbid_extra: When true, extra keys are forbidden instead of ignored.
+    :param forbid_extra: When true, extra keys are forbidden instead of ignored. Defaults to False.
     :returns: Validated model instance.
     """
 

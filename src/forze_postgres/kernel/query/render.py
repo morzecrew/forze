@@ -80,7 +80,13 @@ class PsycopgValueCoercer:
 
     # ....................... #
 
-    def array(self, v: Any, *, t: Optional[PostgresType]) -> list[Any]:
+    def array(
+        self,
+        v: Any,
+        *,
+        t: Optional[PostgresType],
+        raise_on_scalar_t: bool = False,
+    ) -> list[Any]:
         if v is None:
             return []
 
@@ -90,7 +96,7 @@ class PsycopgValueCoercer:
         if t is None:
             return [self.scalar(x, t=None) for x in v]
 
-        if not t.is_array:
+        if not t.is_array and raise_on_scalar_t:
             raise ValueError("Expected array column, got scalar")
 
         elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
@@ -321,7 +327,7 @@ class PsycopgQueryRenderer:
             "$subset": "<@",
             "$overlaps": "&&",
         }
-        value = self.coercer.array(value, t=t)
+        value = self.coercer.array(value, t=t, raise_on_scalar_t=True)
         ph = self.binder.add(value)
 
         if op == "$disjoint":
