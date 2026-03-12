@@ -71,3 +71,8 @@ updates:
         applies-to: "security-updates"
         patterns:
           - "*"
+
+  - package-ecosystem: docker
+    directory: /.devcontainer
+    schedule:
+      interval: daily

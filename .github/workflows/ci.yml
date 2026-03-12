@@ -27,6 +27,9 @@ on:
       - "uv.lock"
       - ".github/workflows/ci.yml"
 
+permissions:
+  contents: read
+
 jobs:
   changes:
     name: Detect relevant changes
@@ -40,6 +43,11 @@ jobs:
       force_full: ${{ steps.force.outputs.force_full }}
 
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@58077d3c7e43986b6b15fba718e8ea69e387dfcc # v2.15.1
+        with:
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -75,6 +83,11 @@ jobs:
       contents: read
 
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@58077d3c7e43986b6b15fba718e8ea69e387dfcc # v2.15.1
+        with:
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -106,8 +119,14 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
+      issues: write
 
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@58077d3c7e43986b6b15fba718e8ea69e387dfcc # v2.15.1
+        with:
+          egress-policy: audit
+
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -139,8 +158,8 @@ jobs:
           require_tests: true
           detailed_summary: true
           include_passed: false
-          comment: true
-          updateComment: true
+          comment: ${{ github.event.pull_request.head.repo.fork == false }}
+          updateComment: ${{ github.event.pull_request.head.repo.fork == false }}
           check_annotations: true
           fail_on_failure: false
   
@@ -150,6 +169,11 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@58077d3c7e43986b6b15fba718e8ea69e387dfcc # v2.15.1
+        with:
+          egress-policy: audit
+
       - name: Verify required jobs
         shell: bash
         run: |
