@@ -4,12 +4,25 @@ Provides :class:`Paginated` (typed hits) and :class:`RawPaginated` (raw dict
 hits). Page numbers are one-based; ``count`` is the total across all pages.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PositiveInt
 
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
+
+
+class Pagination(BaseDTO):
+    """Pagination request payload."""
+
+    page: PositiveInt = 1
+    """One-based page number."""
+
+    size: PositiveInt = 10
+    """Page size (number of records per page)."""
+
+
+# ....................... #
 
 
 class Paginated[T: BaseModel](BaseDTO):

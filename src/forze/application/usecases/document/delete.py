@@ -8,6 +8,7 @@ from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
+#! TODO: replace with BaseDTO
 
 
 @final

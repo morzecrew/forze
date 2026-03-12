@@ -11,7 +11,6 @@ from forze.application.dto import (
     SearchRequestDTO,
 )
 from forze.application.execution import Usecase
-from forze.application.usecases.search import RawSearchArgs, TypedSearchArgs
 
 from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
 from .operations import SearchOperation
@@ -29,14 +28,14 @@ rS = TypeVar("rS", bound=RawSearchRequestDTO)
 class SearchUsecasesFacade(BaseUsecasesFacade, Generic[M, tS, rS]):
     """Typed facade for search usecases."""
 
-    def raw(self) -> Usecase[RawSearchArgs[rS], RawPaginated]:
+    def raw(self) -> Usecase[rS, RawPaginated]:
         """Return the raw search usecase."""
 
         return self.resolve(SearchOperation.RAW_SEARCH)
 
     # ....................... #
 
-    def typed(self) -> Usecase[TypedSearchArgs[tS], Paginated[M]]:
+    def typed(self) -> Usecase[tS, Paginated[M]]:
         """Return the typed search usecase."""
 
         return self.resolve(SearchOperation.TYPED_SEARCH)
@@ -52,10 +51,10 @@ class SearchDTOSpec(TypedDict, Generic[M, tS, rS]):
     """Read DTO type."""
 
     typed: NotRequired[type[tS]]
-    """Typed search request DTO type."""
+    """Typed search request DTO type. Provided only if typed search has custom DTO."""
 
     raw: NotRequired[type[rS]]
-    """Raw search request DTO type."""
+    """Raw search request DTO type. Provided only if raw search has custom DTO."""
 
 
 @final

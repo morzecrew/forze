@@ -102,11 +102,7 @@ class TestTypedSearch:
         await doc_port.create(_SearchCreate(title="b", content="foo"))
 
         usecase = TypedSearch(ctx=stub_ctx, search=search_port)
-        args: dict = {
-            "body": SearchRequestDTO(query="foo"),
-            "page": 1,
-            "size": 10,
-        }
+        args = SearchRequestDTO(query="foo", page=1, size=10)
         result = await usecase(args)
 
         assert isinstance(result, Paginated)
@@ -129,11 +125,7 @@ class TestTypedSearch:
         await doc_port.create(_SearchCreate(title="x", content=""))
 
         usecase = TypedSearch(ctx=stub_ctx, search=search_port)
-        args: dict = {
-            "body": SearchRequestDTO(query=""),
-            "page": 1,
-            "size": 10,
-        }
+        args = SearchRequestDTO(query="", page=1, size=10)
         result = await usecase(args)
 
         assert result.count == 1
@@ -155,11 +147,7 @@ class TestRawSearch:
         await doc_port.create(_SearchCreate(title="y", content="bar"))
 
         usecase = RawSearch(ctx=stub_ctx, search=search_port)
-        args: dict = {
-            "body": RawSearchRequestDTO(query="bar", return_fields={"id", "title"}),
-            "page": 1,
-            "size": 10,
-        }
+        args = RawSearchRequestDTO(query="bar", return_fields={"id", "title"}, page=1, size=10)
         result = await usecase(args)
 
         assert isinstance(result, RawPaginated)
@@ -182,11 +170,7 @@ class TestRawSearch:
             await doc_port.create(_SearchCreate(title="", content="q"))
 
         usecase = RawSearch(ctx=stub_ctx, search=search_port)
-        args: dict = {
-            "body": RawSearchRequestDTO(query="q", return_fields={"content"}),
-            "page": 2,
-            "size": 2,
-        }
+        args = RawSearchRequestDTO(query="q", return_fields={"content"}, page=2, size=2)
         result = await usecase(args)
 
         assert result.count == 5

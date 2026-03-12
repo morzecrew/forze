@@ -23,7 +23,7 @@ from forze.application.dto import (
 from forze.application.execution import ExecutionContext
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..routing.params import Pagination, RevQuery, UUIDQuery, pagination
+from ..routing.params import RevQuery, UUIDQuery
 from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
 from ._utils import override_annotations
 
@@ -180,18 +180,11 @@ def attach_document_routes(
         @override_annotations({"dto": list_dto})
         async def list(  # pyright: ignore[reportUnusedFunction]
             body: tL = Body(...),
-            pagi: Pagination = Depends(pagination),
             ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
         ) -> Paginated[R]:
             """List documents by filters and sorts."""
 
-            return await ucs.list()(
-                {
-                    "body": body,
-                    "page": pagi.page,
-                    "size": pagi.size,
-                }
-            )
+            return await ucs.list()(body)
 
         # ....................... #
 
@@ -203,18 +196,11 @@ def attach_document_routes(
         @override_annotations({"dto": raw_list_dto})
         async def raw_list(  # pyright: ignore[reportUnusedFunction]
             body: rL = Body(...),
-            pagi: Pagination = Depends(pagination),
             ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
         ) -> RawPaginated:
             """List documents with raw results by filters and sorts."""
 
-            return await ucs.raw_list()(
-                {
-                    "body": body,
-                    "page": pagi.page,
-                    "size": pagi.size,
-                }
-            )
+            return await ucs.raw_list()(body)
 
     # ....................... #
 

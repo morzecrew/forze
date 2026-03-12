@@ -10,7 +10,7 @@ from typing import Any, Optional
 from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import ListRequestDTO, RawListRequestDTO
 from forze.application.execution import UsecasePlan, UsecaseRegistry
-from forze.application.mapping import DTOMapper, NumberIdStep
+from forze.application.mapping import DTOMapper, MappingStep, NumberIdStep
 from forze.application.usecases.document import (
     CreateDocument,
     DeleteDocument,
@@ -120,17 +120,16 @@ def build_document_update_mapper(
 def build_document_list_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
-    """Build a DTO mapper for list requests.
+    """Build a DTO mapper for list requests with optional steps."""
 
-    :param spec: Document specification.
-    :returns: DTO mapper for list requests.
-    """
-
-    return DTOMapper(
+    mapper = DTOMapper(
         in_=dto_spec.get("list", ListRequestDTO),
         out=ListRequestDTO,
     )
+
+    return mapper.with_steps(*steps)
 
 
 # ....................... #
@@ -139,6 +138,7 @@ def build_document_list_mapper(
 def build_document_raw_list_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for raw list requests.
 
@@ -146,10 +146,12 @@ def build_document_raw_list_mapper(
     :returns: DTO mapper for raw list requests.
     """
 
-    return DTOMapper(
+    mapper = DTOMapper(
         in_=dto_spec.get("raw_list", RawListRequestDTO),
         out=RawListRequestDTO,
     )
+
+    return mapper.with_steps(*steps)
 
 
 # ....................... #

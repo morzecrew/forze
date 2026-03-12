@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Pagination` DTO with `page` and `size` fields for list and search request payloads.
 - `DocumentDTOSpec` `list` and `raw_list` keys for custom list request DTO types.
 - `SearchDTOSpec` TypedDict for search facade with `read`, `typed`, `raw` keys.
 - `build_document_list_mapper`, `build_document_raw_list_mapper`, `replace_list_mapper`, `replace_raw_list_mapper` in document composition.
@@ -24,12 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DTOMapper` now requires `in_` (source model type) in addition to `out`; update existing mappers accordingly.
 - `MappingStep` protocol is now generic (`MappingStep[In: BaseModel]`); custom step implementations should specify the source type.
 - `CoreModel` no longer includes `Decimal` in `json_encoders`; custom serialization for Decimal fields must be handled elsewhere.
-- Document list endpoints: pagination (`page`, `size`) now accepted via query parameters.
+- `ListRequestDTO` and `SearchRequestDTO` extend `Pagination`; pagination (`page`, `size`) now in request body.
+- List and search usecases take request DTO directly instead of TypedDict with body/page/size.
 - Postgres and Mongo document adapters: write operations now return results via read gateway for consistent read/write source separation.
 
 ### Fixed
 
 - Document list endpoints now correctly pass pagination to the usecase.
+
+### Removed
+
+- `Pagination` and `pagination` from `forze_fastapi.routing.params`; use request body instead.
 
 ## [0.1.12] - 2026-03-11
 

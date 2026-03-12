@@ -9,6 +9,7 @@ from forze.application.mapping import DTOMapper
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
+#! TODO: replace with BaseDTO
 
 
 @final

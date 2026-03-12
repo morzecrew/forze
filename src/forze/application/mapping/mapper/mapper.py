@@ -82,7 +82,11 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
 
     # ....................... #
 
-    async def __call__(self, ctx: "ExecutionContext", source: In) -> Out:
+    async def __call__(
+        self,
+        ctx: "ExecutionContext",
+        source: In,
+    ) -> Out:
         """Map the source model to the output DTO.
 
         Runs each step in sequence, merging patches into the payload. Raises

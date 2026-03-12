@@ -12,9 +12,7 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.usecases.document import (
-    RawListDocumentsArgs,
     SoftDeleteArgs,
-    TypedListDocumentsArgs,
     UpdateArgs,
 )
 from forze.domain.models import BaseDTO, ReadDocument
@@ -44,14 +42,14 @@ class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U, tL, rL]):
 
     # ....................... #
 
-    def list(self) -> Usecase[TypedListDocumentsArgs[tL], Paginated[R]]:
+    def list(self) -> Usecase[tL, Paginated[R]]:
         """Return the list documents usecase."""
 
         return self.resolve(DocumentOperation.LIST)
 
     # ....................... #
 
-    def raw_list(self) -> Usecase[RawListDocumentsArgs[rL], RawPaginated]:
+    def raw_list(self) -> Usecase[rL, RawPaginated]:
         """Return the raw list documents usecase."""
 
         return self.resolve(DocumentOperation.RAW_LIST)
@@ -113,10 +111,10 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
     """Update command type; optional when update is not supported."""
 
     list: NotRequired[type[tL]]
-    """List request type; optional when list is not supported."""
+    """List request type; provided only if list has custom DTO."""
 
     raw_list: NotRequired[type[rL]]
-    """Raw list request type; optional when raw list is not supported."""
+    """Raw list request type; provided only if raw list has custom DTO."""
 
 
 # ....................... #

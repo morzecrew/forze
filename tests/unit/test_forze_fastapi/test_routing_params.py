@@ -1,15 +1,15 @@
-"""Unit tests for forze_fastapi.routing.params."""
+"""Unit tests for forze_fastapi.routing.params and related DTOs."""
 
 import pytest
 
-from forze_fastapi.routing.params import Pagination, pagination
+from forze.application.dto import Pagination
 
 
 # ----------------------- #
 
 
 class TestPagination:
-    """Tests for Pagination."""
+    """Tests for Pagination DTO (used by search/list request bodies)."""
 
     def test_attrs_frozen(self) -> None:
         """Pagination is frozen and has page/size."""
@@ -22,23 +22,3 @@ class TestPagination:
         p = Pagination(page=1, size=10)
         with pytest.raises(Exception):
             p.page = 2  # type: ignore[misc]
-
-
-class TestPaginationDependency:
-    """Tests for pagination dependency function."""
-
-    def test_returns_pagination(self) -> None:
-        """pagination returns Pagination instance."""
-        result = pagination(page=1, size=10)
-        assert isinstance(result, Pagination)
-        assert result.page == 1
-        assert result.size == 10
-
-    def test_defaults(self) -> None:
-        """pagination returns Pagination when called with defaults."""
-        result = pagination()
-        assert isinstance(result, Pagination)
-        # When called outside FastAPI, Query defaults may be used; explicit args work
-        explicit = pagination(page=1, size=10)
-        assert explicit.page == 1
-        assert explicit.size == 10

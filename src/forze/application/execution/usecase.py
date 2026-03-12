@@ -24,7 +24,11 @@ class Usecase[Args, R]:
     """Middlewares wrapping the usecase; first added runs outermost."""
 
     _chain: NextCall[Args, R] | None = attrs.field(
-        default=None, init=False, eq=False, repr=False, alias="_chain"
+        default=None,
+        init=False,
+        eq=False,
+        repr=False,
+        alias="_chain",
     )
 
     # ....................... #

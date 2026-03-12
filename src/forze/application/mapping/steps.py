@@ -44,6 +44,7 @@ class NumberIdStep(MappingStep[BaseModel]):
         ctx: "ExecutionContext",
         source: BaseModel,
         payload: JsonDict,
+        params: None = None,
     ) -> JsonDict:
         counter = ctx.counter(self.namespace)
         number_id = await counter.incr()
@@ -72,5 +73,6 @@ class CreatorIdStep(MappingStep[BaseModel]):
         ctx: "ExecutionContext",
         source: BaseModel,
         payload: JsonDict,
+        params: None = None,
     ) -> JsonDict:
         raise NotImplementedError("CreatorIdStep is not implemented")

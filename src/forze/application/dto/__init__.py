@@ -6,7 +6,7 @@ and paginated response DTOs (:class:`Paginated`, :class:`RawPaginated`). All ext
 """
 
 from .list_ import ListRequestDTO, RawListRequestDTO
-from .paginated import Paginated, RawPaginated
+from .paginated import Paginated, Pagination, RawPaginated
 from .search import RawSearchRequestDTO, SearchRequestDTO
 
 # ----------------------- #
@@ -14,6 +14,7 @@ from .search import RawSearchRequestDTO, SearchRequestDTO
 __all__ = [
     "Paginated",
     "RawPaginated",
+    "Pagination",
     "SearchRequestDTO",
     "RawSearchRequestDTO",
     "ListRequestDTO",

@@ -1,4 +1,4 @@
-from typing import Any, Optional, TypedDict
+from typing import Any, Optional
 
 import attrs
 from pydantic import BaseModel
@@ -16,42 +16,8 @@ from forze.application.mapping import DTOMapper
 # ----------------------- #
 
 
-class TypedSearchArgs[In: SearchRequestDTO](TypedDict):
-    """Arguments for typed search usecases."""
-
-    body: In
-    """Search request (query, filters, sorts)."""
-
-    page: int
-    """One-based page number."""
-
-    size: int
-    """Page size."""
-
-
-# ....................... #
-
-
-class RawSearchArgs[In: RawSearchRequestDTO](TypedDict):
-    """Arguments for raw (field-projected) search usecases."""
-
-    body: In
-    """Search request with required ``return_fields``."""
-
-    page: int
-    """One-based page number."""
-
-    size: int
-    """Page size."""
-
-
-# ....................... #
-
-
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedSearch[In: SearchRequestDTO, Out: BaseModel](
-    Usecase[TypedSearchArgs[In], Paginated[Out]]
-):
+class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Out]]):
     """Usecase that searches with typed results."""
 
     search: SearchReadPort[Out]
@@ -62,17 +28,17 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](
 
     # ....................... #
 
-    async def main(self, args: TypedSearchArgs[In]) -> Paginated[Out]:
+    async def main(self, args: In) -> Paginated[Out]:
         """Search with typed paginated results.
 
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of read models.
         """
 
-        body = args["body"]
-        page = args["page"]
-        size = args["size"]
+        body = args
 
+        page = args.page
+        size = args.size
         limit = size
         offset = (page - 1) * limit
 
@@ -96,7 +62,7 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RawSearch[In: RawSearchRequestDTO](Usecase[RawSearchArgs[In], RawPaginated]):
+class RawSearch[In: RawSearchRequestDTO](Usecase[In, RawPaginated]):
     """Usecase that searches with raw results."""
 
     search: SearchReadPort[Any]
@@ -107,17 +73,17 @@ class RawSearch[In: RawSearchRequestDTO](Usecase[RawSearchArgs[In], RawPaginated
 
     # ....................... #
 
-    async def main(self, args: RawSearchArgs[In]) -> RawPaginated:
+    async def main(self, args: In) -> RawPaginated:
         """Search with raw results.
 
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of raw results.
         """
 
-        body = args["body"]
-        page = args["page"]
-        size = args["size"]
+        body = args
 
+        page = args.page
+        size = args.size
         limit = size
         offset = (page - 1) * limit
 

@@ -4,12 +4,13 @@ from pydantic import Field
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.search import SearchOptions
-from forze.domain.models import BaseDTO
+
+from .paginated import Pagination
 
 # ----------------------- #
 
 
-class SearchRequestDTO(BaseDTO):
+class SearchRequestDTO(Pagination):
     """Search request payload for typed document search.
 
     When :attr:`query` is non-empty, backends use full-text search (with fuzzy

@@ -3,12 +3,13 @@ from typing import Optional
 from pydantic import Field
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.domain.models import BaseDTO
+
+from .paginated import Pagination
 
 # ----------------------- #
 
 
-class ListRequestDTO(BaseDTO):
+class ListRequestDTO(Pagination):
     """List request payload for typed document list."""
 
     filters: Optional[QueryFilterExpression] = None  # type: ignore[valid-type]

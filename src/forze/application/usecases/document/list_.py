@@ -1,4 +1,4 @@
-from typing import Any, Optional, TypedDict
+from typing import Any, Optional
 
 import attrs
 
@@ -16,41 +16,9 @@ from forze.domain.models import ReadDocument
 # ----------------------- #
 
 
-class TypedListDocumentsArgs[In: ListRequestDTO](TypedDict):
-    """Arguments for typed list documents usecase."""
-
-    body: In
-    """List request (filters, sorts)."""
-
-    page: int
-    """One-based page number."""
-
-    size: int
-    """Page size."""
-
-
-# ....................... #
-
-
-class RawListDocumentsArgs[In: RawListRequestDTO](TypedDict):
-    """Arguments for raw (field-projected) list documents usecase."""
-
-    body: In
-    """List request with required ``return_fields``."""
-
-    page: int
-    """One-based page number."""
-
-    size: int
-    """Page size."""
-
-
-# ....................... #
-
-
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
-    Usecase[TypedListDocumentsArgs[In], Paginated[Out]]
+    Usecase[In, Paginated[Out]]
 ):
     """Usecase that fetches multiple documents by filters and sorts."""
 
@@ -62,17 +30,17 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
 
     # ....................... #
 
-    async def main(self, args: TypedListDocumentsArgs[In]) -> Paginated[Out]:
+    async def main(self, args: In) -> Paginated[Out]:
         """Fetch multiple documents by filters and sorts.
 
         :param args: List arguments (body, page, size).
         :returns: Paginated list of read models.
         """
 
-        body = args["body"]
-        page = args["page"]
-        size = args["size"]
+        body = args
 
+        page = args.page
+        size = args.size
         limit = size
         offset = (page - 1) * limit
 
@@ -94,9 +62,7 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RawListDocuments[In: RawListRequestDTO](
-    Usecase[RawListDocumentsArgs[In], RawPaginated]
-):
+class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
     """Usecase that fetches multiple documents by filters and sorts with raw results."""
 
     doc: DocumentReadPort[Any]
@@ -107,17 +73,17 @@ class RawListDocuments[In: RawListRequestDTO](
 
     # ....................... #
 
-    async def main(self, args: RawListDocumentsArgs[In]) -> RawPaginated:
+    async def main(self, args: In) -> RawPaginated:
         """Fetch multiple documents by filters and sorts with raw results.
 
         :param args: List arguments (body, page, size).
         :returns: Paginated list of raw results.
         """
 
-        body = args["body"]
-        page = args["page"]
-        size = args["size"]
+        body = args
 
+        page = args.page
+        size = args.size
         limit = size
         offset = (page - 1) * limit
 

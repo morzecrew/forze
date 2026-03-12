@@ -22,7 +22,6 @@ from forze.application.dto import (
 )
 from forze.application.execution import ExecutionContext
 
-from ..routing.params import Pagination, pagination
 from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
 from ._utils import override_annotations
 
@@ -96,18 +95,11 @@ def attach_search_routes(
     @override_annotations({"dto": typed_dto})
     async def search(  # pyright: ignore[reportUnusedFunction]
         body: tS = Body(...),
-        pagi: Pagination = Depends(pagination),
         ucs: SearchUsecasesFacade[M, tS, rS] = Depends(ucs_dep),
     ) -> Paginated[M]:
         """Search documents using a typed search request body."""
 
-        return await ucs.typed()(
-            {
-                "body": body,
-                "page": pagi.page,
-                "size": pagi.size,
-            }
-        )
+        return await ucs.typed()(body)
 
     # ....................... #
 
@@ -119,18 +111,11 @@ def attach_search_routes(
     @override_annotations({"dto": raw_dto})
     async def raw_search(  # pyright: ignore[reportUnusedFunction]
         body: rS = Body(...),
-        pagi: Pagination = Depends(pagination),
         ucs: SearchUsecasesFacade[M, tS, rS] = Depends(ucs_dep),
     ) -> RawPaginated:
         """Search documents using a raw (untyped) search body."""
 
-        return await ucs.raw()(
-            {
-                "body": body,
-                "page": pagi.page,
-                "size": pagi.size,
-            }
-        )
+        return await ucs.raw()(body)
 
     # ....................... #
 
