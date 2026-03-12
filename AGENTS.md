@@ -44,7 +44,8 @@ Read:
 - `justfile`
 
 Use it for:
-- test entrypoints (`just test`, path-scoped tests)
+- test entrypoints (`just test-fast`, path-scoped tests)
+- performance testing (`just test-perf`, performance benchmarks)
 - quality checks (`just quality`, strict mode)
 - security/dependency/dead-code checks
 
