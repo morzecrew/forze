@@ -1,7 +1,5 @@
 # Forze
 
-[![CI](https://img.shields.io/github/actions/workflow/status/morzecrew/forze/ci.yml?branch=main&label=CI)](https://github.com/morzecrew/forze/actions/workflows/ci.yml) [![CodeQL](https://img.shields.io/github/actions/workflow/status/morzecrew/forze/codeql.yml?branch=main&label=CodeQL)](https://github.com/morzecrew/forze/actions/workflows/codeql.yml) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12151/badge)](https://www.bestpractices.dev/projects/12151)
-
 [![PyPI](https://img.shields.io/pypi/v/forze?label=PyPI)](https://pypi.org/project/forze/) [![Python](https://img.shields.io/pypi/pyversions/forze)](https://pypi.org/project/forze/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze)
 
 **Forze** is a lightweight infrastructure toolkit for building backend services
