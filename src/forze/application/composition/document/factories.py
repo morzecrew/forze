@@ -1,9 +1,4 @@
-"""Factories for document plans, mappers, and registries.
-
-Provides :func:`build_document_plan`, :func:`build_document_create_mapper`, and
-:func:`build_document_registry`. Used to assemble document usecases from a
-:class:`DocumentSpec`.
-"""
+"""Factories for document plans, mappers, and registries."""
 
 from typing import Any, Optional
 

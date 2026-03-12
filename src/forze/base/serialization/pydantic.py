@@ -1,6 +1,7 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
+import logging
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Literal, TypedDict
@@ -8,7 +9,13 @@ from typing import Any, Literal, TypedDict
 import orjson
 from pydantic import BaseModel
 
+from ..logging import log_section
+
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 
 def pydantic_validate[M: BaseModel](
@@ -25,7 +32,19 @@ def pydantic_validate[M: BaseModel](
     :returns: Validated model instance.
     """
 
-    return cls.model_validate(data, extra="forbid" if forbid_extra else "ignore")
+    logger.debug(
+        "Validating data into %s (forbid_extra=%s)",
+        cls.__name__,
+        forbid_extra,
+    )
+
+    with log_section():
+        logger.debug("Input keys: %s", tuple(data.keys()))
+        model = cls.model_validate(data, extra="forbid" if forbid_extra else "ignore")
+
+        logger.debug("Validation succeeded for %s", cls.__name__)
+
+    return model
 
 
 # ....................... #
@@ -61,13 +80,25 @@ def pydantic_dump(
     :returns: JSON-ready dictionary representation.
     """
 
-    return obj.model_dump(
-        exclude_unset=exclude.get("unset", False),
-        exclude_none=exclude.get("none", False),
-        exclude_defaults=exclude.get("defaults", False),
-        exclude_computed_fields=exclude.get("computed_fields", False),
-        mode=mode,
+    logger.debug(
+        "Dumping %s (mode=%s, exclude=%s)",
+        type(obj).__name__,
+        mode,
+        exclude,
     )
+
+    with log_section():
+        dumped = obj.model_dump(
+            exclude_unset=exclude.get("unset", False),
+            exclude_none=exclude.get("none", False),
+            exclude_defaults=exclude.get("defaults", False),
+            exclude_computed_fields=exclude.get("computed_fields", False),
+            mode=mode,
+        )
+
+        logger.debug("Dumped keys: %s", tuple(dumped.keys()))
+
+    return dumped
 
 
 # ....................... #
@@ -138,8 +169,22 @@ def pydantic_model_hash(
     :returns: Hex-encoded SHA-256 digest of the sorted JSON representation.
     """
 
-    data = pydantic_dump(model, exclude=exclude)
-    norm_data = _normalize_for_hashing(data)
-    raw = orjson.dumps(norm_data, option=orjson.OPT_SORT_KEYS)
+    logger.debug(
+        "Hashing Pydantic model %s (exclude=%s)",
+        type(model).__name__,
+        exclude,
+    )
 
-    return hashlib.sha256(raw).hexdigest()
+    with log_section():
+        data = pydantic_dump(model, exclude=exclude)
+        norm_data = _normalize_for_hashing(data)
+        raw = orjson.dumps(norm_data, option=orjson.OPT_SORT_KEYS)
+        digest = hashlib.sha256(raw).hexdigest()
+
+        logger.debug(
+            "Hash calculated for %s: %s",
+            type(model).__name__,
+            digest[:8] + "...",
+        )
+
+    return digest

@@ -8,11 +8,7 @@ from typing import final
 
 @final
 class DocumentOperation(StrEnum):
-    """Logical operation identifiers for document usecases.
-
-    Used as keys in :class:`UsecaseRegistry` and when resolving usecases from
-    :class:`DocumentUsecasesFacade`. Values are dot-prefixed for namespacing.
-    """
+    """Logical operation identifiers for document usecases."""
 
     GET = "document.get"
     """Fetch a single document by primary key."""

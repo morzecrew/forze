@@ -5,13 +5,20 @@ buffer. Use :meth:`ContextualBuffer.scope` to isolate buffers within nested
 operations.
 """
 
+import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, Sequence, final
 
 import attrs
 
+from ..logging import log_section
+
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 
 @final
@@ -33,6 +40,7 @@ class ContextualBuffer[T]:
 
     def peek(self) -> list[T]:
         """Return currently buffered objects without clearing the buffer."""
+
         return self.__buffer.get([])
 
     # ....................... #
@@ -40,12 +48,17 @@ class ContextualBuffer[T]:
     def clear(self) -> None:
         """Clear all buffered objects from the context variable."""
 
+        logger.debug("Clearing contextual buffer")
+
         self.__buffer.set([])
 
     # ....................... #
 
     def push(self, e: Sequence[T]) -> None:
         """Append objects to the buffer. Extends the current list in place."""
+
+        logger.debug("Pushing %d item(s) to contextual buffer", len(e))
+
         buf = self.peek()
         buf.extend(list(e))
 
@@ -55,7 +68,11 @@ class ContextualBuffer[T]:
 
     def pop(self) -> list[T]:
         """Return all buffered objects and clear the buffer."""
+
         buf = self.peek()
+
+        logger.debug("Popping %d item(s) from contextual buffer", len(buf))
+
         self.clear()
 
         return buf
@@ -69,10 +86,21 @@ class ContextualBuffer[T]:
         On entry, the buffer is cleared. On exit, the previous buffer state
         is restored.
         """
-        token = self.__buffer.set([])
 
-        try:
-            yield
+        logger.debug("Entering contextual buffer scope")
 
-        finally:
-            self.__buffer.reset(token)
+        with log_section():
+            token = self.__buffer.set([])
+
+            try:
+                yield
+
+            finally:
+                buf = self.peek()
+
+                logger.debug(
+                    "Leaving contextual buffer scope (%d buffered item(s))",
+                    len(buf),
+                )
+
+                self.__buffer.reset(token)

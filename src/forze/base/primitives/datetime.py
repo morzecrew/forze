@@ -11,4 +11,5 @@ def utcnow() -> datetime:
     Uses :class:`datetime.datetime` with ``tzinfo=UTC`` for consistent
     timestamp handling across the application.
     """
+
     return datetime.now(UTC)

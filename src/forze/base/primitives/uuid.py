@@ -9,7 +9,7 @@ timestamp information making IDs sortable by creation time.
 Notes:
     Source: https://github.com/educationwarehouse/uuid7
     Fixed: milliseconds to nanoseconds conversion
-    Added: hash_from_any, hex_uuid4_from_string, hex_uuid4
+    Added: hash_from_any, hex_uuid4_from_string, hex_uuid4, error capture
 """
 
 import hashlib
@@ -23,6 +23,8 @@ from zoneinfo import ZoneInfo
 
 import orjson
 from dateutil.parser import parse as dt_parse
+
+from ..errors import CoreError
 
 # ----------------------- #
 
@@ -60,7 +62,7 @@ def uuid7(
     """
 
     if timestamp_ms is not None and timestamp_ns is not None:
-        raise ValueError("Specify only one of timestamp_ms or timestamp_ns, not both.")
+        raise CoreError("Specify only one of timestamp_ms or timestamp_ns, not both.")
 
     if (timestamp_ms == 0 and timestamp_ns is None) or (
         timestamp_ns == 0 and timestamp_ms is None
@@ -75,7 +77,7 @@ def uuid7(
         timestamp_ns = time.time_ns()
 
     if timestamp_ns < 0:
-        raise ValueError("Timestamp must be positive.")
+        raise CoreError("Timestamp must be positive.")
 
     timestamp_ms = timestamp_ns // 1_000_000
     sub_ms_ns = timestamp_ns % 1_000_000  # 20 bits max

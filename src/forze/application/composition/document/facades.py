@@ -1,4 +1,4 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast, final
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast
 from uuid import UUID
 
 import attrs
@@ -31,7 +31,6 @@ rL = TypeVar("rL", bound=RawListRequestDTO, default=RawListRequestDTO)
 # ....................... #
 
 
-@final
 class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U, tL, rL]):
     """Typed facade for document usecases."""
 
@@ -120,7 +119,6 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
 # ....................... #
 
 
-@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentUsecasesFacadeProvider(
     BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U, tL, rL]],

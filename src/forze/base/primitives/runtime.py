@@ -1,5 +1,6 @@
 """Thread-safe runtime variables for application-wide singletons."""
 
+import logging
 from threading import RLock
 from typing import Optional
 
@@ -9,6 +10,10 @@ from ..errors import CoreError
 
 # ----------------------- #
 
+logger = logging.getLogger(__name__)
+
+# ....................... #
+
 
 @attrs.define(slots=True)
 class RuntimeVar[T: object]:
@@ -17,16 +22,6 @@ class RuntimeVar[T: object]:
     Used to store application-wide runtime values (e.g. an ``AppContext``)
     initialized during startup and accessed throughout the application lifecycle.
     Raises :exc:`~forze.base.errors.CoreError` on invalid operations.
-
-    Example::
-
-        app_rt_var: RuntimeVar[AppContext] = RuntimeVar("app_rt")
-
-        # During startup
-        app_rt_var.set_once(context)
-
-        # Later, anywhere in the application
-        ctx = app_rt_var.get()
     """
 
     name: str
@@ -46,6 +41,12 @@ class RuntimeVar[T: object]:
 
         if value is None:
             raise CoreError(f"Value cannot be None for {self.name}")
+
+        logger.debug(
+            "Setting runtime variable %s with value type %s",
+            self.name,
+            type(value).__name__,
+        )
 
         with self.__lock:
             if self.__value is not None:
@@ -69,6 +70,8 @@ class RuntimeVar[T: object]:
 
     def reset(self) -> None:
         """Clear the stored value so it can be set again. Thread-safe. Useful for testing."""
+
+        logger.debug("Resetting runtime variable %s", self.name)
 
         with self.__lock:
             self.__value = None

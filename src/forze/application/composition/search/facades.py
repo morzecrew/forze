@@ -1,4 +1,4 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast, final
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast
 
 import attrs
 from pydantic import BaseModel
@@ -24,7 +24,6 @@ rS = TypeVar("rS", bound=RawSearchRequestDTO, default=RawSearchRequestDTO)
 # ....................... #
 
 
-@final
 class SearchUsecasesFacade(BaseUsecasesFacade, Generic[M, tS, rS]):
     """Typed facade for search usecases."""
 
@@ -57,7 +56,9 @@ class SearchDTOSpec(TypedDict, Generic[M, tS, rS]):
     """Raw search request DTO type. Provided only if raw search has custom DTO."""
 
 
-@final
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchUsecasesFacadeProvider(
     BaseUsecasesFacadeProvider[SearchUsecasesFacade[M, tS, rS]], Generic[M, tS, rS]

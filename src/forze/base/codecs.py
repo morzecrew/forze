@@ -28,12 +28,14 @@ class JsonCodec:
 
     def dumps(self, value: Any) -> bytes:
         """Serialize a value to JSON bytes with sorted keys."""
+
         return orjson.dumps(value, option=orjson.OPT_SORT_KEYS)
 
     # ....................... #
 
     def loads(self, raw: bytes | str) -> Any:
         """Deserialize JSON from bytes or string. Strings are encoded with :attr:`encoding`."""
+
         if isinstance(raw, str):
             raw = raw.encode(self.encoding)
 
@@ -43,6 +45,7 @@ class JsonCodec:
 
     def dumps_as_str(self, value: Any) -> str:
         """Serialize to JSON and decode to string using :attr:`encoding`."""
+
         return self.dumps(value).decode(self.encoding)
 
 
@@ -64,12 +67,14 @@ class TextCodec:
 
     def dumps(self, value: str) -> bytes:
         """Encode a string to bytes using :attr:`encoding`."""
+
         return value.encode(self.encoding)
 
     # ....................... #
 
     def loads(self, raw: bytes | str) -> str:
         """Decode bytes to string, or return string unchanged."""
+
         if isinstance(raw, str):
             return raw
 
@@ -94,6 +99,7 @@ class AsciiB64Codec:
 
     def dumps(self, value: str) -> str:
         """Return value as-is if ASCII, otherwise base64-encode with prefix."""
+
         try:
             value.encode("ascii")
             return value
@@ -106,6 +112,7 @@ class AsciiB64Codec:
 
     def loads(self, raw: str) -> str:
         """Decode base64 if prefixed, otherwise return raw string."""
+
         if raw.startswith(self.prefix):
             raw = raw[len(self.prefix) :]
 
@@ -135,6 +142,7 @@ class KeyCodec:
 
     def join(self, *parts: str) -> str:
         """Build a namespaced key from non-empty parts."""
+
         items = [p.strip(self.sep) for p in (self.namespace, *parts) if p]
 
         return self.sep.join(items)
@@ -143,12 +151,14 @@ class KeyCodec:
 
     def split(self, key: str) -> list[str]:
         """Split a key by :attr:`sep`."""
+
         return key.split(self.sep)
 
     # ....................... #
 
     def cond_join(self, *parts: Optional[str]) -> str:
         """Join only non-``None`` parts into a namespaced key."""
+
         items = list(filter(None, parts))
 
         return self.join(*items)
@@ -172,6 +182,7 @@ class PathCodec:
 
     def join(self, *parts: str) -> str:
         """Build a path from non-empty parts."""
+
         items = [p.strip(self.sep) for p in parts if p]
 
         return self.sep.join(items)
@@ -180,12 +191,14 @@ class PathCodec:
 
     def split(self, key: str) -> list[str]:
         """Split a path by :attr:`sep`."""
+
         return key.split(self.sep)
 
     # ....................... #
 
     def cond_join(self, *parts: Optional[str]) -> str:
         """Join only non-``None`` parts into a path."""
+
         items = list(filter(None, parts))
 
         return self.join(*items)

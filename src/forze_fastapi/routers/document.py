@@ -128,7 +128,7 @@ def attach_document_routes(
     include_write_endpoints: bool = True,
     path_overrides: OverrideDocumentEndpointPaths = {},
 ) -> ForzeAPIRouter:
-    """Attach document endpoints to an existing router."""
+    """Attach document CRUD endpoints to an existing router."""
 
     read_dto = provider.dtos["read"]
     create_dto = provider.dtos.get("create")
@@ -327,7 +327,7 @@ def build_document_router(
     include_write_endpoints: bool = True,
     path_overrides: OverrideDocumentEndpointPaths = {},
 ) -> ForzeAPIRouter:
-    """Construct a router exposing CRUD and search endpoints for a document spec.
+    """Construct a router exposing CRUD endpoints for a document spec.
 
     The resulting router wires HTTP routes to the corresponding document
     usecases via :class:`DocumentUsecasesFacade`, including optional support for

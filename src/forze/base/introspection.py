@@ -31,8 +31,10 @@ def _module_name(obj: object) -> str:
     """Return the module name for *obj*, cached for repeated lookups."""
 
     mod = inspect.getmodule(obj)
+
     if mod is None:
         return "<unknown>"
+
     return mod.__name__
 
 

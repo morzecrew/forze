@@ -4,6 +4,7 @@ The core :class:`Document` model implements versioning and update semantics
 based on JSON-like diffs and pluggable update validators.
 """
 
+import logging
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Optional, Self, cast
 from uuid import UUID
@@ -11,6 +12,7 @@ from uuid import UUID
 from pydantic import Field
 
 from forze.base.errors import ValidationError
+from forze.base.logging import log_section
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,
@@ -27,6 +29,10 @@ from ..validation import (
 from .base import BaseDTO, CoreModel
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 
 class Document(CoreModel):
@@ -59,15 +65,33 @@ class Document(CoreModel):
     def __init_subclass__(cls, **kwargs: Any):
         super().__init_subclass__(**kwargs)
 
-        cls._update_validators_ = collect_update_validators(
-            cls,
-            on_conflict=cls._update_validators_on_conflict,
+        logger.debug(
+            "Collecting update validators for document subclass %s",
+            cls.__qualname__,
         )
+
+        with log_section():
+            cls._update_validators_ = collect_update_validators(
+                cls,
+                on_conflict=cls._update_validators_on_conflict,
+            )
+
+            logger.debug(
+                "Collected %d validator(s) for %s",
+                len(cls._update_validators_),
+                cls.__qualname__,
+            )
 
     # ....................... #
 
     def _validate_update_data(self, data: JsonDict) -> JsonDict:
         """Validate incoming update data against model fields and frozen flags."""
+
+        logger.debug(
+            "Validating update data for %s with keys=%s",
+            type(self).__qualname__,
+            tuple(data.keys()),
+        )
 
         valid: JsonDict = {}
         fields = type(self).model_fields
@@ -75,12 +99,16 @@ class Document(CoreModel):
         for k, v in data.items():
             if k in fields:
                 if fields[k].frozen:
-                    raise ValidationError(f"Поле {k} не разрешено для обновления.")
+                    raise ValidationError(
+                        f"Field {k} is frozen and not allowed for update."
+                    )
 
                 valid[k] = v
 
             else:
-                raise ValidationError(f"Поле {k} не разрешено для обновления.")
+                raise ValidationError(f"Field {k} is not found in the model.")
+
+        logger.debug("Validated update keys: %s", tuple(valid.keys()))
 
         return valid
 
@@ -89,11 +117,20 @@ class Document(CoreModel):
     def _calculate_update_diff(self, data: JsonDict) -> JsonDict:
         """Return a minimal merge patch that represents ``data`` applied to self."""
 
-        patch = self._validate_update_data(data)
-        before = self.model_dump(mode="json")
+        logger.debug(
+            "Calculating update diff for %s",
+            type(self).__qualname__,
+        )
 
-        after = apply_dict_patch(before, patch)
-        diff = calculate_dict_difference(before, after)
+        with log_section():
+            patch = self._validate_update_data(data)
+            logger.debug("Validated patch: %s", patch)
+
+            before = self.model_dump(mode="json")
+            after = apply_dict_patch(before, patch)
+            diff = calculate_dict_difference(before, after)
+
+            logger.debug("Calculated update diff: %s", diff)
 
         return diff
 
@@ -101,9 +138,20 @@ class Document(CoreModel):
 
     def _apply_update(self, diff: JsonDict) -> Self:
         if not diff:
+            logger.debug(
+                "No diff for %s; returning original instance",
+                type(self).__qualname__,
+            )
             return self
 
         needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
+
+        logger.debug(
+            "Applying diff to %s (needs_deep=%s)",
+            type(self).__qualname__,
+            needs_deep,
+        )
+
         return self.model_copy(update=diff, deep=needs_deep)
 
     # ....................... #
@@ -112,12 +160,22 @@ class Document(CoreModel):
         keys = diff.keys()
         cls = type(self)
 
-        for name, meta in cls._update_validators_:
-            if meta.fields is not None and keys.isdisjoint(meta.fields):
-                continue
+        logger.debug(
+            "Running update validators for %s with diff keys=%s",
+            cls.__qualname__,
+            tuple(keys),
+        )
 
-            method = cast(UpdateValidator[Self], getattr(cls, name))
-            method(self, after, diff)
+        with log_section():
+            for name, meta in cls._update_validators_:
+                if meta.fields is not None and keys.isdisjoint(meta.fields):
+                    logger.debug("Skipping validator %s (fields=%s)", name, meta.fields)
+                    continue
+
+                logger.debug("Running validator %s (fields=%s)", name, meta.fields)
+
+                method = cast(UpdateValidator[Self], getattr(cls, name))
+                method(self, after, diff)
 
     # ....................... #
 
@@ -132,26 +190,42 @@ class Document(CoreModel):
         * runs registered :func:`update_validator` hooks.
         """
 
-        diff = self._calculate_update_diff(data)
+        logger.debug(
+            "Updating %s with keys=%s",
+            type(self).__qualname__,
+            tuple(data.keys()),
+        )
 
-        if diff:
-            diff["last_update_at"] = utcnow()
-            after = self._apply_update(diff)
+        with log_section():
+            diff = self._calculate_update_diff(data)
 
-        else:
-            after = self
+            if diff:
+                logger.debug("Update diff is not empty")
+                diff["last_update_at"] = utcnow()
+                after = self._apply_update(diff)
 
-        self._run_update_validators(after, diff)
+            else:
+                logger.debug("Update diff is empty; document remains unchanged")
+                after = self
 
-        return after, diff
+            self._run_update_validators(after, diff)
+
+            logger.debug("Update completed with diff=%s", diff)
+
+            return after, diff
 
     # ....................... #
 
     def touch(self) -> tuple[Self, JsonDict]:
         """Update only ``last_update_at`` and return a new instance and diff."""
 
-        diff = {"last_update_at": utcnow()}
-        model_copy = self.model_copy(update=diff)
+        logger.debug("Touching %s", type(self).__qualname__)
+
+        with log_section():
+            diff = {"last_update_at": utcnow()}
+            model_copy = self.model_copy(update=diff)
+
+            logger.debug("Touch diff: %s", diff)
 
         return model_copy, diff
 
@@ -164,27 +238,38 @@ class Document(CoreModel):
         reconstructing state from history.
         """
 
-        old_state = old.model_dump(mode="json")
-        self_state = self.model_dump(mode="json")
-
-        old_upd_state = apply_dict_patch(old_state, data)
-
-        old_self_diff = calculate_dict_difference(old_state, self_state)
-        old_upd_diff = calculate_dict_difference(old_state, old_upd_state)
-
-        old_self_scalars, old_self_containers = split_touches_from_merge_patch(
-            old_self_diff
-        )
-        old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(
-            old_upd_diff
+        logger.debug(
+            "Validating historical consistency for %s with update keys=%s",
+            type(self).__qualname__,
+            tuple(data.keys()),
         )
 
-        return not has_hybrid_patch_conflict(
-            old_self_scalars,
-            old_self_containers,
-            old_upd_scalars,
-            old_upd_containers,
-        )
+        with log_section():
+            old_state = old.model_dump(mode="json")
+            self_state = self.model_dump(mode="json")
+
+            old_upd_state = apply_dict_patch(old_state, data)
+
+            old_self_diff = calculate_dict_difference(old_state, self_state)
+            old_upd_diff = calculate_dict_difference(old_state, old_upd_state)
+
+            old_self_scalars, old_self_containers = split_touches_from_merge_patch(
+                old_self_diff
+            )
+            old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(
+                old_upd_diff
+            )
+
+            has_conflict = has_hybrid_patch_conflict(
+                old_self_scalars,
+                old_self_containers,
+                old_upd_scalars,
+                old_upd_containers,
+            )
+
+            logger.debug("Historical consistency conflict=%s", has_conflict)
+
+        return not has_conflict
 
 
 # ....................... #

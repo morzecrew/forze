@@ -1,8 +1,9 @@
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 
+from forze.base.errors import CoreError
 from forze.base.primitives.uuid import (
     _hash_from_any,
     _uuid4_from_any,
@@ -11,7 +12,6 @@ from forze.base.primitives.uuid import (
     uuid7,
     uuid7_to_datetime,
 )
-
 
 # ----------------------- #
 # uuid7
@@ -34,7 +34,7 @@ class TestUuid7:
         assert u.version == 7
 
     def test_both_ms_and_ns_raises(self) -> None:
-        with pytest.raises(ValueError, match="only one"):
+        with pytest.raises(CoreError, match="only one"):
             uuid7(timestamp_ms=100, timestamp_ns=100)
 
     def test_zero_ms_returns_nil(self) -> None:
@@ -46,7 +46,7 @@ class TestUuid7:
         assert str(u) == "00000000-0000-0000-0000-000000000000"
 
     def test_negative_timestamp_raises(self) -> None:
-        with pytest.raises(ValueError, match="positive"):
+        with pytest.raises(CoreError, match="positive"):
             uuid7(timestamp_ns=-1)
 
     def test_float_timestamp_ms(self) -> None:
