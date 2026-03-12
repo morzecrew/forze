@@ -285,7 +285,8 @@ class PostgresDocumentAdapter(
         w = self._require_write()
         domain = await w.create(dto)
 
-        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+        # Repeat read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(domain.id)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
