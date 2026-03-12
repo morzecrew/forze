@@ -119,6 +119,7 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
+      issues: write
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -157,8 +158,8 @@ jobs:
           require_tests: true
           detailed_summary: true
           include_passed: false
-          comment: true
-          updateComment: true
+          comment: ${{ github.event.pull_request.head.repo.fork == false }}
+          updateComment: ${{ github.event.pull_request.head.repo.fork == false }}
           check_annotations: true
           fail_on_failure: false
   
