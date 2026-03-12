@@ -118,17 +118,15 @@ class ExecutionRuntime:
         """
 
         logger.debug("Entering execution runtime scope")
+        self.create_context()
 
-        with log_section():
-            self.create_context()
+        try:
+            await self.startup()
+            logger.debug("Execution runtime scope entered")
 
-            try:
-                await self.startup()
-                logger.debug("Execution runtime scope entered")
+            yield
 
-                yield
-
-            finally:
-                logger.debug("Leaving execution runtime scope")
-                await self.shutdown()
-                logger.debug("Execution runtime scope left")
+        finally:
+            logger.debug("Leaving execution runtime scope")
+            await self.shutdown()
+            logger.debug("Execution runtime scope left")
