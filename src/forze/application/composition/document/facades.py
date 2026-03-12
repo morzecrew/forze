@@ -25,8 +25,8 @@ from .operations import DocumentOperation
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
-tL = TypeVar("tL", bound=ListRequestDTO)
-rL = TypeVar("rL", bound=RawListRequestDTO)
+tL = TypeVar("tL", bound=ListRequestDTO, default=ListRequestDTO)
+rL = TypeVar("rL", bound=RawListRequestDTO, default=RawListRequestDTO)
 
 # ....................... #
 

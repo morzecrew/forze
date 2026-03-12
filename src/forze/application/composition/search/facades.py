@@ -18,8 +18,8 @@ from .operations import SearchOperation
 # ----------------------- #
 
 M = TypeVar("M", bound=BaseModel)
-tS = TypeVar("tS", bound=SearchRequestDTO)
-rS = TypeVar("rS", bound=RawSearchRequestDTO)
+tS = TypeVar("tS", bound=SearchRequestDTO, default=SearchRequestDTO)
+rS = TypeVar("rS", bound=RawSearchRequestDTO, default=RawSearchRequestDTO)
 
 # ....................... #
 
