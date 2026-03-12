@@ -59,13 +59,13 @@ jobs:
 
     steps:
       - name: Download package artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: python-package
           path: dist/
 
       - name: Publish package
-        uses: pypa/gh-action-pypi-publish@v1.13.0
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
 
   github-release:
     name: Create GitHub Release
@@ -88,13 +88,13 @@ jobs:
       
       - name: Get Changelog Entry
         id: changelog
-        uses: mindsers/changelog-reader-action@v2.2.3
+        uses: mindsers/changelog-reader-action@32aa5b4c155d76c94e4ec883a223c947b2f02656 # v2.2.3
         with:
           version: ${{ steps.ver.outputs.version }}
           path: ./CHANGELOG.md
       
       - name: Create GitHub Release (no files)
-        uses: softprops/action-gh-release@v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           body: |
             ## Changelog
