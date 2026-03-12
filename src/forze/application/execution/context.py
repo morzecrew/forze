@@ -6,6 +6,7 @@ convenience methods (:meth:`doc`, :meth:`counter`, :meth:`txmanager`,
 dependency cycle detection.
 """
 
+import logging
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
@@ -14,6 +15,7 @@ from typing import Any, AsyncIterator, Iterator, Optional, final
 import attrs
 
 from forze.base.errors import CoreError
+from forze.base.logging import log_section
 
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
@@ -30,6 +32,10 @@ from ..contracts.storage import StorageDepKey, StoragePort
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPort
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 
 @final
@@ -73,6 +79,7 @@ class ExecutionContext:
 
         Returns ``None`` when no transaction is active.
         """
+
         return self.__tx_handle.get()
 
     # ....................... #
@@ -84,42 +91,59 @@ class ExecutionContext:
         Nested calls reuse the same transaction (savepoints when supported).
         Raises :exc:`CoreError` on scope mismatch (e.g. different tx manager).
         """
-        tx = self.txmanager()
 
-        scope = tx.scope_key()
-        depth = self.__tx_depth.get()
-        cur = self.__tx_handle.get()
+        logger.debug("Entering transaction scope")
 
-        if depth > 0:
-            if (  # protect against different kind (implementations) of tx opened simultaneously
-                cur is None or cur.scope != scope
-            ):
-                raise CoreError(
-                    f"Nested tx scope mismatch: active={cur.scope.name if cur else None} "
-                    f"requested={scope.name}"
-                )
+        with log_section():
+            tx = self.txmanager()
 
-            token_d = self.__tx_depth.set(depth + 1)
+            scope = tx.scope_key()
+            depth = self.__tx_depth.get()
+            cur = self.__tx_handle.get()
+
+            logger.debug(
+                "Transaction state: requested_scope=%s depth=%d active_scope=%s",
+                scope.name,
+                depth,
+                cur.scope.name if cur else None,
+            )
+
+            if depth > 0:
+                if (  # protect against different kind (implementations) of tx opened simultaneously
+                    cur is None or cur.scope != scope
+                ):
+                    raise CoreError(
+                        f"Nested tx scope mismatch: active={cur.scope.name if cur else None} "
+                        f"requested={scope.name}"
+                    )
+
+                token_d = self.__tx_depth.set(depth + 1)
+
+                try:
+                    logger.debug("Reusing nested transaction scope %s", scope.name)
+
+                    async with tx.transaction():
+                        yield
+
+                finally:
+                    self.__tx_depth.reset(token_d)
+                    logger.debug("Leaving nested transaction scope %s", scope.name)
+
+                return
+
+            token_h = self.__tx_handle.set(TxHandle(scope=scope))
+            token_d = self.__tx_depth.set(1)
 
             try:
+                logger.debug("Starting root transaction scope %s", scope.name)
+
                 async with tx.transaction():
                     yield
 
             finally:
+                self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
-
-            return
-
-        token_h = self.__tx_handle.set(TxHandle(scope=scope))
-        token_d = self.__tx_depth.set(1)
-
-        try:
-            async with tx.transaction():
-                yield
-
-        finally:
-            self.__tx_handle.reset(token_h)
-            self.__tx_depth.reset(token_d)
+                logger.debug("Leaving root transaction scope %s", scope.name)
 
     # ....................... #
 
@@ -141,6 +165,12 @@ class ExecutionContext:
     def __resolving(self, key: DepKey[Any]) -> Iterator[None]:
         stack = self.__resolve_stack.get()
 
+        logger.debug(
+            "Resolving dependency %s (depth=%d)",
+            key.name,
+            len(stack),
+        )
+
         if key in stack:
             chain = " -> ".join(k.name for k in (*stack, key))
             raise CoreError(f"Dependency cycle detected: {chain}")
@@ -148,10 +178,12 @@ class ExecutionContext:
         token = self.__resolve_stack.set(stack + (key,))
 
         try:
-            yield
+            with log_section():
+                yield
 
         finally:
             self.__resolve_stack.reset(token)
+            logger.debug("Finished resolving dependency %s", key.name)
 
     # ....................... #
 
@@ -162,8 +194,16 @@ class ExecutionContext:
         :returns: Resolved instance.
         :raises CoreError: If the dependency is not registered or a cycle is detected.
         """
+
         with self.__resolving(key):
-            return self.deps.provide(key)
+            dep = self.deps.provide(key)
+            logger.debug(
+                "Resolved dependency %s -> %s",
+                key.name,
+                type(dep).__qualname__,
+            )
+
+            return dep
 
     # ....................... #
     # Convenient namespace methods for resolving ports
@@ -178,6 +218,11 @@ class ExecutionContext:
         :returns: Document port instance.
         """
 
+        logger.debug(
+            "Resolving document read port for namespace %s",
+            spec.namespace,
+        )
+
         cache = None
 
         if spec.cache is not None and spec.cache.get("enabled", False):
@@ -185,10 +230,21 @@ class ExecutionContext:
                 namespace=spec.namespace,
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
+            logger.debug(
+                "Resolving cache for document read namespace %s with ttl=%s",
+                spec.namespace,
+                cache_spec.ttl,
+            )
             cache = self.cache(cache_spec)
 
         dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
+
+        logger.debug(
+            "Resolved document read port for namespace %s -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
+        )
 
         return dep
 
@@ -204,6 +260,11 @@ class ExecutionContext:
         :returns: Document port instance.
         """
 
+        logger.debug(
+            "Resolving document write port for namespace %s",
+            spec.namespace,
+        )
+
         cache = None
 
         if spec.cache is not None and spec.cache.get("enabled", False):
@@ -211,10 +272,21 @@ class ExecutionContext:
                 namespace=spec.namespace,
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
+            logger.debug(
+                "Resolving cache for document write namespace %s with ttl=%s",
+                spec.namespace,
+                cache_spec.ttl,
+            )
             cache = self.cache(cache_spec)
 
         dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
+
+        logger.debug(
+            "Resolved document write port for namespace %s -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
+        )
 
         return dep
 
@@ -227,6 +299,8 @@ class ExecutionContext:
         :returns: Cache port instance.
         """
 
+        logger.debug("Resolving cache port for namespace %s", spec.namespace)
+
         return self.dep(CacheDepKey)(self, spec)
 
     # ....................... #
@@ -238,12 +312,16 @@ class ExecutionContext:
         :returns: Counter port instance.
         """
 
+        logger.debug("Resolving counter port for namespace %s", namespace)
+
         return self.dep(CounterDepKey)(self, namespace)
 
     # ....................... #
 
     def txmanager(self) -> TxManagerPort:
         """Resolve the transaction manager port."""
+
+        logger.debug("Resolving transaction manager port")
 
         return self.dep(TxManagerDepKey)(self)
 
@@ -256,11 +334,15 @@ class ExecutionContext:
         :returns: Storage port instance.
         """
 
+        logger.debug("Resolving storage port for bucket %s", bucket)
+
         return self.dep(StorageDepKey)(self, bucket)
 
     # ....................... #
 
     def search(self, spec: SearchSpec[Any]) -> SearchReadPort[Any]:
         """Resolve a search port."""
+
+        logger.debug("Resolving search port")
 
         return self.dep(SearchReadDepKey)(self, spec)

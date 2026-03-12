@@ -6,13 +6,20 @@ concrete implementations: :class:`GuardMiddleware`, :class:`EffectMiddleware`,
 effects after.
 """
 
+import logging
 from typing import Awaitable, Callable, Protocol, Self
 
 import attrs
 
+from forze.base.logging import log_section
+
 from .context import ExecutionContext
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 type NextCall[Args, R] = Callable[[Args], Awaitable[R]]
 """Next middleware or usecase in the chain."""
@@ -65,8 +72,16 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        await self.guard(args)
-        return await next(args)
+        logger.debug("Entering guard middleware %s", type(self.guard).__qualname__)
+
+        with log_section():
+            await self.guard(args)
+            logger.debug("Guard %s passed", type(self.guard).__qualname__)
+            result = await next(args)
+
+        logger.debug("Leaving guard middleware %s", type(self.guard).__qualname__)
+
+        return result
 
 
 # ....................... #
@@ -82,8 +97,16 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        res = await next(args)
-        return await self.effect(args, res)
+        logger.debug("Entering effect middleware %s", type(self.effect).__qualname__)
+
+        with log_section():
+            res = await next(args)
+            logger.debug("Running effect %s", type(self.effect).__qualname__)
+            res = await self.effect(args, res)
+
+        logger.debug("Leaving effect middleware %s", type(self.effect).__qualname__)
+
+        return res
 
 
 # ....................... #
@@ -112,15 +135,40 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
         :param effects: Effects to append.
         :returns: New middleware instance.
         """
+
+        logger.debug(
+            "Appending %d after-commit effect(s) to %s",
+            len(effects),
+            type(self).__qualname__,
+        )
+
         return attrs.evolve(self, after_commit=(*self.after_commit, *effects))
 
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        async with self.ctx.transaction():
-            res = await next(args)
+        logger.debug(
+            "Entering transaction middleware with %d after-commit effect(s)",
+            len(self.after_commit),
+        )
 
-        for eff in self.after_commit:
-            res = await eff(args, res)
+        with log_section():
+            async with self.ctx.transaction():
+                res = await next(args)
+
+            if self.after_commit:
+                logger.debug(
+                    "Running %d after-commit effect(s)", len(self.after_commit)
+                )
+
+                with log_section():
+                    for eff in self.after_commit:
+                        logger.debug(
+                            "Running after-commit effect %s",
+                            type(eff).__qualname__,
+                        )
+                        res = await eff(args, res)
+
+        logger.debug("Leaving transaction middleware")
 
         return res

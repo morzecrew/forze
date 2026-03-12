@@ -5,17 +5,23 @@ and attach :class:`UsecasePlan` middleware composition. :meth:`resolve` builds
 a fully composed usecase for an operation.
 """
 
+import logging
 from typing import Any, Callable, Literal, Optional, Self, final, overload
 
 import attrs
 
 from forze.base.errors import CoreError
+from forze.base.logging import log_section
 
 from .context import ExecutionContext
 from .plan import OpKey, UsecasePlan
 from .usecase import Usecase
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 UsecaseFactory = Callable[[ExecutionContext], Usecase[Any, Any]]
 """Factory that builds a usecase from execution context."""
@@ -82,6 +88,13 @@ class UsecaseRegistry:
 
         op = str(op)
 
+        logger.debug(
+            "Registering usecase factory for operation %s (inplace=%s, factory_id=%s)",
+            op,
+            inplace,
+            id(factory),
+        )
+
         if op in self.defaults:
             raise CoreError(
                 f"Usecase factory is already registered for operation: {op}"
@@ -92,10 +105,12 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
+            logger.debug("Registered factory in place for operation %s", op)
             return None
 
         else:
             new_instance = type(self)(defaults=new)
+            logger.debug("Registered factory immutably for operation %s", op)
             return new_instance
 
     # ....................... #
@@ -142,6 +157,13 @@ class UsecaseRegistry:
 
         op = str(op)
 
+        logger.debug(
+            "Overriding usecase factory for operation %s (inplace=%s, factory_id=%s)",
+            op,
+            inplace,
+            id(factory),
+        )
+
         if op not in self.defaults:
             raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
@@ -150,10 +172,12 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
+            logger.debug("Overrode factory in place for operation %s", op)
             return None
 
         else:
             new_instance = type(self)(defaults=new)
+            logger.debug("Overrode factory immutably for operation %s", op)
             return new_instance
 
     # ....................... #
@@ -203,23 +227,34 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        already_registered = set(self.defaults.keys()).intersection(ops.keys())
+        logger.debug(
+            "Registering %d usecase factory(s) (inplace=%s)",
+            len(ops),
+            inplace,
+        )
 
-        if already_registered:
-            raise CoreError(
-                f"Usecase factories are already registered for operations: {already_registered}"
-            )
+        with log_section():
+            logger.debug("Operations: %s", tuple(ops.keys()))
 
-        new = dict(self.defaults)
-        new.update(ops)
+            already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
-        if inplace:
-            self.defaults = new
-            return None
+            if already_registered:
+                raise CoreError(
+                    f"Usecase factories are already registered for operations: {already_registered}"
+                )
 
-        else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            new = dict(self.defaults)
+            new.update(ops)
+
+            if inplace:
+                self.defaults = new
+                logger.debug("Registered %d factory(s) in place", len(ops))
+                return None
+
+            else:
+                new_instance = type(self)(defaults=new)
+                logger.debug("Registered %d factory(s) immutably", len(ops))
+                return new_instance
 
     # ....................... #
 
@@ -271,23 +306,34 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
+        logger.debug(
+            "Overriding %d usecase factory(s) (inplace=%s)",
+            len(ops),
+            inplace,
+        )
 
-        if not_yet_registered:
-            raise CoreError(
-                f"Usecase factories are not registered for operations: {not_yet_registered}"
-            )
+        with log_section():
+            logger.debug("Operations: %s", tuple(ops.keys()))
 
-        new = dict(self.defaults)
-        new.update(ops)
+            not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
-        if inplace:
-            self.defaults = new
-            return None
+            if not_yet_registered:
+                raise CoreError(
+                    f"Usecase factories are not registered for operations: {not_yet_registered}"
+                )
 
-        else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            new = dict(self.defaults)
+            new.update(ops)
+
+            if inplace:
+                self.defaults = new
+                logger.debug("Overrode %d factory(s) in place", len(ops))
+                return None
+
+            else:
+                new_instance = type(self)(defaults=new)
+                logger.debug("Overrode %d factory(s) immutably", len(ops))
+                return new_instance
 
     # ....................... #
 
@@ -333,17 +379,28 @@ class UsecaseRegistry:
         :param inplace: When ``True``, mutate the registry in place.
         """
 
-        merged = UsecasePlan.merge(self.__plan, extra)
+        logger.debug(
+            "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
+            inplace,
+            len(extra.ops),
+        )
 
-        if inplace:
-            self.__plan = merged
-            return None
+        with log_section():
+            merged = UsecasePlan.merge(self.__plan, extra)
+            logger.debug("Merged plan contains %d operation(s)", len(merged.ops))
 
-        else:
-            new_instance = type(self)(defaults=self.defaults)
-            new_instance.__plan = merged
+            if inplace:
+                self.__plan = merged
+                logger.debug("Extended registry plan in place")
 
-            return new_instance
+                return None
+
+            else:
+                new_instance = type(self)(defaults=self.defaults)
+                new_instance.__plan = merged
+                logger.debug("Extended registry plan immutably")
+
+                return new_instance
 
     # ....................... #
 
@@ -375,13 +432,37 @@ class UsecaseRegistry:
         :raises CoreError: If op is not registered.
         """
         op = str(op)
-        factory = self.defaults.get(op)
 
-        if not factory:
-            raise CoreError(f"Usecase factory is not registered for operation: {op}")
+        logger.debug(
+            "Resolving usecase for operation %s with context %s (debug_plan=%s)",
+            op,
+            type(ctx).__qualname__,
+            debug_plan,
+        )
 
-        if debug_plan:
-            explain = self.__plan.explain(op)
-            print(explain.pretty_format())
+        with log_section():
+            factory = self.defaults.get(op)
 
-        return self.__plan.resolve(op, ctx, factory)
+            if not factory:
+                raise CoreError(
+                    f"Usecase factory is not registered for operation: {op}"
+                )
+
+            logger.debug(
+                "Found factory for operation %s (factory_id=%s)", op, id(factory)
+            )
+
+            if debug_plan:
+                logger.debug("Generating plan explanation for operation %s", op)
+                explain = self.__plan.explain(op)
+                print(explain.pretty_format())
+
+            resolved = self.__plan.resolve(op, ctx, factory)
+
+            logger.debug(
+                "Resolved usecase for operation %s into %s",
+                op,
+                type(resolved).__qualname__,
+            )
+
+        return resolved

@@ -8,6 +8,7 @@ into composed usecases via :class:`UsecaseRegistry`.
 
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from forze.base.errors import CoreError
 from forze.base.introspection import get_callable_module, get_callable_name
+from forze.base.logging import log_section
 
 from .context import ExecutionContext
 from .middleware import (
@@ -29,6 +31,10 @@ from .middleware import (
 from .usecase import Usecase
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 U = TypeVar("U", bound=Usecase[Any, Any])
 
@@ -180,10 +186,22 @@ class OperationPlan:
         :returns: New plan instance.
         :raises CoreError: If bucket is invalid.
         """
+
+        logger.debug(
+            "Adding middleware spec to bucket %s (priority=%s, factory_id=%s)",
+            bucket,
+            spec.priority,
+            id(spec.factory),
+        )
+
         if not hasattr(self, bucket):
             raise CoreError(f"Invalid bucket: {bucket}")
 
         cur = getattr(self, bucket)
+
+        with log_section():
+            logger.debug("Current bucket size: %d", len(cur))
+
         return attrs.evolve(self, **{bucket: (*cur, spec)})  # type: ignore[arg-type, misc]
 
     # ....................... #
@@ -193,15 +211,31 @@ class OperationPlan:
 
         :raises CoreError: If in-tx or after-commit buckets are used without tx.
         """
-        if (
-            self.in_tx_before
-            or self.in_tx_after
-            or self.in_tx_wrap
-            or self.after_commit
-        ) and not self.tx:
-            raise CoreError(
-                "Operation plan uses IN_TX_* middlewares but tx() is not enabled"
+
+        logger.debug("Validating operation plan (tx=%s)", self.tx)
+
+        with log_section():
+            logger.debug(
+                "Bucket sizes: outer_before=%d outer_wrap=%d outer_after=%d "
+                "in_tx_before=%d in_tx_wrap=%d in_tx_after=%d after_commit=%d",
+                len(self.outer_before),
+                len(self.outer_wrap),
+                len(self.outer_after),
+                len(self.in_tx_before),
+                len(self.in_tx_wrap),
+                len(self.in_tx_after),
+                len(self.after_commit),
             )
+
+            if (
+                self.in_tx_before
+                or self.in_tx_after
+                or self.in_tx_wrap
+                or self.after_commit
+            ) and not self.tx:
+                raise CoreError(
+                    "Operation plan uses IN_TX_* middlewares but tx() is not enabled"
+                )
 
     # ....................... #
 
@@ -232,15 +266,26 @@ class OperationPlan:
         seen: set[tuple[int, int]] = set()
         out: list[MiddlewareSpec] = []
 
+        logger.debug("Deduplicating bucket %s (%d spec(s))", bucket, len(cur))
+
         for s in cur:
             k = (id(s.factory), s.priority)
+
             if k in seen:
+                logger.debug(
+                    "Skipping duplicate middleware in bucket %s (priority=%s, factory_id=%s)",
+                    bucket,
+                    s.priority,
+                    id(s.factory),
+                )
                 continue
 
             seen.add(k)
             out.append(s)
 
         self.__ensure_no_collisions(out, bucket=bucket)
+
+        logger.debug("Deduplicated bucket %s to %d spec(s)", bucket, len(out))
 
         return tuple(out)
 
@@ -265,9 +310,20 @@ class OperationPlan:
         :param bucket: Bucket name.
         :returns: Ordered specs.
         """
-        deduped_specs = self.__dedupe(bucket)
 
-        return self.__sort(deduped_specs, reverse=True)
+        logger.debug("Building operation plan bucket %s", bucket)
+
+        with log_section():
+            deduped_specs = self.__dedupe(bucket)
+            built = self.__sort(deduped_specs, reverse=True)
+
+            logger.debug(
+                "Built bucket %s with priorities=%s",
+                bucket,
+                tuple(s.priority for s in built),
+            )
+
+        return built
 
     # ....................... #
 
@@ -279,19 +335,38 @@ class OperationPlan:
         :returns: A new :class:`OperationPlan` with combined operations.
         """
 
-        acc: OperationPlan = OperationPlan()
+        logger.debug("Merging %d operation plan(s)", len(plans))
 
-        for plan in plans:
-            acc = OperationPlan(
-                tx=acc.tx or plan.tx,
-                outer_before=(*acc.outer_before, *plan.outer_before),
-                outer_wrap=(*acc.outer_wrap, *plan.outer_wrap),
-                outer_after=(*acc.outer_after, *plan.outer_after),
-                in_tx_before=(*acc.in_tx_before, *plan.in_tx_before),
-                in_tx_wrap=(*acc.in_tx_wrap, *plan.in_tx_wrap),
-                in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
-                after_commit=(*acc.after_commit, *plan.after_commit),
-            )
+        with log_section():
+            acc: OperationPlan = OperationPlan()
+
+            for i, plan in enumerate(plans, 1):
+                logger.debug(
+                    "Merging plan #%d (tx=%s, outer_before=%d, outer_wrap=%d, outer_after=%d, "
+                    "in_tx_before=%d, in_tx_wrap=%d, in_tx_after=%d, after_commit=%d)",
+                    i,
+                    plan.tx,
+                    len(plan.outer_before),
+                    len(plan.outer_wrap),
+                    len(plan.outer_after),
+                    len(plan.in_tx_before),
+                    len(plan.in_tx_wrap),
+                    len(plan.in_tx_after),
+                    len(plan.after_commit),
+                )
+
+                acc = OperationPlan(
+                    tx=acc.tx or plan.tx,
+                    outer_before=(*acc.outer_before, *plan.outer_before),
+                    outer_wrap=(*acc.outer_wrap, *plan.outer_wrap),
+                    outer_after=(*acc.outer_after, *plan.outer_after),
+                    in_tx_before=(*acc.in_tx_before, *plan.in_tx_before),
+                    in_tx_wrap=(*acc.in_tx_wrap, *plan.in_tx_wrap),
+                    in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
+                    after_commit=(*acc.after_commit, *plan.after_commit),
+                )
+
+            logger.debug("Merged operation plan tx=%s", acc.tx)
 
         return acc
 
@@ -328,7 +403,18 @@ class UsecasePlan:
         return attrs.evolve(self, ops=new_ops)
 
     def _add(self, op: OpKey, bucket: PlanBucket, spec: MiddlewareSpec) -> Self:
-        cur = self._op(op)
+        logger.debug(
+            "Adding middleware to usecase plan (op=%s, bucket=%s, priority=%s, factory_id=%s)",
+            op,
+            bucket,
+            spec.priority,
+            id(spec.factory),
+        )
+
+        with log_section():
+            cur = self._op(op)
+            logger.debug("Current operation tx=%s", cur.tx)
+
         return self._put(op, cur.add(bucket, spec))
 
     # ....................... #
@@ -339,7 +425,10 @@ class UsecasePlan:
         :param op: Operation key.
         :returns: New plan instance.
         """
+
+        logger.debug("Enabling transaction for operation %s", op)
         cur = self._op(op)
+
         return self._put(op, attrs.evolve(cur, tx=True))
 
     # ....................... #
@@ -471,51 +560,89 @@ class UsecasePlan:
         """
         op = str(op)
 
+        logger.debug(
+            "Resolving usecase plan for operation %s with context %s",
+            op,
+            type(ctx).__qualname__,
+        )
+
         if op == WILDCARD or op.endswith(WILDCARD):
             raise CoreError(f"Resolve on wildcard operation `{op}` is not allowed")
 
-        plan = OperationPlan.merge(self._base(), self._op(op))
-        plan.validate()
+        with log_section():
+            plan = OperationPlan.merge(self._base(), self._op(op))
+            plan.validate()
 
-        outer_before = plan.build("outer_before")
-        outer_wrap = plan.build("outer_wrap")
-        outer_after = plan.build("outer_after")
+            outer_before = plan.build("outer_before")
+            outer_wrap = plan.build("outer_wrap")
+            outer_after = plan.build("outer_after")
 
-        in_tx_before = plan.build("in_tx_before")
-        in_tx_wrap = plan.build("in_tx_wrap")
-        in_tx_after = plan.build("in_tx_after")
+            in_tx_before = plan.build("in_tx_before")
+            in_tx_wrap = plan.build("in_tx_wrap")
+            in_tx_after = plan.build("in_tx_after")
 
-        after_commit = plan.build("after_commit")
-        after_commit_effects: list[Effect[Any, Any]] = []
+            after_commit = plan.build("after_commit")
 
-        for s in after_commit:
-            mw = s.factory(ctx)
-
-            if not isinstance(mw, EffectMiddleware):
-                raise CoreError(f"Expected EffectMiddleware, got {type(mw)}")
-
-            after_commit_effects.append(mw.effect)
-
-        chain: list[Middleware[Any, Any]] = []
-
-        chain.extend(s.factory(ctx) for s in outer_before)
-        chain.extend(s.factory(ctx) for s in outer_wrap)
-
-        if plan.tx:
-            chain.append(
-                TxMiddleware[Any, Any](ctx=ctx).with_after_commit(*after_commit_effects)
+            logger.debug(
+                "Built plan for %s: tx=%s outer_before=%d outer_wrap=%d outer_after=%d "
+                "in_tx_before=%d in_tx_wrap=%d in_tx_after=%d after_commit=%d",
+                op,
+                plan.tx,
+                len(outer_before),
+                len(outer_wrap),
+                len(outer_after),
+                len(in_tx_before),
+                len(in_tx_wrap),
+                len(in_tx_after),
+                len(after_commit),
             )
-            chain.extend(s.factory(ctx) for s in in_tx_before)
-            chain.extend(s.factory(ctx) for s in in_tx_wrap)
-            chain.extend(s.factory(ctx) for s in in_tx_after)
 
-        chain.extend(s.factory(ctx) for s in outer_after)
+            after_commit_effects: list[Effect[Any, Any]] = []
 
-        uc = factory(ctx)
+            for s in after_commit:
+                mw = s.factory(ctx)
 
-        return uc.with_middlewares(*chain)
+                logger.debug(
+                    "Built after_commit middleware %s from factory_id=%s",
+                    type(mw).__qualname__,
+                    id(s.factory),
+                )
+
+                if not isinstance(mw, EffectMiddleware):
+                    raise CoreError(f"Expected EffectMiddleware, got {type(mw)}")
+
+                after_commit_effects.append(mw.effect)
+
+            chain: list[Middleware[Any, Any]] = []
+
+            chain.extend(s.factory(ctx) for s in outer_before)
+            chain.extend(s.factory(ctx) for s in outer_wrap)
+
+            if plan.tx:
+                chain.append(
+                    TxMiddleware[Any, Any](ctx=ctx).with_after_commit(
+                        *after_commit_effects
+                    )
+                )
+                chain.extend(s.factory(ctx) for s in in_tx_before)
+                chain.extend(s.factory(ctx) for s in in_tx_wrap)
+                chain.extend(s.factory(ctx) for s in in_tx_after)
+
+            chain.extend(s.factory(ctx) for s in outer_after)
+            logger.debug(
+                "Constructed middleware chain with %d middleware(s)", len(chain)
+            )
+
+            uc = factory(ctx)
+            logger.debug("Built usecase instance %s", type(uc).__qualname__)
+
+            resolved = uc.with_middlewares(*chain)
+            logger.debug("Applied middleware chain to %s", type(uc).__qualname__)
+
+        return resolved
 
     # ....................... #
+    #! Redundant method if we have logging with indentation
 
     def explain(self, op: OpKey) -> _Explain:
         """Return a human-readable explanation of the middleware chain for an op.
@@ -593,11 +720,21 @@ class UsecasePlan:
         :param plans: Plans to merge.
         :returns: Merged plan.
         """
-        acc: dict[str, OperationPlan] = {}
 
-        for p in plans:
-            for op, pl in p.ops.items():
-                cur = acc.get(op, OperationPlan())
-                acc[op] = OperationPlan.merge(cur, pl)
+        logger.debug("Merging %d usecase plan(s)", len(plans))
+
+        with log_section():
+            acc: dict[str, OperationPlan] = {}
+
+            for i, p in enumerate(plans, 1):
+                logger.debug("Merging usecase plan #%d with %d op(s)", i, len(p.ops))
+
+                for op, pl in p.ops.items():
+                    logger.debug("Merging operation %s", op)
+
+                    cur = acc.get(op, OperationPlan())
+                    acc[op] = OperationPlan.merge(cur, pl)
+
+                logger.debug("Merged usecase plan contains %d op(s)", len(acc))
 
         return cls(ops=acc)

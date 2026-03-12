@@ -1,10 +1,12 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, final
 
 import attrs
 
+from forze.base.logging import log_section
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
@@ -12,6 +14,10 @@ from .deps import DepsPlan
 from .lifecycle import LifecyclePlan
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 
 @final
@@ -56,14 +62,30 @@ class ExecutionRuntime:
         Builds deps via :meth:`DepsPlan.build` and stores the context.
         Idempotent within a scope; raises if context already exists.
         """
-        ctx = ExecutionContext(deps=self.deps.build())
-        self.__ctx.set_once(ctx)
+
+        logger.debug("Creating execution context")
+
+        with log_section():
+            deps = self.deps.build()
+            logger.debug("Built dependency container")
+
+            ctx = ExecutionContext(deps=deps)
+            self.__ctx.set_once(ctx)
+
+            logger.debug("Execution context created")
 
     # ....................... #
 
     async def startup(self) -> None:
         """Run lifecycle startup hooks with the current context."""
-        await self.lifecycle.startup(self.__ctx.get())
+
+        logger.debug("Starting execution runtime")
+
+        with log_section():
+            ctx = self.__ctx.get()
+            await self.lifecycle.startup(ctx)
+
+            logger.debug("Execution runtime started")
 
     # ....................... #
 
@@ -73,11 +95,17 @@ class ExecutionRuntime:
         Shutdown runs in reverse order of startup. Context is reset in a
         ``finally`` block so it is cleared even if shutdown raises.
         """
-        try:
-            await self.lifecycle.shutdown(self.__ctx.get())
 
-        finally:
-            self.__ctx.reset()
+        logger.debug("Shutting down execution runtime")
+
+        with log_section():
+            try:
+                await self.lifecycle.shutdown(self.__ctx.get())
+                logger.debug("Execution runtime lifecycle shutdown completed")
+
+            finally:
+                self.__ctx.reset()
+                logger.debug("Execution context reset")
 
     # ....................... #
 
@@ -88,11 +116,19 @@ class ExecutionRuntime:
         Use as an async context manager. On entry: create context, run startup.
         On exit: run shutdown, reset context.
         """
-        self.create_context()
 
-        try:
-            await self.startup()
-            yield
+        logger.debug("Entering execution runtime scope")
 
-        finally:
-            await self.shutdown()
+        with log_section():
+            self.create_context()
+
+            try:
+                await self.startup()
+                logger.debug("Execution runtime scope entered")
+
+                yield
+
+            finally:
+                logger.debug("Leaving execution runtime scope")
+                await self.shutdown()
+                logger.debug("Execution runtime scope left")

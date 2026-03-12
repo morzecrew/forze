@@ -4,15 +4,21 @@ Provides :class:`Deps` (in-memory container implementing :class:`DepsPort`),
 :class:`DepsModule` protocol, and :class:`DepsPlan` for declarative assembly.
 """
 
+import logging
 from typing import Any, Protocol, Self, TypeVar, cast, final
 
 import attrs
 
 from forze.base.errors import CoreError
+from forze.base.logging import log_section
 
 from ..contracts.deps import DepKey, DepsPort
 
 # ----------------------- #
+
+logger = logging.getLogger(__name__)
+
+# ....................... #
 
 T = TypeVar("T")
 
@@ -37,10 +43,14 @@ class Deps(DepsPort):
         :raises CoreError: If the dependency is not registered.
         """
 
+        logger.debug("Providing dependency %s", key.name)
+
         dep = self.deps.get(key)
 
         if not dep:
             raise CoreError(f"Dependency {key.name} not found")
+
+        logger.debug("Provided dependency %s -> %s", key.name, type(dep).__qualname__)
 
         return cast(T, dep)
 
@@ -61,16 +71,28 @@ class Deps(DepsPort):
         :returns: New container with all dependencies.
         :raises CoreError: If any key is registered in more than one container.
         """
-        acc: dict[DepKey[Any], Any] = {}
 
-        for d in deps:
-            overlap = set(acc.keys()).intersection(d.deps.keys())
+        logger.debug("Merging %d dependency container(s)", len(deps))
 
-            if overlap:
-                names = ", ".join(k.name for k in overlap)
-                raise CoreError(f"Conflicting dependencies: {names}")
+        with log_section():
+            acc: dict[DepKey[Any], Any] = {}
 
-            acc.update(d.deps)
+            for i, d in enumerate(deps, 1):
+                logger.debug(
+                    "Merging container #%d with %d dependency(ies)",
+                    i,
+                    len(d.deps),
+                )
+
+                overlap = set(acc.keys()).intersection(d.deps.keys())
+
+                if overlap:
+                    names = ", ".join(k.name for k in overlap)
+                    raise CoreError(f"Conflicting dependencies: {names}")
+
+                acc.update(d.deps)
+
+            logger.debug("Merged dependency container has %d dependency(ies)", len(acc))
 
         return cls(deps=acc)
 
@@ -82,6 +104,9 @@ class Deps(DepsPort):
         :param key: Key to remove.
         :returns: New container without the key.
         """
+
+        logger.debug("Removing dependency %s from container copy", key.name)
+
         new = dict(self.deps)
         new.pop(key)
 
@@ -91,6 +116,7 @@ class Deps(DepsPort):
 
     def empty(self) -> bool:
         """Return ``True`` if the dependency container is empty."""
+
         return len(self.deps) == 0
 
 
@@ -135,6 +161,7 @@ class DepsPlan:
         :param modules: Modules to include.
         :returns: New plan instance.
         """
+
         return cls(modules=modules)
 
     # ....................... #
@@ -145,6 +172,13 @@ class DepsPlan:
         :param modules: Modules to append.
         :returns: New plan instance.
         """
+
+        logger.debug(
+            "Appending %d module(s) to deps plan with %d existing module(s)",
+            len(modules),
+            len(self.modules),
+        )
+
         return attrs.evolve(self, modules=(*self.modules, *modules))
 
     # ....................... #
@@ -155,7 +189,34 @@ class DepsPlan:
         :returns: Merged :class:`Deps` instance.
         :raises CoreError: If any module registers a conflicting key.
         """
-        if not self.modules:
-            return Deps()
 
-        return Deps.merge(*(m() for m in self.modules))
+        logger.debug(
+            "Building dependency container from %d module(s)", len(self.modules)
+        )
+
+        with log_section():
+            if not self.modules:
+                logger.debug("Deps plan is empty; returning empty container")
+                return Deps()
+
+            built: list[Deps] = []
+
+            for i, module in enumerate(self.modules, 1):
+                logger.debug("Building deps module #%d", i)
+
+                with log_section():
+                    deps = module()
+                    logger.debug(
+                        "Built deps module #%d with %d dependency(ies)",
+                        i,
+                        len(deps.deps),
+                    )
+                    built.append(deps)
+
+            merged = Deps.merge(*built)
+            logger.debug(
+                "Built merged dependency container with %d dependency(ies)",
+                len(merged.deps),
+            )
+
+        return merged

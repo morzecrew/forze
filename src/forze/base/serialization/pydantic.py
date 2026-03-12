@@ -181,10 +181,6 @@ def pydantic_model_hash(
         raw = orjson.dumps(norm_data, option=orjson.OPT_SORT_KEYS)
         digest = hashlib.sha256(raw).hexdigest()
 
-        logger.debug(
-            "Hash calculated for %s: %s",
-            type(model).__name__,
-            digest[:8] + "...",
-        )
+        logger.debug("Hash calculated for %s: %s", type(model).__name__, digest)
 
     return digest
