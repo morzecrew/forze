@@ -68,12 +68,6 @@ fetch-dependencies:
 # ----------------------- #
 # CI
 
-# Run tests
-test *args='':
-    {{ _uv_sync }}
-
-    uv run pytest {{ args }}
-
 # Run fast tests
 test-fast *args='':
     {{ _uv_sync }}

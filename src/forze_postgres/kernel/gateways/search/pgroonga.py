@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Optional, Sequence, TypeVar, overload
+from typing import Any, Final, Optional, Sequence, TypeVar, overload
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -23,6 +23,7 @@ from .base import PostgresSearchGateway
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+_TABLE_ALIAS: Final[str] = "t"
 
 # ....................... #
 
@@ -160,8 +161,11 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     def _pgroonga_order(
         self,
         sorts: Optional[QuerySortExpression] = None,  # type: ignore[valid-type]
+        table_alias: str = _TABLE_ALIAS,
     ) -> sql.Composable:
-        parts: list[sql.Composable] = [sql.SQL("pgroonga_score(tableoid, ctid) DESC")]
+        parts: list[sql.Composable] = [
+            sql.SQL("pgroonga_score({}) DESC").format(sql.Identifier(table_alias))
+        ]
 
         if sorts:
             for field, order in sorts.items():
@@ -249,7 +253,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         where, params = await self._where_clause(query, filters, options=options)
-        order = self._pgroonga_order(sorts)
+        order = self._pgroonga_order(sorts, table_alias=_TABLE_ALIAS)
 
         # total
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
@@ -264,10 +268,11 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
         # rows
         stmt = sql.SQL(
-            "SELECT {cols} FROM {table} WHERE {where} ORDER BY {order}"
+            "SELECT {cols} FROM {table} {table_alias} WHERE {where} ORDER BY {order}"
         ).format(
             cols=self.return_clause(return_model, return_fields),
             table=self.qname.ident(),
+            table_alias=sql.Identifier(_TABLE_ALIAS),
             where=where,
             order=order,
         )

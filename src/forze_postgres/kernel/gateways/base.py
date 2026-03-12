@@ -150,6 +150,7 @@ class PostgresGateway[M: BaseModel]:
         sorts: Optional[QuerySortExpression] = None,
     ) -> sql.Composable:
         if not sorts:
+            #! That's quite bad because there no assumption about id column presented
             sorts = {ID_FIELD: "desc"}
 
         parts: list[sql.Composable] = []
