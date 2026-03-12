@@ -2,13 +2,33 @@
 
 Thank you for your interest in contributing to **Forze**. This document describes the development workflow, coding conventions, and contribution guidelines.
 
-## Prerequisites
+## Reporting bugs
+
+If you encounter a bug, please report it using the GitHub issue tracker:
+
+https://github.com/morzecrew/forze/issues
+
+When reporting a bug, please include:
+
+- steps to reproduce the issue
+- expected behavior
+- actual behavior
+- relevant logs or stack traces
+- environment information (Python version, OS, etc.)
+
+## Feature requests
+
+Feature requests can also be submitted using the GitHub issue tracker.
+
+Please describe the use case and why the feature would be useful.
+
+## Development Setup
+
+Prerequisites:
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
 - [d2](https://d2lang.com/) (optional, for regenerating diagrams in docs)
-
-## Development Setup
 
 Clone the repository and install all dependencies, including development tools, documentation dependencies, and optional integrations:
 
@@ -18,7 +38,7 @@ cd forze
 uv sync --all-groups --all-extras
 ```
 
-## Running Tests
+### Running Tests
 
 Run the full test suite:
 
@@ -38,7 +58,7 @@ Run integration tests (require running external services or testcontainers):
 just test tests/integration
 ```
 
-## Code Quality
+### Code Quality
 
 Run all quality checks (types, imports, dead code, dependencies, security):
 
@@ -54,7 +74,7 @@ just quality -s
 
 All checks must pass before submitting a pull request.
 
-## Documentation
+### Documentation
 
 Documentation lives in `pages/docs/` and is built with MkDocs. See `pages/mkdocs.yml` for navigation and structure.
 
@@ -90,19 +110,61 @@ Commits follow **Conventional Commits** with a **gitmoji** prefix:
 ```
 
 | Gitmoji | Type | Purpose |
-|---------|---------|---------|
+|---------|------|---------|
 | ✨ | feat | new features |
-| 🐛 | fix | bug fixes |
-| 📝 | docs | documentation changes |
-| 💄 | style | formatting or style changes |
-| ♻️ | refactor | internal code restructuring |
+| 🚸 | feat | UX improvements |
+| 📊 | feat | analytics / tracking |
+| 💬 | feat | text / literals |
+| 🌱 | feat | seed data |
+| 🗃 | feat | database changes |
+| 🧵 | feat | multithreading / concurrency |
+| 🦺 | feat | validation |
+| 🦖 | feat | backwards compatibility |
+| 🛂 | feat | authorization / permissions |
+| 🧭 | feat | feature flags |
+| 🩺 | feat | healthchecks |
+| 🥚 | feat | easter egg |
+| 💥 | feat | breaking changes |
+| 🐛 | fix | bug fix |
+| 🚑 | fix | critical hotfix |
+| 🩹 | fix | small fix |
+| 🚨 | fix | fix linter / compiler warnings |
+| 🎯 | fix | catch errors |
+| ♻️ | refactor | refactor code |
+| 🔥 | refactor | remove code/files |
+| 💩 | refactor | bad code needing improvement |
+| 🚚 | refactor | move/rename files |
+| 🗑 | refactor | deprecate code |
+| ⚰️ | refactor | remove dead code |
+| 🏗 | refactor | architectural changes |
+| 🎨 | style | code formatting / structure |
 | ⚡️ | perf | performance improvements |
-| 🧪 | test | test changes |
-| 🔧 | chore | maintenance tasks |
-| 📦 | build | build system changes |
-| 👷 | ci | CI configuration changes |
-| ⏪ | revert | revert a previous commit |
-| 🔒 | security | security fixes and improvements |
+| 📝 | docs | documentation |
+| 💡 | docs | code comments |
+| ✏️ | docs | fix typos |
+| 🧪 | test | tests |
+| 🤡 | test | mocks |
+| 📸 | test | snapshots |
+| 📦 | build | packages / compiled files |
+| ⬆️ | build | upgrade dependencies |
+| ⬇️ | build | downgrade dependencies |
+| 📌 | build | pin dependencies |
+| ➕ | build | add dependency |
+| ➖ | build | remove dependency |
+| 🧱 | build | infrastructure |
+| 👷 | ci | CI configuration |
+| 💚 | ci | fix CI build |
+| 🔧 | chore | maintenance |
+| 🔨 | chore | dev scripts |
+| 🙈 | chore | .gitignore |
+| 🕵️ | chore | data exploration |
+| 🧑‍💻 | chore | developer experience |
+| 🔖 | chore | release / version tags |
+| 🚀 | chore | deployment |
+| 🚧 | chore | work in progress |
+| 🔀 | chore | merge branches |
+| 🔒 | security | security changes |
+| ⏪ | revert | revert commit |
 
 Examples:
 

@@ -89,9 +89,13 @@ Use them for:
 - `src/forze_s3/`: S3 integration package.
 - `src/forze_temporal/`: Temporal integration package.
 - `src/forze_mongo/`: Mongo integration package.
+- `src/forze_mock/`: in-memory mock adapters for local development.
+- `src/forze_rabbitmq/`: RabbitMQ integration package.
+- `src/forze_socketio/`: Socket.IO integration package.
+- `src/forze_sqs/`: SQS integration package.
 - `tests/unit/`: unit tests, typically mirroring `src` layout.
 - `tests/integration/`: integration tests with external dependencies.
-- `specs/`: planning/spec artifacts (guidance context, not runtime truth).
+- `tests/perf/`: performance benchmarks (require Docker).
 
 ## Operating rules for agents
 
@@ -105,12 +109,7 @@ Use them for:
 
 ## Agent memory files
 
-Agent journals live under `.jules/` (memory only, not policy):
-
-- `.jules/atlas.md`
-- `.jules/bolt.md`
-- `.jules/verifier.md`
-- `.jules/steward.md`
+Agent journals may live under `.jules/` (memory only, not policy) when present.
 
 ## Cross-tool compatibility
 
@@ -143,6 +142,6 @@ See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 
 ### Caveats
 
-- Integration tests (`tests/integration/`) require Docker and pull container images for Postgres, Valkey, MinIO, and MongoDB via testcontainers. They will fail without a running Docker daemon.
+- Integration tests (`tests/integration/`) and performance tests (`tests/perf/`) require Docker and pull container images for Postgres, Valkey, MinIO, MongoDB, RabbitMQ, and LocalStack (SQS) via testcontainers. They will fail without a running Docker daemon.
 - The package version is derived from git tags via `hatch-vcs`; importing `forze.__version__` does not work—use `forze._version.__version__` instead.
 - `uv sync` is called automatically by `justfile` recipes before test/quality commands, so manual re-sync is rarely needed.

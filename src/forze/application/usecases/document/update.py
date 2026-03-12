@@ -37,7 +37,7 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
     doc: DocumentWritePort[Out, Any, Any, Cmd]
     """Document port for update operations."""
 
-    mapper: DTOMapper[Cmd]
+    mapper: DTOMapper[In, Cmd]
     """Mapper that converts input DTO to update command."""
 
     # ....................... #

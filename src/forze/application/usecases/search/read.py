@@ -1,4 +1,4 @@
-from typing import Any, Optional, TypedDict, final
+from typing import Any, Optional, TypedDict
 
 import attrs
 from pydantic import BaseModel
@@ -16,11 +16,10 @@ from forze.application.mapping import DTOMapper
 # ----------------------- #
 
 
-@final
-class TypedSearchArgs(TypedDict):
+class TypedSearchArgs[In: SearchRequestDTO](TypedDict):
     """Arguments for typed search usecases."""
 
-    body: SearchRequestDTO
+    body: In
     """Search request (query, filters, sorts)."""
 
     page: int
@@ -33,11 +32,10 @@ class TypedSearchArgs(TypedDict):
 # ....................... #
 
 
-@final
-class RawSearchArgs(TypedDict):
+class RawSearchArgs[In: RawSearchRequestDTO](TypedDict):
     """Arguments for raw (field-projected) search usecases."""
 
-    body: RawSearchRequestDTO
+    body: In
     """Search request with required ``return_fields``."""
 
     page: int
@@ -51,23 +49,26 @@ class RawSearchArgs(TypedDict):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedSearch[Out: BaseModel](Usecase[TypedSearchArgs, Paginated[Out]]):
+class TypedSearch[In: SearchRequestDTO, Out: BaseModel](
+    Usecase[TypedSearchArgs[In], Paginated[Out]]
+):
     """Usecase that searches with typed results."""
 
     search: SearchReadPort[Out]
     """Search port for search operations."""
 
-    mapper: Optional[DTOMapper[SearchRequestDTO]] = None
+    mapper: Optional[DTOMapper[In, SearchRequestDTO]] = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def main(self, args: TypedSearchArgs) -> Paginated[Out]:
+    async def main(self, args: TypedSearchArgs[In]) -> Paginated[Out]:
         """Search with typed paginated results.
 
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of read models.
         """
+
         body = args["body"]
         page = args["page"]
         size = args["size"]
@@ -76,7 +77,8 @@ class TypedSearch[Out: BaseModel](Usecase[TypedSearchArgs, Paginated[Out]]):
         offset = (page - 1) * limit
 
         if self.mapper:
-            body = await self.mapper(self.ctx, body)
+            # typevar ensures that the incoming body is subclass of SearchRequestDTO, so the assignment is safe
+            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
         hits, count = await self.search.search(
             query=body.query,
@@ -94,22 +96,23 @@ class TypedSearch[Out: BaseModel](Usecase[TypedSearchArgs, Paginated[Out]]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RawSearch(Usecase[RawSearchArgs, RawPaginated]):
+class RawSearch[In: RawSearchRequestDTO](Usecase[RawSearchArgs[In], RawPaginated]):
     """Usecase that searches with raw results."""
 
     search: SearchReadPort[Any]
     """Search port for search operations."""
 
-    mapper: Optional[DTOMapper[RawSearchRequestDTO]] = None
+    mapper: Optional[DTOMapper[In, RawSearchRequestDTO]] = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def main(self, args: RawSearchArgs) -> RawPaginated:
+    async def main(self, args: RawSearchArgs[In]) -> RawPaginated:
         """Search with raw results.
 
         :param args: Search arguments (body, page, size).
-        :returns: Paginated list of raw results."""
+        :returns: Paginated list of raw results.
+        """
 
         body = args["body"]
         page = args["page"]
@@ -119,7 +122,8 @@ class RawSearch(Usecase[RawSearchArgs, RawPaginated]):
         offset = (page - 1) * limit
 
         if self.mapper:
-            body = await self.mapper(self.ctx, body)
+            # typevar ensures that the incoming body is subclass of RawSearchRequestDTO, so the assignment is safe
+            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
         hits, count = await self.search.search(
             query=body.query,

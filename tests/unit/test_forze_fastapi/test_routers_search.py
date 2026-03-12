@@ -36,6 +36,11 @@ def _minimal_search_spec() -> SearchSpec[ReadDTO]:
     )
 
 
+def _minimal_search_dto_spec() -> dict:
+    """Build a minimal SearchDTOSpec for testing."""
+    return {"read": ReadDTO}
+
+
 class TestSearchFacadeDependency:
     """Tests for search_facade_dependency."""
 
@@ -45,11 +50,12 @@ class TestSearchFacadeDependency:
     ) -> None:
         """search_facade_dependency returns a callable dependency factory."""
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         plan = build_search_plan()
         provider = SearchUsecasesFacadeProvider(
             spec=spec,
-            read_dto=ReadDTO,
+            dtos=dto_spec,
             reg=reg,
             plan=plan,
         )
@@ -70,11 +76,12 @@ class TestAttachSearchRouter:
     ) -> None:
         """attach_search_router adds /search and /raw-search routes."""
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         plan = build_search_plan()
         provider = SearchUsecasesFacadeProvider(
             spec=spec,
-            read_dto=ReadDTO,
+            dtos=dto_spec,
             reg=reg,
             plan=plan,
         )
@@ -99,11 +106,12 @@ class TestAttachSearchRouter:
     ) -> None:
         """POST /search returns paginated results."""
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         plan = build_search_plan()
         provider = SearchUsecasesFacadeProvider(
             spec=spec,
-            read_dto=ReadDTO,
+            dtos=dto_spec,
             reg=reg,
             plan=plan,
         )
@@ -140,11 +148,12 @@ class TestBuildSearchRouter:
     ) -> None:
         """build_search_router returns a router with search routes."""
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         plan = build_search_plan()
         provider = SearchUsecasesFacadeProvider(
             spec=spec,
-            read_dto=ReadDTO,
+            dtos=dto_spec,
             reg=reg,
             plan=plan,
         )

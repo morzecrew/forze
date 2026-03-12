@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
-class MappingStep(Protocol):
+class MappingStep[In: BaseModel](Protocol):
     """Protocol for a single step in a DTO mapping pipeline.
 
     Each step declares which output fields it produces via :meth:`produces` and
@@ -26,7 +26,7 @@ class MappingStep(Protocol):
     async def __call__(
         self,
         ctx: "ExecutionContext",
-        source: BaseModel,
+        source: In,
         payload: JsonDict,
     ) -> JsonDict:
         """Compute a patch dict to merge into the payload.

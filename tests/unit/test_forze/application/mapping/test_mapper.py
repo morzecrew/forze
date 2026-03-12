@@ -75,7 +75,7 @@ class TestCreatorIdStep:
 
 class TestDTOMapper:
     async def test_basic_mapping(self, ctx: ExecutionContext) -> None:
-        mapper = DTOMapper(out=OutputModel)
+        mapper = DTOMapper(in_=InputModel, out=OutputModel)
         source = InputModel(name="hello")
         result = await mapper(ctx, source)
         assert isinstance(result, OutputModel)
@@ -94,6 +94,8 @@ class TestDTOMapper:
             ) -> JsonDict:
                 return {"extra": 42}
 
-        mapper = DTOMapper(out=OutputModel).with_steps(ExtraStep())
+        mapper = DTOMapper(
+            in_=InputModel, out=OutputModel
+        ).with_steps(ExtraStep())
         result = await mapper(ctx, InputModel(name="test"))
         assert result.extra == 42

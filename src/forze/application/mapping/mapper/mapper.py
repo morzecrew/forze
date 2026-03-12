@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DTOMapper[Out: BaseDTO]:
+class DTOMapper[In: BaseModel, Out: BaseDTO]:
     """Pipeline that maps a Pydantic source model to an output DTO.
 
     Dumps the source to a dict (excluding unset fields), runs each
@@ -28,10 +28,13 @@ class DTOMapper[Out: BaseDTO]:
     incrementally.
     """
 
+    in_: type[In]
+    """Source model class for validation."""
+
     out: type[Out]
     """Target DTO model class for validation."""
 
-    steps: tuple[MappingStep, ...] = attrs.field(factory=tuple)
+    steps: tuple[MappingStep[In], ...] = attrs.field(factory=tuple)
     """Ordered sequence of mapping steps."""
 
     policy: MappingPolicy = attrs.field(factory=MappingPolicy)
@@ -67,18 +70,19 @@ class DTOMapper[Out: BaseDTO]:
 
     # ....................... #
 
-    def with_steps(self, *steps: MappingStep) -> Self:
+    def with_steps(self, *steps: MappingStep[In]) -> Self:
         """Return a new mapper with additional steps appended.
 
         :param steps: Steps to append to the pipeline.
         :returns: A new :class:`DTOMapper` instance.
         :raises CoreError: If any step produces fields already produced by others.
         """
+
         return attrs.evolve(self, steps=(*self.steps, *steps))
 
     # ....................... #
 
-    async def __call__(self, ctx: "ExecutionContext", source: BaseModel) -> Out:
+    async def __call__(self, ctx: "ExecutionContext", source: In) -> Out:
         """Map the source model to the output DTO.
 
         Runs each step in sequence, merging patches into the payload. Raises
@@ -86,10 +90,11 @@ class DTOMapper[Out: BaseDTO]:
         :attr:`policy`.
 
         :param ctx: Execution context for step resolution.
-        :param source: Pydantic model to map.
+        :param source: Source model to map.
         :returns: Validated instance of :attr:`out`.
         :raises CoreError: On step conflict or disallowed overwrite.
         """
+
         payload = pydantic_dump(source, exclude={"unset": True})
 
         for step, fields in zip(self.steps, self._step_fields, strict=True):

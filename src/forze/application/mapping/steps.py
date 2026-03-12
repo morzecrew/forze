@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class NumberIdStep(MappingStep):
+class NumberIdStep(MappingStep[BaseModel]):
     """Step that injects ``number_id`` from a counter in the execution context.
 
     Resolves :meth:`ExecutionContext.counter` for the given :attr:`namespace`,
@@ -55,7 +55,7 @@ class NumberIdStep(MappingStep):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class CreatorIdStep(MappingStep):
+class CreatorIdStep(MappingStep[BaseModel]):
     """Placeholder step that would inject ``creator_id`` from the current actor.
 
     Not yet implemented; raises :exc:`NotImplementedError`. Intended for future

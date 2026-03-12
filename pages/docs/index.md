@@ -10,7 +10,7 @@ If you are new to the package, start with:
 
 1. [Installation](installation.md)
 2. [Getting Started](getting-started.md)
-3. [Core Concepts](core-concepts/index.md)
+3. [Concepts](core-concepts/index.md)
 
 ## Why use Forze?
 

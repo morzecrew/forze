@@ -98,7 +98,8 @@ class TestMongoDocumentAdapter:
         pk = uuid4()
         read_gw = _build_read_gateway()
         write_gw = _build_write_gateway(read_gw.client)
-        write_gw.update.return_value = _domain_doc(pk, rev=2, name="after")
+        expected_read = _read_doc(pk, rev=2, name="after")
+        read_gw.get.return_value = expected_read
 
         adapter = MongoDocumentAdapter(read_gw=read_gw, write_gw=write_gw)
         updated = await adapter.update(pk, MyUpdateDoc(name="after"), rev=1)

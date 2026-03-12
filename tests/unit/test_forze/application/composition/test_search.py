@@ -37,17 +37,24 @@ def _minimal_search_spec() -> SearchSpec[_MinimalSearchModel]:
     )
 
 
+def _minimal_search_dto_spec() -> dict:
+    """Build a minimal SearchDTOSpec for testing."""
+    return {"read": _MinimalSearchModel}
+
+
 class TestBuildSearchRegistry:
     """Tests for build_search_registry."""
 
     def test_returns_registry(self) -> None:
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         assert isinstance(reg, UsecaseRegistry)
 
     def test_has_core_operations(self) -> None:
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         assert reg.exists(SearchOperation.TYPED_SEARCH)
         assert reg.exists(SearchOperation.RAW_SEARCH)
 
@@ -56,7 +63,8 @@ class TestBuildSearchRegistry:
         composition_ctx,
     ) -> None:
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         uc = reg.resolve(SearchOperation.RAW_SEARCH, composition_ctx)
         assert uc is not None
 
@@ -77,13 +85,14 @@ class TestSearchUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         plan = build_search_plan()
         provider = SearchUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
             spec=spec,
-            read_dto=_MinimalSearchModel,
+            dtos=dto_spec,
         )
         facade = provider(composition_ctx)
         assert facade is not None
@@ -94,13 +103,14 @@ class TestSearchUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_search_spec()
-        reg = build_search_registry(spec)
+        dto_spec = _minimal_search_dto_spec()
+        reg = build_search_registry(spec, dto_spec)
         plan = build_search_plan()
         provider = SearchUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
             spec=spec,
-            read_dto=_MinimalSearchModel,
+            dtos=dto_spec,
         )
         facade = provider(composition_ctx)
         uc = facade.raw()

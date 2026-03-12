@@ -23,7 +23,7 @@ from forze.application.dto import (
 from forze.application.execution import ExecutionContext
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..routing.params import RevQuery, UUIDQuery
+from ..routing.params import Pagination, RevQuery, UUIDQuery, pagination
 from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
 from ._utils import override_annotations
 
@@ -32,6 +32,8 @@ from ._utils import override_annotations
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
+tL = TypeVar("tL", bound=ListRequestDTO)
+rL = TypeVar("rL", bound=RawListRequestDTO)
 
 # ....................... #
 
@@ -69,14 +71,14 @@ class DocumentETagProvider:
 
 
 def document_facade_dependency(
-    provider: DocumentUsecasesFacadeProvider[R, C, U],
+    provider: DocumentUsecasesFacadeProvider[R, C, U, tL, rL],
     ctx: ExecutionContextDependencyPort,
-) -> Callable[[ExecutionContext], DocumentUsecasesFacade[R, C, U]]:
+) -> Callable[[ExecutionContext], DocumentUsecasesFacade[R, C, U, tL, rL]]:
     """Build a FastAPI dependency that resolves :class:`DocumentUsecasesFacade`."""
 
     def facade(
         context: ExecutionContext = Depends(ctx),
-    ) -> DocumentUsecasesFacade[R, C, U]:
+    ) -> DocumentUsecasesFacade[R, C, U, tL, rL]:
         return provider(context)
 
     return facade
@@ -85,7 +87,7 @@ def document_facade_dependency(
 # ....................... #
 
 
-class OverrideDocumentEndpointNames(TypedDict, total=False):
+class OverrideDocumentEndpointPaths(TypedDict, total=False):
     """Override the default operation IDs and endpoint paths for document routes."""
 
     get: str
@@ -119,31 +121,33 @@ class OverrideDocumentEndpointNames(TypedDict, total=False):
 def attach_document_routes(
     router: ForzeAPIRouter,
     *,
-    provider: DocumentUsecasesFacadeProvider[R, C, U],
+    provider: DocumentUsecasesFacadeProvider[R, C, U, tL, rL],
     context: ExecutionContextDependencyPort,
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
-    name_overrides: OverrideDocumentEndpointNames = {},
+    path_overrides: OverrideDocumentEndpointPaths = {},
 ) -> ForzeAPIRouter:
     """Attach document endpoints to an existing router."""
 
     read_dto = provider.dtos["read"]
     create_dto = provider.dtos.get("create")
     update_dto = provider.dtos.get("update")
+    list_dto = provider.dtos.get("list", ListRequestDTO)
+    raw_list_dto = provider.dtos.get("raw_list", RawListRequestDTO)
 
     ucs_dep = document_facade_dependency(provider, context)
 
     # ....................... #
 
-    get_path = name_overrides.get("get", "metadata")
-    list_path = name_overrides.get("typed_list", "list")
-    raw_list_path = name_overrides.get("raw_list", "raw-list")
-    create_path = name_overrides.get("create", "create")
-    update_path = name_overrides.get("update", "update")
-    delete_path = name_overrides.get("delete", "delete")
-    restore_path = name_overrides.get("restore", "restore")
-    kill_path = name_overrides.get("kill", "kill")
+    get_path = path_overrides.get("get", "metadata")
+    list_path = path_overrides.get("typed_list", "list")
+    raw_list_path = path_overrides.get("raw_list", "raw-list")
+    create_path = path_overrides.get("create", "create")
+    update_path = path_overrides.get("update", "update")
+    delete_path = path_overrides.get("delete", "delete")
+    restore_path = path_overrides.get("restore", "restore")
+    kill_path = path_overrides.get("kill", "kill")
 
     # ....................... #
 
@@ -158,7 +162,7 @@ def attach_document_routes(
         )
         async def metadata(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
         ) -> R:
             """Return metadata for a single document by identifier."""
 
@@ -173,13 +177,21 @@ def attach_document_routes(
             response_model=Paginated[read_dto],  # type: ignore[valid-type]
             operation_id=f"{provider.spec.namespace}.{list_path}",
         )
+        @override_annotations({"dto": list_dto})
         async def list(  # pyright: ignore[reportUnusedFunction]
-            body: ListRequestDTO = Body(...),
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            body: tL = Body(...),
+            pagi: Pagination = Depends(pagination),
+            ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
         ) -> Paginated[R]:
             """List documents by filters and sorts."""
 
-            return await ucs.list()(body)
+            return await ucs.list()(
+                {
+                    "body": body,
+                    "page": pagi.page,
+                    "size": pagi.size,
+                }
+            )
 
         # ....................... #
 
@@ -188,13 +200,21 @@ def attach_document_routes(
             response_model=RawPaginated,
             operation_id=f"{provider.spec.namespace}.{raw_list_path}",
         )
+        @override_annotations({"dto": raw_list_dto})
         async def raw_list(  # pyright: ignore[reportUnusedFunction]
-            body: RawListRequestDTO = Body(...),
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            body: rL = Body(...),
+            pagi: Pagination = Depends(pagination),
+            ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
         ) -> RawPaginated:
             """List documents with raw results by filters and sorts."""
 
-            return await ucs.raw_list()(body)
+            return await ucs.raw_list()(
+                {
+                    "body": body,
+                    "page": pagi.page,
+                    "size": pagi.size,
+                }
+            )
 
     # ....................... #
 
@@ -212,7 +232,7 @@ def attach_document_routes(
             @override_annotations({"dto": create_dto})
             async def create(  # pyright: ignore[reportUnusedFunction]
                 dto: C = Body(...),
-                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+                ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
             ) -> R:
                 """Create a new document from the provided DTO."""
 
@@ -232,7 +252,7 @@ def attach_document_routes(
                 id: UUIDQuery,
                 rev: RevQuery,
                 dto: U = Body(...),
-                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+                ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
             ) -> R:
                 """Apply a partial update to an existing document."""
 
@@ -256,7 +276,7 @@ def attach_document_routes(
             async def delete(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
                 rev: RevQuery,
-                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+                ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
             ) -> R:
                 """Soft-delete a document and return the new representation."""
 
@@ -275,7 +295,7 @@ def attach_document_routes(
             async def restore(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
                 rev: RevQuery,
-                ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+                ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
             ) -> R:
                 """Restore a previously soft-deleted document."""
 
@@ -296,7 +316,7 @@ def attach_document_routes(
         )
         async def kill(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
-            ucs: DocumentUsecasesFacade[R, C, U] = Depends(ucs_dep),
+            ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
         ) -> None:
             """Hard-delete a document without soft-delete semantics."""
 
@@ -314,12 +334,12 @@ def build_document_router(
     prefix: str,
     tags: Optional[list[str | Enum]] = None,
     *,
-    provider: DocumentUsecasesFacadeProvider[R, C, U],
+    provider: DocumentUsecasesFacadeProvider[R, C, U, tL, rL],
     context: ExecutionContextDependencyPort,
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
-    name_overrides: OverrideDocumentEndpointNames = {},
+    path_overrides: OverrideDocumentEndpointPaths = {},
 ) -> ForzeAPIRouter:
     """Construct a router exposing CRUD and search endpoints for a document spec.
 
@@ -342,7 +362,7 @@ def build_document_router(
         include_get_endpoint=include_get_endpoint,
         include_list_endpoints=include_list_endpoints,
         include_write_endpoints=include_write_endpoints,
-        name_overrides=name_overrides,
+        path_overrides=path_overrides,
     )
 
     return router

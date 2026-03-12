@@ -44,6 +44,20 @@ def _minimal_spec(
     )
 
 
+def _minimal_dto_spec(supports_update: bool = False) -> dict:
+    """Build a minimal DocumentDTOSpec for testing."""
+    class UpdateCmd(BaseDTO):
+        title: str | None = None
+
+    empty_update = type("EmptyUpdate", (BaseDTO,), {})
+    dto: dict = {
+        "read": ReadDocument,
+        "create": CreateDocumentCmd,
+        "update": UpdateCmd if supports_update else empty_update,
+    }
+    return dto
+
+
 class TestDocumentFacadeDependency:
     """Tests for document_facade_dependency."""
 
@@ -53,7 +67,8 @@ class TestDocumentFacadeDependency:
     ) -> None:
         """document_facade_dependency returns a dependency that resolves to a facade."""
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         plan = build_document_plan()
         provider = DocumentUsecasesFacadeProvider(
             spec=spec,
@@ -79,7 +94,8 @@ class TestBuildDocumentRouter:
     ) -> None:
         """build_document_router returns a router with /metadata route."""
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         plan = build_document_plan()
         provider = DocumentUsecasesFacadeProvider(
             spec=spec,
@@ -111,7 +127,8 @@ class TestBuildDocumentRouter:
         from forze.base.errors import NotFoundError
 
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         plan = build_document_plan()
         provider = DocumentUsecasesFacadeProvider(
             spec=spec,
@@ -145,7 +162,8 @@ class TestBuildDocumentRouter:
         from fastapi.routing import APIRoute
 
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         plan = build_document_plan()
         provider = DocumentUsecasesFacadeProvider(
             spec=spec,

@@ -11,7 +11,12 @@ from forze.application.dto import (
     RawPaginated,
 )
 from forze.application.execution import Usecase
-from forze.application.usecases.document import SoftDeleteArgs, UpdateArgs
+from forze.application.usecases.document import (
+    RawListDocumentsArgs,
+    SoftDeleteArgs,
+    TypedListDocumentsArgs,
+    UpdateArgs,
+)
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
@@ -22,12 +27,14 @@ from .operations import DocumentOperation
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO)
 U = TypeVar("U", bound=BaseDTO)
+tL = TypeVar("tL", bound=ListRequestDTO)
+rL = TypeVar("rL", bound=RawListRequestDTO)
 
 # ....................... #
 
 
 @final
-class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U]):
+class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U, tL, rL]):
     """Typed facade for document usecases."""
 
     def get(self) -> Usecase[UUID, R]:
@@ -37,14 +44,14 @@ class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U]):
 
     # ....................... #
 
-    def list(self) -> Usecase[ListRequestDTO, Paginated[R]]:
+    def list(self) -> Usecase[TypedListDocumentsArgs[tL], Paginated[R]]:
         """Return the list documents usecase."""
 
         return self.resolve(DocumentOperation.LIST)
 
     # ....................... #
 
-    def raw_list(self) -> Usecase[RawListRequestDTO, RawPaginated]:
+    def raw_list(self) -> Usecase[RawListDocumentsArgs[rL], RawPaginated]:
         """Return the raw list documents usecase."""
 
         return self.resolve(DocumentOperation.RAW_LIST)
@@ -88,7 +95,7 @@ class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U]):
 # ....................... #
 
 
-class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
+class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
     """DTO type mapping for a document aggregate.
 
     Used by :class:`DocumentUsecasesFacade` and providers to type the facade
@@ -105,6 +112,12 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
     update: NotRequired[type[U]]
     """Update command type; optional when update is not supported."""
 
+    list: NotRequired[type[tL]]
+    """List request type; optional when list is not supported."""
+
+    raw_list: NotRequired[type[rL]]
+    """Raw list request type; optional when raw list is not supported."""
+
 
 # ....................... #
 
@@ -112,20 +125,22 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U]):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentUsecasesFacadeProvider(
-    BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U]],
-    Generic[R, C, U],
+    BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U, tL, rL]],
+    Generic[R, C, U, tL, rL],
 ):
     """Factory that produces a document usecases facade for a given context."""
 
     spec: DocumentSpec[Any, Any, Any, Any]
     """Document specification (used by registry factories)."""
 
-    dtos: DocumentDTOSpec[R, C, U]
+    dtos: DocumentDTOSpec[R, C, U, tL, rL]
     """DTO type mapping for facade typing."""
 
     # Non initable fields
-    facade: type[DocumentUsecasesFacade[R, C, U]] = attrs.field(
-        default=cast(type[DocumentUsecasesFacade[R, C, U]], DocumentUsecasesFacade),
+    facade: type[DocumentUsecasesFacade[R, C, U, tL, rL]] = attrs.field(
+        default=cast(
+            type[DocumentUsecasesFacade[R, C, U, tL, rL]], DocumentUsecasesFacade
+        ),
         init=False,
     )
     """Facade type to produce."""

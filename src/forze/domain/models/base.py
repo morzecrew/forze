@@ -4,8 +4,6 @@
 :class:`BaseDTO` extends it with frozen-by-default semantics for data transfer.
 """
 
-from decimal import Decimal
-
 from pydantic import BaseModel, ConfigDict
 
 # ----------------------- #
@@ -24,7 +22,7 @@ class CoreModel(BaseModel):
         model_title_generator=lambda _: "",
         field_title_generator=lambda _, __: "",
         str_strip_whitespace=True,
-        json_encoders={set: sorted, Decimal: str},
+        json_encoders={set: sorted},
     )
 
 

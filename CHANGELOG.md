@@ -9,15 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- `DocumentDTOSpec` `list` and `raw_list` keys for custom list request DTO types.
+- `SearchDTOSpec` TypedDict for search facade with `read`, `typed`, `raw` keys.
+- `build_document_list_mapper`, `build_document_raw_list_mapper`, `replace_list_mapper`, `replace_raw_list_mapper` in document composition.
+- `build_search_typed_mapper`, `build_search_raw_mapper` in search composition.
 
 ### Changed
 
-- ...
+- `OverrideDocumentEndpointNames` renamed to `OverrideDocumentEndpointPaths`; `name_overrides` renamed to `path_overrides` in document router.
+- `OverrideSearchEndpointNames` renamed to `OverrideSearchEndpointPaths`; `name_overrides` renamed to `path_overrides` in search router.
+- `SearchUsecasesFacadeProvider` now uses `dtos: SearchDTOSpec` instead of `read_dto`; `build_search_registry` requires `dto_spec`.
+- `build_document_registry`, `build_document_create_mapper`, `build_document_update_mapper` now require `dto_spec`.
+- `build_search_registry` parameters `typed_mapper`/`raw_mapper` renamed to `replace_typed_mapper`/`replace_raw_mapper`.
+- `DTOMapper` now requires `in_` (source model type) in addition to `out`; update existing mappers accordingly.
+- `MappingStep` protocol is now generic (`MappingStep[In: BaseModel]`); custom step implementations should specify the source type.
+- `CoreModel` no longer includes `Decimal` in `json_encoders`; custom serialization for Decimal fields must be handled elsewhere.
+- Document list endpoints: pagination (`page`, `size`) now accepted via query parameters.
+- Postgres and Mongo document adapters: write operations now return results via read gateway for consistent read/write source separation.
 
 ### Fixed
 
-- ...
+- Document list endpoints now correctly pass pagination to the usecase.
 
 ## [0.1.12] - 2026-03-11
 

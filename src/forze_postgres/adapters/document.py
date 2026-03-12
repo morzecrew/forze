@@ -303,10 +303,8 @@ class PostgresDocumentAdapter(
         w = self._require_write()
         domains = await w.create_many(dtos)
 
-        res = [
-            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
-            for x in domains
-        ]
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many([x.id for x in domains])
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -327,11 +325,12 @@ class PostgresDocumentAdapter(
 
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
-        domain = await w.update(pk, dto, rev=rev)
 
+        await w.update(pk, dto, rev=rev)
         await self._clear_cache(pk)
 
-        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -354,13 +353,11 @@ class PostgresDocumentAdapter(
     ) -> Sequence[R]:
         w = self._require_write()
 
-        domains = await w.update_many(pks, dtos, revs=revs)
+        await w.update_many(pks, dtos, revs=revs)
         await self._clear_cache(*pks)
 
-        res = [
-            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
-            for x in domains
-        ]
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -375,10 +372,11 @@ class PostgresDocumentAdapter(
     async def touch(self, pk: UUID) -> R:
         w = self._require_write()
 
-        domain = await w.touch(pk)
+        await w.touch(pk)
         await self._clear_cache(pk)
 
-        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -395,13 +393,11 @@ class PostgresDocumentAdapter(
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
         w = self._require_write()
 
-        domains = await w.touch_many(pks)
+        await w.touch_many(pks)
         await self._clear_cache(*pks)
 
-        res = [
-            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
-            for x in domains
-        ]
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -432,10 +428,11 @@ class PostgresDocumentAdapter(
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
-        domain = await w.delete(pk, rev=rev)
+        await w.delete(pk, rev=rev)
         await self._clear_cache(pk)
 
-        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -457,13 +454,11 @@ class PostgresDocumentAdapter(
     ) -> Sequence[R]:
         w = self._require_write()
 
-        domains = await w.delete_many(pks, revs=revs)
+        await w.delete_many(pks, revs=revs)
         await self._clear_cache(*pks)
 
-        res = [
-            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
-            for x in domains
-        ]
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -478,10 +473,11 @@ class PostgresDocumentAdapter(
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
-        domain = await w.restore(pk, rev=rev)
+        await w.restore(pk, rev=rev)
         await self._clear_cache(pk)
 
-        res = pydantic_validate(self.read_gw.model, domain.model_dump(mode="json"))
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):
@@ -503,13 +499,11 @@ class PostgresDocumentAdapter(
     ) -> Sequence[R]:
         w = self._require_write()
 
-        domains = await w.restore_many(pks, revs=revs)
+        await w.restore_many(pks, revs=revs)
         await self._clear_cache(*pks)
 
-        res = [
-            pydantic_validate(self.read_gw.model, x.model_dump(mode="json"))
-            for x in domains
-        ]
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
             with contextlib.suppress(Exception):

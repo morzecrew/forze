@@ -24,7 +24,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
     doc: DocumentWritePort[Out, Any, Cmd, Any]
     """Document port for create operations."""
 
-    mapper: DTOMapper[Cmd]
+    mapper: DTOMapper[In, Cmd]
     """Mapper that converts input DTO to create command."""
 
     # ....................... #

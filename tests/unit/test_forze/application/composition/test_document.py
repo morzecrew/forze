@@ -42,29 +42,49 @@ def _minimal_spec(
     )
 
 
+def _minimal_dto_spec(supports_update: bool = False) -> DocumentDTOSpec:
+    """Build a minimal DocumentDTOSpec for testing."""
+    from forze.domain.models import BaseDTO
+
+    class UpdateCmd(BaseDTO):
+        title: str | None = None
+
+    empty_update = type("EmptyUpdate", (BaseDTO,), {})
+    dto: DocumentDTOSpec = {
+        "read": ReadDocument,
+        "create": CreateDocumentCmd,
+        "update": UpdateCmd if supports_update else empty_update,
+    }
+    return dto
+
+
 class TestBuildDocumentRegistry:
     """Tests for build_document_registry."""
 
     def test_returns_registry(self) -> None:
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         assert isinstance(reg, UsecaseRegistry)
 
     def test_has_core_operations(self) -> None:
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         assert reg.exists(DocumentOperation.GET)
         assert reg.exists(DocumentOperation.CREATE)
         assert reg.exists(DocumentOperation.KILL)
 
     def test_update_registered_when_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=True)
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec(supports_update=True)
+        reg = build_document_registry(spec, dto_spec)
         assert reg.exists(DocumentOperation.UPDATE)
 
     def test_update_not_registered_when_no_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=False)
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         assert not reg.exists(DocumentOperation.UPDATE)
 
     def test_resolve_get_returns_usecase(
@@ -72,7 +92,8 @@ class TestBuildDocumentRegistry:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         uc = reg.resolve(DocumentOperation.GET, composition_ctx)
         assert uc is not None
 
@@ -85,9 +106,10 @@ class TestDocumentUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         plan = build_document_plan()
-        dtos: DocumentDTOSpec = {"read": ReadDocument}
+        dtos: DocumentDTOSpec = {"read": ReadDocument, "create": CreateDocumentCmd}
         provider = DocumentUsecasesFacadeProvider(
             spec=spec,
             reg=reg,
@@ -103,9 +125,10 @@ class TestDocumentUsecasesFacadeProvider:
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
-        reg = build_document_registry(spec)
+        dto_spec = _minimal_dto_spec()
+        reg = build_document_registry(spec, dto_spec)
         plan = build_document_plan()
-        dtos: DocumentDTOSpec = {"read": ReadDocument}
+        dtos: DocumentDTOSpec = {"read": ReadDocument, "create": CreateDocumentCmd}
         provider = DocumentUsecasesFacadeProvider(
             spec=spec,
             reg=reg,

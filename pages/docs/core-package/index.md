@@ -36,7 +36,6 @@ These pages cover the orchestration layer:
 ### Reference
 
 - [Query Syntax](query-syntax.md) — filter and sort DSL used across all adapters
-- [Outbox](outbox.md) — transactional outbox pattern for reliable event publishing
 
 ## Quick example
 
