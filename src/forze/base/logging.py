@@ -5,7 +5,7 @@ from typing import Final, Iterator, Mapping, Optional
 
 # ----------------------- #
 
-__log_depth: ContextVar[int] = ContextVar("log_depth", default=0)
+_log_depth: ContextVar[int] = ContextVar("log_depth", default=0)
 """Current indentation depth for the active execution context."""
 
 DEFAULT_LOG_FORMAT: Final[str] = (
@@ -32,14 +32,14 @@ def _matches_namespace(name: str, prefixes: tuple[str, ...]) -> bool:
 def log_section() -> Iterator[None]:
     """Context manager to keep track of the current log depth."""
 
-    depth = __log_depth.get()
-    token = __log_depth.set(depth + 1)
+    depth = _log_depth.get()
+    token = _log_depth.set(depth + 1)
 
     try:
         yield
 
     finally:
-        __log_depth.reset(token)
+        _log_depth.reset(token)
 
 
 # ....................... #
@@ -68,7 +68,7 @@ class NamespaceIndentFilter(logging.Filter):
     # ....................... #
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.indent = self._step * __log_depth.get()
+        record.indent = self._step * _log_depth.get()
 
         name = record.name
 
