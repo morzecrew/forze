@@ -6,9 +6,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.base.errors import CoreError
 from forze.domain.models import ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
-from forze_postgres.kernel.gateways import PostgresReadGateway
+from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 
 
 def _build_read_doc(pk: UUID, *, rev: int = 1) -> ReadDocument:
@@ -22,6 +23,13 @@ def _build_read_gateway() -> MagicMock:
     gateway.client = object()
     gateway.get = AsyncMock()
     gateway.get_many = AsyncMock()
+    return gateway
+
+
+def _build_write_gateway(client: object) -> MagicMock:
+    gateway = MagicMock(spec=PostgresWriteGateway)
+    gateway.client = client
+    gateway.create = AsyncMock()
     return gateway
 
 
@@ -105,3 +113,72 @@ class TestPostgresDocumentAdapter:
         assert result == expected
         read_gw.get_many.assert_awaited_once_with(pks)
         cache.set_many_versioned.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_reads_fresh_document_via_read_gateway_and_caches_it(
+        self,
+    ) -> None:
+        pk = uuid4()
+        stale_domain = MagicMock()
+        stale_domain.id = pk
+
+        expected = _build_read_doc(pk, rev=2)
+        read_gw = _build_read_gateway()
+        read_gw.get.return_value = expected
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.create.return_value = stale_domain
+
+        cache = MagicMock()
+        cache.set_versioned = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+        dto = MagicMock()
+
+        result = await adapter.create(dto)
+
+        assert result == expected
+        write_gw.create.assert_awaited_once_with(dto)
+        read_gw.get.assert_awaited_once_with(pk)
+        cache.set_versioned.assert_awaited_once_with(
+            str(pk),
+            str(expected.rev),
+            adapter._map_to_cache(expected),
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_ignores_cache_set_failure_after_fresh_read(self) -> None:
+        pk = uuid4()
+        stale_domain = MagicMock()
+        stale_domain.id = pk
+        expected = _build_read_doc(pk, rev=2)
+
+        read_gw = _build_read_gateway()
+        read_gw.get.return_value = expected
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.create.return_value = stale_domain
+
+        cache = MagicMock()
+        cache.set_versioned = AsyncMock(side_effect=RuntimeError("cache unavailable"))
+
+        adapter = PostgresDocumentAdapter(
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        result = await adapter.create(MagicMock())
+
+        assert result == expected
+        read_gw.get.assert_awaited_once_with(pk)
+        cache.set_versioned.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_requires_write_gateway(self) -> None:
+        adapter = PostgresDocumentAdapter(read_gw=_build_read_gateway())
+
+        with pytest.raises(CoreError, match="Write gateway is not configured"):
+            await adapter.create(MagicMock())
