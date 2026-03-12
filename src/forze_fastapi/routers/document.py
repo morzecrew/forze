@@ -172,7 +172,7 @@ def attach_document_routes(
 
     if include_list_endpoints:
 
-        @router.get(
+        @router.post(
             f"/{list_path}",
             response_model=Paginated[read_dto],  # type: ignore[valid-type]
             operation_id=f"{provider.spec.namespace}.{list_path}",
@@ -188,7 +188,7 @@ def attach_document_routes(
 
         # ....................... #
 
-        @router.get(
+        @router.post(
             f"/{raw_list_path}",
             response_model=RawPaginated,
             operation_id=f"{provider.spec.namespace}.{raw_list_path}",
