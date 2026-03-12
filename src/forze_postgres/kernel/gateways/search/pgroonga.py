@@ -163,17 +163,17 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         sorts: Optional[QuerySortExpression] = None,  # type: ignore[valid-type]
         table_alias: str = _TABLE_ALIAS,
     ) -> sql.Composable:
-        parts: list[sql.Composable] = [
-            sql.SQL("pgroonga_score({}) DESC").format(sql.Identifier(table_alias))
-        ]
+        if not sorts:
+            return sql.SQL("pgroonga_score({}) DESC").format(
+                sql.Identifier(table_alias)
+            )
 
-        if sorts:
-            for field, order in sorts.items():
-                parts.append(
-                    sql.SQL("{} {}").format(
-                        sql.Identifier(field), sql.SQL(order.upper())
-                    )
-                )
+        parts: list[sql.Composable] = []
+
+        for field, order in sorts.items():
+            parts.append(
+                sql.SQL("{} {}").format(sql.Identifier(field), sql.SQL(order.upper()))
+            )
 
         return sql.SQL(", ").join(parts)
 
