@@ -7,8 +7,8 @@ description: Maintain CHANGELOG.md in Keep a Changelog format by updating Unrele
 
 This skill helps keep `CHANGELOG.md` accurate, current, and user-focused following **Keep a Changelog** format.
 
-It is intended for maintaining changelog entries as the product evolves.  
-The agent helps update `## [Unreleased]` and, when explicitly asked, prepare version sections in the changelog.  
+It is intended for maintaining changelog entries as the product evolves.
+The agent helps update `## [Unreleased]` and, when explicitly asked, prepare version sections in the changelog.
 The human remains responsible for deciding when and how to cut a release.
 
 ## Use this skill when
@@ -78,7 +78,7 @@ Do not include:
   - same categories inside as needed
 - Reference links at the bottom exist (for example `[unreleased]: ...`, `[0.1.1]: ...`)
 
-**Important:**  
+**Important:**
 Do not add or modify bottom reference links unless explicitly asked.
 
 ## Categorization rules

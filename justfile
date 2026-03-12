@@ -85,7 +85,7 @@ test-perf *args='tests/perf':
         --benchmark-max-time=30 \
         -m perf \
         {{ args }}
-    
+
 
 # Run all quality checks
 [arg("strict", long, short="s", value="true", help="Enable strict mode (fail on error in any check)")]

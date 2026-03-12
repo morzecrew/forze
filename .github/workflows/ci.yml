@@ -14,7 +14,7 @@ on:
         required: false
         type: boolean
         default: true
-        
+
   pull_request:
     types: [opened, synchronize, reopened]
   push:
@@ -112,7 +112,7 @@ jobs:
     name: Run tests
     needs: [changes, quality]
     if: |
-      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') && 
+      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') &&
       needs.quality.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -162,7 +162,7 @@ jobs:
           updateComment: ${{ github.event.pull_request.head.repo.fork == false }}
           check_annotations: true
           fail_on_failure: false
-  
+
   required-ci:
     name: Required Continuous Integration
     needs: [changes, quality, tests]

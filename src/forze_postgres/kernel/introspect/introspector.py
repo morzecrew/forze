@@ -80,7 +80,7 @@ class PostgresIntrospector:
             SELECT c.relkind
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = {schema} 
+            WHERE n.nspname = {schema}
                 AND c.relname = {relation}
             LIMIT 1
             """

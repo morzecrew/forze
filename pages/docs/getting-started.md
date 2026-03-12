@@ -24,9 +24,9 @@ Every aggregate starts with four model types: a **domain model**, a **read model
     :::python
     from forze.domain.mixins import SoftDeletionMixin
     from forze.domain.models import (
-        BaseDTO, 
-        CreateDocumentCmd, 
-        Document, 
+        BaseDTO,
+        CreateDocumentCmd,
+        Document,
         ReadDocument,
     )
 
@@ -94,9 +94,9 @@ The runtime has two parts: a **dependency plan** that assembles the container an
 
     :::python
     from forze.application.execution import (
-        Deps, 
-        DepsPlan, 
-        ExecutionRuntime, 
+        Deps,
+        DepsPlan,
+        ExecutionRuntime,
         LifecyclePlan,
     )
     from forze_postgres import (
@@ -259,16 +259,16 @@ Optionally add a history table for audit trails:
     )
     from forze.application.contracts.document import DocumentSpec
     from forze.application.execution import (
-        Deps, 
-        DepsPlan, 
-        ExecutionRuntime, 
+        Deps,
+        DepsPlan,
+        ExecutionRuntime,
         LifecyclePlan,
     )
     from forze.domain.mixins import SoftDeletionMixin
     from forze.domain.models import (
-        BaseDTO, 
-        CreateDocumentCmd, 
-        Document, 
+        BaseDTO,
+        CreateDocumentCmd,
+        Document,
         ReadDocument,
     )
     from forze_fastapi.routers import build_document_router
@@ -310,7 +310,7 @@ Optionally add a history table for audit trails:
     project_spec = DocumentSpec(
         namespace="projects",
         read={
-            "source": "public.projects", 
+            "source": "public.projects",
             "model": ProjectReadModel,
         },
         write={

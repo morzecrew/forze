@@ -88,7 +88,7 @@ Check whether applying a patch to an older state would conflict with the current
 
     :::python
     is_safe = current.validate_historical_consistency(
-        old_state, 
+        old_state,
         incoming_patch,
     )
 

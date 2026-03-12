@@ -83,7 +83,7 @@ The `validate_historical_consistency()` method checks whether a concurrent updat
 
     :::python
     is_safe = current.validate_historical_consistency(
-        old_state, 
+        old_state,
         incoming_patch,
     )
 
@@ -171,8 +171,8 @@ Adds `name` (required), `display_name`, `short_name`, and `description` (all opt
 
     :::python
     from forze.domain.mixins import (
-        NameMixin, 
-        NameCreateCmdMixin, 
+        NameMixin,
+        NameCreateCmdMixin,
         NameUpdateCmdMixin,
     )
 

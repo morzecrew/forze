@@ -43,9 +43,9 @@ A minimal aggregate definition using the core package:
 
     :::python
     from forze.domain.models import (
-        Document, 
-        CreateDocumentCmd, 
-        ReadDocument, 
+        Document,
+        CreateDocumentCmd,
+        ReadDocument,
         BaseDTO,
     )
     from forze.domain.mixins import SoftDeletionMixin

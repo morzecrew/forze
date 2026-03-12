@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * 1'
-  
+
 permissions: read-all
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
-      
+
       - name: Upload analysis results
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:

@@ -251,16 +251,16 @@ timeout: int
 
 ## Minimal templates
 
-**Type alias / constant:**  
+**Type alias / constant:**
 `Thing = ...` → `"""What it represents and how callers should interpret it."""`
 
-**Class:**  
+**Class:**
 One-line summary, then key behaviors, lifecycle, invariants, and ``:meth:`X.foo`` / ``:class:`Y`` references.
 
-**Function / method:**  
+**Function / method:**
 One-line summary, then details; ``:param name: Meaning.`` ``:returns: Meaning.`` ``:raises SomeError: When.``
 
-**Field:**  
+**Field:**
 `field: Type = default` → `"""Meaning, units, constraints, or why it exists."""`
 
 ---

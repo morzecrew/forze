@@ -87,8 +87,8 @@ Middlewares wrap the usecase call chain. Three protocol types exist:
 
     class LogCreation(Effect[CreateProjectCmd, ProjectReadModel]):
         async def __call__(
-            self, 
-            args: CreateProjectCmd, 
+            self,
+            args: CreateProjectCmd,
             res: ProjectReadModel,
         ) -> ProjectReadModel:
             logger.info("Created project %s", res.id)
@@ -122,8 +122,8 @@ The `ExecutionRuntime` combines the dependency plan, lifecycle plan, and executi
 
     :::python
     from forze.application.execution import (
-        ExecutionRuntime, 
-        DepsPlan, 
+        ExecutionRuntime,
+        DepsPlan,
         LifecyclePlan,
     )
 

@@ -1,6 +1,6 @@
 # Forze
 
-[![CI](https://img.shields.io/github/actions/workflow/status/morzecrew/forze/ci.yml?branch=main&label=CI)](https://github.com/morzecrew/forze/actions/workflows/ci.yml) [![CodeQL](https://img.shields.io/github/actions/workflow/status/morzecrew/forze/codeql.yml?branch=main&label=CodeQL)](https://github.com/morzecrew/forze/actions/workflows/codeql.yml) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12151/badge)](https://www.bestpractices.dev/projects/12151) 
+[![CI](https://img.shields.io/github/actions/workflow/status/morzecrew/forze/ci.yml?branch=main&label=CI)](https://github.com/morzecrew/forze/actions/workflows/ci.yml) [![CodeQL](https://img.shields.io/github/actions/workflow/status/morzecrew/forze/codeql.yml?branch=main&label=CodeQL)](https://github.com/morzecrew/forze/actions/workflows/codeql.yml) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12151/badge)](https://www.bestpractices.dev/projects/12151)
 
 [![PyPI](https://img.shields.io/pypi/v/forze?label=PyPI)](https://pypi.org/project/forze/) [![Python](https://img.shields.io/pypi/pyversions/forze)](https://pypi.org/project/forze/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze)
 
@@ -38,12 +38,12 @@ uv add 'forze[fastapi,postgres,socketio]'
 
 ## Versioning
 
-Forze follows [Semantic Versioning (SemVer)](https://semver.org/). 
+Forze follows [Semantic Versioning (SemVer)](https://semver.org/).
 Pre-release builds may include experimental APIs and are not guaranteed to be stable.
 
 ## Contributing
 
-Contributions, issues, and feature requests are welcome. 
+Contributions, issues, and feature requests are welcome.
 See [CONTRIBUTING.md](https://github.com/morzecrew/forze/blob/main/CONTRIBUTING.md) for details.
 
 ## Security

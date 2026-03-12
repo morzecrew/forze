@@ -22,16 +22,16 @@ You **MUST** consider the user input before proceeding (e.g. preferred option A/
 
 ## Publish options
 
-1. **Option A (recommended)**  
-   **Branch → PR → merge (squash)**  
+1. **Option A (recommended)**
+   **Branch → PR → merge (squash)**
    Best default: open a PR from current branch to main, review, then merge with squash. No direct push to main.
 
-2. **Option B (fast)**  
-   **Merge directly to main**  
+2. **Option B (fast)**
+   **Merge directly to main**
    Only for small, low-risk edits (e.g. docs, workflows, config). No PR. Use with caution.
 
-3. **Option C (release)**  
-   **After merge: bump changelog → tag vX.Y.Z → push tag**  
+3. **Option C (release)**
+   **After merge: bump changelog → tag vX.Y.Z → push tag**
    Use after work is merged to main. Bump `CHANGELOG.md` for new version, create tag `vX.Y.Z`, push tag. **Pushing the tag triggers the release workflow** (e.g. GHA publishes OCI artifact and creates GitHub Release from changelog).
 
 ## Outline
