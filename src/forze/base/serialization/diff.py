@@ -270,10 +270,10 @@ def has_hybrid_patch_conflict(
     logger.debug("Checking for hybrid patch conflict")
 
     with log_section():
-        logger.debug("A scalars: %s", a_scalars)
-        logger.debug("A containers: %s", a_containers)
-        logger.debug("B scalars: %s", b_scalars)
-        logger.debug("B containers: %s", b_containers)
+        logger.debug("A scalars: %s", tuple(a_scalars.keys()))
+        logger.debug("A containers: %s", tuple(a_containers))
+        logger.debug("B scalars: %s", tuple(b_scalars.keys()))
+        logger.debug("B containers: %s", tuple(b_containers))
 
         all_a = set(a_containers) | set(a_scalars.keys())
         all_b = set(b_containers) | set(b_scalars.keys())

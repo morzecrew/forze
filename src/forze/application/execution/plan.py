@@ -266,26 +266,16 @@ class OperationPlan:
         seen: set[tuple[int, int]] = set()
         out: list[MiddlewareSpec] = []
 
-        logger.debug("Deduplicating bucket %s (%d spec(s))", bucket, len(cur))
-
         for s in cur:
             k = (id(s.factory), s.priority)
 
             if k in seen:
-                logger.debug(
-                    "Skipping duplicate middleware in bucket %s (priority=%s, factory_id=%s)",
-                    bucket,
-                    s.priority,
-                    id(s.factory),
-                )
                 continue
 
             seen.add(k)
             out.append(s)
 
         self.__ensure_no_collisions(out, bucket=bucket)
-
-        logger.debug("Deduplicated bucket %s to %d spec(s)", bucket, len(out))
 
         return tuple(out)
 
@@ -311,17 +301,15 @@ class OperationPlan:
         :returns: Ordered specs.
         """
 
-        logger.debug("Building operation plan bucket %s", bucket)
+        deduped_specs = self.__dedupe(bucket)
+        built = self.__sort(deduped_specs, reverse=True)
 
-        with log_section():
-            deduped_specs = self.__dedupe(bucket)
-            built = self.__sort(deduped_specs, reverse=True)
-
-            logger.debug(
-                "Built bucket %s with priorities=%s",
-                bucket,
-                tuple(s.priority for s in built),
-            )
+        logger.debug(
+            "Built bucket %s with %d spec(s) priorities=%s",
+            bucket,
+            len(built),
+            tuple(s.priority for s in built),
+        )
 
         return built
 

@@ -43,14 +43,10 @@ class Deps(DepsPort):
         :raises CoreError: If the dependency is not registered.
         """
 
-        logger.debug("Providing dependency %s", key.name)
-
         dep = self.deps.get(key)
 
         if not dep:
             raise CoreError(f"Dependency {key.name} not found")
-
-        logger.debug("Provided dependency %s -> %s", key.name, type(dep).__qualname__)
 
         return cast(T, dep)
 
@@ -74,25 +70,16 @@ class Deps(DepsPort):
 
         logger.debug("Merging %d dependency container(s)", len(deps))
 
-        with log_section():
-            acc: dict[DepKey[Any], Any] = {}
+        acc: dict[DepKey[Any], Any] = {}
 
-            for i, d in enumerate(deps, 1):
-                logger.debug(
-                    "Merging container #%d with %d dependency(ies)",
-                    i,
-                    len(d.deps),
-                )
+        for d in deps:
+            overlap = set(acc.keys()).intersection(d.deps.keys())
 
-                overlap = set(acc.keys()).intersection(d.deps.keys())
+            if overlap:
+                names = ", ".join(k.name for k in overlap)
+                raise CoreError(f"Conflicting dependencies: {names}")
 
-                if overlap:
-                    names = ", ".join(k.name for k in overlap)
-                    raise CoreError(f"Conflicting dependencies: {names}")
-
-                acc.update(d.deps)
-
-            logger.debug("Merged dependency container has %d dependency(ies)", len(acc))
+            acc.update(d.deps)
 
         return cls(deps=acc)
 
@@ -191,7 +178,8 @@ class DepsPlan:
         """
 
         logger.debug(
-            "Building dependency container from %d module(s)", len(self.modules)
+            "Building dependency container from %d module(s)",
+            len(self.modules),
         )
 
         with log_section():
@@ -202,16 +190,13 @@ class DepsPlan:
             built: list[Deps] = []
 
             for i, module in enumerate(self.modules, 1):
-                logger.debug("Building deps module #%d", i)
-
-                with log_section():
-                    deps = module()
-                    logger.debug(
-                        "Built deps module #%d with %d dependency(ies)",
-                        i,
-                        len(deps.deps),
-                    )
-                    built.append(deps)
+                deps = module()
+                logger.debug(
+                    "Built deps module #%d with %d dependency(ies)",
+                    i,
+                    len(deps.deps),
+                )
+                built.append(deps)
 
             merged = Deps.merge(*built)
             logger.debug(

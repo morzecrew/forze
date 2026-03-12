@@ -88,10 +88,6 @@ class LifecyclePlan:
     def _check_name_collision(*steps: LifecycleStep) -> None:
         used: set[str] = set()
 
-        logger.debug(
-            "Checking lifecycle step name collisions for %d step(s)", len(steps)
-        )
-
         for step in steps:
             if step.name in used:
                 raise CoreError(f"Lifecycle step name collision: {step.name}")
@@ -150,24 +146,19 @@ class LifecyclePlan:
         re-raises.
         """
 
-        logger.debug(
-            "Running lifecycle startup with %d step(s) for context %s",
-            len(self.steps),
-            type(ctx).__qualname__,
-        )
+        logger.debug("Running lifecycle startup with %d step(s)", len(self.steps))
 
         executed: list[LifecycleStep] = []
 
         with log_section():
             try:
                 for step in self.steps:
-                    logger.debug("Starting lifecycle step %s", step.name)
+                    logger.debug("Executing '%s' startup hook", step.name)
 
                     with log_section():
                         await step.startup(ctx)
 
                     executed.append(step)
-                    logger.debug("Started lifecycle step %s", step.name)
 
             except Exception:
                 logger.exception("Lifecycle startup failed")
@@ -176,7 +167,7 @@ class LifecyclePlan:
                     for step in reversed(executed):
                         try:
                             logger.debug(
-                                "Rolling back lifecycle step %s via shutdown",
+                                "Rolling back '%s' via shutdown",
                                 step.name,
                             )
 
@@ -184,13 +175,13 @@ class LifecyclePlan:
                                 await step.shutdown(ctx)
 
                             logger.debug(
-                                "Rolled back lifecycle step %s successfully",
+                                "Rolled back '%s' successfully",
                                 step.name,
                             )
 
-                        except Exception:  # nosec: B110
+                        except Exception:
                             logger.exception(
-                                "Lifecycle rollback shutdown failed for step %s",
+                                "Lifecycle rollback shutdown failed for '%s'",
                                 step.name,
                             )
 
@@ -204,24 +195,15 @@ class LifecyclePlan:
         Exceptions are swallowed so all steps are attempted.
         """
 
-        logger.debug(
-            "Running lifecycle shutdown with %d step(s) for context %s",
-            len(self.steps),
-            type(ctx).__qualname__,
-        )
+        logger.debug("Running lifecycle shutdown with %d step(s)", len(self.steps))
 
         with log_section():
             for step in reversed(self.steps):
                 try:
-                    logger.debug("Shutting down lifecycle step %s", step.name)
+                    logger.debug("Executing '%s' shutdown hook", step.name)
 
                     with log_section():
                         await step.shutdown(ctx)
 
-                    logger.debug("Shut down lifecycle step %s", step.name)
-
-                except Exception:  # nosec: B110
-                    logger.exception(
-                        "Lifecycle shutdown failed for step %s",
-                        step.name,
-                    )
+                except Exception:
+                    logger.exception("Lifecycle shutdown failed for '%s'", step.name)

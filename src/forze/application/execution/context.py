@@ -183,7 +183,6 @@ class ExecutionContext:
 
         finally:
             self.__resolve_stack.reset(token)
-            logger.debug("Finished resolving dependency %s", key.name)
 
     # ....................... #
 
