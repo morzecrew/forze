@@ -196,12 +196,6 @@ class ExecutionContext:
 
         with self.__resolving(key):
             dep = self.deps.provide(key)
-            logger.debug(
-                "Resolved dependency '%s' -> %s",
-                key.name,
-                type(dep).__qualname__,
-            )
-
             return dep
 
     # ....................... #

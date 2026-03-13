@@ -40,10 +40,10 @@ class RuntimeVar[T: object]:
         """Set the runtime value once. Thread-safe; subsequent calls raise :exc:`CoreError`."""
 
         if value is None:
-            raise CoreError(f"Value cannot be None for {self.name}")
+            raise CoreError(f"Value cannot be None for '{self.name}'")
 
         logger.debug(
-            "Setting runtime variable %s with value type %s",
+            "Setting runtime variable '%s' with value type %s",
             self.name,
             type(value).__name__,
         )
@@ -51,7 +51,7 @@ class RuntimeVar[T: object]:
         with self.__lock:
             if self.__value is not None:
                 raise CoreError(
-                    f"Value is already set for runtime variable {self.name}"
+                    f"Value is already set for runtime variable '{self.name}'"
                 )
 
             self.__value = value
@@ -62,7 +62,7 @@ class RuntimeVar[T: object]:
         """Return the stored value. Raises :exc:`CoreError` if not yet set."""
 
         if self.__value is None:
-            raise CoreError(f"Value is not set for {self.name}")
+            raise CoreError(f"Value is not set for '{self.name}'")
 
         return self.__value
 
@@ -71,7 +71,7 @@ class RuntimeVar[T: object]:
     def reset(self) -> None:
         """Clear the stored value so it can be set again. Thread-safe. Useful for testing."""
 
-        logger.debug("Resetting runtime variable %s", self.name)
+        logger.debug("Resetting runtime variable '%s'", self.name)
 
         with self.__lock:
             self.__value = None

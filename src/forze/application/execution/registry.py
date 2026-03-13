@@ -105,12 +105,10 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
-            logger.debug("Registered factory in place for operation %s", op)
             return None
 
         else:
             new_instance = type(self)(defaults=new)
-            logger.debug("Registered factory immutably for operation %s", op)
             return new_instance
 
     # ....................... #
@@ -172,12 +170,10 @@ class UsecaseRegistry:
 
         if inplace:
             self.defaults = new
-            logger.debug("Overrode factory in place for operation %s", op)
             return None
 
         else:
             new_instance = type(self)(defaults=new)
-            logger.debug("Overrode factory immutably for operation %s", op)
             return new_instance
 
     # ....................... #
@@ -248,12 +244,10 @@ class UsecaseRegistry:
 
             if inplace:
                 self.defaults = new
-                logger.debug("Registered %d factory(s) in place", len(ops))
                 return None
 
             else:
                 new_instance = type(self)(defaults=new)
-                logger.debug("Registered %d factory(s) immutably", len(ops))
                 return new_instance
 
     # ....................... #
@@ -327,12 +321,10 @@ class UsecaseRegistry:
 
             if inplace:
                 self.defaults = new
-                logger.debug("Overrode %d factory(s) in place", len(ops))
                 return None
 
             else:
                 new_instance = type(self)(defaults=new)
-                logger.debug("Overrode %d factory(s) immutably", len(ops))
                 return new_instance
 
     # ....................... #
@@ -391,15 +383,11 @@ class UsecaseRegistry:
 
             if inplace:
                 self.__plan = merged
-                logger.debug("Extended registry plan in place")
-
                 return None
 
             else:
                 new_instance = type(self)(defaults=self.defaults)
                 new_instance.__plan = merged
-                logger.debug("Extended registry plan immutably")
-
                 return new_instance
 
     # ....................... #

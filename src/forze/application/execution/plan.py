@@ -212,30 +212,15 @@ class OperationPlan:
         :raises CoreError: If in-tx or after-commit buckets are used without tx.
         """
 
-        logger.debug("Validating operation plan (tx=%s)", self.tx)
-
-        with log_section():
-            logger.debug(
-                "Bucket sizes: outer_before=%d outer_wrap=%d outer_after=%d "
-                "in_tx_before=%d in_tx_wrap=%d in_tx_after=%d after_commit=%d",
-                len(self.outer_before),
-                len(self.outer_wrap),
-                len(self.outer_after),
-                len(self.in_tx_before),
-                len(self.in_tx_wrap),
-                len(self.in_tx_after),
-                len(self.after_commit),
+        if (
+            self.in_tx_before
+            or self.in_tx_after
+            or self.in_tx_wrap
+            or self.after_commit
+        ) and not self.tx:
+            raise CoreError(
+                "Operation plan uses IN_TX_* middlewares but tx() is not enabled"
             )
-
-            if (
-                self.in_tx_before
-                or self.in_tx_after
-                or self.in_tx_wrap
-                or self.after_commit
-            ) and not self.tx:
-                raise CoreError(
-                    "Operation plan uses IN_TX_* middlewares but tx() is not enabled"
-                )
 
     # ....................... #
 
@@ -304,13 +289,6 @@ class OperationPlan:
         deduped_specs = self.__dedupe(bucket)
         built = self.__sort(deduped_specs, reverse=True)
 
-        logger.debug(
-            "Built bucket %s with %d spec(s) priorities=%s",
-            bucket,
-            len(built),
-            tuple(s.priority for s in built),
-        )
-
         return built
 
     # ....................... #
@@ -353,8 +331,6 @@ class OperationPlan:
                     in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
                     after_commit=(*acc.after_commit, *plan.after_commit),
                 )
-
-            logger.debug("Merged operation plan tx=%s", acc.tx)
 
         return acc
 
@@ -546,6 +522,7 @@ class UsecasePlan:
         :returns: Composed usecase with middlewares.
         :raises CoreError: If op is wildcard or plan is invalid.
         """
+
         op = str(op)
 
         logger.debug(
@@ -709,20 +686,11 @@ class UsecasePlan:
         :returns: Merged plan.
         """
 
-        logger.debug("Merging %d usecase plan(s)", len(plans))
+        acc: dict[str, OperationPlan] = {}
 
-        with log_section():
-            acc: dict[str, OperationPlan] = {}
-
-            for i, p in enumerate(plans, 1):
-                logger.debug("Merging usecase plan #%d with %d op(s)", i, len(p.ops))
-
-                for op, pl in p.ops.items():
-                    logger.debug("Merging operation %s", op)
-
-                    cur = acc.get(op, OperationPlan())
-                    acc[op] = OperationPlan.merge(cur, pl)
-
-                logger.debug("Merged usecase plan contains %d op(s)", len(acc))
+        for p in plans:
+            for op, pl in p.ops.items():
+                cur = acc.get(op, OperationPlan())
+                acc[op] = OperationPlan.merge(cur, pl)
 
         return cls(ops=acc)
