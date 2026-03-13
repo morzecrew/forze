@@ -166,7 +166,7 @@ class ExecutionContext:
         stack = self.__resolve_stack.get()
 
         logger.debug(
-            "Resolving dependency %s (depth=%d)",
+            "Resolving dependency '%s' (depth=%d)",
             key.name,
             len(stack),
         )
@@ -197,7 +197,7 @@ class ExecutionContext:
         with self.__resolving(key):
             dep = self.deps.provide(key)
             logger.debug(
-                "Resolved dependency %s -> %s",
+                "Resolved dependency '%s' -> %s",
                 key.name,
                 type(dep).__qualname__,
             )

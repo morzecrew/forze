@@ -67,12 +67,9 @@ class ExecutionRuntime:
 
         with log_section():
             deps = self.deps.build()
-            logger.debug("Built dependency container")
 
             ctx = ExecutionContext(deps=deps)
             self.__ctx.set_once(ctx)
-
-            logger.debug("Execution context created")
 
     # ....................... #
 
@@ -84,8 +81,6 @@ class ExecutionRuntime:
         with log_section():
             ctx = self.__ctx.get()
             await self.lifecycle.startup(ctx)
-
-            logger.debug("Execution runtime started")
 
     # ....................... #
 

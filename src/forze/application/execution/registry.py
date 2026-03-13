@@ -434,9 +434,8 @@ class UsecaseRegistry:
         op = str(op)
 
         logger.debug(
-            "Resolving usecase for operation %s with context %s (debug_plan=%s)",
+            "Resolving usecase for operation '%s' (debug_plan=%s)",
             op,
-            type(ctx).__qualname__,
             debug_plan,
         )
 
@@ -449,7 +448,7 @@ class UsecaseRegistry:
                 )
 
             logger.debug(
-                "Found factory for operation %s (factory_id=%s)", op, id(factory)
+                "Found factory for operation '%s' (factory_id=%s)", op, id(factory)
             )
 
             if debug_plan:
@@ -460,7 +459,7 @@ class UsecaseRegistry:
             resolved = self.__plan.resolve(op, ctx, factory)
 
             logger.debug(
-                "Resolved usecase for operation %s into %s",
+                "Resolved usecase for operation '%s' -> %s",
                 op,
                 type(resolved).__qualname__,
             )
