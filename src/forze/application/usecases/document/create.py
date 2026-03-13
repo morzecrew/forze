@@ -5,7 +5,7 @@ import attrs
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
@@ -41,10 +41,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         :returns: Created read model.
         """
 
-        with log_section():
-            cmd = await self.mapper(self.ctx, args)
-
+        cmd = await self.mapper(self.ctx, args)
         self.log_delegation(self.doc)
 
-        with log_section():
-            return await self.doc.create(cmd)
+        return await self.doc.create(cmd)

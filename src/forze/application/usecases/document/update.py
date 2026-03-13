@@ -6,7 +6,7 @@ import attrs
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
@@ -56,10 +56,8 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
 
         self.log_parameters({"pk": args["pk"], "rev": args.get("rev")})
 
-        with log_section():
-            cmd = await self.mapper(self.ctx, args["dto"])
+        cmd = await self.mapper(self.ctx, args["dto"])
 
         self.log_delegation(self.doc)
 
-        with log_section():
-            return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))
+        return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))

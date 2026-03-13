@@ -5,7 +5,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -45,14 +45,9 @@ class KillDocument(Usecase[UUID, None]):
         :returns: ``None``.
         """
 
-        logger.debug(
-            "%s: delegating to %s",
-            type(self).__qualname__,
-            type(self.doc).__qualname__,
-        )
+        self.log_delegation(self.doc)
 
-        with log_section():
-            return await self.doc.kill(args)
+        return await self.doc.kill(args)
 
 
 # ....................... #
@@ -74,14 +69,10 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        logger.debug(
-            "%s: delegating to %s",
-            type(self).__qualname__,
-            type(self.doc).__qualname__,
-        )
+        self.log_parameters(dict(args))
+        self.log_delegation(self.doc)
 
-        with log_section():
-            return await self.doc.delete(args["pk"], rev=args.get("rev"))
+        return await self.doc.delete(args["pk"], rev=args.get("rev"))
 
 
 # ....................... #
@@ -103,18 +94,7 @@ class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        logger.debug(
-            "%s: pk=%s, rev=%s",
-            type(self).__qualname__,
-            args["pk"],
-            args.get("rev"),
-        )
+        self.log_parameters(dict(args))
+        self.log_delegation(self.doc)
 
-        logger.debug(
-            "%s: delegating to %s",
-            type(self).__qualname__,
-            type(self.doc).__qualname__,
-        )
-
-        with log_section():
-            return await self.doc.restore(args["pk"], rev=args.get("rev"))
+        return await self.doc.restore(args["pk"], rev=args.get("rev"))

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -116,6 +116,12 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
         )
 
         with log_section():
+            if self.in_ is self.out and not self.steps:
+                logger.trace(
+                    "Source and target are the same class and no steps are defined, returning source directly"
+                )
+                return cast(Out, source)
+
             payload = pydantic_dump(source, exclude={"unset": True})
             logger.trace("Initial payload keys: %s", tuple(payload.keys()))
 

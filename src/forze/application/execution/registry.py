@@ -424,9 +424,6 @@ class UsecaseRegistry:
                 "Found factory for operation '%s' (factory_id=%s)", op, id(factory)
             )
 
-            explain = self.__plan.explain(op)
-            logger.trace("Plan explanation: %s", explain.pretty_format())
-
             resolved = self.__plan.resolve(op, ctx, factory)
 
         return resolved

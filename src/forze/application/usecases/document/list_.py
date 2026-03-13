@@ -11,7 +11,7 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -45,22 +45,20 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
         offset = (page - 1) * limit
         body = args
 
-        self.log_parameters({"page": page, "size": size, "offset": offset})
+        self.log_parameters({"page": page, "size": size})
 
         if self.mapper:
-            with log_section():
-                # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
-                body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+            # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
+            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
         self.log_delegation(self.doc)
 
-        with log_section():
-            hits, count = await self.doc.find_many(
-                filters=body.filters,
-                sorts=body.sorts,
-                limit=limit,
-                offset=offset,
-            )
+        hits, count = await self.doc.find_many(
+            filters=body.filters,
+            sorts=body.sorts,
+            limit=limit,
+            offset=offset,
+        )
 
         return Paginated(hits=hits, page=page, size=size, count=count)
 
@@ -93,21 +91,19 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
         offset = (page - 1) * limit
         body = args
 
-        self.log_parameters({"page": page, "size": size, "offset": offset})
+        self.log_parameters({"page": page, "size": size})
 
         if self.mapper:
-            with log_section():
-                # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
-                body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+            # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
+            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
         self.log_delegation(self.doc)
 
-        with log_section():
-            hits, count = await self.doc.find_many(
-                filters=body.filters,
-                sorts=body.sorts,
-                limit=limit,
-                offset=offset,
-            )
+        hits, count = await self.doc.find_many(
+            filters=body.filters,
+            sorts=body.sorts,
+            limit=limit,
+            offset=offset,
+        )
 
         return RawPaginated(hits=hits, page=page, size=size, count=count)

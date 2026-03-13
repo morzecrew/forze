@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentReadPort
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -35,5 +35,4 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
         self.log_parameters({"pk": args})
         self.log_delegation(self.doc)
 
-        with log_section():
-            return await self.doc.get(args)
+        return await self.doc.get(args)
