@@ -87,8 +87,8 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        logger.debug(
-            "Registering usecase factory for operation %s (inplace=%s, factory_id=%s)",
+        logger.trace(
+            "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
             op,
             inplace,
             id(factory),
@@ -154,8 +154,8 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        logger.debug(
-            "Overriding usecase factory for operation %s (inplace=%s, factory_id=%s)",
+        logger.trace(
+            "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
             op,
             inplace,
             id(factory),
@@ -222,14 +222,14 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        logger.debug(
+        logger.trace(
             "Registering %d usecase factory(s) (inplace=%s)",
             len(ops),
             inplace,
         )
 
         with log_section():
-            logger.debug("Operations: %s", tuple(ops.keys()))
+            logger.trace("Operations: %s", tuple(ops.keys()))
 
             already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
@@ -299,14 +299,14 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        logger.debug(
+        logger.trace(
             "Overriding %d usecase factory(s) (inplace=%s)",
             len(ops),
             inplace,
         )
 
         with log_section():
-            logger.debug("Operations: %s", tuple(ops.keys()))
+            logger.trace("Operations: %s", tuple(ops.keys()))
 
             not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 

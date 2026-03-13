@@ -147,7 +147,7 @@ def _path_get(obj: Any, path: str) -> Any:
         if isinstance(cur, dict):
             if part not in cur:
                 return _MISSING
-            cur = cur[part]
+            cur = cur[part]  # pyright: ignore[reportUnknownVariableType]
             continue
 
         return _MISSING

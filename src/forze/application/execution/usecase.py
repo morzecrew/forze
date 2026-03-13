@@ -2,7 +2,7 @@ from typing import Any, Self
 
 import attrs
 
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .middleware import Middleware, NextCall
@@ -150,13 +150,14 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        logger.info("Starting usecase execution: %s", type(self).__qualname__)
+        with logger.contextualize(usecase=type(self).__qualname__):
+            logger.debug("Starting usecase execution")
 
-        with log_section():
-            chain = self._build_chain()
-            result = await chain(args)
+            with logger.section():
+                chain = self._build_chain()
+                result = await chain(args)
 
-        logger.info("Usecase execution completed: %s", type(self).__qualname__)
+            logger.debug("Usecase execution completed")
 
         return result
 

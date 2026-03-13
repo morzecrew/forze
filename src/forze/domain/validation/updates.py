@@ -105,14 +105,14 @@ def update_validator(
         sig = inspect.signature(f)
         params = list(sig.parameters.values())
 
-        logger.debug(
+        logger.trace(
             "Registering update validator %s",
             getattr(f, "__qualname__", getattr(f, "__name__", repr(f))),
         )
 
         with log_section():
-            logger.debug("Validator signature: %s", sig)
-            logger.debug("Validator fields: %s", tuple(fields) if fields else None)
+            logger.trace("Validator signature: %s", sig)
+            logger.trace("Validator fields: %s", tuple(fields) if fields else None)
 
             if not params:
                 raise CoreError(
@@ -123,7 +123,7 @@ def update_validator(
             fields_meta = frozenset(fields) if fields else None
             meta = UpdateValidatorMetadata(fields=fields_meta)
 
-            logger.debug("Normalized validator arity: %d", extra + 1)
+            logger.trace("Normalized validator arity: %d", extra + 1)
 
             if extra == 0:
 
@@ -152,12 +152,6 @@ def update_validator(
             wrapper.__name__ = getattr(f, "__name__", "update_validator")
             wrapper.__qualname__ = getattr(f, "__qualname__", wrapper.__name__)
 
-            logger.debug(
-                "Registered validator %s with fields=%s",
-                wrapper.__qualname__,
-                meta.fields,
-            )
-
             return wrapper
 
     if _func is not None:
@@ -179,7 +173,7 @@ def collect_update_validators(
     Handles name conflicts according to the ``on_conflict`` strategy.
     """
 
-    logger.debug(
+    logger.trace(
         "Collecting update validators for %s (on_conflict=%s)",
         cls.__qualname__,
         on_conflict,
@@ -189,7 +183,7 @@ def collect_update_validators(
         by_name: OrderedDict[str, _ValidatorEntry] = OrderedDict()
 
         for b in reversed(cls.mro()[:-1]):
-            logger.debug("Scanning class %s", b.__qualname__)
+            logger.trace("Scanning class %s", b.__qualname__)
 
             with log_section():
                 for name, attr in b.__dict__.items():
@@ -198,7 +192,7 @@ def collect_update_validators(
                     if not isinstance(meta, UpdateValidatorMetadata):
                         continue
 
-                    logger.debug(
+                    logger.trace(
                         "Found validator %s on %s with fields=%s",
                         name,
                         b.__qualname__,
@@ -214,7 +208,7 @@ def collect_update_validators(
                             f"{b.__qualname__} overrides {prev.owner.__qualname__}."
                         )
 
-                        logger.debug(
+                        logger.trace(
                             "Validator conflict for %s: previous=%s, current=%s",
                             name,
                             prev.owner.__qualname__,
@@ -232,10 +226,10 @@ def collect_update_validators(
 
         result = [(name, entry.meta) for name, entry in by_name.items()]
 
-        logger.debug(
-            "Collected %d update validator(s) for %s",
-            len(result),
-            cls.__qualname__,
-        )
+    logger.trace(
+        "Collected %d update validator(s) for %s",
+        len(result),
+        cls.__qualname__,
+    )
 
-        return result
+    return result

@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Document list endpoints now correctly pass pagination to the usecase.
+- Logging format: escape extra dict in output to avoid loguru KeyError; exclude redundant ``logger_name`` from displayed extra.
 
 ### Removed
 

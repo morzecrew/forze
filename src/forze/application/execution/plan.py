@@ -372,7 +372,7 @@ class UsecasePlan:
         :returns: New plan instance.
         """
 
-        logger.trace("Enabling transaction for operation %s", op)
+        logger.trace("Enabling transaction for operation '%s'", op)
         cur = self._op(op)
 
         return self._put(op, attrs.evolve(cur, tx=True))
@@ -510,7 +510,7 @@ class UsecasePlan:
         logger.debug("Resolving usecase plan for operation '%s'", op)
 
         if op == WILDCARD or op.endswith(WILDCARD):
-            raise CoreError(f"Resolve on wildcard operation `{op}` is not allowed")
+            raise CoreError(f"Resolve on wildcard operation '{op}' is not allowed")
 
         with log_section():
             plan = OperationPlan.merge(self._base(), self._op(op))
