@@ -123,6 +123,10 @@ def _level_no(level: LogLevelName) -> int:
     return _LEVEL_TO_NO[level]
 
 
+def _escape_loguru_braces(text: str) -> str:
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def _matches_namespace(name: str, prefixes: tuple[str, ...]) -> bool:
     """Return ``True`` if *name* belongs to one of the configured namespaces."""
 
@@ -223,10 +227,10 @@ def _record_format(record: Record) -> str:
     message = record["message"]
 
     return (
-        f"<green>{time}</green> "
+        f"<dim>{time}</dim> "
         f"<level>{level}</level> "
-        f"<cyan>{shortname:<{_config.width}}</cyan> "
-        f"{indent}<level>{message}</level>\n"
+        f"<dim>{shortname:<{_config.width}}</dim> "
+        f"{indent}{message}\n"
     )
 
 
@@ -306,7 +310,8 @@ class Logger:
 
     def exception(self, message: Any, *args: Any) -> None:
         rendered = _render_message(message, args)
-        self._logger.opt(exception=True).error(rendered)  # type: ignore[no-untyped-call]
+        escaped = _escape_loguru_braces(rendered)
+        self._logger.opt(exception=True).error(escaped)  # type: ignore[no-untyped-call]
 
     def log(self, level: LogLevel, message: Any, *args: Any) -> None:
         self._log(_normalize_level(level), message, *args)
@@ -315,7 +320,8 @@ class Logger:
 
     def _log(self, level: LogLevelName, message: Any, *args: Any) -> None:
         rendered = _render_message(message, args)
-        self._logger.log(level, rendered)  # type: ignore[no-untyped-call]
+        escaped = _escape_loguru_braces(rendered)
+        self._logger.log(level, escaped)  # type: ignore[no-untyped-call]
 
 
 def getLogger(name: str | None = None) -> Logger:
