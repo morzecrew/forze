@@ -169,64 +169,69 @@ class IdempotencyFeature(RouteFeature):
         """
 
         async def wrapped(request: Request) -> Response:
-            logger.trace("Starting idempotent route execution")
+            with logger.contextualize(scope="idempotency"):
+                logger.trace("Starting idempotent route execution")
 
-            idem_key = request.headers.get(self.config["header_key"])
+                idem_key = request.headers.get(self.config["header_key"])
 
-            if not idem_key:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Idempotency key is required",
+                if not idem_key:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Idempotency key is required",
+                    )
+
+                ctx = self.ctx_dep()
+                idem_f = ctx.dep(IdempotencyDepKey)
+                idem = idem_f(context=ctx, ttl=self.config["ttl"])
+
+                raw_body = await request.body()
+                payload_hash: str
+
+                try:
+                    payload_hash = _hash_payload(self.config, raw_body)
+
+                except Exception:
+                    logger.exception(
+                        "Failed to hash request payload, continuing with handler"
+                    )
+                    return await handler(request)
+
+                snap = await idem.begin(
+                    self.config["operation"], idem_key, payload_hash
                 )
 
-            ctx = self.ctx_dep()
-            idem_f = ctx.dep(IdempotencyDepKey)
-            idem = idem_f(context=ctx, ttl=self.config["ttl"])
+                if snap is not None:
+                    return Response(
+                        content=snap["body"],
+                        status_code=int(snap.get("code", 200)),
+                        media_type=snap.get("content_type", "application/json"),
+                    )
 
-            raw_body = await request.body()
-            payload_hash: str
+                resp = await handler(request)
 
-            try:
-                payload_hash = _hash_payload(self.config, raw_body)
+                try:
+                    body_bytes = await _response_body_bytes(resp)
+                    await idem.commit(
+                        self.config["operation"],
+                        idem_key,
+                        payload_hash,
+                        {
+                            "code": int(resp.status_code),
+                            "content_type": resp.media_type
+                            or resp.headers.get(
+                                "content-type", "application/octet-stream"
+                            ),
+                            "body": body_bytes,
+                        },
+                    )
+                    logger.debug("Idempotency snapshot committed successfully")
 
-            except Exception:
-                logger.exception(
-                    "Failed to hash request payload, continuing with handler"
-                )
-                return await handler(request)
+                except Exception:
+                    logger.exception("Failed to commit idempotency snapshot")
 
-            snap = await idem.begin(self.config["operation"], idem_key, payload_hash)
+                logger.trace("Finished idempotent route execution")
 
-            if snap is not None:
-                return Response(
-                    content=snap["body"],
-                    status_code=int(snap.get("code", 200)),
-                    media_type=snap.get("content_type", "application/json"),
-                )
-
-            resp = await handler(request)
-
-            try:
-                body_bytes = await _response_body_bytes(resp)
-                await idem.commit(
-                    self.config["operation"],
-                    idem_key,
-                    payload_hash,
-                    {
-                        "code": int(resp.status_code),
-                        "content_type": resp.media_type
-                        or resp.headers.get("content-type", "application/octet-stream"),
-                        "body": body_bytes,
-                    },
-                )
-                logger.debug("Idempotency snapshot committed successfully")
-
-            except Exception:
-                logger.exception("Failed to commit idempotency snapshot")
-
-            logger.trace("Finished idempotent route execution")
-
-            return resp
+                return resp
 
         return wrapped
 

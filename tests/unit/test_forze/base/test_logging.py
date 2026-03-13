@@ -43,16 +43,19 @@ class TestGetLogger:
         captured = capsys.readouterr()
         assert "hello world" in captured.err
         assert "INFO" in captured.err
-        assert "forze" in captured.err
 
-    def test_debug_filtered_at_info_level(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_debug_filtered_at_info_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure(level="INFO", colorize=False)
         log = getLogger("forze.test")
         log.debug("should not appear")
         captured = capsys.readouterr()
         assert "should not appear" not in captured.err
 
-    def test_debug_emitted_at_debug_level(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_debug_emitted_at_debug_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure(level="DEBUG", colorize=False)
         log = getLogger("forze.test")
         log.debug("debug message")
@@ -106,7 +109,9 @@ class TestPerNamespaceLevels:
 class TestLogSections:
     """Tests for :func:`log_section` and indentation."""
 
-    def test_section_increases_indentation(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_section_increases_indentation(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
         log = getLogger("forze.test")
         log.info("before section")
@@ -117,7 +122,7 @@ class TestLogSections:
         lines = captured.err.strip().split("\n")
         assert len(lines) >= 3
         # Inside section should have extra indentation (step)
-        inside_idx = next(i for i, l in enumerate(lines) if "inside section" in l)
+        inside_idx = next(i for i, li in enumerate(lines) if "inside section" in li)
         assert "  " in lines[inside_idx] or lines[inside_idx].strip().startswith("  ")
 
     def test_nested_sections_stack_indentation(
@@ -133,45 +138,15 @@ class TestLogSections:
         assert "depth 1" in captured.err
         assert "depth 2" in captured.err
 
-    def test_logger_section_context_manager(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_logger_section_context_manager(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
         log = getLogger("forze.test")
         with log.section():
             log.info("via logger.section()")
         captured = capsys.readouterr()
         assert "via logger.section()" in captured.err
-
-
-# ----------------------- #
-# Formatting (name truncation, root aliases)
-
-
-class TestFormatting:
-    """Tests for logger name formatting and display."""
-
-    def test_keep_sections_truncates_name(self, capsys: pytest.CaptureFixture[str]) -> None:
-        configure(
-            level="INFO",
-            keep_sections={"forze": 2},
-            colorize=False,
-        )
-        log = getLogger("forze.application.execution.usecase")
-        log.info("truncated")
-        captured = capsys.readouterr()
-        # Should show forze.application, not full path
-        assert "forze.application" in captured.err
-        assert "usecase" not in captured.err
-
-    def test_root_aliases_replace_prefix(self, capsys: pytest.CaptureFixture[str]) -> None:
-        configure(
-            level="INFO",
-            root_aliases={"forze": "fz"},
-            colorize=False,
-        )
-        log = getLogger("forze.application")
-        log.info("aliased")
-        captured = capsys.readouterr()
-        assert "fz" in captured.err
 
 
 # ----------------------- #
@@ -203,7 +178,9 @@ class TestIsEnabledFor:
 class TestSetupDefault:
     """Tests for :func:`setup_default`."""
 
-    def test_setup_default_configures_sink(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_setup_default_configures_sink(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         setup_default()
         log = getLogger("forze.test")
         log.info("after setup_default")

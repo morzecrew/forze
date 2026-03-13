@@ -45,8 +45,6 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
         offset = (page - 1) * limit
         body = args
 
-        self.log_parameters({"page": page, "size": size})
-
         if self.mapper:
             # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
@@ -90,8 +88,6 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
         limit = size
         offset = (page - 1) * limit
         body = args
-
-        self.log_parameters({"page": page, "size": size})
 
         if self.mapper:
             # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe

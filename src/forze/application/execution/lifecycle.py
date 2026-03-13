@@ -104,13 +104,14 @@ class LifecyclePlan:
         :raises CoreError: If step names collide.
         """
 
-        logger.trace("Creating lifecycle plan from %d step(s)", len(steps))
+        with logger.contextualize(scope="lifecycle"):
+            logger.trace("Creating lifecycle plan from %d step(s)", len(steps))
 
-        with logger.section():
-            logger.trace("Steps: %s", tuple(step.name for step in steps))
-            cls._check_name_collision(*steps)
+            with logger.section():
+                logger.trace("Steps: %s", tuple(step.name for step in steps))
+                cls._check_name_collision(*steps)
 
-        return cls(steps=steps)
+            return cls(steps=steps)
 
     # ....................... #
 

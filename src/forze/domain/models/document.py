@@ -64,7 +64,7 @@ class Document(CoreModel):
     def __init_subclass__(cls, **kwargs: Any):
         super().__init_subclass__(**kwargs)
 
-        logger.debug(
+        logger.trace(
             "Collecting update validators for document subclass %s",
             cls.__qualname__,
         )

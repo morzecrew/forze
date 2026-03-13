@@ -32,7 +32,6 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
         :returns: Read model.
         """
 
-        self.log_parameters({"pk": args})
         self.log_delegation(self.doc)
 
         return await self.doc.get(args)

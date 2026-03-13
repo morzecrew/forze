@@ -87,28 +87,29 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        logger.trace(
-            "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
-            op,
-            inplace,
-            id(factory),
-        )
-
-        if op in self.defaults:
-            raise CoreError(
-                f"Usecase factory is already registered for operation: {op}"
+        with logger.contextualize(scope="registry"):
+            logger.trace(
+                "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
+                op,
+                inplace,
+                id(factory),
             )
 
-        new = dict(self.defaults)
-        new[op] = factory
+            if op in self.defaults:
+                raise CoreError(
+                    f"Usecase factory is already registered for operation: {op}"
+                )
 
-        if inplace:
-            self.defaults = new
-            return None
+            new = dict(self.defaults)
+            new[op] = factory
 
-        else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            if inplace:
+                self.defaults = new
+                return None
+
+            else:
+                new_instance = type(self)(defaults=new)
+                return new_instance
 
     # ....................... #
 
@@ -154,26 +155,29 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        logger.trace(
-            "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
-            op,
-            inplace,
-            id(factory),
-        )
+        with logger.contextualize(scope="registry"):
+            logger.trace(
+                "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
+                op,
+                inplace,
+                id(factory),
+            )
 
-        if op not in self.defaults:
-            raise CoreError(f"Usecase factory is not registered for operation: {op}")
+            if op not in self.defaults:
+                raise CoreError(
+                    f"Usecase factory is not registered for operation: {op}"
+                )
 
-        new = dict(self.defaults)
-        new[op] = factory
+            new = dict(self.defaults)
+            new[op] = factory
 
-        if inplace:
-            self.defaults = new
-            return None
+            if inplace:
+                self.defaults = new
+                return None
 
-        else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            else:
+                new_instance = type(self)(defaults=new)
+                return new_instance
 
     # ....................... #
 
@@ -222,32 +226,33 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        logger.trace(
-            "Registering %d usecase factory(s) (inplace=%s)",
-            len(ops),
-            inplace,
-        )
+        with logger.contextualize(scope="registry"):
+            logger.trace(
+                "Registering %d usecase factory(s) (inplace=%s)",
+                len(ops),
+                inplace,
+            )
 
-        with log_section():
-            logger.trace("Operations: %s", tuple(ops.keys()))
+            with log_section():
+                logger.trace("Operations: %s", tuple(ops.keys()))
 
-            already_registered = set(self.defaults.keys()).intersection(ops.keys())
+                already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
-            if already_registered:
-                raise CoreError(
-                    f"Usecase factories are already registered for operations: {already_registered}"
-                )
+                if already_registered:
+                    raise CoreError(
+                        f"Usecase factories are already registered for operations: {already_registered}"
+                    )
 
-            new = dict(self.defaults)
-            new.update(ops)
+                new = dict(self.defaults)
+                new.update(ops)
 
-            if inplace:
-                self.defaults = new
-                return None
+                if inplace:
+                    self.defaults = new
+                    return None
 
-            else:
-                new_instance = type(self)(defaults=new)
-                return new_instance
+                else:
+                    new_instance = type(self)(defaults=new)
+                    return new_instance
 
     # ....................... #
 
@@ -299,32 +304,33 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        logger.trace(
-            "Overriding %d usecase factory(s) (inplace=%s)",
-            len(ops),
-            inplace,
-        )
+        with logger.contextualize(scope="registry"):
+            logger.trace(
+                "Overriding %d usecase factory(s) (inplace=%s)",
+                len(ops),
+                inplace,
+            )
 
-        with log_section():
-            logger.trace("Operations: %s", tuple(ops.keys()))
+            with log_section():
+                logger.trace("Operations: %s", tuple(ops.keys()))
 
-            not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
+                not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
-            if not_yet_registered:
-                raise CoreError(
-                    f"Usecase factories are not registered for operations: {not_yet_registered}"
-                )
+                if not_yet_registered:
+                    raise CoreError(
+                        f"Usecase factories are not registered for operations: {not_yet_registered}"
+                    )
 
-            new = dict(self.defaults)
-            new.update(ops)
+                new = dict(self.defaults)
+                new.update(ops)
 
-            if inplace:
-                self.defaults = new
-                return None
+                if inplace:
+                    self.defaults = new
+                    return None
 
-            else:
-                new_instance = type(self)(defaults=new)
-                return new_instance
+                else:
+                    new_instance = type(self)(defaults=new)
+                    return new_instance
 
     # ....................... #
 
@@ -370,22 +376,23 @@ class UsecaseRegistry:
         :param inplace: When ``True``, mutate the registry in place.
         """
 
-        logger.trace(
-            "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
-            inplace,
-            len(extra.ops),
-        )
+        with logger.contextualize(scope="registry"):
+            logger.trace(
+                "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
+                inplace,
+                len(extra.ops),
+            )
 
-        merged = UsecasePlan.merge(self.__plan, extra)
+            merged = UsecasePlan.merge(self.__plan, extra)
 
-        if inplace:
-            self.__plan = merged
-            return None
+            if inplace:
+                self.__plan = merged
+                return None
 
-        else:
-            new_instance = type(self)(defaults=self.defaults)
-            new_instance.__plan = merged
-            return new_instance
+            else:
+                new_instance = type(self)(defaults=self.defaults)
+                new_instance.__plan = merged
+                return new_instance
 
     # ....................... #
 
@@ -410,14 +417,17 @@ class UsecaseRegistry:
         """
         op = str(op)
 
-        logger.debug("Resolving usecase for operation '%s'", op)
-        factory = self.defaults.get(op)
+        with logger.contextualize(scope="registry"):
+            logger.debug("Resolving usecase for operation '%s'", op)
+            factory = self.defaults.get(op)
 
-        if not factory:
-            raise CoreError(f"Usecase factory is not registered for operation: {op}")
+            if not factory:
+                raise CoreError(
+                    f"Usecase factory is not registered for operation: {op}"
+                )
 
-        logger.trace("Found factory (factory_id=%s)", id(factory))
+            logger.trace("Found factory (factory_id=%s)", id(factory))
 
-        resolved = self.__plan.resolve(op, ctx, factory)
+            resolved = self.__plan.resolve(op, ctx, factory)
 
-        return resolved
+            return resolved

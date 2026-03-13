@@ -1,8 +1,8 @@
-from typing import Any, Self
+from typing import Self
 
 import attrs
 
-from forze.base.logging import getLogger
+from forze.base.logging import getLogger, safe_preview
 
 from .context import ExecutionContext
 from .middleware import Middleware, NextCall
@@ -10,57 +10,6 @@ from .middleware import Middleware, NextCall
 # ----------------------- #
 
 logger = getLogger(__name__)
-
-# ....................... #
-
-_QUALNAME_CACHE_MAXSIZE = 256
-_qualname_cache: dict[type[Any], str] = {}
-_qualname_cache_keys: list[type[Any]] = []
-
-
-def _qualname_for_type(t: type[Any]) -> str:
-    """Return qualname for a type, cached to avoid repeated introspection."""
-
-    if t in _qualname_cache:
-        return _qualname_cache[t]
-
-    result = getattr(t, "__qualname__", getattr(t, "__name__", repr(t)))
-
-    if len(_qualname_cache) >= _QUALNAME_CACHE_MAXSIZE:
-        evict = _qualname_cache_keys.pop(0)
-        del _qualname_cache[evict]
-
-    _qualname_cache[t] = result
-    _qualname_cache_keys.append(t)
-    return result
-
-
-def _args_safe_for_logging_impl(args: Any) -> str:
-    """Return a logging-safe string representation of *args*.
-
-    Handles list (recursive on first element), dict (first level only),
-    and plain objects. Uses type qualnames only; never captures values.
-    """
-
-    if isinstance(args, list):
-        if not args:
-            return "list (empty)"
-
-        first_qual = _args_safe_for_logging_impl(args[0])
-        return f"list[{first_qual}]"
-
-    if isinstance(args, dict):
-        if not args:
-            return "dict (empty)"
-
-        parts = (
-            f"{k}: {_qualname_for_type(type(v))}"  # pyright: ignore[reportUnknownArgumentType]
-            for k, v in args.items()  # pyright: ignore[reportUnknownVariableType]
-        )
-        return "{" + ", ".join(parts) + "}"
-
-    return _qualname_for_type(type(args))  # pyright: ignore[reportUnknownArgumentType]
-
 
 # ....................... #
 
@@ -118,7 +67,7 @@ class Usecase[Args, R]:
         )
 
         async def last(args: Args) -> R:
-            safe_args = self._args_safe_for_logging(args)
+            safe_args = safe_preview(args)
             logger.debug("Calling main with args: %s", safe_args)
             return await self.main(args)
 
@@ -164,11 +113,5 @@ class Usecase[Args, R]:
     # ....................... #
     # Convenient methods
 
-    def log_parameters(self, parameters: dict[str, Any]) -> None:
-        logger.debug("Parameters: %s", parameters)
-
     def log_delegation(self, target: object) -> None:
         logger.debug("Delegating to %s", type(target).__qualname__)
-
-    def _args_safe_for_logging(self, args: Any) -> str:
-        return _args_safe_for_logging_impl(args)

@@ -54,8 +54,6 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         :returns: Updated read model.
         """
 
-        self.log_parameters({"pk": args["pk"], "rev": args.get("rev")})
-
         cmd = await self.mapper(self.ctx, args["dto"])
 
         self.log_delegation(self.doc)

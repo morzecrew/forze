@@ -69,7 +69,6 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        self.log_parameters(dict(args))
         self.log_delegation(self.doc)
 
         return await self.doc.delete(args["pk"], rev=args.get("rev"))
@@ -94,7 +93,6 @@ class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        self.log_parameters(dict(args))
         self.log_delegation(self.doc)
 
         return await self.doc.restore(args["pk"], rev=args.get("rev"))

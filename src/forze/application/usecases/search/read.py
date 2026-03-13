@@ -43,8 +43,6 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Ou
         offset = (page - 1) * limit
         body = args
 
-        self.log_parameters({"page": page, "size": size})
-
         if self.mapper:
             # typevar ensures that the incoming body is subclass of SearchRequestDTO, so the assignment is safe
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
@@ -89,8 +87,6 @@ class RawSearch[In: RawSearchRequestDTO](Usecase[In, RawPaginated]):
         limit = size
         offset = (page - 1) * limit
         body = args
-
-        self.log_parameters({"page": page, "size": size})
 
         if self.mapper:
             # typevar ensures that the incoming body is subclass of RawSearchRequestDTO, so the assignment is safe
