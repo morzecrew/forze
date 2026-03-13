@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- ``register_uvicorn_logging_interceptor``: add interceptor to root logger and use propagation instead of replacing per-logger handlers.
 - `OverrideDocumentEndpointNames` renamed to `OverrideDocumentEndpointPaths`; `name_overrides` renamed to `path_overrides` in document router.
 - `OverrideSearchEndpointNames` renamed to `OverrideSearchEndpointPaths`; `name_overrides` renamed to `path_overrides` in search router.
 - `SearchUsecasesFacadeProvider` now uses `dtos: SearchDTOSpec` instead of `read_dto`; `build_search_registry` requires `dto_spec`.

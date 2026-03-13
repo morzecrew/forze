@@ -5,12 +5,15 @@ from forze.base.logging.helpers import normalize_level
 
 # ----------------------- #
 
+logger = getLogger(__name__)
+
+# ....................... #
+
 
 class InterceptHandler(logging.Handler):
     """Redirect standard logging to loguru."""
 
     def emit(self, record: logging.LogRecord) -> None:
-        logger = getLogger(__name__)
         level = normalize_level(record.levelno)
 
         with logger.contextualize(scope="uvicorn"):
@@ -26,11 +29,18 @@ class InterceptHandler(logging.Handler):
 def register_uvicorn_logging_interceptor() -> None:
     interceptor = InterceptHandler()
 
-    for name in [
+    root = logging.getLogger()
+    root.setLevel(logging.NOTSET)
+
+    # Add interceptor to root; child loggers propagate to it
+    root.addHandler(interceptor)
+
+    for name in (
         "uvicorn",
-        "uvicorn.access",
         "uvicorn.error",
+        "uvicorn.access",
         "fastapi",
-    ]:
-        logging.getLogger(name).handlers = [interceptor]
-        logging.getLogger(name).propagate = False
+    ):
+        log = logging.getLogger(name)
+        log.handlers.clear()
+        log.propagate = True
