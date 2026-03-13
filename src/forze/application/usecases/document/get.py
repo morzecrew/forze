@@ -4,9 +4,12 @@ import attrs
 
 from forze.application.contracts.document import DocumentReadPort
 from forze.application.execution import Usecase
+from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -28,4 +31,5 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
         :param args: Document primary key.
         :returns: Read model.
         """
+        logger.trace("GetDocument: pk=%s", args)
         return await self.doc.get(args)

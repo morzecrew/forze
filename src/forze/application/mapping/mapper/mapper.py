@@ -4,6 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
+from forze.base.logging import getLogger, log_section
 from forze.base.serialization import apply_dict_patch, pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO
 
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 
 @final
@@ -67,6 +70,13 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
             step_fields.append(frozenset(produces))
 
         object.__setattr__(self, "_step_fields", tuple(step_fields))
+        logger.trace(
+            "DTOMapper initialized: %s -> %s with %d step(s), fields=%s",
+            self.in_.__qualname__,
+            self.out.__qualname__,
+            len(self.steps),
+            tuple(step_fields),
+        )
 
     # ....................... #
 
@@ -98,17 +108,45 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
         :returns: Validated instance of :attr:`out`.
         :raises CoreError: On step conflict or disallowed overwrite.
         """
-
+        logger.debug(
+            "Mapping %s -> %s",
+            self.in_.__qualname__,
+            self.out.__qualname__,
+        )
         payload = pydantic_dump(source, exclude={"unset": True})
+        logger.trace("Initial payload keys: %s", tuple(payload.keys()))
 
-        for step, fields in zip(self.steps, self._step_fields, strict=True):
-            patch = await step(ctx, source, payload)
+        with log_section():
+            for i, (step, fields) in enumerate(
+                zip(self.steps, self._step_fields, strict=True)
+            ):
+                logger.trace(
+                    "Running step %d/%d (%s), produces %s",
+                    i + 1,
+                    len(self.steps),
+                    type(step).__qualname__,
+                    tuple(fields),
+                )
+                patch = await step(ctx, source, payload)
 
-            for k in fields:
-                if k in payload and payload.get(k) != patch.get(k):
-                    if not self.policy.can_overwrite(k):
-                        raise CoreError(f"Field {k} is not allowed to be overwritten")
+                for k in fields:
+                    if k in payload and payload.get(k) != patch.get(k):
+                        if not self.policy.can_overwrite(k):
+                            raise CoreError(
+                                f"Field {k} is not allowed to be overwritten"
+                            )
 
-            payload = apply_dict_patch(payload, patch)
+                        logger.trace(
+                            "Overwriting field %s (allowed by policy)",
+                            k,
+                        )
 
-        return pydantic_validate(self.out, payload)
+                payload = apply_dict_patch(payload, patch)
+
+            result = pydantic_validate(self.out, payload)
+            logger.debug(
+                "Mapping completed: %s -> %s",
+                self.in_.__qualname__,
+                self.out.__qualname__,
+            )
+        return result

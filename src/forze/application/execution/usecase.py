@@ -69,7 +69,7 @@ class Usecase[Args, R]:
     # ....................... #
 
     def _build_chain(self) -> NextCall[Args, R]:
-        logger.debug(
+        logger.trace(
             "Building middleware chain for %s with %d middleware(s)",
             type(self).__qualname__,
             len(self.middlewares),
@@ -125,12 +125,12 @@ class Usecase[Args, R]:
             chain = self._chain
 
             if chain is None:
-                logger.debug("Middleware chain is not built; building now")
+                logger.trace("Middleware chain is not built; building now")
                 chain = self._build_chain()
                 object.__setattr__(self, "_chain", chain)
 
             else:
-                logger.debug("Reusing cached middleware chain")
+                logger.trace("Reusing cached middleware chain")
 
             result = await chain(args)
 

@@ -15,12 +15,15 @@ from forze.application.usecases.document import (
     SoftDeleteArgs,
     UpdateArgs,
 )
+from forze.base.logging import getLogger
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
 from .operations import DocumentOperation
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO)
@@ -36,56 +39,56 @@ class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U, tL, rL]):
 
     def get(self) -> Usecase[UUID, R]:
         """Return the get-document usecase."""
-
+        logger.trace("DocumentUsecasesFacade.get")
         return self.resolve(DocumentOperation.GET)
 
     # ....................... #
 
     def list(self) -> Usecase[tL, Paginated[R]]:
         """Return the list documents usecase."""
-
+        logger.trace("DocumentUsecasesFacade.list")
         return self.resolve(DocumentOperation.LIST)
 
     # ....................... #
 
     def raw_list(self) -> Usecase[rL, RawPaginated]:
         """Return the raw list documents usecase."""
-
+        logger.trace("DocumentUsecasesFacade.raw_list")
         return self.resolve(DocumentOperation.RAW_LIST)
 
     # ....................... #
 
     def create(self) -> Usecase[C, R]:
         """Return the create usecase."""
-
+        logger.trace("DocumentUsecasesFacade.create")
         return self.resolve(DocumentOperation.CREATE)
 
     # ....................... #
 
     def update(self) -> Usecase[UpdateArgs[U], R]:
         """Return the update usecase."""
-
+        logger.trace("DocumentUsecasesFacade.update")
         return self.resolve(DocumentOperation.UPDATE)
 
     # ....................... #
 
     def kill(self) -> Usecase[UUID, None]:
         """Return the hard-delete (kill) usecase."""
-
+        logger.trace("DocumentUsecasesFacade.kill")
         return self.resolve(DocumentOperation.KILL)
 
     # ....................... #
 
     def delete(self) -> Usecase[SoftDeleteArgs, R]:
         """Return the soft-delete usecase."""
-
+        logger.trace("DocumentUsecasesFacade.delete")
         return self.resolve(DocumentOperation.DELETE)
 
     # ....................... #
 
     def restore(self) -> Usecase[SoftDeleteArgs, R]:
         """Return the restore usecase."""
-
+        logger.trace("DocumentUsecasesFacade.restore")
         return self.resolve(DocumentOperation.RESTORE)
 
 

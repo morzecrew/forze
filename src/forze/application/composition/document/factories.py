@@ -17,11 +17,14 @@ from forze.application.usecases.document import (
     UpdateDocument,
 )
 from forze.base.errors import CoreError
+from forze.base.logging import getLogger
 
 from .facades import DocumentDTOSpec
 from .operations import DocumentOperation
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 
 def build_document_plan(
@@ -36,6 +39,7 @@ def build_document_plan(
     :param tx_on_write: Whether to wrap write operations in transactions.
     :returns: Usecase plan.
     """
+    logger.trace("build_document_plan: tx_on_write=%s", tx_on_write)
     plan = UsecasePlan()
 
     if tx_on_write:
@@ -69,6 +73,11 @@ def build_document_create_mapper(
     :param numbered: Whether to add number_id injection.
     :returns: DTO mapper for create commands.
     """
+    logger.trace(
+        "build_document_create_mapper: namespace=%s, numbered=%s",
+        spec.namespace,
+        numbered,
+    )
 
     if spec.write is None:
         raise CoreError("Document specification does not support write operations")
@@ -98,6 +107,7 @@ def build_document_update_mapper(
     :param spec: Document specification.
     :returns: DTO mapper for update commands.
     """
+    logger.trace("build_document_update_mapper: namespace=%s", spec.namespace)
     if spec.write is None:
         raise CoreError("Document specification does not support write operations")
 
@@ -118,6 +128,11 @@ def build_document_list_mapper(
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for list requests with optional steps."""
+    logger.trace(
+        "build_document_list_mapper: namespace=%s, steps=%d",
+        spec.namespace,
+        len(steps),
+    )
 
     mapper = DTOMapper(
         in_=dto_spec.get("list", ListRequestDTO),
@@ -140,6 +155,11 @@ def build_document_raw_list_mapper(
     :param spec: Document specification.
     :returns: DTO mapper for raw list requests.
     """
+    logger.trace(
+        "build_document_raw_list_mapper: namespace=%s, steps=%d",
+        spec.namespace,
+        len(steps),
+    )
 
     mapper = DTOMapper(
         in_=dto_spec.get("raw_list", RawListRequestDTO),
@@ -173,6 +193,10 @@ def build_document_registry(
     :param replace_update_mapper: Optional custom update mapper.
     :returns: Usecase registry with all supported operations.
     """
+    logger.trace(
+        "build_document_registry: namespace=%s",
+        spec.namespace,
+    )
 
     list_mapper = replace_list_mapper or build_document_list_mapper(spec, dto_spec)
     raw_list_mapper = replace_raw_list_mapper or build_document_raw_list_mapper(

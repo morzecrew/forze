@@ -12,8 +12,11 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
+from forze.base.logging import getLogger
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -34,18 +37,25 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Ou
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of read models.
         """
-
-        body = args
-
         page = args.page
         size = args.size
         limit = size
         offset = (page - 1) * limit
+        logger.trace(
+            "TypedSearch: page=%s, size=%s, offset=%s",
+            page,
+            size,
+            offset,
+        )
+
+        body = args
 
         if self.mapper:
             # typevar ensures that the incoming body is subclass of SearchRequestDTO, so the assignment is safe
+            logger.trace("TypedSearch: mapping request body")
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
+        logger.trace("TypedSearch: delegating to SearchReadPort.search")
         hits, count = await self.search.search(
             query=body.query,
             filters=body.filters,
@@ -79,18 +89,25 @@ class RawSearch[In: RawSearchRequestDTO](Usecase[In, RawPaginated]):
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of raw results.
         """
-
-        body = args
-
         page = args.page
         size = args.size
         limit = size
         offset = (page - 1) * limit
+        logger.trace(
+            "RawSearch: page=%s, size=%s, offset=%s",
+            page,
+            size,
+            offset,
+        )
+
+        body = args
 
         if self.mapper:
             # typevar ensures that the incoming body is subclass of RawSearchRequestDTO, so the assignment is safe
+            logger.trace("RawSearch: mapping request body")
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
+        logger.trace("RawSearch: delegating to SearchReadPort.search")
         hits, count = await self.search.search(
             query=body.query,
             filters=body.filters,

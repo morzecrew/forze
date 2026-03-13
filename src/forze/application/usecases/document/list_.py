@@ -11,9 +11,12 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
+from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -36,18 +39,25 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
         :param args: List arguments (body, page, size).
         :returns: Paginated list of read models.
         """
-
-        body = args
-
         page = args.page
         size = args.size
         limit = size
         offset = (page - 1) * limit
+        logger.trace(
+            "TypedListDocuments: page=%s, size=%s, offset=%s",
+            page,
+            size,
+            offset,
+        )
+
+        body = args
 
         if self.mapper:
             # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
+            logger.trace("TypedListDocuments: mapping request body")
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
+        logger.trace("TypedListDocuments: delegating to DocumentReadPort.find_many")
         hits, count = await self.doc.find_many(
             filters=body.filters,
             sorts=body.sorts,
@@ -79,18 +89,25 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
         :param args: List arguments (body, page, size).
         :returns: Paginated list of raw results.
         """
-
-        body = args
-
         page = args.page
         size = args.size
         limit = size
         offset = (page - 1) * limit
+        logger.trace(
+            "RawListDocuments: page=%s, size=%s, offset=%s",
+            page,
+            size,
+            offset,
+        )
+
+        body = args
 
         if self.mapper:
             # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
+            logger.trace("RawListDocuments: mapping request body")
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
+        logger.trace("RawListDocuments: delegating to DocumentReadPort.find_many")
         hits, count = await self.doc.find_many(
             filters=body.filters,
             sorts=body.sorts,

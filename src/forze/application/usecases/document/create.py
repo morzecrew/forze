@@ -5,9 +5,12 @@ import attrs
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
+from forze.base.logging import getLogger
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -35,6 +38,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         :param args: Input DTO (e.g. request payload).
         :returns: Created read model.
         """
+        logger.trace("CreateDocument: mapping input to CreateDocumentCmd")
         cmd = await self.mapper(self.ctx, args)
-
+        logger.trace("CreateDocument: delegating to DocumentWritePort.create")
         return await self.doc.create(cmd)

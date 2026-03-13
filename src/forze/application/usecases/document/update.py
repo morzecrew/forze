@@ -6,9 +6,12 @@ import attrs
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
+from forze.base.logging import getLogger
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
+
+logger = getLogger(__name__)
 #! TODO: replace with BaseDTO
 
 
@@ -49,6 +52,8 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         :param args: Update arguments (pk, dto, rev).
         :returns: Updated read model.
         """
+        logger.trace("UpdateDocument: pk=%s, rev=%s", args["pk"], args.get("rev"))
+        logger.trace("UpdateDocument: mapping dto to update command")
         cmd = await self.mapper(self.ctx, args["dto"])
-
+        logger.trace("UpdateDocument: delegating to DocumentWritePort.update")
         return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))
