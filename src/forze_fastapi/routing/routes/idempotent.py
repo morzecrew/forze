@@ -201,6 +201,10 @@ class IdempotencyFeature(RouteFeature):
                 )
 
                 if snap is not None:
+                    logger.debug(
+                        "Idempotency snapshot found, returning cached response"
+                    )
+
                     return Response(
                         content=snap["body"],
                         status_code=int(snap.get("code", 200)),

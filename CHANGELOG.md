@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SearchDTOSpec` TypedDict for search facade with `read`, `typed`, `raw` keys.
 - `build_document_list_mapper`, `build_document_raw_list_mapper`, `replace_list_mapper`, `replace_raw_list_mapper` in document composition.
 - `build_search_typed_mapper`, `build_search_raw_mapper` in search composition.
+- ``LoggingMiddleware`` in ``forze_fastapi.middlewares`` for request/response logging with scope.
 
 ### Changed
 
