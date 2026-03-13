@@ -1,16 +1,15 @@
 """Dict-diff and merge helpers used by higher-level composition logic."""
 
-import logging
 from copy import deepcopy
 from typing import Any, Iterable, cast
 
 from ..errors import CoreError
-from ..logging import log_section
+from ..logging import getLogger, log_section
 from ..primitives.types import JsonDict
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 
@@ -68,7 +67,7 @@ def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
     :returns: New dictionary with the patch applied.
     """
 
-    logger.debug(
+    logger.trace(
         "Applying dict patch (before_keys=%d, patch_keys=%d)",
         len(before),
         len(patch),
@@ -76,11 +75,11 @@ def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
 
     with log_section():
         if patch:
-            logger.debug("Patch keys: %s", tuple(patch.keys()))
+            logger.trace("Patch keys: %s", tuple(patch.keys()))
 
         res = _shallow_merge(before, patch)
 
-        logger.debug("Patched result has %d top-level key(s)", len(res))
+        logger.trace("Patched result has %d top-level key(s)", len(res))
 
     return res
 
@@ -105,7 +104,7 @@ def _diff_recursive(
             child_path = path + (k,)
 
             if k not in before:
-                logger.debug("Diff added key at %s", child_path)
+                logger.trace("Diff added key at %s", child_path)
                 _set_nested(patch, child_path, deepcopy(after[k]))
 
             else:
@@ -120,7 +119,7 @@ def _diff_recursive(
         if deletions_as_none:
             for k in before:
                 if k not in after:
-                    logger.debug("Diff removed key at %s", path + (k,))
+                    logger.trace("Diff removed key at %s", path + (k,))
                     _set_nested(patch, path + (k,), None)
 
         return
@@ -130,13 +129,13 @@ def _diff_recursive(
         after = cast(list[Any], after)  # type: ignore[redundant-cast]
 
         if before != after:
-            logger.debug("Diff replaced list at %s", path)
+            logger.trace("Diff replaced list at %s", path)
             _set_nested(patch, path, deepcopy(after))
 
         return
 
     if before != after:
-        logger.debug("Diff changed value at %s", path)
+        logger.trace("Diff changed value at %s", path)
         _set_nested(
             patch,
             path,
@@ -174,10 +173,10 @@ def calculate_dict_difference(
         patch: JsonDict = {}
         _diff_recursive(before, after, patch, (), deletions_as_none)
 
-        logger.debug("Calculated diff with %d top-level key(s)", len(patch))
+        logger.trace("Calculated diff with %d top-level key(s)", len(patch))
 
         if patch:
-            logger.debug("Diff keys: %s", tuple(patch.keys()))
+            logger.trace("Diff keys: %s", tuple(patch.keys()))
 
     return patch
 
@@ -246,7 +245,7 @@ def split_touches_from_merge_patch(
     with log_section():
         walk(patch, ())
 
-        logger.debug(
+        logger.trace(
             "Split patch into %d scalar touch(es) and %d container touch(es)",
             len(scalar_map),
             len(container_paths),
@@ -291,11 +290,11 @@ def has_hybrid_patch_conflict(
                 is_both_scalar = pa in a_scalars and pb in b_scalars
 
                 if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
-                    logger.debug("Ignoring compatible scalar overlap at %s", pa)
+                    logger.trace("Ignoring compatible scalar overlap at %s", pa)
                     continue
 
-                logger.debug("Conflict detected between %s and %s", pa, pb)
+                logger.trace("Conflict detected between %s and %s", pa, pb)
                 return True
 
-        logger.debug("No conflict detected")
+        logger.trace("No conflict detected")
         return False

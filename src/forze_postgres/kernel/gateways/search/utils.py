@@ -1,13 +1,13 @@
 """Utilities for mapping search spec groups to Postgres FTS weight letters."""
 
-import logging
 from typing import Literal, Optional
 
 from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
+from forze.base.logging import getLogger
 
 # ----------------------- #
 
-_logger = logging.getLogger(__name__)
+_logger = getLogger(__name__)
 
 FtsGroupLetter = Literal["A", "B", "C", "D"]
 """One of the four Postgres FTS weight labels."""

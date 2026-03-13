@@ -1,12 +1,11 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
-import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, final
 
 import attrs
 
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
@@ -15,7 +14,7 @@ from .lifecycle import LifecyclePlan
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

@@ -1,16 +1,16 @@
 """Thread-safe runtime variables for application-wide singletons."""
 
-import logging
 from threading import RLock
 from typing import Optional
 
 import attrs
 
 from ..errors import CoreError
+from ..logging import getLogger
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

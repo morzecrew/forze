@@ -6,7 +6,6 @@ convenience methods (:meth:`doc`, :meth:`counter`, :meth:`txmanager`,
 dependency cycle detection.
 """
 
-import logging
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
@@ -15,7 +14,7 @@ from typing import Any, AsyncIterator, Iterator, Optional, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
@@ -33,7 +32,7 @@ from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPor
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

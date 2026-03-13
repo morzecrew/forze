@@ -1,16 +1,15 @@
-import logging
 from typing import Self
 
 import attrs
 
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from .context import ExecutionContext
 from .middleware import Middleware, NextCall
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

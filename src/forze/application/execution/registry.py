@@ -5,13 +5,12 @@ and attach :class:`UsecasePlan` middleware composition. :meth:`resolve` builds
 a fully composed usecase for an operation.
 """
 
-import logging
 from typing import Any, Callable, Literal, Optional, Self, final, overload
 
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from .context import ExecutionContext
 from .plan import OpKey, UsecasePlan
@@ -19,7 +18,7 @@ from .usecase import Usecase
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

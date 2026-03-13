@@ -1,15 +1,16 @@
 """File I/O helpers for YAML, text, and chunked byte iteration."""
 
 import io
-import logging
 from pathlib import Path
 from typing import Any, Iterator
 
 import yaml
 
+from .logging import getLogger
+
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 
@@ -23,7 +24,7 @@ def read_yaml(path: str | Path) -> dict[str, Any]:
     :returns: Parsed YAML document as a dictionary.
     """
 
-    logger.debug("Reading YAML file %s", path)
+    logger.trace("Reading YAML file %s", path)
 
     with open(path, "r") as f:
         r = yaml.safe_load(f)
@@ -41,7 +42,7 @@ def read_text(path: str | Path) -> str:
     :returns: File contents as a string.
     """
 
-    logger.debug("Reading text file %s", path)
+    logger.trace("Reading text file %s", path)
 
     with open(path, "r") as f:
         return f.read()
@@ -85,7 +86,7 @@ def iter_file(b: bytes | io.BytesIO) -> Iterator[bytes]:
     :returns: Iterator over byte chunks.
     """
 
-    logger.debug("Iterating file from %s", type(b).__name__)
+    logger.trace("Iterating file from %s", type(b).__name__)
 
     if isinstance(b, bytes):
         return _iter_bytes(b)

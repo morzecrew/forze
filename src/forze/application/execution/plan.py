@@ -8,7 +8,6 @@ into composed usecases via :class:`UsecaseRegistry`.
 
 from __future__ import annotations
 
-import logging
 from enum import StrEnum
 from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
@@ -17,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from forze.base.errors import CoreError
 from forze.base.introspection import get_callable_module, get_callable_name
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from .context import ExecutionContext
 from .middleware import (
@@ -32,7 +31,7 @@ from .usecase import Usecase
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

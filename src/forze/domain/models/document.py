@@ -4,7 +4,6 @@ The core :class:`Document` model implements versioning and update semantics
 based on JSON-like diffs and pluggable update validators.
 """
 
-import logging
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Optional, Self, cast
 from uuid import UUID
@@ -12,7 +11,7 @@ from uuid import UUID
 from pydantic import Field
 
 from forze.base.errors import ValidationError
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,
@@ -30,7 +29,7 @@ from .base import BaseDTO, CoreModel
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 
@@ -204,11 +203,8 @@ class Document(CoreModel):
 
         logger.debug("Touching %s", type(self).__qualname__)
 
-        with log_section():
-            diff = {"last_update_at": utcnow()}
-            model_copy = self.model_copy(update=diff)
-
-            logger.debug("Touch diff: %s", diff)
+        diff = {"last_update_at": utcnow()}
+        model_copy = self.model_copy(update=diff)
 
         return model_copy, diff
 

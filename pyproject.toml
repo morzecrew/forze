@@ -30,6 +30,7 @@ keywords = [
 
 dependencies = [
     "attrs>=25.4.0",
+    "loguru>=0.7.3",
     "more-itertools>=10.8.0",
     "orjson>=3.11.7",
     "pydantic>=2.12.5",

@@ -1,7 +1,6 @@
 """Serialization and utility helpers around Pydantic models."""
 
 import hashlib
-import logging
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Literal, TypedDict
@@ -9,9 +8,11 @@ from typing import Any, Literal, TypedDict
 import orjson
 from pydantic import BaseModel
 
+from ..logging import getLogger
+
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 
@@ -30,7 +31,7 @@ def pydantic_validate[M: BaseModel](
     :returns: Validated model instance.
     """
 
-    logger.debug(
+    logger.trace(
         "Validating data into %s (forbid_extra=%s, keys=%d)",
         cls.__name__,
         forbid_extra,
@@ -73,7 +74,7 @@ def pydantic_dump(
     :returns: JSON-ready dictionary representation.
     """
 
-    logger.debug(
+    logger.trace(
         "Dumping %s (mode=%s, exclude=%s)",
         type(obj).__name__,
         mode,
@@ -157,7 +158,7 @@ def pydantic_model_hash(
     :returns: Hex-encoded SHA-256 digest of the sorted JSON representation.
     """
 
-    logger.debug(
+    logger.trace(
         "Hashing Pydantic model %s (exclude=%s)",
         type(model).__name__,
         exclude,

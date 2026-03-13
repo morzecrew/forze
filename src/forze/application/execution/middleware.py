@@ -6,18 +6,17 @@ concrete implementations: :class:`GuardMiddleware`, :class:`EffectMiddleware`,
 effects after.
 """
 
-import logging
 from typing import Awaitable, Callable, Protocol, Self
 
 import attrs
 
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from .context import ExecutionContext
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

@@ -1,7 +1,6 @@
 """Helpers for declaring and collecting domain update validators."""
 
 import inspect
-import logging
 import warnings
 from collections import OrderedDict
 from typing import (
@@ -20,12 +19,12 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

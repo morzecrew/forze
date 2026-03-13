@@ -4,19 +4,18 @@ Provides :class:`Deps` (in-memory container implementing :class:`DepsPort`),
 :class:`DepsModule` protocol, and :class:`DepsPlan` for declarative assembly.
 """
 
-import logging
 from typing import Any, Protocol, Self, TypeVar, cast, final
 
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from ..contracts.deps import DepKey, DepsPort
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

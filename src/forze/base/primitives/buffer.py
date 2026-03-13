@@ -5,18 +5,17 @@ buffer. Use :meth:`ContextualBuffer.scope` to isolate buffers within nested
 operations.
 """
 
-import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, Sequence, final
 
 import attrs
 
-from ..logging import log_section
+from ..logging import getLogger, log_section
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

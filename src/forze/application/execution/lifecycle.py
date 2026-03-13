@@ -6,19 +6,18 @@ Startup runs in order; shutdown runs in reverse. On startup failure, already-
 executed steps are shut down in reverse before re-raising.
 """
 
-import logging
 from typing import Protocol, Self, final
 
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import log_section
+from forze.base.logging import getLogger, log_section
 
 from .context import ExecutionContext
 
 # ----------------------- #
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # ....................... #
 

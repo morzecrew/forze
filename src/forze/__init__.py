@@ -1,7 +1,7 @@
 """Domain-Driven Design and Hexagonal Architecture for backend services."""
 
-import logging
+# import logging
 
-# ----------------------- #
+# # ----------------------- #
 
-logging.getLogger(__name__).addHandler(logging.NullHandler())
+# logging.getLogger(__name__).addHandler(logging.NullHandler())
