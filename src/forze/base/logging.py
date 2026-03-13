@@ -69,6 +69,7 @@ _DEFAULT_PREFIXES: Final[tuple[str, ...]] = ("forze",)
 # Register TRACE explicitly in case environment differs.
 try:
     _base_logger.level("TRACE")
+
 except ValueError:
     _base_logger.level("TRACE", no=TRACE, color="<cyan>", icon="✏️")
 
@@ -221,7 +222,12 @@ def _record_format(record: Record) -> str:
     time = record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     message = record["message"]
 
-    return f"{time} {level} {shortname:<{_config.width}} {indent}{message}\n"
+    return (
+        f"<green>{time}</green> "
+        f"<level>{level}</level> "
+        f"<cyan>{shortname:<{_config.width}}</cyan> "
+        f"{indent}<level>{message}</level>\n"
+    )
 
 
 # ----------------------- #

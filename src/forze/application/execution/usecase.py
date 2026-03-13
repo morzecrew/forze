@@ -48,7 +48,7 @@ class Usecase[Args, R]:
         if not middlewares:
             return self
 
-        logger.debug(
+        logger.trace(
             "Appending %d middleware(s) to usecase %s",
             len(middlewares),
             type(self).__qualname__,
@@ -86,7 +86,7 @@ class Usecase[Args, R]:
         for mw in reversed(self.middlewares):
             prev = fn
 
-            logger.debug(
+            logger.trace(
                 "Wrapping %s with middleware %s",
                 type(self).__qualname__,
                 type(mw).__qualname__,
@@ -98,7 +98,14 @@ class Usecase[Args, R]:
                 _mw: Middleware[Args, R] = mw,
                 _prev: NextCall[Args, R] = prev,
             ) -> R:
-                return await _mw(_prev, a)
+                logger.debug(
+                    "Calling middleware %s of %s",
+                    type(mw).__qualname__,
+                    type(self).__qualname__,
+                )
+
+                with log_section():
+                    return await _mw(_prev, a)
 
             fn = wrapped
 
