@@ -104,10 +104,10 @@ class LifecyclePlan:
         :raises CoreError: If step names collide.
         """
 
-        logger.debug("Creating lifecycle plan from %d step(s)", len(steps))
+        logger.trace("Creating lifecycle plan from %d step(s)", len(steps))
 
         with log_section():
-            logger.debug("Steps: %s", tuple(step.name for step in steps))
+            logger.trace("Steps: %s", tuple(step.name for step in steps))
             cls._check_name_collision(*steps)
 
         return cls(steps=steps)
@@ -122,15 +122,15 @@ class LifecyclePlan:
         :raises CoreError: If step names collide.
         """
 
-        logger.debug(
+        logger.trace(
             "Appending %d lifecycle step(s) to existing plan with %d step(s)",
             len(steps),
             len(self.steps),
         )
 
         with log_section():
-            logger.debug("Existing steps: %s", tuple(step.name for step in self.steps))
-            logger.debug("New steps: %s", tuple(step.name for step in steps))
+            logger.trace("Existing steps: %s", tuple(step.name for step in self.steps))
+            logger.trace("New steps: %s", tuple(step.name for step in steps))
 
             self._check_name_collision(*self.steps, *steps)
 
@@ -145,14 +145,14 @@ class LifecyclePlan:
         re-raises.
         """
 
-        logger.debug("Running lifecycle startup with %d step(s)", len(self.steps))
+        logger.trace("Running lifecycle startup with %d step(s)", len(self.steps))
 
         executed: list[LifecycleStep] = []
 
         with log_section():
             try:
                 for step in self.steps:
-                    logger.debug("Executing '%s' startup hook", step.name)
+                    logger.trace("Executing '%s' startup hook", step.name)
 
                     with log_section():
                         await step.startup(ctx)
@@ -165,7 +165,7 @@ class LifecyclePlan:
                 with log_section():
                     for step in reversed(executed):
                         try:
-                            logger.debug(
+                            logger.trace(
                                 "Rolling back '%s' via shutdown",
                                 step.name,
                             )
@@ -173,7 +173,7 @@ class LifecyclePlan:
                             with log_section():
                                 await step.shutdown(ctx)
 
-                            logger.debug(
+                            logger.trace(
                                 "Rolled back '%s' successfully",
                                 step.name,
                             )
@@ -194,12 +194,12 @@ class LifecyclePlan:
         Exceptions are swallowed so all steps are attempted.
         """
 
-        logger.debug("Running lifecycle shutdown with %d step(s)", len(self.steps))
+        logger.trace("Running lifecycle shutdown with %d step(s)", len(self.steps))
 
         with log_section():
             for step in reversed(self.steps):
                 try:
-                    logger.debug("Executing '%s' shutdown hook", step.name)
+                    logger.trace("Executing '%s' shutdown hook", step.name)
 
                     with log_section():
                         await step.shutdown(ctx)

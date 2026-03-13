@@ -370,7 +370,7 @@ class UsecaseRegistry:
         :param inplace: When ``True``, mutate the registry in place.
         """
 
-        logger.debug(
+        logger.trace(
             "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
             inplace,
             len(extra.ops),
@@ -432,18 +432,18 @@ class UsecaseRegistry:
                     f"Usecase factory is not registered for operation: {op}"
                 )
 
-            logger.debug(
+            logger.trace(
                 "Found factory for operation '%s' (factory_id=%s)", op, id(factory)
             )
 
             if debug_plan:
-                logger.debug("Generating plan explanation for operation %s", op)
+                logger.trace("Generating plan explanation for operation %s", op)
                 explain = self.__plan.explain(op)
                 print(explain.pretty_format())
 
             resolved = self.__plan.resolve(op, ctx, factory)
 
-            logger.debug(
+            logger.trace(
                 "Resolved usecase for operation '%s' -> %s",
                 op,
                 type(resolved).__qualname__,

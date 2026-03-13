@@ -186,7 +186,7 @@ class OperationPlan:
         :raises CoreError: If bucket is invalid.
         """
 
-        logger.debug(
+        logger.trace(
             "Adding middleware spec to bucket %s (priority=%s, factory_id=%s)",
             bucket,
             spec.priority,
@@ -199,7 +199,7 @@ class OperationPlan:
         cur = getattr(self, bucket)
 
         with log_section():
-            logger.debug("Current bucket size: %d", len(cur))
+            logger.trace("Current bucket size: %d", len(cur))
 
         return attrs.evolve(self, **{bucket: (*cur, spec)})  # type: ignore[arg-type, misc]
 
@@ -349,7 +349,7 @@ class UsecasePlan:
         return attrs.evolve(self, ops=new_ops)
 
     def _add(self, op: OpKey, bucket: PlanBucket, spec: MiddlewareSpec) -> Self:
-        logger.debug(
+        logger.trace(
             "Adding middleware to usecase plan (op=%s, bucket=%s, priority=%s, factory_id=%s)",
             op,
             bucket,
@@ -359,7 +359,7 @@ class UsecasePlan:
 
         with log_section():
             cur = self._op(op)
-            logger.debug("Current operation tx=%s", cur.tx)
+            logger.trace("Current operation tx=%s", cur.tx)
 
         return self._put(op, cur.add(bucket, spec))
 
@@ -372,7 +372,7 @@ class UsecasePlan:
         :returns: New plan instance.
         """
 
-        logger.debug("Enabling transaction for operation %s", op)
+        logger.trace("Enabling transaction for operation %s", op)
         cur = self._op(op)
 
         return self._put(op, attrs.evolve(cur, tx=True))
@@ -526,7 +526,7 @@ class UsecasePlan:
 
             after_commit = plan.build("after_commit")
 
-            logger.debug(
+            logger.trace(
                 "Built plan for '%s' (tx=%s, outer_before=%d, outer_wrap=%d, outer_after=%d, "
                 "in_tx_before=%d, in_tx_wrap=%d, in_tx_after=%d, after_commit=%d)",
                 op,
@@ -545,7 +545,7 @@ class UsecasePlan:
             for s in after_commit:
                 mw = s.factory(ctx)
 
-                logger.debug(
+                logger.trace(
                     "Built after_commit middleware %s from factory_id=%s",
                     type(mw).__qualname__,
                     id(s.factory),
@@ -572,7 +572,7 @@ class UsecasePlan:
                 chain.extend(s.factory(ctx) for s in in_tx_after)
 
             chain.extend(s.factory(ctx) for s in outer_after)
-            logger.debug(
+            logger.trace(
                 "Constructed middleware chain with %d middleware(s)", len(chain)
             )
 
