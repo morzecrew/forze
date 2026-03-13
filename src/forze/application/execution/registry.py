@@ -420,9 +420,7 @@ class UsecaseRegistry:
                     f"Usecase factory is not registered for operation: {op}"
                 )
 
-            logger.trace(
-                "Found factory for operation '%s' (factory_id=%s)", op, id(factory)
-            )
+            logger.trace("Found factory (factory_id=%s)", id(factory))
 
             resolved = self.__plan.resolve(op, ctx, factory)
 

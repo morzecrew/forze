@@ -34,23 +34,32 @@ class BaseUsecasesFacade:
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True, kw_only=True)
 class BaseUsecasesFacadeProvider[F: BaseUsecasesFacade]:
     """Factory that produces a base usecases facade for a given context."""
 
-    reg: UsecaseRegistry
+    reg: UsecaseRegistry = attrs.field(on_setattr=attrs.setters.frozen)
     """Base usecase registry."""
 
-    plan: UsecasePlan
+    plan: UsecasePlan = attrs.field(on_setattr=attrs.setters.frozen)
     """Plan to merge into the registry when building the facade."""
 
-    facade: type[F]
+    facade: type[F] = attrs.field(on_setattr=attrs.setters.frozen)
     """Facade type to produce."""
+
+    _final_reg: UsecaseRegistry = attrs.field(init=False, repr=False)
+    """Final registry with plan merged."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        """Post-init hook to merge the plan into the registry."""
+
+        self._final_reg = self.reg.extend_plan(self.plan)
 
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext) -> F:
         """Build a base usecases facade for a given context."""
 
-        reg = self.reg.extend_plan(self.plan)
-        return self.facade(ctx=ctx, reg=reg)
+        return self.facade(ctx=ctx, reg=self._final_reg)

@@ -116,17 +116,21 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True, kw_only=True)
 class DocumentUsecasesFacadeProvider(
     BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U, tL, rL]],
     Generic[R, C, U, tL, rL],
 ):
     """Factory that produces a document usecases facade for a given context."""
 
-    spec: DocumentSpec[Any, Any, Any, Any]
+    spec: DocumentSpec[Any, Any, Any, Any] = attrs.field(
+        on_setattr=attrs.setters.frozen
+    )
     """Document specification (used by registry factories)."""
 
-    dtos: DocumentDTOSpec[R, C, U, tL, rL]
+    dtos: DocumentDTOSpec[R, C, U, tL, rL] = attrs.field(
+        on_setattr=attrs.setters.frozen
+    )
     """DTO type mapping for facade typing."""
 
     # Non initable fields

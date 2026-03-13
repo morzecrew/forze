@@ -169,7 +169,7 @@ class IdempotencyFeature(RouteFeature):
         """
 
         async def wrapped(request: Request) -> Response:
-            logger.debug("Starting idempotent route execution")
+            logger.trace("Starting idempotent route execution")
 
             idem_key = request.headers.get(self.config["header_key"])
 
@@ -224,7 +224,7 @@ class IdempotencyFeature(RouteFeature):
             except Exception:
                 logger.exception("Failed to commit idempotency snapshot")
 
-            logger.debug("Finished idempotent route execution")
+            logger.trace("Finished idempotent route execution")
 
             return resp
 

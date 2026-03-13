@@ -60,3 +60,35 @@ class TestUsecase:
         result = await uc("x")
         assert seen == ["effect:x:result:x"]
         assert result == "RESULT:X"
+
+    def test_args_safe_for_logging_list_empty(self, stub_ctx: ExecutionContext) -> None:
+        uc = ConcreteUsecase(ctx=stub_ctx)
+        assert uc._args_safe_for_logging([]) == "list (empty)"
+
+    def test_args_safe_for_logging_list_of_primitives(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
+        uc = ConcreteUsecase(ctx=stub_ctx)
+        assert uc._args_safe_for_logging([1, 2, 3]) == "list[int]"
+
+    def test_args_safe_for_logging_list_nested(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
+        uc = ConcreteUsecase(ctx=stub_ctx)
+        assert uc._args_safe_for_logging([[1], [2]]) == "list[list[int]]"
+
+    def test_args_safe_for_logging_dict_empty(self, stub_ctx: ExecutionContext) -> None:
+        uc = ConcreteUsecase(ctx=stub_ctx)
+        assert uc._args_safe_for_logging({}) == "dict (empty)"
+
+    def test_args_safe_for_logging_dict_non_empty(
+        self, stub_ctx: ExecutionContext
+    ) -> None:
+        uc = ConcreteUsecase(ctx=stub_ctx)
+        result = uc._args_safe_for_logging({"a": 1, "b": "x"})
+        assert "a: int" in result and "b: str" in result
+        assert result.startswith("{") and result.endswith("}")
+
+    def test_args_safe_for_logging_object(self, stub_ctx: ExecutionContext) -> None:
+        uc = ConcreteUsecase(ctx=stub_ctx)
+        assert uc._args_safe_for_logging(uc) == "ConcreteUsecase"

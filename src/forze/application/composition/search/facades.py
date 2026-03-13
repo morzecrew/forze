@@ -59,16 +59,16 @@ class SearchDTOSpec(TypedDict, Generic[M, tS, rS]):
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True, kw_only=True)
 class SearchUsecasesFacadeProvider(
     BaseUsecasesFacadeProvider[SearchUsecasesFacade[M, tS, rS]], Generic[M, tS, rS]
 ):
     """Factory that produces a search usecases facade for a given context."""
 
-    spec: SearchSpec[Any]
+    spec: SearchSpec[Any] = attrs.field(on_setattr=attrs.setters.frozen)
     """Search specification (used by registry factories)."""
 
-    dtos: SearchDTOSpec[M, tS, rS]
+    dtos: SearchDTOSpec[M, tS, rS] = attrs.field(on_setattr=attrs.setters.frozen)
     """DTO type mapping for facade typing."""
 
     # Non initable fields

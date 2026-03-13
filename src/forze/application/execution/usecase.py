@@ -13,6 +13,57 @@ logger = getLogger(__name__)
 
 # ....................... #
 
+_QUALNAME_CACHE_MAXSIZE = 256
+_qualname_cache: dict[type[Any], str] = {}
+_qualname_cache_keys: list[type[Any]] = []
+
+
+def _qualname_for_type(t: type[Any]) -> str:
+    """Return qualname for a type, cached to avoid repeated introspection."""
+
+    if t in _qualname_cache:
+        return _qualname_cache[t]
+
+    result = getattr(t, "__qualname__", getattr(t, "__name__", repr(t)))
+
+    if len(_qualname_cache) >= _QUALNAME_CACHE_MAXSIZE:
+        evict = _qualname_cache_keys.pop(0)
+        del _qualname_cache[evict]
+
+    _qualname_cache[t] = result
+    _qualname_cache_keys.append(t)
+    return result
+
+
+def _args_safe_for_logging_impl(args: Any) -> str:
+    """Return a logging-safe string representation of *args*.
+
+    Handles list (recursive on first element), dict (first level only),
+    and plain objects. Uses type qualnames only; never captures values.
+    """
+
+    if isinstance(args, list):
+        if not args:
+            return "list (empty)"
+
+        first_qual = _args_safe_for_logging_impl(args[0])
+        return f"list[{first_qual}]"
+
+    if isinstance(args, dict):
+        if not args:
+            return "dict (empty)"
+
+        parts = (
+            f"{k}: {_qualname_for_type(type(v))}"  # pyright: ignore[reportUnknownArgumentType]
+            for k, v in args.items()  # pyright: ignore[reportUnknownVariableType]
+        )
+        return "{" + ", ".join(parts) + "}"
+
+    return _qualname_for_type(type(args))  # pyright: ignore[reportUnknownArgumentType]
+
+
+# ....................... #
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class Usecase[Args, R]:
@@ -28,14 +79,6 @@ class Usecase[Args, R]:
 
     middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
     """Middlewares wrapping the usecase; first added runs outermost."""
-
-    _chain: NextCall[Args, R] | None = attrs.field(
-        default=None,
-        init=False,
-        eq=False,
-        repr=False,
-        alias="_chain",
-    )
 
     # ....................... #
 
@@ -70,11 +113,13 @@ class Usecase[Args, R]:
 
     def _build_chain(self) -> NextCall[Args, R]:
         logger.trace(
-            "Building middleware chain with %d middleware(s)", len(self.middlewares)
+            "Building middleware chain with %d middleware(s)",
+            len(self.middlewares),
         )
 
         async def last(args: Args) -> R:
-            logger.debug("Calling main")
+            safe_args = self._args_safe_for_logging(args)
+            logger.debug("Calling main with args: %s", safe_args)
             return await self.main(args)
 
         fn: NextCall[Args, R] = last
@@ -108,17 +153,10 @@ class Usecase[Args, R]:
         logger.info("Starting usecase execution: %s", type(self).__qualname__)
 
         with log_section():
-            chain = self._chain
-
-            if chain is None:
-                logger.trace("Middleware chain is not built; building now")
-                chain = self._build_chain()
-                object.__setattr__(self, "_chain", chain)
-
-            else:
-                logger.trace("Reusing cached middleware chain")
-
+            chain = self._build_chain()
             result = await chain(args)
+
+        logger.info("Usecase execution completed: %s", type(self).__qualname__)
 
         return result
 
@@ -130,3 +168,6 @@ class Usecase[Args, R]:
 
     def log_delegation(self, target: object) -> None:
         logger.debug("Delegating to %s", type(target).__qualname__)
+
+    def _args_safe_for_logging(self, args: Any) -> str:
+        return _args_safe_for_logging_impl(args)
