@@ -11,7 +11,7 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Iterator, Literal, Mapping, cast
+from typing import TYPE_CHECKING, Any, Final, Iterator, Literal, Mapping, Optional, cast
 
 if TYPE_CHECKING:
     from loguru import Record
@@ -91,10 +91,10 @@ class _LoggingConfig:
     levels: Mapping[str, LogLevelName] | None = None
     prefixes: tuple[str, ...] = _DEFAULT_PREFIXES
     step: str = "  "
-    shorten_name: bool = True
-    strip_prefix: str | None = None
+    keep_sections: Optional[int] = None
     width: int = 36
     colorize: bool = True
+    root_aliases: Optional[Mapping[str, str]] = None
 
 
 _config: _LoggingConfig = _LoggingConfig()
@@ -139,21 +139,44 @@ def _matches_namespace(name: str, prefixes: tuple[str, ...]) -> bool:
 def _normalize_name(
     name: str,
     *,
-    shorten_name: bool,
-    strip_prefix: str | None,
+    root_aliases: Mapping[str, str] | None = None,
+    keep_sections: int | None = None,
 ) -> str:
-    """Normalize a logger name for rendering."""
+    """Normalize a logger name for rendering.
 
-    if strip_prefix:
-        if name == strip_prefix:
-            name = strip_prefix
-        elif name.startswith(f"{strip_prefix}."):
-            name = name[len(strip_prefix) + 1 :]
+    Applies root alias replacement first, then keeps the first ``keep_sections``
+    sections of the normalized name when requested.
+    """
 
-    if shorten_name and "." in name:
-        name = name.rsplit(".", 1)[0]
+    normalized = name
 
-    return name
+    if root_aliases:
+        matched_root: str | None = None
+        matched_alias: str | None = None
+
+        for root, alias in root_aliases.items():
+            if normalized == root or normalized.startswith(f"{root}."):
+                if matched_root is None or len(root) > len(matched_root):
+                    matched_root = root
+                    matched_alias = alias
+
+        if matched_root is not None:
+            suffix = normalized[len(matched_root) :].lstrip(".")
+            parts: list[str] = []
+
+            if matched_alias:
+                parts.extend(p for p in matched_alias.split(".") if p)
+
+            if suffix:
+                parts.extend(p for p in suffix.split(".") if p)
+
+            normalized = ".".join(parts)
+
+    if keep_sections is not None and keep_sections > 0:
+        parts = [p for p in normalized.split(".") if p]
+        normalized = ".".join(parts[:keep_sections])
+
+    return normalized or name
 
 
 def _effective_level_for_name(name: str) -> LogLevelName:
@@ -218,8 +241,8 @@ def _record_format(record: Record) -> str:
     name = _record_name(record)
     shortname = _normalize_name(
         name,
-        shorten_name=_config.shorten_name,
-        strip_prefix=_config.strip_prefix,
+        keep_sections=_config.keep_sections,
+        root_aliases=_config.root_aliases,
     )
     indent = _indent_for_name(name)
     level = f"{record['level'].name:<8}"
@@ -334,11 +357,11 @@ def getLogger(name: str | None = None) -> Logger:
 def configure(
     *,
     level: LogLevel = _DEFAULT_LEVEL,
-    levels: Mapping[str, LogLevel] | None = None,
+    levels: Optional[Mapping[str, LogLevel]] = None,
     prefixes: tuple[str, ...] = _DEFAULT_PREFIXES,
     step: str = "  ",
-    shorten_name: bool = True,
-    strip_prefix: str | None = None,
+    keep_sections: Optional[int] = None,
+    root_aliases: Optional[Mapping[str, str]] = None,
     width: int = 36,
     colorize: bool = False,
 ) -> None:
@@ -349,8 +372,8 @@ def configure(
         ``{"forze.application": "DEBUG", "forze.base.serialization": "TRACE"}``.
     :param prefixes: Namespaces that should receive indentation.
     :param step: Indentation unit.
-    :param shorten_name: Drop the last logger-name segment when rendering.
-    :param strip_prefix: Optional prefix stripped from rendered logger names.
+    :param keep_sections: Keep the last logger-name segment when rendering.
+    :param root_aliases: Optional root aliases for rendered logger names.
     :param width: Width of the rendered logger-name column.
     :param colorize: Whether to allow color output.
     """
@@ -370,8 +393,8 @@ def configure(
         levels=normalized_levels,
         prefixes=prefixes,
         step=step,
-        shorten_name=shorten_name,
-        strip_prefix=strip_prefix,
+        keep_sections=keep_sections,
+        root_aliases=root_aliases,
         width=width,
         colorize=colorize,
     )
