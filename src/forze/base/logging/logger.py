@@ -157,3 +157,10 @@ class Logger:
         rendered = render_message(message, args)
         escaped = escape_loguru_braces(rendered)
         self.logger.log(level, escaped)  # type: ignore[no-untyped-call]
+
+    # ....................... #
+
+    def opt(self, **kwargs: Any) -> Self:
+        """Return a logger with additional options."""
+
+        return attrs.evolve(self, logger=self.logger.opt(**kwargs))  # type: ignore[no-untyped-call]

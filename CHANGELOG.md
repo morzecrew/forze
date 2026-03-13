@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `build_document_list_mapper`, `build_document_raw_list_mapper`, `replace_list_mapper`, `replace_raw_list_mapper` in document composition.
 - `build_search_typed_mapper`, `build_search_raw_mapper` in search composition.
 - ``LoggingMiddleware`` in ``forze_fastapi.middlewares`` for request/response logging with scope.
+- ``Logger.opt`` for passing options (depth, exception, etc.) to the underlying logger.
+- ``register_uvicorn_logging_interceptor`` in ``forze_fastapi.handlers`` to redirect uvicorn/fastapi logs to loguru with scope.
 
 ### Changed
 
