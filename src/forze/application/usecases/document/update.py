@@ -56,6 +56,4 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
 
         cmd = await self.mapper(self.ctx, args["dto"])
 
-        self.log_delegation(self.doc)
-
         return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))

@@ -1,12 +1,12 @@
 """Postgres adapter implementing the document read/write port contracts."""
 
+from forze.base.logging import getLogger
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
 
 # ....................... #
 
-import contextlib
 from typing import Optional, Sequence, TypeVar, final, overload
 from uuid import UUID
 
@@ -30,6 +30,10 @@ from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="postgres.adapter")
+
+# ....................... #
 
 R = TypeVar("R", bound=ReadDocument)
 D = TypeVar("D", bound=Document)
@@ -104,6 +108,50 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
+    async def _set_cache(self, doc: R) -> None:
+        if self.cache is not None:
+            try:
+                await self.cache.set_versioned(
+                    str(doc.id), str(doc.rev), self._map_to_cache(doc)
+                )
+                logger.trace("Cache set successfully for 1 document(s)")
+            except Exception:
+                logger.exception("Cache set failed for 1 document(s), continuing")
+
+    # ....................... #
+
+    async def _set_cache_many(self, docs: Sequence[R]) -> None:
+        if self.cache is not None:
+            try:
+                res_cache = self._map_to_cache_many(docs)
+                res_cache_map = {
+                    (str(x.id), str(x.rev)): y for x, y in zip(docs, res_cache)
+                }
+                await self.cache.set_many_versioned(res_cache_map)
+                logger.trace(
+                    "Cache set many successfully for %d document(s)", len(docs)
+                )
+
+            except Exception:
+                logger.exception(
+                    "Cache set failed for %d document(s), continuing", len(docs)
+                )
+
+    # ....................... #
+
+    async def _clear_cache(self, *pks: UUID) -> None:
+        if self.cache is not None:
+            try:
+                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+                logger.trace("Cache cleared successfully for %d document(s)", len(pks))
+
+            except Exception:
+                logger.exception(
+                    "Cache clear failed for %d document(s), continuing", len(pks)
+                )
+
+    # ....................... #
+
     @overload
     async def get(
         self,
@@ -138,7 +186,11 @@ class PostgresDocumentAdapter(
 
         try:
             cached = await self.cache.get(str(pk))
+
         except Exception:
+            logger.exception(
+                "Cache get failed for 1 document(s), falling back to read gateway"
+            )
             return await self.read_gw.get(
                 pk,
                 for_update=for_update,
@@ -146,16 +198,11 @@ class PostgresDocumentAdapter(
             )
 
         if cached is not None:
+            logger.trace("Retrieved 1 cached document(s)")
             return pydantic_validate(self.read_gw.model, cached)
 
         res = await self.read_gw.get(pk)
-
-        with contextlib.suppress(Exception):
-            await self.cache.set_versioned(
-                str(pk),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+        await self._set_cache(res)
 
         return res
 
@@ -189,20 +236,21 @@ class PostgresDocumentAdapter(
         try:
             hits, misses = await self.cache.get_many([str(pk) for pk in pks])
 
+            if hits:
+                logger.trace("Retrieved %d cached document(s)", len(hits))
+
         except Exception:
+            logger.exception(
+                "Cache get failed for %d document(s), falling back to read gateway",
+                len(pks),
+            )
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
         miss_res: list[R] = []
 
         if misses:
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
-            miss_res_cache = self._map_to_cache_many(miss_res)
-            miss_res_cache_map = {
-                (str(x.id), str(x.rev)): y for x, y in zip(miss_res, miss_res_cache)
-            }
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(miss_res_cache_map)
+            await self._set_cache_many(miss_res)
 
         hits_validated = pydantic_validate_many(self.read_gw.model, list(hits.values()))
         by_pk = {x.id: x for x in hits_validated}
@@ -279,7 +327,10 @@ class PostgresDocumentAdapter(
         cnt = await self.read_gw.count(filters)
 
         if not cnt:
+            logger.trace("No documents found")
             return [], 0
+
+        logger.trace("Found %d documents(s) matching filters", cnt)
 
         res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,
@@ -304,14 +355,7 @@ class PostgresDocumentAdapter(
 
         # Repeat read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(domain.id)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -323,22 +367,9 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many([x.id for x in domains])
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
-
-    # ....................... #
-
-    async def _clear_cache(self, *pks: UUID) -> None:
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
 
     # ....................... #
 
@@ -350,14 +381,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -377,13 +401,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
@@ -397,14 +415,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -418,13 +429,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
@@ -454,14 +459,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -480,13 +478,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
@@ -500,14 +492,7 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -526,12 +511,6 @@ class PostgresDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res

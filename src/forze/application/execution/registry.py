@@ -10,7 +10,7 @@ from typing import Any, Callable, Literal, Optional, Self, final, overload
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .plan import OpKey, UsecasePlan
@@ -18,7 +18,7 @@ from .usecase import Usecase
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="registry")
 
 # ....................... #
 
@@ -87,29 +87,28 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        with logger.contextualize(scope="registry"):
-            logger.trace(
-                "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
-                op,
-                inplace,
-                id(factory),
+        logger.trace(
+            "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
+            op,
+            inplace,
+            id(factory),
+        )
+
+        if op in self.defaults:
+            raise CoreError(
+                f"Usecase factory is already registered for operation: {op}"
             )
 
-            if op in self.defaults:
-                raise CoreError(
-                    f"Usecase factory is already registered for operation: {op}"
-                )
+        new = dict(self.defaults)
+        new[op] = factory
 
-            new = dict(self.defaults)
-            new[op] = factory
+        if inplace:
+            self.defaults = new
+            return None
 
-            if inplace:
-                self.defaults = new
-                return None
-
-            else:
-                new_instance = type(self)(defaults=new)
-                return new_instance
+        else:
+            new_instance = type(self)(defaults=new)
+            return new_instance
 
     # ....................... #
 
@@ -155,21 +154,92 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        with logger.contextualize(scope="registry"):
-            logger.trace(
-                "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
-                op,
-                inplace,
-                id(factory),
-            )
+        logger.trace(
+            "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
+            op,
+            inplace,
+            id(factory),
+        )
 
-            if op not in self.defaults:
+        if op not in self.defaults:
+            raise CoreError(f"Usecase factory is not registered for operation: {op}")
+
+        new = dict(self.defaults)
+        new[op] = factory
+
+        if inplace:
+            self.defaults = new
+            return None
+
+        else:
+            new_instance = type(self)(defaults=new)
+            return new_instance
+
+    # ....................... #
+
+    @overload
+    def register_many(
+        self,
+        ops: dict[OpKey, UsecaseFactory],
+        *,
+        inplace: Literal[True],
+    ) -> None:
+        """Register several operations at once.
+
+        :param ops: Mapping from operation name to factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations is already registered.
+        """
+        ...
+
+    @overload
+    def register_many(
+        self,
+        ops: dict[OpKey, UsecaseFactory],
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self:
+        """Register several operations at once.
+
+        :param ops: Mapping from operation name to factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations is already registered.
+        """
+        ...
+
+    def register_many(
+        self,
+        ops: dict[OpKey, UsecaseFactory],
+        *,
+        inplace: bool = False,
+    ) -> Optional[Self]:
+        """Register several operations at once.
+
+        :param ops: Mapping from operation name to factory.
+        :param inplace: When ``True``, mutate the registry in place.
+        :raises CoreError: When any of the operations is already registered.
+        """
+
+        ops = {str(op): factory for op, factory in ops.items()}
+
+        logger.trace(
+            "Registering %d usecase factory(s) (inplace=%s)",
+            len(ops),
+            inplace,
+        )
+
+        with logger.section():
+            logger.trace("Operations: %s", tuple(ops.keys()))
+
+            already_registered = set(self.defaults.keys()).intersection(ops.keys())
+
+            if already_registered:
                 raise CoreError(
-                    f"Usecase factory is not registered for operation: {op}"
+                    f"Usecase factories are already registered for operations: {already_registered}"
                 )
 
             new = dict(self.defaults)
-            new[op] = factory
+            new.update(ops)
 
             if inplace:
                 self.defaults = new
@@ -182,81 +252,6 @@ class UsecaseRegistry:
     # ....................... #
 
     @overload
-    def register_many(
-        self,
-        ops: dict[OpKey, UsecaseFactory],
-        *,
-        inplace: Literal[True],
-    ) -> None:
-        """Register several operations at once.
-
-        :param ops: Mapping from operation name to factory.
-        :param inplace: When ``True``, mutate the registry in place.
-        :raises CoreError: When any of the operations is already registered.
-        """
-        ...
-
-    @overload
-    def register_many(
-        self,
-        ops: dict[OpKey, UsecaseFactory],
-        *,
-        inplace: Literal[False] = False,
-    ) -> Self:
-        """Register several operations at once.
-
-        :param ops: Mapping from operation name to factory.
-        :param inplace: When ``True``, mutate the registry in place.
-        :raises CoreError: When any of the operations is already registered.
-        """
-        ...
-
-    def register_many(
-        self,
-        ops: dict[OpKey, UsecaseFactory],
-        *,
-        inplace: bool = False,
-    ) -> Optional[Self]:
-        """Register several operations at once.
-
-        :param ops: Mapping from operation name to factory.
-        :param inplace: When ``True``, mutate the registry in place.
-        :raises CoreError: When any of the operations is already registered.
-        """
-
-        ops = {str(op): factory for op, factory in ops.items()}
-
-        with logger.contextualize(scope="registry"):
-            logger.trace(
-                "Registering %d usecase factory(s) (inplace=%s)",
-                len(ops),
-                inplace,
-            )
-
-            with log_section():
-                logger.trace("Operations: %s", tuple(ops.keys()))
-
-                already_registered = set(self.defaults.keys()).intersection(ops.keys())
-
-                if already_registered:
-                    raise CoreError(
-                        f"Usecase factories are already registered for operations: {already_registered}"
-                    )
-
-                new = dict(self.defaults)
-                new.update(ops)
-
-                if inplace:
-                    self.defaults = new
-                    return None
-
-                else:
-                    new_instance = type(self)(defaults=new)
-                    return new_instance
-
-    # ....................... #
-
-    @overload
     def override_many(
         self,
         ops: dict[OpKey, UsecaseFactory],
@@ -304,95 +299,93 @@ class UsecaseRegistry:
 
         ops = {str(op): factory for op, factory in ops.items()}
 
-        with logger.contextualize(scope="registry"):
-            logger.trace(
-                "Overriding %d usecase factory(s) (inplace=%s)",
-                len(ops),
-                inplace,
-            )
+        logger.trace(
+            "Overriding %d usecase factory(s) (inplace=%s)",
+            len(ops),
+            inplace,
+        )
 
-            with log_section():
-                logger.trace("Operations: %s", tuple(ops.keys()))
+        with logger.section():
+            logger.trace("Operations: %s", tuple(ops.keys()))
 
-                not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
+            not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
-                if not_yet_registered:
-                    raise CoreError(
-                        f"Usecase factories are not registered for operations: {not_yet_registered}"
-                    )
+            if not_yet_registered:
+                raise CoreError(
+                    f"Usecase factories are not registered for operations: {not_yet_registered}"
+                )
 
-                new = dict(self.defaults)
-                new.update(ops)
-
-                if inplace:
-                    self.defaults = new
-                    return None
-
-                else:
-                    new_instance = type(self)(defaults=new)
-                    return new_instance
-
-    # ....................... #
-
-    @overload
-    def extend_plan(
-        self,
-        extra: UsecasePlan,
-        *,
-        inplace: Literal[True],
-    ) -> None:
-        """Attach additional planning information to the registry.
-
-        :param extra: Plan to merge into the existing registry plan.
-        :param inplace: When ``True``, mutate the registry in place.
-        """
-
-        ...
-
-    @overload
-    def extend_plan(
-        self,
-        extra: UsecasePlan,
-        *,
-        inplace: Literal[False] = False,
-    ) -> Self:
-        """Attach additional planning information to the registry.
-
-        :param extra: Plan to merge into the existing registry plan.
-        :param inplace: When ``True``, mutate the registry in place.
-        """
-
-        ...
-
-    def extend_plan(
-        self,
-        extra: UsecasePlan,
-        *,
-        inplace: bool = False,
-    ) -> Optional[Self]:
-        """Attach additional planning information to the registry.
-
-        :param extra: Plan to merge into the existing registry plan.
-        :param inplace: When ``True``, mutate the registry in place.
-        """
-
-        with logger.contextualize(scope="registry"):
-            logger.trace(
-                "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
-                inplace,
-                len(extra.ops),
-            )
-
-            merged = UsecasePlan.merge(self.__plan, extra)
+            new = dict(self.defaults)
+            new.update(ops)
 
             if inplace:
-                self.__plan = merged
+                self.defaults = new
                 return None
 
             else:
-                new_instance = type(self)(defaults=self.defaults)
-                new_instance.__plan = merged
+                new_instance = type(self)(defaults=new)
                 return new_instance
+
+    # ....................... #
+
+    @overload
+    def extend_plan(
+        self,
+        extra: UsecasePlan,
+        *,
+        inplace: Literal[True],
+    ) -> None:
+        """Attach additional planning information to the registry.
+
+        :param extra: Plan to merge into the existing registry plan.
+        :param inplace: When ``True``, mutate the registry in place.
+        """
+
+        ...
+
+    @overload
+    def extend_plan(
+        self,
+        extra: UsecasePlan,
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self:
+        """Attach additional planning information to the registry.
+
+        :param extra: Plan to merge into the existing registry plan.
+        :param inplace: When ``True``, mutate the registry in place.
+        """
+
+        ...
+
+    def extend_plan(
+        self,
+        extra: UsecasePlan,
+        *,
+        inplace: bool = False,
+    ) -> Optional[Self]:
+        """Attach additional planning information to the registry.
+
+        :param extra: Plan to merge into the existing registry plan.
+        :param inplace: When ``True``, mutate the registry in place.
+        """
+
+        logger.trace(
+            "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
+            inplace,
+            len(extra.ops),
+        )
+
+        merged = UsecasePlan.merge(self.__plan, extra)
+
+        if inplace:
+            self.__plan = merged
+            return None
+
+        else:
+            new_instance = type(self)(defaults=self.defaults)
+            new_instance.__plan = merged
+            return new_instance
 
     # ....................... #
 
@@ -415,19 +408,17 @@ class UsecaseRegistry:
         :returns: Composed usecase with middlewares.
         :raises CoreError: If op is not registered.
         """
+
         op = str(op)
 
-        with logger.contextualize(scope="registry"):
-            logger.debug("Resolving usecase for operation '%s'", op)
-            factory = self.defaults.get(op)
+        logger.debug("Resolving usecase for operation '%s'", op)
+        factory = self.defaults.get(op)
 
-            if not factory:
-                raise CoreError(
-                    f"Usecase factory is not registered for operation: {op}"
-                )
+        if not factory:
+            raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
-            logger.trace("Found factory (factory_id=%s)", id(factory))
+        logger.trace("Found factory (factory_id=%s)", id(factory))
 
-            resolved = self.__plan.resolve(op, ctx, factory)
+        resolved = self.__plan.resolve(op, ctx, factory)
 
-            return resolved
+        return resolved

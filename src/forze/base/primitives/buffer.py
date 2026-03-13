@@ -11,11 +11,11 @@ from typing import Iterator, Sequence, final
 
 import attrs
 
-from ..logging import getLogger, log_section
+from ..logging import getLogger
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="buffer")
 
 # ....................... #
 
@@ -87,19 +87,17 @@ class ContextualBuffer[T]:
         """
 
         logger.debug("Entering contextual buffer scope")
+        token = self.__buffer.set([])
 
-        with log_section():
-            token = self.__buffer.set([])
+        try:
+            yield
 
-            try:
-                yield
+        finally:
+            buf = self.peek()
 
-            finally:
-                buf = self.peek()
+            logger.debug(
+                "Leaving contextual buffer scope (%d buffered item(s))",
+                len(buf),
+            )
 
-                logger.debug(
-                    "Leaving contextual buffer scope (%d buffered item(s))",
-                    len(buf),
-                )
-
-                self.__buffer.reset(token)
+            self.__buffer.reset(token)

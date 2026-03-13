@@ -10,13 +10,13 @@ from typing import Awaitable, Callable, Protocol, Self
 
 import attrs
 
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="middleware")
 
 # ....................... #
 
@@ -73,7 +73,7 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         logger.trace("Entering guard middleware %s", type(self.guard).__qualname__)
 
-        with log_section():
+        with logger.section():
             await self.guard(args)
             logger.trace("Guard %s passed", type(self.guard).__qualname__)
             result = await next(args)
@@ -96,7 +96,7 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         logger.trace("Entering effect middleware %s", type(self.effect).__qualname__)
 
-        with log_section():
+        with logger.section():
             res = await next(args)
             logger.trace("Running effect %s", type(self.effect).__qualname__)
             res = await self.effect(args, res)

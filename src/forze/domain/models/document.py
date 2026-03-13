@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import Field
 
 from forze.base.errors import ValidationError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,
@@ -29,7 +29,7 @@ from .base import BaseDTO, CoreModel
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="domain")
 
 # ....................... #
 
@@ -69,7 +69,7 @@ class Document(CoreModel):
             cls.__qualname__,
         )
 
-        with log_section():
+        with logger.section():
             cls._update_validators_ = collect_update_validators(
                 cls,
                 on_conflict=cls._update_validators_on_conflict,
@@ -115,7 +115,7 @@ class Document(CoreModel):
             type(self).__qualname__,
         )
 
-        with log_section():
+        with logger.section():
             patch = self._validate_update_data(data)
             before = self.model_dump(mode="json")
             after = apply_dict_patch(before, patch)
@@ -151,7 +151,7 @@ class Document(CoreModel):
 
         logger.trace("Running update validators for %s", cls.__qualname__)
 
-        with log_section():
+        with logger.section():
             for name, meta in cls._update_validators_:
                 if meta.fields is not None and keys.isdisjoint(meta.fields):
                     logger.trace("Skipping validator %s (fields=%s)", name, meta.fields)
@@ -181,7 +181,7 @@ class Document(CoreModel):
             tuple(data.keys()),
         )
 
-        with log_section():
+        with logger.section():
             diff = self._calculate_update_diff(data)
 
             if diff:
@@ -223,7 +223,7 @@ class Document(CoreModel):
             tuple(data.keys()),
         )
 
-        with log_section():
+        with logger.section():
             old_state = old.model_dump(mode="json")
             self_state = self.model_dump(mode="json")
 

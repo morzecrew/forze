@@ -5,7 +5,10 @@ from forze.base.logging.helpers import normalize_level
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+_log = getLogger(__name__)
+
+api_logger = _log.bind(scope="api")
+server_logger = _log.bind(scope="server")
 
 # ....................... #
 
@@ -18,16 +21,12 @@ class InterceptHandler(logging.Handler):
             return
 
         level = normalize_level(record.levelno)
+        _log = server_logger
 
-        scope = "server"
         if record.name == "uvicorn.access":
-            scope = "api"
+            _log = api_logger
 
-        with logger.contextualize(scope=scope):
-            logger.opt(
-                depth=6,
-                exception=record.exc_info,
-            ).log(level, record.getMessage())
+        _log.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
 
 
 # ....................... #

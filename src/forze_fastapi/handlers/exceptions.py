@@ -8,10 +8,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from forze.base.errors import ConflictError, CoreError, NotFoundError, ValidationError
+from forze.base.logging import getLogger
 
 from ..constants import ERROR_CODE_HEADER
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="api")
+
+# ....................... #
 
 
 def _status_code_mapper(exc: CoreError) -> int:
@@ -36,6 +41,8 @@ def _status_code_mapper(exc: CoreError) -> int:
 
 async def forze_exception_handler(request: Request, exc: CoreError) -> JSONResponse:
     """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
+
+    logger.exception("Exception occurred: %s (%s)", exc.message, exc.code)
 
     return JSONResponse(
         status_code=_status_code_mapper(exc),

@@ -1,10 +1,4 @@
-"""Usecase composition plans for middleware ordering and transaction wrapping.
-
-Provides :class:`UsecasePlan` (per-operation middleware composition),
-:class:`OperationPlan` (buckets for before/wrap/after, in-tx, after-commit),
-and :class:`MiddlewareSpec` (priority + factory). Plans are merged and resolved
-into composed usecases via :class:`UsecaseRegistry`.
-"""
+"""Usecase composition plans for middleware ordering and transaction wrapping."""
 
 from __future__ import annotations
 
@@ -12,11 +6,9 @@ from enum import StrEnum
 from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
 import attrs
-from pydantic import BaseModel, Field
 
 from forze.base.errors import CoreError
-from forze.base.introspection import get_callable_module, get_callable_name
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .middleware import (
@@ -31,7 +23,7 @@ from .usecase import Usecase
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="plan")
 
 # ....................... #
 
@@ -62,54 +54,6 @@ PlanBucket = Literal[
     "after_commit",
 ]
 """Bucket names for middleware placement in the chain."""
-
-# ....................... #
-
-
-class _ExplainItem(BaseModel):
-    """Single entry in a plan explanation, representing one middleware slot."""
-
-    bucket: PlanBucket
-    priority: int
-    factory: str
-    factory_id: int
-
-
-class _Explain(BaseModel):
-    """Human-readable explanation of a resolved plan for a single operation."""
-
-    op: str
-    tx: bool
-    chain: list[_ExplainItem] = Field(default_factory=list)
-    after_commit: list[_ExplainItem] = Field(default_factory=list)
-
-    # ....................... #
-
-    def pretty_format(self) -> str:
-        lines: list[str] = []
-        lines.append(f"UsecasePlan explain for operation `{self.op}` (tx={self.tx})")
-        lines.append("Chain (outer -> inner):")
-
-        for i, item in enumerate(self.chain, 1):
-            lines.append(
-                f"  {i:02d}. {item.bucket:12s} prio={item.priority:6d} "
-                f"factory={item.factory} id={item.factory_id}"
-            )
-
-        if self.after_commit:
-            lines.append("After-commit effects (run after successful commit):")
-
-            for i, item in enumerate(self.after_commit, 1):
-                lines.append(
-                    f"  {i:02d}. {item.bucket:12s} prio={item.priority:6d} "
-                    f"factory={item.factory} id={item.factory_id}"
-                )
-
-        else:
-            lines.append("After-commit effects: <none>")
-
-        return "\n".join(lines)
-
 
 # ....................... #
 
@@ -198,7 +142,7 @@ class OperationPlan:
 
         cur = getattr(self, bucket)
 
-        with log_section():
+        with logger.section():
             logger.trace("Current bucket size: %d", len(cur))
 
         return attrs.evolve(self, **{bucket: (*cur, spec)})  # type: ignore[arg-type, misc]
@@ -357,7 +301,7 @@ class UsecasePlan:
             id(spec.factory),
         )
 
-        with log_section():
+        with logger.section():
             cur = self._op(op)
             logger.trace("Current operation tx=%s", cur.tx)
 
@@ -512,7 +456,7 @@ class UsecasePlan:
         if op == WILDCARD or op.endswith(WILDCARD):
             raise CoreError(f"Resolve on wildcard operation '{op}' is not allowed")
 
-        with log_section():
+        with logger.section():
             plan = OperationPlan.merge(self._base(), self._op(op))
             plan.validate()
 
@@ -580,73 +524,6 @@ class UsecasePlan:
             resolved = uc.with_middlewares(*chain)
 
         return resolved
-
-    # ....................... #
-    #! Redundant method if we have logging with indentation
-
-    def explain(self, op: OpKey) -> _Explain:
-        """Return a human-readable explanation of the middleware chain for an op.
-
-        :param op: Operation key.
-        :returns: Explain object with pretty_format.
-        :raises CoreError: If op is wildcard.
-        """
-        op = str(op)
-
-        if op == WILDCARD or op.endswith(WILDCARD):
-            raise CoreError(f"Explain on wildcard operation `{op}` is not allowed")
-
-        plan = OperationPlan.merge(self._base(), self._op(op))
-        plan.validate()
-
-        def pack(
-            bucket: PlanBucket,
-            specs: Iterable[MiddlewareSpec],
-        ) -> list[_ExplainItem]:
-            out: list[_ExplainItem] = []
-
-            for s in specs:
-                mod = get_callable_module(s.factory)
-                name = get_callable_name(s.factory)
-
-                out.append(
-                    _ExplainItem(
-                        bucket=bucket,
-                        priority=s.priority,
-                        factory=f"{mod}:{name}",
-                        factory_id=id(s.factory),
-                    )
-                )
-
-            return out
-
-        outer_before = plan.build("outer_before")
-        outer_wrap = plan.build("outer_wrap")
-        outer_after = plan.build("outer_after")
-
-        in_tx_before = plan.build("in_tx_before")
-        in_tx_wrap = plan.build("in_tx_wrap")
-        in_tx_after = plan.build("in_tx_after")
-
-        after_commit = plan.build("after_commit")
-
-        chain: list[_ExplainItem] = []
-        chain.extend(pack("outer_before", outer_before))
-        chain.extend(pack("outer_wrap", outer_wrap))
-
-        if plan.tx:
-            chain.extend(pack("in_tx_before", in_tx_before))
-            chain.extend(pack("in_tx_wrap", in_tx_wrap))
-            chain.extend(pack("in_tx_after", in_tx_after))
-
-        chain.extend(pack("outer_after", outer_after))
-
-        return _Explain(
-            op=op,
-            tx=plan.tx,
-            chain=chain,
-            after_commit=pack("after_commit", after_commit),
-        )
 
     # ....................... #
 

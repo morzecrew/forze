@@ -4,12 +4,12 @@ from copy import deepcopy
 from typing import Any, Iterable, cast
 
 from ..errors import CoreError
-from ..logging import getLogger, log_section
+from ..logging import getLogger
 from ..primitives.types import JsonDict
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="serialization")
 
 # ....................... #
 
@@ -73,7 +73,7 @@ def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
         len(patch),
     )
 
-    with log_section():
+    with logger.section():
         if patch:
             logger.trace("Patch keys: %s", tuple(patch.keys()))
 
@@ -169,7 +169,7 @@ def calculate_dict_difference(
         len(after),
     )
 
-    with log_section():
+    with logger.section():
         patch: JsonDict = {}
         _diff_recursive(before, after, patch, (), deletions_as_none)
 
@@ -242,7 +242,7 @@ def split_touches_from_merge_patch(
         else:
             scalar_map[prefix] = node
 
-    with log_section():
+    with logger.section():
         walk(patch, ())
 
         logger.trace(
@@ -278,7 +278,7 @@ def has_hybrid_patch_conflict(
         len(b_containers),
     )
 
-    with log_section():
+    with logger.section():
         all_a = set(a_containers) | set(a_scalars.keys())
         all_b = set(b_containers) | set(b_scalars.keys())
 

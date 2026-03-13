@@ -45,8 +45,6 @@ class KillDocument(Usecase[UUID, None]):
         :returns: ``None``.
         """
 
-        self.log_delegation(self.doc)
-
         return await self.doc.kill(args)
 
 
@@ -69,8 +67,6 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        self.log_delegation(self.doc)
-
         return await self.doc.delete(args["pk"], rev=args.get("rev"))
 
 
@@ -92,7 +88,5 @@ class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :param args: Restore arguments (pk, optional rev).
         :returns: Updated read model.
         """
-
-        self.log_delegation(self.doc)
 
         return await self.doc.restore(args["pk"], rev=args.get("rev"))

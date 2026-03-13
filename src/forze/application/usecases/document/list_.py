@@ -49,8 +49,6 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
             # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
 
-        self.log_delegation(self.doc)
-
         hits, count = await self.doc.find_many(
             filters=body.filters,
             sorts=body.sorts,
@@ -92,8 +90,6 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
         if self.mapper:
             # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
             body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
-
-        self.log_delegation(self.doc)
 
         hits, count = await self.doc.find_many(
             filters=body.filters,

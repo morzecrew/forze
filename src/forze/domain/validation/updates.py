@@ -19,12 +19,12 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="validation")
 
 # ....................... #
 
@@ -110,7 +110,7 @@ def update_validator(
             getattr(f, "__qualname__", getattr(f, "__name__", repr(f))),
         )
 
-        with log_section():
+        with logger.section():
             logger.trace("Validator signature: %s", sig)
             logger.trace("Validator fields: %s", tuple(fields) if fields else None)
 
@@ -179,13 +179,13 @@ def collect_update_validators(
         on_conflict,
     )
 
-    with log_section():
+    with logger.section():
         by_name: OrderedDict[str, _ValidatorEntry] = OrderedDict()
 
         for b in reversed(cls.mro()[:-1]):
             logger.trace("Scanning class %s", b.__qualname__)
 
-            with log_section():
+            with logger.section():
                 for name, attr in b.__dict__.items():
                     meta = getattr(attr, UPDATE_VALIDATOR_METADATA_FIELD, None)
 

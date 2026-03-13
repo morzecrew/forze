@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.base.serialization import apply_dict_patch, pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO
 
@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="mapping")
+
+# ....................... #
 
 
 @final
@@ -115,7 +117,7 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
             self.out.__qualname__,
         )
 
-        with log_section():
+        with logger.section():
             if self.in_ is self.out and not self.steps:
                 logger.trace(
                     "Source and target are the same class and no steps are defined, returning source directly"

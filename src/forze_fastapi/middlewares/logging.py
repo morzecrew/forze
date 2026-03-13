@@ -9,7 +9,7 @@ from forze.base.logging import getLogger
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="api")
 
 # ....................... #
 
@@ -25,25 +25,23 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration = int((time.perf_counter() - start) * 1000)
+        status = response.status_code
 
-        with logger.contextualize(scope="api"):
-            status = response.status_code
+        if status < 300:
+            status_code = f"<green>{status}</green>"
 
-            if status < 300:
-                status_code = f"<green>{status}</green>"
+        elif status < 400:
+            status_code = f"<yellow>{status}</yellow>"
 
-            elif status < 400:
-                status_code = f"<yellow>{status}</yellow>"
+        else:
+            status_code = f"<red>{status}</red>"
 
-            else:
-                status_code = f"<red>{status}</red>"
-
-            logger.info(
-                "%s %s %s %dms",
-                request.method,
-                request.url.path,
-                status_code,
-                duration,
-            )
+        logger.info(
+            "%s %s %s %dms",
+            request.method,
+            request.url.path,
+            status_code,
+            duration,
+        )
 
         return response

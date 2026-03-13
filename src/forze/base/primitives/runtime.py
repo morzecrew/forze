@@ -10,7 +10,7 @@ from ..logging import getLogger
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="runtime")
 
 # ....................... #
 
@@ -39,23 +39,22 @@ class RuntimeVar[T: object]:
     def set_once(self, value: T) -> None:
         """Set the runtime value once. Thread-safe; subsequent calls raise :exc:`CoreError`."""
 
-        with logger.contextualize(scope="runtime"):
-            if value is None:
-                raise CoreError(f"Value cannot be None for '{self.name}'")
+        if value is None:
+            raise CoreError(f"Value cannot be None for '{self.name}'")
 
-            logger.trace(
-                "Setting runtime variable '%s' with value type %s",
-                self.name,
-                type(value).__name__,
-            )
+        logger.trace(
+            "Setting runtime variable '%s' with value type %s",
+            self.name,
+            type(value).__name__,
+        )
 
-            with self.__lock:
-                if self.__value is not None:
-                    raise CoreError(
-                        f"Value is already set for runtime variable '{self.name}'"
-                    )
+        with self.__lock:
+            if self.__value is not None:
+                raise CoreError(
+                    f"Value is already set for runtime variable '{self.name}'"
+                )
 
-                self.__value = value
+            self.__value = value
 
     # ....................... #
 
@@ -72,8 +71,7 @@ class RuntimeVar[T: object]:
     def reset(self) -> None:
         """Clear the stored value so it can be set again. Thread-safe. Useful for testing."""
 
-        with logger.contextualize(scope="runtime"):
-            logger.trace("Resetting runtime variable '%s'", self.name)
+        logger.trace("Resetting runtime variable '%s'", self.name)
 
-            with self.__lock:
-                self.__value = None
+        with self.__lock:
+            self.__value = None

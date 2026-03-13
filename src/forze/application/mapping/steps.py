@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="mapping")
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

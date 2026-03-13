@@ -9,7 +9,7 @@ from .middleware import Middleware, NextCall
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="usecase")
 
 # ....................... #
 
@@ -99,19 +99,12 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        with logger.contextualize(scope=type(self).__qualname__):
-            logger.debug("Starting usecase execution")
+        logger.debug("Starting usecase execution")
 
-            with logger.section():
-                chain = self._build_chain()
-                result = await chain(args)
+        with logger.section():
+            chain = self._build_chain()
+            result = await chain(args)
 
-            logger.debug("Usecase execution completed")
+        logger.debug("Usecase execution completed")
 
         return result
-
-    # ....................... #
-    # Convenient methods
-
-    def log_delegation(self, target: object) -> None:
-        logger.debug("Delegating to %s", type(target).__qualname__)

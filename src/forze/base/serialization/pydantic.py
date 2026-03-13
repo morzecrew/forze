@@ -12,7 +12,7 @@ from ..logging import getLogger
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="serialization")
 
 # ....................... #
 

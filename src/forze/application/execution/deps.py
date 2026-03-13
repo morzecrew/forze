@@ -15,7 +15,7 @@ from ..contracts.deps import DepKey, DepsPort
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="deps")
 
 # ....................... #
 

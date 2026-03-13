@@ -1,10 +1,4 @@
-"""Execution context for dependency resolution and transactions.
-
-Provides :class:`ExecutionContext` with :meth:`dep`, :meth:`transaction`, and
-convenience methods (:meth:`doc`, :meth:`counter`, :meth:`txmanager`,
-:meth:`storage`). Uses context variables for per-task transaction state and
-dependency cycle detection.
-"""
+"""Execution context for dependency resolution and transactions."""
 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -14,7 +8,7 @@ from typing import Any, AsyncIterator, Iterator, Optional, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
@@ -32,7 +26,7 @@ from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPor
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="context")
 
 # ....................... #
 
@@ -93,7 +87,7 @@ class ExecutionContext:
 
         logger.debug("Entering transaction scope")
 
-        with log_section():
+        with logger.section():
             tx = self.txmanager()
             scope = tx.scope_key()
             depth = self.__tx_depth.get()
@@ -170,7 +164,7 @@ class ExecutionContext:
         token = self.__resolve_stack.set(stack + (key,))
 
         try:
-            with log_section():
+            with logger.section():
                 yield
 
         finally:

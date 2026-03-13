@@ -42,6 +42,5 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         """
 
         cmd = await self.mapper(self.ctx, args)
-        self.log_delegation(self.doc)
 
         return await self.doc.create(cmd)

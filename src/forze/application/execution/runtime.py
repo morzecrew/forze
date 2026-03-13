@@ -14,7 +14,7 @@ from .lifecycle import LifecyclePlan
 
 # ----------------------- #
 
-logger = getLogger(__name__)
+logger = getLogger(__name__).bind(scope="runtime")
 
 # ....................... #
 
@@ -109,15 +109,14 @@ class ExecutionRuntime:
         On exit: run shutdown, reset context.
         """
 
-        with logger.contextualize(scope="runtime"):
-            logger.info("Entering execution runtime scope")
-            self.create_context()
+        logger.info("Entering execution runtime scope")
+        self.create_context()
 
-            try:
-                await self.startup()
+        try:
+            await self.startup()
 
-                yield
+            yield
 
-            finally:
-                logger.info("Leaving execution runtime scope")
-                await self.shutdown()
+        finally:
+            logger.info("Leaving execution runtime scope")
+            await self.shutdown()
