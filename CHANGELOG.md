@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ListRequestDTO` and `SearchRequestDTO` extend `Pagination`; pagination (`page`, `size`) now in request body.
 - List and search usecases take request DTO directly instead of TypedDict with body/page/size.
 - Postgres and Mongo document adapters: write operations now return results via read gateway for consistent read/write source separation.
+- Log format: add usecase scope when available; remove extra dict from log output.
+- Log format: ``safe_preview`` skips empty values; type fallback no longer wrapped in angle brackets.
 
 ### Fixed
 

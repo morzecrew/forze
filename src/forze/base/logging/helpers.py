@@ -291,6 +291,9 @@ def _safe_preview_impl(
             if _is_sensitive_key(key):
                 out[key] = "***"
 
+            elif not v:
+                continue
+
             else:
                 out[key] = _safe_preview_impl(v, depth=depth + 1)
 
@@ -318,7 +321,7 @@ def _safe_preview_impl(
 
         return list_out
 
-    return f"<{_qualname_for_type(type(value))}>"  # pyright: ignore[reportUnknownArgumentType]
+    return f"{_qualname_for_type(type(value))}"  # pyright: ignore[reportUnknownArgumentType]
 
 
 # ....................... #
@@ -336,4 +339,4 @@ def safe_preview(value: Any) -> str:
         return repr(preview)
 
     except Exception:
-        return f"<{_qualname_for_type(type(value))}>"  # pyright: ignore[reportUnknownArgumentType]
+        return f"{_qualname_for_type(type(value))}"  # pyright: ignore[reportUnknownArgumentType]

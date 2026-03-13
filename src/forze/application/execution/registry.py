@@ -411,17 +411,13 @@ class UsecaseRegistry:
         op = str(op)
 
         logger.debug("Resolving usecase for operation '%s'", op)
+        factory = self.defaults.get(op)
 
-        with log_section():
-            factory = self.defaults.get(op)
+        if not factory:
+            raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
-            if not factory:
-                raise CoreError(
-                    f"Usecase factory is not registered for operation: {op}"
-                )
+        logger.trace("Found factory (factory_id=%s)", id(factory))
 
-            logger.trace("Found factory (factory_id=%s)", id(factory))
-
-            resolved = self.__plan.resolve(op, ctx, factory)
+        resolved = self.__plan.resolve(op, ctx, factory)
 
         return resolved

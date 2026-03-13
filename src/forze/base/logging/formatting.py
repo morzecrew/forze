@@ -10,7 +10,6 @@ from typing import cast
 from .config import get_config
 from .context import get_depth
 from .helpers import (
-    escape_loguru_braces,
     level_no,
     matches_namespace,
     normalize_name,
@@ -122,24 +121,36 @@ def record_format(record: LogRecord) -> str:
     message = record["message"]
     extra = record.get("extra") or {}  # pyright: ignore[reportUnknownVariableType]
 
-    # Exclude logger_name from display (already shown as shortname)
-    extra_display = {  # pyright: ignore[reportUnknownVariableType]
-        k: v
-        for k, v in extra.items()  # pyright: ignore[reportUnknownVariableType]
-        if k != "logger_name"
-    }
+    # # Exclude logger_name from display (already shown as shortname)
+    # extra_display = {  # pyright: ignore[reportUnknownVariableType]
+    #     k: v
+    #     for k, v in extra.items()  # pyright: ignore[reportUnknownVariableType]
+    #     if k != "logger_name"
+    # }
 
-    extra_str = (
-        escape_loguru_braces(
-            str(extra_display)  # pyright: ignore[reportUnknownArgumentType]
+    # extra_str = (
+    #     escape_loguru_braces(
+    #         str(extra_display)  # pyright: ignore[reportUnknownArgumentType]
+    #     )
+    #     if extra_display
+    #     else ""
+    # )
+
+    usecase = str(
+        extra.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            "usecase", ""
         )
-        if extra_display
-        else ""
     )
+    if usecase:
+        scope = f"[{usecase}]"
+
+    else:
+        scope = ""
 
     return (
-        f"<dim>{time_str}</dim> "
-        f"<level>{level}</level> "
+        f"<dim>{time_str}</dim>   "
+        f"<level>{level}</level>"
         f"<dim>{shortname:<{config.width}}</dim> "
-        f"{indent}{message} ({extra_str})\n"
+        f"<dim>{scope}</dim> "
+        f"{indent}{message}\n"
     )
