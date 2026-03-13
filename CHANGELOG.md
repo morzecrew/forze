@@ -16,11 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `build_search_typed_mapper`, `build_search_raw_mapper` in search composition.
 - ``LoggingMiddleware`` in ``forze_fastapi.middlewares`` for request/response logging with scope.
 - ``Logger.opt`` for passing options (depth, exception, etc.) to the underlying logger.
-- ``register_uvicorn_logging_interceptor`` in ``forze_fastapi.handlers`` to redirect uvicorn/fastapi logs to loguru with scope.
+- ``UVICORN_LOG_CONFIG_TEMPLATE`` and ``InterceptHandler`` in ``forze_fastapi.logging`` for uvicorn log_config integration.
 
 ### Changed
 
-- ``register_uvicorn_logging_interceptor``: add interceptor to root logger and use propagation instead of replacing per-logger handlers.
 - `OverrideDocumentEndpointNames` renamed to `OverrideDocumentEndpointPaths`; `name_overrides` renamed to `path_overrides` in document router.
 - `OverrideSearchEndpointNames` renamed to `OverrideSearchEndpointPaths`; `name_overrides` renamed to `path_overrides` in search router.
 - `SearchUsecasesFacadeProvider` now uses `dtos: SearchDTOSpec` instead of `read_dto`; `build_search_registry` requires `dto_spec`.
@@ -46,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Pagination` and `pagination` from `forze_fastapi.routing.params`; use request body instead.
 - ``Usecase.log_parameters`` and ``Usecase._args_safe_for_logging``; use ``safe_preview`` from ``forze.base.logging`` instead.
+- ``register_uvicorn_logging_interceptor``; use ``UVICORN_LOG_CONFIG_TEMPLATE`` in uvicorn ``log_config`` instead.
 
 ## [0.1.12] - 2026-03-11
 
