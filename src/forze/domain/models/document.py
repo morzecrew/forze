@@ -87,11 +87,7 @@ class Document(CoreModel):
     def _validate_update_data(self, data: JsonDict) -> JsonDict:
         """Validate incoming update data against model fields and frozen flags."""
 
-        logger.debug(
-            "Validating update data for %s with keys=%s",
-            type(self).__qualname__,
-            tuple(data.keys()),
-        )
+        logger.debug("Validating update data for %s", type(self).__qualname__)
 
         valid: JsonDict = {}
         fields = type(self).model_fields
@@ -108,8 +104,6 @@ class Document(CoreModel):
             else:
                 raise ValidationError(f"Field {k} is not found in the model.")
 
-        logger.debug("Validated update keys: %s", tuple(valid.keys()))
-
         return valid
 
     # ....................... #
@@ -124,13 +118,9 @@ class Document(CoreModel):
 
         with log_section():
             patch = self._validate_update_data(data)
-            logger.debug("Validated patch: %s", patch)
-
             before = self.model_dump(mode="json")
             after = apply_dict_patch(before, patch)
             diff = calculate_dict_difference(before, after)
-
-            logger.debug("Calculated update diff: %s", diff)
 
         return diff
 
@@ -160,11 +150,7 @@ class Document(CoreModel):
         keys = diff.keys()
         cls = type(self)
 
-        logger.debug(
-            "Running update validators for %s with diff keys=%s",
-            cls.__qualname__,
-            tuple(keys),
-        )
+        logger.debug("Running update validators for %s", cls.__qualname__)
 
         with log_section():
             for name, meta in cls._update_validators_:
@@ -200,7 +186,6 @@ class Document(CoreModel):
             diff = self._calculate_update_diff(data)
 
             if diff:
-                logger.debug("Update diff is not empty")
                 diff["last_update_at"] = utcnow()
                 after = self._apply_update(diff)
 
@@ -209,8 +194,6 @@ class Document(CoreModel):
                 after = self
 
             self._run_update_validators(after, diff)
-
-            logger.debug("Update completed with diff=%s", diff)
 
             return after, diff
 

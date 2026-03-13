@@ -78,7 +78,9 @@ class Usecase[Args, R]:
 
         async def last(args: Args) -> R:
             logger.debug("Calling main() of %s", type(self).__qualname__)
-            return await self.main(args)
+
+            with log_section():
+                return await self.main(args)
 
         fn: NextCall[Args, R] = last
 

@@ -578,8 +578,6 @@ class UsecasePlan:
             )
 
             uc = factory(ctx)
-            logger.debug("Built usecase instance %s", type(uc).__qualname__)
-
             resolved = uc.with_middlewares(*chain)
 
         return resolved
