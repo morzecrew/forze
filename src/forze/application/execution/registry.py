@@ -437,16 +437,9 @@ class UsecaseRegistry:
             )
 
             if debug_plan:
-                logger.trace("Generating plan explanation for operation %s", op)
                 explain = self.__plan.explain(op)
-                print(explain.pretty_format())
+                logger.trace("Plan explanation: %s", explain.pretty_format())
 
             resolved = self.__plan.resolve(op, ctx, factory)
-
-            logger.trace(
-                "Resolved usecase for operation '%s' -> %s",
-                op,
-                type(resolved).__qualname__,
-            )
 
         return resolved

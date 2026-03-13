@@ -9,13 +9,8 @@ from forze.application.execution import (
     UsecaseRegistry,
 )
 from forze.application.execution.plan import OpKey
-from forze.base.logging import getLogger, log_section
 
 # ----------------------- #
-
-logger = getLogger(__name__)
-
-# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -33,10 +28,7 @@ class BaseUsecasesFacade:
     def resolve(self, op: OpKey) -> Usecase[Any, Any]:
         """Resolve a usecase for the given operation."""
 
-        logger.trace("%s: resolving operation '%s'", type(self).__qualname__, op)
-
-        with log_section():
-            return self.reg.resolve(op, self.ctx)
+        return self.reg.resolve(op, self.ctx)
 
 
 # ....................... #
@@ -60,12 +52,5 @@ class BaseUsecasesFacadeProvider[F: BaseUsecasesFacade]:
     def __call__(self, ctx: ExecutionContext) -> F:
         """Build a base usecases facade for a given context."""
 
-        logger.trace(
-            "%s: building facade %s",
-            type(self).__qualname__,
-            self.facade.__qualname__,
-        )
-
-        with log_section():
-            reg = self.reg.extend_plan(self.plan)
-            return self.facade(ctx=ctx, reg=reg)
+        reg = self.reg.extend_plan(self.plan)
+        return self.facade(ctx=ctx, reg=reg)

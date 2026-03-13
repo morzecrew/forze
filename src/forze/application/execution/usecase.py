@@ -70,13 +70,11 @@ class Usecase[Args, R]:
 
     def _build_chain(self) -> NextCall[Args, R]:
         logger.trace(
-            "Building middleware chain for %s with %d middleware(s)",
-            type(self).__qualname__,
-            len(self.middlewares),
+            "Building middleware chain with %d middleware(s)", len(self.middlewares)
         )
 
         async def last(args: Args) -> R:
-            logger.debug("Calling main() of %s", type(self).__qualname__)
+            self.debug_log("calling main")
 
             with log_section():
                 return await self.main(args)
@@ -86,11 +84,7 @@ class Usecase[Args, R]:
         for mw in reversed(self.middlewares):
             prev = fn
 
-            logger.trace(
-                "Wrapping %s with middleware %s",
-                type(self).__qualname__,
-                type(mw).__qualname__,
-            )
+            logger.trace("Wrapping with middleware %s", type(mw).__qualname__)
 
             async def wrapped(
                 a: Args,
@@ -98,11 +92,7 @@ class Usecase[Args, R]:
                 _mw: Middleware[Args, R] = mw,
                 _prev: NextCall[Args, R] = prev,
             ) -> R:
-                logger.debug(
-                    "Calling middleware %s of %s",
-                    type(mw).__qualname__,
-                    type(self).__qualname__,
-                )
+                self.debug_log("calling middleware %s", type(mw).__qualname__)
 
                 return await _mw(_prev, a)
 
@@ -118,7 +108,7 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        logger.debug("Calling usecase %s", type(self).__qualname__)
+        self.info_log("starting usecase execution")
 
         with log_section():
             chain = self._chain
@@ -138,8 +128,17 @@ class Usecase[Args, R]:
     # ....................... #
     # Logging helpers
 
+    def info_log(self, message: str, *args: Any) -> None:
+        logger.info("%s: %s", type(self).__qualname__, message % args)
+
     def debug_log(self, message: str, *args: Any) -> None:
         logger.debug("%s: %s", type(self).__qualname__, message % args)
+
+    def trace_log(self, message: str, *args: Any) -> None:
+        logger.trace("%s: %s", type(self).__qualname__, message % args)
+
+    # ....................... #
+    # Convenient methods
 
     def log_parameters(self, parameters: dict[str, Any]) -> None:
         self.debug_log("parameters: %s", parameters)

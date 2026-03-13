@@ -169,13 +169,14 @@ class IdempotencyFeature(RouteFeature):
         """
 
         async def wrapped(request: Request) -> Response:
-            logger.info("Executing idempotent route handler")
+            logger.debug("Starting idempotent route execution")
 
             idem_key = request.headers.get(self.config["header_key"])
 
             if not idem_key:
                 raise HTTPException(
-                    status_code=400, detail="Idempotency key is required"
+                    status_code=400,
+                    detail="Idempotency key is required",
                 )
 
             ctx = self.ctx_dep()
@@ -218,9 +219,12 @@ class IdempotencyFeature(RouteFeature):
                         "body": body_bytes,
                     },
                 )
+                logger.debug("Idempotency snapshot committed successfully")
 
             except Exception:
                 logger.exception("Failed to commit idempotency snapshot")
+
+            logger.debug("Finished idempotent route execution")
 
             return resp
 

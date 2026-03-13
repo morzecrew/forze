@@ -220,7 +220,7 @@ class ExecutionContext:
         dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
 
-        logger.debug(
+        logger.trace(
             "Resolved document read port for namespace '%s' -> %s",
             spec.namespace,
             type(dep).__qualname__,
@@ -257,7 +257,7 @@ class ExecutionContext:
         dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
         self.__validate_tx_scope(dep)
 
-        logger.debug(
+        logger.trace(
             "Resolved document write port for namespace '%s' -> %s",
             spec.namespace,
             type(dep).__qualname__,
@@ -276,7 +276,7 @@ class ExecutionContext:
 
         dep = self.dep(CacheDepKey)(self, spec)
 
-        logger.debug(
+        logger.trace(
             "Resolved cache port for namespace '%s' -> %s",
             spec.namespace,
             type(dep).__qualname__,
@@ -295,7 +295,7 @@ class ExecutionContext:
 
         dep = self.dep(CounterDepKey)(self, namespace)
 
-        logger.debug(
+        logger.trace(
             "Resolved counter port for namespace '%s' -> %s",
             namespace,
             type(dep).__qualname__,
@@ -310,7 +310,7 @@ class ExecutionContext:
 
         dep = self.dep(TxManagerDepKey)(self)
 
-        logger.debug(
+        logger.trace(
             "Resolved transaction manager port -> %s",
             type(dep).__qualname__,
         )
@@ -328,7 +328,7 @@ class ExecutionContext:
 
         dep = self.dep(StorageDepKey)(self, bucket)
 
-        logger.debug(
+        logger.trace(
             "Resolved storage port for bucket '%s' -> %s",
             bucket,
             type(dep).__qualname__,
@@ -343,7 +343,7 @@ class ExecutionContext:
 
         dep = self.dep(SearchReadDepKey)(self, spec)
 
-        logger.debug(
+        logger.trace(
             "Resolved search port -> %s",
             type(dep).__qualname__,
         )
