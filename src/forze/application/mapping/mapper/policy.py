@@ -22,4 +22,5 @@ class MappingPolicy:
 
     def can_overwrite(self, field: str) -> bool:
         """Return ``True`` if the given field may be overwritten by a step."""
+
         return field in self.allow_overwrite

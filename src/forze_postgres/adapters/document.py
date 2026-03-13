@@ -21,10 +21,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
-from ..kernel.gateways import (
-    PostgresReadGateway,
-    PostgresWriteGateway,
-)
+from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #

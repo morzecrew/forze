@@ -113,10 +113,11 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
             self.in_.__qualname__,
             self.out.__qualname__,
         )
-        payload = pydantic_dump(source, exclude={"unset": True})
-        logger.trace("Initial payload keys: %s", tuple(payload.keys()))
 
         with log_section():
+            payload = pydantic_dump(source, exclude={"unset": True})
+            logger.trace("Initial payload keys: %s", tuple(payload.keys()))
+
             for i, (step, fields) in enumerate(
                 zip(self.steps, self._step_fields, strict=True)
             ):
@@ -144,9 +145,5 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
                 payload = apply_dict_patch(payload, patch)
 
             result = pydantic_validate(self.out, payload)
-            logger.debug(
-                "Mapping completed: %s -> %s",
-                self.in_.__qualname__,
-                self.out.__qualname__,
-            )
+
         return result

@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentReadPort
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger
+from forze.base.logging import getLogger, log_section
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -31,5 +31,12 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
         :param args: Document primary key.
         :returns: Read model.
         """
-        logger.trace("GetDocument: pk=%s", args)
-        return await self.doc.get(args)
+
+        logger.trace(
+            "%s: delegating to %s",
+            type(self).__qualname__,
+            type(self.doc).__qualname__,
+        )
+
+        with log_section():
+            return await self.doc.get(args)

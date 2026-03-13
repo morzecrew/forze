@@ -1,10 +1,3 @@
-from datetime import timedelta
-
-import orjson
-from pydantic import BaseModel, TypeAdapter
-
-from forze.application.contracts.idempotency import IdempotencyDepKey
-from forze.base.serialization import pydantic_model_hash
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -12,17 +5,27 @@ require_fastapi()
 # ....................... #
 
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any, Callable, NotRequired, Optional, TypedDict, final
 
+import orjson
 from fastapi import HTTPException, Request, Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
+from pydantic import BaseModel, TypeAdapter
 
+from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import ExecutionContext
+from forze.base.logging import getLogger, log_section
+from forze.base.serialization import pydantic_model_hash
 
 from .feature import RouteHandler
 
 # ----------------------- #
+
+logger = getLogger(__name__)
+
+# ....................... #
 
 ExecutionContextDependencyPort = Callable[[], ExecutionContext]
 """Callable that returns an :class:`ExecutionContext` (used as a FastAPI dependency)."""
@@ -87,6 +90,9 @@ def _hash_payload(config: IdempotentRouteConfig, raw_body: bytes) -> str:
     validated = config["adapter"].validate_python(data)
 
     return pydantic_model_hash(validated)
+
+
+# ....................... #
 
 
 async def _response_body_bytes(resp: Response) -> bytes:
@@ -169,59 +175,60 @@ class IdempotencyFeature:
         config = self._config
 
         async def wrapped(request: Request) -> Response:
-            idem_key = request.headers.get(config["header_key"])
+            logger.debug("Executing idempotent route handler")
 
-            if not idem_key:
-                raise HTTPException(
-                    status_code=400, detail="Idempotency key is required"
-                )
+            with log_section():
+                idem_key = request.headers.get(config["header_key"])
 
-            ctx = ctx_dep()
-            idem_f = ctx.dep(IdempotencyDepKey)
-            idem = idem_f(context=ctx, ttl=config["ttl"])
+                if not idem_key:
+                    raise HTTPException(
+                        status_code=400, detail="Idempotency key is required"
+                    )
 
-            raw_body = await request.body()
-            payload_hash: str
+                ctx = ctx_dep()
+                idem_f = ctx.dep(IdempotencyDepKey)
+                idem = idem_f(context=ctx, ttl=config["ttl"])
 
-            try:
-                payload_hash = _hash_payload(config, raw_body)
+                raw_body = await request.body()
+                payload_hash: str
 
-            except Exception:
-                return await handler(request)
+                try:
+                    payload_hash = _hash_payload(config, raw_body)
 
-            snap = await idem.begin(
-                config["operation"], idem_key, payload_hash
-            )
+                except Exception:
+                    return await handler(request)
 
-            if snap is not None:
-                return Response(
-                    content=snap["body"],
-                    status_code=int(snap.get("code", 200)),
-                    media_type=snap.get("content_type", "application/json"),
-                )
+                snap = await idem.begin(config["operation"], idem_key, payload_hash)
 
-            resp = await handler(request)
+                if snap is not None:
+                    return Response(
+                        content=snap["body"],
+                        status_code=int(snap.get("code", 200)),
+                        media_type=snap.get("content_type", "application/json"),
+                    )
 
-            try:
-                body_bytes = await _response_body_bytes(resp)
-                await idem.commit(
-                    config["operation"],
-                    idem_key,
-                    payload_hash,
-                    {
-                        "code": int(resp.status_code),
-                        "content_type": resp.media_type
-                        or resp.headers.get(
-                            "content-type", "application/octet-stream"
-                        ),
-                        "body": body_bytes,
-                    },
-                )
+                resp = await handler(request)
 
-            except Exception:  # nosec: B110
-                pass
+                try:
+                    body_bytes = await _response_body_bytes(resp)
+                    await idem.commit(
+                        config["operation"],
+                        idem_key,
+                        payload_hash,
+                        {
+                            "code": int(resp.status_code),
+                            "content_type": resp.media_type
+                            or resp.headers.get(
+                                "content-type", "application/octet-stream"
+                            ),
+                            "body": body_bytes,
+                        },
+                    )
 
-            return resp
+                except Exception:  # nosec: B110
+                    pass
+
+                return resp
 
         return wrapped
 

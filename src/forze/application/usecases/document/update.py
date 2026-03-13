@@ -6,16 +6,17 @@ import attrs
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger
+from forze.base.logging import getLogger, log_section
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
 
 logger = getLogger(__name__)
-#! TODO: replace with BaseDTO
+
+# ....................... #
 
 
-@final
+@final  #! TODO: replace with BaseDTO
 class UpdateArgs[In: BaseDTO](TypedDict):
     """Arguments for update usecases."""
 
@@ -52,8 +53,28 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         :param args: Update arguments (pk, dto, rev).
         :returns: Updated read model.
         """
-        logger.trace("UpdateDocument: pk=%s, rev=%s", args["pk"], args.get("rev"))
-        logger.trace("UpdateDocument: mapping dto to update command")
-        cmd = await self.mapper(self.ctx, args["dto"])
-        logger.trace("UpdateDocument: delegating to DocumentWritePort.update")
-        return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))
+
+        logger.trace(
+            "%s: pk=%s, rev=%s",
+            type(self).__qualname__,
+            args["pk"],
+            args.get("rev"),
+        )
+
+        logger.trace(
+            "%s: mapping input (dto) %s",
+            type(self).__qualname__,
+            type(args).__qualname__,
+        )
+
+        with log_section():
+            cmd = await self.mapper(self.ctx, args["dto"])
+
+        logger.trace(
+            "%s: delegating to %s",
+            type(self).__qualname__,
+            type(self.doc).__qualname__,
+        )
+
+        with log_section():
+            return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))

@@ -11,14 +11,11 @@ from forze.application.dto import (
     SearchRequestDTO,
 )
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger
 
 from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
 from .operations import SearchOperation
 
 # ----------------------- #
-
-logger = getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
 tS = TypeVar("tS", bound=SearchRequestDTO, default=SearchRequestDTO)
@@ -32,14 +29,14 @@ class SearchUsecasesFacade(BaseUsecasesFacade, Generic[M, tS, rS]):
 
     def raw(self) -> Usecase[rS, RawPaginated]:
         """Return the raw search usecase."""
-        logger.trace("SearchUsecasesFacade.raw")
+
         return self.resolve(SearchOperation.RAW_SEARCH)
 
     # ....................... #
 
     def typed(self) -> Usecase[tS, Paginated[M]]:
         """Return the typed search usecase."""
-        logger.trace("SearchUsecasesFacade.typed")
+
         return self.resolve(SearchOperation.TYPED_SEARCH)
 
 

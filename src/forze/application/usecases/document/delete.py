@@ -5,16 +5,17 @@ import attrs
 
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger
+from forze.base.logging import getLogger, log_section
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
 
 logger = getLogger(__name__)
-#! TODO: replace with BaseDTO
+
+# ....................... #
 
 
-@final
+@final  #! TODO: replace with BaseDTO
 class SoftDeleteArgs(TypedDict):
     """Arguments for soft delete and restore usecases."""
 
@@ -43,8 +44,15 @@ class KillDocument(Usecase[UUID, None]):
         :param args: Document primary key.
         :returns: ``None``.
         """
-        logger.trace("KillDocument: pk=%s", args)
-        return await self.doc.kill(args)
+
+        logger.trace(
+            "%s: delegating to %s",
+            type(self).__qualname__,
+            type(self.doc).__qualname__,
+        )
+
+        with log_section():
+            return await self.doc.kill(args)
 
 
 # ....................... #
@@ -65,8 +73,15 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :param args: Delete arguments (pk, optional rev).
         :returns: Updated read model.
         """
-        logger.trace("DeleteDocument: pk=%s, rev=%s", args["pk"], args.get("rev"))
-        return await self.doc.delete(args["pk"], rev=args.get("rev"))
+
+        logger.trace(
+            "%s: delegating to %s",
+            type(self).__qualname__,
+            type(self.doc).__qualname__,
+        )
+
+        with log_section():
+            return await self.doc.delete(args["pk"], rev=args.get("rev"))
 
 
 # ....................... #
@@ -87,5 +102,19 @@ class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :param args: Restore arguments (pk, optional rev).
         :returns: Updated read model.
         """
-        logger.trace("RestoreDocument: pk=%s, rev=%s", args["pk"], args.get("rev"))
-        return await self.doc.restore(args["pk"], rev=args.get("rev"))
+
+        logger.trace(
+            "%s: pk=%s, rev=%s",
+            type(self).__qualname__,
+            args["pk"],
+            args.get("rev"),
+        )
+
+        logger.trace(
+            "%s: delegating to %s",
+            type(self).__qualname__,
+            type(self.doc).__qualname__,
+        )
+
+        with log_section():
+            return await self.doc.restore(args["pk"], rev=args.get("rev"))
