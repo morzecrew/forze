@@ -162,7 +162,7 @@ def calculate_dict_difference(
     :returns: Merge patch that transforms ``before`` into ``after``.
     """
 
-    logger.debug(
+    logger.trace(
         "Calculating dict difference (deletions_as_none=%s, before_keys=%d, after_keys=%d)",
         deletions_as_none,
         len(before),
@@ -214,7 +214,7 @@ def split_touches_from_merge_patch(
     :returns: A tuple of scalar-path→value mapping and a set of container paths.
     """
 
-    logger.debug(
+    logger.trace(
         "Splitting touches from merge patch (top_level_keys=%d)",
         len(patch),
     )
@@ -269,7 +269,7 @@ def has_hybrid_patch_conflict(
     the same or ancestor/descendant key paths.
     """
 
-    logger.debug(
+    logger.trace(
         "Checking for hybrid patch conflict "
         "(a_scalars=%d, a_containers=%d, b_scalars=%d, b_containers=%d)",
         len(a_scalars),

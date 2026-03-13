@@ -100,7 +100,7 @@ class ExecutionContext:
             depth = self.__tx_depth.get()
             cur = self.__tx_handle.get()
 
-            logger.debug(
+            logger.trace(
                 "Transaction state: requested_scope=%s depth=%d active_scope=%s",
                 scope.name,
                 depth,
@@ -126,7 +126,7 @@ class ExecutionContext:
 
                 finally:
                     self.__tx_depth.reset(token_d)
-                    logger.debug("Leaving nested transaction scope %s", scope.name)
+                    logger.trace("Leaving nested transaction scope %s", scope.name)
 
                 return
 
@@ -142,7 +142,7 @@ class ExecutionContext:
             finally:
                 self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
-                logger.debug("Leaving root transaction scope %s", scope.name)
+                logger.trace("Leaving root transaction scope %s", scope.name)
 
     # ....................... #
 
@@ -164,7 +164,7 @@ class ExecutionContext:
     def __resolving(self, key: DepKey[Any]) -> Iterator[None]:
         stack = self.__resolve_stack.get()
 
-        logger.debug(
+        logger.trace(
             "Resolving dependency '%s' (depth=%d)",
             key.name,
             len(stack),
@@ -210,7 +210,7 @@ class ExecutionContext:
         :returns: Document port instance.
         """
 
-        logger.debug(
+        logger.trace(
             "Resolving document read port for namespace '%s'",
             spec.namespace,
         )
@@ -223,7 +223,7 @@ class ExecutionContext:
                     namespace=spec.namespace,
                     ttl=spec.cache.get("ttl", timedelta(seconds=300)),
                 )
-                logger.debug(
+                logger.trace(
                     "Resolving cache for document read namespace '%s' with ttl=%s",
                     spec.namespace,
                     cache_spec.ttl,
@@ -233,7 +233,7 @@ class ExecutionContext:
             dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
             self.__validate_tx_scope(dep)
 
-            logger.debug(
+            logger.trace(
                 "Resolved document read port for namespace '%s' -> %s",
                 spec.namespace,
                 type(dep).__qualname__,
@@ -253,7 +253,7 @@ class ExecutionContext:
         :returns: Document port instance.
         """
 
-        logger.debug(
+        logger.trace(
             "Resolving document write port for namespace '%s'",
             spec.namespace,
         )
@@ -266,7 +266,7 @@ class ExecutionContext:
                     namespace=spec.namespace,
                     ttl=spec.cache.get("ttl", timedelta(seconds=300)),
                 )
-                logger.debug(
+                logger.trace(
                     "Resolving cache for document write namespace '%s' with ttl=%s",
                     spec.namespace,
                     cache_spec.ttl,
@@ -276,7 +276,7 @@ class ExecutionContext:
             dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
             self.__validate_tx_scope(dep)
 
-            logger.debug(
+            logger.trace(
                 "Resolved document write port for namespace '%s' -> %s",
                 spec.namespace,
                 type(dep).__qualname__,
@@ -293,7 +293,7 @@ class ExecutionContext:
         :returns: Cache port instance.
         """
 
-        logger.debug("Resolving cache port for namespace '%s'", spec.namespace)
+        logger.trace("Resolving cache port for namespace '%s'", spec.namespace)
 
         with log_section():
             return self.dep(CacheDepKey)(self, spec)
@@ -307,7 +307,7 @@ class ExecutionContext:
         :returns: Counter port instance.
         """
 
-        logger.debug("Resolving counter port for namespace '%s'", namespace)
+        logger.trace("Resolving counter port for namespace '%s'", namespace)
 
         with log_section():
             return self.dep(CounterDepKey)(self, namespace)
@@ -317,7 +317,7 @@ class ExecutionContext:
     def txmanager(self) -> TxManagerPort:
         """Resolve the transaction manager port."""
 
-        logger.debug("Resolving transaction manager port")
+        logger.trace("Resolving transaction manager port")
 
         with log_section():
             return self.dep(TxManagerDepKey)(self)
@@ -331,7 +331,7 @@ class ExecutionContext:
         :returns: Storage port instance.
         """
 
-        logger.debug("Resolving storage port for bucket '%s'", bucket)
+        logger.trace("Resolving storage port for bucket '%s'", bucket)
 
         with log_section():
             return self.dep(StorageDepKey)(self, bucket)
@@ -341,7 +341,7 @@ class ExecutionContext:
     def search(self, spec: SearchSpec[Any]) -> SearchReadPort[Any]:
         """Resolve a search port."""
 
-        logger.debug("Resolving search port")
+        logger.trace("Resolving search port")
 
         with log_section():
             return self.dep(SearchReadDepKey)(self, spec)

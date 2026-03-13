@@ -67,7 +67,7 @@ class Deps(DepsPort):
         :raises CoreError: If any key is registered in more than one container.
         """
 
-        logger.debug("Merging %d dependency container(s)", len(deps))
+        logger.trace("Merging %d dependency container(s)", len(deps))
 
         acc: dict[DepKey[Any], Any] = {}
 
@@ -91,7 +91,7 @@ class Deps(DepsPort):
         :returns: New container without the key.
         """
 
-        logger.debug("Removing dependency %s from container copy", key.name)
+        logger.trace("Removing dependency %s from container copy", key.name)
 
         new = dict(self.deps)
         new.pop(key)
@@ -159,7 +159,7 @@ class DepsPlan:
         :returns: New plan instance.
         """
 
-        logger.debug(
+        logger.trace(
             "Appending %d module(s) to deps plan with %d existing module(s)",
             len(modules),
             len(self.modules),
@@ -176,21 +176,21 @@ class DepsPlan:
         :raises CoreError: If any module registers a conflicting key.
         """
 
-        logger.debug(
+        logger.trace(
             "Building dependency container from %d module(s)",
             len(self.modules),
         )
 
         with log_section():
             if not self.modules:
-                logger.debug("Deps plan is empty; returning empty container")
+                logger.trace("Deps plan is empty; returning empty container")
                 return Deps()
 
             built: list[Deps] = []
 
             for i, module in enumerate(self.modules, 1):
                 deps = module()
-                logger.debug(
+                logger.trace(
                     "Built deps module #%d with %d dependency(ies)",
                     i,
                     len(deps.deps),
@@ -198,7 +198,7 @@ class DepsPlan:
                 built.append(deps)
 
             merged = Deps.merge(*built)
-            logger.debug(
+            logger.trace(
                 "Built merged dependency container with %d dependency(ies)",
                 len(merged.deps),
             )

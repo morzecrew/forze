@@ -75,7 +75,7 @@ class Document(CoreModel):
                 on_conflict=cls._update_validators_on_conflict,
             )
 
-            logger.debug(
+            logger.trace(
                 "Collected %d validator(s) for %s",
                 len(cls._update_validators_),
                 cls.__qualname__,
@@ -86,7 +86,7 @@ class Document(CoreModel):
     def _validate_update_data(self, data: JsonDict) -> JsonDict:
         """Validate incoming update data against model fields and frozen flags."""
 
-        logger.debug("Validating update data for %s", type(self).__qualname__)
+        logger.trace("Validating update data for %s", type(self).__qualname__)
 
         valid: JsonDict = {}
         fields = type(self).model_fields
@@ -110,7 +110,7 @@ class Document(CoreModel):
     def _calculate_update_diff(self, data: JsonDict) -> JsonDict:
         """Return a minimal merge patch that represents ``data`` applied to self."""
 
-        logger.debug(
+        logger.trace(
             "Calculating update diff for %s",
             type(self).__qualname__,
         )
@@ -127,7 +127,7 @@ class Document(CoreModel):
 
     def _apply_update(self, diff: JsonDict) -> Self:
         if not diff:
-            logger.debug(
+            logger.trace(
                 "No diff for %s; returning original instance",
                 type(self).__qualname__,
             )
@@ -135,7 +135,7 @@ class Document(CoreModel):
 
         needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
 
-        logger.debug(
+        logger.trace(
             "Applying diff to %s (needs_deep=%s)",
             type(self).__qualname__,
             needs_deep,
@@ -149,15 +149,15 @@ class Document(CoreModel):
         keys = diff.keys()
         cls = type(self)
 
-        logger.debug("Running update validators for %s", cls.__qualname__)
+        logger.trace("Running update validators for %s", cls.__qualname__)
 
         with log_section():
             for name, meta in cls._update_validators_:
                 if meta.fields is not None and keys.isdisjoint(meta.fields):
-                    logger.debug("Skipping validator %s (fields=%s)", name, meta.fields)
+                    logger.trace("Skipping validator %s (fields=%s)", name, meta.fields)
                     continue
 
-                logger.debug("Running validator %s (fields=%s)", name, meta.fields)
+                logger.trace("Running validator %s (fields=%s)", name, meta.fields)
 
                 method = cast(UpdateValidator[Self], getattr(cls, name))
                 method(self, after, diff)
@@ -189,7 +189,7 @@ class Document(CoreModel):
                 after = self._apply_update(diff)
 
             else:
-                logger.debug("Update diff is empty; document remains unchanged")
+                logger.trace("Update diff is empty; document remains unchanged")
                 after = self
 
             self._run_update_validators(after, diff)
@@ -246,7 +246,7 @@ class Document(CoreModel):
                 old_upd_containers,
             )
 
-            logger.debug("Historical consistency conflict=%s", has_conflict)
+            logger.trace("Historical consistency conflict=%s", has_conflict)
 
         return not has_conflict
 
