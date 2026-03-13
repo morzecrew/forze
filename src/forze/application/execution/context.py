@@ -212,32 +212,33 @@ class ExecutionContext:
         """
 
         logger.debug(
-            "Resolving document read port for namespace %s",
+            "Resolving document read port for namespace '%s'",
             spec.namespace,
         )
 
-        cache = None
+        with log_section():
+            cache = None
 
-        if spec.cache is not None and spec.cache.get("enabled", False):
-            cache_spec = CacheSpec(
-                namespace=spec.namespace,
-                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
-            )
+            if spec.cache is not None and spec.cache.get("enabled", False):
+                cache_spec = CacheSpec(
+                    namespace=spec.namespace,
+                    ttl=spec.cache.get("ttl", timedelta(seconds=300)),
+                )
+                logger.debug(
+                    "Resolving cache for document read namespace '%s' with ttl=%s",
+                    spec.namespace,
+                    cache_spec.ttl,
+                )
+                cache = self.cache(cache_spec)
+
+            dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
+            self.__validate_tx_scope(dep)
+
             logger.debug(
-                "Resolving cache for document read namespace %s with ttl=%s",
+                "Resolved document read port for namespace '%s' -> %s",
                 spec.namespace,
-                cache_spec.ttl,
+                type(dep).__qualname__,
             )
-            cache = self.cache(cache_spec)
-
-        dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
-        self.__validate_tx_scope(dep)
-
-        logger.debug(
-            "Resolved document read port for namespace %s -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
-        )
 
         return dep
 
@@ -254,32 +255,33 @@ class ExecutionContext:
         """
 
         logger.debug(
-            "Resolving document write port for namespace %s",
+            "Resolving document write port for namespace '%s'",
             spec.namespace,
         )
 
-        cache = None
+        with log_section():
+            cache = None
 
-        if spec.cache is not None and spec.cache.get("enabled", False):
-            cache_spec = CacheSpec(
-                namespace=spec.namespace,
-                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
-            )
+            if spec.cache is not None and spec.cache.get("enabled", False):
+                cache_spec = CacheSpec(
+                    namespace=spec.namespace,
+                    ttl=spec.cache.get("ttl", timedelta(seconds=300)),
+                )
+                logger.debug(
+                    "Resolving cache for document write namespace '%s' with ttl=%s",
+                    spec.namespace,
+                    cache_spec.ttl,
+                )
+                cache = self.cache(cache_spec)
+
+            dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
+            self.__validate_tx_scope(dep)
+
             logger.debug(
-                "Resolving cache for document write namespace %s with ttl=%s",
+                "Resolved document write port for namespace '%s' -> %s",
                 spec.namespace,
-                cache_spec.ttl,
+                type(dep).__qualname__,
             )
-            cache = self.cache(cache_spec)
-
-        dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
-        self.__validate_tx_scope(dep)
-
-        logger.debug(
-            "Resolved document write port for namespace %s -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
-        )
 
         return dep
 
@@ -292,9 +294,10 @@ class ExecutionContext:
         :returns: Cache port instance.
         """
 
-        logger.debug("Resolving cache port for namespace %s", spec.namespace)
+        logger.debug("Resolving cache port for namespace '%s'", spec.namespace)
 
-        return self.dep(CacheDepKey)(self, spec)
+        with log_section():
+            return self.dep(CacheDepKey)(self, spec)
 
     # ....................... #
 
@@ -305,9 +308,10 @@ class ExecutionContext:
         :returns: Counter port instance.
         """
 
-        logger.debug("Resolving counter port for namespace %s", namespace)
+        logger.debug("Resolving counter port for namespace '%s'", namespace)
 
-        return self.dep(CounterDepKey)(self, namespace)
+        with log_section():
+            return self.dep(CounterDepKey)(self, namespace)
 
     # ....................... #
 
@@ -316,7 +320,8 @@ class ExecutionContext:
 
         logger.debug("Resolving transaction manager port")
 
-        return self.dep(TxManagerDepKey)(self)
+        with log_section():
+            return self.dep(TxManagerDepKey)(self)
 
     # ....................... #
 
@@ -327,9 +332,10 @@ class ExecutionContext:
         :returns: Storage port instance.
         """
 
-        logger.debug("Resolving storage port for bucket %s", bucket)
+        logger.debug("Resolving storage port for bucket '%s'", bucket)
 
-        return self.dep(StorageDepKey)(self, bucket)
+        with log_section():
+            return self.dep(StorageDepKey)(self, bucket)
 
     # ....................... #
 
@@ -338,4 +344,5 @@ class ExecutionContext:
 
         logger.debug("Resolving search port")
 
-        return self.dep(SearchReadDepKey)(self, spec)
+        with log_section():
+            return self.dep(SearchReadDepKey)(self, spec)

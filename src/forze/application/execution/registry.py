@@ -377,18 +377,16 @@ class UsecaseRegistry:
             len(extra.ops),
         )
 
-        with log_section():
-            merged = UsecasePlan.merge(self.__plan, extra)
-            logger.debug("Merged plan contains %d operation(s)", len(merged.ops))
+        merged = UsecasePlan.merge(self.__plan, extra)
 
-            if inplace:
-                self.__plan = merged
-                return None
+        if inplace:
+            self.__plan = merged
+            return None
 
-            else:
-                new_instance = type(self)(defaults=self.defaults)
-                new_instance.__plan = merged
-                return new_instance
+        else:
+            new_instance = type(self)(defaults=self.defaults)
+            new_instance.__plan = merged
+            return new_instance
 
     # ....................... #
 

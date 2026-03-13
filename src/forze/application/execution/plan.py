@@ -301,36 +301,19 @@ class OperationPlan:
         :returns: A new :class:`OperationPlan` with combined operations.
         """
 
-        logger.debug("Merging %d operation plan(s)", len(plans))
+        acc: OperationPlan = OperationPlan()
 
-        with log_section():
-            acc: OperationPlan = OperationPlan()
-
-            for i, plan in enumerate(plans, 1):
-                logger.debug(
-                    "Merging plan #%d (tx=%s, outer_before=%d, outer_wrap=%d, outer_after=%d, "
-                    "in_tx_before=%d, in_tx_wrap=%d, in_tx_after=%d, after_commit=%d)",
-                    i,
-                    plan.tx,
-                    len(plan.outer_before),
-                    len(plan.outer_wrap),
-                    len(plan.outer_after),
-                    len(plan.in_tx_before),
-                    len(plan.in_tx_wrap),
-                    len(plan.in_tx_after),
-                    len(plan.after_commit),
-                )
-
-                acc = OperationPlan(
-                    tx=acc.tx or plan.tx,
-                    outer_before=(*acc.outer_before, *plan.outer_before),
-                    outer_wrap=(*acc.outer_wrap, *plan.outer_wrap),
-                    outer_after=(*acc.outer_after, *plan.outer_after),
-                    in_tx_before=(*acc.in_tx_before, *plan.in_tx_before),
-                    in_tx_wrap=(*acc.in_tx_wrap, *plan.in_tx_wrap),
-                    in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
-                    after_commit=(*acc.after_commit, *plan.after_commit),
-                )
+        for plan in plans:
+            acc = OperationPlan(
+                tx=acc.tx or plan.tx,
+                outer_before=(*acc.outer_before, *plan.outer_before),
+                outer_wrap=(*acc.outer_wrap, *plan.outer_wrap),
+                outer_after=(*acc.outer_after, *plan.outer_after),
+                in_tx_before=(*acc.in_tx_before, *plan.in_tx_before),
+                in_tx_wrap=(*acc.in_tx_wrap, *plan.in_tx_wrap),
+                in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
+                after_commit=(*acc.after_commit, *plan.after_commit),
+            )
 
         return acc
 
@@ -525,11 +508,7 @@ class UsecasePlan:
 
         op = str(op)
 
-        logger.debug(
-            "Resolving usecase plan for operation %s with context %s",
-            op,
-            type(ctx).__qualname__,
-        )
+        logger.debug("Resolving usecase plan for operation '%s'", op)
 
         if op == WILDCARD or op.endswith(WILDCARD):
             raise CoreError(f"Resolve on wildcard operation `{op}` is not allowed")
@@ -549,8 +528,8 @@ class UsecasePlan:
             after_commit = plan.build("after_commit")
 
             logger.debug(
-                "Built plan for %s: tx=%s outer_before=%d outer_wrap=%d outer_after=%d "
-                "in_tx_before=%d in_tx_wrap=%d in_tx_after=%d after_commit=%d",
+                "Built plan for '%s' (tx=%s, outer_before=%d, outer_wrap=%d, outer_after=%d, "
+                "in_tx_before=%d, in_tx_wrap=%d, in_tx_after=%d, after_commit=%d)",
                 op,
                 plan.tx,
                 len(outer_before),
@@ -602,7 +581,6 @@ class UsecasePlan:
             logger.debug("Built usecase instance %s", type(uc).__qualname__)
 
             resolved = uc.with_middlewares(*chain)
-            logger.debug("Applied middleware chain to %s", type(uc).__qualname__)
 
         return resolved
 
