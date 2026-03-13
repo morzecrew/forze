@@ -13,7 +13,12 @@ import attrs
 from psycopg import sql
 
 from forze.base.errors import CoreError, NotFoundError, ValidationError
-from forze.base.serialization import pydantic_dump, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_validate,
+    pydantic_validate_many,
+)
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -107,7 +112,9 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             params.extend([p, r])
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
-        return [pydantic_validate(self.model, row[HISTORY_DATA_FIELD]) for row in rows]
+        return pydantic_validate_many(
+            self.model, [row[HISTORY_DATA_FIELD] for row in rows]
+        )
 
     # ....................... #
 
@@ -147,9 +154,9 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         if self.strategy == "database":
             return
 
-        records = [self._from_data(d) for d in data]
-        insert_data_raw = [pydantic_dump(r) for r in records]
-        insert_data = [await self.adapt_payload_for_write(d) for d in insert_data_raw]
+        records = list(map(self._from_data, data))
+        insert_data_raw = pydantic_dump_many(records)
+        insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
 
         keys = list(insert_data[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]

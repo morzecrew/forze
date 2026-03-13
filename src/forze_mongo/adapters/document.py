@@ -18,7 +18,12 @@ from forze.application.contracts.query import QueryFilterExpression, QuerySortEx
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_dump, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_validate,
+    pydantic_validate_many,
+)
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..kernel.gateways import MongoReadGateway, MongoWriteGateway
@@ -82,6 +87,19 @@ class MongoDocumentAdapter(
     def _map_to_cache(self, doc: R) -> JsonDict:
         return pydantic_dump(
             doc,
+            exclude={
+                "none": True,
+                "defaults": True,
+                "computed_fields": True,
+            },
+            mode="json",
+        )
+
+    # ....................... #
+
+    def _map_to_cache_many(self, docs: Sequence[R]) -> list[JsonDict]:
+        return pydantic_dump_many(
+            docs,
             exclude={
                 "none": True,
                 "defaults": True,
@@ -207,6 +225,7 @@ class MongoDocumentAdapter(
 
         try:
             hits, misses = await self.cache.get_many([str(pk) for pk in pks])
+
         except Exception:
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
@@ -214,17 +233,19 @@ class MongoDocumentAdapter(
 
         if misses:
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
+            miss_res_cache = self._map_to_cache_many(miss_res)
+            miss_res_cache_map = {
+                (str(x.id), str(x.rev)): y for x, y in zip(miss_res, miss_res_cache)
+            }
+
             with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(
-                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in miss_res}
-                )
+                await self.cache.set_many_versioned(miss_res_cache_map)
 
-        by_pk: dict[str, R] = {
-            k: pydantic_validate(self.read_gw.model, v) for k, v in hits.items()
-        }
-        by_pk.update({str(x.id): x for x in miss_res})
+        hits_validated = pydantic_validate_many(self.read_gw.model, list(hits.values()))
+        by_pk = {x.id: x for x in hits_validated}
+        by_pk.update({x.id: x for x in miss_res})
 
-        return [by_pk[str(pk)] for pk in pks]
+        return [by_pk[pk] for pk in pks]
 
     # ....................... #
 
@@ -385,10 +406,11 @@ class MongoDocumentAdapter(
         res = await self.read_gw.get_many([x.id for x in domains])
 
         if self.cache is not None:
+            res_cache = self._map_to_cache_many(res)
+            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
+
             with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(
-                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-                )
+                await self.cache.set_many_versioned(res_cache_map)
 
         return res
 
@@ -451,10 +473,11 @@ class MongoDocumentAdapter(
         res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
+            res_cache = self._map_to_cache_many(res)
+            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
+
             with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(
-                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-                )
+                await self.cache.set_many_versioned(res_cache_map)
 
         return res
 
@@ -499,10 +522,11 @@ class MongoDocumentAdapter(
         res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
+            res_cache = self._map_to_cache_many(res)
+            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
+
             with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(
-                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-                )
+                await self.cache.set_many_versioned(res_cache_map)
 
         return res
 
@@ -578,10 +602,11 @@ class MongoDocumentAdapter(
         res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
+            res_cache = self._map_to_cache_many(res)
+            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
+
             with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(
-                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-                )
+                await self.cache.set_many_versioned(res_cache_map)
 
         return res
 
@@ -633,9 +658,10 @@ class MongoDocumentAdapter(
         res = await self.read_gw.get_many(pks)
 
         if self.cache is not None:
+            res_cache = self._map_to_cache_many(res)
+            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
+
             with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(
-                    {(str(x.id), str(x.rev)): self._map_to_cache(x) for x in res}
-                )
+                await self.cache.set_many_versioned(res_cache_map)
 
         return res

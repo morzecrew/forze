@@ -18,7 +18,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate
+from forze.base.serialization import pydantic_validate_many
 
 from ..base import PostgresQualifiedName
 from .base import PostgresSearchGateway
@@ -253,9 +253,9 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
         if return_model is not None:
-            return [pydantic_validate(return_model, r) for r in rows], total
+            return pydantic_validate_many(return_model, rows), total
 
         if return_fields is not None:
             return [{k: r.get(k, None) for k in return_fields} for r in rows], total
 
-        return [pydantic_validate(self.model, r) for r in rows], total
+        return pydantic_validate_many(self.model, rows), total

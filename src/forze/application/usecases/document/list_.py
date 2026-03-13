@@ -48,8 +48,6 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
         self.log_parameters({"page": page, "size": size, "offset": offset})
 
         if self.mapper:
-            self.log_mapping(args)
-
             with log_section():
                 # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
                 body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
@@ -98,8 +96,6 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
         self.log_parameters({"page": page, "size": size, "offset": offset})
 
         if self.mapper:
-            self.log_mapping(args)
-
             with log_section():
                 # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
                 body = await self.mapper(self.ctx, body)  # type: ignore[assignment]

@@ -232,3 +232,18 @@ class PostgresGateway[M: BaseModel]:
             out[k] = self.adapt_value_for_write(v, t=types.get(k))
 
         return out
+
+    # ....................... #
+
+    async def adapt_many_payload_for_write(
+        self,
+        payloads: Sequence[JsonDict],
+    ) -> Sequence[JsonDict]:
+        types = await self.column_types()
+        out = list(map(dict, payloads))
+
+        for payload in out:
+            for k, v in payload.items():
+                payload[k] = self.adapt_value_for_write(v, t=types.get(k))
+
+        return out

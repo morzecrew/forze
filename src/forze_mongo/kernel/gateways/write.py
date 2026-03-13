@@ -27,8 +27,10 @@ from forze.base.errors import (
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
+    pydantic_dump_many,
     pydantic_field_names,
     pydantic_validate,
+    pydantic_validate_many,
 )
 from forze.domain.constants import REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -187,6 +189,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
+        data = pydantic_dump_many(dtos, exclude={"unset": True})
+        return pydantic_validate_many(self.model, data)
+
+    # ....................... #
+
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         """Insert a new document from a creation DTO and record its history.
@@ -199,9 +207,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         data = pydantic_dump(model)
 
         await self.client.insert_one(self.coll(), self._storage_doc(data))
-        await self._write_history(model)
 
-        return model
+        created = await self.read.get(model.id)
+        await self._write_history(created)
+
+        return created
 
     # ....................... #
 
@@ -215,13 +225,16 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if not dtos:
             return []
 
-        models = [self._from_cdto(d) for d in dtos]
-        payloads = [self._storage_doc(pydantic_dump(m)) for m in models]
+        models = self._from_cdto_many(dtos)
+        raw_payloads = pydantic_dump_many(models)
+        payloads = list(map(self._storage_doc, raw_payloads))
 
         await self.client.insert_many(self.coll(), payloads)
-        await self._write_history(*models)
 
-        return models
+        created = await self.read.get_many([model.id for model in models])
+        await self._write_history(*created)
+
+        return created
 
     # ....................... #
 
@@ -266,7 +279,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if matched != 1:
             raise ConcurrencyError("Failed to update record")
 
-        updated = current.model_copy(update=diff, deep=True)
+        updated = await self.read.get(pk)
         await self._write_history(updated)
 
         return updated
@@ -326,20 +339,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if matched != len(to_patch):
             raise ConcurrencyError("Failed to update one or more records")
 
-        # 3. Finalization
-        updated_models: list[D] = []
-        updated_map: dict[int, D] = {}
+        updated = await self.read.get_many(pks)
+        await self._write_history(*updated)
 
-        for i, current, diff in to_patch:
-            bumped = self._bump_rev(current, diff)
-            model = current.model_copy(update=bumped, deep=True)
-            updated_models.append(model)
-            updated_map[i] = model
-
-        out = [updated_map.get(idx, currents[idx]) for idx in range(len(currents))]
-        await self._write_history(*updated_models)
-
-        return out
+        return updated
 
     # ....................... #
 
@@ -382,7 +385,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if revs is not None and len(revs) != len(pks):
             raise CoreError("Length mismatch between primary keys and revisions")
 
-        updates = [pydantic_dump(d, exclude={"unset": True}) for d in dtos]
+        updates = pydantic_dump_many(dtos, exclude={"unset": True})
         return await self._patch_many(pks, updates, revs=revs)
 
     # ....................... #

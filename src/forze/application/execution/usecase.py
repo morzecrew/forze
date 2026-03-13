@@ -74,10 +74,8 @@ class Usecase[Args, R]:
         )
 
         async def last(args: Args) -> R:
-            self.debug_log("calling main")
-
-            with log_section():
-                return await self.main(args)
+            logger.debug("Calling main")
+            return await self.main(args)
 
         fn: NextCall[Args, R] = last
 
@@ -92,8 +90,7 @@ class Usecase[Args, R]:
                 _mw: Middleware[Args, R] = mw,
                 _prev: NextCall[Args, R] = prev,
             ) -> R:
-                self.debug_log("calling middleware %s", type(mw).__qualname__)
-
+                logger.debug("Calling middleware %s", type(mw).__qualname__)
                 return await _mw(_prev, a)
 
             fn = wrapped
@@ -108,7 +105,7 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        self.info_log("starting usecase execution")
+        logger.info("Starting usecase execution: %s", type(self).__qualname__)
 
         with log_section():
             chain = self._chain
@@ -126,25 +123,10 @@ class Usecase[Args, R]:
         return result
 
     # ....................... #
-    # Logging helpers
-
-    def info_log(self, message: str, *args: Any) -> None:
-        logger.info("%s: %s", type(self).__qualname__, message % args)
-
-    def debug_log(self, message: str, *args: Any) -> None:
-        logger.debug("%s: %s", type(self).__qualname__, message % args)
-
-    def trace_log(self, message: str, *args: Any) -> None:
-        logger.trace("%s: %s", type(self).__qualname__, message % args)
-
-    # ....................... #
     # Convenient methods
 
     def log_parameters(self, parameters: dict[str, Any]) -> None:
-        self.debug_log("parameters: %s", parameters)
-
-    def log_mapping(self, dto: object) -> None:
-        self.debug_log("mapping input (%s)", type(dto).__qualname__)
+        logger.debug("Parameters: %s", parameters)
 
     def log_delegation(self, target: object) -> None:
-        self.debug_log("delegating to %s", type(target).__qualname__)
+        logger.debug("Delegating to %s", type(target).__qualname__)

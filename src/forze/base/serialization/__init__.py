@@ -8,9 +8,11 @@ from .diff import (
 )
 from .pydantic import (
     pydantic_dump,
+    pydantic_dump_many,
     pydantic_field_names,
     pydantic_model_hash,
     pydantic_validate,
+    pydantic_validate_many,
 )
 
 # ----------------------- #
@@ -24,4 +26,6 @@ __all__ = [
     "pydantic_model_hash",
     "split_touches_from_merge_patch",
     "has_hybrid_patch_conflict",
+    "pydantic_validate_many",
+    "pydantic_dump_many",
 ]

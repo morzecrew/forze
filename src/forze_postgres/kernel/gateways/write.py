@@ -28,7 +28,12 @@ from forze.base.errors import (
     ValidationError,
 )
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_dump, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_validate,
+    pydantic_validate_many,
+)
 from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -171,6 +176,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
+        data = pydantic_dump_many(dtos, exclude={"unset": True})
+        return pydantic_validate_many(self.model, data)
+
+    # ....................... #
+
     def _where_pk_rev(self) -> sql.Composable:
         return sql.SQL("{} = {} AND {} = {}").format(
             self.ident_pk(),
@@ -225,9 +236,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not dtos:
             return []
 
-        models = [self._from_cdto(d) for d in dtos]
-        insert_data_raw = [pydantic_dump(m) for m in models]
-        insert_data = [await self.adapt_payload_for_write(d) for d in insert_data_raw]
+        models = self._from_cdto_many(dtos)
+        insert_data_raw = pydantic_dump_many(models)
+        insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
 
         keys = list(insert_data[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]
@@ -240,7 +251,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             + sql.SQL(")")
         )
 
-        result: list[D] = []
+        result_raw: list[JsonDict] = []
         offset = 0
 
         while offset < len(insert_data):
@@ -272,12 +283,13 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     code="create_many_mismatch",
                 )
 
-            result.extend(pydantic_validate(self.model, row) for row in rows)
+            result_raw.extend(rows)
             offset += batch_size
 
-        if len(result) != len(dtos):
+        if len(result_raw) != len(dtos):
             raise CoreError("Failed to create all records")
 
+        result = pydantic_validate_many(self.model, result_raw)
         await self._write_history(*result)
 
         return result
@@ -419,7 +431,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if missing:
             raise ConcurrencyError("Failed to update records")
 
-        return [pydantic_validate(self.model, row) for row in rows]
+        return pydantic_validate_many(self.model, rows)
 
     # ....................... #
 
@@ -451,7 +463,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                 _, diff = c.touch()
                 diff = self.__bump_rev(c, diff)
-                return c.id, c.rev, await self.adapt_payload_for_write(diff)
+                adapted_diff = await self.adapt_payload_for_write(diff)
+
+                return c.id, c.rev, adapted_diff
 
             results = await asyncio.gather(*(_prepare_touch(c) for c in currents))
             for cid, crev, diff in results:
@@ -519,7 +533,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         revs: Optional[Sequence[int]] = None,
         batch_size: int = 500,
     ) -> Sequence[D]:
-        updates = [pydantic_dump(d, exclude={"unset": True}) for d in dtos]
+        updates = pydantic_dump_many(dtos, exclude={"unset": True})
 
         return await self.__patch_many(pks, updates, revs=revs, batch_size=batch_size)
 

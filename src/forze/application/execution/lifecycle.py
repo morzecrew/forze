@@ -149,42 +149,41 @@ class LifecyclePlan:
 
         executed: list[LifecycleStep] = []
 
-        with log_section():
-            try:
-                for step in self.steps:
-                    logger.trace("Executing '%s' startup hook", step.name)
-
-                    with log_section():
-                        await step.startup(ctx)
-
-                    executed.append(step)
-
-            except Exception:
-                logger.exception("Lifecycle startup failed")
+        try:
+            for step in self.steps:
+                logger.trace("Executing '%s' startup hook", step.name)
 
                 with log_section():
-                    for step in reversed(executed):
-                        try:
-                            logger.trace(
-                                "Rolling back '%s' via shutdown",
-                                step.name,
-                            )
+                    await step.startup(ctx)
 
-                            with log_section():
-                                await step.shutdown(ctx)
+                executed.append(step)
 
-                            logger.trace(
-                                "Rolled back '%s' successfully",
-                                step.name,
-                            )
+        except Exception:
+            logger.exception("Lifecycle startup failed")
 
-                        except Exception:
-                            logger.exception(
-                                "Lifecycle rollback shutdown failed for '%s'",
-                                step.name,
-                            )
+            with log_section():
+                for step in reversed(executed):
+                    try:
+                        logger.trace(
+                            "Rolling back '%s' via shutdown",
+                            step.name,
+                        )
 
-                raise
+                        with log_section():
+                            await step.shutdown(ctx)
+
+                        logger.trace(
+                            "Rolled back '%s' successfully",
+                            step.name,
+                        )
+
+                    except Exception:
+                        logger.exception(
+                            "Lifecycle rollback shutdown failed for '%s'",
+                            step.name,
+                        )
+
+            raise
 
     # ....................... #
 
@@ -196,13 +195,12 @@ class LifecyclePlan:
 
         logger.trace("Running lifecycle shutdown with %d step(s)", len(self.steps))
 
-        with log_section():
-            for step in reversed(self.steps):
-                try:
-                    logger.trace("Executing '%s' shutdown hook", step.name)
+        for step in reversed(self.steps):
+            try:
+                logger.trace("Executing '%s' shutdown hook", step.name)
 
-                    with log_section():
-                        await step.shutdown(ctx)
+                with log_section():
+                    await step.shutdown(ctx)
 
-                except Exception:
-                    logger.exception("Lifecycle shutdown failed for '%s'", step.name)
+            except Exception:
+                logger.exception("Lifecycle shutdown failed for '%s'", step.name)

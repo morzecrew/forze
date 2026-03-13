@@ -95,11 +95,9 @@ class ExecutionRuntime:
         with log_section():
             try:
                 await self.lifecycle.shutdown(self.__ctx.get())
-                logger.debug("Execution runtime lifecycle shutdown completed")
 
             finally:
                 self.__ctx.reset()
-                logger.debug("Execution context reset")
 
     # ....................... #
 

@@ -9,7 +9,7 @@ from typing import Any, Protocol, Self, TypeVar, cast, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from ..contracts.deps import DepKey, DepsPort
 
@@ -181,26 +181,21 @@ class DepsPlan:
             len(self.modules),
         )
 
-        with log_section():
-            if not self.modules:
-                logger.trace("Deps plan is empty; returning empty container")
-                return Deps()
+        if not self.modules:
+            logger.trace("Deps plan is empty; returning empty container")
+            return Deps()
 
-            built: list[Deps] = []
+        built: list[Deps] = []
 
-            for i, module in enumerate(self.modules, 1):
-                deps = module()
-                logger.trace(
-                    "Built deps module #%d with %d dependency(ies)",
-                    i,
-                    len(deps.deps),
-                )
-                built.append(deps)
-
-            merged = Deps.merge(*built)
+        for i, module in enumerate(self.modules, 1):
+            deps = module()
             logger.trace(
-                "Built merged dependency container with %d dependency(ies)",
-                len(merged.deps),
+                "Built deps module #%d with %d dependency(ies)",
+                i,
+                len(deps.deps),
             )
+            built.append(deps)
+
+        merged = Deps.merge(*built)
 
         return merged

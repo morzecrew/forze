@@ -6,13 +6,18 @@ require_mongo()
 
 # ....................... #
 
-from typing import Literal, Sequence, final, get_args
+from typing import Any, Literal, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
 
 from forze.base.errors import CoreError, NotFoundError, ValidationError
-from forze.base.serialization import pydantic_dump, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_validate,
+    pydantic_validate_many,
+)
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
     HISTORY_SOURCE_FIELD,
@@ -116,20 +121,22 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             ): row
             for row in rows
         }
-        ordered: list[D] = []
+        ordered_raw: list[Any] = []
 
         for pk, rev in zip(pks, revs, strict=True):
             row = keyed.get((self._storage_pk(pk), rev))
+
             if row is None:
                 continue
 
             payload = row.get(HISTORY_DATA_FIELD)
+
             if payload is None:
                 continue
 
-            ordered.append(pydantic_validate(self.model, payload))
+            ordered_raw.append(payload)
 
-        return ordered
+        return pydantic_validate_many(self.model, ordered_raw)
 
     # ....................... #
 
@@ -164,6 +171,8 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         if not data:
             return
 
-        records = [self._from_data(d) for d in data]
-        payloads = [self._coerce_query_value(pydantic_dump(r)) for r in records]
+        records = list(map(self._from_data, data))
+        raw_payloads = pydantic_dump_many(records)
+        payloads = list(map(self._coerce_query_value, raw_payloads))
+
         await self.client.insert_many(self.coll(), payloads)

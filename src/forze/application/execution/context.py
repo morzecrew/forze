@@ -118,7 +118,7 @@ class ExecutionContext:
                 token_d = self.__tx_depth.set(depth + 1)
 
                 try:
-                    logger.debug("Reusing nested transaction scope %s", scope.name)
+                    logger.trace("Reusing nested transaction scope %s", scope.name)
 
                     async with tx.transaction():
                         yield
@@ -133,7 +133,7 @@ class ExecutionContext:
             token_d = self.__tx_depth.set(1)
 
             try:
-                logger.debug("Starting root transaction scope %s", scope.name)
+                logger.trace("Starting root transaction scope %s", scope.name)
 
                 async with tx.transaction():
                     yield

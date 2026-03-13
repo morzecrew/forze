@@ -54,27 +54,12 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         :returns: Updated read model.
         """
 
-        logger.debug(
-            "%s: pk=%s, rev=%s",
-            type(self).__qualname__,
-            args["pk"],
-            args.get("rev"),
-        )
-
-        logger.debug(
-            "%s: mapping input %s",
-            type(self).__qualname__,
-            type(args).__qualname__,
-        )
+        self.log_parameters({"pk": args["pk"], "rev": args.get("rev")})
 
         with log_section():
             cmd = await self.mapper(self.ctx, args["dto"])
 
-        logger.debug(
-            "%s: delegating to %s",
-            type(self).__qualname__,
-            type(self.doc).__qualname__,
-        )
+        self.log_delegation(self.doc)
 
         with log_section():
             return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))

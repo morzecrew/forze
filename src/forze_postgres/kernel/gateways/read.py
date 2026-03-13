@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.base.errors import NotFoundError, ValidationError
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate
+from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
 from .base import PostgresGateway
@@ -170,12 +170,12 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             raise NotFoundError(f"Some records not found: {missing}")
 
         if return_model is not None:
-            return [pydantic_validate(return_model, row) for row in ordered]
+            return pydantic_validate_many(return_model, ordered)
 
         if return_fields is not None:
             return [{k: row.get(k, None) for k in return_fields} for row in ordered]
 
-        return [pydantic_validate(self.model, row) for row in ordered]
+        return pydantic_validate_many(self.model, ordered)
 
     # ....................... #
 
@@ -338,12 +338,12 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
         if return_model is not None:
-            return [pydantic_validate(return_model, row) for row in rows]
+            return pydantic_validate_many(return_model, rows)
 
         if return_fields is not None:
             return [{k: row.get(k, None) for k in return_fields} for row in rows]
 
-        return [pydantic_validate(self.model, row) for row in rows]
+        return pydantic_validate_many(self.model, rows)
 
     # ....................... #
 

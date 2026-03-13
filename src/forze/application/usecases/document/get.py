@@ -32,11 +32,8 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
         :returns: Read model.
         """
 
-        logger.debug(
-            "%s: delegating to %s",
-            type(self).__qualname__,
-            type(self.doc).__qualname__,
-        )
+        self.log_parameters({"pk": args})
+        self.log_delegation(self.doc)
 
         with log_section():
             return await self.doc.get(args)

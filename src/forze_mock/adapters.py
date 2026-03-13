@@ -64,7 +64,11 @@ from forze.application.contracts.stream import (
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
 from forze.base.primitives import JsonDict, utcnow, uuid7
-from forze.base.serialization import pydantic_dump, pydantic_validate
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_validate,
+    pydantic_validate_many,
+)
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
@@ -930,12 +934,12 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
             return [_project(doc, return_fields) for doc in ordered], total
 
         if return_model is not None:
-            return [pydantic_validate(return_model, doc) for doc in ordered], total
+            return pydantic_validate_many(return_model, ordered), total
 
         allowed = set(self.spec.model.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
 
-        return [pydantic_validate(self.spec.model, doc) for doc in typed_docs], total
+        return pydantic_validate_many(self.spec.model, typed_docs), total
 
 
 # ----------------------- #

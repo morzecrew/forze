@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.base.errors import NotFoundError, ValidationError
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_validate
+from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
 from .base import MongoGateway
@@ -205,12 +205,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
 
         if return_model is not None:
-            return [pydantic_validate(return_model, row) for row in ordered]
+            return pydantic_validate_many(return_model, ordered)
 
         if return_fields is not None:
             return [self._return_subset(row, return_fields) for row in ordered]
 
-        return [pydantic_validate(self.model, row) for row in ordered]
+        return pydantic_validate_many(self.model, ordered)
 
     # ....................... #
 
@@ -400,12 +400,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         normalized = [self._from_storage_doc(row) for row in rows]
 
         if return_model is not None:
-            return [pydantic_validate(return_model, row) for row in normalized]
+            return pydantic_validate_many(return_model, normalized)
 
         if return_fields is not None:
             return [self._return_subset(row, return_fields) for row in normalized]
 
-        return [pydantic_validate(self.model, row) for row in normalized]
+        return pydantic_validate_many(self.model, normalized)
 
     # ....................... #
 

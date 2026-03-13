@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.execution import ExecutionContext, Deps, Usecase, UsecaseRegistry
+from forze.application.execution import Deps, ExecutionContext, Usecase, UsecaseRegistry
 
 # ----------------------- #
 
@@ -124,15 +124,6 @@ class TestUsecaseRegistry:
         ctx = ExecutionContext(deps=Deps())
         uc = reg.resolve("get", ctx)
         assert isinstance(uc, StubUsecase)
-
-    def test_resolve_with_debug_plan_prints(
-        self, capsys: pytest.CaptureFixture
-    ) -> None:
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        ctx = ExecutionContext(deps=Deps())
-        reg.resolve("get", ctx, debug_plan=True)
-        out = capsys.readouterr().out
-        assert "get" in out or "plan" in out.lower() or len(out) > 0
 
     def test_resolve_unregistered_raises(self) -> None:
         from forze.base.errors import CoreError

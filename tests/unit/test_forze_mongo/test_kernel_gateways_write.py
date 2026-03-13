@@ -53,10 +53,11 @@ class TestMongoWriteGateway:
     async def test_update_bumps_revision_in_application_strategy(self) -> None:
         pk = uuid4()
         current = _domain_doc(pk, rev=1, name="before")
+        after_write = _domain_doc(pk, rev=2, name="after")
         client = _build_client()
         client.update_one.return_value = 1
         read = _build_read(client)
-        read.get.return_value = current
+        read.get.side_effect = [current, after_write]  # read-before-write, then read-after-write
 
         gw = MongoWriteGateway(
             source="docs",
@@ -95,13 +96,14 @@ class TestMongoWriteGateway:
     async def test_update_retries_on_concurrency_error(self) -> None:
         pk = uuid4()
         current = _domain_doc(pk, rev=1, name="before")
+        after_write = _domain_doc(pk, rev=2, name="after")
         client = _build_client()
         client.update_one.side_effect = [
             ConcurrencyError("Failed to update record"),
             1,
         ]
         read = _build_read(client)
-        read.get.return_value = current
+        read.get.side_effect = [current, current, after_write]  # attempt 1 before write, attempt 2 before+after write
 
         gw = MongoWriteGateway(
             source="docs",

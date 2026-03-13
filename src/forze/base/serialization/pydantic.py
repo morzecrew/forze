@@ -3,16 +3,24 @@
 import hashlib
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Sequence, TypedDict
 
 import orjson
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from ..logging import getLogger
 
 # ----------------------- #
 
 logger = getLogger(__name__)
+
+# ....................... #
+
+
+@lru_cache(maxsize=128)
+def _list_adapter[M: BaseModel](cls: type[M]) -> TypeAdapter[list[M]]:
+    return TypeAdapter(list[cls])  # type: ignore[valid-type]
+
 
 # ....................... #
 
@@ -32,13 +40,33 @@ def pydantic_validate[M: BaseModel](
     """
 
     logger.trace(
-        "Validating data into %s (forbid_extra=%s, keys=%d)",
-        cls.__name__,
-        forbid_extra,
-        len(data),
+        "Validating data into %s (forbid_extra=%s)", cls.__name__, forbid_extra
     )
 
     return cls.model_validate(data, extra="forbid" if forbid_extra else "ignore")
+
+
+# ....................... #
+
+
+def pydantic_validate_many[M: BaseModel](
+    cls: type[M],
+    data: Sequence[dict[str, Any]],
+    *,
+    forbid_extra: bool = False,
+) -> list[M]:
+    logger.trace(
+        "Validating %d data items into list[%s] (forbid_extra=%s)",
+        len(data),
+        cls.__name__,
+        forbid_extra,
+    )
+    adapter = _list_adapter(cls)
+
+    return adapter.validate_python(
+        list(data),
+        extra="forbid" if forbid_extra else "ignore",
+    )
 
 
 # ....................... #
@@ -58,6 +86,9 @@ class _PydanticDumpExcludeOptions(TypedDict, total=False):
 
     computed_fields: bool
     """Exclude computed (derived) fields."""
+
+
+# ....................... #
 
 
 def pydantic_dump(
@@ -88,6 +119,48 @@ def pydantic_dump(
         exclude_computed_fields=exclude.get("computed_fields", False),
         mode=mode,
     )
+
+
+# ....................... #
+
+
+def pydantic_dump_many(
+    objs: Sequence[BaseModel],
+    *,
+    mode: Literal["json", "python"] = "python",
+    exclude: _PydanticDumpExcludeOptions = {},
+) -> list[dict[str, Any]]:
+    """Dump a list of Pydantic models into a list of JSON-compatible ``dict``.
+
+    :param objs: List of models to serialize.
+    :param mode: Serialization mode.
+    :param exclude: Fine-grained control over which fields are omitted.
+    :returns: List of JSON-ready dictionary representations.
+    """
+
+    if not objs:
+        return []
+
+    cls = type(objs[0])
+
+    logger.trace(
+        "Dumping %d models into list[dict[str, Any]] (mode=%s, exclude=%s)",
+        len(objs),
+        mode,
+        exclude,
+    )
+
+    adapter = _list_adapter(cls)
+    dumped = adapter.dump_python(
+        list(objs),
+        mode=mode,
+        exclude_unset=exclude.get("unset", False),
+        exclude_none=exclude.get("none", False),
+        exclude_defaults=exclude.get("defaults", False),
+        exclude_computed_fields=exclude.get("computed_fields", False),
+    )
+
+    return dumped
 
 
 # ....................... #

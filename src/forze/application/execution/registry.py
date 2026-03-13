@@ -398,31 +398,19 @@ class UsecaseRegistry:
 
     # ....................... #
 
-    def resolve(
-        self,
-        op: OpKey,
-        ctx: ExecutionContext,
-        *,
-        debug_plan: bool = False,
-    ) -> Usecase[Any, Any]:
+    def resolve(self, op: OpKey, ctx: ExecutionContext) -> Usecase[Any, Any]:
         """Build a fully composed usecase for an operation.
 
-        Looks up the factory, optionally prints the plan when debug_plan,
-        then delegates to :meth:`UsecasePlan.resolve`.
+        Looks up the factory,then delegates to :meth:`UsecasePlan.resolve`.
 
         :param op: Operation key.
         :param ctx: Execution context.
-        :param debug_plan: When ``True``, print the middleware chain to stdout.
         :returns: Composed usecase with middlewares.
         :raises CoreError: If op is not registered.
         """
         op = str(op)
 
-        logger.debug(
-            "Resolving usecase for operation '%s' (debug_plan=%s)",
-            op,
-            debug_plan,
-        )
+        logger.debug("Resolving usecase for operation '%s'", op)
 
         with log_section():
             factory = self.defaults.get(op)
@@ -436,9 +424,8 @@ class UsecaseRegistry:
                 "Found factory for operation '%s' (factory_id=%s)", op, id(factory)
             )
 
-            if debug_plan:
-                explain = self.__plan.explain(op)
-                logger.trace("Plan explanation: %s", explain.pretty_format())
+            explain = self.__plan.explain(op)
+            logger.trace("Plan explanation: %s", explain.pretty_format())
 
             resolved = self.__plan.resolve(op, ctx, factory)
 
