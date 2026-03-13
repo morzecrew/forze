@@ -11,7 +11,7 @@ from typing import Protocol, Self, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 
@@ -106,7 +106,7 @@ class LifecyclePlan:
 
         logger.trace("Creating lifecycle plan from %d step(s)", len(steps))
 
-        with log_section():
+        with logger.section():
             logger.trace("Steps: %s", tuple(step.name for step in steps))
             cls._check_name_collision(*steps)
 
@@ -128,7 +128,7 @@ class LifecyclePlan:
             len(self.steps),
         )
 
-        with log_section():
+        with logger.section():
             logger.trace("Existing steps: %s", tuple(step.name for step in self.steps))
             logger.trace("New steps: %s", tuple(step.name for step in steps))
 
@@ -145,45 +145,46 @@ class LifecyclePlan:
         re-raises.
         """
 
-        logger.trace("Running lifecycle startup with %d step(s)", len(self.steps))
+        with logger.contextualize(scope="lifecycle"):
+            logger.trace("Running lifecycle startup with %d step(s)", len(self.steps))
 
-        executed: list[LifecycleStep] = []
+            executed: list[LifecycleStep] = []
 
-        try:
-            for step in self.steps:
-                logger.trace("Executing '%s' startup hook", step.name)
+            try:
+                for step in self.steps:
+                    logger.trace("Executing '%s' startup hook", step.name)
 
-                with log_section():
-                    await step.startup(ctx)
+                    with logger.section():
+                        await step.startup(ctx)
 
-                executed.append(step)
+                    executed.append(step)
 
-        except Exception:
-            logger.exception("Lifecycle startup failed")
+            except Exception:
+                logger.exception("Lifecycle startup failed")
 
-            with log_section():
-                for step in reversed(executed):
-                    try:
-                        logger.trace(
-                            "Rolling back '%s' via shutdown",
-                            step.name,
-                        )
+                with logger.section():
+                    for step in reversed(executed):
+                        try:
+                            logger.trace(
+                                "Rolling back '%s' via shutdown",
+                                step.name,
+                            )
 
-                        with log_section():
-                            await step.shutdown(ctx)
+                            with logger.section():
+                                await step.shutdown(ctx)
 
-                        logger.trace(
-                            "Rolled back '%s' successfully",
-                            step.name,
-                        )
+                            logger.trace(
+                                "Rolled back '%s' successfully",
+                                step.name,
+                            )
 
-                    except Exception:
-                        logger.exception(
-                            "Lifecycle rollback shutdown failed for '%s'",
-                            step.name,
-                        )
+                        except Exception:
+                            logger.exception(
+                                "Lifecycle rollback shutdown failed for '%s'",
+                                step.name,
+                            )
 
-            raise
+                raise
 
     # ....................... #
 
@@ -193,14 +194,15 @@ class LifecyclePlan:
         Exceptions are swallowed so all steps are attempted.
         """
 
-        logger.trace("Running lifecycle shutdown with %d step(s)", len(self.steps))
+        with logger.contextualize(scope="lifecycle"):
+            logger.trace("Running lifecycle shutdown with %d step(s)", len(self.steps))
 
-        for step in reversed(self.steps):
-            try:
-                logger.trace("Executing '%s' shutdown hook", step.name)
+            for step in reversed(self.steps):
+                try:
+                    logger.trace("Executing '%s' shutdown hook", step.name)
 
-                with log_section():
-                    await step.shutdown(ctx)
+                    with logger.section():
+                        await step.shutdown(ctx)
 
-            except Exception:
-                logger.exception("Lifecycle shutdown failed for '%s'", step.name)
+                except Exception:
+                    logger.exception("Lifecycle shutdown failed for '%s'", step.name)

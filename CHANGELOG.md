@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Postgres and Mongo document adapters: write operations now return results via read gateway for consistent read/write source separation.
 - Log format: add usecase scope when available; remove extra dict from log output.
 - Log format: ``safe_preview`` skips empty values; type fallback no longer wrapped in angle brackets.
+- Logging: use ``logger.section()`` and ``logger.contextualize(scope=...)`` in lifecycle, runtime, and usecase; log format shows scope instead of logger name.
 
 ### Fixed
 

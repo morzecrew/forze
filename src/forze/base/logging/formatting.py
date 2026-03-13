@@ -12,7 +12,6 @@ from .context import get_depth
 from .helpers import (
     level_no,
     matches_namespace,
-    normalize_name,
 )
 from .types import LogLevelName, LogRecord
 
@@ -109,12 +108,12 @@ def record_format(record: LogRecord) -> str:
 
     config = get_config()
     name = record_name(record)
-    shortname = normalize_name(
-        name,
-        keep_sections=config.keep_sections,
-        root_aliases=config.root_aliases,
-        default_keep_sections=config.default_keep_sections,
-    )
+    # shortname = normalize_name(
+    #     name,
+    #     keep_sections=config.keep_sections,
+    #     root_aliases=config.root_aliases,
+    #     default_keep_sections=config.default_keep_sections,
+    # )
     indent = indent_for_name(name)
     level = f"{record['level'].name:<8}"  # type: ignore[union-attr]
     time_str = record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -136,21 +135,21 @@ def record_format(record: LogRecord) -> str:
     #     else ""
     # )
 
-    usecase = str(
+    scope = str(
         extra.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-            "usecase", ""
+            "scope", ""
         )
     )
-    if usecase:
-        scope = f"[{usecase}]"
+    if scope:
+        scope = f"[{scope}]   "
 
     else:
-        scope = ""
+        scope = "[root]   "
 
     return (
         f"<dim>{time_str}</dim>   "
         f"<level>{level}</level>"
-        f"<dim>{shortname:<{config.width}}</dim> "
-        f"<dim>{scope}</dim> "
+        # f"<dim>{shortname:<{config.width}}</dim> "
+        f"<dim>{scope:<{config.width}}</dim>"
         f"{indent}{message}\n"
     )

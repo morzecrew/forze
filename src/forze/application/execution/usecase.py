@@ -150,7 +150,7 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        with logger.contextualize(usecase=type(self).__qualname__):
+        with logger.contextualize(scope=type(self).__qualname__):
             logger.debug("Starting usecase execution")
 
             with logger.section():
