@@ -91,10 +91,11 @@ class _LoggingConfig:
     levels: Mapping[str, LogLevelName] | None = None
     prefixes: tuple[str, ...] = _DEFAULT_PREFIXES
     step: str = "  "
-    keep_sections: Optional[int] = None
+    default_keep_sections: Optional[int] = None
     width: int = 36
     colorize: bool = True
     root_aliases: Optional[Mapping[str, str]] = None
+    keep_sections: Optional[Mapping[str, int]] = None
 
 
 _config: _LoggingConfig = _LoggingConfig()
@@ -136,11 +137,31 @@ def _matches_namespace(name: str, prefixes: tuple[str, ...]) -> bool:
     )
 
 
+def _match_longest_prefix(
+    name: str,
+    mapping: Mapping[str, str] | Mapping[str, int] | None,
+) -> str | None:
+    """Return the longest matching prefix from *mapping* for *name*."""
+
+    if not mapping:
+        return None
+
+    matched: str | None = None
+
+    for prefix in mapping:
+        if name == prefix or name.startswith(f"{prefix}."):
+            if matched is None or len(prefix) > len(matched):
+                matched = prefix
+
+    return matched
+
+
 def _normalize_name(
     name: str,
     *,
-    root_aliases: Mapping[str, str] | None = None,
-    keep_sections: int | None = None,
+    root_aliases: Optional[Mapping[str, str]] = None,
+    keep_sections: Optional[Mapping[str, int]] = None,
+    default_keep_sections: Optional[int] = None,
 ) -> str:
     """Normalize a logger name for rendering.
 
@@ -148,35 +169,36 @@ def _normalize_name(
     sections of the normalized name when requested.
     """
 
+    original_name = name
     normalized = name
 
-    if root_aliases:
-        matched_root: str | None = None
-        matched_alias: str | None = None
+    matched_root = _match_longest_prefix(original_name, root_aliases)
 
-        for root, alias in root_aliases.items():
-            if normalized == root or normalized.startswith(f"{root}."):
-                if matched_root is None or len(root) > len(matched_root):
-                    matched_root = root
-                    matched_alias = alias
+    if matched_root is not None and root_aliases is not None:
+        alias = root_aliases[matched_root]
+        suffix = normalized[len(matched_root) :].lstrip(".")
+        parts: list[str] = []
 
-        if matched_root is not None:
-            suffix = normalized[len(matched_root) :].lstrip(".")
-            parts: list[str] = []
+        if alias:
+            parts.extend(p for p in alias.split(".") if p)
 
-            if matched_alias:
-                parts.extend(p for p in matched_alias.split(".") if p)
+        if suffix:
+            parts.extend(p for p in suffix.split(".") if p)
 
-            if suffix:
-                parts.extend(p for p in suffix.split(".") if p)
+        normalized = ".".join(parts)
 
-            normalized = ".".join(parts)
+    keep_count = default_keep_sections
+    matched_keep = _match_longest_prefix(original_name, keep_sections)
 
-    if keep_sections is not None and keep_sections > 0:
+    if matched_keep is not None and keep_sections is not None:
+        keep_count = keep_sections[matched_keep]
+
+    if keep_count is not None and keep_count > 0:
         parts = [p for p in normalized.split(".") if p]
-        normalized = ".".join(parts[:keep_sections])
+        parts = parts[:keep_count]
+        normalized = ".".join(parts)
 
-    return normalized or name
+    return normalized or original_name
 
 
 def _effective_level_for_name(name: str) -> LogLevelName:
@@ -360,7 +382,8 @@ def configure(
     levels: Optional[Mapping[str, LogLevel]] = None,
     prefixes: tuple[str, ...] = _DEFAULT_PREFIXES,
     step: str = "  ",
-    keep_sections: Optional[int] = None,
+    keep_sections: Optional[Mapping[str, int]] = None,
+    default_keep_sections: Optional[int] = None,
     root_aliases: Optional[Mapping[str, str]] = None,
     width: int = 36,
     colorize: bool = False,
@@ -393,6 +416,7 @@ def configure(
         levels=normalized_levels,
         prefixes=prefixes,
         step=step,
+        default_keep_sections=default_keep_sections,
         keep_sections=keep_sections,
         root_aliases=root_aliases,
         width=width,
