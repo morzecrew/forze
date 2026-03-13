@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any, Callable, NotRequired, Optional, TypedDict, final
 
+import attrs
 import orjson
 from fastapi import HTTPException, Request, Response
 from fastapi.params import Depends
@@ -16,10 +17,10 @@ from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import ExecutionContext
-from forze.base.logging import getLogger, log_section
+from forze.base.logging import getLogger
 from forze.base.serialization import pydantic_model_hash
 
-from .feature import RouteHandler
+from .feature import RouteFeature, RouteHandler
 
 # ----------------------- #
 
@@ -80,6 +81,7 @@ def _hash_payload(config: IdempotentRouteConfig, raw_body: bytes) -> str:
         data = orjson.loads(raw_body)
 
     except Exception:
+        logger.exception("Failed to load request payload, using raw bytes as stub")
         return pydantic_model_hash(_RawStub(raw=raw_body.hex()))
 
     dto_param = config.get("dto_param")
@@ -141,7 +143,8 @@ async def _response_body_bytes(resp: Response) -> bytes:
 
 
 @final
-class IdempotencyFeature:
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class IdempotencyFeature(RouteFeature):
     """Composable :class:`~.feature.RouteFeature` that adds idempotency semantics.
 
     Before executing the endpoint, checks for an existing idempotency
@@ -149,18 +152,12 @@ class IdempotencyFeature:
     response as a snapshot for future replay.
     """
 
-    __slots__ = ("_ctx_dep", "_config", "_extra_dependencies")
-
-    def __init__(
-        self,
-        *,
-        ctx_dep: ExecutionContextDependencyPort,
-        config: IdempotentRouteConfig,
-        extra_dependencies: Sequence[Depends] = (),
-    ) -> None:
-        self._ctx_dep = ctx_dep
-        self._config = config
-        self._extra_dependencies = tuple(extra_dependencies)
+    ctx_dep: ExecutionContextDependencyPort
+    config: IdempotentRouteConfig
+    _extra_dependencies: Sequence[Depends] = attrs.field(
+        factory=tuple,
+        alias="extra_dependencies",
+    )
 
     # ....................... #
 
@@ -171,64 +168,61 @@ class IdempotencyFeature:
         :returns: A handler that replays cached responses or commits new ones.
         """
 
-        ctx_dep = self._ctx_dep
-        config = self._config
-
         async def wrapped(request: Request) -> Response:
-            logger.debug("Executing idempotent route handler")
+            logger.info("Executing idempotent route handler")
 
-            with log_section():
-                idem_key = request.headers.get(config["header_key"])
+            idem_key = request.headers.get(self.config["header_key"])
 
-                if not idem_key:
-                    raise HTTPException(
-                        status_code=400, detail="Idempotency key is required"
-                    )
+            if not idem_key:
+                raise HTTPException(
+                    status_code=400, detail="Idempotency key is required"
+                )
 
-                ctx = ctx_dep()
-                idem_f = ctx.dep(IdempotencyDepKey)
-                idem = idem_f(context=ctx, ttl=config["ttl"])
+            ctx = self.ctx_dep()
+            idem_f = ctx.dep(IdempotencyDepKey)
+            idem = idem_f(context=ctx, ttl=self.config["ttl"])
 
-                raw_body = await request.body()
-                payload_hash: str
+            raw_body = await request.body()
+            payload_hash: str
 
-                try:
-                    payload_hash = _hash_payload(config, raw_body)
+            try:
+                payload_hash = _hash_payload(self.config, raw_body)
 
-                except Exception:
-                    return await handler(request)
+            except Exception:
+                logger.exception(
+                    "Failed to hash request payload, continuing with handler"
+                )
+                return await handler(request)
 
-                snap = await idem.begin(config["operation"], idem_key, payload_hash)
+            snap = await idem.begin(self.config["operation"], idem_key, payload_hash)
 
-                if snap is not None:
-                    return Response(
-                        content=snap["body"],
-                        status_code=int(snap.get("code", 200)),
-                        media_type=snap.get("content_type", "application/json"),
-                    )
+            if snap is not None:
+                return Response(
+                    content=snap["body"],
+                    status_code=int(snap.get("code", 200)),
+                    media_type=snap.get("content_type", "application/json"),
+                )
 
-                resp = await handler(request)
+            resp = await handler(request)
 
-                try:
-                    body_bytes = await _response_body_bytes(resp)
-                    await idem.commit(
-                        config["operation"],
-                        idem_key,
-                        payload_hash,
-                        {
-                            "code": int(resp.status_code),
-                            "content_type": resp.media_type
-                            or resp.headers.get(
-                                "content-type", "application/octet-stream"
-                            ),
-                            "body": body_bytes,
-                        },
-                    )
+            try:
+                body_bytes = await _response_body_bytes(resp)
+                await idem.commit(
+                    self.config["operation"],
+                    idem_key,
+                    payload_hash,
+                    {
+                        "code": int(resp.status_code),
+                        "content_type": resp.media_type
+                        or resp.headers.get("content-type", "application/octet-stream"),
+                        "body": body_bytes,
+                    },
+                )
 
-                except Exception:  # nosec: B110
-                    pass
+            except Exception:
+                logger.exception("Failed to commit idempotency snapshot")
 
-                return resp
+            return resp
 
         return wrapped
 
@@ -237,6 +231,7 @@ class IdempotencyFeature:
     @property
     def extra_dependencies(self) -> Sequence[Depends]:
         """Header-validation dependency for the idempotency key."""
+
         return self._extra_dependencies
 
 

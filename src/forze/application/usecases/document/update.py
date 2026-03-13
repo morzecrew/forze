@@ -54,15 +54,15 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         :returns: Updated read model.
         """
 
-        logger.trace(
+        logger.debug(
             "%s: pk=%s, rev=%s",
             type(self).__qualname__,
             args["pk"],
             args.get("rev"),
         )
 
-        logger.trace(
-            "%s: mapping input (dto) %s",
+        logger.debug(
+            "%s: mapping input %s",
             type(self).__qualname__,
             type(args).__qualname__,
         )
@@ -70,7 +70,7 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         with log_section():
             cmd = await self.mapper(self.ctx, args["dto"])
 
-        logger.trace(
+        logger.debug(
             "%s: delegating to %s",
             type(self).__qualname__,
             type(self.doc).__qualname__,

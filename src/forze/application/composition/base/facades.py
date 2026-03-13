@@ -33,7 +33,7 @@ class BaseUsecasesFacade:
     def resolve(self, op: OpKey) -> Usecase[Any, Any]:
         """Resolve a usecase for the given operation."""
 
-        logger.trace("%s: resolving operation %s", type(self).__qualname__, op)
+        logger.trace("%s: resolving operation '%s'", type(self).__qualname__, op)
 
         with log_section():
             return self.reg.resolve(op, self.ctx)

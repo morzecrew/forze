@@ -11,7 +11,7 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger
+from forze.base.logging import getLogger, log_section
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -43,27 +43,26 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
         size = args.size
         limit = size
         offset = (page - 1) * limit
-        logger.trace(
-            "TypedListDocuments: page=%s, size=%s, offset=%s",
-            page,
-            size,
-            offset,
-        )
-
         body = args
 
-        if self.mapper:
-            # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
-            logger.trace("TypedListDocuments: mapping request body")
-            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+        self.log_parameters({"page": page, "size": size, "offset": offset})
 
-        logger.trace("TypedListDocuments: delegating to DocumentReadPort.find_many")
-        hits, count = await self.doc.find_many(
-            filters=body.filters,
-            sorts=body.sorts,
-            limit=limit,
-            offset=offset,
-        )
+        if self.mapper:
+            self.log_mapping(args)
+
+            with log_section():
+                # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
+                body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+
+        self.log_delegation(self.doc)
+
+        with log_section():
+            hits, count = await self.doc.find_many(
+                filters=body.filters,
+                sorts=body.sorts,
+                limit=limit,
+                offset=offset,
+            )
 
         return Paginated(hits=hits, page=page, size=size, count=count)
 
@@ -89,30 +88,30 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
         :param args: List arguments (body, page, size).
         :returns: Paginated list of raw results.
         """
+
         page = args.page
         size = args.size
         limit = size
         offset = (page - 1) * limit
-        logger.trace(
-            "RawListDocuments: page=%s, size=%s, offset=%s",
-            page,
-            size,
-            offset,
-        )
-
         body = args
 
-        if self.mapper:
-            # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
-            logger.trace("RawListDocuments: mapping request body")
-            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+        self.log_parameters({"page": page, "size": size, "offset": offset})
 
-        logger.trace("RawListDocuments: delegating to DocumentReadPort.find_many")
-        hits, count = await self.doc.find_many(
-            filters=body.filters,
-            sorts=body.sorts,
-            limit=limit,
-            offset=offset,
-        )
+        if self.mapper:
+            self.log_mapping(args)
+
+            with log_section():
+                # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
+                body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+
+        self.log_delegation(self.doc)
+
+        with log_section():
+            hits, count = await self.doc.find_many(
+                filters=body.filters,
+                sorts=body.sorts,
+                limit=limit,
+                offset=offset,
+            )
 
         return RawPaginated(hits=hits, page=page, size=size, count=count)

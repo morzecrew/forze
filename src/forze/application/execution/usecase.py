@@ -1,4 +1,4 @@
-from typing import Self
+from typing import Any, Self
 
 import attrs
 
@@ -104,8 +104,7 @@ class Usecase[Args, R]:
                     type(self).__qualname__,
                 )
 
-                with log_section():
-                    return await _mw(_prev, a)
+                return await _mw(_prev, a)
 
             fn = wrapped
 
@@ -134,6 +133,19 @@ class Usecase[Args, R]:
 
             result = await chain(args)
 
-            logger.debug("Usecase %s completed", type(self).__qualname__)
-
         return result
+
+    # ....................... #
+    # Logging helpers
+
+    def debug_log(self, message: str, *args: Any) -> None:
+        logger.debug("%s: %s", type(self).__qualname__, message % args)
+
+    def log_parameters(self, parameters: dict[str, Any]) -> None:
+        self.debug_log("parameters: %s", parameters)
+
+    def log_mapping(self, dto: object) -> None:
+        self.debug_log("mapping input (%s)", type(dto).__qualname__)
+
+    def log_delegation(self, target: object) -> None:
+        self.debug_log("delegating to %s", type(target).__qualname__)

@@ -62,7 +62,7 @@ class ExecutionRuntime:
         Idempotent within a scope; raises if context already exists.
         """
 
-        logger.debug("Creating execution context")
+        logger.info("Creating execution context")
 
         with log_section():
             deps = self.deps.build()
@@ -75,7 +75,7 @@ class ExecutionRuntime:
     async def startup(self) -> None:
         """Run lifecycle startup hooks with the current context."""
 
-        logger.debug("Starting execution runtime")
+        logger.info("Starting execution runtime")
 
         with log_section():
             ctx = self.__ctx.get()
@@ -90,7 +90,7 @@ class ExecutionRuntime:
         ``finally`` block so it is cleared even if shutdown raises.
         """
 
-        logger.debug("Shutting down execution runtime")
+        logger.info("Shutting down execution runtime")
 
         with log_section():
             try:
@@ -111,16 +111,14 @@ class ExecutionRuntime:
         On exit: run shutdown, reset context.
         """
 
-        logger.debug("Entering execution runtime scope")
+        logger.info("Entering execution runtime scope")
         self.create_context()
 
         try:
             await self.startup()
-            logger.debug("Execution runtime scope entered")
 
             yield
 
         finally:
-            logger.debug("Leaving execution runtime scope")
+            logger.info("Leaving execution runtime scope")
             await self.shutdown()
-            logger.debug("Execution runtime scope left")

@@ -32,7 +32,7 @@ class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
         :returns: Read model.
         """
 
-        logger.trace(
+        logger.debug(
             "%s: delegating to %s",
             type(self).__qualname__,
             type(self.doc).__qualname__,

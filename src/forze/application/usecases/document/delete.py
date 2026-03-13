@@ -45,7 +45,7 @@ class KillDocument(Usecase[UUID, None]):
         :returns: ``None``.
         """
 
-        logger.trace(
+        logger.debug(
             "%s: delegating to %s",
             type(self).__qualname__,
             type(self.doc).__qualname__,
@@ -74,7 +74,7 @@ class DeleteDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        logger.trace(
+        logger.debug(
             "%s: delegating to %s",
             type(self).__qualname__,
             type(self.doc).__qualname__,
@@ -103,14 +103,14 @@ class RestoreDocument[Out: ReadDocument](Usecase[SoftDeleteArgs, Out]):
         :returns: Updated read model.
         """
 
-        logger.trace(
+        logger.debug(
             "%s: pk=%s, rev=%s",
             type(self).__qualname__,
             args["pk"],
             args.get("rev"),
         )
 
-        logger.trace(
+        logger.debug(
             "%s: delegating to %s",
             type(self).__qualname__,
             type(self.doc).__qualname__,

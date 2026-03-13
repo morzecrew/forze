@@ -78,8 +78,6 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
             logger.trace("Guard %s passed", type(self.guard).__qualname__)
             result = await next(args)
 
-        logger.trace("Leaving guard middleware %s", type(self.guard).__qualname__)
-
         return result
 
 
@@ -102,8 +100,6 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
             res = await next(args)
             logger.trace("Running effect %s", type(self.effect).__qualname__)
             res = await self.effect(args, res)
-
-        logger.trace("Leaving effect middleware %s", type(self.effect).__qualname__)
 
         return res
 
@@ -151,22 +147,14 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
             len(self.after_commit),
         )
 
-        with log_section():
-            async with self.ctx.transaction():
-                res = await next(args)
+        async with self.ctx.transaction():
+            res = await next(args)
 
-            if self.after_commit:
-                logger.trace(
-                    "Running %d after-commit effect(s)", len(self.after_commit)
-                )
+        if self.after_commit:
+            logger.trace("Running %d after-commit effect(s)", len(self.after_commit))
 
-                with log_section():
-                    for eff in self.after_commit:
-                        logger.trace(
-                            "Running after-commit effect %s",
-                            type(eff).__qualname__,
-                        )
-                        res = await eff(args, res)
+            for eff in self.after_commit:
+                res = await eff(args, res)
 
         logger.trace("Leaving transaction middleware")
 

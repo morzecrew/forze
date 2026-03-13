@@ -5,6 +5,8 @@ from response bodies and handles conditional ``If-None-Match`` requests,
 returning *304 Not Modified* when the resource has not changed.
 """
 
+import attrs
+
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -18,7 +20,7 @@ from fastapi import Request, Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 
-from .feature import RouteHandler
+from .feature import RouteFeature, RouteHandler
 
 # ----------------------- #
 
@@ -90,17 +92,15 @@ def _etag_matches(current: str, if_none_match: str) -> bool:
 
     normalized = _normalize_for_comparison(current)
 
-    return any(
-        _normalize_for_comparison(t) == normalized
-        for t in header.split(",")
-    )
+    return any(_normalize_for_comparison(t) == normalized for t in header.split(","))
 
 
 # ....................... #
 
 
 @final
-class ETagFeature:
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ETagFeature(RouteFeature):
     """Composable :class:`~.feature.RouteFeature` that injects ETag headers.
 
     When wrapped around a route handler, generates an ``ETag`` from the
@@ -108,10 +108,7 @@ class ETagFeature:
     returns *304 Not Modified* for matching ``If-None-Match`` requests.
     """
 
-    __slots__ = ("_config",)
-
-    def __init__(self, *, config: ETagRouteConfig) -> None:
-        self._config = config
+    config: ETagRouteConfig
 
     # ....................... #
 
@@ -122,8 +119,6 @@ class ETagFeature:
         :returns: A handler that adds ``ETag`` headers to responses.
         """
 
-        config = self._config
-
         async def wrapped(request: Request) -> Response:
             resp = await handler(request)
 
@@ -132,7 +127,7 @@ class ETagFeature:
             if not isinstance(body, (bytes, bytearray)):
                 return resp
 
-            raw_tag = config["provider"].generate(bytes(body))
+            raw_tag = self.config["provider"].generate(bytes(body))
 
             if raw_tag is None:
                 return resp
@@ -140,7 +135,7 @@ class ETagFeature:
             etag = _ensure_quoted(raw_tag)
             resp.headers["ETag"] = etag
 
-            if config["auto_304"]:
+            if self.config["auto_304"]:
                 if_none_match = request.headers.get("if-none-match")
 
                 if if_none_match and _etag_matches(etag, if_none_match):

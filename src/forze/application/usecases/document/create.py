@@ -41,7 +41,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         :returns: Created read model.
         """
 
-        logger.trace(
+        logger.debug(
             "%s: mapping input %s",
             type(self).__qualname__,
             type(args).__qualname__,
@@ -50,7 +50,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         with log_section():
             cmd = await self.mapper(self.ctx, args)
 
-        logger.trace(
+        logger.debug(
             "%s: delegating to %s",
             type(self).__qualname__,
             type(self.doc).__qualname__,

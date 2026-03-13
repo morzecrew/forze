@@ -95,7 +95,6 @@ class ExecutionContext:
 
         with log_section():
             tx = self.txmanager()
-
             scope = tx.scope_key()
             depth = self.__tx_depth.get()
             cur = self.__tx_handle.get()
@@ -164,12 +163,6 @@ class ExecutionContext:
     def __resolving(self, key: DepKey[Any]) -> Iterator[None]:
         stack = self.__resolve_stack.get()
 
-        logger.trace(
-            "Resolving dependency '%s' (depth=%d)",
-            key.name,
-            len(stack),
-        )
-
         if key in stack:
             chain = " -> ".join(k.name for k in (*stack, key))
             raise CoreError(f"Dependency cycle detected: {chain}")
@@ -210,34 +203,28 @@ class ExecutionContext:
         :returns: Document port instance.
         """
 
-        logger.trace(
-            "Resolving document read port for namespace '%s'",
-            spec.namespace,
-        )
+        cache = None
 
-        with log_section():
-            cache = None
-
-            if spec.cache is not None and spec.cache.get("enabled", False):
-                cache_spec = CacheSpec(
-                    namespace=spec.namespace,
-                    ttl=spec.cache.get("ttl", timedelta(seconds=300)),
-                )
-                logger.trace(
-                    "Resolving cache for document read namespace '%s' with ttl=%s",
-                    spec.namespace,
-                    cache_spec.ttl,
-                )
-                cache = self.cache(cache_spec)
-
-            dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
-            self.__validate_tx_scope(dep)
-
-            logger.trace(
-                "Resolved document read port for namespace '%s' -> %s",
-                spec.namespace,
-                type(dep).__qualname__,
+        if spec.cache is not None and spec.cache.get("enabled", False):
+            cache_spec = CacheSpec(
+                namespace=spec.namespace,
+                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
+            logger.trace(
+                "Resolving cache for document read namespace '%s' with ttl=%s",
+                spec.namespace,
+                cache_spec.ttl,
+            )
+            cache = self.cache(cache_spec)
+
+        dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
+        self.__validate_tx_scope(dep)
+
+        logger.debug(
+            "Resolved document read port for namespace '%s' -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
+        )
 
         return dep
 
@@ -253,34 +240,28 @@ class ExecutionContext:
         :returns: Document port instance.
         """
 
-        logger.trace(
-            "Resolving document write port for namespace '%s'",
-            spec.namespace,
-        )
+        cache = None
 
-        with log_section():
-            cache = None
-
-            if spec.cache is not None and spec.cache.get("enabled", False):
-                cache_spec = CacheSpec(
-                    namespace=spec.namespace,
-                    ttl=spec.cache.get("ttl", timedelta(seconds=300)),
-                )
-                logger.trace(
-                    "Resolving cache for document write namespace '%s' with ttl=%s",
-                    spec.namespace,
-                    cache_spec.ttl,
-                )
-                cache = self.cache(cache_spec)
-
-            dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
-            self.__validate_tx_scope(dep)
-
-            logger.trace(
-                "Resolved document write port for namespace '%s' -> %s",
-                spec.namespace,
-                type(dep).__qualname__,
+        if spec.cache is not None and spec.cache.get("enabled", False):
+            cache_spec = CacheSpec(
+                namespace=spec.namespace,
+                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
+            logger.trace(
+                "Resolving cache for document write namespace '%s' with ttl=%s",
+                spec.namespace,
+                cache_spec.ttl,
+            )
+            cache = self.cache(cache_spec)
+
+        dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
+        self.__validate_tx_scope(dep)
+
+        logger.debug(
+            "Resolved document write port for namespace '%s' -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
+        )
 
         return dep
 
@@ -293,10 +274,15 @@ class ExecutionContext:
         :returns: Cache port instance.
         """
 
-        logger.trace("Resolving cache port for namespace '%s'", spec.namespace)
+        dep = self.dep(CacheDepKey)(self, spec)
 
-        with log_section():
-            return self.dep(CacheDepKey)(self, spec)
+        logger.debug(
+            "Resolved cache port for namespace '%s' -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
+        )
+
+        return dep
 
     # ....................... #
 
@@ -307,20 +293,29 @@ class ExecutionContext:
         :returns: Counter port instance.
         """
 
-        logger.trace("Resolving counter port for namespace '%s'", namespace)
+        dep = self.dep(CounterDepKey)(self, namespace)
 
-        with log_section():
-            return self.dep(CounterDepKey)(self, namespace)
+        logger.debug(
+            "Resolved counter port for namespace '%s' -> %s",
+            namespace,
+            type(dep).__qualname__,
+        )
+
+        return dep
 
     # ....................... #
 
     def txmanager(self) -> TxManagerPort:
         """Resolve the transaction manager port."""
 
-        logger.trace("Resolving transaction manager port")
+        dep = self.dep(TxManagerDepKey)(self)
 
-        with log_section():
-            return self.dep(TxManagerDepKey)(self)
+        logger.debug(
+            "Resolved transaction manager port -> %s",
+            type(dep).__qualname__,
+        )
+
+        return dep
 
     # ....................... #
 
@@ -331,17 +326,26 @@ class ExecutionContext:
         :returns: Storage port instance.
         """
 
-        logger.trace("Resolving storage port for bucket '%s'", bucket)
+        dep = self.dep(StorageDepKey)(self, bucket)
 
-        with log_section():
-            return self.dep(StorageDepKey)(self, bucket)
+        logger.debug(
+            "Resolved storage port for bucket '%s' -> %s",
+            bucket,
+            type(dep).__qualname__,
+        )
+
+        return dep
 
     # ....................... #
 
     def search(self, spec: SearchSpec[Any]) -> SearchReadPort[Any]:
         """Resolve a search port."""
 
-        logger.trace("Resolving search port")
+        dep = self.dep(SearchReadDepKey)(self, spec)
 
-        with log_section():
-            return self.dep(SearchReadDepKey)(self, spec)
+        logger.debug(
+            "Resolved search port -> %s",
+            type(dep).__qualname__,
+        )
+
+        return dep
