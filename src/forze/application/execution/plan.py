@@ -7,6 +7,7 @@ from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
 
 import attrs
 
+from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 from forze.base.logging import getLogger
 
@@ -222,6 +223,9 @@ class OperationPlan:
     def build(self, bucket: PlanBucket) -> tuple[MiddlewareSpec, ...]:
         """Build the ordered middleware specs for a bucket.
 
+        If method called on an instance, the instance is merged with the other plans.
+        Otherwise only provided plans are merged.
+
         Deduplicates by priority and factory id, then sorts by priority
         descending (higher first).
 
@@ -236,8 +240,11 @@ class OperationPlan:
 
     # ....................... #
 
-    @classmethod
-    def merge(cls, *plans: Self) -> OperationPlan:
+    @hybridmethod
+    def merge(  # type: ignore[misc]
+        cls: type[Self],  # pyright: ignore[reportGeneralTypeIssues]
+        *plans: Self,
+    ) -> OperationPlan:
         """Merge multiple plans into a single aggregate plan.
 
         :param plans: Plans to merge.
@@ -259,6 +266,17 @@ class OperationPlan:
             )
 
         return acc
+
+    # ....................... #
+
+    @merge.instancemethod
+    def _merge_instance(  # pyright: ignore[reportUnusedFunction]
+        self: Self,
+        *plans: Self,
+    ) -> OperationPlan:
+        """Merge multiple plans into a single aggregate plan."""
+
+        return type(self).merge(self, *plans)
 
 
 # ....................... #
@@ -527,9 +545,15 @@ class UsecasePlan:
 
     # ....................... #
 
-    @classmethod
-    def merge(cls, *plans: Self) -> Self:
+    @hybridmethod
+    def merge(  # type: ignore[misc]
+        cls: type[Self],  # pyright: ignore[reportGeneralTypeIssues]
+        *plans: Self,
+    ) -> Self:
         """Merge multiple plans into a single aggregate plan.
+
+        If method called on an instance, the instance is merged with the other plans.
+        Otherwise only provided plans are merged.
 
         For each operation key, merges the corresponding :class:`OperationPlan`
         instances. Base (wildcard) and op-specific plans are combined per op.
@@ -543,6 +567,21 @@ class UsecasePlan:
         for p in plans:
             for op, pl in p.ops.items():
                 cur = acc.get(op, OperationPlan())
-                acc[op] = OperationPlan.merge(cur, pl)
+                acc[op] = cur.merge(pl)
 
         return cls(ops=acc)
+
+    # ....................... #
+
+    @merge.instancemethod
+    def _merge_instance(  # pyright: ignore[reportUnusedFunction]
+        self: Self,
+        *plans: Self,
+    ) -> Self:
+        """Merge multiple plans into a single aggregate plan.
+
+        :param plans: Plans to merge.
+        :returns: Merged plan.
+        """
+
+        return type(self).merge(self, *plans)

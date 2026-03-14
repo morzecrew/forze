@@ -12,7 +12,7 @@ from fastapi import Body, Depends
 
 from forze.application.composition.document import (
     DocumentUsecasesFacade,
-    DocumentUsecasesFacadeProvider,
+    DocumentUsecasesModule,
 )
 from forze.application.dto import (
     ListRequestDTO,
@@ -71,7 +71,7 @@ class DocumentETagProvider:
 
 
 def document_facade_dependency(
-    provider: DocumentUsecasesFacadeProvider[R, C, U, tL, rL],
+    module: DocumentUsecasesModule[R, C, U, tL, rL],
     ctx: ExecutionContextDependencyPort,
 ) -> Callable[[ExecutionContext], DocumentUsecasesFacade[R, C, U, tL, rL]]:
     """Build a FastAPI dependency that resolves :class:`DocumentUsecasesFacade`."""
@@ -79,7 +79,7 @@ def document_facade_dependency(
     def facade(
         context: ExecutionContext = Depends(ctx),
     ) -> DocumentUsecasesFacade[R, C, U, tL, rL]:
-        return provider(context)
+        return module.provider(context)
 
     return facade
 
@@ -121,7 +121,7 @@ class OverrideDocumentEndpointPaths(TypedDict, total=False):
 def attach_document_routes(
     router: ForzeAPIRouter,
     *,
-    provider: DocumentUsecasesFacadeProvider[R, C, U, tL, rL],
+    module: DocumentUsecasesModule[R, C, U, tL, rL],
     context: ExecutionContextDependencyPort,
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
@@ -130,13 +130,13 @@ def attach_document_routes(
 ) -> ForzeAPIRouter:
     """Attach document CRUD endpoints to an existing router."""
 
-    read_dto = provider.dtos["read"]
-    create_dto = provider.dtos.get("create")
-    update_dto = provider.dtos.get("update")
-    list_dto = provider.dtos.get("list", ListRequestDTO)
-    raw_list_dto = provider.dtos.get("raw_list", RawListRequestDTO)
+    read_dto = module.dtos["read"]
+    create_dto = module.dtos.get("create")
+    update_dto = module.dtos.get("update")
+    list_dto = module.dtos.get("list", ListRequestDTO)
+    raw_list_dto = module.dtos.get("raw_list", RawListRequestDTO)
 
-    ucs_dep = document_facade_dependency(provider, context)
+    ucs_dep = document_facade_dependency(module, context)
 
     # ....................... #
 
@@ -156,7 +156,7 @@ def attach_document_routes(
         @router.get(
             f"/{get_path}",
             response_model=read_dto,
-            operation_id=f"{provider.spec.namespace}.{get_path}",
+            operation_id=f"{module.spec.namespace}.{get_path}",
             etag=True,
             etag_config={"provider": DocumentETagProvider()},
         )
@@ -175,7 +175,7 @@ def attach_document_routes(
         @router.post(
             f"/{list_path}",
             response_model=Paginated[read_dto],  # type: ignore[valid-type]
-            operation_id=f"{provider.spec.namespace}.{list_path}",
+            operation_id=f"{module.spec.namespace}.{list_path}",
         )
         @override_annotations({"dto": list_dto})
         async def list(  # pyright: ignore[reportUnusedFunction]
@@ -191,7 +191,7 @@ def attach_document_routes(
         @router.post(
             f"/{raw_list_path}",
             response_model=RawPaginated,
-            operation_id=f"{provider.spec.namespace}.{raw_list_path}",
+            operation_id=f"{module.spec.namespace}.{raw_list_path}",
         )
         @override_annotations({"dto": raw_list_dto})
         async def raw_list(  # pyright: ignore[reportUnusedFunction]
@@ -204,7 +204,7 @@ def attach_document_routes(
 
     # ....................... #
 
-    if provider.spec.write is not None and include_write_endpoints:
+    if module.spec.write is not None and include_write_endpoints:
 
         if create_dto:
 
@@ -213,7 +213,7 @@ def attach_document_routes(
                 response_model=read_dto,
                 idempotent=True,
                 idempotency_config={"dto_param": "dto"},
-                operation_id=f"{provider.spec.namespace}.{create_path}",
+                operation_id=f"{module.spec.namespace}.{create_path}",
             )
             @override_annotations({"dto": create_dto})
             async def create(  # pyright: ignore[reportUnusedFunction]
@@ -226,12 +226,12 @@ def attach_document_routes(
 
         # ....................... #
 
-        if update_dto and provider.spec.supports_update():
+        if update_dto and module.spec.supports_update():
 
             @router.patch(
                 f"/{update_path}",
                 response_model=read_dto,
-                operation_id=f"{provider.spec.namespace}.{update_path}",
+                operation_id=f"{module.spec.namespace}.{update_path}",
             )
             @override_annotations({"dto": update_dto})
             async def update(  # pyright: ignore[reportUnusedFunction]
@@ -252,12 +252,12 @@ def attach_document_routes(
 
         # ....................... #
 
-        if provider.spec.supports_soft_delete():
+        if module.spec.supports_soft_delete():
 
             @router.patch(
                 f"/{delete_path}",
                 response_model=read_dto,
-                operation_id=f"{provider.spec.namespace}.{delete_path}",
+                operation_id=f"{module.spec.namespace}.{delete_path}",
             )
             async def delete(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
@@ -276,7 +276,7 @@ def attach_document_routes(
             @router.patch(
                 f"/{restore_path}",
                 response_model=read_dto,
-                operation_id=f"{provider.spec.namespace}.{restore_path}",
+                operation_id=f"{module.spec.namespace}.{restore_path}",
             )
             async def restore(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
@@ -298,7 +298,7 @@ def attach_document_routes(
             f"/{kill_path}",
             response_model=None,
             status_code=204,
-            operation_id=f"{provider.spec.namespace}.{kill_path}",
+            operation_id=f"{module.spec.namespace}.{kill_path}",
         )
         async def kill(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
@@ -307,8 +307,6 @@ def attach_document_routes(
             """Hard-delete a document without soft-delete semantics."""
 
             return await ucs.kill()(id)
-
-    # ....................... #
 
     return router
 
@@ -320,7 +318,7 @@ def build_document_router(
     prefix: str,
     tags: Optional[list[str | Enum]] = None,
     *,
-    provider: DocumentUsecasesFacadeProvider[R, C, U, tL, rL],
+    module: DocumentUsecasesModule[R, C, U, tL, rL],
     context: ExecutionContextDependencyPort,
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
@@ -343,7 +341,7 @@ def build_document_router(
 
     attach_document_routes(
         router,
-        provider=provider,
+        module=module,
         context=context,
         include_get_endpoint=include_get_endpoint,
         include_list_endpoints=include_list_endpoints,

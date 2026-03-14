@@ -111,7 +111,7 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
         :raises CoreError: On step conflict or disallowed overwrite.
         """
 
-        logger.trace(
+        logger.debug(
             "Mapping %s -> %s",
             self.in_.__qualname__,
             self.out.__qualname__,

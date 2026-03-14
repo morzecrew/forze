@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `hybridmethod` descriptor in `forze.base.descriptors` for class/instance dual method support.
 - `Pagination` DTO with `page` and `size` fields for list and search request payloads.
 - `DocumentDTOSpec` `list` and `raw_list` keys for custom list request DTO types.
 - `SearchDTOSpec` TypedDict for search facade with `read`, `typed`, `raw` keys.
@@ -20,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `OperationPlan.merge`, `UsecasePlan.merge`, and `UsecaseRegistry.merge` are now hybridmethods (callable on class or instance).
 - `OverrideDocumentEndpointNames` renamed to `OverrideDocumentEndpointPaths`; `name_overrides` renamed to `path_overrides` in document router.
 - `OverrideSearchEndpointNames` renamed to `OverrideSearchEndpointPaths`; `name_overrides` renamed to `path_overrides` in search router.
 - `SearchUsecasesFacadeProvider` now uses `dtos: SearchDTOSpec` instead of `read_dto`; `build_search_registry` requires `dto_spec`.

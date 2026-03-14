@@ -118,21 +118,21 @@ class RedisIdempotencyAdapter(IdempotencyPort):
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
-        logger.debug("Beginning idempotency for op '%s', key '%s'", op, key)
+        logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[4:] + "...")
 
         with logger.section():
             k = self.__key(op, key)
             idem_p = _Payload(st=_PENDING, ph=payload_hash)
 
             if await self.__acuire(k, idem_p):
-                logger.debug("Idempotency key is acquired, returning")
+                logger.debug("Idempotency key is acquired")
                 return None
 
             raw = await self.client.get(k)
 
             if raw is None:
                 if await self.__acuire(k, idem_p):
-                    logger.debug("Idempotency key is acquired, returning")
+                    logger.debug("Idempotency key is acquired")
                     return None
 
                 raise ConflictError("Idempotency is in progress (not readable)")
@@ -176,7 +176,9 @@ class RedisIdempotencyAdapter(IdempotencyPort):
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
-        logger.debug("Committing idempotency for op '%s', key '%s'", op, key)
+        logger.debug(
+            "Committing idempotency for op '%s', key '%s'", op, key[4:] + "..."
+        )
 
         with logger.section():
             k = self.__key(op, key)

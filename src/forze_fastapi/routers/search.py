@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from forze.application.composition.search import (
     SearchUsecasesFacade,
-    SearchUsecasesFacadeProvider,
+    SearchUsecasesModule,
 )
 from forze.application.dto import (
     Paginated,
@@ -36,7 +36,7 @@ rS = TypeVar("rS", bound=RawSearchRequestDTO)
 
 
 def search_facade_dependency(
-    provider: SearchUsecasesFacadeProvider[M, tS, rS],
+    module: SearchUsecasesModule[M, tS, rS],
     ctx: ExecutionContextDependencyPort,
 ) -> Callable[[ExecutionContext], SearchUsecasesFacade[M, tS, rS]]:
     """Create a FastAPI dependency that resolves a :class:`SearchUsecasesFacade`."""
@@ -44,7 +44,7 @@ def search_facade_dependency(
     def facade(
         context: ExecutionContext = Depends(ctx),
     ) -> SearchUsecasesFacade[M, tS, rS]:
-        return provider(context)
+        return module.provider(context)
 
     return facade
 
@@ -68,17 +68,17 @@ class OverrideSearchEndpointPaths(TypedDict, total=False):
 def attach_search_routes(
     router: R,
     *,
-    provider: SearchUsecasesFacadeProvider[M, tS, rS],
+    module: SearchUsecasesModule[M, tS, rS],
     context: ExecutionContextDependencyPort,
     path_overrides: OverrideSearchEndpointPaths = {},
 ) -> R:
     """Attach typed and raw search endpoints to an existing router."""
 
-    read_dto = provider.dtos["read"]
-    typed_dto = provider.dtos.get("typed", SearchRequestDTO)
-    raw_dto = provider.dtos.get("raw", RawSearchRequestDTO)
+    read_dto = module.dtos["read"]
+    typed_dto = module.dtos.get("typed", SearchRequestDTO)
+    raw_dto = module.dtos.get("raw", RawSearchRequestDTO)
 
-    ucs_dep = search_facade_dependency(provider, context)
+    ucs_dep = search_facade_dependency(module, context)
 
     # ....................... #
 
@@ -90,7 +90,7 @@ def attach_search_routes(
     @router.post(
         f"/{search_path}",
         response_model=Paginated[read_dto],  # type: ignore[valid-type]
-        operation_id=f"{provider.spec.namespace}.{search_path}",
+        operation_id=f"{module.spec.namespace}.{search_path}",
     )
     @override_annotations({"dto": typed_dto})
     async def search(  # pyright: ignore[reportUnusedFunction]
@@ -99,14 +99,14 @@ def attach_search_routes(
     ) -> Paginated[M]:
         """Search documents using a typed search request body."""
 
-        return await ucs.typed()(body)
+        return await ucs.search()(body)
 
     # ....................... #
 
     @router.post(
         f"/{raw_search_path}",
         response_model=RawPaginated,
-        operation_id=f"{provider.spec.namespace}.{raw_search_path}",
+        operation_id=f"{module.spec.namespace}.{raw_search_path}",
     )
     @override_annotations({"dto": raw_dto})
     async def raw_search(  # pyright: ignore[reportUnusedFunction]
@@ -115,7 +115,7 @@ def attach_search_routes(
     ) -> RawPaginated:
         """Search documents using a raw (untyped) search body."""
 
-        return await ucs.raw()(body)
+        return await ucs.raw_search()(body)
 
     # ....................... #
 
@@ -126,7 +126,7 @@ def build_search_router(
     prefix: str,
     tags: Optional[list[str | Enum]] = None,
     *,
-    provider: SearchUsecasesFacadeProvider[M, tS, rS],
+    module: SearchUsecasesModule[M, tS, rS],
     context: ExecutionContextDependencyPort,
     path_overrides: OverrideSearchEndpointPaths = {},
 ) -> ForzeAPIRouter:
@@ -140,7 +140,7 @@ def build_search_router(
 
     attach_search_routes(
         router,
-        provider=provider,
+        module=module,
         context=context,
         path_overrides=path_overrides,
     )

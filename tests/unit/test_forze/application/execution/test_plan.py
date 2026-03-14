@@ -149,6 +149,38 @@ class TestOperationPlan:
         merged = OperationPlan.merge(p1, p2)
         assert merged.tx is True
 
+    def test_merge_from_instance_includes_self(self) -> None:
+        """Instance merge (p1.merge(p2)) includes p1 in the result."""
+        def f1(ctx):
+            return None
+
+        def f2(ctx):
+            return None
+
+        p1 = OperationPlan(
+            outer_before=(MiddlewareSpec(priority=1, factory=f1),),
+            tx=True,
+        )
+        p2 = OperationPlan(outer_after=(MiddlewareSpec(priority=2, factory=f2),))
+        merged = p1.merge(p2)
+        assert len(merged.outer_before) == 1
+        assert len(merged.outer_after) == 1
+        assert merged.tx is True
+
+    def test_merge_from_instance_single_arg(self) -> None:
+        """Instance merge with one other plan: p1.merge(p2) equals OperationPlan.merge(p1, p2)."""
+        def f1(ctx):
+            return None
+
+        def f2(ctx):
+            return None
+
+        p1 = OperationPlan(outer_before=(MiddlewareSpec(priority=1, factory=f1),))
+        p2 = OperationPlan(outer_before=(MiddlewareSpec(priority=2, factory=f2),))
+        via_class = OperationPlan.merge(p1, p2)
+        via_instance = p1.merge(p2)
+        assert len(via_class.outer_before) == len(via_instance.outer_before) == 2
+
 
 class TestUsecasePlan:
     """Tests for UsecasePlan."""
@@ -214,6 +246,50 @@ class TestUsecasePlan:
         assert "get" in merged.ops
         assert len(merged.ops[WILDCARD].outer_before) == 1
         assert len(merged.ops["get"].outer_before) == 1
+
+    def test_merge_from_instance_includes_self(self) -> None:
+        """Instance merge (plan_a.merge(plan_b)) includes plan_a in the result."""
+        def guard_a(ctx: ExecutionContext):
+            async def _guard(args):
+                pass
+
+            return _guard
+
+        def guard_b(ctx: ExecutionContext):
+            async def _guard(args):
+                pass
+
+            return _guard
+
+        plan_a = UsecasePlan().before("get", guard_a, priority=1)
+        plan_b = UsecasePlan().before("create", guard_b, priority=1)
+        merged = plan_a.merge(plan_b)
+        assert "get" in merged.ops
+        assert "create" in merged.ops
+        assert len(merged.ops["get"].outer_before) == 1
+        assert len(merged.ops["create"].outer_before) == 1
+
+    def test_merge_from_instance_equals_class_merge(self) -> None:
+        """plan_a.merge(plan_b) equals UsecasePlan.merge(plan_a, plan_b)."""
+        def guard_a(ctx: ExecutionContext):
+            async def _guard(args):
+                pass
+
+            return _guard
+
+        def guard_b(ctx: ExecutionContext):
+            async def _guard(args):
+                pass
+
+            return _guard
+
+        plan_a = UsecasePlan().before("get", guard_a, priority=1)
+        plan_b = UsecasePlan().before("create", guard_b, priority=1)
+        via_class = UsecasePlan.merge(plan_a, plan_b)
+        via_instance = plan_a.merge(plan_b)
+        assert set(via_class.ops.keys()) == set(via_instance.ops.keys())
+        assert len(via_instance.ops["get"].outer_before) == 1
+        assert len(via_instance.ops["create"].outer_before) == 1
 
     def test_tx_enables_transaction(self) -> None:
         plan = UsecasePlan().tx("create")

@@ -1,4 +1,4 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar
 from uuid import UUID
 
 import attrs
@@ -20,8 +20,8 @@ from .operations import DocumentOperation
 # ----------------------- #
 
 R = TypeVar("R", bound=ReadDocument)
-C = TypeVar("C", bound=BaseDTO)
-U = TypeVar("U", bound=BaseDTO)
+C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
+U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 tL = TypeVar("tL", bound=ListRequestDTO, default=ListRequestDTO)
 rL = TypeVar("rL", bound=RawListRequestDTO, default=RawListRequestDTO)
 
@@ -116,28 +116,8 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True)
-class DocumentUsecasesFacadeProvider(
-    BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U, tL, rL]],
-    Generic[R, C, U, tL, rL],
-):
-    """Factory that produces a document usecases facade for a given context."""
-
-    spec: DocumentSpec[Any, Any, Any, Any] = attrs.field(
-        on_setattr=attrs.setters.frozen
-    )
-    """Document specification (used by registry factories)."""
-
-    dtos: DocumentDTOSpec[R, C, U, tL, rL] = attrs.field(
-        on_setattr=attrs.setters.frozen
-    )
-    """DTO type mapping for facade typing."""
-
-    # Non initable fields
-    facade: type[DocumentUsecasesFacade[R, C, U, tL, rL]] = attrs.field(
-        default=cast(
-            type[DocumentUsecasesFacade[R, C, U, tL, rL]], DocumentUsecasesFacade
-        ),
-        init=False,
-    )
-    """Facade type to produce."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DocumentUsecasesModule(Generic[R, C, U, tL, rL]):
+    spec: DocumentSpec[R, Any, Any, Any]
+    dtos: DocumentDTOSpec[R, C, U, tL, rL]
+    provider: BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U, tL, rL]]

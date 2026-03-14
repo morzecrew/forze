@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal, Optional, Self, final, overload
 
 import attrs
 
+from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 from forze.base.logging import getLogger
 
@@ -376,7 +377,7 @@ class UsecaseRegistry:
             len(extra.ops),
         )
 
-        merged = UsecasePlan.merge(self.__plan, extra)
+        merged = self.__plan.merge(extra)
 
         if inplace:
             self.__plan = merged
@@ -414,11 +415,126 @@ class UsecaseRegistry:
         logger.debug("Resolving usecase for operation '%s'", op)
         factory = self.defaults.get(op)
 
-        if not factory:
-            raise CoreError(f"Usecase factory is not registered for operation: {op}")
+        with logger.section():
+            if not factory:
+                raise CoreError(
+                    f"Usecase factory is not registered for operation: {op}"
+                )
 
-        logger.trace("Found factory (factory_id=%s)", id(factory))
+            logger.trace("Found factory (factory_id=%s)", id(factory))
 
         resolved = self.__plan.resolve(op, ctx, factory)
 
         return resolved
+
+    # ....................... #
+
+    @hybridmethod
+    def merge(  # type: ignore[misc]
+        cls: type[Self],  # pyright: ignore[reportGeneralTypeIssues]
+        *registries: Self,
+        on_conflict: Literal["error", "overwrite"] = "error",
+    ) -> Self:
+        """Merge multiple registries into a single registry.
+
+        If method called on an instance, the instance is merged with the other registries.
+        Otherwise only provided registries are merged.
+
+        :param registries: Registries to merge.
+        :param on_conflict: What to do when a factory is registered for the same operation in multiple registries.
+        :returns: New registry with all factories merged.
+        :raises CoreError: If a factory is registered for the same operation in multiple registries and ``on_conflict`` is ``"error"``.
+        """
+
+        logger.debug(
+            "Merging %d usecase registries (on_conflict=%s)",
+            len(registries),
+            on_conflict,
+        )
+
+        acc = cls()
+
+        with logger.section():
+            if not registries:
+                logger.trace("No registries provided, returning empty registry")
+                return acc
+
+            for idx, reg in enumerate(registries, 1):
+                logger.trace(
+                    "Processing registry #%d (factory_count=%d, plan_ops=%d, registry_id=%s)",
+                    idx,
+                    len(reg.defaults),
+                    len(reg.__plan.ops),
+                    id(reg),
+                )
+
+                # Merge factories
+                for op, factory in reg.defaults.items():
+                    existing = acc.defaults.get(op)
+
+                    if existing is not None:
+                        logger.trace(
+                            "Conflict for operation '%s' (existing_factory_id=%s, new_factory_id=%s)",
+                            op,
+                            id(existing),
+                            id(factory),
+                        )
+
+                        if on_conflict == "error":
+                            raise CoreError(
+                                f"Usecase factory is already registered for operation: {op}"
+                            )
+
+                        logger.trace(
+                            "Overwriting factory for operation '%s' with rightmost registry entry",
+                            op,
+                        )
+
+                    else:
+                        logger.trace(
+                            "Adding factory for operation '%s' (factory_id=%s)",
+                            op,
+                            id(factory),
+                        )
+
+                    acc.defaults[op] = factory
+
+                # Merge plans
+                logger.trace(
+                    "Merging plan from registry #%d (ops=%d)",
+                    idx,
+                    len(reg.__plan.ops),
+                )
+                acc.extend_plan(reg.__plan, inplace=True)
+
+            logger.trace(
+                "Merged %d registries into one (factory_count=%d, plan_ops=%d)",
+                len(registries),
+                len(acc.defaults),
+                len(acc.__plan.ops),
+            )
+
+        return acc
+
+    # ....................... #
+
+    @merge.instancemethod
+    def _merge_instance(  # pyright: ignore[reportUnusedFunction]
+        self: Self,
+        *registries: Self,
+        on_conflict: Literal["error", "overwrite"] = "error",
+    ) -> Self:
+        """Merge this registry with another registry.
+
+        :param registries: Registries to merge into this registry.
+        :param on_conflict: What to do when a factory is registered for the same operation in multiple registries.
+        :returns: New registry with all factories merged.
+        :raises CoreError: If a factory is registered for the same operation in multiple registries and ``on_conflict`` is ``"error"``.
+        """
+
+        return type(self).merge(self, *registries, on_conflict=on_conflict)
+
+
+# ....
+
+reg = UsecaseRegistry()

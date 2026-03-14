@@ -5,12 +5,11 @@ import pytest
 from forze.application.composition.document.facades import DocumentDTOSpec
 from forze.application.composition.document.factories import (
     build_document_create_mapper,
-    build_document_plan,
     build_document_registry,
 )
 from forze.application.composition.document.operations import DocumentOperation
 from forze.application.contracts.document import DocumentSpec
-from forze.application.mapping import DTOMapper
+from forze.application.mapping import DTOMapper, NumberIdStep
 from forze.base.errors import CoreError
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -71,16 +70,6 @@ def _read_only_dto_spec() -> DocumentDTOSpec:
 # ----------------------- #
 
 
-class TestBuildDocumentPlan:
-    def test_default_with_tx(self) -> None:
-        plan = build_document_plan()
-        assert plan is not None
-
-    def test_without_tx(self) -> None:
-        plan = build_document_plan(tx_on_write=False)
-        assert plan is not None
-
-
 class TestBuildDocumentCreateMapper:
     def test_basic(self) -> None:
         spec = _write_spec()
@@ -91,7 +80,9 @@ class TestBuildDocumentCreateMapper:
     def test_numbered(self) -> None:
         spec = _write_spec()
         dto_spec = _write_dto_spec()
-        mapper = build_document_create_mapper(spec, dto_spec, numbered=True)
+        mapper = build_document_create_mapper(
+            spec, dto_spec, steps=(NumberIdStep(namespace="test"),)
+        )
         assert isinstance(mapper, DTOMapper)
 
     def test_read_only_spec_raises(self) -> None:
@@ -148,11 +139,10 @@ class TestBuildDocumentRegistry:
         assert reg.exists(DocumentOperation.GET)
         assert not reg.exists(DocumentOperation.CREATE)
 
-    def test_custom_create_mapper(self) -> None:
+    def test_custom_create_steps(self) -> None:
         spec = _write_spec()
         dto_spec = _write_dto_spec()
-        custom_mapper = DTOMapper(in_=CreateDocumentCmd, out=CreateDocumentCmd)
         reg = build_document_registry(
-            spec, dto_spec, replace_create_mapper=custom_mapper
+            spec, dto_spec, create_steps=(NumberIdStep(namespace="test"),)
         )
         assert reg.exists(DocumentOperation.CREATE)

@@ -1,8 +1,8 @@
-from typing import Any, Optional
+from typing import Any
 
 from forze.application.contracts.search import SearchSpec
 from forze.application.dto import RawSearchRequestDTO, SearchRequestDTO
-from forze.application.execution import UsecasePlan, UsecaseRegistry
+from forze.application.execution import UsecaseRegistry
 from forze.application.mapping import DTOMapper, MappingStep
 from forze.application.usecases.search import RawSearch, TypedSearch
 
@@ -10,21 +10,12 @@ from .facades import SearchDTOSpec
 from .operations import SearchOperation
 
 # ----------------------- #
-#! TODO: extend properly
-
-
-def build_search_plan() -> UsecasePlan:
-    plan = UsecasePlan()
-
-    return plan
-
-
-# ....................... #
 
 
 def build_search_typed_mapper(
     spec: SearchSpec[Any],
     dto_spec: SearchDTOSpec[Any, Any, Any],
+    *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for typed search requests."""
@@ -42,6 +33,7 @@ def build_search_typed_mapper(
 def build_search_raw_mapper(
     spec: SearchSpec[Any],
     dto_spec: SearchDTOSpec[Any, Any, Any],
+    *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for raw search requests."""
@@ -60,11 +52,11 @@ def build_search_registry(
     spec: SearchSpec[Any],
     dto_spec: SearchDTOSpec[Any, Any, Any],
     *,
-    replace_typed_mapper: Optional[DTOMapper[Any, Any]] = None,
-    replace_raw_mapper: Optional[DTOMapper[Any, Any]] = None,
+    search_steps: tuple[MappingStep[Any], ...] = (),
+    raw_search_steps: tuple[MappingStep[Any], ...] = (),
 ) -> UsecaseRegistry:
-    typed_mapper = replace_typed_mapper or build_search_typed_mapper(spec, dto_spec)
-    raw_mapper = replace_raw_mapper or build_search_raw_mapper(spec, dto_spec)
+    typed_mapper = build_search_typed_mapper(spec, dto_spec, steps=search_steps)
+    raw_mapper = build_search_raw_mapper(spec, dto_spec, steps=raw_search_steps)
 
     reg = UsecaseRegistry(
         {

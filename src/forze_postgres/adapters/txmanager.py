@@ -21,6 +21,7 @@ from ..kernel.platform import PostgresClient, PostgresTransactionOptions
 logger = getLogger(__name__).bind(scope="postgres.txmanager")
 
 # ....................... #
+
 PostgresTxScopeKey = TxScopeKey("postgres")
 """Key used to scope the Postgres transaction."""
 
@@ -46,7 +47,17 @@ class PostgresTxManagerAdapter(TxManagerPort):
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
+        #! TODO: log options
         logger.debug("Starting transaction")
 
         async with self.client.transaction(options=self.options):
-            yield
+            try:
+                yield
+
+            #! Hmmm.. should it be like that?
+            except Exception:
+                logger.debug("Transaction rolled back")
+                raise
+
+            else:
+                logger.debug("Transaction committed")

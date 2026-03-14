@@ -2,10 +2,11 @@
 
 from pydantic import BaseModel
 
+from forze.application.composition.base import BaseUsecasesFacadeProvider
 from forze.application.composition.search import (
     SearchOperation,
-    SearchUsecasesFacadeProvider,
-    build_search_plan,
+    SearchUsecasesFacade,
+    SearchUsecasesModule,
     build_search_registry,
 )
 from forze.application.contracts.search import (
@@ -13,7 +14,7 @@ from forze.application.contracts.search import (
     SearchIndexSpec,
     SearchSpec,
 )
-from forze.application.execution import UsecaseRegistry
+from forze.application.execution import UsecasePlan, UsecaseRegistry
 
 # ----------------------- #
 
@@ -69,49 +70,41 @@ class TestBuildSearchRegistry:
         assert uc is not None
 
 
-class TestBuildSearchPlan:
-    """Tests for build_search_plan."""
+class TestSearchUsecasesModule:
+    """Tests for SearchUsecasesModule."""
 
-    def test_returns_plan(self) -> None:
-        plan = build_search_plan()
-        assert plan is not None
-
-
-class TestSearchUsecasesFacadeProvider:
-    """Tests for SearchUsecasesFacadeProvider."""
-
-    def test_call_returns_facade(
+    def test_provider_call_returns_facade(
         self,
         composition_ctx,
     ) -> None:
         spec = _minimal_search_spec()
         dto_spec = _minimal_search_dto_spec()
         reg = build_search_registry(spec, dto_spec)
-        plan = build_search_plan()
-        provider = SearchUsecasesFacadeProvider(
+        plan = UsecasePlan()
+        provider = BaseUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
-            spec=spec,
-            dtos=dto_spec,
+            facade=SearchUsecasesFacade,
         )
-        facade = provider(composition_ctx)
+        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
+        facade = module.provider(composition_ctx)
         assert facade is not None
         assert facade.ctx is composition_ctx
 
-    def test_facade_raw_resolves(
+    def test_facade_raw_search_resolves(
         self,
         composition_ctx,
     ) -> None:
         spec = _minimal_search_spec()
         dto_spec = _minimal_search_dto_spec()
         reg = build_search_registry(spec, dto_spec)
-        plan = build_search_plan()
-        provider = SearchUsecasesFacadeProvider(
+        plan = UsecasePlan()
+        provider = BaseUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
-            spec=spec,
-            dtos=dto_spec,
+            facade=SearchUsecasesFacade,
         )
-        facade = provider(composition_ctx)
-        uc = facade.raw()
+        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
+        facade = module.provider(composition_ctx)
+        uc = facade.raw_search()
         assert uc is not None

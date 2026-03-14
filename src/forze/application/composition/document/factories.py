@@ -1,11 +1,11 @@
 """Factories for document plans, mappers, and registries."""
 
-from typing import Any, Optional
+from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import ListRequestDTO, RawListRequestDTO
 from forze.application.execution import UsecasePlan, UsecaseRegistry
-from forze.application.mapping import DTOMapper, MappingStep, NumberIdStep
+from forze.application.mapping import DTOMapper, MappingStep
 from forze.application.usecases.document import (
     CreateDocument,
     DeleteDocument,
@@ -23,34 +23,14 @@ from .operations import DocumentOperation
 
 # ----------------------- #
 
-
-def build_document_plan(
-    *,
-    tx_on_write: bool = True,
-) -> UsecasePlan:
-    """Build a usecase plan with optional transaction wrapping for write ops.
-
-    When ``tx_on_write`` is ``True``, enables transactions for create, update,
-    delete, restore, and kill operations.
-
-    :param tx_on_write: Whether to wrap write operations in transactions.
-    :returns: Usecase plan.
-    """
-
-    plan = UsecasePlan()
-
-    if tx_on_write:
-        for op in [
-            DocumentOperation.CREATE,
-            DocumentOperation.UPDATE,
-            DocumentOperation.DELETE,
-            DocumentOperation.RESTORE,
-            DocumentOperation.KILL,
-        ]:
-            plan = plan.tx(op)
-
-    return plan
-
+tx_document_plan = (
+    UsecasePlan()
+    .tx(DocumentOperation.CREATE)
+    .tx(DocumentOperation.UPDATE)
+    .tx(DocumentOperation.DELETE)
+    .tx(DocumentOperation.RESTORE)
+    .tx(DocumentOperation.KILL)
+)
 
 # ....................... #
 
@@ -59,15 +39,13 @@ def build_document_create_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
     *,
-    numbered: bool = False,
+    steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for create commands.
 
-    When ``numbered`` is ``True``, adds :class:`NumberIdStep` to inject
-    ``number_id`` from the counter for the spec's namespace.
-
     :param spec: Document specification.
-    :param numbered: Whether to add number_id injection.
+    :param dto_spec: Document DTO specification.
+    :param steps: Optional mapping steps to append to the mapper.
     :returns: DTO mapper for create commands.
     """
 
@@ -81,10 +59,7 @@ def build_document_create_mapper(
 
     mapper = DTOMapper(in_=create_dto, out=spec.write["models"]["create_cmd"])
 
-    if numbered:
-        mapper = mapper.with_steps(NumberIdStep(namespace=spec.namespace))
-
-    return mapper
+    return mapper.with_steps(*steps)
 
 
 # ....................... #
@@ -93,10 +68,14 @@ def build_document_create_mapper(
 def build_document_update_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    *,
+    steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for update commands.
 
     :param spec: Document specification.
+    :param dto_spec: Document DTO specification.
+    :param steps: Optional mapping steps to append to the mapper.
     :returns: DTO mapper for update commands.
     """
 
@@ -108,7 +87,9 @@ def build_document_update_mapper(
     if update_dto is None:
         raise CoreError("Document specification does not support update operations")
 
-    return DTOMapper(in_=update_dto, out=spec.write["models"]["update_cmd"])
+    mapper = DTOMapper(in_=update_dto, out=spec.write["models"]["update_cmd"])
+
+    return mapper.with_steps(*steps)
 
 
 # ....................... #
@@ -117,6 +98,7 @@ def build_document_update_mapper(
 def build_document_list_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for list requests with optional steps."""
@@ -135,11 +117,14 @@ def build_document_list_mapper(
 def build_document_raw_list_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for raw list requests.
 
     :param spec: Document specification.
+    :param dto_spec: Document DTO specification.
+    :param steps: Optional mapping steps to append to the mapper.
     :returns: DTO mapper for raw list requests.
     """
 
@@ -158,27 +143,31 @@ def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
     *,
-    replace_create_mapper: Optional[DTOMapper[Any, Any]] = None,
-    replace_update_mapper: Optional[DTOMapper[Any, Any]] = None,
-    replace_list_mapper: Optional[DTOMapper[Any, Any]] = None,
-    replace_raw_list_mapper: Optional[DTOMapper[Any, Any]] = None,
+    create_steps: tuple[MappingStep[Any], ...] = (),
+    update_steps: tuple[MappingStep[Any], ...] = (),
+    list_steps: tuple[MappingStep[Any], ...] = (),
+    raw_list_steps: tuple[MappingStep[Any], ...] = (),
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec.
 
-    Registers get, search, raw_search, create, and kill. Registers update when
-    the spec supports it; registers delete and restore when the spec supports
-    soft delete. Uses ``replace_create_mapper`` when provided, otherwise
-    builds a default create mapper.
-
     :param spec: Document specification.
-    :param replace_create_mapper: Optional custom create mapper.
-    :param replace_update_mapper: Optional custom update mapper.
+    :param dto_spec: Document DTO specification.
+    :param create_steps: Optional mapping steps to append to the create mapper.
+    :param update_steps: Optional mapping steps to append to the update mapper.
+    :param list_steps: Optional mapping steps to append to the list mapper.
+    :param raw_list_steps: Optional mapping steps to append to the raw list mapper.
     :returns: Usecase registry with all supported operations.
     """
 
-    list_mapper = replace_list_mapper or build_document_list_mapper(spec, dto_spec)
-    raw_list_mapper = replace_raw_list_mapper or build_document_raw_list_mapper(
-        spec, dto_spec
+    list_mapper = build_document_list_mapper(
+        spec,
+        dto_spec,
+        steps=list_steps,
+    )
+    raw_list_mapper = build_document_raw_list_mapper(
+        spec,
+        dto_spec,
+        steps=raw_list_steps,
     )
 
     reg = UsecaseRegistry(
@@ -201,11 +190,15 @@ def build_document_registry(
     )
 
     if spec.write is not None:
-        create_mapper = replace_create_mapper or build_document_create_mapper(
-            spec, dto_spec
+        create_mapper = build_document_create_mapper(
+            spec,
+            dto_spec,
+            steps=create_steps,
         )
-        update_mapper = replace_update_mapper or build_document_update_mapper(
-            spec, dto_spec
+        update_mapper = build_document_update_mapper(
+            spec,
+            dto_spec,
+            steps=update_steps,
         )
 
         reg = reg.register_many(

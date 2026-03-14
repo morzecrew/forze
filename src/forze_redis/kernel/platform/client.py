@@ -14,6 +14,7 @@ from redis.asyncio.client import Pipeline, Redis
 from redis.asyncio.connection import ConnectionPool
 
 from forze.base.errors import InfrastructureError
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
 from .errors import redis_handled
@@ -21,6 +22,10 @@ from .types import RedisPubSubMessage, RedisStreamResponse
 from .utils import parse_pubsub_message, parse_stream_entries
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="redis.client")
+
+# ....................... #
 
 
 @final
@@ -68,33 +73,45 @@ class RedisClient:
         *,
         config: RedisConfig = RedisConfig(),
     ) -> None:
-        if self.__client is not None:
-            return
+        logger.trace("Initializing client")  #! TODO: log config
 
-        self.__pool = (
-            ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
-                dsn,
-                max_connections=config.max_size,
-                socket_timeout=config.socket_timeout,
-                socket_connect_timeout=config.connect_timeout,
-                decode_responses=False,
-                encoding="utf-8",
+        with logger.section():
+            if self.__client is not None:
+                logger.trace("Client already initialized, skipping")
+                return
+
+            self.__pool = (
+                ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+                    dsn,
+                    max_connections=config.max_size,
+                    socket_timeout=config.socket_timeout,
+                    socket_connect_timeout=config.connect_timeout,
+                    decode_responses=False,
+                    encoding="utf-8",
+                )
             )
-        )
-        self.__client = Redis(connection_pool=self.__pool)
+            self.__client = Redis(connection_pool=self.__pool)
+            await self.__client.ping()  # type: ignore[misc]
 
-        await self.__client.ping()  # type: ignore[misc]
+            logger.trace("Client initialized successfully")
 
     # ....................... #
 
     async def close(self) -> None:
-        if self.__client is not None:
-            await self.__client.aclose()
-            self.__client = None
+        logger.trace("Closing client")
 
-        if self.__pool is not None:
-            await self.__pool.disconnect(inuse_connections=True)
-            self.__pool = None
+        with logger.section():
+            if self.__client is not None:
+                logger.trace("Client found, closing")
+                await self.__client.aclose()
+                self.__client = None
+
+            if self.__pool is not None:
+                logger.trace("Pool found, disconnecting")
+                await self.__pool.disconnect(inuse_connections=True)
+                self.__pool = None
+
+            logger.trace("Client closed successfully")
 
     # ....................... #
 
@@ -131,6 +148,8 @@ class RedisClient:
     @redis_handled("redis.pipeline")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def pipeline(self, *, transaction: bool = True) -> AsyncIterator[Pipeline]:
+        logger.trace("Entering pipeline context")
+
         depth = self.__ctx_depth.get()
         parent = self.__current_pipe()
 

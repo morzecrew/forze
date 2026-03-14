@@ -43,16 +43,16 @@ class TestSearchUsecasesFacade:
             lambda ctx: StubRawSearchUsecase(ctx=ctx),
         )
 
-    def test_raw_returns_usecase(
+    def test_raw_search_returns_usecase(
         self,
         stub_ctx: ExecutionContext,
         mock_raw_search_usecase: UsecaseRegistry,
     ) -> None:
         facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
-        uc = facade.raw()
+        uc = facade.raw_search()
         assert uc is not None
 
-    def test_typed_not_supported_raises(
+    def test_search_not_supported_raises(
         self,
         stub_ctx: ExecutionContext,
         mock_raw_search_usecase: UsecaseRegistry,
@@ -63,4 +63,4 @@ class TestSearchUsecasesFacade:
         with pytest.raises(
             CoreError, match="not registered for operation: search.typed"
         ):
-            facade.typed()
+            facade.search()

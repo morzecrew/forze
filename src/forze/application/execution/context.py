@@ -94,16 +94,15 @@ class ExecutionContext:
             cur = self.__tx_handle.get()
 
             logger.trace(
-                "Transaction state: requested_scope=%s depth=%d active_scope=%s",
+                "Transaction state: requested_scope='%s' depth=%d active_scope='%s'",
                 scope.name,
                 depth,
                 cur.scope.name if cur else None,
             )
 
             if depth > 0:
-                if (  # protect against different kind (implementations) of tx opened simultaneously
-                    cur is None or cur.scope != scope
-                ):
+                # Protect against different kind (implementations) of tx opened simultaneously
+                if cur is None or cur.scope != scope:
                     raise CoreError(
                         f"Nested tx scope mismatch: active={cur.scope.name if cur else None} "
                         f"requested={scope.name}"
@@ -112,14 +111,14 @@ class ExecutionContext:
                 token_d = self.__tx_depth.set(depth + 1)
 
                 try:
-                    logger.trace("Reusing nested transaction scope %s", scope.name)
+                    logger.trace("Reusing nested transaction scope '%s'", scope.name)
 
                     async with tx.transaction():
                         yield
 
                 finally:
                     self.__tx_depth.reset(token_d)
-                    logger.trace("Leaving nested transaction scope %s", scope.name)
+                    logger.trace("Leaving nested transaction scope '%s'", scope.name)
 
                 return
 
@@ -127,13 +126,13 @@ class ExecutionContext:
             token_d = self.__tx_depth.set(1)
 
             try:
-                logger.trace("Starting root transaction scope %s", scope.name)
+                logger.trace("Entering root transaction scope '%s'", scope.name)
 
                 async with tx.transaction():
                     yield
 
             finally:
-                logger.trace("Leaving root transaction scope %s", scope.name)
+                logger.trace("Leaving root transaction scope '%s'", scope.name)
                 self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
 

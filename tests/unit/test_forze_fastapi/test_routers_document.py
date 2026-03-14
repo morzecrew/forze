@@ -4,10 +4,12 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from forze.application.composition.base import BaseUsecasesFacadeProvider
 from forze.application.composition.document import (
-    DocumentUsecasesFacadeProvider,
-    build_document_plan,
+    DocumentUsecasesFacade,
+    DocumentUsecasesModule,
     build_document_registry,
+    tx_document_plan,
 )
 from forze.application.contracts.document import DocumentSpec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -46,6 +48,7 @@ def _minimal_spec(
 
 def _minimal_dto_spec(supports_update: bool = False) -> dict:
     """Build a minimal DocumentDTOSpec for testing."""
+
     class UpdateCmd(BaseDTO):
         title: str | None = None
 
@@ -69,18 +72,22 @@ class TestDocumentFacadeDependency:
         spec = _minimal_spec()
         dto_spec = _minimal_dto_spec()
         reg = build_document_registry(spec, dto_spec)
-        plan = build_document_plan()
-        provider = DocumentUsecasesFacadeProvider(
-            spec=spec,
+        plan = tx_document_plan
+        provider = BaseUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
+            facade=DocumentUsecasesFacade,
+        )
+        module = DocumentUsecasesModule(
+            spec=spec,
             dtos={"read": ReadDocument, "create": CreateDocumentCmd},
+            provider=provider,
         )
 
         def ctx_dep():
             return composition_ctx
 
-        dep = document_facade_dependency(provider, ctx_dep)
+        dep = document_facade_dependency(module, ctx_dep)
         # dep is a factory that returns a FastAPI dependency
         assert callable(dep)
 
@@ -96,12 +103,16 @@ class TestBuildDocumentRouter:
         spec = _minimal_spec()
         dto_spec = _minimal_dto_spec()
         reg = build_document_registry(spec, dto_spec)
-        plan = build_document_plan()
-        provider = DocumentUsecasesFacadeProvider(
-            spec=spec,
+        plan = tx_document_plan
+        provider = BaseUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
+            facade=DocumentUsecasesFacade,
+        )
+        module = DocumentUsecasesModule(
+            spec=spec,
             dtos={"read": ReadDocument, "create": CreateDocumentCmd},
+            provider=provider,
         )
 
         def ctx_dep():
@@ -109,7 +120,7 @@ class TestBuildDocumentRouter:
 
         router = build_document_router(
             prefix="/docs",
-            provider=provider,
+            module=module,
             context=ctx_dep,
         )
 
@@ -129,12 +140,16 @@ class TestBuildDocumentRouter:
         spec = _minimal_spec()
         dto_spec = _minimal_dto_spec()
         reg = build_document_registry(spec, dto_spec)
-        plan = build_document_plan()
-        provider = DocumentUsecasesFacadeProvider(
-            spec=spec,
+        plan = tx_document_plan
+        provider = BaseUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
+            facade=DocumentUsecasesFacade,
+        )
+        module = DocumentUsecasesModule(
+            spec=spec,
             dtos={"read": ReadDocument, "create": CreateDocumentCmd},
+            provider=provider,
         )
 
         def ctx_dep():
@@ -142,7 +157,7 @@ class TestBuildDocumentRouter:
 
         router = build_document_router(
             prefix="/docs",
-            provider=provider,
+            module=module,
             context=ctx_dep,
         )
 
@@ -164,12 +179,16 @@ class TestBuildDocumentRouter:
         spec = _minimal_spec()
         dto_spec = _minimal_dto_spec()
         reg = build_document_registry(spec, dto_spec)
-        plan = build_document_plan()
-        provider = DocumentUsecasesFacadeProvider(
-            spec=spec,
+        plan = tx_document_plan
+        provider = BaseUsecasesFacadeProvider(
             reg=reg,
             plan=plan,
+            facade=DocumentUsecasesFacade,
+        )
+        module = DocumentUsecasesModule(
+            spec=spec,
             dtos={"read": ReadDocument, "create": CreateDocumentCmd},
+            provider=provider,
         )
 
         def ctx_dep():
@@ -177,7 +196,7 @@ class TestBuildDocumentRouter:
 
         router = build_document_router(
             prefix="/docs",
-            provider=provider,
+            module=module,
             context=ctx_dep,
         )
 

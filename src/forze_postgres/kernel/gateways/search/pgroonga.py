@@ -23,6 +23,9 @@ from .base import PostgresSearchGateway
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+# ....................... #
+
 _TABLE_ALIAS: Final[str] = "t"
 
 # ....................... #

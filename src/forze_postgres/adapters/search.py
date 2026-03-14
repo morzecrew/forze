@@ -96,7 +96,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
 
         match index_info.engine:
             case "pgroonga":
-                logger.trace("Using PGroonga search gateway for index %s", index)
+                logger.trace("Using PGroonga search gateway for index '%s'", index)
 
                 gw = PostgresPGroongaSearchGateway[M](
                     qname=q_source,
@@ -107,7 +107,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
                 )
 
             case "fts":
-                logger.trace("Using FTS search gateway for index %s", index)
+                logger.trace("Using FTS search gateway for index '%s'", index)
 
                 gw = PostgresFTSSearchGateway[M](
                     qname=q_source,
@@ -181,23 +181,45 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         index, spec = self.search_spec.pick_index(options)
-        gw = await self._pick_gateway(index, spec)
 
         logger.debug(
-            "Searching %s in index %s (query='%s')",
-            gw.model.__qualname__,
+            "Searching %s in index '%s' (query='%s')",
+            self.model.__qualname__,
             index,
             query if len(query) < 10 else query[:10] + "...",
         )
 
         with logger.section():
-            return await gw.search(  # type: ignore[misc]
-                query=query,
-                filters=filters,
-                limit=limit,
-                offset=offset,
-                sorts=sorts,
-                options=options,
-                return_model=return_model,  # type: ignore[arg-type]
-                return_fields=return_fields,  # type: ignore[arg-type]
-            )
+            gw = await self._pick_gateway(index, spec)
+
+            if return_model is not None:
+                return await gw.search(
+                    query=query,
+                    filters=filters,
+                    limit=limit,
+                    offset=offset,
+                    sorts=sorts,
+                    options=options,
+                    return_model=return_model,
+                )
+
+            elif return_fields is not None:
+                return await gw.search(
+                    query=query,
+                    filters=filters,
+                    limit=limit,
+                    offset=offset,
+                    sorts=sorts,
+                    options=options,
+                    return_fields=return_fields,
+                )
+
+            else:
+                return await gw.search(
+                    query=query,
+                    filters=filters,
+                    limit=limit,
+                    offset=offset,
+                    sorts=sorts,
+                    options=options,
+                )

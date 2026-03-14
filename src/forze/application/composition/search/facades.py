@@ -1,4 +1,4 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, cast
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar
 
 import attrs
 from pydantic import BaseModel
@@ -27,14 +27,14 @@ rS = TypeVar("rS", bound=RawSearchRequestDTO, default=RawSearchRequestDTO)
 class SearchUsecasesFacade(BaseUsecasesFacade, Generic[M, tS, rS]):
     """Typed facade for search usecases."""
 
-    def raw(self) -> Usecase[rS, RawPaginated]:
+    def raw_search(self) -> Usecase[rS, RawPaginated]:
         """Return the raw search usecase."""
 
         return self.resolve(SearchOperation.RAW_SEARCH)
 
     # ....................... #
 
-    def typed(self) -> Usecase[tS, Paginated[M]]:
+    def search(self) -> Usecase[tS, Paginated[M]]:
         """Return the typed search usecase."""
 
         return self.resolve(SearchOperation.TYPED_SEARCH)
@@ -59,21 +59,8 @@ class SearchDTOSpec(TypedDict, Generic[M, tS, rS]):
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True)
-class SearchUsecasesFacadeProvider(
-    BaseUsecasesFacadeProvider[SearchUsecasesFacade[M, tS, rS]], Generic[M, tS, rS]
-):
-    """Factory that produces a search usecases facade for a given context."""
-
-    spec: SearchSpec[Any] = attrs.field(on_setattr=attrs.setters.frozen)
-    """Search specification (used by registry factories)."""
-
-    dtos: SearchDTOSpec[M, tS, rS] = attrs.field(on_setattr=attrs.setters.frozen)
-    """DTO type mapping for facade typing."""
-
-    # Non initable fields
-    facade: type[SearchUsecasesFacade[M, tS, rS]] = attrs.field(
-        default=cast(type[SearchUsecasesFacade[M, tS, rS]], SearchUsecasesFacade),
-        init=False,
-    )
-    """Facade type to produce."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchUsecasesModule(Generic[M, tS, rS]):
+    spec: SearchSpec[Any]
+    dtos: SearchDTOSpec[M, tS, rS]
+    provider: BaseUsecasesFacadeProvider[SearchUsecasesFacade[M, tS, rS]]
