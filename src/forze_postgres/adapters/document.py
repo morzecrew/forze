@@ -133,9 +133,7 @@ class PostgresDocumentAdapter(
                     (str(x.id), str(x.rev)): y for x, y in zip(docs, res_cache)
                 }
                 await self.cache.set_many_versioned(res_cache_map)
-                logger.debug(
-                    "Cache set many successfully for %d document(s)", len(docs)
-                )
+                logger.debug("Cache set successfully for %d document(s)", len(docs))
 
             except Exception as e:
                 logger.exception(

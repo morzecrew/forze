@@ -67,8 +67,10 @@ class Usecase[Args, R]:
         )
 
         async def last(args: Args) -> R:
-            logger.debug("Calling main %s", type(self).__qualname__)
-            return await self.main(args)
+            logger.debug("Calling main: %s", type(self).__qualname__)
+
+            with logger.section():
+                return await self.main(args)
 
         fn: NextCall[Args, R] = last
 
@@ -107,12 +109,12 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        logger.debug("Starting execution of usecase %s", type(self).__qualname__)
+        logger.debug("Starting usecase execution: %s", type(self).__qualname__)
 
         with logger.section():
             chain = self._build_chain()
             result = await chain(args)
 
-        logger.debug("Finished execution of usecase %s", type(self).__qualname__)
+        logger.debug("Usecase execution completed: %s", type(self).__qualname__)
 
         return result

@@ -71,7 +71,7 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        logger.debug("Running guard %s", type(self.guard).__qualname__)
+        logger.debug("Running guard: %s", type(self.guard).__qualname__)
 
         with logger.section():
             await self.guard(args)
@@ -96,7 +96,7 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         res = await next(args)
 
-        logger.debug("Running effect %s", type(self.effect).__qualname__)
+        logger.debug("Running effect: %s", type(self.effect).__qualname__)
 
         with logger.section():
             res = await self.effect(args, res)
@@ -142,7 +142,7 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        logger.debug("Running transaction middleware")
+        logger.debug("Running transaction middleware: %s", type(self).__qualname__)
 
         async with self.ctx.transaction():
             res = await next(args)

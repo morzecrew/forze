@@ -70,6 +70,8 @@ class ExecutionRuntime:
             ctx = ExecutionContext(deps=deps)
             self.__ctx.set_once(ctx)
 
+        logger.info("Execution context created")
+
     # ....................... #
 
     async def startup(self) -> None:
@@ -80,6 +82,8 @@ class ExecutionRuntime:
         with logger.section():
             ctx = self.__ctx.get()
             await self.lifecycle.startup(ctx)
+
+        logger.info("Execution runtime startup completed")
 
     # ....................... #
 
@@ -98,6 +102,8 @@ class ExecutionRuntime:
 
             finally:
                 self.__ctx.reset()
+
+        logger.info("Execution runtime shutdown completed")
 
     # ....................... #
 
@@ -120,3 +126,5 @@ class ExecutionRuntime:
         finally:
             logger.info("Leaving execution runtime scope")
             await self.shutdown()
+
+        logger.info("Execution runtime scope exited")

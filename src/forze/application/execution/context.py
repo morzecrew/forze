@@ -133,9 +133,11 @@ class ExecutionContext:
                     yield
 
             finally:
+                logger.trace("Leaving root transaction scope %s", scope.name)
                 self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
-                logger.trace("Leaving root transaction scope %s", scope.name)
+
+        logger.debug("Transaction scope exited")
 
     # ....................... #
 
