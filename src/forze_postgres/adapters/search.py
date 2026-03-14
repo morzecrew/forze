@@ -20,6 +20,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
 from ..kernel.gateways import (
@@ -32,6 +33,10 @@ from ..kernel.platform import PostgresClient
 from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="postgres.search")
+
+# ....................... #
 
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
@@ -74,6 +79,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         spec: SearchIndexSpecInternal,
     ) -> SearchGateway[M]:
         if index in self.__gw_cache:
+            logger.trace("Returning cached gateway for index %s", index)
             return self.__gw_cache[index]
 
         q = PostgresQualifiedName.from_string(index)
@@ -90,6 +96,8 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
 
         match index_info.engine:
             case "pgroonga":
+                logger.trace("Using PGroonga search gateway for index %s", index)
+
                 gw = PostgresPGroongaSearchGateway[M](
                     qname=q_source,
                     client=self.client,
@@ -99,6 +107,8 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
                 )
 
             case "fts":
+                logger.trace("Using FTS search gateway for index %s", index)
+
                 gw = PostgresFTSSearchGateway[M](
                     qname=q_source,
                     client=self.client,
@@ -172,6 +182,13 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         index, spec = self.search_spec.pick_index(options)
         gw = await self._pick_gateway(index, spec)
+
+        logger.trace(
+            "Searching %s in index %s (query='%s')",
+            gw.model.__qualname__,
+            index,
+            query if len(query) < 10 else query[:10] + "...",
+        )
 
         return await gw.search(  # type: ignore[misc]
             query=query,

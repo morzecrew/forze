@@ -12,11 +12,15 @@ from typing import AsyncIterator, final
 import attrs
 
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
+from forze.base.logging import getLogger
 
 from ..kernel.platform import PostgresClient, PostgresTransactionOptions
 
 # ----------------------- #
 
+logger = getLogger(__name__).bind(scope="postgres.txmanager")
+
+# ....................... #
 PostgresTxScopeKey = TxScopeKey("postgres")
 """Key used to scope the Postgres transaction."""
 
@@ -42,5 +46,7 @@ class PostgresTxManagerAdapter(TxManagerPort):
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
+        logger.trace("Starting Postgres transaction")
+
         async with self.client.transaction(options=self.options):
             yield

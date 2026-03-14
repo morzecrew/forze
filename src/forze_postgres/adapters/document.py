@@ -1,5 +1,7 @@
 """Postgres adapter implementing the document read/write port contracts."""
 
+from functools import cached_property
+
 from forze.base.logging import getLogger
 from forze_postgres._compat import require_psycopg
 
@@ -75,6 +77,19 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
+    @cached_property
+    def _rgw_qname(self) -> str:
+        return self.read_gw.model.__qualname__
+
+    @cached_property
+    def _wgw_qname(self) -> str:
+        if self.write_gw is None:
+            raise CoreError("Write gateway is not configured")
+
+        return self.write_gw.model.__qualname__
+
+    # ....................... #
+
     def _require_write(self) -> PostgresWriteGateway[D, C, U]:
         if self.write_gw is None:
             raise CoreError("Write gateway is not configured")
@@ -115,10 +130,14 @@ class PostgresDocumentAdapter(
                 await self.cache.set_versioned(
                     str(doc.id), str(doc.rev), self._map_to_cache(doc)
                 )
-                logger.debug("Cache set successfully for 1 document(s)")
+                logger.trace(
+                    "Cache set successfully for 1 %s document", self._rgw_qname
+                )
 
             except Exception as e:
-                logger.exception("Cache set failed for 1 document(s), continuing")
+                logger.debug(
+                    "Cache set failed for 1 %s document, continuing", self._rgw_qname
+                )
 
                 with logger.section():
                     logger.trace("Cache exception: %s", e)
@@ -133,11 +152,17 @@ class PostgresDocumentAdapter(
                     (str(x.id), str(x.rev)): y for x, y in zip(docs, res_cache)
                 }
                 await self.cache.set_many_versioned(res_cache_map)
-                logger.debug("Cache set successfully for %d document(s)", len(docs))
+                logger.trace(
+                    "Cache set successfully for %d %s document(s)",
+                    len(docs),
+                    self._rgw_qname,
+                )
 
             except Exception as e:
-                logger.exception(
-                    "Cache set failed for %d document(s), continuing", len(docs)
+                logger.debug(
+                    "Cache set failed for %d %s document(s), continuing",
+                    len(docs),
+                    self._rgw_qname,
                 )
 
                 with logger.section():
@@ -149,11 +174,17 @@ class PostgresDocumentAdapter(
         if self.cache is not None:
             try:
                 await self.cache.delete_many([str(pk) for pk in pks], hard=True)
-                logger.debug("Cache cleared successfully for %d document(s)", len(pks))
+                logger.trace(
+                    "Cache cleared successfully for %d %s document(s)",
+                    len(pks),
+                    self._rgw_qname,
+                )
 
             except Exception as e:
-                logger.exception(
-                    "Cache clear failed for %d document(s), continuing", len(pks)
+                logger.debug(
+                    "Cache clear failed for %d %s document(s), continuing",
+                    len(pks),
+                    self._rgw_qname,
                 )
 
                 with logger.section():
@@ -186,6 +217,8 @@ class PostgresDocumentAdapter(
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
     ) -> R | JsonDict:
+        logger.trace("Fetching 1 %s document (pk=%s)", self._rgw_qname, pk)
+
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get(
                 pk,
@@ -197,8 +230,9 @@ class PostgresDocumentAdapter(
             cached = await self.cache.get(str(pk))
 
         except Exception as e:
-            logger.exception(
-                "Cache get failed for 1 document(s), falling back to read gateway"
+            logger.debug(
+                "Cache get failed for 1 %s document, falling back to read gateway",
+                self._rgw_qname,
             )
 
             with logger.section():
@@ -211,9 +245,12 @@ class PostgresDocumentAdapter(
             )
 
         if cached is not None:
-            logger.debug("Retrieved 1 cached document(s)")
+            logger.trace("Retrieved 1 cached %s document", self._rgw_qname)
             return pydantic_validate(self.read_gw.model, cached)
 
+        logger.debug(
+            "Fetching 1 %s document from database (cache miss)", self._rgw_qname
+        )
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
 
@@ -243,6 +280,16 @@ class PostgresDocumentAdapter(
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Sequence[R] | Sequence[JsonDict]:
+        if not pks:
+            return []
+
+        logger.trace(
+            "Fetching %d %s document(s) (first_pk=%s)",
+            len(pks),
+            self._rgw_qname,
+            pks[0],
+        )
+
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
@@ -250,12 +297,15 @@ class PostgresDocumentAdapter(
             hits, misses = await self.cache.get_many([str(pk) for pk in pks])
 
             if hits:
-                logger.debug("Retrieved %d cached document(s)", len(hits))
+                logger.trace(
+                    "Retrieved %d cached %s document(s)", len(hits), self._rgw_qname
+                )
 
         except Exception as e:
-            logger.exception(
-                "Cache get failed for %d document(s), falling back to read gateway",
+            logger.debug(
+                "Cache get failed for %d %s document(s), falling back to read gateway",
                 len(pks),
+                self._rgw_qname,
             )
 
             with logger.section():
@@ -266,6 +316,12 @@ class PostgresDocumentAdapter(
         miss_res: list[R] = []
 
         if misses:
+            logger.debug(
+                "Fetching %d %s document(s) from database (cache miss)",
+                len(misses),
+                self._rgw_qname,
+            )
+
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
             await self._set_cache_many(miss_res)
 
@@ -302,6 +358,13 @@ class PostgresDocumentAdapter(
         for_update: bool = False,
         return_fields: Optional[Sequence[str]] = None,
     ) -> Optional[R | JsonDict]:
+        logger.trace(
+            "Finding 1 %s document (filter by %s, for_update=%s)",
+            self._rgw_qname,
+            list(filters.keys()),  # type: ignore[attr-defined]
+            for_update,
+        )
+
         return await self.read_gw.find(
             filters,
             for_update=for_update,
@@ -341,13 +404,21 @@ class PostgresDocumentAdapter(
         *,
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
+        logger.trace(
+            "Finding %s documents (filter by %s, limit=%s, offset=%s, sorts=%s)",
+            self._rgw_qname,
+            list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
+            limit if limit is not None else "N/A",
+            offset if offset is not None else "N/A",
+            sorts if sorts is not None else "N/A",
+        )
         cnt = await self.read_gw.count(filters)
 
         if not cnt:
-            logger.debug("No documents found")
+            logger.debug("No %s documents found", self._rgw_qname)
             return [], 0
 
-        logger.debug("Found %d documents(s) matching filters", cnt)
+        logger.debug("Found %d %s documents matching filters", cnt, self._rgw_qname)
 
         res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,
@@ -362,12 +433,20 @@ class PostgresDocumentAdapter(
     # ....................... #
 
     async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
+        logger.trace(
+            "Counting %s documents (filter by %s)",
+            self._rgw_qname,
+            list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
+        )
+
         return await self.read_gw.count(filters)
 
     # ....................... #
 
     async def create(self, dto: C) -> R:
         w = self._require_write()
+
+        logger.trace("Creating 1 %s document", self._wgw_qname)
         domain = await w.create(dto)
 
         # Repeat read is required to meet criteria for diverse read and write sources
@@ -380,6 +459,14 @@ class PostgresDocumentAdapter(
 
     async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
         w = self._require_write()
+
+        if not dtos:
+            logger.debug(
+                "Empty list of payloads, skipping creation for %s", self._wgw_qname
+            )
+            return []
+
+        logger.trace("Creating %d %s documents", len(dtos), self._wgw_qname)
         domains = await w.create_many(dtos)
 
         # Repeate read is required to meet criteria for diverse read and write sources
@@ -393,6 +480,7 @@ class PostgresDocumentAdapter(
     async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
+        logger.trace("Updating 1 %s document (pk=%s)", self._rgw_qname, pk)
         await w.update(pk, dto, rev=rev)
         await self._clear_cache(pk)
 
@@ -413,6 +501,19 @@ class PostgresDocumentAdapter(
     ) -> Sequence[R]:
         w = self._require_write()
 
+        if not pks or not dtos:
+            logger.debug(
+                "Empty list of primary keys or payloads, skipping update for %s",
+                self._wgw_qname,
+            )
+            return []
+
+        logger.trace(
+            "Updating %d %s documents (first_pk=%s)",
+            len(pks),
+            self._wgw_qname,
+            pks[0],
+        )
         await w.update_many(pks, dtos, revs=revs)
         await self._clear_cache(*pks)
 
@@ -427,6 +528,7 @@ class PostgresDocumentAdapter(
     async def touch(self, pk: UUID) -> R:
         w = self._require_write()
 
+        logger.trace("Touching 1 %s document (pk=%s)", self._wgw_qname, pk)
         await w.touch(pk)
         await self._clear_cache(pk)
 
@@ -441,6 +543,15 @@ class PostgresDocumentAdapter(
     async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
         w = self._require_write()
 
+        if not pks:
+            logger.debug(
+                "Empty list of primary keys, skipping touch for %s", self._wgw_qname
+            )
+            return []
+
+        logger.trace(
+            "Touching %d %s documents (first_pk=%s)", len(pks), self._wgw_qname, pks[0]
+        )
         await w.touch_many(pks)
         await self._clear_cache(*pks)
 
@@ -455,6 +566,7 @@ class PostgresDocumentAdapter(
     async def kill(self, pk: UUID) -> None:
         w = self._require_write()
 
+        logger.trace("Hard-deleting 1 %s document (pk=%s)", self._rgw_qname, pk)
         await w.kill(pk)
         await self._clear_cache(pk)
 
@@ -463,6 +575,19 @@ class PostgresDocumentAdapter(
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         w = self._require_write()
 
+        if not pks:
+            logger.debug(
+                "Empty list of primary keys, skipping hard-delete for %s",
+                self._wgw_qname,
+            )
+            return None
+
+        logger.trace(
+            "Hard-deleting %d %s documents (first_pk=%s)",
+            len(pks),
+            self._rgw_qname,
+            pks[0],
+        )
         await w.kill_many(pks)
         await self._clear_cache(*pks)
 
@@ -471,6 +596,7 @@ class PostgresDocumentAdapter(
     async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
+        logger.trace("Soft-deleting 1 %s document (pk=%s)", self._rgw_qname, pk)
         await w.delete(pk, rev=rev)
         await self._clear_cache(pk)
 
@@ -490,6 +616,19 @@ class PostgresDocumentAdapter(
     ) -> Sequence[R]:
         w = self._require_write()
 
+        if not pks:
+            logger.debug(
+                "Empty list of primary keys, skipping soft-delete for %s",
+                self._wgw_qname,
+            )
+            return []
+
+        logger.trace(
+            "Soft-deleting %d %s documents (first_pk=%s)",
+            len(pks),
+            self._wgw_qname,
+            pks[0],
+        )
         await w.delete_many(pks, revs=revs)
         await self._clear_cache(*pks)
 
@@ -504,6 +643,7 @@ class PostgresDocumentAdapter(
     async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
         w = self._require_write()
 
+        logger.trace("Restoring 1 %s document (pk=%s)", self._wgw_qname, pk)
         await w.restore(pk, rev=rev)
         await self._clear_cache(pk)
 
@@ -523,6 +663,15 @@ class PostgresDocumentAdapter(
     ) -> Sequence[R]:
         w = self._require_write()
 
+        if not pks:
+            logger.debug(
+                "Empty list of primary keys, skipping restore for %s", self._wgw_qname
+            )
+            return []
+
+        logger.trace(
+            "Restoring %d %s documents (first_pk=%s)", len(pks), self._wgw_qname, pks[0]
+        )
         await w.restore_many(pks, revs=revs)
         await self._clear_cache(*pks)
 

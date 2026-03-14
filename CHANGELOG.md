@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Log format: ``safe_preview`` skips empty values; type fallback no longer wrapped in angle brackets.
 - Logging: use ``logger.section()`` and ``logger.contextualize(scope=...)`` in lifecycle, runtime, and usecase; log format shows scope instead of logger name.
 - Logging: extend scope contextualize to registry, lifecycle plan creation, idempotency; usecase uses ``safe_preview`` instead of ``_args_safe_for_logging``; remove ``log_parameters`` from usecase.
+- Postgres document adapter: add trace/debug logs with model qualname; downgrade cache exception logs to debug; early return for empty bulk operations.
+- Postgres search and txmanager adapters: add scope-bound logger and trace logs.
 
 ### Fixed
 
