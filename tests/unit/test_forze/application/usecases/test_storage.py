@@ -2,15 +2,12 @@
 
 import pytest
 
+from forze.application.dto import ListObjectsRequestDTO, UploadObjectRequestDTO
 from forze.application.usecases.storage import (
     DeleteObject,
-    DeleteObjectArgs,
     DownloadObject,
-    DownloadObjectArgs,
     ListObjects,
-    ListObjectsArgs,
     UploadObject,
-    UploadObjectArgs,
 )
 
 # ----------------------- #
@@ -28,11 +25,11 @@ class TestStorageUsecases:
 
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
         uploaded = await upload_uc(
-            UploadObjectArgs(filename="hello.txt", data=b"hello", prefix="docs")
+            UploadObjectRequestDTO(filename="hello.txt", data=b"hello", prefix="docs")
         )
 
         download_uc = DownloadObject(ctx=stub_ctx, storage=storage)
-        downloaded = await download_uc(DownloadObjectArgs(key=uploaded["key"]))
+        downloaded = await download_uc(uploaded["key"])
 
         assert uploaded["filename"] == "hello.txt"
         assert downloaded["data"] == b"hello"
@@ -45,12 +42,12 @@ class TestStorageUsecases:
         storage = stub_ctx.storage("files")
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
 
-        await upload_uc(UploadObjectArgs(filename="a.txt", data=b"a", prefix="docs"))
-        await upload_uc(UploadObjectArgs(filename="b.txt", data=b"b", prefix="docs"))
-        await upload_uc(UploadObjectArgs(filename="c.txt", data=b"c", prefix="tmp"))
+        await upload_uc(UploadObjectRequestDTO(filename="a.txt", data=b"a", prefix="docs"))
+        await upload_uc(UploadObjectRequestDTO(filename="b.txt", data=b"b", prefix="docs"))
+        await upload_uc(UploadObjectRequestDTO(filename="c.txt", data=b"c", prefix="tmp"))
 
         list_uc = ListObjects(ctx=stub_ctx, storage=storage)
-        result = await list_uc(ListObjectsArgs(page=1, size=10, prefix="docs"))
+        result = await list_uc(ListObjectsRequestDTO(page=1, size=10, prefix="docs"))
 
         assert result.count == 2
         assert len(result.hits) == 2
@@ -62,12 +59,12 @@ class TestStorageUsecases:
     ) -> None:
         storage = stub_ctx.storage("files")
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
-        uploaded = await upload_uc(UploadObjectArgs(filename="gone.txt", data=b"x"))
+        uploaded = await upload_uc(UploadObjectRequestDTO(filename="gone.txt", data=b"x"))
 
         delete_uc = DeleteObject(ctx=stub_ctx, storage=storage)
-        await delete_uc(DeleteObjectArgs(key=uploaded["key"]))
+        await delete_uc(uploaded["key"])
 
         list_uc = ListObjects(ctx=stub_ctx, storage=storage)
-        result = await list_uc(ListObjectsArgs(page=1, size=10))
+        result = await list_uc(ListObjectsRequestDTO(page=1, size=10))
 
         assert result.count == 0

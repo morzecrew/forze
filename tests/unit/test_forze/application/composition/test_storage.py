@@ -1,7 +1,6 @@
 """Unit tests for forze.application.composition.storage."""
 
 from forze.application.composition.storage import (
-    StorageDTOs,
     StorageOperation,
     StorageUsecasesFacade,
     build_storage_registry,
@@ -15,11 +14,11 @@ class TestBuildStorageRegistry:
     """Tests for build_storage_registry."""
 
     def test_returns_registry(self) -> None:
-        reg = build_storage_registry("files", StorageDTOs())
+        reg = build_storage_registry("files")
         assert isinstance(reg, UsecaseRegistry)
 
     def test_has_core_operations(self) -> None:
-        reg = build_storage_registry("files", StorageDTOs())
+        reg = build_storage_registry("files")
         assert reg.exists(StorageOperation.UPLOAD)
         assert reg.exists(StorageOperation.LIST)
         assert reg.exists(StorageOperation.DOWNLOAD)
@@ -29,7 +28,7 @@ class TestBuildStorageRegistry:
         self,
         composition_ctx,
     ) -> None:
-        reg = build_storage_registry("files", StorageDTOs())
+        reg = build_storage_registry("files")
         uc = reg.resolve(StorageOperation.UPLOAD, composition_ctx)
         assert uc is not None
 
@@ -41,7 +40,7 @@ class TestStorageFacadeWithRegistry:
         self,
         composition_ctx,
     ) -> None:
-        reg = build_storage_registry("files", StorageDTOs())
+        reg = build_storage_registry("files")
         facade = StorageUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.upload
         assert uc is not None
