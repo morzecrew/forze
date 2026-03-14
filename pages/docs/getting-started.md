@@ -144,31 +144,29 @@ The runtime has two parts: a **dependency plan** that assembles the container an
 
 ## Step 4: Create the FastAPI application
 
-Build a facade provider that wires usecase factories and a plan, then mount it as a router.
+Build a registry that wires usecase factories for the spec, then mount it as a router.
 
     :::python
     from fastapi import FastAPI
 
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
         build_document_registry,
+        tx_document_plan,
     )
     from forze_fastapi.routers import build_document_router
 
 
     app = FastAPI(title="Projects API")
 
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={
-            "read": ProjectReadModel,
-            "create": CreateProjectCmd,
-            "update": UpdateProjectCmd,
-        },
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
+
+    registry = build_document_registry(project_spec, project_dtos)
+    registry.extend_plan(tx_document_plan, inplace=True)
 
 
     def context_dependency():
@@ -179,8 +177,10 @@ Build a facade provider that wires usecase factories and a plan, then mount it a
         build_document_router(
             prefix="/projects",
             tags=["projects"],
-            provider=provider,
-            context=context_dependency,
+            registry=registry,
+            spec=project_spec,
+            dtos=project_dtos,
+            ctx_dep=context_dependency,
         )
     )
 
@@ -253,9 +253,9 @@ Optionally add a history table for audit trails:
     from fastapi import FastAPI
 
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
         build_document_registry,
+        tx_document_plan,
     )
     from forze.application.contracts.document import DocumentSpec
     from forze.application.execution import (
@@ -353,23 +353,23 @@ Optionally add a history table for audit trails:
 
     app = FastAPI(title="Projects API")
 
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={
-            "read": ProjectReadModel,
-            "create": CreateProjectCmd,
-            "update": UpdateProjectCmd,
-        },
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
+
+    registry = build_document_registry(project_spec, project_dtos)
+    registry.extend_plan(tx_document_plan, inplace=True)
 
     app.include_router(
         build_document_router(
             prefix="/projects",
             tags=["projects"],
-            provider=provider,
-            context=lambda: runtime.get_context(),
+            registry=registry,
+            spec=project_spec,
+            dtos=project_dtos,
+            ctx_dep=lambda: runtime.get_context(),
         )
     )
 
@@ -390,4 +390,4 @@ Optionally add a history table for audit trails:
 
 - [Core Concepts](core-concepts/index.md): understand the architecture, layers, and execution model
 - [Core Package](core-package/index.md): query syntax, specifications, and advanced composition
-- Integration guides: [FastAPI](integrations/fastapi.md) | [PostgreSQL](integrations/postgres.md) | [Redis](integrations/redis.md) | [S3](integrations/s3.md) | [MongoDB](integrations/mongo.md) | [Socket.IO](integrations/socketio.md) | [Temporal](integrations/temporal.md)
+- Integration guides: [FastAPI](integrations/fastapi.md) | [PostgreSQL](integrations/postgres.md) | [Redis](integrations/redis.md) | [S3](integrations/s3.md) | [MongoDB](integrations/mongo.md) | [Socket.IO](integrations/socketio.md) | [Temporal](integrations/temporal.md) | [Mock](integrations/mock.md)

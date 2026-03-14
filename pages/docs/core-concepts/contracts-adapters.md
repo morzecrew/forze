@@ -220,17 +220,25 @@ Integration modules register their adapters at dependency plan build time:
 
 ## Testing
 
-Tests stub contracts with in-memory or fake implementations. Build a `Deps` container with only the ports your test needs:
+Tests stub contracts with in-memory or fake implementations. The `forze_mock` package provides ready-made adapters for all contracts, backed by shared in-memory state:
 
     :::python
-    from forze.application.execution import Deps, ExecutionContext
+    from forze.application.execution import Deps, DepsPlan, ExecutionContext
+    from forze_mock import MockDepsModule
 
+    module = MockDepsModule()
+    deps_plan = DepsPlan.from_modules(module)
+    ctx = ExecutionContext(deps=deps_plan.build())
+
+    doc = ctx.doc_read(project_spec)
+    result = await doc.get(some_uuid)
+
+You can also build a `Deps` container manually with only the ports your test needs:
+
+    :::python
     deps = Deps({
         DocumentReadDepKey: lambda ctx, spec, cache=None: FakeDocReadAdapter(),
     })
     ctx = ExecutionContext(deps=deps)
 
-    doc = ctx.doc_read(project_spec)
-    result = await doc.get(some_uuid)
-
-No real databases or external services are needed for unit testing business logic.
+No real databases or external services are needed for unit testing business logic. See the [Mock integration guide](../integrations/mock.md) for full details.

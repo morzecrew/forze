@@ -9,9 +9,18 @@ Forze provides pre-built composition layers for document and search aggregates, 
 Creates a `UsecaseRegistry` pre-populated with standard CRUD usecase factories:
 
     :::python
-    from forze.application.composition.document import build_document_registry
+    from forze.application.composition.document import (
+        DocumentDTOs,
+        build_document_registry,
+    )
 
-    registry = build_document_registry(project_spec)
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
+    )
+
+    registry = build_document_registry(project_spec, project_dtos)
 
 The registry includes factories for all `DocumentOperation` variants:
 
@@ -23,82 +32,67 @@ The registry includes factories for all `DocumentOperation` variants:
 | `KILL` | `KillDocument` | `UUID` | `None` |
 | `DELETE` | `DeleteDocument` | `SoftDeleteArgs` | `R` |
 | `RESTORE` | `RestoreDocument` | `SoftDeleteArgs` | `R` |
+| `LIST` | `TypedListDocuments` | `tL` | `Paginated[R]` |
+| `RAW_LIST` | `RawListDocuments` | `rL` | `RawPaginated` |
 
-`DELETE` and `RESTORE` are only registered when the domain model supports soft deletion.
+`DELETE` and `RESTORE` are only registered when the domain model supports soft deletion. `UPDATE` is only registered when the spec supports update.
 
-### build_document_plan
+### tx_document_plan
 
-Creates a default `UsecasePlan` with transaction wrapping for write operations:
+A pre-built `UsecasePlan` with transaction wrapping for all operations:
 
     :::python
-    from forze.application.composition.document import build_document_plan
+    from forze.application.composition.document import tx_document_plan
 
-    plan = build_document_plan()
+    registry.extend_plan(tx_document_plan, inplace=True)
 
 ### DocumentUsecasesFacade
 
-Typed facade exposing document operations as methods:
+Typed facade exposing document operations as attributes:
 
     :::python
-    facade = provider(ctx)
+    from forze.application.composition.document import DocumentUsecasesFacade
 
-    project = await facade.create()(CreateProjectCmd(title="New"))
-    fetched = await facade.get()(project.id)
-    updated = await facade.update()(UpdateArgs(pk=project.id, dto=UpdateProjectCmd(title="Updated")))
-    await facade.kill()(project.id)
+    facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
 
-| Method | Returns |
-|--------|---------|
-| `get()` | `Usecase[UUID, R]` |
-| `create()` | `Usecase[C, R]` |
-| `update()` | `Usecase[UpdateArgs[U], R]` |
-| `kill()` | `Usecase[UUID, None]` |
-| `delete()` | `Usecase[SoftDeleteArgs, R]` |
-| `restore()` | `Usecase[SoftDeleteArgs, R]` |
+    project = await facade.create(CreateProjectCmd(title="New"))
+    fetched = await facade.get(project.id)
+    updated = await facade.update(UpdateArgs(pk=project.id, dto=UpdateProjectCmd(title="Updated")))
+    await facade.kill(project.id)
 
-Each method resolves the usecase from the registry with the plan's middleware chain.
+| Attribute | Resolved usecase |
+|-----------|-----------------|
+| `get` | `GetDocument[R]` |
+| `create` | `CreateDocument[C, D, R]` |
+| `update` | `UpdateDocument[U, D, R]` |
+| `kill` | `KillDocument` |
+| `delete` | `DeleteDocument[R]` |
+| `restore` | `RestoreDocument[R]` |
+| `list` | `TypedListDocuments[tL, R]` |
+| `raw_list` | `RawListDocuments[rL]` |
 
-### DocumentUsecasesFacadeProvider
+Each attribute resolves the usecase from the registry with the plan's middleware chain.
 
-Factory that produces a facade for a given context:
+### DocumentDTOs
+
+An attrs class mapping DTO types for a document aggregate:
 
     :::python
-    from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
-        build_document_registry,
+    from forze.application.composition.document import DocumentDTOs
+
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
 
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={
-            "read": ProjectRead,
-            "create": CreateProjectCmd,
-            "update": UpdateProjectCmd,
-        },
-    )
-
-    # At request time
-    facade = provider(ctx)
-
-| Field | Type | Purpose |
-|-------|------|---------|
-| `spec` | `DocumentSpec` | Aggregate specification |
-| `reg` | `UsecaseRegistry` | Registry with usecase factories |
-| `plan` | `UsecasePlan` | Middleware composition plan |
-| `dtos` | `DocumentDTOSpec` | DTO type mapping for facade typing |
-
-### DocumentDTOSpec
-
-TypedDict mapping DTO types for a document aggregate:
-
-| Key | Type | Required |
-|-----|------|----------|
+| Field | Type | Required |
+|-------|------|----------|
 | `read` | `type[ReadDocument]` | Yes |
 | `create` | `type[BaseDTO]` | No |
 | `update` | `type[BaseDTO]` | No |
+| `list` | `type[ListRequestDTO]` | No |
+| `raw_list` | `type[RawListRequestDTO]` | No |
 
 ### Extending document composition
 
@@ -107,19 +101,19 @@ Add custom middleware to the default plan or register custom operations:
     :::python
     from forze.application.composition.document import (
         DocumentOperation,
-        build_document_plan,
         build_document_registry,
+        tx_document_plan,
     )
 
     # Custom middleware
     plan = (
-        build_document_plan()
+        tx_document_plan
         .before(DocumentOperation.CREATE, auth_guard, priority=100)
         .after_commit(DocumentOperation.CREATE, notify_effect)
     )
 
     # Custom operation
-    registry = build_document_registry(project_spec)
+    registry = build_document_registry(project_spec, project_dtos)
     registry = registry.register(
         "archive",
         lambda ctx: ArchiveProject(ctx=ctx),
@@ -149,33 +143,21 @@ Typed argument containers for update and soft-delete usecases:
 Creates a registry with typed and raw search usecase factories:
 
     :::python
-    from forze.application.composition.search import build_search_registry
-
-    search_registry = build_search_registry(search_spec)
-
-### build_search_plan
-
-Creates a default plan for search operations:
-
-    :::python
-    from forze.application.composition.search import build_search_plan
-
-    search_plan = build_search_plan()
-
-### SearchUsecasesFacadeProvider
-
-    :::python
-    from forze.application.composition.search import SearchUsecasesFacadeProvider
-
-    search_provider = SearchUsecasesFacadeProvider(
-        spec=search_spec,
-        reg=search_registry,
-        plan=search_plan,
-        read_dto=ProjectRead,
+    from forze.application.composition.search import (
+        SearchDTOs,
+        build_search_registry,
     )
 
-    facade = search_provider(ctx)
-    result = await facade.typed_search()(TypedSearchArgs(query="roadmap", limit=20))
+    search_dtos = SearchDTOs(read=ProjectRead)
+    search_registry = build_search_registry(search_spec, search_dtos)
+
+### SearchUsecasesFacade
+
+    :::python
+    from forze.application.composition.search import SearchUsecasesFacade
+
+    facade = SearchUsecasesFacade(ctx=ctx, reg=search_registry)
+    result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 
 ### SearchOperation
 
@@ -196,6 +178,7 @@ Pipeline that maps a Pydantic source model to an output DTO:
     from forze.application.mapping import DTOMapper
 
     mapper = DTOMapper(
+        in_=CreateProjectDTO,
         out=CreateProjectCmd,
         steps=(NumberIdStep(namespace="projects"),),
     )
@@ -255,7 +238,7 @@ Factory that creates a mapper pre-configured for document creation:
     :::python
     from forze.application.composition.document import build_document_create_mapper
 
-    mapper = build_document_create_mapper(project_spec)
+    mapper = build_document_create_mapper(project_spec, project_dtos)
     mapper = mapper.with_steps(NumberIdStep(namespace="projects"))
 
 ## DTOs
@@ -323,42 +306,40 @@ A complete example wiring document and search composition:
 
     :::python
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
+        DocumentUsecasesFacade,
         build_document_registry,
+        tx_document_plan,
     )
     from forze.application.composition.search import (
-        SearchUsecasesFacadeProvider,
-        build_search_plan,
+        SearchDTOs,
+        SearchUsecasesFacade,
         build_search_registry,
     )
 
-    # Document facade
-    project_provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={"read": ProjectRead, "create": CreateProjectCmd, "update": UpdateProjectCmd},
+    # Document registry
+    project_dtos = DocumentDTOs(
+        read=ProjectRead,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
+    doc_registry = build_document_registry(project_spec, project_dtos)
+    doc_registry.extend_plan(tx_document_plan, inplace=True)
 
-    # Search facade
-    project_search_provider = SearchUsecasesFacadeProvider(
-        spec=project_search_spec,
-        reg=build_search_registry(project_search_spec),
-        plan=build_search_plan(),
-        read_dto=ProjectRead,
-    )
+    # Search registry
+    search_dtos = SearchDTOs(read=ProjectRead)
+    search_registry = build_search_registry(project_search_spec, search_dtos)
 
     # At request time
     ctx = runtime.get_context()
-    docs = project_provider(ctx)
-    search = project_search_provider(ctx)
+    docs = DocumentUsecasesFacade(ctx=ctx, reg=doc_registry)
+    search = SearchUsecasesFacade(ctx=ctx, reg=search_registry)
 
     # CRUD
-    created = await docs.create()(CreateProjectCmd(title="Roadmap"))
-    fetched = await docs.get()(created.id)
+    created = await docs.create(CreateProjectCmd(title="Roadmap"))
+    fetched = await docs.get(created.id)
 
     # Search
-    results = await search.typed_search()(
-        TypedSearchArgs(query="roadmap", limit=20)
+    results = await search.search(
+        SearchRequestDTO(query="roadmap", limit=20)
     )

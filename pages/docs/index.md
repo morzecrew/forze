@@ -53,3 +53,4 @@ Read more in [Layered Architecture](core-concepts/layered-architecture.md).
 | `forze_temporal` | Temporal workflow integration (scaffolding) |
 | `forze_sqs` | SQS message queue adapter |
 | `forze_rabbitmq` | RabbitMQ message queue adapter |
+| `forze_mock` | In-memory mock adapters for development and testing |

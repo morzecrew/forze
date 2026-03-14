@@ -252,7 +252,7 @@ RabbitMQ is typically combined with Postgres and Redis:
 Use RabbitMQ as a reliable event bus by dispatching messages in after-commit effects:
 
     :::python
-    from forze.application.composition.document import DocumentOperation, build_document_plan
+    from forze.application.composition.document import DocumentOperation, tx_document_plan
 
 
     def order_created_effect(ctx):
@@ -268,7 +268,7 @@ Use RabbitMQ as a reliable event bus by dispatching messages in after-commit eff
 
 
     plan = (
-        build_document_plan()
+        tx_document_plan
         .after_commit(DocumentOperation.CREATE, order_created_effect)
     )
 

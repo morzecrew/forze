@@ -195,34 +195,35 @@ Forze ships built-in usecases for standard document CRUD:
 | `KILL` | `KillDocument` | `UUID` | `None` |
 | `DELETE` | `DeleteDocument` | `SoftDeleteArgs` | `R` |
 | `RESTORE` | `RestoreDocument` | `SoftDeleteArgs` | `R` |
+| `LIST` | `TypedListDocuments` | `tL` (list request) | `Paginated[R]` |
+| `RAW_LIST` | `RawListDocuments` | `rL` (raw list request) | `RawPaginated` |
 
-These are wired automatically by `build_document_registry()` and composed with middleware via `build_document_plan()`.
+These are wired automatically by `build_document_registry()` and composed with middleware via `tx_document_plan`.
 
-## Facade providers
+## Facades
 
-A `DocumentUsecasesFacadeProvider` ties together the spec, registry, plan, and DTO types. When called with an execution context, it produces a typed facade:
+A `DocumentUsecasesFacade` ties together an execution context and a registry. It provides typed access to resolved usecases:
 
     :::python
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
+        DocumentUsecasesFacade,
         build_document_registry,
+        tx_document_plan,
     )
 
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={
-            "read": ProjectReadModel,
-            "create": CreateProjectCmd,
-            "update": UpdateProjectCmd,
-        },
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
 
-    facade = provider(ctx)
-    project = await facade.create()(CreateProjectCmd(title="New"))
+    registry = build_document_registry(project_spec, project_dtos)
+    registry.extend_plan(tx_document_plan, inplace=True)
 
-The facade exposes typed methods: `get()`, `create()`, `update()`, `kill()`, `delete()`, `restore()`. Each returns a composed `Usecase` ready to call.
+    facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
+    project = await facade.create(CreateProjectCmd(title="New"))
 
-Similarly, `SearchUsecasesFacadeProvider` builds facades for full-text search operations with `typed_search()` and `raw_search()` methods.
+The facade exposes typed attributes: `get`, `create`, `update`, `kill`, `delete`, `restore`. Each resolves a composed `Usecase` from the registry.
+
+Similarly, `SearchUsecasesFacade` provides `search` and `raw_search` attributes for full-text search operations.

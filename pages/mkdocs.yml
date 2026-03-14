@@ -74,5 +74,6 @@ nav:
     - Temporal: integrations/temporal.md
     - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md
+    - Mock: integrations/mock.md
   # - API Reference:
   #   - Core: api/core.md

@@ -190,7 +190,7 @@ Factory types:
 Multiple plans can be merged for modular composition:
 
     :::python
-    base_plan = build_document_plan()
+    base_plan = tx_document_plan
     auth_plan = build_auth_plan()
     audit_plan = build_audit_plan()
 
