@@ -183,20 +183,21 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         index, spec = self.search_spec.pick_index(options)
         gw = await self._pick_gateway(index, spec)
 
-        logger.trace(
+        logger.debug(
             "Searching %s in index %s (query='%s')",
             gw.model.__qualname__,
             index,
             query if len(query) < 10 else query[:10] + "...",
         )
 
-        return await gw.search(  # type: ignore[misc]
-            query=query,
-            filters=filters,
-            limit=limit,
-            offset=offset,
-            sorts=sorts,
-            options=options,
-            return_model=return_model,  # type: ignore[arg-type]
-            return_fields=return_fields,  # type: ignore[arg-type]
-        )
+        with logger.section():
+            return await gw.search(  # type: ignore[misc]
+                query=query,
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                options=options,
+                return_model=return_model,  # type: ignore[arg-type]
+                return_fields=return_fields,  # type: ignore[arg-type]
+            )

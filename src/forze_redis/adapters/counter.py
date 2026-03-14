@@ -12,12 +12,17 @@ import attrs
 
 from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.tenant import TenantContextPort
-from forze.base.errors import ValidationError
 from forze.base.codecs import KeyCodec
+from forze.base.errors import ValidationError
+from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="redis.counter")
+
+# ....................... #
 
 
 @final
@@ -43,7 +48,12 @@ class RedisCounterAdapter(CounterPort):
     # ....................... #
 
     async def incr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
-        return await self.client.incr(self._build_key(suffix), by)
+        key = self._build_key(suffix)
+
+        logger.debug("Incrementing counter %s by %d", key, by)
+
+        with logger.section():
+            return await self.client.incr(key, by)
 
     # ....................... #
 
@@ -56,16 +66,31 @@ class RedisCounterAdapter(CounterPort):
         if size <= 1:
             raise ValidationError("Size must be greater than 1")
 
-        max_cnt = await self.client.incr(self._build_key(suffix), size)
+        key = self._build_key(suffix)
 
-        return list(range(max_cnt - size + 1, max_cnt + 1))
+        logger.debug("Incrementing batch of %d counters %s", size, key)
+
+        with logger.section():
+            max_cnt = await self.client.incr(key, size)
+
+            return list(range(max_cnt - size + 1, max_cnt + 1))
 
     # ....................... #
 
     async def decr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
-        return await self.client.decr(self._build_key(suffix), by)
+        key = self._build_key(suffix)
+
+        logger.debug("Decrementing counter %s by %d", key, by)
+
+        with logger.section():
+            return await self.client.decr(key, by)
 
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> int:
-        return await self.client.reset(self._build_key(suffix), value)
+        key = self._build_key(suffix)
+
+        logger.debug("Resetting counter %s to %d", key, value)
+
+        with logger.section():
+            return await self.client.reset(key, value)

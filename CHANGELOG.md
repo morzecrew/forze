@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logging: extend scope contextualize to registry, lifecycle plan creation, idempotency; usecase uses ``safe_preview`` instead of ``_args_safe_for_logging``; remove ``log_parameters`` from usecase.
 - Postgres document adapter: add trace/debug logs with model qualname; downgrade cache exception logs to debug; early return for empty bulk operations.
 - Postgres search and txmanager adapters: add scope-bound logger and trace logs.
+- Postgres document adapter: wrap read/write operations in ``logger.section()``; promote trace to debug for entry points.
+- Redis adapters: add scope-bound loggers and ``logger.section()`` to cache, counter, idempotency, pubsub, stream.
 
 ### Fixed
 

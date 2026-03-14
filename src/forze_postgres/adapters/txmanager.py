@@ -46,7 +46,7 @@ class PostgresTxManagerAdapter(TxManagerPort):
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
-        logger.trace("Starting Postgres transaction")
+        logger.debug("Starting transaction")
 
         async with self.client.transaction(options=self.options):
             yield

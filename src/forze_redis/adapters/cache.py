@@ -222,39 +222,54 @@ class RedisCacheAdapter(CachePort):
 
     async def get(self, key: str) -> Optional[Any]:
         # Try versioned first
-        pointers = await self.__mget_pointers([key])
+        logger.debug("Cache lookup for key=%s", key)
 
-        if pointers:
-            bodies = await self.__mget_bodies({key: pointers[key]})
-            if key in bodies:
-                return bodies[key]
+        with logger.section():
+            pointers = await self.__mget_pointers([key])
 
-        # Fallback to plain
-        kv = await self.__mget_kv([key])
+            if pointers:
+                bodies = await self.__mget_bodies({key: pointers[key]})
+                if key in bodies:
+                    logger.debug("Cache hit (versioned) key=%s", key)
+                    return bodies[key]
 
-        return kv.get(key)
+            # Fallback to plain
+            kv = await self.__mget_kv([key])
+
+            if key in kv:
+                logger.debug("Cache hit (plain) key=%s", key)
+                return kv[key]
+
+            logger.debug("Cache miss key=%s", key)
+            return None
 
     # ....................... #
 
     async def get_many(self, keys: Sequence[str]) -> tuple[dict[str, Any], list[str]]:
         if not keys:
+            logger.debug("Empty list of keys, skipping")
             return {}, []
 
-        # 1) versioned hits where pointer exists + body exists
-        pointers = await self.__mget_pointers(keys)
-        versioned_hits: dict[str, Any] = {}
+        logger.debug("Cache batch lookup for %d keys", len(keys))
 
-        if pointers:
-            versioned_hits = await self.__mget_bodies(pointers)
+        with logger.section():
+            # 1) versioned hits where pointer exists + body exists
+            pointers = await self.__mget_pointers(keys)
+            versioned_hits: dict[str, Any] = {}
 
-        # 2) for the rest, try plain KV
-        remaining = [k for k in keys if k not in versioned_hits]
-        kv_hits = await self.__mget_kv(remaining) if remaining else {}
+            if pointers:
+                versioned_hits = await self.__mget_bodies(pointers)
 
-        hits = {**versioned_hits, **kv_hits}
-        misses = [k for k in keys if k not in hits]
+            # 2) for the rest, try plain KV
+            remaining = [k for k in keys if k not in versioned_hits]
+            kv_hits = await self.__mget_kv(remaining) if remaining else {}
 
-        return hits, misses
+            hits = {**versioned_hits, **kv_hits}
+            misses = [k for k in keys if k not in hits]
+
+            logger.debug("Cache hits=%d, misses=%d", len(hits), len(misses))
+
+            return hits, misses
 
     # ....................... #
     # Public: write

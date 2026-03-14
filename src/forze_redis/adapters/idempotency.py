@@ -16,10 +16,15 @@ from forze.application.contracts.idempotency import IdempotencyPort, Idempotency
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import JsonCodec, KeyCodec
 from forze.base.errors import ConflictError
+from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="redis.idempotency")
+
+# ....................... #
 
 _PENDING: Final[str] = "P"
 _DONE: Final[str] = "D"
@@ -78,6 +83,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     def __key(self, op: str, key: str) -> str:
         if self.tenant_context is not None:
             return self.key_codec.join(str(self.tenant_context.get()), op, key)
+
         return self.key_codec.join(op, key)
 
     # ....................... #
@@ -109,41 +115,47 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         payload_hash: str,
     ) -> IdempotencySnapshot | None:
         if not key:
+            logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
-        k = self.__key(op, key)
-        idem_p = _Payload(st=_PENDING, ph=payload_hash)
+        logger.debug("Beginning idempotency for op '%s', key '%s'", op, key)
 
-        if await self.__acuire(k, idem_p):
-            return None
+        with logger.section():
+            k = self.__key(op, key)
+            idem_p = _Payload(st=_PENDING, ph=payload_hash)
 
-        raw = await self.client.get(k)
-
-        if raw is None:
             if await self.__acuire(k, idem_p):
+                logger.debug("Idempotency key is acquired, returning")
                 return None
 
-            raise ConflictError("Idempotency is in progress (not readable)")
+            raw = await self.client.get(k)
 
-        data: _Payload = self.json_codec.loads(raw)
+            if raw is None:
+                if await self.__acuire(k, idem_p):
+                    logger.debug("Idempotency key is acquired, returning")
+                    return None
 
-        data_st = data.get("st", "")
-        data_ph = data.get("ph", "")
-        data_b64 = data.get("body_b64", None)
+                raise ConflictError("Idempotency is in progress (not readable)")
 
-        if data_ph != payload_hash:
-            raise ConflictError("Payload hash mismatch")
+            data: _Payload = self.json_codec.loads(raw)
 
-        if data_st == _PENDING:
-            raise ConflictError("Idempotency is in progress (pending)")
+            data_st = data.get("st", "")
+            data_ph = data.get("ph", "")
+            data_b64 = data.get("body_b64", None)
 
-        if data_st != _DONE:
-            raise ConflictError("Idempotency is in progress (unknown state)")
+            if data_ph != payload_hash:
+                raise ConflictError("Payload hash mismatch")
 
-        if data_b64 is None:
-            raise ConflictError("Idempotency is in progress (done without body)")
+            if data_st == _PENDING:
+                raise ConflictError("Idempotency is in progress (pending)")
 
-        body = self.__decode_body(data_b64)
+            if data_st != _DONE:
+                raise ConflictError("Idempotency is in progress (unknown state)")
+
+            if data_b64 is None:
+                raise ConflictError("Idempotency is in progress (done without body)")
+
+            body = self.__decode_body(data_b64)
 
         return IdempotencySnapshot(
             code=int(data.get("code", 200)),
@@ -161,20 +173,29 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         snapshot: IdempotencySnapshot,
     ) -> None:
         if not key:
+            logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
-        k = self.__key(op, key)
-        idem_p = _Payload(
-            st=_DONE,
-            ph=payload_hash,
-            code=snapshot["code"],
-            ct=snapshot["content_type"],
-            body_b64=self.__encode_body(snapshot["body"]),
-        )
+        logger.debug("Committing idempotency for op '%s', key '%s'", op, key)
 
-        ok = await self.client.set(
-            k, self.json_codec.dumps(idem_p), ex=int(self.ttl.total_seconds()), xx=True
-        )
+        with logger.section():
+            k = self.__key(op, key)
+            idem_p = _Payload(
+                st=_DONE,
+                ph=payload_hash,
+                code=snapshot["code"],
+                ct=snapshot["content_type"],
+                body_b64=self.__encode_body(snapshot["body"]),
+            )
 
-        if not ok:
-            raise ConflictError("Idempotency commit failed (key missing or expired)")
+            ok = await self.client.set(
+                k,
+                self.json_codec.dumps(idem_p),
+                ex=int(self.ttl.total_seconds()),
+                xx=True,
+            )
+
+            if not ok:
+                raise ConflictError(
+                    "Idempotency commit failed (key missing or expired)"
+                )
