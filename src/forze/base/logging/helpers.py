@@ -175,6 +175,7 @@ def render_message(message: Any, args: tuple[Any, ...]) -> str:
     If ``%`` formatting fails (e.g. wrong number of args), falls back
     to appending a repr of the args.
     """
+
     text = str(message)
 
     if not args:

@@ -2,10 +2,10 @@ from typing import Self
 
 import attrs
 
-from forze.base.logging import getLogger, safe_preview
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
-from .middleware import Middleware, NextCall
+from .middleware import EffectMiddleware, GuardMiddleware, Middleware, NextCall
 
 # ----------------------- #
 
@@ -67,27 +67,35 @@ class Usecase[Args, R]:
         )
 
         async def last(args: Args) -> R:
-            safe_args = safe_preview(args)
-            logger.debug("Calling main with args: %s", safe_args)
+            logger.debug("Calling main %s", type(self).__qualname__)
             return await self.main(args)
 
         fn: NextCall[Args, R] = last
 
-        for mw in reversed(self.middlewares):
-            prev = fn
+        with logger.section():
+            for mw in reversed(self.middlewares):
+                prev = fn
 
-            logger.trace("Wrapping with middleware %s", type(mw).__qualname__)
+                if isinstance(mw, GuardMiddleware):
+                    qualname = type(mw.guard).__qualname__
 
-            async def wrapped(
-                a: Args,
-                *,
-                _mw: Middleware[Args, R] = mw,
-                _prev: NextCall[Args, R] = prev,
-            ) -> R:
-                logger.debug("Calling middleware %s", type(mw).__qualname__)
-                return await _mw(_prev, a)
+                elif isinstance(mw, EffectMiddleware):
+                    qualname = type(mw.effect).__qualname__
 
-            fn = wrapped
+                else:
+                    qualname = type(mw).__qualname__
+
+                logger.trace("Wrapping with %s", qualname)
+
+                async def wrapped(
+                    a: Args,
+                    *,
+                    _mw: Middleware[Args, R] = mw,
+                    _prev: NextCall[Args, R] = prev,
+                ) -> R:
+                    return await _mw(_prev, a)
+
+                fn = wrapped
 
         return fn
 
@@ -99,12 +107,12 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        logger.debug("Starting usecase execution")
+        logger.debug("Starting execution of usecase %s", type(self).__qualname__)
 
         with logger.section():
             chain = self._build_chain()
             result = await chain(args)
 
-        logger.debug("Usecase execution completed")
+        logger.debug("Finished execution of usecase %s", type(self).__qualname__)
 
         return result

@@ -14,10 +14,15 @@ import attrs
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import JsonCodec, KeyCodec, TextCodec
+from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="redis.cache")
+
+# ....................... #
 
 
 @final
@@ -312,6 +317,7 @@ class RedisCacheAdapter(CachePort):
 
         if hard:
             pointers = await self.__mget_pointers(keys)
+
             if pointers:
                 await self.__mdelete_bodies(pointers)
 

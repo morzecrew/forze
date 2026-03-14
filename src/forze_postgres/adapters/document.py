@@ -31,7 +31,7 @@ from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
-logger = getLogger(__name__).bind(scope="postgres.adapter")
+logger = getLogger(__name__).bind(scope="postgres.document")
 
 # ....................... #
 
@@ -104,6 +104,7 @@ class PostgresDocumentAdapter(
                 "defaults": True,
                 "computed_fields": True,
             },
+            mode="json",
         )
 
     # ....................... #
@@ -114,9 +115,13 @@ class PostgresDocumentAdapter(
                 await self.cache.set_versioned(
                     str(doc.id), str(doc.rev), self._map_to_cache(doc)
                 )
-                logger.trace("Cache set successfully for 1 document(s)")
-            except Exception:
+                logger.debug("Cache set successfully for 1 document(s)")
+
+            except Exception as e:
                 logger.exception("Cache set failed for 1 document(s), continuing")
+
+                with logger.section():
+                    logger.trace("Cache exception: %s", e)
 
     # ....................... #
 
@@ -128,14 +133,17 @@ class PostgresDocumentAdapter(
                     (str(x.id), str(x.rev)): y for x, y in zip(docs, res_cache)
                 }
                 await self.cache.set_many_versioned(res_cache_map)
-                logger.trace(
+                logger.debug(
                     "Cache set many successfully for %d document(s)", len(docs)
                 )
 
-            except Exception:
+            except Exception as e:
                 logger.exception(
                     "Cache set failed for %d document(s), continuing", len(docs)
                 )
+
+                with logger.section():
+                    logger.trace("Cache exception: %s", e)
 
     # ....................... #
 
@@ -143,12 +151,15 @@ class PostgresDocumentAdapter(
         if self.cache is not None:
             try:
                 await self.cache.delete_many([str(pk) for pk in pks], hard=True)
-                logger.trace("Cache cleared successfully for %d document(s)", len(pks))
+                logger.debug("Cache cleared successfully for %d document(s)", len(pks))
 
-            except Exception:
+            except Exception as e:
                 logger.exception(
                     "Cache clear failed for %d document(s), continuing", len(pks)
                 )
+
+                with logger.section():
+                    logger.trace("Cache exception: %s", e)
 
     # ....................... #
 
@@ -187,10 +198,14 @@ class PostgresDocumentAdapter(
         try:
             cached = await self.cache.get(str(pk))
 
-        except Exception:
+        except Exception as e:
             logger.exception(
                 "Cache get failed for 1 document(s), falling back to read gateway"
             )
+
+            with logger.section():
+                logger.trace("Cache exception: %s", e)
+
             return await self.read_gw.get(
                 pk,
                 for_update=for_update,
@@ -198,7 +213,7 @@ class PostgresDocumentAdapter(
             )
 
         if cached is not None:
-            logger.trace("Retrieved 1 cached document(s)")
+            logger.debug("Retrieved 1 cached document(s)")
             return pydantic_validate(self.read_gw.model, cached)
 
         res = await self.read_gw.get(pk)
@@ -237,13 +252,17 @@ class PostgresDocumentAdapter(
             hits, misses = await self.cache.get_many([str(pk) for pk in pks])
 
             if hits:
-                logger.trace("Retrieved %d cached document(s)", len(hits))
+                logger.debug("Retrieved %d cached document(s)", len(hits))
 
-        except Exception:
+        except Exception as e:
             logger.exception(
                 "Cache get failed for %d document(s), falling back to read gateway",
                 len(pks),
             )
+
+            with logger.section():
+                logger.trace("Cache exception: %s", e)
+
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
         miss_res: list[R] = []
@@ -327,10 +346,10 @@ class PostgresDocumentAdapter(
         cnt = await self.read_gw.count(filters)
 
         if not cnt:
-            logger.trace("No documents found")
+            logger.debug("No documents found")
             return [], 0
 
-        logger.trace("Found %d documents(s) matching filters", cnt)
+        logger.debug("Found %d documents(s) matching filters", cnt)
 
         res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,

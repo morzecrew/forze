@@ -37,10 +37,10 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             status_code = f"<red>{status}</red>"
 
         logger.info(
-            "%s %s %s %dms",
+            "%s %s %s (%dms)",
+            status_code,
             request.method,
             request.url.path,
-            status_code,
             duration,
         )
 
