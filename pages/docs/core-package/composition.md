@@ -129,10 +129,10 @@ Typed argument containers for update and soft-delete usecases:
     from forze.application.usecases.document import UpdateArgs, SoftDeleteArgs
 
     # Update
-    await facade.update()(UpdateArgs(pk=project_id, dto=update_cmd))
+    await facade.update(UpdateArgs(pk=project_id, dto=update_cmd))
 
     # Soft delete with optimistic concurrency
-    await facade.delete()(SoftDeleteArgs(pk=project_id, rev=current_rev))
+    await facade.delete(SoftDeleteArgs(pk=project_id, rev=current_rev))
 
 `UpdateArgs[U]` carries `pk` (UUID) and `dto` (update command). `SoftDeleteArgs` carries `pk` (UUID) and optional `rev` (int).
 

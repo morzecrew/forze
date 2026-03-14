@@ -22,7 +22,7 @@ All Forze routes resolve ports through `ExecutionContext`. In FastAPI, provide a
     def context_dependency():
         return runtime.get_context()
 
-This function is passed as `context=` to prebuilt routers or `context_dependency=` to `ForzeAPIRouter`.
+This function is passed as `ctx_dep=` to prebuilt routers or `context_dependency=` to `ForzeAPIRouter`.
 
 ## Document router
 
