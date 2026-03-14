@@ -23,14 +23,7 @@ from .operations import DocumentOperation
 
 # ----------------------- #
 
-tx_document_plan = (
-    UsecasePlan()
-    .tx(DocumentOperation.CREATE)
-    .tx(DocumentOperation.UPDATE)
-    .tx(DocumentOperation.DELETE)
-    .tx(DocumentOperation.RESTORE)
-    .tx(DocumentOperation.KILL)
-)
+tx_document_plan = UsecasePlan().tx("*")
 
 # ....................... #
 

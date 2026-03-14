@@ -142,8 +142,6 @@ class RedisClient:
     @redis_handled("redis.pipeline")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def pipeline(self, *, transaction: bool = True) -> AsyncIterator[Pipeline]:
-        logger.trace("Entering pipeline context")
-
         depth = self.__ctx_depth.get()
         parent = self.__current_pipe()
 

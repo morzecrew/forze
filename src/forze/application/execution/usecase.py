@@ -1,4 +1,4 @@
-from typing import Self
+from typing import Self, final
 
 import attrs
 
@@ -31,6 +31,7 @@ class Usecase[Args, R]:
 
     # ....................... #
 
+    @final
     def with_middlewares(self, *middlewares: Middleware[Args, R]) -> Self:
         """Return a new usecase with additional middlewares appended.
 
@@ -60,6 +61,7 @@ class Usecase[Args, R]:
 
     # ....................... #
 
+    @final
     def _build_chain(self) -> NextCall[Args, R]:
         logger.trace(
             "Building middleware chain with %d middleware(s)",
@@ -103,6 +105,7 @@ class Usecase[Args, R]:
 
     # ....................... #
 
+    @final
     async def __call__(self, args: Args) -> R:
         """Execute the usecase with the configured middlewares.
 
