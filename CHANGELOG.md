@@ -11,47 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `hybridmethod` descriptor in `forze.base.descriptors` for class/instance dual method support.
 - `Pagination` DTO with `page` and `size` fields for list and search request payloads.
-- `DocumentDTOSpec` `list` and `raw_list` keys for custom list request DTO types.
-- `SearchDTOSpec` TypedDict for search facade with `read`, `typed`, `raw` keys.
-- `build_document_list_mapper`, `build_document_raw_list_mapper`, `replace_list_mapper`, `replace_raw_list_mapper` in document composition.
-- `build_search_typed_mapper`, `build_search_raw_mapper` in search composition.
-- ``LoggingMiddleware`` in ``forze_fastapi.middlewares`` for request/response logging with scope.
-- ``Logger.opt`` for passing options (depth, exception, etc.) to the underlying logger.
-- ``UVICORN_LOG_CONFIG_TEMPLATE`` and ``InterceptHandler`` in ``forze_fastapi.logging`` for uvicorn log_config integration.
+- `DocumentDTOs` with `list` and `raw_list` keys for custom list request DTO types.
+- `SearchDTOs` with `read`, `typed`, and `raw` keys for search facade DTO configuration.
+- `build_document_list_mapper` and `build_document_raw_list_mapper` in document composition.
+- `build_search_typed_mapper` and `build_search_raw_mapper` in search composition.
+- `LoggingMiddleware` in `forze_fastapi.middlewares` for request/response logging with scope.
+- `Logger.opt` for passing options (depth, exception, etc.) to the underlying logger.
+- `UVICORN_LOG_CONFIG_TEMPLATE` and `InterceptHandler` in `forze_fastapi.logging` for uvicorn log_config integration.
 
 ### Changed
 
 - `OperationPlan.merge`, `UsecasePlan.merge`, and `UsecaseRegistry.merge` are now hybridmethods (callable on class or instance).
 - `OverrideDocumentEndpointNames` renamed to `OverrideDocumentEndpointPaths`; `name_overrides` renamed to `path_overrides` in document router.
 - `OverrideSearchEndpointNames` renamed to `OverrideSearchEndpointPaths`; `name_overrides` renamed to `path_overrides` in search router.
-- `SearchUsecasesFacadeProvider` now uses `dtos: SearchDTOSpec` instead of `read_dto`; `build_search_registry` requires `dto_spec`.
-- `build_document_registry`, `build_document_create_mapper`, `build_document_update_mapper` now require `dto_spec`.
-- `build_search_registry` parameters `typed_mapper`/`raw_mapper` renamed to `replace_typed_mapper`/`replace_raw_mapper`.
+- Document and search facades now use `dtos: DocumentDTOs` / `dtos: SearchDTOs` instead of `read_dto`; `build_document_registry` and `build_search_registry` require `dtos`.
 - `DTOMapper` now requires `in_` (source model type) in addition to `out`; update existing mappers accordingly.
 - `MappingStep` protocol is now generic (`MappingStep[In: BaseModel]`); custom step implementations should specify the source type.
 - `CoreModel` no longer includes `Decimal` in `json_encoders`; custom serialization for Decimal fields must be handled elsewhere.
 - `ListRequestDTO` and `SearchRequestDTO` extend `Pagination`; pagination (`page`, `size`) now in request body.
 - List and search usecases take request DTO directly instead of TypedDict with body/page/size.
 - Postgres and Mongo document adapters: write operations now return results via read gateway for consistent read/write source separation.
-- Log format: add usecase scope when available; remove extra dict from log output.
-- Log format: ``safe_preview`` skips empty values; type fallback no longer wrapped in angle brackets.
-- Logging: use ``logger.section()`` and ``logger.contextualize(scope=...)`` in lifecycle, runtime, and usecase; log format shows scope instead of logger name.
-- Logging: extend scope contextualize to registry, lifecycle plan creation, idempotency; usecase uses ``safe_preview`` instead of ``_args_safe_for_logging``; remove ``log_parameters`` from usecase.
-- Postgres document adapter: add trace/debug logs with model qualname; downgrade cache exception logs to debug; early return for empty bulk operations.
-- Postgres search and txmanager adapters: add scope-bound logger and trace logs.
-- Postgres document adapter: wrap read/write operations in ``logger.section()``; promote trace to debug for entry points.
-- Redis adapters: add scope-bound loggers and ``logger.section()`` to cache, counter, idempotency, pubsub, stream.
+- Logging: scope-based contextualization across execution modules; `logger.section()` for structured spans; usecase scope in log format; `safe_preview` replaces `_args_safe_for_logging` for argument preview.
 
 ### Fixed
 
 - Document list endpoints now correctly pass pagination to the usecase.
-- Logging format: escape extra dict in output to avoid loguru KeyError; exclude redundant ``logger_name`` from displayed extra.
+- Logging format: escape extra dict in output to avoid loguru KeyError; exclude redundant `logger_name` from displayed extra.
 
 ### Removed
 
 - `Pagination` and `pagination` from `forze_fastapi.routing.params`; use request body instead.
-- ``Usecase.log_parameters`` and ``Usecase._args_safe_for_logging``; use ``safe_preview`` from ``forze.base.logging`` instead.
-- ``register_uvicorn_logging_interceptor``; use ``UVICORN_LOG_CONFIG_TEMPLATE`` in uvicorn ``log_config`` instead.
+- `Usecase.log_parameters` and `Usecase._args_safe_for_logging`; use `safe_preview` from `forze.base.logging` instead.
+- `register_uvicorn_logging_interceptor`; use `UVICORN_LOG_CONFIG_TEMPLATE` in uvicorn `log_config` instead.
 
 ## [0.1.12] - 2026-03-11
 

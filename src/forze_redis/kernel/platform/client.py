@@ -73,45 +73,39 @@ class RedisClient:
         *,
         config: RedisConfig = RedisConfig(),
     ) -> None:
-        logger.trace("Initializing client")  #! TODO: log config
+        if self.__client is not None:
+            logger.trace("Client already initialized, skipping")
+            return
 
-        with logger.section():
-            if self.__client is not None:
-                logger.trace("Client already initialized, skipping")
-                return
-
-            self.__pool = (
-                ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
-                    dsn,
-                    max_connections=config.max_size,
-                    socket_timeout=config.socket_timeout,
-                    socket_connect_timeout=config.connect_timeout,
-                    decode_responses=False,
-                    encoding="utf-8",
-                )
+        self.__pool = (
+            ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+                dsn,
+                max_connections=config.max_size,
+                socket_timeout=config.socket_timeout,
+                socket_connect_timeout=config.connect_timeout,
+                decode_responses=False,
+                encoding="utf-8",
             )
-            self.__client = Redis(connection_pool=self.__pool)
-            await self.__client.ping()  # type: ignore[misc]
+        )
+        self.__client = Redis(connection_pool=self.__pool)
+        await self.__client.ping()  # type: ignore[misc]
 
-            logger.trace("Client initialized successfully")
+        logger.trace("Client initialized successfully")
 
     # ....................... #
 
     async def close(self) -> None:
-        logger.trace("Closing client")
+        if self.__client is not None:
+            logger.trace("Client found, closing")
+            await self.__client.aclose()
+            self.__client = None
 
-        with logger.section():
-            if self.__client is not None:
-                logger.trace("Client found, closing")
-                await self.__client.aclose()
-                self.__client = None
+        if self.__pool is not None:
+            logger.trace("Pool found, disconnecting")
+            await self.__pool.disconnect(inuse_connections=True)
+            self.__pool = None
 
-            if self.__pool is not None:
-                logger.trace("Pool found, disconnecting")
-                await self.__pool.disconnect(inuse_connections=True)
-                self.__pool = None
-
-            logger.trace("Client closed successfully")
+        logger.trace("Client closed successfully")
 
     # ....................... #
 

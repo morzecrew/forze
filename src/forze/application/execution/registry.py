@@ -446,7 +446,7 @@ class UsecaseRegistry:
         :raises CoreError: If a factory is registered for the same operation in multiple registries and ``on_conflict`` is ``"error"``.
         """
 
-        logger.debug(
+        logger.trace(
             "Merging %d usecase registries (on_conflict=%s)",
             len(registries),
             on_conflict,
@@ -533,8 +533,3 @@ class UsecaseRegistry:
         """
 
         return type(self).merge(self, *registries, on_conflict=on_conflict)
-
-
-# ....
-
-reg = UsecaseRegistry()

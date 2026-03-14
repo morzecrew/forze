@@ -77,11 +77,10 @@ class TestSearchFacadeWithRegistry:
         composition_ctx,
     ) -> None:
         """Facade built from registry resolves raw_search usecase."""
-        from forze.application.execution import build_usecases_facade
 
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        facade = build_usecases_facade(SearchUsecasesFacade, reg, composition_ctx)
+        facade = SearchUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.raw_search
         assert uc is not None

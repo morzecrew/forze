@@ -12,7 +12,6 @@ from forze.application.execution import (
     ExecutionContext,
     UsecaseRegistry,
     UsecasesFacade,
-    build_usecases_facade,
 )
 
 # ----------------------- #
@@ -70,6 +69,6 @@ def facade_dependency[F: UsecasesFacade](
     """Build a FastAPI dependency that resolves a :class:`UsecasesFacade`."""
 
     def dependency(ctx: ExecutionContext = Depends(ctx_dep)) -> F:
-        return build_usecases_facade(facade, reg, ctx)
+        return facade(ctx=ctx, reg=reg)
 
     return dependency

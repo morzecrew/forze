@@ -208,11 +208,10 @@ class TestDocumentFacadeWithRegistry:
     ) -> None:
         """Facade built from registry resolves get usecase."""
         from forze.application.composition.document import DocumentUsecasesFacade
-        from forze.application.execution import build_usecases_facade
 
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
         reg = build_document_registry(spec, dtos).extend_plan(tx_document_plan)
-        facade = build_usecases_facade(DocumentUsecasesFacade, reg, composition_ctx)
+        facade = DocumentUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.get
         assert uc is not None
