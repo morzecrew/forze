@@ -22,11 +22,11 @@ All Forze routes resolve ports through `ExecutionContext`. In FastAPI, provide a
     def context_dependency():
         return runtime.get_context()
 
-This function is passed as `context=` to prebuilt routers or `context_dependency=` to `ForzeAPIRouter`.
+This function is passed as `ctx_dep=` to prebuilt routers or `context_dependency=` to `ForzeAPIRouter`.
 
 ## Document router
 
-`build_document_router` wires standard CRUD operations from a `DocumentUsecasesFacadeProvider`. It generates routes that resolve the facade, build the usecase, and execute it.
+`build_document_router` wires standard CRUD operations from a `UsecaseRegistry` and `DocumentDTOs`. It generates routes that resolve the `DocumentUsecasesFacade`, build each usecase, and execute it.
 
 ### Generated endpoints
 
@@ -36,36 +36,40 @@ This function is passed as `context=` to prebuilt routers or `context_dependency
 | `/create` | POST | Create a document (idempotent when configured) |
 | `/update` | PATCH | Partial update with `id`, `rev`, and DTO body |
 | `/delete` | PATCH | Soft-delete (when the spec supports it) |
-| `/restore` | PATCH | Restore a soft-deleted document |
+| `/restore` | PATCH | Restore a previously soft-deleted document |
 | `/kill` | DELETE | Hard-delete a document |
+| `/list` | POST | List documents with typed results (opt-in) |
+| `/raw-list` | POST | List documents with raw results (opt-in) |
+
+List endpoints are disabled by default. Enable them with `include_list_endpoints=True`.
 
 ### Setup
 
     :::python
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
         build_document_registry,
+        tx_document_plan,
     )
     from forze_fastapi.routers import build_document_router
 
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={
-            "read": ProjectReadModel,
-            "create": CreateProjectCmd,
-            "update": UpdateProjectCmd,
-        },
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
+
+    registry = build_document_registry(project_spec, project_dtos)
+    registry.extend_plan(tx_document_plan, inplace=True)
 
     app.include_router(
         build_document_router(
             prefix="/projects",
             tags=["projects"],
-            provider=provider,
-            context=context_dependency,
+            registry=registry,
+            spec=project_spec,
+            dtos=project_dtos,
+            ctx_dep=context_dependency,
         )
     )
 
@@ -84,29 +88,26 @@ The router automatically detects whether the spec supports soft-delete and updat
 
     :::python
     from forze.application.composition.search import (
-        SearchUsecasesFacadeProvider,
-        build_search_plan,
+        SearchDTOs,
         build_search_registry,
     )
     from forze_fastapi.routers import build_search_router
 
-    search_provider = SearchUsecasesFacadeProvider(
-        spec=project_search_spec,
-        reg=build_search_registry(project_search_spec),
-        plan=build_search_plan(),
-        read_dto=ProjectReadModel,
-    )
+    search_dtos = SearchDTOs(read=ProjectReadModel)
+    search_registry = build_search_registry(project_search_spec, search_dtos)
 
     app.include_router(
         build_search_router(
             prefix="/projects",
             tags=["projects-search"],
-            provider=search_provider,
-            context=context_dependency,
+            registry=search_registry,
+            spec=project_search_spec,
+            dtos=search_dtos,
+            ctx_dep=context_dependency,
         )
     )
 
-You can also attach a search router to an existing document router using `attach_search_router()` for a combined endpoint group.
+You can also attach search routes to an existing router using `attach_search_routes()` for a combined endpoint group.
 
 ## Custom routes with ForzeAPIRouter
 
@@ -263,13 +264,12 @@ This ensures infrastructure clients are connected during the application lifetim
     from fastapi import FastAPI
 
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
         build_document_registry,
+        tx_document_plan,
     )
     from forze.application.composition.search import (
-        SearchUsecasesFacadeProvider,
-        build_search_plan,
+        SearchDTOs,
         build_search_registry,
     )
     from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
@@ -315,22 +315,37 @@ This ensures infrastructure clients are connected during the application lifetim
     ctx_dep = lambda: runtime.get_context()
 
     # Document routes
-    doc_provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={"read": ProjectReadModel, "create": CreateProjectCmd, "update": UpdateProjectCmd},
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
-    app.include_router(build_document_router(prefix="/projects", tags=["projects"], provider=doc_provider, context=ctx_dep))
+    doc_registry = build_document_registry(project_spec, project_dtos)
+    doc_registry.extend_plan(tx_document_plan, inplace=True)
+    app.include_router(
+        build_document_router(
+            prefix="/projects",
+            tags=["projects"],
+            registry=doc_registry,
+            spec=project_spec,
+            dtos=project_dtos,
+            ctx_dep=ctx_dep,
+        )
+    )
 
     # Search routes
-    search_provider = SearchUsecasesFacadeProvider(
-        spec=project_search_spec,
-        reg=build_search_registry(project_search_spec),
-        plan=build_search_plan(),
-        read_dto=ProjectReadModel,
+    search_dtos = SearchDTOs(read=ProjectReadModel)
+    search_registry = build_search_registry(project_search_spec, search_dtos)
+    app.include_router(
+        build_search_router(
+            prefix="/projects",
+            tags=["search"],
+            registry=search_registry,
+            spec=project_search_spec,
+            dtos=search_dtos,
+            ctx_dep=ctx_dep,
+        )
     )
-    app.include_router(build_search_router(prefix="/projects", tags=["search"], provider=search_provider, context=ctx_dep))
 
 
     async def main():

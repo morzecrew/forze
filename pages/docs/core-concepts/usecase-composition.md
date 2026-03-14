@@ -29,7 +29,7 @@ The `UsecaseRegistry` maps operation keys to usecase factories. Each factory rec
     registry = registry.register("get", lambda ctx: GetProject(ctx=ctx))
     registry = registry.register("create", lambda ctx: CreateProject(ctx=ctx))
 
-For document aggregates, `build_document_registry(spec)` creates a registry pre-populated with standard CRUD operations (GET, CREATE, UPDATE, KILL, DELETE, RESTORE).
+For document aggregates, `build_document_registry(spec, dtos)` creates a registry pre-populated with standard CRUD operations (GET, CREATE, UPDATE, KILL, DELETE, RESTORE).
 
 ## Usecase plan
 
@@ -84,7 +84,7 @@ Middlewares within a bucket are sorted by priority (descending). Higher priority
 Multiple plans can be merged for modular composition:
 
     :::python
-    base_plan = build_document_plan()
+    base_plan = tx_document_plan
     auth_plan = build_auth_plan()
     audit_plan = build_audit_plan()
 
@@ -106,32 +106,31 @@ For document aggregates, Forze provides a pre-built composition layer:
 
     :::python
     from forze.application.composition.document import (
-        DocumentUsecasesFacadeProvider,
-        build_document_plan,
+        DocumentDTOs,
+        DocumentUsecasesFacade,
         build_document_registry,
+        tx_document_plan,
     )
 
-    provider = DocumentUsecasesFacadeProvider(
-        spec=project_spec,
-        reg=build_document_registry(project_spec),
-        plan=build_document_plan(),
-        dtos={
-            "read": ProjectReadModel,
-            "create": CreateProjectCmd,
-            "update": UpdateProjectCmd,
-        },
+    project_dtos = DocumentDTOs(
+        read=ProjectReadModel,
+        create=CreateProjectCmd,
+        update=UpdateProjectCmd,
     )
 
-`build_document_registry(spec)` registers standard usecase factories for all `DocumentOperation` variants.
+    registry = build_document_registry(project_spec, project_dtos)
+    registry.extend_plan(tx_document_plan, inplace=True)
 
-`build_document_plan()` returns a default plan with transaction wrapping for write operations.
+`build_document_registry(spec, dtos)` registers standard usecase factories for all `DocumentOperation` variants.
 
-The provider is a factory: call it with an `ExecutionContext` to get a typed facade:
+`tx_document_plan` is a pre-built `UsecasePlan` with transaction wrapping for all operations.
+
+Create a facade from an execution context and the registry:
 
     :::python
-    facade = provider(ctx)
-    project = await facade.create()(CreateProjectCmd(title="New"))
-    fetched = await facade.get()(project.id)
+    facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
+    project = await facade.create(CreateProjectCmd(title="New"))
+    fetched = await facade.get(project.id)
 
 ### Document operations
 
@@ -145,6 +144,8 @@ The `DocumentOperation` enum defines the standard operation keys:
 | `KILL` | Hard-delete a document |
 | `DELETE` | Soft-delete a document |
 | `RESTORE` | Restore a soft-deleted document |
+| `LIST` | List documents with typed results |
+| `RAW_LIST` | List documents with raw results |
 
 ### Extending document composition
 
@@ -153,7 +154,7 @@ Add custom middleware to the default plan:
     :::python
     from forze.application.composition.document import (
         DocumentOperation,
-        build_document_plan,
+        tx_document_plan,
     )
 
 
@@ -165,7 +166,7 @@ Add custom middleware to the default plan:
 
 
     plan = (
-        build_document_plan()
+        tx_document_plan
         .before(DocumentOperation.CREATE, my_auth_guard, priority=100)
         .before(DocumentOperation.UPDATE, my_auth_guard, priority=100)
         .after_commit(DocumentOperation.CREATE, my_notification_effect)
@@ -177,21 +178,17 @@ Search follows the same pattern:
 
     :::python
     from forze.application.composition.search import (
-        SearchUsecasesFacadeProvider,
-        build_search_plan,
+        SearchDTOs,
+        SearchUsecasesFacade,
         build_search_registry,
     )
 
-    search_provider = SearchUsecasesFacadeProvider(
-        spec=project_search_spec,
-        reg=build_search_registry(project_search_spec),
-        plan=build_search_plan(),
-        read_dto=ProjectReadModel,
-    )
+    search_dtos = SearchDTOs(read=ProjectReadModel)
+    search_registry = build_search_registry(project_search_spec, search_dtos)
 
-    facade = search_provider(ctx)
-    hits, total = await facade.typed_search()(
-        TypedSearchArgs(query="roadmap", limit=20)
+    facade = SearchUsecasesFacade(ctx=ctx, reg=search_registry)
+    result = await facade.search(
+        SearchRequestDTO(query="roadmap", limit=20)
     )
 
 ## DTO mapping
@@ -202,7 +199,7 @@ The mapping pipeline transforms incoming DTOs before they reach the usecase:
     from forze.application.mapping import DTOMapper, NumberIdStep, CreatorIdStep
 
     mapper = (
-        build_document_create_mapper(project_spec)
+        build_document_create_mapper(project_spec, project_dtos)
         .with_steps(NumberIdStep(), CreatorIdStep())
     )
 
@@ -222,11 +219,11 @@ You can register entirely custom usecases alongside the standard ones:
             return await doc.update(args, UpdateProjectCmd(status="archived"))
 
 
-    registry = build_document_registry(project_spec)
+    registry = build_document_registry(project_spec, project_dtos)
     registry = registry.register("archive", lambda ctx: ArchiveProject(ctx=ctx))
 
     plan = (
-        build_document_plan()
+        tx_document_plan
         .tx("archive")
         .before("archive", auth_guard, priority=100)
     )

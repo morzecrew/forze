@@ -40,6 +40,8 @@ Install only what you need. Extras map directly to integration packages:
 | `sqs` | SQS integration (`forze_sqs`) |
 | `rabbitmq` | RabbitMQ integration (`forze_rabbitmq`) |
 
+`forze_mock` is bundled with the core package and requires no extra. It provides in-memory adapters for development and testing without external infrastructure.
+
 Common setup:
 
 /// tab | uv
