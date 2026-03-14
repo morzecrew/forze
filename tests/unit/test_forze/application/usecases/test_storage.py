@@ -1,27 +1,70 @@
-"""Unit tests for forze.application.usecases.storage.
+"""Unit tests for forze.application.usecases.storage."""
 
-The storage usecases module is currently a placeholder with no concrete
-usecase implementations. These tests document the current state and
-ensure the package can be imported.
-"""
+import pytest
+
+from forze.application.dto import ListObjectsRequestDTO, UploadObjectRequestDTO
+from forze.application.usecases.storage import (
+    DeleteObject,
+    DownloadObject,
+    ListObjects,
+    UploadObject,
+)
 
 # ----------------------- #
 
 
-class TestStorageUsecasesModule:
-    """Tests for the storage usecases package."""
+class TestStorageUsecases:
+    """Tests for storage usecase workflows."""
 
-    def test_storage_package_imports(self) -> None:
-        """Storage usecases package can be imported."""
-        from forze.application.usecases import storage
+    @pytest.mark.asyncio
+    async def test_upload_and_download(
+        self,
+        stub_ctx,
+    ) -> None:
+        storage = stub_ctx.storage("files")
 
-        assert storage is not None
+        upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
+        uploaded = await upload_uc(
+            UploadObjectRequestDTO(filename="hello.txt", data=b"hello", prefix="docs")
+        )
 
-    def test_storage_operation_enum_available(self) -> None:
-        """StorageOperation enum from usecases.storage is available for future use."""
-        from forze.application.usecases.storage import StorageOperation
+        download_uc = DownloadObject(ctx=stub_ctx, storage=storage)
+        downloaded = await download_uc(uploaded["key"])
 
-        assert StorageOperation.UPLOAD == "upload"
-        assert StorageOperation.LIST == "list"
-        assert StorageOperation.DOWNLOAD == "download"
-        assert StorageOperation.DELETE == "delete"
+        assert uploaded["filename"] == "hello.txt"
+        assert downloaded["data"] == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_list_returns_paginated_objects(
+        self,
+        stub_ctx,
+    ) -> None:
+        storage = stub_ctx.storage("files")
+        upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
+
+        await upload_uc(UploadObjectRequestDTO(filename="a.txt", data=b"a", prefix="docs"))
+        await upload_uc(UploadObjectRequestDTO(filename="b.txt", data=b"b", prefix="docs"))
+        await upload_uc(UploadObjectRequestDTO(filename="c.txt", data=b"c", prefix="tmp"))
+
+        list_uc = ListObjects(ctx=stub_ctx, storage=storage)
+        result = await list_uc(ListObjectsRequestDTO(page=1, size=10, prefix="docs"))
+
+        assert result.count == 2
+        assert len(result.hits) == 2
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_object(
+        self,
+        stub_ctx,
+    ) -> None:
+        storage = stub_ctx.storage("files")
+        upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
+        uploaded = await upload_uc(UploadObjectRequestDTO(filename="gone.txt", data=b"x"))
+
+        delete_uc = DeleteObject(ctx=stub_ctx, storage=storage)
+        await delete_uc(uploaded["key"])
+
+        list_uc = ListObjects(ctx=stub_ctx, storage=storage)
+        result = await list_uc(ListObjectsRequestDTO(page=1, size=10))
+
+        assert result.count == 0

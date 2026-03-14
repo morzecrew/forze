@@ -8,6 +8,7 @@ and paginated response DTOs (:class:`Paginated`, :class:`RawPaginated`). All ext
 from .list_ import ListRequestDTO, RawListRequestDTO
 from .paginated import Paginated, Pagination, RawPaginated
 from .search import RawSearchRequestDTO, SearchRequestDTO
+from .storage import ListObjectsRequestDTO, UploadObjectRequestDTO
 
 # ----------------------- #
 
@@ -19,4 +20,6 @@ __all__ = [
     "RawSearchRequestDTO",
     "ListRequestDTO",
     "RawListRequestDTO",
+    "UploadObjectRequestDTO",
+    "ListObjectsRequestDTO",
 ]

@@ -3,5 +3,5 @@
 Provides document composition (:mod:`document`) and storage composition
 (:mod:`storage`). Document composition includes facades, factories for plans
 and registries, and operation identifiers. Storage composition provides
-operation identifiers for object storage usecases.
+facades, factories, and operation identifiers for object storage usecases.
 """
