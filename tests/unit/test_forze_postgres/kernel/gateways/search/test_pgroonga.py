@@ -11,7 +11,8 @@ from forze_postgres.kernel.gateways import (
     PostgresPGroongaSearchGateway,
     PostgresQualifiedName,
 )
-from forze_postgres.kernel.introspect import PostgresIndexInfo, PostgresIntrospector
+from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.introspect.types import PostgresIndexInfo
 from forze_postgres.kernel.platform import PostgresClient
 
 
