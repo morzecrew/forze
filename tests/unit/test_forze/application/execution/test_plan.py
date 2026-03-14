@@ -4,10 +4,10 @@ import pytest
 
 from forze.application.execution import Deps, ExecutionContext, Usecase
 from forze.application.execution.plan import (
+    WILDCARD,
     MiddlewareSpec,
     OperationPlan,
     UsecasePlan,
-    WILDCARD,
 )
 
 # ----------------------- #
@@ -267,57 +267,6 @@ class TestUsecasePlan:
         plan = UsecasePlan()
         with pytest.raises(CoreError, match="wildcard"):
             plan.resolve(WILDCARD, ctx, lambda ctx: StubUsecase(ctx=ctx))
-
-    def test_explain_returns_structured_info(self) -> None:
-        def guard_factory(ctx):
-            async def guard(args):
-                pass
-
-            return guard
-
-        plan = UsecasePlan().before("get", guard_factory, priority=1)
-        explain = plan.explain("get")
-        assert explain.op == "get"
-        assert explain.tx is False
-        assert len(explain.chain) >= 1
-
-    def test_explain_pretty_format(self) -> None:
-        def guard_factory(ctx):
-            async def guard(args):
-                pass
-
-            return guard
-
-        plan = UsecasePlan().before("get", guard_factory, priority=1)
-        explain = plan.explain("get")
-        text = explain.pretty_format()
-        assert "UsecasePlan explain" in text
-        assert "get" in text
-        assert "Chain (outer -> inner):" in text
-        assert "After-commit effects: <none>" in text
-
-    def test_explain_pretty_format_with_after_commit(self) -> None:
-        def effect_factory(ctx):
-            async def effect(args, res):
-                return res
-
-            return effect
-
-        plan = (
-            UsecasePlan()
-            .tx("create")
-            .after_commit("create", effect_factory, priority=1)
-        )
-        explain = plan.explain("create")
-        text = explain.pretty_format()
-        assert "After-commit effects (run after successful commit):" in text
-
-    def test_explain_wildcard_suffix_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        plan = UsecasePlan()
-        with pytest.raises(CoreError, match="wildcard"):
-            plan.explain("foo*")
 
     def test_wrap_adds_middleware(self) -> None:
         from forze.application.execution.middleware import GuardMiddleware

@@ -6,7 +6,7 @@ logging output (sections, levels, formatting) in the terminal.
 
 import pytest
 
-from forze.base.logging import configure, getLogger, log_section, reset, setup_default
+from forze.base.logging import configure, getLogger, reset, setup_default
 
 # ----------------------- #
 # Fixtures
@@ -115,7 +115,7 @@ class TestLogSections:
         configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
         log = getLogger("forze.test")
         log.info("before section")
-        with log_section():
+        with log.section():
             log.info("inside section")
         log.info("after section")
         captured = capsys.readouterr()
@@ -130,9 +130,9 @@ class TestLogSections:
     ) -> None:
         configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
         log = getLogger("forze.test")
-        with log_section():
+        with log.section():
             log.info("depth 1")
-            with log_section():
+            with log.section():
                 log.info("depth 2")
         captured = capsys.readouterr()
         assert "depth 1" in captured.err
