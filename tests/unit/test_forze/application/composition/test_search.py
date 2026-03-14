@@ -2,11 +2,10 @@
 
 from pydantic import BaseModel
 
-from forze.application.composition.base import BaseUsecasesFacadeProvider
 from forze.application.composition.search import (
+    SearchDTOs,
     SearchOperation,
     SearchUsecasesFacade,
-    SearchUsecasesModule,
     build_search_registry,
 )
 from forze.application.contracts.search import (
@@ -14,7 +13,7 @@ from forze.application.contracts.search import (
     SearchIndexSpec,
     SearchSpec,
 )
-from forze.application.execution import UsecasePlan, UsecaseRegistry
+from forze.application.execution import UsecaseRegistry
 
 # ----------------------- #
 
@@ -38,9 +37,9 @@ def _minimal_search_spec() -> SearchSpec[_MinimalSearchModel]:
     )
 
 
-def _minimal_search_dto_spec() -> dict:
-    """Build a minimal SearchDTOSpec for testing."""
-    return {"read": _MinimalSearchModel}
+def _minimal_search_dtos() -> SearchDTOs:
+    """Build minimal SearchDTOs for testing."""
+    return SearchDTOs(read=_MinimalSearchModel)
 
 
 class TestBuildSearchRegistry:
@@ -48,14 +47,14 @@ class TestBuildSearchRegistry:
 
     def test_returns_registry(self) -> None:
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
         assert isinstance(reg, UsecaseRegistry)
 
     def test_has_core_operations(self) -> None:
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
         assert reg.exists(SearchOperation.TYPED_SEARCH)
         assert reg.exists(SearchOperation.RAW_SEARCH)
 
@@ -64,47 +63,25 @@ class TestBuildSearchRegistry:
         composition_ctx,
     ) -> None:
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
         uc = reg.resolve(SearchOperation.RAW_SEARCH, composition_ctx)
         assert uc is not None
 
 
-class TestSearchUsecasesModule:
-    """Tests for SearchUsecasesModule."""
+class TestSearchFacadeWithRegistry:
+    """Tests for SearchUsecasesFacade with build_search_registry."""
 
-    def test_provider_call_returns_facade(
+    def test_facade_resolves_raw_search_usecase(
         self,
         composition_ctx,
     ) -> None:
-        spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
-        plan = UsecasePlan()
-        provider = BaseUsecasesFacadeProvider(
-            reg=reg,
-            plan=plan,
-            facade=SearchUsecasesFacade,
-        )
-        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
-        facade = module.provider(composition_ctx)
-        assert facade is not None
-        assert facade.ctx is composition_ctx
+        """Facade built from registry resolves raw_search usecase."""
+        from forze.application.execution import build_usecases_facade
 
-    def test_facade_raw_search_resolves(
-        self,
-        composition_ctx,
-    ) -> None:
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
-        plan = UsecasePlan()
-        provider = BaseUsecasesFacadeProvider(
-            reg=reg,
-            plan=plan,
-            facade=SearchUsecasesFacade,
-        )
-        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
-        facade = module.provider(composition_ctx)
-        uc = facade.raw_search()
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
+        facade = build_usecases_facade(SearchUsecasesFacade, reg, composition_ctx)
+        uc = facade.raw_search
         assert uc is not None

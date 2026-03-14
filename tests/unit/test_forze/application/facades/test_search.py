@@ -49,7 +49,7 @@ class TestSearchUsecasesFacade:
         mock_raw_search_usecase: UsecaseRegistry,
     ) -> None:
         facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
-        uc = facade.raw_search()
+        uc = facade.raw_search
         assert uc is not None
 
     def test_search_not_supported_raises(

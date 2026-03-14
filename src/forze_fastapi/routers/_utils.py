@@ -1,4 +1,19 @@
+from forze_fastapi._compat import require_fastapi
+
+require_fastapi()
+
+# ....................... #
+
 from typing import Callable
+
+from fastapi import Depends
+
+from forze.application.execution import (
+    ExecutionContext,
+    UsecaseRegistry,
+    UsecasesFacade,
+    build_usecases_facade,
+)
 
 # ----------------------- #
 
@@ -42,3 +57,19 @@ def override_annotations[T](annotations: dict[str, type]) -> Callable[[T], T]:
         return obj
 
     return decorator
+
+
+# ....................... #
+
+
+def facade_dependency[F: UsecasesFacade](
+    facade: type[F],
+    reg: UsecaseRegistry,
+    ctx_dep: Callable[[], ExecutionContext],
+) -> Callable[[ExecutionContext], F]:
+    """Build a FastAPI dependency that resolves a :class:`UsecasesFacade`."""
+
+    def dependency(ctx: ExecutionContext = Depends(ctx_dep)) -> F:
+        return build_usecases_facade(facade, reg, ctx)
+
+    return dependency

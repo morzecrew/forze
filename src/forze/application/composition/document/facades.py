@@ -1,20 +1,21 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar
-from uuid import UUID
+from typing import Any, Generic, Optional, TypeVar
 
 import attrs
 
-from forze.application.contracts.document import DocumentSpec
-from forze.application.dto import (
-    ListRequestDTO,
-    Paginated,
-    RawListRequestDTO,
-    RawPaginated,
+from forze.application.dto import ListRequestDTO, RawListRequestDTO
+from forze.application.execution import UsecasesFacade, facade_op
+from forze.application.usecases.document import (
+    CreateDocument,
+    DeleteDocument,
+    GetDocument,
+    KillDocument,
+    RawListDocuments,
+    RestoreDocument,
+    TypedListDocuments,
+    UpdateDocument,
 )
-from forze.application.execution import Usecase
-from forze.application.usecases.document import SoftDeleteArgs, UpdateArgs
 from forze.domain.models import BaseDTO, ReadDocument
 
-from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
 from .operations import DocumentOperation
 
 # ----------------------- #
@@ -28,88 +29,23 @@ rL = TypeVar("rL", bound=RawListRequestDTO, default=RawListRequestDTO)
 # ....................... #
 
 
-class DocumentUsecasesFacade(BaseUsecasesFacade, Generic[R, C, U, tL, rL]):
-    """Typed facade for document usecases."""
-
-    def get(self) -> Usecase[UUID, R]:
-        """Return the get-document usecase."""
-
-        return self.resolve(DocumentOperation.GET)
-
-    # ....................... #
-
-    def list(self) -> Usecase[tL, Paginated[R]]:
-        """Return the list documents usecase."""
-
-        return self.resolve(DocumentOperation.LIST)
-
-    # ....................... #
-
-    def raw_list(self) -> Usecase[rL, RawPaginated]:
-        """Return the raw list documents usecase."""
-
-        return self.resolve(DocumentOperation.RAW_LIST)
-
-    # ....................... #
-
-    def create(self) -> Usecase[C, R]:
-        """Return the create usecase."""
-
-        return self.resolve(DocumentOperation.CREATE)
-
-    # ....................... #
-
-    def update(self) -> Usecase[UpdateArgs[U], R]:
-        """Return the update usecase."""
-
-        return self.resolve(DocumentOperation.UPDATE)
-
-    # ....................... #
-
-    def kill(self) -> Usecase[UUID, None]:
-        """Return the hard-delete (kill) usecase."""
-
-        return self.resolve(DocumentOperation.KILL)
-
-    # ....................... #
-
-    def delete(self) -> Usecase[SoftDeleteArgs, R]:
-        """Return the soft-delete usecase."""
-
-        return self.resolve(DocumentOperation.DELETE)
-
-    # ....................... #
-
-    def restore(self) -> Usecase[SoftDeleteArgs, R]:
-        """Return the restore usecase."""
-
-        return self.resolve(DocumentOperation.RESTORE)
-
-
-# ....................... #
-
-
-class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
-    """DTO type mapping for a document aggregate.
-
-    Used by :class:`DocumentUsecasesFacade` and providers to type the facade
-    methods. ``create`` and ``update`` are optional when the aggregate does
-    not support those operations.
-    """
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DocumentDTOs(Generic[R, C, U, tL, rL]):
+    """DTO type mapping for a document aggregate."""
 
     read: type[R]
-    """Read model type (e.g. :class:`ReadDocument`)."""
+    """Get command type (e.g. :class:`ReadDocument`)."""
 
-    create: NotRequired[type[C]]
+    create: Optional[type[C]] = None
     """Create command type; optional when create is not supported."""
 
-    update: NotRequired[type[U]]
+    update: Optional[type[U]] = None
     """Update command type; optional when update is not supported."""
 
-    list: NotRequired[type[tL]]
+    list: Optional[type[tL]] = None
     """List request type; provided only if list has custom DTO."""
 
-    raw_list: NotRequired[type[rL]]
+    raw_list: Optional[type[rL]] = None
     """Raw list request type; provided only if raw list has custom DTO."""
 
 
@@ -117,7 +53,29 @@ class DocumentDTOSpec(TypedDict, Generic[R, C, U, tL, rL]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentUsecasesModule(Generic[R, C, U, tL, rL]):
-    spec: DocumentSpec[R, Any, Any, Any]
-    dtos: DocumentDTOSpec[R, C, U, tL, rL]
-    provider: BaseUsecasesFacadeProvider[DocumentUsecasesFacade[R, C, U, tL, rL]]
+class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U, tL, rL]):
+    """Typed facade for document usecases."""
+
+    get = facade_op(DocumentOperation.GET, uc=GetDocument[R])
+    """Get document usecase."""
+
+    list = facade_op(DocumentOperation.LIST, uc=TypedListDocuments[tL, R])
+    """List documents usecase."""
+
+    raw_list = facade_op(DocumentOperation.RAW_LIST, uc=RawListDocuments[rL])
+    """Raw list documents usecase."""
+
+    create = facade_op(DocumentOperation.CREATE, uc=CreateDocument[C, Any, R])
+    """Create document usecase."""
+
+    update = facade_op(DocumentOperation.UPDATE, uc=UpdateDocument[U, Any, R])
+    """Update document usecase."""
+
+    kill = facade_op(DocumentOperation.KILL, uc=KillDocument)
+    """Kill document usecase."""
+
+    delete = facade_op(DocumentOperation.DELETE, uc=DeleteDocument[R])
+    """Delete document usecase."""
+
+    restore = facade_op(DocumentOperation.RESTORE, uc=RestoreDocument[R])
+    """Restore document usecase."""

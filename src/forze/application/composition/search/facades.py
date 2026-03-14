@@ -1,18 +1,12 @@
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar
+from typing import Generic, Optional, TypeVar
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchSpec
-from forze.application.dto import (
-    Paginated,
-    RawPaginated,
-    RawSearchRequestDTO,
-    SearchRequestDTO,
-)
-from forze.application.execution import Usecase
+from forze.application.dto import RawSearchRequestDTO, SearchRequestDTO
+from forze.application.execution import UsecasesFacade, facade_op
+from forze.application.usecases.search import RawSearch, TypedSearch
 
-from ..base import BaseUsecasesFacade, BaseUsecasesFacadeProvider
 from .operations import SearchOperation
 
 # ----------------------- #
@@ -24,35 +18,17 @@ rS = TypeVar("rS", bound=RawSearchRequestDTO, default=RawSearchRequestDTO)
 # ....................... #
 
 
-class SearchUsecasesFacade(BaseUsecasesFacade, Generic[M, tS, rS]):
-    """Typed facade for search usecases."""
-
-    def raw_search(self) -> Usecase[rS, RawPaginated]:
-        """Return the raw search usecase."""
-
-        return self.resolve(SearchOperation.RAW_SEARCH)
-
-    # ....................... #
-
-    def search(self) -> Usecase[tS, Paginated[M]]:
-        """Return the typed search usecase."""
-
-        return self.resolve(SearchOperation.TYPED_SEARCH)
-
-
-# ....................... #
-
-
-class SearchDTOSpec(TypedDict, Generic[M, tS, rS]):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchDTOs(Generic[M, tS, rS]):
     """DTO type mapping for a search aggregate."""
 
     read: type[M]
     """Read DTO type."""
 
-    typed: NotRequired[type[tS]]
+    typed: Optional[type[tS]] = None
     """Typed search request DTO type. Provided only if typed search has custom DTO."""
 
-    raw: NotRequired[type[rS]]
+    raw: Optional[type[rS]] = None
     """Raw search request DTO type. Provided only if raw search has custom DTO."""
 
 
@@ -60,7 +36,11 @@ class SearchDTOSpec(TypedDict, Generic[M, tS, rS]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchUsecasesModule(Generic[M, tS, rS]):
-    spec: SearchSpec[Any]
-    dtos: SearchDTOSpec[M, tS, rS]
-    provider: BaseUsecasesFacadeProvider[SearchUsecasesFacade[M, tS, rS]]
+class SearchUsecasesFacade(UsecasesFacade, Generic[M, tS, rS]):
+    """Typed facade for search usecases."""
+
+    raw_search = facade_op(SearchOperation.RAW_SEARCH, uc=RawSearch[rS])
+    """Raw search usecase."""
+
+    search = facade_op(SearchOperation.TYPED_SEARCH, uc=TypedSearch[tS, M])
+    """Typed search usecase."""

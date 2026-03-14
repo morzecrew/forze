@@ -51,7 +51,7 @@ class TestDocumentUsecasesFacade:
         mock_get_usecase: UsecaseRegistry,
     ) -> None:
         facade = DocumentUsecasesFacade(ctx=stub_ctx, reg=mock_get_usecase)
-        uc = facade.get()
+        uc = facade.get
         assert uc is not None
 
     def test_update_not_supported_raises(

@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.composition.document.facades import DocumentDTOSpec
+from forze.application.composition.document import DocumentDTOs
 from forze.application.composition.document.factories import (
     build_document_create_mapper,
     build_document_registry,
@@ -54,17 +54,16 @@ def _read_only_spec() -> DocumentSpec:
     )
 
 
-def _write_dto_spec(update_cmd: type = _UpdateCmd) -> DocumentDTOSpec:
-    dto: DocumentDTOSpec = {
-        "read": ReadDocument,
-        "create": CreateDocumentCmd,
-        "update": update_cmd,
-    }
-    return dto
+def _write_dtos(update_cmd: type = _UpdateCmd) -> DocumentDTOs:
+    return DocumentDTOs(
+        read=ReadDocument,
+        create=CreateDocumentCmd,
+        update=update_cmd,
+    )
 
 
-def _read_only_dto_spec() -> DocumentDTOSpec:
-    return {"read": ReadDocument}
+def _read_only_dtos() -> DocumentDTOs:
+    return DocumentDTOs(read=ReadDocument)
 
 
 # ----------------------- #
@@ -73,76 +72,76 @@ def _read_only_dto_spec() -> DocumentDTOSpec:
 class TestBuildDocumentCreateMapper:
     def test_basic(self) -> None:
         spec = _write_spec()
-        dto_spec = _write_dto_spec()
-        mapper = build_document_create_mapper(spec, dto_spec)
+        dtos = _write_dtos()
+        mapper = build_document_create_mapper(spec, dtos)
         assert isinstance(mapper, DTOMapper)
 
     def test_numbered(self) -> None:
         spec = _write_spec()
-        dto_spec = _write_dto_spec()
+        dtos = _write_dtos()
         mapper = build_document_create_mapper(
-            spec, dto_spec, steps=(NumberIdStep(namespace="test"),)
+            spec, dtos, steps=(NumberIdStep(namespace="test"),)
         )
         assert isinstance(mapper, DTOMapper)
 
     def test_read_only_spec_raises(self) -> None:
         spec = _read_only_spec()
-        dto_spec = _read_only_dto_spec()
+        dtos = _read_only_dtos()
         with pytest.raises(CoreError, match="does not support write"):
-            build_document_create_mapper(spec, dto_spec)
+            build_document_create_mapper(spec, dtos)
 
 
 class TestBuildDocumentRegistry:
     def test_registers_get(self) -> None:
         spec = _write_spec()
-        dto_spec = _write_dto_spec()
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _write_dtos()
+        reg = build_document_registry(spec, dtos)
         assert reg.exists(DocumentOperation.GET)
 
     def test_registers_create_and_kill(self) -> None:
         spec = _write_spec()
-        dto_spec = _write_dto_spec()
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _write_dtos()
+        reg = build_document_registry(spec, dtos)
         assert reg.exists(DocumentOperation.CREATE)
         assert reg.exists(DocumentOperation.KILL)
 
     def test_registers_update_when_update_cmd_has_fields(self) -> None:
         spec = _write_spec(update_cmd=_UpdateCmd)
-        dto_spec = _write_dto_spec(update_cmd=_UpdateCmd)
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _write_dtos(update_cmd=_UpdateCmd)
+        reg = build_document_registry(spec, dtos)
         assert reg.exists(DocumentOperation.UPDATE)
 
     def test_skips_update_when_update_cmd_empty(self) -> None:
         spec = _write_spec(update_cmd=_EmptyUpdateCmd)
-        dto_spec = _write_dto_spec(update_cmd=_EmptyUpdateCmd)
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _write_dtos(update_cmd=_EmptyUpdateCmd)
+        reg = build_document_registry(spec, dtos)
         assert not reg.exists(DocumentOperation.UPDATE)
 
     def test_registers_delete_restore_for_soft_delete(self) -> None:
         spec = _write_spec(domain=_SoftDoc)
-        dto_spec = _write_dto_spec()
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _write_dtos()
+        reg = build_document_registry(spec, dtos)
         assert reg.exists(DocumentOperation.DELETE)
         assert reg.exists(DocumentOperation.RESTORE)
 
     def test_no_delete_restore_without_soft_delete(self) -> None:
         spec = _write_spec(domain=Document)
-        dto_spec = _write_dto_spec()
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _write_dtos()
+        reg = build_document_registry(spec, dtos)
         assert not reg.exists(DocumentOperation.DELETE)
         assert not reg.exists(DocumentOperation.RESTORE)
 
     def test_read_only_spec_only_get(self) -> None:
         spec = _read_only_spec()
-        dto_spec = _read_only_dto_spec()
-        reg = build_document_registry(spec, dto_spec)
+        dtos = _read_only_dtos()
+        reg = build_document_registry(spec, dtos)
         assert reg.exists(DocumentOperation.GET)
         assert not reg.exists(DocumentOperation.CREATE)
 
     def test_custom_create_steps(self) -> None:
         spec = _write_spec()
-        dto_spec = _write_dto_spec()
+        dtos = _write_dtos()
         reg = build_document_registry(
-            spec, dto_spec, create_steps=(NumberIdStep(namespace="test"),)
+            spec, dtos, create_steps=(NumberIdStep(namespace="test"),)
         )
         assert reg.exists(DocumentOperation.CREATE)

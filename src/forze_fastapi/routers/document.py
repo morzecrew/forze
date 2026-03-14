@@ -5,27 +5,25 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Callable, Optional, TypedDict, TypeVar
+from typing import Any, Callable, Optional, TypedDict, TypeVar
 
 import orjson
 from fastapi import Body, Depends
 
-from forze.application.composition.document import (
-    DocumentUsecasesFacade,
-    DocumentUsecasesModule,
-)
+from forze.application.composition.document import DocumentDTOs, DocumentUsecasesFacade
+from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import (
     ListRequestDTO,
     Paginated,
     RawListRequestDTO,
     RawPaginated,
 )
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, UsecaseRegistry
 from forze.domain.models import BaseDTO, ReadDocument
 
 from ..routing.params import RevQuery, UUIDQuery
-from ..routing.router import ExecutionContextDependencyPort, ForzeAPIRouter
-from ._utils import override_annotations
+from ..routing.router import ForzeAPIRouter
+from ._utils import facade_dependency, override_annotations
 
 # ----------------------- #
 
@@ -70,23 +68,6 @@ class DocumentETagProvider:
 # ....................... #
 
 
-def document_facade_dependency(
-    module: DocumentUsecasesModule[R, C, U, tL, rL],
-    ctx: ExecutionContextDependencyPort,
-) -> Callable[[ExecutionContext], DocumentUsecasesFacade[R, C, U, tL, rL]]:
-    """Build a FastAPI dependency that resolves :class:`DocumentUsecasesFacade`."""
-
-    def facade(
-        context: ExecutionContext = Depends(ctx),
-    ) -> DocumentUsecasesFacade[R, C, U, tL, rL]:
-        return module.provider(context)
-
-    return facade
-
-
-# ....................... #
-
-
 class OverrideDocumentEndpointPaths(TypedDict, total=False):
     """Override the default operation IDs and endpoint paths for document routes."""
 
@@ -121,8 +102,10 @@ class OverrideDocumentEndpointPaths(TypedDict, total=False):
 def attach_document_routes(
     router: ForzeAPIRouter,
     *,
-    module: DocumentUsecasesModule[R, C, U, tL, rL],
-    context: ExecutionContextDependencyPort,
+    registry: UsecaseRegistry,
+    spec: DocumentSpec[R, Any, Any, Any],
+    dtos: DocumentDTOs[R, C, U, tL, rL],
+    ctx_dep: Callable[[], ExecutionContext],
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
@@ -130,13 +113,17 @@ def attach_document_routes(
 ) -> ForzeAPIRouter:
     """Attach document CRUD endpoints to an existing router."""
 
-    read_dto = module.dtos["read"]
-    create_dto = module.dtos.get("create")
-    update_dto = module.dtos.get("update")
-    list_dto = module.dtos.get("list", ListRequestDTO)
-    raw_list_dto = module.dtos.get("raw_list", RawListRequestDTO)
+    read_dto = dtos.read
+    create_dto = dtos.create
+    update_dto = dtos.update
+    list_dto = dtos.list or ListRequestDTO
+    raw_list_dto = dtos.raw_list or RawListRequestDTO
 
-    ucs_dep = document_facade_dependency(module, context)
+    ucs_dep = facade_dependency(
+        facade=DocumentUsecasesFacade,
+        reg=registry,
+        ctx_dep=ctx_dep,
+    )
 
     # ....................... #
 
@@ -156,7 +143,7 @@ def attach_document_routes(
         @router.get(
             f"/{get_path}",
             response_model=read_dto,
-            operation_id=f"{module.spec.namespace}.{get_path}",
+            operation_id=f"{spec.namespace}.{get_path}",
             etag=True,
             etag_config={"provider": DocumentETagProvider()},
         )
@@ -166,7 +153,7 @@ def attach_document_routes(
         ) -> R:
             """Return metadata for a single document by identifier."""
 
-            return await ucs.get()(id)
+            return await ucs.get(id)
 
     # ....................... #
 
@@ -175,7 +162,7 @@ def attach_document_routes(
         @router.post(
             f"/{list_path}",
             response_model=Paginated[read_dto],  # type: ignore[valid-type]
-            operation_id=f"{module.spec.namespace}.{list_path}",
+            operation_id=f"{spec.namespace}.{list_path}",
         )
         @override_annotations({"dto": list_dto})
         async def list(  # pyright: ignore[reportUnusedFunction]
@@ -184,14 +171,14 @@ def attach_document_routes(
         ) -> Paginated[R]:
             """List documents by filters and sorts."""
 
-            return await ucs.list()(body)
+            return await ucs.list(body)
 
         # ....................... #
 
         @router.post(
             f"/{raw_list_path}",
             response_model=RawPaginated,
-            operation_id=f"{module.spec.namespace}.{raw_list_path}",
+            operation_id=f"{spec.namespace}.{raw_list_path}",
         )
         @override_annotations({"dto": raw_list_dto})
         async def raw_list(  # pyright: ignore[reportUnusedFunction]
@@ -200,11 +187,11 @@ def attach_document_routes(
         ) -> RawPaginated:
             """List documents with raw results by filters and sorts."""
 
-            return await ucs.raw_list()(body)
+            return await ucs.raw_list(body)
 
     # ....................... #
 
-    if module.spec.write is not None and include_write_endpoints:
+    if spec.write is not None and include_write_endpoints:
 
         if create_dto:
 
@@ -213,7 +200,7 @@ def attach_document_routes(
                 response_model=read_dto,
                 idempotent=True,
                 idempotency_config={"dto_param": "dto"},
-                operation_id=f"{module.spec.namespace}.{create_path}",
+                operation_id=f"{spec.namespace}.{create_path}",
             )
             @override_annotations({"dto": create_dto})
             async def create(  # pyright: ignore[reportUnusedFunction]
@@ -222,16 +209,16 @@ def attach_document_routes(
             ) -> R:
                 """Create a new document from the provided DTO."""
 
-                return await ucs.create()(dto)
+                return await ucs.create(dto)
 
         # ....................... #
 
-        if update_dto and module.spec.supports_update():
+        if update_dto and spec.supports_update():
 
             @router.patch(
                 f"/{update_path}",
                 response_model=read_dto,
-                operation_id=f"{module.spec.namespace}.{update_path}",
+                operation_id=f"{spec.namespace}.{update_path}",
             )
             @override_annotations({"dto": update_dto})
             async def update(  # pyright: ignore[reportUnusedFunction]
@@ -242,7 +229,7 @@ def attach_document_routes(
             ) -> R:
                 """Apply a partial update to an existing document."""
 
-                return await ucs.update()(
+                return await ucs.update(
                     {
                         "pk": id,
                         "dto": dto,
@@ -252,12 +239,12 @@ def attach_document_routes(
 
         # ....................... #
 
-        if module.spec.supports_soft_delete():
+        if spec.supports_soft_delete():
 
             @router.patch(
                 f"/{delete_path}",
                 response_model=read_dto,
-                operation_id=f"{module.spec.namespace}.{delete_path}",
+                operation_id=f"{spec.namespace}.{delete_path}",
             )
             async def delete(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
@@ -266,7 +253,7 @@ def attach_document_routes(
             ) -> R:
                 """Soft-delete a document and return the new representation."""
 
-                return await ucs.delete()(
+                return await ucs.delete(
                     {
                         "pk": id,
                         "rev": rev,
@@ -276,7 +263,7 @@ def attach_document_routes(
             @router.patch(
                 f"/{restore_path}",
                 response_model=read_dto,
-                operation_id=f"{module.spec.namespace}.{restore_path}",
+                operation_id=f"{spec.namespace}.{restore_path}",
             )
             async def restore(  # pyright: ignore[reportUnusedFunction]
                 id: UUIDQuery,
@@ -285,7 +272,7 @@ def attach_document_routes(
             ) -> R:
                 """Restore a previously soft-deleted document."""
 
-                return await ucs.restore()(
+                return await ucs.restore(
                     {
                         "pk": id,
                         "rev": rev,
@@ -298,7 +285,7 @@ def attach_document_routes(
             f"/{kill_path}",
             response_model=None,
             status_code=204,
-            operation_id=f"{module.spec.namespace}.{kill_path}",
+            operation_id=f"{spec.namespace}.{kill_path}",
         )
         async def kill(  # pyright: ignore[reportUnusedFunction]
             id: UUIDQuery,
@@ -306,7 +293,7 @@ def attach_document_routes(
         ) -> None:
             """Hard-delete a document without soft-delete semantics."""
 
-            return await ucs.kill()(id)
+            return await ucs.kill(id)
 
     return router
 
@@ -318,8 +305,10 @@ def build_document_router(
     prefix: str,
     tags: Optional[list[str | Enum]] = None,
     *,
-    module: DocumentUsecasesModule[R, C, U, tL, rL],
-    context: ExecutionContextDependencyPort,
+    registry: UsecaseRegistry,
+    spec: DocumentSpec[R, Any, Any, Any],
+    dtos: DocumentDTOs[R, C, U, tL, rL],
+    ctx_dep: Callable[[], ExecutionContext],
     include_get_endpoint: bool = True,
     include_list_endpoints: bool = False,
     include_write_endpoints: bool = True,
@@ -336,13 +325,15 @@ def build_document_router(
     router = ForzeAPIRouter(
         prefix=prefix,
         tags=tags,
-        context_dependency=context,
+        context_dependency=ctx_dep,
     )
 
     attach_document_routes(
         router,
-        module=module,
-        context=context,
+        registry=registry,
+        dtos=dtos,
+        spec=spec,
+        ctx_dep=ctx_dep,
         include_get_endpoint=include_get_endpoint,
         include_list_endpoints=include_list_endpoints,
         include_write_endpoints=include_write_endpoints,

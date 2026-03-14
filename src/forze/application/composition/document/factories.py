@@ -18,7 +18,7 @@ from forze.application.usecases.document import (
 )
 from forze.base.errors import CoreError
 
-from .facades import DocumentDTOSpec
+from .facades import DocumentDTOs
 from .operations import DocumentOperation
 
 # ----------------------- #
@@ -37,7 +37,7 @@ tx_document_plan = (
 
 def build_document_create_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
@@ -52,7 +52,7 @@ def build_document_create_mapper(
     if spec.write is None:
         raise CoreError("Document specification does not support write operations")
 
-    create_dto = dto_spec.get("create")
+    create_dto = dtos.create
 
     if create_dto is None:
         raise CoreError("Document specification does not support create operations")
@@ -67,7 +67,7 @@ def build_document_create_mapper(
 
 def build_document_update_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
@@ -82,7 +82,7 @@ def build_document_update_mapper(
     if spec.write is None:
         raise CoreError("Document specification does not support write operations")
 
-    update_dto = dto_spec.get("update")
+    update_dto = dtos.update
 
     if update_dto is None:
         raise CoreError("Document specification does not support update operations")
@@ -97,14 +97,14 @@ def build_document_update_mapper(
 
 def build_document_list_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for list requests with optional steps."""
 
     mapper = DTOMapper(
-        in_=dto_spec.get("list", ListRequestDTO),
+        in_=dtos.list or ListRequestDTO,
         out=ListRequestDTO,
     )
 
@@ -116,7 +116,7 @@ def build_document_list_mapper(
 
 def build_document_raw_list_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
@@ -129,7 +129,7 @@ def build_document_raw_list_mapper(
     """
 
     mapper = DTOMapper(
-        in_=dto_spec.get("raw_list", RawListRequestDTO),
+        in_=dtos.raw_list or RawListRequestDTO,
         out=RawListRequestDTO,
     )
 
@@ -141,7 +141,7 @@ def build_document_raw_list_mapper(
 
 def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dto_spec: DocumentDTOSpec[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     create_steps: tuple[MappingStep[Any], ...] = (),
     update_steps: tuple[MappingStep[Any], ...] = (),
@@ -161,12 +161,12 @@ def build_document_registry(
 
     list_mapper = build_document_list_mapper(
         spec,
-        dto_spec,
+        dtos,
         steps=list_steps,
     )
     raw_list_mapper = build_document_raw_list_mapper(
         spec,
-        dto_spec,
+        dtos,
         steps=raw_list_steps,
     )
 
@@ -192,12 +192,12 @@ def build_document_registry(
     if spec.write is not None:
         create_mapper = build_document_create_mapper(
             spec,
-            dto_spec,
+            dtos,
             steps=create_steps,
         )
         update_mapper = build_document_update_mapper(
             spec,
-            dto_spec,
+            dtos,
             steps=update_steps,
         )
 

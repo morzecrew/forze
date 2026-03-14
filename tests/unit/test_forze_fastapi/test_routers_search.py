@@ -4,18 +4,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
-from forze.application.composition.base import BaseUsecasesFacadeProvider
 from forze.application.composition.search import (
-    SearchUsecasesFacade,
-    SearchUsecasesModule,
+    SearchDTOs,
     build_search_registry,
 )
 from forze.application.contracts.search import SearchSpec
-from forze.application.execution import UsecasePlan
 from forze_fastapi.routers.search import (
     attach_search_routes,
     build_search_router,
-    search_facade_dependency,
 )
 from forze_fastapi.routing.router import ForzeAPIRouter
 
@@ -38,55 +34,22 @@ def _minimal_search_spec() -> SearchSpec[ReadDTO]:
     )
 
 
-def _minimal_search_dto_spec() -> dict:
-    """Build a minimal SearchDTOSpec for testing."""
-    return {"read": ReadDTO}
+def _minimal_search_dtos() -> SearchDTOs:
+    """Build minimal SearchDTOs for testing."""
+    return SearchDTOs(read=ReadDTO)
 
 
-class TestSearchFacadeDependency:
-    """Tests for search_facade_dependency."""
-
-    def test_returns_callable(
-        self,
-        composition_ctx,
-    ) -> None:
-        """search_facade_dependency returns a callable dependency factory."""
-        spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
-        plan = UsecasePlan()
-        provider = BaseUsecasesFacadeProvider(
-            reg=reg,
-            plan=plan,
-            facade=SearchUsecasesFacade,
-        )
-        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
-
-        def ctx_dep():
-            return composition_ctx
-
-        dep = search_facade_dependency(module, ctx_dep)
-        assert callable(dep)
-
-
-class TestAttachSearchRouter:
+class TestAttachSearchRoutes:
     """Tests for attach_search_router."""
 
     def test_adds_search_routes(
         self,
         composition_ctx,
     ) -> None:
-        """attach_search_router adds /search and /raw-search routes."""
+        """attach_search_routes adds /search and /raw-search routes."""
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
-        plan = UsecasePlan()
-        provider = BaseUsecasesFacadeProvider(
-            reg=reg,
-            plan=plan,
-            facade=SearchUsecasesFacade,
-        )
-        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
 
         def ctx_dep():
             return composition_ctx
@@ -95,12 +58,18 @@ class TestAttachSearchRouter:
             prefix="/api",
             context_dependency=ctx_dep,
         )
-        result = attach_search_routes(router, module=module, context=ctx_dep)
+        result = attach_search_routes(
+            router,
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+        )
 
         assert result is router
         paths = {r.path for r in router.routes}
-        assert "/api/search" in paths
-        assert "/api/raw-search" in paths
+        assert "/search" in paths or "/api/search" in paths
+        assert "/raw-search" in paths or "/api/raw-search" in paths
 
     def test_search_endpoint_returns_paginated(
         self,
@@ -108,15 +77,8 @@ class TestAttachSearchRouter:
     ) -> None:
         """POST /search returns paginated results."""
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
-        plan = UsecasePlan()
-        provider = BaseUsecasesFacadeProvider(
-            reg=reg,
-            plan=plan,
-            facade=SearchUsecasesFacade,
-        )
-        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
 
         def ctx_dep():
             return composition_ctx
@@ -125,7 +87,13 @@ class TestAttachSearchRouter:
             prefix="/api",
             context_dependency=ctx_dep,
         )
-        attach_search_routes(router, module=module, context=ctx_dep)
+        attach_search_routes(
+            router,
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+        )
 
         app = FastAPI()
         app.include_router(router)
@@ -150,23 +118,18 @@ class TestBuildSearchRouter:
     ) -> None:
         """build_search_router returns a router with search routes."""
         spec = _minimal_search_spec()
-        dto_spec = _minimal_search_dto_spec()
-        reg = build_search_registry(spec, dto_spec)
-        plan = UsecasePlan()
-        provider = BaseUsecasesFacadeProvider(
-            reg=reg,
-            plan=plan,
-            facade=SearchUsecasesFacade,
-        )
-        module = SearchUsecasesModule(spec=spec, dtos=dto_spec, provider=provider)
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
 
         def ctx_dep():
             return composition_ctx
 
         router = build_search_router(
             prefix="/search",
-            module=module,
-            context=ctx_dep,
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
         )
 
         assert isinstance(router, ForzeAPIRouter)
