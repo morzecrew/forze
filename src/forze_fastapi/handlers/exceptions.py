@@ -4,6 +4,8 @@ require_fastapi()
 
 # ....................... #
 
+from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -42,11 +44,21 @@ def _status_code_mapper(exc: CoreError) -> int:
 async def forze_exception_handler(request: Request, exc: CoreError) -> JSONResponse:
     """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
 
-    logger.exception("Exception occurred: %s (%s)", exc.message, exc.code)
+    logger.exception(
+        "Exception occurred: %s (code=%s, details=%s)",
+        exc.message,
+        exc.code,
+        exc.details,
+    )
+
+    content: dict[str, Any] = {"detail": exc.message}
+
+    if exc.details:
+        content["context"] = exc.details
 
     return JSONResponse(
         status_code=_status_code_mapper(exc),
-        content={"detail": exc.message},
+        content=content,
         headers={ERROR_CODE_HEADER: exc.code},
     )
 

@@ -4,6 +4,7 @@ require_psycopg()
 
 # ....................... #
 
+import re
 from functools import partial
 from typing import Any
 
@@ -14,12 +15,19 @@ from forze.base.errors import (
     ConflictError,
     CoreError,
     InfrastructureError,
+    NotFoundError,
     ValidationError,
     error_handler,
     handled,
 )
 
 # ----------------------- #
+
+FK_pattern = re.compile(
+    r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
+)
+
+# ....................... #
 
 
 @error_handler
@@ -33,7 +41,21 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
         # Integrity / constraints
 
         case errors.ForeignKeyViolation():
-            return ValidationError("Reference document not found.")
+            msg = str(e.diag.message_detail)
+            match = FK_pattern.match(msg)
+
+            if match:
+                details = {
+                    "table": match.group("table"),
+                    "value": match.group("value"),
+                }
+            else:
+                details = {"raw": msg}
+
+            return NotFoundError(
+                message="Reference document not found.",
+                details=details,
+            )
 
         case errors.UniqueViolation():
             return ConflictError("Unique violation.")

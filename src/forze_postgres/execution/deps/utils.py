@@ -23,7 +23,8 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 
 def read_gw(
-    ctx: ExecutionContext, spec: DocumentReadSpec[Any]
+    ctx: ExecutionContext,
+    spec: DocumentReadSpec[Any],
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
