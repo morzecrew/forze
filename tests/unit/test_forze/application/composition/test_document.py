@@ -7,7 +7,6 @@ from forze.application.composition.document import (
     DocumentOperation,
     build_document_create_mapper,
     build_document_registry,
-    tx_document_plan,
 )
 from forze.application.composition.document.factories import (
     build_document_list_mapper,
@@ -15,7 +14,7 @@ from forze.application.composition.document.factories import (
     build_document_update_mapper,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import UsecaseRegistry
+from forze.application.execution import UsecasePlan, UsecaseRegistry
 from forze.application.mapping import DTOMapper
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
@@ -211,7 +210,7 @@ class TestDocumentFacadeWithRegistry:
 
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
-        reg = build_document_registry(spec, dtos).extend_plan(tx_document_plan)
+        reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
         facade = DocumentUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.get
         assert uc is not None

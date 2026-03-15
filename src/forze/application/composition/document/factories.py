@@ -4,7 +4,7 @@ from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import ListRequestDTO, RawListRequestDTO
-from forze.application.execution import UsecasePlan, UsecaseRegistry
+from forze.application.execution import UsecaseRegistry
 from forze.application.mapping import DTOMapper, MappingStep
 from forze.application.usecases.document import (
     CreateDocument,
@@ -22,10 +22,6 @@ from .facades import DocumentDTOs
 from .operations import DocumentOperation
 
 # ----------------------- #
-
-tx_document_plan = UsecasePlan().tx("*")
-
-# ....................... #
 
 
 def build_document_create_mapper(

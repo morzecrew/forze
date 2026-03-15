@@ -7,9 +7,9 @@ from starlette.testclient import TestClient
 from forze.application.composition.document import (
     DocumentDTOs,
     build_document_registry,
-    tx_document_plan,
 )
 from forze.application.contracts.document import DocumentSpec
+from forze.application.execution import UsecasePlan
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.routers.document import (
@@ -69,7 +69,7 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
     """Build registry with plan merged."""
     reg = build_document_registry(spec, dtos)
-    return reg.extend_plan(tx_document_plan)
+    return reg.extend_plan(UsecasePlan().tx("*"))
 
 
 class TestBuildDocumentRouter:
