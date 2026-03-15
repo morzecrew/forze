@@ -4,12 +4,9 @@ import attrs
 
 from forze.application.contracts.document import DocumentReadPort
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
-
-logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

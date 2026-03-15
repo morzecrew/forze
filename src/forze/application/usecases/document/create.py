@@ -5,14 +5,9 @@ import attrs
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
-
-logger = getLogger(__name__)
-
-# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

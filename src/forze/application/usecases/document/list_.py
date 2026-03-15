@@ -11,12 +11,9 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
-
-logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

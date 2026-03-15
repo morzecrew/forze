@@ -6,7 +6,7 @@ concrete implementations: :class:`GuardMiddleware`, :class:`EffectMiddleware`,
 effects after.
 """
 
-from typing import Awaitable, Callable, Protocol, Self
+from typing import Awaitable, Callable, Protocol, Self, final
 
 import attrs
 
@@ -108,6 +108,7 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
 # Pre-defined middlewares
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TxMiddleware[Args, R](Middleware[Args, R]):
     """Middleware that wraps the next call in a transaction.

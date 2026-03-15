@@ -5,14 +5,9 @@ import attrs
 
 from forze.application.contracts.document import DocumentWritePort
 from forze.application.execution import Usecase
-from forze.base.logging import getLogger
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
-
-logger = getLogger(__name__)
-
-# ....................... #
 
 
 @final  #! TODO: replace with BaseDTO

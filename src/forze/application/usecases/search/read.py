@@ -12,11 +12,8 @@ from forze.application.dto import (
 )
 from forze.application.execution import Usecase
 from forze.application.mapping import DTOMapper
-from forze.base.logging import getLogger
 
 # ----------------------- #
-
-logger = getLogger(__name__)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -37,6 +34,7 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Ou
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of read models.
         """
+
         page = args.page
         size = args.size
         limit = size
@@ -80,6 +78,7 @@ class RawSearch[In: RawSearchRequestDTO](Usecase[In, RawPaginated]):
         :param args: Search arguments (body, page, size).
         :returns: Paginated list of raw results.
         """
+
         page = args.page
         size = args.size
         limit = size
