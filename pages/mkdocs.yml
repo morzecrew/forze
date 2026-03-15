@@ -16,6 +16,9 @@ theme:
 extra_css:
   - assets/css/extra.css
 
+extra_javascript:
+  - assets/js/title-prefix.js
+
 plugins:
   - d2
   - search

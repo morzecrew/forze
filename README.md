@@ -52,11 +52,9 @@ npx skills add morzecrew/forze
 
 | Skill | Description |
 |-------|-------------|
-| `forze-architecture` | Understand the Forze framework's DDD/hexagonal architecture, layer boundaries, and import constraints. Use when creating new modules, refactoring code, or reviewing architecture compliance. |
-| `forze-application-layer` | Work with Forze's application layer including usecases, middleware, CQRS, composition, execution context, and facades. Use when creating usecases, configuring middleware, or setting up document/storage/search operations. |
-| `forze-domain-modeling` | Create and work with Forze domain models including Document, CoreModel, BaseDTO, mixins, and update validators. Use when defining new entities, value objects, or domain logic. |
-| `forze-ports-and-adapters` | Work with Forze's ports (contracts), specs, dependency injection, and adapter patterns. Use when implementing new adapters, defining ports, configuring specs, or wiring dependencies. |
-| `forze-fastapi-integration` | Build HTTP APIs with Forze's FastAPI integration including routers, document routes, route features, error handling, and dependency injection. Use when creating API endpoints, configuring routers, or integrating Forze with FastAPI. |
+| `forze-wiring` | Wire Forze runtime, dependencies, composition, and interface (FastAPI). Apply when setting up the application, configuring adapters, or exposing endpoints. |
+| `forze-framework-usage` | Write code that uses the Forze framework correctly. Apply when implementing features, usecases, or integrating Forze into an application. |
+| `forze-domain-aggregates` | Define domain models, document aggregates, and specifications for Forze. Apply when creating entities, models, specs, or DTOs. |
 
 ## Versioning
 
