@@ -1,3 +1,4 @@
+from forze.base.logging import getLogger
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -26,6 +27,10 @@ from ..routing.router import ForzeAPIRouter
 from ._utils import facade_dependency, override_annotations
 
 # ----------------------- #
+
+logger = getLogger(__name__).bind(scope="api.build")
+
+# ....................... #
 
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO)
@@ -106,9 +111,13 @@ def attach_document_routes(
     spec: DocumentSpec[R, Any, Any, Any],
     dtos: DocumentDTOs[R, C, U, tL, rL],
     ctx_dep: Callable[[], ExecutionContext],
-    include_get_endpoint: bool = True,
-    include_list_endpoints: bool = False,
-    include_write_endpoints: bool = True,
+    include_metadata_endpoint: bool = True,
+    include_list_endpoint: bool = False,
+    include_raw_list_endpoint: bool = False,
+    include_update_endpoint: bool = True,
+    include_create_endpoint: bool = True,
+    include_soft_delete_endpoints: bool = True,
+    include_hard_delete_endpoint: bool = True,
     path_overrides: OverrideDocumentEndpointPaths = {},
 ) -> ForzeAPIRouter:
     """Attach document CRUD endpoints to an existing router."""
@@ -138,7 +147,7 @@ def attach_document_routes(
 
     # ....................... #
 
-    if include_get_endpoint:
+    if include_metadata_endpoint:
 
         @router.get(
             f"/{get_path}",
@@ -157,7 +166,7 @@ def attach_document_routes(
 
     # ....................... #
 
-    if include_list_endpoints:
+    if include_list_endpoint:
 
         @router.post(
             f"/{list_path}",
@@ -173,7 +182,9 @@ def attach_document_routes(
 
             return await ucs.list(body)
 
-        # ....................... #
+    # ....................... #
+
+    if include_raw_list_endpoint:
 
         @router.post(
             f"/{raw_list_path}",
@@ -191,9 +202,20 @@ def attach_document_routes(
 
     # ....................... #
 
-    if spec.write is not None and include_write_endpoints:
+    if include_create_endpoint:
+        if spec.write is None:
+            logger.warning(
+                "Write operations are not supported for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
 
-        if create_dto:
+        if not create_dto:
+            logger.warning(
+                "Create DTO is not provided for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
+
+        else:
 
             @router.post(
                 f"/{create_path}",
@@ -211,9 +233,28 @@ def attach_document_routes(
 
                 return await ucs.create(dto)
 
-        # ....................... #
+    # ....................... #
 
-        if update_dto and spec.supports_update():
+    if include_update_endpoint:
+        if spec.write is None:
+            logger.warning(
+                "Write operations are not supported for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
+
+        elif not update_dto:
+            logger.warning(
+                "Update DTO is not provided for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
+
+        elif not spec.supports_update():
+            logger.warning(
+                "Update is not supported for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
+
+        else:
 
             @router.patch(
                 f"/{update_path}",
@@ -237,9 +278,22 @@ def attach_document_routes(
                     }
                 )
 
-        # ....................... #
+    # ....................... #
 
-        if spec.supports_soft_delete():
+    if include_soft_delete_endpoints:
+        if spec.write is None:
+            logger.warning(
+                "Write operations are not supported for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
+
+        elif not spec.supports_soft_delete():
+            logger.warning(
+                "Soft delete is not supported for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
+
+        else:
 
             @router.patch(
                 f"/{delete_path}",
@@ -260,6 +314,8 @@ def attach_document_routes(
                     }
                 )
 
+            # ....................... #
+
             @router.patch(
                 f"/{restore_path}",
                 response_model=read_dto,
@@ -279,21 +335,30 @@ def attach_document_routes(
                     }
                 )
 
-        # ....................... #
+    # ....................... #
 
-        @router.delete(
-            f"/{kill_path}",
-            response_model=None,
-            status_code=204,
-            operation_id=f"{spec.namespace}.{kill_path}",
-        )
-        async def kill(  # pyright: ignore[reportUnusedFunction]
-            id: UUIDQuery,
-            ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
-        ) -> None:
-            """Hard-delete a document without soft-delete semantics."""
+    if include_hard_delete_endpoint:
+        if spec.write is None:
+            logger.warning(
+                "Write operations are not supported for document %s, skipping",
+                spec.read["model"].__qualname__,
+            )
 
-            return await ucs.kill(id)
+        else:
+
+            @router.delete(
+                f"/{kill_path}",
+                response_model=None,
+                status_code=204,
+                operation_id=f"{spec.namespace}.{kill_path}",
+            )
+            async def kill(  # pyright: ignore[reportUnusedFunction]
+                id: UUIDQuery,
+                ucs: DocumentUsecasesFacade[R, C, U, tL, rL] = Depends(ucs_dep),
+            ) -> None:
+                """Hard-delete a document without soft-delete semantics."""
+
+                return await ucs.kill(id)
 
     return router
 
@@ -309,9 +374,13 @@ def build_document_router(
     spec: DocumentSpec[R, Any, Any, Any],
     dtos: DocumentDTOs[R, C, U, tL, rL],
     ctx_dep: Callable[[], ExecutionContext],
-    include_get_endpoint: bool = True,
-    include_list_endpoints: bool = False,
-    include_write_endpoints: bool = True,
+    include_metadata_endpoint: bool = True,
+    include_list_endpoint: bool = False,
+    include_raw_list_endpoint: bool = False,
+    include_update_endpoint: bool = True,
+    include_create_endpoint: bool = True,
+    include_soft_delete_endpoints: bool = True,
+    include_hard_delete_endpoint: bool = True,
     path_overrides: OverrideDocumentEndpointPaths = {},
 ) -> ForzeAPIRouter:
     """Construct a router exposing CRUD endpoints for a document spec.
@@ -334,9 +403,13 @@ def build_document_router(
         dtos=dtos,
         spec=spec,
         ctx_dep=ctx_dep,
-        include_get_endpoint=include_get_endpoint,
-        include_list_endpoints=include_list_endpoints,
-        include_write_endpoints=include_write_endpoints,
+        include_metadata_endpoint=include_metadata_endpoint,
+        include_list_endpoint=include_list_endpoint,
+        include_raw_list_endpoint=include_raw_list_endpoint,
+        include_update_endpoint=include_update_endpoint,
+        include_create_endpoint=include_create_endpoint,
+        include_soft_delete_endpoints=include_soft_delete_endpoints,
+        include_hard_delete_endpoint=include_hard_delete_endpoint,
         path_overrides=path_overrides,
     )
 

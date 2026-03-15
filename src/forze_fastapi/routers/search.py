@@ -53,6 +53,8 @@ def attach_search_routes(
     spec: SearchSpec[M],
     dtos: SearchDTOs[M, tS, rS],
     ctx_dep: Callable[[], ExecutionContext],
+    include_typed_search_endpoint: bool = True,
+    include_raw_search_endpoint: bool = True,
     path_overrides: OverrideSearchEndpointPaths = {},
 ) -> R:
     """Attach typed and raw search endpoints to an existing router."""
@@ -74,35 +76,39 @@ def attach_search_routes(
 
     # ....................... #
 
-    @router.post(
-        f"/{search_path}",
-        response_model=Paginated[read_dto],  # type: ignore[valid-type]
-        operation_id=f"{spec.namespace}.{search_path}",
-    )
-    @override_annotations({"dto": typed_dto})
-    async def search(  # pyright: ignore[reportUnusedFunction]
-        body: tS = Body(...),
-        ucs: SearchUsecasesFacade[M, tS, rS] = Depends(ucs_dep),
-    ) -> Paginated[M]:
-        """Search documents using a typed search request body."""
+    if include_typed_search_endpoint:
 
-        return await ucs.search(body)
+        @router.post(
+            f"/{search_path}",
+            response_model=Paginated[read_dto],  # type: ignore[valid-type]
+            operation_id=f"{spec.namespace}.{search_path}",
+        )
+        @override_annotations({"dto": typed_dto})
+        async def search(  # pyright: ignore[reportUnusedFunction]
+            body: tS = Body(...),
+            ucs: SearchUsecasesFacade[M, tS, rS] = Depends(ucs_dep),
+        ) -> Paginated[M]:
+            """Search documents using a typed search request body."""
+
+            return await ucs.search(body)
 
     # ....................... #
 
-    @router.post(
-        f"/{raw_search_path}",
-        response_model=RawPaginated,
-        operation_id=f"{spec.namespace}.{raw_search_path}",
-    )
-    @override_annotations({"dto": raw_dto})
-    async def raw_search(  # pyright: ignore[reportUnusedFunction]
-        body: rS = Body(...),
-        ucs: SearchUsecasesFacade[M, tS, rS] = Depends(ucs_dep),
-    ) -> RawPaginated:
-        """Search documents using a raw (untyped) search body."""
+    if include_raw_search_endpoint:
 
-        return await ucs.raw_search(body)
+        @router.post(
+            f"/{raw_search_path}",
+            response_model=RawPaginated,
+            operation_id=f"{spec.namespace}.{raw_search_path}",
+        )
+        @override_annotations({"dto": raw_dto})
+        async def raw_search(  # pyright: ignore[reportUnusedFunction]
+            body: rS = Body(...),
+            ucs: SearchUsecasesFacade[M, tS, rS] = Depends(ucs_dep),
+        ) -> RawPaginated:
+            """Search documents using a raw (untyped) search body."""
+
+            return await ucs.raw_search(body)
 
     # ....................... #
 
@@ -117,6 +123,8 @@ def build_search_router(
     spec: SearchSpec[M],
     dtos: SearchDTOs[M, tS, rS],
     ctx_dep: Callable[[], ExecutionContext],
+    include_typed_search_endpoint: bool = True,
+    include_raw_search_endpoint: bool = True,
     path_overrides: OverrideSearchEndpointPaths = {},
 ) -> ForzeAPIRouter:
     """Build a standalone :class:`ForzeAPIRouter` with search endpoints."""
@@ -133,6 +141,8 @@ def build_search_router(
         spec=spec,
         dtos=dtos,
         ctx_dep=ctx_dep,
+        include_typed_search_endpoint=include_typed_search_endpoint,
+        include_raw_search_endpoint=include_raw_search_endpoint,
         path_overrides=path_overrides,
     )
 
