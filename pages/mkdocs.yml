@@ -14,25 +14,14 @@ theme:
   show_datetime: true
 
 extra_css:
-  - assets/css/extra.css
+  - extra/extra.css
 
 extra_javascript:
-  - assets/js/title-prefix.js
+  - extra/extra.js
 
 plugins:
-  - d2
   - search
   - pygments
-  - mkdocstrings:
-      handlers:
-        python:
-          paths: ["../src"]
-          options:
-            show_root_heading: true
-            show_source: false
-            members_order: source
-            filters:
-              - "!^_"
 
 markdown_extensions:
   - admonition

@@ -1,0 +1,90 @@
+.d2-diagram .d2-dark {
+    display: none;
+}
+
+html.dark .d2-diagram .d2-light {
+    display: none;
+}
+
+html.dark .d2-diagram .d2-dark {
+    display: block;
+}
+
+article .typography h2 {
+    margin-top: 2.2rem;
+}
+
+article .typography h3 {
+    margin-top: 1.8rem;
+}
+
+article .typography h4 {
+    margin-top: 1.6rem;
+}
+
+article .typography h5 {
+    margin-top: 1.4rem;
+}
+
+article .typography p {
+    margin-top: 1.2rem;
+}
+
+article .codehilite td.linenos {
+    display: none;
+}
+
+html {
+    scrollbar-gutter: stable;
+}
+
+/* Blur when search is open */
+
+html.search-open body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    background: rgb(0 0 0 / 0.08);
+    pointer-events: none;
+    z-index: 30;
+}
+
+#search-dialog {
+    z-index: 40;
+}
+
+/* Fixes for layout full width */
+
+html.layout-full .container,
+html.layout-full .container-wrapper,
+html.layout-full [class~="3xl:fixed:container"],
+html.layout-full [data-slot="sidebar-wrapper"],
+html.layout-full [data-slot="docs"] {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+html.layout-full article[view-transition-name="page"] {
+  width: 100%;
+  max-width: 1100px;
+}
+
+html.layout-full .typography {
+  width: 100%;
+  max-width: 1100px;
+}
+
+html.layout-full .mx-auto.flex.flex-wrap.h-16.w-full.max-w-2xl {
+  max-width: 1100px !important;
+}
+
+/* FIXED */
+html.layout-fixed article[view-transition-name="page"] {
+  max-width: 800px;
+}
+
+html.layout-fixed .typography {
+  max-width: 800px;
+}
