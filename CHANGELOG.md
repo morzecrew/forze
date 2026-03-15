@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+### Removed
+
+- ...
+
+## [0.1.13] - 2026-03-15
+
+### Added
+
 - `hybridmethod` descriptor in `forze.base.descriptors` for class/instance dual method support.
 - `Pagination` DTO with `page` and `size` fields for list and search request payloads.
 - `DocumentDTOs` with `list` and `raw_list` keys for custom list request DTO types.
@@ -288,7 +306,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.12...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/morzecrew/forze/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/morzecrew/forze/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/morzecrew/forze/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/morzecrew/forze/compare/v0.1.9...v0.1.10
