@@ -37,6 +37,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Ensure release tag is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+
+          TAG_COMMIT="$(git rev-list -n 1 "${GITHUB_REF_NAME}")"
+
+          if git merge-base --is-ancestor "$TAG_COMMIT" "origin/main"; then
+            echo "OK: tag commit is on main"
+          else
+            echo "ERROR: tag '${GITHUB_REF_NAME}' points to commit not contained in main"
+            echo "Tag commit: $TAG_COMMIT"
+            echo "Refuse release build."
+            exit 1
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@6ee6290f1cbc4156c0bdd66691b2c144ef8df19a # v7
         with:
