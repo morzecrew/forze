@@ -20,12 +20,12 @@ from .constants import (
     NO_TO_LEVEL,
     SENSITIVE_KEY_PARTS,
 )
-from .types import LogLevel, LogLevelName
+from .types import LogLevelName
 
 # ----------------------- #
 
 
-def normalize_level(level: LogLevel) -> LogLevelName:
+def normalize_level(level: str | int) -> LogLevelName:
     """Normalize an integer or string level to a canonical level name.
 
     :param level: A level name (e.g. ``"DEBUG"``) or numeric value.

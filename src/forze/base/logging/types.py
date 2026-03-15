@@ -11,15 +11,6 @@ from typing import Any, Mapping, Optional
 
 from .constants import LogLevelName
 
-__all__ = [
-    "KeepSectionsMap",
-    "LevelsMap",
-    "LogLevel",
-    "LogLevelName",
-    "LogRecord",
-    "RootAliasesMap",
-]
-
 # ----------------------- #
 # Level types
 
@@ -48,3 +39,14 @@ RootAliasesMap = Optional[Mapping[str, str]]
 
 KeepSectionsMap = Optional[Mapping[str, int]]
 """Per-namespace truncation of logger name segments when rendering."""
+
+# ....................... #
+
+__all__ = [
+    "KeepSectionsMap",
+    "LevelsMap",
+    "LogLevel",
+    "LogLevelName",
+    "LogRecord",
+    "RootAliasesMap",
+]
