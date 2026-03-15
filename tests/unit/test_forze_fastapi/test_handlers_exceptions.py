@@ -1,5 +1,7 @@
 """Unit tests for forze_fastapi.handlers.exceptions."""
 
+import json
+
 import pytest
 
 from fastapi import FastAPI
@@ -61,6 +63,26 @@ class TestForzeExceptionHandler:
         response = await forze_exception_handler(request, exc)
         assert response.status_code == 500
         assert response.headers.get(ERROR_CODE_HEADER) == "internal"
+
+    @pytest.mark.asyncio
+    async def test_includes_context_when_error_has_details(self) -> None:
+        """Responses include context payload when CoreError details are present."""
+        exc = NotFoundError(
+            message="Document not found",
+            details={"table": "users", "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af"},
+        )
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await forze_exception_handler(request, exc)
+
+        assert response.status_code == 404
+        assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
+        assert json.loads(response.body) == {
+            "detail": "Document not found",
+            "context": {
+                "table": "users",
+                "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af",
+            },
+        }
 
 
 class TestRegisterExceptionHandlers:
