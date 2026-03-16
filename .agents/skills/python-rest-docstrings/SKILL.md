@@ -1,11 +1,11 @@
 ---
-name: python-docstrings
-description: Write docstrings for Python code using Sphinx/reST roles. Use when the user asks to write or update docstrings, or when writing or editing Python code that should be documented.
+name: python-rest-docstrings
+description: Write consistent Python docstrings using reST roles for cross-references. Use when writing or updating docstrings, documenting Python code, or when the user mentions docstrings, reST, Sphinx, or API documentation.
 ---
 
-# Python Docstring Writer (Sphinx/reST)
+# Python Docstring Writer (reST)
 
-Write **consistent, high-signal docstrings** using **Sphinx/reST roles** for cross-linking. Optimize for: fast scanning in IDE/tooltips, Sphinx-friendly references, minimal redundancy with type hints, and explaining **why/behavior** rather than restating types.
+Write **consistent, high-signal docstrings** using **reST roles** for cross-linking. Optimize for: fast scanning in IDE/tooltips, friendly references, minimal redundancy with type hints, and explaining **why/behavior** rather than restating types.
 
 **Conventions:** Type aliases/constants → immediate string literal. Classes/functions → PEP 257 docstring. Attributes/TypedDict keys → trailing docstring. Cross-references → reST roles (e.g. ``:class:`Foo``, ``:meth:`Bar.baz``), not plain text. For ``@overload`` and :class:`typing.Protocol`, follow the dedicated sections below.
 
@@ -50,7 +50,7 @@ For :class:`typing.Protocol` interfaces:
 - Do **not** document ``:raises`` for protocols unless an exception is a required part of the contract (usually unknown for interfaces).
 - Use reST roles for referenced types and callables.
 - Don't forget to add ellipsis below the docstring for protocol methods, otherwise the method will be treated as broken.
-- To document protocol overloads refer to 3.1. ``@overload``
+- For protocol methods with overloads, see section 3.1 ``@overload``.
 
 ```python
 from typing import Protocol, AsyncContextManager
@@ -195,7 +195,7 @@ class TransactionOptions(TypedDict, total=False):
 ## reST roles (use for cross-references)
 
 | Role | Use for |
-| ------ | -------- |
+|------|--------|
 | ``:class:`MyClass`` | Classes |
 | ``:meth:`MyClass.method`` | Methods |
 | ``:func:`my_function`` | Functions |
@@ -204,13 +204,13 @@ class TransactionOptions(TypedDict, total=False):
 | ``:data:`CONSTANT`` | Module-level data/constants |
 | ``:exc:`SomeError`` | Exceptions |
 
-Same-class: ``:meth:`initialize`` is fine. Cross-module: prefer fully-qualified, e.g. ``:class:`pkg.mod.Foo``.
+Same-class: ``:meth:`initialize`` is fine. Cross-module: use fully-qualified names, e.g. ``:class:`pkg.mod.Foo``.
 
 ---
 
 ## Formatting (hard requirements)
 
-- **Sentence-cased**, end with a period. One blank line between code and docstring.
+- **Sentence-cased**, end with a period. One blank line between definition and docstring.
 - **Present tense** (“Returns …”, “Acquires …”).
 - Double backticks for literal values, SQL fragments, flags, env vars.
 - Blank line between summary and body. ~88 chars line length when reasonable.
@@ -218,23 +218,13 @@ Same-class: ``:meth:`initialize`` is fine. Cross-module: prefer fully-qualified,
 
 ---
 
-## Anti-pattern
+## Anti-patterns
 
-**Bad** (repeats type, no roles):
+**Attribute** — Bad (repeats type): ``"""Timeout as an integer."""``
+Good: ``"""Timeout in seconds for acquiring a connection from the pool."""``
 
-```python
-timeout: int
-"""Timeout as an integer."""
-"""Options for PostgresClient.transaction."""
-```
-
-**Good**:
-
-```python
-timeout: int
-"""Timeout in seconds for acquiring a connection from the pool."""
-"""Options for :meth:`PostgresClient.transaction`."""
-```
+**TypedDict** — Bad (no role): ``"""Options for PostgresClient.transaction."""``
+Good: ``"""Options for :meth:`PostgresClient.transaction`."""``
 
 ---
 
@@ -244,7 +234,7 @@ timeout: int
 2. **Type hint already clear?** → Docstring adds semantics, not types.
 3. **Correctness-sensitive?** (transactions, concurrency, caching, idempotency) → Must document.
 4. **Can cross-link?** → Use ``:meth:`...`` / ``:class:`...``.
-5. ``@overload``? → Prefer a single docstring on the implementation; stubs omit or duplicate.
+5. ``@overload``? → Each overload stub must have a docstring; document semantic differences per signature.
 6. :class:`typing.Protocol`? → Document contract/semantics; avoid ``:raises`` unless mandated.
 
 ---
@@ -265,4 +255,4 @@ One-line summary, then details; ``:param name: Meaning.`` ``:returns: Meaning.``
 
 ---
 
-Compatible with PEP 257, Sphinx/reST, and IDE tooltips. Keep roles even in Markdown-only contexts; they stay readable and Sphinx benefits.
+Compatible with PEP 257, reST, and IDE tooltips. Keep roles even in Markdown-only contexts; they stay readable and beneficial.

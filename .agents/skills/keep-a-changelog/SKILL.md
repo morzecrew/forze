@@ -16,7 +16,7 @@ The human remains responsible for deciding when and how to cut a release.
 - The user explicitly asks to update or maintain `CHANGELOG.md`
 - The user provides changes and wants them added to `## [Unreleased]`
 - The repository changes imply that `CHANGELOG.md` should be updated
-- The user wants help categorizing changes into `Added`, `Changed`, `Fixed`
+- The user wants help categorizing changes into `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
 - The user wants to turn accumulated `Unreleased` notes into a versioned changelog section
 
 ## Do not use this skill when
@@ -72,7 +72,10 @@ Do not include:
 - `## [Unreleased]`
   - `### Added`
   - `### Changed`
+  - `### Deprecated`
+  - `### Removed`
   - `### Fixed`
+  - `### Security`
 - Version sections:
   - `## [X.Y.Z] - YYYY-MM-DD`
   - same categories inside as needed
@@ -83,9 +86,14 @@ Do not add or modify bottom reference links unless explicitly asked.
 
 ## Categorization rules
 
-- **Added**: new public APIs, new primitives, new modules, new features
-- **Changed**: behavior changes, notable usage changes, meaningful adjustments visible to users
-- **Fixed**: bug fixes, packaging/metadata fixes, build/installation fixes
+Use these types as defined by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
+
+- **Added**: new features
+- **Changed**: changes in existing functionality
+- **Deprecated**: soon-to-be removed features
+- **Removed**: now removed features
+- **Fixed**: any bug fixes
+- **Security**: in case of vulnerabilities
 
 Additional rules:
 

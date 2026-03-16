@@ -5,19 +5,12 @@ set shell := ["bash", "-cu"]
 # Paths / constants
 
 _uv_sync := "uv sync --all-groups --all-extras > /dev/null 2>&1"
-_mod_cache_dir := ".just/modules"
-_import_cache_dir := ".just/imports"
 
 # ----------------------- #
 # Modules
 
 # Supported commands: serve, build, diagrams
 mod pages "pages/justfile"
-
-# ----------------------- #
-# Imports
-
-import? ".just/imports/areg.just"
 
 # ----------------------- #
 # Default command
@@ -56,14 +49,6 @@ _uv_cmd name strict *command:
             exit 1; \
         fi; \
     fi
-
-# ----------------------- #
-# Chore
-
-fetch-dependencies:
-    mkdir -p {{ _mod_cache_dir }}
-    mkdir -p {{ _import_cache_dir }}
-    curl -sL https://raw.githubusercontent.com/morzecrew/agent-artifacts/main/module.just -o {{ _import_cache_dir }}/areg.just
 
 # ----------------------- #
 # CI

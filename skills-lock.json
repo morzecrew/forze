@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "skills": {
+    "create-agentsmd": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "bfbdbb76b17cca970d1d624e36ce72b6847860d740581c8865da796c1fef8552"
+    },
+    "gitmoji-conventional-commits": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "computedHash": "82d8c564afbfb0cb3ba76392895ddb38b0020b58939ab741ab1f19ba62ac57ad"
+    },
+    "gitmoji-conventional-pull-requests": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "computedHash": "6a6e4f0f45d32fd101a0d4aa48cea5b5b462f43ce138b38dcfbf2cdf4bfd8574"
+    },
+    "keep-a-changelog": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "computedHash": "d70cabc3ee6e135da14173efed3f62235e389b2ceb5cd5fdfdd644c609ae62f7"
+    },
+    "python-rest-docstrings": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "computedHash": "080988c8d0e7efc94d40f663eb29c69d46683f93998e60cbb83e20e9d2a9a030"
+    }
+  }
+}

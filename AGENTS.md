@@ -5,6 +5,10 @@ Routing guide for AI agents working in this repository.
 This file is not the source of truth for project policy. It tells agents where
 to look first for authoritative rules before editing code, tests, docs, or release assets.
 
+## Project overview
+
+Forze is a Python library for Domain-Driven Design and Hexagonal Architecture in backend services. It provides core framework layers (application, domain, utils, base) and optional integrations (FastAPI, Postgres, Redis, S3, Temporal, Mongo, RabbitMQ, Socket.IO, SQS). Development validation means running tests and quality checks—there is no runnable application or server to start.
+
 ## Agent workflow (quick checklist)
 
 1. Identify task type (code, tests, docs, release, security, CI).
@@ -22,7 +26,7 @@ Read:
 
 Use it for:
 - branch and contribution flow
-- commit and PR title format
+- commit and PR title format (Conventional Commits + gitmoji)
 - test expectations
 - changelog and release preparation
 
@@ -108,10 +112,6 @@ Use them for:
 6. Record user-facing changes in `CHANGELOG.md` under `[Unreleased]`.
 7. For security-sensitive work, follow `SECURITY.md` and minimize public detail.
 
-## Agent memory files
-
-Agent journals may live under `.jules/` (memory only, not policy) when present.
-
 ## Cross-tool compatibility
 
 If tool-specific directories exist (for example `.agent/` or `.cursor/`), they
@@ -136,8 +136,9 @@ The VM update script installs `uv`, `just`, and Python 3.13 via `uv`. After the 
 
 See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 
-- **Unit tests:** `just test tests/unit`
-- **All tests:** `just test` (integration tests need Docker for testcontainers)
+- **Unit tests:** `just test-fast tests/unit`
+- **All tests (unit + integration):** `just test-fast` (integration tests need Docker for testcontainers)
+- **Performance tests:** `just test-perf` (requires Docker)
 - **Quality checks (lint/imports/dead-code/deps/security):** `just quality` (or `just quality -s` for strict)
 - **Docs:** `just pages serve`
 
