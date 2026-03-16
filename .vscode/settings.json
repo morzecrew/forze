@@ -1,8 +1,4 @@
 {
-    "markdownlint.config": {
-        "default": false, // temporarily disabled
-        "extends": ".vscode/.markdownlint.yaml",
-    },
     "editor.codeLens": true,
     "files.associations": {
         "*.env*": "env",

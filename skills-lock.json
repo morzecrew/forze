@@ -1,11 +1,6 @@
 {
   "version": 1,
   "skills": {
-    "create-agentsmd": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "bfbdbb76b17cca970d1d624e36ce72b6847860d740581c8865da796c1fef8552"
-    },
     "gitmoji-conventional-commits": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",

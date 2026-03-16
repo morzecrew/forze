@@ -1,0 +1,36 @@
+# Relax rules that conflict with docs structure (mkdocs, images, tables)
+# See https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+# MD013: Line length - docs often have long lines (URLs, code, paths)
+MD013: false
+
+# MD033: Inline HTML - mkdocs uses div/img for images and layout
+MD033: false
+
+# MD056: Table column count - strict consistency can break tables
+MD056: false
+
+# MD060: Table column style - allow compact tables
+MD060: false
+
+# MD024: Duplicate headings - CHANGELOG and docs reuse section names across versions
+MD024:
+  siblings_only: true
+
+# MD034: Bare URLs - allow for email, links in lists
+MD034: false
+
+# MD012: Multiple blank lines - sometimes used for readability
+MD012: false
+
+# MD031: Blanks around fences - strict spacing
+MD031: false
+
+# MD032: Blanks around lists - strict spacing
+MD032: false
+
+# MD036: Emphasis as heading - intentional style in some docs
+MD036: false
+
+# MD040: Fenced code language - not always needed
+MD040: false

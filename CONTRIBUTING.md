@@ -98,7 +98,7 @@ just pages diagrams
 
 - Update documentation when behavior changes; keep docs aligned with code.
 - Add or update pages under `pages/docs/` and adjust `pages/mkdocs.yml` navigation as needed.
-- Follow markdownlint rules (see `.vscode/.markdownlint.yaml`) for style consistency.
+- Follow markdownlint rules (see `.markdownlint.yaml`) for style consistency.
 - API docs are generated from docstrings via mkdocstrings; use Sphinx/reST roles in Python docstrings.
 
 ## Commit Messages
