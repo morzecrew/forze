@@ -57,7 +57,7 @@ jobs:
           fi
 
       - name: Install uv
-        uses: astral-sh/setup-uv@6ee6290f1cbc4156c0bdd66691b2c144ef8df19a # v7
+        uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -131,7 +131,7 @@ jobs:
           path: ./CHANGELOG.md
 
       - name: Create GitHub Release (no files)
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
         with:
           body: |
             ## Changelog
