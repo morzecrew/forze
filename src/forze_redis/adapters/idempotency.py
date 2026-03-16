@@ -118,7 +118,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
-        logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[4:] + "...")
+        logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[:8] + "...")
 
         with logger.section():
             k = self.__key(op, key)
@@ -177,7 +177,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
             return None
 
         logger.debug(
-            "Committing idempotency for op '%s', key '%s'", op, key[4:] + "..."
+            "Committing idempotency for op '%s', key '%s'", op, key[:8] + "..."
         )
 
         with logger.section():

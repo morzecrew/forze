@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 import structlog
 from rich.console import Console
+from rich.highlighter import ReprHighlighter
+from rich.pretty import Pretty
+from rich.rule import Rule
 from rich.traceback import Traceback
 
 from forze.base.logging.helpers import render_message, safe_preview
@@ -287,6 +290,39 @@ def _indent_for_name(name: str) -> str:
     return config.step * get_depth()
 
 
+def _render_rich_to_str(renderable: Any) -> str:
+    """Render a Rich renderable to an ANSI-colored string."""
+    buf = StringIO()
+    Console(file=buf, force_terminal=True, color_system="auto").print(
+        renderable, end=""
+    )
+    return buf.getvalue()
+
+
+def _extra_needs_pretty(extra: dict[str, Any]) -> bool:
+    """Use Pretty when extra has nested structures or many keys."""
+
+    if len(extra) > 3:
+        return True
+
+    return any(
+        isinstance(v, (dict, list, tuple)) and not _is_simple_tuple(v)
+        for v in extra.values()
+    )
+
+
+def _is_simple_tuple(v: Any) -> bool:
+    """Tuples of primitives can stay inline."""
+
+    if not isinstance(v, tuple):
+        return False
+
+    return len(v) <= 3 and all(  # pyright: ignore[reportUnknownArgumentType]
+        isinstance(x, (str, int, float, bool, type(None)))
+        for x in v  # pyright: ignore[reportUnknownVariableType]
+    )
+
+
 # ----------------------- #
 # Renderers
 
@@ -304,7 +340,7 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
     config = get_config()
     name = event_dict.get("logger", "root")
     indent = _indent_for_name(name)
-    level = _level_display(event_dict.get("level", "INFO")).ljust(8)
+    level = _level_display(event_dict.get("level", "INFO")).ljust(9)
     ts = event_dict.get("timestamp", "")
     time_str = _format_ts(ts) if ts else ""
     event = event_dict.get("event", "")
@@ -328,9 +364,21 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
         k: v for k, v in event_dict.items() if k not in standard_keys and v is not None
     }
     extra_str = ""
-
     if extra:
-        extra_str = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
+        if config.colorize and _extra_needs_pretty(extra):
+            pretty_out = _render_rich_to_str(
+                Pretty(extra, indent_guides=True, max_length=40)
+            )
+            extra_str = "\n" + "\n".join(
+                indent + ln for ln in pretty_out.rstrip().split("\n")
+            )
+        else:
+            inline = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
+            if config.colorize:
+                highlighted = _render_rich_to_str(ReprHighlighter()(inline.lstrip()))
+                extra_str = " " + highlighted if highlighted else inline
+            else:
+                extra_str = inline
 
     dim = "\033[2m" if config.colorize else ""
     rst = "\033[0m" if config.colorize else ""
@@ -342,17 +390,22 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
         "CRITICAL": "\033[35m",
     }
     is_trace = level.strip() == "TRACE"
+    is_error_or_critical = level.strip() in ("ERROR", "CRITICAL")
+
+    rule_str = ""
+    if config.colorize and is_error_or_critical:
+        rule_str = _render_rich_to_str(Rule(style="red")) + "\n"
 
     if is_trace and config.colorize:
         # Dim entire TRACE record so it recedes visually
-        line = f"{dim}{time_str}   {level}{scope_str}{indent}{event}{extra_str}{rst}"
+        line = f"{rule_str}{dim}{time_str}   {level}{scope_str}{indent}{event}{extra_str}{rst}"
 
     else:
         lvl_style = colors.get(level.strip(), "") if config.colorize else ""
-        line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}"
+        line = f"{rule_str}{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}"
 
     if exception_str:
-        line += f"\n\n{indent}{exception_str}\n"
+        line += f"\n\n{indent}{exception_str}"
 
     return line
 

@@ -256,3 +256,44 @@ class TestBindAndScope:
         captured = capsys.readouterr()
         assert "[usecase]" in captured.err or "usecase" in captured.err
         assert "message" in captured.err
+
+
+# ----------------------- #
+# Rich enhancements (Rule, Pretty, ReprHighlighter)
+
+
+class TestRichEnhancements:
+    """Tests for Rule, Pretty, and ReprHighlighter when colorize=True."""
+
+    def test_error_emits_rule_when_colorized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=True)
+        log = getLogger("forze.test")
+        log.error("something failed")
+        captured = capsys.readouterr()
+        assert "something failed" in captured.err
+        assert "─" in captured.err or "━" in captured.err  # Rule character
+
+    def test_extra_with_nested_dict_uses_pretty_when_colorized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=True)
+        log = getLogger("forze.test")
+        log.info("mapping", exclude={"unset": True, "defaults": True})
+        captured = capsys.readouterr()
+        assert "mapping" in captured.err
+        assert "unset" in captured.err
+        assert "defaults" in captured.err
+
+    def test_extra_with_simple_values_emits_inline_when_colorized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=True)
+        log = getLogger("forze.test")
+        log.info("step", n=1, mode="python")
+        captured = capsys.readouterr()
+        assert "step" in captured.err
+        # ReprHighlighter inserts ANSI codes between key and "=", so check values
+        assert "1" in captured.err
+        assert "python" in captured.err
