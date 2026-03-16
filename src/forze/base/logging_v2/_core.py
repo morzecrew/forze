@@ -194,29 +194,39 @@ def _resolve_forze_level(
     """
     del logger, method_name
     override = event_dict.pop(_FORZE_LEVEL_KEY, None)
+
     if override is not None:
         event_dict["level"] = override
+
     return event_dict
 
 
 def _maybe_rich_exc_info(
-    logger: Any, method_name: str, event_dict: dict[str, Any]
+    logger: Any,
+    method_name: str,
+    event_dict: dict[str, Any],
 ) -> dict[str, Any]:
     """Format exception with Rich when colorize; else let format_exc_info handle it."""
     del logger, method_name
+
     exc_info = event_dict.get("exc_info")
+
     if exc_info is None or not get_config().colorize:
         return event_dict
+
     if exc_info is True:
         exc_info = sys.exc_info()
+
     if exc_info and exc_info[0] is not None:
         exc_type, exc_value, exc_tb = exc_info
+
         if exc_type is not None and exc_value is not None:
             tb = Traceback.from_exception(exc_type, exc_value, exc_tb)
             buf = StringIO()
             Console(file=buf, force_terminal=True, color_system="auto").print(tb)
             event_dict["exception"] = buf.getvalue()
             event_dict.pop("exc_info", None)
+
     return event_dict
 
 
@@ -225,8 +235,10 @@ def _add_forze_context(
 ) -> dict[str, Any]:
     del method_name
     event_dict["depth"] = get_depth()
+
     if "scope" not in event_dict or event_dict["scope"] is None:
         event_dict["scope"] = "root"
+
     return event_dict
 
 
@@ -234,12 +246,15 @@ def _filter_by_level(
     logger: Any, method_name: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
     del method_name
+
     config = get_config()
     name = event_dict.get("logger", "root")
     levels = config.levels
+
     if levels:
         matched_prefix: str | None = None
         matched_level: str | None = None
+
         for prefix, level in levels.items():
             if (
                 name == prefix
@@ -249,13 +264,18 @@ def _filter_by_level(
                 if matched_prefix is None or len(prefix) > len(matched_prefix):
                     matched_prefix = prefix
                     matched_level = level
+
         effective = matched_level or config.level
+
     else:
         effective = config.level
+
     msg_level = event_dict.get("level", "INFO")
     msg_no = msg_level if isinstance(msg_level, int) else level_no(msg_level)
+
     if msg_no < level_no(effective):
         raise structlog.DropEvent
+
     return event_dict
 
 
@@ -263,6 +283,7 @@ def _indent_for_name(name: str) -> str:
     config = get_config()
     if not matches_namespace(name, config.prefixes):
         return ""
+
     return config.step * get_depth()
 
 
@@ -273,11 +294,13 @@ def _indent_for_name(name: str) -> str:
 def _level_display(level: Any) -> str:
     if isinstance(level, int):
         return NO_TO_LEVEL.get(level, "INFO")
+
     return str(level).upper()
 
 
 def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any]) -> str:
     del logger, method_name
+
     config = get_config()
     name = event_dict.get("logger", "root")
     indent = _indent_for_name(name)
@@ -287,6 +310,7 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
     event = event_dict.get("event", "")
     scope = event_dict.get("scope", "root")
     scope_str = f"[{scope}]".ljust(config.width)
+
     standard_keys = {
         "event",
         "level",
@@ -299,12 +323,15 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
         "exc_info",
     }
     exception_str = event_dict.get("exception", "")
+
     extra = {
         k: v for k, v in event_dict.items() if k not in standard_keys and v is not None
     }
     extra_str = ""
+
     if extra:
         extra_str = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
+
     dim = "\033[2m" if config.colorize else ""
     rst = "\033[0m" if config.colorize else ""
     colors = {
@@ -315,14 +342,18 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
         "CRITICAL": "\033[35m",
     }
     is_trace = level.strip() == "TRACE"
+
     if is_trace and config.colorize:
         # Dim entire TRACE record so it recedes visually
-        line = f"{dim}{time_str}   {level}{scope_str}{indent}{event}{extra_str}{rst}\n"
+        line = f"{dim}{time_str}   {level}{scope_str}{indent}{event}{extra_str}{rst}"
+
     else:
         lvl_style = colors.get(level.strip(), "") if config.colorize else ""
         line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}"
+
     if exception_str:
         line += f"\n\n{indent}{exception_str}\n"
+
     return line
 
 

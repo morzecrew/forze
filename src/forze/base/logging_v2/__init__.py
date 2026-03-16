@@ -8,8 +8,8 @@ use :func:`bound_context` or :func:`bind_context` at the start of each request.
 
 from ._core import (
     LogLevelName,
-    bound_context,
     bind_context,
+    bound_context,
     clear_context,
     configure,
     get_config,
@@ -20,6 +20,8 @@ from ._core import (
     safe_preview,
 )
 from .logger import Logger
+
+# ----------------------- #
 
 __all__ = [
     "LogLevelName",
