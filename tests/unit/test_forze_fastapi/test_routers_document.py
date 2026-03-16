@@ -193,3 +193,116 @@ class TestAttachDocumentRoutes:
         assert result is router
         paths = {r.path for r in router.routes}
         assert "/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
+
+    def test_can_enable_list_and_raw_list_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """attach_document_routes can include typed and raw list endpoints."""
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = ForzeAPIRouter(
+            prefix="/api",
+            context_dependency=ctx_dep,
+        )
+        attach_document_routes(
+            router,
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+            include_list_endpoint=True,
+            include_raw_list_endpoint=True,
+        )
+
+        paths = {r.path for r in router.routes}
+        assert any(path.endswith("/list") for path in paths)
+        assert any(path.endswith("/raw-list") for path in paths)
+
+    def test_can_disable_metadata_and_write_related_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """attach_document_routes can skip metadata and all write endpoints."""
+        spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
+        dtos = _minimal_dtos(supports_update=True)
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = ForzeAPIRouter(
+            prefix="/api",
+            context_dependency=ctx_dep,
+        )
+        attach_document_routes(
+            router,
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+            include_metadata_endpoint=False,
+            include_create_endpoint=False,
+            include_update_endpoint=False,
+            include_soft_delete_endpoints=False,
+            include_hard_delete_endpoint=False,
+        )
+
+        paths = {r.path for r in router.routes}
+        assert all(not path.endswith("/metadata") for path in paths)
+        assert all(not path.endswith("/create") for path in paths)
+        assert all(not path.endswith("/update") for path in paths)
+        assert all(not path.endswith("/delete") for path in paths)
+        assert all(not path.endswith("/restore") for path in paths)
+        assert all(not path.endswith("/kill") for path in paths)
+
+
+class TestBuildDocumentRouter:
+    """Additional tests for build_document_router options."""
+
+    def test_respects_path_overrides(
+        self,
+        composition_ctx,
+    ) -> None:
+        """build_document_router applies overridden endpoint paths."""
+        spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
+        dtos = _minimal_dtos(supports_update=True)
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = build_document_router(
+            prefix="/docs",
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+            include_list_endpoint=True,
+            include_raw_list_endpoint=True,
+            path_overrides={
+                "get": "meta",
+                "typed_list": "query",
+                "raw_list": "raw-query",
+                "create": "new",
+                "update": "edit",
+                "delete": "archive",
+                "restore": "unarchive",
+                "kill": "purge",
+            },
+        )
+
+        paths = {r.path for r in router.routes}
+        assert any(path.endswith("/meta") for path in paths)
+        assert any(path.endswith("/query") for path in paths)
+        assert any(path.endswith("/raw-query") for path in paths)
+        assert any(path.endswith("/new") for path in paths)
+        assert any(path.endswith("/edit") for path in paths)
+        assert any(path.endswith("/archive") for path in paths)
+        assert any(path.endswith("/unarchive") for path in paths)
+        assert any(path.endswith("/purge") for path in paths)

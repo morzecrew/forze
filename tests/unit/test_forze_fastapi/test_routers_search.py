@@ -108,6 +108,36 @@ class TestAttachSearchRoutes:
         assert "hits" in data or "items" in data
         assert "count" in data or "total" in data
 
+    def test_can_disable_typed_search_endpoint(
+        self,
+        composition_ctx,
+    ) -> None:
+        """attach_search_routes can skip typed search while keeping raw search."""
+        spec = _minimal_search_spec()
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = ForzeAPIRouter(
+            prefix="/api",
+            context_dependency=ctx_dep,
+        )
+        attach_search_routes(
+            router,
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+            include_typed_search_endpoint=False,
+            include_raw_search_endpoint=True,
+        )
+
+        paths = {r.path for r in router.routes}
+        assert all(not path.endswith("/search") for path in paths)
+        assert any(path.endswith("/raw-search") for path in paths)
+
 
 class TestBuildSearchRouter:
     """Tests for build_search_router."""
@@ -136,3 +166,30 @@ class TestBuildSearchRouter:
         paths = {r.path for r in router.routes}
         assert "/search/search" in paths or "/search" in paths
         assert "/search/raw-search" in paths or "/raw-search" in paths
+
+    def test_respects_endpoint_flags_and_path_overrides(
+        self,
+        composition_ctx,
+    ) -> None:
+        """build_search_router applies endpoint flags and overridden paths."""
+        spec = _minimal_search_spec()
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = build_search_router(
+            prefix="/search",
+            registry=reg,
+            spec=spec,
+            dtos=dtos,
+            ctx_dep=ctx_dep,
+            include_typed_search_endpoint=True,
+            include_raw_search_endpoint=False,
+            path_overrides={"typed_search": "query"},
+        )
+
+        paths = {r.path for r in router.routes}
+        assert any(path.endswith("/query") for path in paths)
+        assert all(not path.endswith("/raw-search") for path in paths)
