@@ -10,10 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `forze.base.logging_v2`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).
+- `forze.base.logging_v2`: proper TRACE level support (below DEBUG) for noisy per-operation details; ``Logger.trace()``, ``configure(level="TRACE")``, and per-namespace ``levels={"module": "TRACE"}``.
+- `forze.base.logging_v2`: Rich traceback formatting when ``colorize=True``.
+- `forze_fastapi.middlewares.logging`: ``format_status_for_log(status_code)`` for ANSI-colored HTTP status in access logs.
 
 ### Changed
 
 - All internal logging now uses :mod:`forze.base.logging_v2` instead of :mod:`forze.base.logging`.
+- Console renderer: blank lines around exception tracebacks for clearer separation; TRACE level dims entire record when colorized.
+- ``LoggingMiddleware`` uses ``format_status_for_log`` (in forze_fastapi) for proper ANSI colors instead of Rich markup tags.
 
 ### Fixed
 

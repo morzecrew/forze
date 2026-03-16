@@ -633,6 +633,7 @@ dependencies = [
     { name = "pydantic-extra-types" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "structlog" },
     { name = "tenacity" },
 ]
@@ -737,6 +738,7 @@ requires-dist = [
     { name = "python-socketio-stubs", marker = "extra == 'socketio'", specifier = ">=5.16.1.0.20260211" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=7.3.0" },
+    { name = "rich", specifier = ">=14.0.0" },
     { name = "scalar-fastapi", marker = "extra == 'fastapi'", specifier = ">=1.8.0" },
     { name = "starlette", marker = "extra == 'fastapi'", specifier = ">=0.52.1" },
     { name = "structlog", specifier = ">=25.0.0" },

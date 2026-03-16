@@ -6,8 +6,14 @@ from typing import Any, Iterator, Self
 import attrs
 import structlog.typing
 
-from ._core import LogLevel, effective_level_for_name, level_no, log_section
-from ._core import normalize_level, render_message
+from ._core import (
+    LogLevel,
+    effective_level_for_name,
+    level_no,
+    log_section,
+    normalize_level,
+    render_message,
+)
 
 # ----------------------- #
 
@@ -33,8 +39,9 @@ class Logger:
             yield
 
     def trace(self, message: Any, *args: Any, **kwargs: Any) -> None:
-        """Log at TRACE level (emitted as DEBUG)."""
-        self._log("debug", message, args, kwargs)
+        """Log at TRACE level (below DEBUG). Use for noisy per-op details."""
+
+        self._log("debug", message, args, {**kwargs, "_forze_level": "trace"})
 
     def debug(self, message: Any, *args: Any, **kwargs: Any) -> None:
         self._log("debug", message, args, kwargs)

@@ -66,6 +66,34 @@ class TestGetLogger:
         assert "debug message" in captured.err
         assert "DEBUG" in captured.err
 
+    def test_trace_filtered_at_info_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test")
+        log.trace("should not appear")
+        captured = capsys.readouterr()
+        assert "should not appear" not in captured.err
+
+    def test_trace_filtered_at_debug_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="DEBUG", colorize=False)
+        log = getLogger("forze.test")
+        log.trace("trace should not appear at debug")
+        captured = capsys.readouterr()
+        assert "trace should not appear at debug" not in captured.err
+
+    def test_trace_emitted_at_trace_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="TRACE", colorize=False)
+        log = getLogger("forze.test")
+        log.trace("trace message")
+        captured = capsys.readouterr()
+        assert "trace message" in captured.err
+        assert "TRACE" in captured.err
+
 
 # ----------------------- #
 # Per-namespace levels
@@ -103,6 +131,20 @@ class TestPerNamespaceLevels:
         log.debug("nested debug")
         captured = capsys.readouterr()
         assert "nested debug" in captured.err
+
+    def test_namespace_trace_level(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure(
+            level="INFO",
+            levels={"forze.application": "TRACE"},
+            colorize=False,
+        )
+        app_log = getLogger("forze.application.execution")
+        base_log = getLogger("forze.base.utils")
+        app_log.trace("app trace")
+        base_log.trace("base trace")
+        captured = capsys.readouterr()
+        assert "app trace" in captured.err
+        assert "base trace" not in captured.err
 
 
 # ----------------------- #
@@ -163,7 +205,13 @@ class TestIsEnabledFor:
         log = getLogger("forze.test")
         assert log.isEnabledFor("INFO") is True
         assert log.isEnabledFor("DEBUG") is False
+        assert log.isEnabledFor("TRACE") is False
         assert log.isEnabledFor("WARNING") is True
+
+    def test_is_enabled_for_trace_at_trace_level(self) -> None:
+        configure(level="TRACE")
+        log = getLogger("forze.test")
+        assert log.isEnabledFor("TRACE") is True
 
     def test_is_enabled_for_respects_namespace_level(self) -> None:
         configure(level="WARNING", levels={"forze.application": "DEBUG"})

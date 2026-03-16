@@ -5,7 +5,26 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from forze.base.logging_v2 import getLogger
+from forze.base.logging_v2 import get_config, getLogger
+
+# ----------------------- #
+
+
+def format_status_for_log(status_code: int) -> str:
+    """Format HTTP status code for log output.
+
+    When :attr:`LoggingConfig.colorize` is True, returns ANSI-colored string.
+    Otherwise returns plain string. Use in access logs (e.g. LoggingMiddleware).
+    """
+    s = str(status_code)
+    if not get_config().colorize:
+        return s
+    if status_code < 300:
+        return f"\033[32m{s}\033[0m"
+    if status_code < 400:
+        return f"\033[33m{s}\033[0m"
+    return f"\033[31m{s}\033[0m"
+
 
 # ----------------------- #
 
@@ -25,16 +44,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration = int((time.perf_counter() - start) * 1000)
-        status = response.status_code
-
-        if status < 300:
-            status_code = f"<green>{status}</green>"
-
-        elif status < 400:
-            status_code = f"<yellow>{status}</yellow>"
-
-        else:
-            status_code = f"<red>{status}</red>"
+        status_code = format_status_for_log(response.status_code)
 
         logger.info(
             "%s %s %s (%dms)",

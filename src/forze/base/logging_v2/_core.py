@@ -10,12 +10,15 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
+from io import StringIO
 from typing import TYPE_CHECKING, Any, Iterator, Literal, Mapping, Optional, cast
 
 if TYPE_CHECKING:
     from .logger import Logger
 
 import structlog
+from rich.console import Console
+from rich.traceback import Traceback
 
 from forze.base.logging.helpers import render_message, safe_preview
 
@@ -178,6 +181,45 @@ def bound_context(**kwargs: Any) -> Iterator[None]:
 # Processors
 
 
+_FORZE_LEVEL_KEY = "_forze_level"
+
+
+def _resolve_forze_level(
+    logger: Any, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Override structlog level when Logger.trace() passes _forze_level.
+
+    structlog has no native TRACE level; trace() emits via debug() and this
+    processor sets level to trace so _filter_by_level and renderers handle it.
+    """
+    del logger, method_name
+    override = event_dict.pop(_FORZE_LEVEL_KEY, None)
+    if override is not None:
+        event_dict["level"] = override
+    return event_dict
+
+
+def _maybe_rich_exc_info(
+    logger: Any, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Format exception with Rich when colorize; else let format_exc_info handle it."""
+    del logger, method_name
+    exc_info = event_dict.get("exc_info")
+    if exc_info is None or not get_config().colorize:
+        return event_dict
+    if exc_info is True:
+        exc_info = sys.exc_info()
+    if exc_info and exc_info[0] is not None:
+        exc_type, exc_value, exc_tb = exc_info
+        if exc_type is not None and exc_value is not None:
+            tb = Traceback.from_exception(exc_type, exc_value, exc_tb)
+            buf = StringIO()
+            Console(file=buf, force_terminal=True, color_system="auto").print(tb)
+            event_dict["exception"] = buf.getvalue()
+            event_dict.pop("exc_info", None)
+    return event_dict
+
+
 def _add_forze_context(
     logger: Any, method_name: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
@@ -258,9 +300,7 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
     }
     exception_str = event_dict.get("exception", "")
     extra = {
-        k: v
-        for k, v in event_dict.items()
-        if k not in standard_keys and v is not None
+        k: v for k, v in event_dict.items() if k not in standard_keys and v is not None
     }
     extra_str = ""
     if extra:
@@ -274,10 +314,15 @@ def _console_renderer(logger: Any, method_name: str, event_dict: dict[str, Any])
         "ERROR": "\033[31m",
         "CRITICAL": "\033[35m",
     }
-    lvl_style = colors.get(level.strip(), "") if config.colorize else ""
-    line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}\n"
+    is_trace = level.strip() == "TRACE"
+    if is_trace and config.colorize:
+        # Dim entire TRACE record so it recedes visually
+        line = f"{dim}{time_str}   {level}{scope_str}{indent}{event}{extra_str}{rst}\n"
+    else:
+        lvl_style = colors.get(level.strip(), "") if config.colorize else ""
+        line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}"
     if exception_str:
-        line += f"{indent}{exception_str}\n"
+        line += f"\n\n{indent}{exception_str}\n"
     return line
 
 
@@ -291,7 +336,9 @@ def _build_chain(*, json_mode: bool = False) -> list[Any]:
     chain: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
+        _resolve_forze_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        _maybe_rich_exc_info,
         structlog.processors.format_exc_info,
         _add_forze_context,
         _filter_by_level,
