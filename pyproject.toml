@@ -60,13 +60,14 @@ dev = [
     "types-python-dateutil>=2.9.0.20260305",
     "types-pyyaml>=6.0.12.20250915",
     "vulture>=2.14",
+    "pre-commit>=4.5.1",
 ]
 docs = [
     "mkdocs>=1.6.1,<2.0.0",
+    "mkdocs-awesome-pages-plugin>=2.10.1",
     "mkdocs-pygments>=0.1.0",
     "mkdocs-shadcn>=0.10.1",
     "mkdocstrings[python]>=1.0.3",
-    "pre-commit>=4.5.1",
     "pygments>=2.19.2",
     "pymdown-extensions>=10.21",
 ]

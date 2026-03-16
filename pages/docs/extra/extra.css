@@ -44,8 +44,8 @@ html.search-open body::before {
     content: "";
     position: fixed;
     inset: 0;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(7px);
+    -webkit-backdrop-filter: blur(7px);
     background: rgb(0 0 0 / 0.08);
     pointer-events: none;
     z-index: 30;
@@ -53,6 +53,10 @@ html.search-open body::before {
 
 #search-dialog {
     z-index: 40;
+}
+
+html.dark #search-dialog {
+    box-shadow: 0 0 100px 10px rgba(0, 0, 0, 0.5);
 }
 
 /* Fixes for layout full width */
@@ -69,6 +73,8 @@ html.layout-full [data-slot="docs"] {
 html.layout-full article[view-transition-name="page"] {
   width: 100%;
   max-width: 1100px;
+  padding-inline: 1rem;
+  box-sizing: border-box;
 }
 
 html.layout-full .typography {
@@ -78,11 +84,15 @@ html.layout-full .typography {
 
 html.layout-full .mx-auto.flex.flex-wrap.h-16.w-full.max-w-2xl {
   max-width: 1100px !important;
+  padding-inline: 1rem;
+  box-sizing: border-box;
 }
 
 /* FIXED */
 html.layout-fixed article[view-transition-name="page"] {
   max-width: 800px;
+  padding-inline: 1rem;
+  box-sizing: border-box;
 }
 
 html.layout-fixed .typography {
@@ -94,26 +104,29 @@ html.layout-fixed .typography {
 #search-dialog {
   top: calc(var(--header-height) + 1rem) !important;
   left: 50% !important;
-
-  width: min(800px, calc(100vw - 2rem)) !important;
-  max-width: min(800px, calc(100vw - 2rem)) !important;
-
   margin: 0 !important;
+
+  translate: -50% 0 !important;
+  transform: none !important;
 }
 
-#search-dialog .w-lg {
+#search-dialog > .w-lg {
+  width: min(800px, calc(100vw - 2rem)) !important;
+  max-width: min(800px, calc(100vw - 2rem)) !important;
+}
+
+#mkdocs-search-results {
+  max-height: 70vh !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+#mkdocs-search-results article {
+  margin: 0.25rem !important;
   width: 100% !important;
   max-width: none !important;
 }
 
-#search-dialog [data-slot="command-input-wrapper"] {
-  position: sticky;
-  top: 0;
-  background: var(--background);
-  z-index: 10;
-}
-
-#mkdocs-search-results {
-  max-height: 70vh;
-  overflow-y: auto;
+#mkdocs-search-results article:hover {
+  background: var(--muted);
 }

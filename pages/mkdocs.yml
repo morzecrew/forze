@@ -1,6 +1,7 @@
 site_name: Forze
 site_url: https://morzecrew.github.io/forze
 repo_url: https://github.com/morzecrew/forze
+dev_addr: "localhost:8045"
 
 theme:
   name: shadcn
