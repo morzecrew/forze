@@ -14,7 +14,7 @@ from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import KeyCodec
 from forze.base.errors import ValidationError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from ..kernel.platform import RedisClient
 

@@ -151,6 +151,7 @@ class TestOperationPlan:
 
     def test_merge_from_instance_includes_self(self) -> None:
         """Instance merge (p1.merge(p2)) includes p1 in the result."""
+
         def f1(ctx):
             return None
 
@@ -169,6 +170,7 @@ class TestOperationPlan:
 
     def test_merge_from_instance_single_arg(self) -> None:
         """Instance merge with one other plan: p1.merge(p2) equals OperationPlan.merge(p1, p2)."""
+
         def f1(ctx):
             return None
 
@@ -249,6 +251,7 @@ class TestUsecasePlan:
 
     def test_merge_from_instance_includes_self(self) -> None:
         """Instance merge (plan_a.merge(plan_b)) includes plan_a in the result."""
+
         def guard_a(ctx: ExecutionContext):
             async def _guard(args):
                 pass
@@ -271,6 +274,7 @@ class TestUsecasePlan:
 
     def test_merge_from_instance_equals_class_merge(self) -> None:
         """plan_a.merge(plan_b) equals UsecasePlan.merge(plan_a, plan_b)."""
+
         def guard_a(ctx: ExecutionContext):
             async def _guard(args):
                 pass

@@ -128,9 +128,7 @@ class TestLifecyclePlan:
         assert "a" in shutdown_log
         assert "b" not in shutdown_log
 
-    async def test_shutdown_swallows_exceptions(
-        self, ctx: ExecutionContext
-    ) -> None:
+    async def test_shutdown_swallows_exceptions(self, ctx: ExecutionContext) -> None:
         order: list[str] = []
 
         async def down_fail(c: ExecutionContext) -> None:
@@ -147,9 +145,7 @@ class TestLifecyclePlan:
         await plan.shutdown(ctx)
         assert order == ["fail", "ok"]
 
-    async def test_empty_plan_startup_and_shutdown(
-        self, ctx: ExecutionContext
-    ) -> None:
+    async def test_empty_plan_startup_and_shutdown(self, ctx: ExecutionContext) -> None:
         plan = LifecyclePlan()
         await plan.startup(ctx)
         await plan.shutdown(ctx)

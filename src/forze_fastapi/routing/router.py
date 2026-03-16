@@ -288,9 +288,7 @@ class ForzeAPIRouter(APIRouter):
             provider: Optional[ETagProvider] = merged.get("provider")
 
             if provider is None:
-                raise CoreError(
-                    "ETag provider is required when ETag is enabled"
-                )
+                raise CoreError("ETag provider is required when ETag is enabled")
 
             auto_304: bool = merged.get("auto_304", True)
 

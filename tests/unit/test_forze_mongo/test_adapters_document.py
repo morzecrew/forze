@@ -76,7 +76,9 @@ class TestMongoDocumentAdapter:
         cache.set_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_get_many_falls_back_to_read_gateway_when_cache_get_many_fails(self) -> None:
+    async def test_get_many_falls_back_to_read_gateway_when_cache_get_many_fails(
+        self,
+    ) -> None:
         pks = [uuid4(), uuid4()]
         expected = [_read_doc(pk, rev=i + 1) for i, pk in enumerate(pks)]
         read_gw = _build_read_gateway()
@@ -94,7 +96,9 @@ class TestMongoDocumentAdapter:
         cache.set_many_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_delegates_to_write_gateway_and_maps_domain_to_read(self) -> None:
+    async def test_update_delegates_to_write_gateway_and_maps_domain_to_read(
+        self,
+    ) -> None:
         pk = uuid4()
         read_gw = _build_read_gateway()
         write_gw = _build_write_gateway(read_gw.client)

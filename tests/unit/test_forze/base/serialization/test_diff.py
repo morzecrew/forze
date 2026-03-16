@@ -186,44 +186,28 @@ class TestSplitTouchesFromMergePatch:
 
 class TestHasHybridPatchConflict:
     def test_no_conflict_disjoint_scalars(self) -> None:
-        assert not has_hybrid_patch_conflict(
-            {("a",): 1}, set(), {("b",): 2}, set()
-        )
+        assert not has_hybrid_patch_conflict({("a",): 1}, set(), {("b",): 2}, set())
 
     def test_no_conflict_same_scalar_same_value(self) -> None:
-        assert not has_hybrid_patch_conflict(
-            {("a",): 1}, set(), {("a",): 1}, set()
-        )
+        assert not has_hybrid_patch_conflict({("a",): 1}, set(), {("a",): 1}, set())
 
     def test_conflict_same_scalar_different_value(self) -> None:
-        assert has_hybrid_patch_conflict(
-            {("a",): 1}, set(), {("a",): 2}, set()
-        )
+        assert has_hybrid_patch_conflict({("a",): 1}, set(), {("a",): 2}, set())
 
     def test_conflict_container_overlap(self) -> None:
-        assert has_hybrid_patch_conflict(
-            {}, {("a",)}, {}, {("a", "b")}
-        )
+        assert has_hybrid_patch_conflict({}, {("a",)}, {}, {("a", "b")})
 
     def test_conflict_container_vs_scalar_prefix(self) -> None:
-        assert has_hybrid_patch_conflict(
-            {}, {("a",)}, {("a", "x"): 1}, set()
-        )
+        assert has_hybrid_patch_conflict({}, {("a",)}, {("a", "x"): 1}, set())
 
     def test_conflict_scalar_vs_container_prefix(self) -> None:
-        assert has_hybrid_patch_conflict(
-            {("a", "x"): 1}, set(), {}, {("a",)}
-        )
+        assert has_hybrid_patch_conflict({("a", "x"): 1}, set(), {}, {("a",)})
 
     def test_no_conflict_empty(self) -> None:
         assert not has_hybrid_patch_conflict({}, set(), {}, set())
 
     def test_conflict_nested_scalar_prefix(self) -> None:
-        assert has_hybrid_patch_conflict(
-            {("a",): 1}, set(), {("a", "x"): 2}, set()
-        )
+        assert has_hybrid_patch_conflict({("a",): 1}, set(), {("a", "x"): 2}, set())
 
     def test_no_conflict_independent_containers(self) -> None:
-        assert not has_hybrid_patch_conflict(
-            {}, {("a",)}, {}, {("b",)}
-        )
+        assert not has_hybrid_patch_conflict({}, {("a",)}, {}, {("b",)})

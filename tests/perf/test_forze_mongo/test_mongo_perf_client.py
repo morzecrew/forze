@@ -27,9 +27,7 @@ async def test_health_benchmark(async_benchmark, mongo_client: MongoClient) -> N
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_insert_one_benchmark(
-    async_benchmark, mongo_client: MongoClient
-) -> None:
+async def test_insert_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark single document insert."""
     coll_name = _perf_collection("insert")
     coll = mongo_client.collection(coll_name)
@@ -60,9 +58,7 @@ async def test_insert_many_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_find_one_benchmark(
-    async_benchmark, mongo_client: MongoClient
-) -> None:
+async def test_find_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark find_one (document pre-seeded)."""
     coll_name = _perf_collection("find_one")
     coll = mongo_client.collection(coll_name)
@@ -122,18 +118,14 @@ async def test_find_many_medium_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_update_one_benchmark(
-    async_benchmark, mongo_client: MongoClient
-) -> None:
+async def test_update_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark update_one."""
     coll_name = _perf_collection("update")
     coll = mongo_client.collection(coll_name)
     await mongo_client.insert_one(coll, {"value": "old", "idx": 1})
 
     async def run() -> None:
-        await mongo_client.update_one(
-            coll, {"idx": 1}, {"$set": {"value": "updated"}}
-        )
+        await mongo_client.update_one(coll, {"idx": 1}, {"$set": {"value": "updated"}})
 
     await async_benchmark(run)
 
@@ -142,9 +134,7 @@ async def test_update_one_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_delete_one_benchmark(
-    async_benchmark, mongo_client: MongoClient
-) -> None:
+async def test_delete_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark delete_one (document pre-seeded each iteration via insert)."""
     coll_name = _perf_collection("delete")
     coll = mongo_client.collection(coll_name)
@@ -158,9 +148,7 @@ async def test_delete_one_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_count_benchmark(
-    async_benchmark, mongo_client: MongoClient
-) -> None:
+async def test_count_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark count_documents."""
     coll_name = _perf_collection("count")
     coll = mongo_client.collection(coll_name)

@@ -5,7 +5,7 @@ from typing import AsyncIterator, final
 
 import attrs
 
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext

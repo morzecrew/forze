@@ -44,7 +44,9 @@ class TestIdempotencyPort:
 
     async def test_commit_and_begin_returns_snapshot(self) -> None:
         stub = _StubIdempotency()
-        snap = IdempotencySnapshot(code=200, content_type="application/json", body=b'{"ok":1}')
+        snap = IdempotencySnapshot(
+            code=200, content_type="application/json", body=b'{"ok":1}'
+        )
         await stub.commit("create", "k1", "hash1", snap)
         result = await stub.begin("create", "k1", "hash1")
         assert result is not None
@@ -67,7 +69,9 @@ class TestIdempotencyPort:
 
 class TestIdempotencySnapshot:
     def test_create_snapshot(self) -> None:
-        snap = IdempotencySnapshot(code=200, content_type="application/json", body=b"{}")
+        snap = IdempotencySnapshot(
+            code=200, content_type="application/json", body=b"{}"
+        )
         assert snap["code"] == 200
         assert snap["content_type"] == "application/json"
         assert snap["body"] == b"{}"

@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import Field
 
 from forze.base.errors import ValidationError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,

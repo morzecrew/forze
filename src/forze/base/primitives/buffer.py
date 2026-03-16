@@ -11,7 +11,7 @@ from typing import Iterator, Sequence, final
 
 import attrs
 
-from ..logging import getLogger
+from ..logging_v2 import getLogger
 
 # ----------------------- #
 

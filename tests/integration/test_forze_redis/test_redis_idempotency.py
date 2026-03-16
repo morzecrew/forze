@@ -72,7 +72,9 @@ async def test_idempotency_payload_hash_mismatch_raises(
     """begin with different payload hash raises ConflictError."""
     await redis_idempotency.begin(op="op", key="k1", payload_hash="h1")
     snapshot = {"code": 200, "content_type": "application/json", "body": b"ok"}
-    await redis_idempotency.commit(op="op", key="k1", payload_hash="h1", snapshot=snapshot)
+    await redis_idempotency.commit(
+        op="op", key="k1", payload_hash="h1", snapshot=snapshot
+    )
 
     with pytest.raises(ConflictError, match="Payload hash mismatch"):
         await redis_idempotency.begin(op="op", key="k1", payload_hash="h2")

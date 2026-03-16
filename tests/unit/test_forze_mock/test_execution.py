@@ -4,8 +4,16 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.pubsub import PubSubPublishDepKey, PubSubSpec
-from forze.application.contracts.queue import QueueReadDepKey, QueueSpec, QueueWriteDepKey
-from forze.application.contracts.search import SearchFieldSpec, SearchIndexSpec, SearchSpec
+from forze.application.contracts.queue import (
+    QueueReadDepKey,
+    QueueSpec,
+    QueueWriteDepKey,
+)
+from forze.application.contracts.search import (
+    SearchFieldSpec,
+    SearchIndexSpec,
+    SearchSpec,
+)
 from forze.application.contracts.stream import (
     StreamGroupDepKey,
     StreamWriteDepKey,
@@ -93,8 +101,12 @@ async def test_execution_context_resolves_optional_contract_ports() -> None:
     queue_read = ctx.dep(QueueReadDepKey)(ctx, QueueSpec(namespace="q", model=_Msg))
     queue_write = ctx.dep(QueueWriteDepKey)(ctx, QueueSpec(namespace="q", model=_Msg))
     pubsub = ctx.dep(PubSubPublishDepKey)(ctx, PubSubSpec(namespace="p", model=_Msg))
-    stream_write = ctx.dep(StreamWriteDepKey)(ctx, StreamSpec(namespace="s", model=_Msg))
-    stream_group = ctx.dep(StreamGroupDepKey)(ctx, StreamSpec(namespace="s", model=_Msg))
+    stream_write = ctx.dep(StreamWriteDepKey)(
+        ctx, StreamSpec(namespace="s", model=_Msg)
+    )
+    stream_group = ctx.dep(StreamGroupDepKey)(
+        ctx, StreamSpec(namespace="s", model=_Msg)
+    )
 
     msg_id = await queue_write.enqueue("tasks", _Msg(value="x"))
     received = await queue_read.receive("tasks")

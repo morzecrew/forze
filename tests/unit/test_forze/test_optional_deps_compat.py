@@ -43,7 +43,9 @@ def test_require_rabbitmq_raises_clear_error_when_missing(
 ) -> None:
     _mock_import(monkeypatch, module_name="aio_pika", raises=True)
 
-    with pytest.raises(RuntimeError, match=r"forze_rabbitmq requires 'forze\[rabbitmq\]' extra") as exc:
+    with pytest.raises(
+        RuntimeError, match=r"forze_rabbitmq requires 'forze\[rabbitmq\]' extra"
+    ) as exc:
         require_rabbitmq()
 
     assert isinstance(exc.value.__cause__, ImportError)
@@ -62,7 +64,9 @@ def test_require_temporal_raises_clear_error_when_missing(
 ) -> None:
     _mock_import(monkeypatch, module_name="temporalio", raises=True)
 
-    with pytest.raises(RuntimeError, match=r"forze_temporal requires 'forze\[temporal\]' extra") as exc:
+    with pytest.raises(
+        RuntimeError, match=r"forze_temporal requires 'forze\[temporal\]' extra"
+    ) as exc:
         require_temporal()
 
     assert isinstance(exc.value.__cause__, ImportError)
@@ -83,7 +87,9 @@ def test_require_sqs_raises_clear_error_when_missing(
 ) -> None:
     _mock_import(monkeypatch, module_name="aioboto3", raises=True)
 
-    with pytest.raises(RuntimeError, match=r"forze_sqs requires 'forze\[sqs\]' extra") as exc:
+    with pytest.raises(
+        RuntimeError, match=r"forze_sqs requires 'forze\[sqs\]' extra"
+    ) as exc:
         require_sqs()
 
     assert isinstance(exc.value.__cause__, ImportError)
@@ -102,7 +108,9 @@ def test_require_socketio_raises_clear_error_when_missing(
 ) -> None:
     _mock_import(monkeypatch, module_name="socketio", raises=True)
 
-    with pytest.raises(RuntimeError, match=r"forze_socketio requires 'forze\[socketio\]' extra") as exc:
+    with pytest.raises(
+        RuntimeError, match=r"forze_socketio requires 'forze\[socketio\]' extra"
+    ) as exc:
         require_socketio()
 
     assert isinstance(exc.value.__cause__, ImportError)

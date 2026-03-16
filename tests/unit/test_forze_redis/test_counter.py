@@ -22,9 +22,7 @@ def tenant_mock():
 
 @pytest.mark.asyncio
 async def test_redis_counter_adapter_without_tenant(redis_mock):
-    counter = RedisCounterAdapter(
-        client=redis_mock, key_codec=KeyCodec(namespace="ns")
-    )
+    counter = RedisCounterAdapter(client=redis_mock, key_codec=KeyCodec(namespace="ns"))
 
     redis_mock.incr = AsyncMock(return_value=1)
     await counter.incr(suffix="my-suffix")

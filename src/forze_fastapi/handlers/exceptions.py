@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from forze.base.errors import ConflictError, CoreError, NotFoundError, ValidationError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from ..constants import ERROR_CODE_HEADER
 

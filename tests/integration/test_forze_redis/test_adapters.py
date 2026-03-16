@@ -14,7 +14,9 @@ from forze_redis.kernel.platform.client import RedisClient
 @pytest.mark.asyncio
 async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:
     namespace = f"it:redis-cache:{uuid4()}"
-    cache = RedisCacheAdapter(client=redis_client, key_codec=KeyCodec(namespace=namespace))
+    cache = RedisCacheAdapter(
+        client=redis_client, key_codec=KeyCodec(namespace=namespace)
+    )
 
     await cache.set("plain", {"name": "plain"})
     await cache.set_versioned("doc", "v1", {"name": "old"})

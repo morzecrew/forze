@@ -37,9 +37,7 @@ class SQSQueueCodec[M: BaseModel]:
     def decode(self, queue: str, raw: SQSQueueMessage) -> QueueMessage[M]:
         body = raw["body"]
 
-        if not isinstance(
-            body, (bytes, bytearray)
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(body, (bytes, bytearray)):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise CoreError(f"SQS queue message '{raw['id']}' has invalid payload")
 
         return QueueMessage(

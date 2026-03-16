@@ -6,7 +6,7 @@ from typing import Any, Iterator
 
 import yaml
 
-from .logging import getLogger
+from .logging_v2 import getLogger
 
 # ----------------------- #
 

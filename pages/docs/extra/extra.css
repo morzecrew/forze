@@ -88,3 +88,32 @@ html.layout-fixed article[view-transition-name="page"] {
 html.layout-fixed .typography {
   max-width: 800px;
 }
+
+/* Fixes for search dialog alignment */
+
+#search-dialog {
+  top: calc(var(--header-height) + 1rem) !important;
+  left: 50% !important;
+
+  width: min(800px, calc(100vw - 2rem)) !important;
+  max-width: min(800px, calc(100vw - 2rem)) !important;
+
+  margin: 0 !important;
+}
+
+#search-dialog .w-lg {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+#search-dialog [data-slot="command-input-wrapper"] {
+  position: sticky;
+  top: 0;
+  background: var(--background);
+  z-index: 10;
+}
+
+#mkdocs-search-results {
+  max-height: 70vh;
+  overflow-y: auto;
+}

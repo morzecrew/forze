@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze.base.serialization import apply_dict_patch, pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO
 

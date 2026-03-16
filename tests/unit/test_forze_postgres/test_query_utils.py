@@ -1,4 +1,3 @@
-
 from psycopg import sql
 
 from forze_postgres.kernel.query.utils import PsycopgPositionalBinder

@@ -73,7 +73,9 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert total == 2
     assert {x.id for x in docs} == {created.id, created_2.id}
 
-    updated = await adapter.update(created.id, MyUpdateDoc(name="alpha-2"), rev=created.rev)
+    updated = await adapter.update(
+        created.id, MyUpdateDoc(name="alpha-2"), rev=created.rev
+    )
     assert updated.name == "alpha-2"
     assert updated.rev == 2
 

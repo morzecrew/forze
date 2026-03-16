@@ -20,11 +20,38 @@ from forze.application.contracts.query.internal import (
 class TestQueryValueCaster:
     # as_bool
     def test_as_bool_true_variants(self) -> None:
-        for v in (True, 1, "true", "True", "TRUE", "t", "T", "1", "yes", "YES", "y", "on", "ON"):
+        for v in (
+            True,
+            1,
+            "true",
+            "True",
+            "TRUE",
+            "t",
+            "T",
+            "1",
+            "yes",
+            "YES",
+            "y",
+            "on",
+            "ON",
+        ):
             assert QueryValueCaster.as_bool(v) is True
 
     def test_as_bool_false_variants(self) -> None:
-        for v in (False, 0, "false", "False", "f", "F", "0", "no", "NO", "n", "off", "OFF"):
+        for v in (
+            False,
+            0,
+            "false",
+            "False",
+            "f",
+            "F",
+            "0",
+            "no",
+            "NO",
+            "n",
+            "off",
+            "OFF",
+        ):
             assert QueryValueCaster.as_bool(v) is False
 
     def test_as_bool_whitespace_stripped(self) -> None:
@@ -356,7 +383,9 @@ class TestQueryFilterExpressionParser:
 
     def test_parse_ord_invalid_value_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid value for"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {"$gte": "not-numeric"}}})
+            QueryFilterExpressionParser.parse(
+                {"$fields": {"x": {"$gte": "not-numeric"}}}
+            )
 
     def test_parse_in_invalid_value_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid value for"):
@@ -372,7 +401,9 @@ class TestQueryFilterExpressionParser:
 
     def test_parse_set_rel_invalid_value_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid value for"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {"$superset": "not-list"}}})
+            QueryFilterExpressionParser.parse(
+                {"$fields": {"x": {"$superset": "not-list"}}}
+            )
 
     # Validate null=True with other ops
     def test_null_true_with_other_ops_raises(self) -> None:

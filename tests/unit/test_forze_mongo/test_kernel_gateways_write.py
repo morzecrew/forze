@@ -57,7 +57,10 @@ class TestMongoWriteGateway:
         client = _build_client()
         client.update_one.return_value = 1
         read = _build_read(client)
-        read.get.side_effect = [current, after_write]  # read-before-write, then read-after-write
+        read.get.side_effect = [
+            current,
+            after_write,
+        ]  # read-before-write, then read-after-write
 
         gw = MongoWriteGateway(
             source="docs",
@@ -103,7 +106,11 @@ class TestMongoWriteGateway:
             1,
         ]
         read = _build_read(client)
-        read.get.side_effect = [current, current, after_write]  # attempt 1 before write, attempt 2 before+after write
+        read.get.side_effect = [
+            current,
+            current,
+            after_write,
+        ]  # attempt 1 before write, attempt 2 before+after write
 
         gw = MongoWriteGateway(
             source="docs",

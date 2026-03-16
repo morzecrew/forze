@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import attrs
 from pydantic import BaseModel
 
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze.base.primitives import JsonDict
 from forze.domain.constants import CREATOR_ID_FIELD, NUMBER_ID_FIELD
 

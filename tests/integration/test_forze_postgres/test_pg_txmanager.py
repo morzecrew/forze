@@ -41,9 +41,7 @@ async def test_transaction_commit(
         val = await pg_client.fetch_value("SELECT value FROM test_txmanager_commit")
         assert val == 42
 
-    val_after = await pg_client.fetch_value(
-        "SELECT value FROM test_txmanager_commit"
-    )
+    val_after = await pg_client.fetch_value("SELECT value FROM test_txmanager_commit")
     assert val_after == 42
 
 
@@ -71,9 +69,7 @@ async def test_transaction_rollback(
     except ValueError:
         pass
 
-    val_after = await pg_client.fetch_value(
-        "SELECT value FROM test_txmanager_rollback"
-    )
+    val_after = await pg_client.fetch_value("SELECT value FROM test_txmanager_rollback")
     assert val_after is None
 
 

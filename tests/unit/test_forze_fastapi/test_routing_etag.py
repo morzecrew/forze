@@ -233,9 +233,7 @@ class TestETagRouteIntegration:
         """Matching one tag in comma-separated If-None-Match returns 304."""
         app = _make_etag_app(_FixedProvider("v2"))
         client = TestClient(app)
-        response = client.get(
-            "/item", headers={"If-None-Match": '"v1", "v2", "v3"'}
-        )
+        response = client.get("/item", headers={"If-None-Match": '"v1", "v2", "v3"'})
 
         assert response.status_code == 304
 

@@ -2,7 +2,11 @@ from unittest.mock import Mock
 
 from pydantic import BaseModel
 
-from forze.application.contracts.queue import QueueReadDepKey, QueueSpec, QueueWriteDepKey
+from forze.application.contracts.queue import (
+    QueueReadDepKey,
+    QueueSpec,
+    QueueWriteDepKey,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze_sqs.adapters import SQSQueueAdapter
 from forze_sqs.execution.deps import SQSClientDepKey, SQSDepsModule

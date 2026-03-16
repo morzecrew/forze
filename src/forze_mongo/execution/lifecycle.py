@@ -30,7 +30,9 @@ class MongoStartupHook(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         mongo_client = ctx.dep(MongoClientDepKey)
-        await mongo_client.initialize(self.uri, db_name=self.db_name, config=self.config)
+        await mongo_client.initialize(
+            self.uri, db_name=self.db_name, config=self.config
+        )
 
 
 # ....................... #

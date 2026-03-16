@@ -92,9 +92,7 @@ async def test_cache_set_many_benchmark(
     """Benchmark cache set_many with 20 items."""
 
     async def run() -> None:
-        mapping = {
-            f"k:{uuid4().hex[:8]}": {"data": f"v{i}"} for i in range(20)
-        }
+        mapping = {f"k:{uuid4().hex[:8]}": {"data": f"v{i}"} for i in range(20)}
         await redis_cache.set_many(mapping)
         await redis_cache.delete_many(list(mapping.keys()), hard=True)
 

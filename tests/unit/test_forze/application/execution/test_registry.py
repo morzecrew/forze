@@ -257,6 +257,7 @@ class TestUsecaseRegistryMerge:
 
     def test_merge_from_instance_with_on_conflict_overwrite(self) -> None:
         """Instance merge supports on_conflict parameter."""
+
         def other_factory(ctx):
             return StubUsecase(ctx=ctx)
 

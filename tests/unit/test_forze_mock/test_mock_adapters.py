@@ -6,7 +6,11 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchFieldSpec, SearchIndexSpec, SearchSpec
+from forze.application.contracts.search import (
+    SearchFieldSpec,
+    SearchIndexSpec,
+    SearchSpec,
+)
 from forze.base.errors import ConcurrencyError
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -52,9 +56,9 @@ class _ProductSearch(BaseModel):
     tags: list[str] = []
 
 
-def _document_adapter(state: MockState) -> MockDocumentAdapter[
-    _ProductRead, _ProductDoc, _ProductCreate, _ProductUpdate
-]:
+def _document_adapter(
+    state: MockState,
+) -> MockDocumentAdapter[_ProductRead, _ProductDoc, _ProductCreate, _ProductUpdate]:
     return MockDocumentAdapter(
         state=state,
         namespace="products",

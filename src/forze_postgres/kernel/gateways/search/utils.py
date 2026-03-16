@@ -3,7 +3,7 @@
 from typing import Literal, Optional
 
 from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 # ----------------------- #
 

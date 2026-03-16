@@ -1,5 +1,5 @@
 set quiet
-set shell := ["bash", "-cu"]
+# set shell := ["bash", "-cu"]
 
 # ----------------------- #
 # Paths / constants

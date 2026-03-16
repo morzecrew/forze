@@ -3,7 +3,11 @@ from unittest.mock import Mock
 from pydantic import BaseModel
 
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.contracts.queue import QueueReadDepKey, QueueSpec, QueueWriteDepKey
+from forze.application.contracts.queue import (
+    QueueReadDepKey,
+    QueueSpec,
+    QueueWriteDepKey,
+)
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter
 from forze_rabbitmq.execution.deps import RabbitMQClientDepKey, RabbitMQDepsModule
 from forze_rabbitmq.execution.deps.deps import rabbitmq_queue

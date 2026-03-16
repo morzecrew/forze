@@ -99,9 +99,7 @@ class TestRowToDictPerf:
 
         from forze_postgres.kernel.platform.client import PostgresClient
 
-        cols_data = [
-            ("id", "name", "email", "age", "status", "created_at")
-        ]
+        cols_data = [("id", "name", "email", "age", "status", "created_at")]
         mock_desc = []
         for name in cols_data[0]:
             col = MagicMock()
@@ -224,7 +222,9 @@ class TestQueryOperatorSetsPerf:
         elapsed_ns = time.perf_counter_ns() - start
 
         avg_us = elapsed_ns / (iterations * len(ops_and_values)) / 1_000
-        assert avg_us < 10, f"Operator validation avg {avg_us:.1f}us exceeds 10us budget"
+        assert avg_us < 10, (
+            f"Operator validation avg {avg_us:.1f}us exceeds 10us budget"
+        )
 
 
 # ----------------------- #

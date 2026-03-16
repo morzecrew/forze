@@ -6,7 +6,7 @@ from typing import Optional
 import attrs
 
 from ..errors import CoreError
-from ..logging import getLogger
+from ..logging_v2 import getLogger
 
 # ----------------------- #
 

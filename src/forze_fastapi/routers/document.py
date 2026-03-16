@@ -1,4 +1,4 @@
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()

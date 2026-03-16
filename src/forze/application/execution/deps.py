@@ -9,7 +9,7 @@ from typing import Any, Protocol, Self, TypeVar, cast, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from ..contracts.deps import DepKey, DepsPort
 

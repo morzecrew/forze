@@ -14,7 +14,7 @@ from redis.asyncio.client import Pipeline, Redis
 from redis.asyncio.connection import ConnectionPool
 
 from forze.base.errors import InfrastructureError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze.base.primitives import JsonDict
 
 from .errors import redis_handled
@@ -77,15 +77,13 @@ class RedisClient:
             logger.trace("Client already initialized, skipping")
             return
 
-        self.__pool = (
-            ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
-                dsn,
-                max_connections=config.max_size,
-                socket_timeout=config.socket_timeout,
-                socket_connect_timeout=config.connect_timeout,
-                decode_responses=False,
-                encoding="utf-8",
-            )
+        self.__pool = ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+            dsn,
+            max_connections=config.max_size,
+            socket_timeout=config.socket_timeout,
+            socket_connect_timeout=config.connect_timeout,
+            decode_responses=False,
+            encoding="utf-8",
         )
         self.__client = Redis(connection_pool=self.__pool)
         await self.__client.ping()  # type: ignore[misc]
@@ -280,10 +278,8 @@ class RedisClient:
 
     @redis_handled("redis.publish")  # type: ignore[untyped-decorator]
     async def publish(self, channel: str, message: bytes | str) -> int:
-        res = (
-            await self.__executor().publish(  # pyright: ignore[reportUnknownMemberType]
-                channel, message
-            )
+        res = await self.__executor().publish(  # pyright: ignore[reportUnknownMemberType]
+            channel, message
         )
 
         return int(res)

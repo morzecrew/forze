@@ -2,7 +2,10 @@
 
 import pytest
 
-from forze.application.composition.storage import StorageOperation, StorageUsecasesFacade
+from forze.application.composition.storage import (
+    StorageOperation,
+    StorageUsecasesFacade,
+)
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
 # ----------------------- #

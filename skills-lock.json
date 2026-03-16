@@ -1,25 +1,55 @@
 {
   "version": 1,
   "skills": {
-    "gitmoji-conventional-commits": {
-      "source": "morzecrew/agent-skills",
+    "async-python-patterns": {
+      "source": "wshobson/agents",
       "sourceType": "github",
-      "computedHash": "82d8c564afbfb0cb3ba76392895ddb38b0020b58939ab741ab1f19ba62ac57ad"
+      "computedHash": "e2c6c594828cbbf4f0c181eedcf2bd39a2a49b4f087942b295faf36cdc88c423"
     },
-    "gitmoji-conventional-pull-requests": {
+    "gitmoji-conventional": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
-      "computedHash": "6a6e4f0f45d32fd101a0d4aa48cea5b5b462f43ce138b38dcfbf2cdf4bfd8574"
+      "computedHash": "f0822e8699f1c0fcd0edb445b7304c3c5f24c03ca8512f27c0c0548f050b6b8d"
     },
     "keep-a-changelog": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "computedHash": "d70cabc3ee6e135da14173efed3f62235e389b2ceb5cd5fdfdd644c609ae62f7"
     },
+    "python-background-jobs": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "fad6a58871cfac542c5fd457585cf42f65cd64b6cff81ff52f9bd0b4e3f8e36a"
+    },
+    "python-error-handling": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "05d1fd2762d38e6afac8533e28554038e27fc8620b2df63f1e806de3c4d77fe3"
+    },
+    "python-performance-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "2a11c79dcd94b5424261b44247ab03a8365cbe62f05f9b52500211db8fda98f9"
+    },
+    "python-resilience": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "2f109425df447de4618fed93808ecea89e037c07ab1d2676cf7349d0d320c885"
+    },
     "python-rest-docstrings": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "computedHash": "080988c8d0e7efc94d40f663eb29c69d46683f93998e60cbb83e20e9d2a9a030"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "c9ac74e0ecade3d4aacc89b8eb9eec63d9125a3a02e4bac9781ae0ca371227ad"
+    },
+    "python-type-safety": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "f011d9018935ae01209f30c0a0f9d2f15f3058867baeb7a8c820bc54c8394645"
     }
   }
 }

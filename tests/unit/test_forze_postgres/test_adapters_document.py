@@ -86,7 +86,9 @@ class TestPostgresDocumentAdapter:
         cache.set_many_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_get_many_ignores_cache_set_many_failure_after_cache_misses(self) -> None:
+    async def test_get_many_ignores_cache_set_many_failure_after_cache_misses(
+        self,
+    ) -> None:
         pks = [uuid4(), uuid4()]
         expected = [_build_read_doc(pk, rev=i + 1) for i, pk in enumerate(pks)]
         read_gw = _build_read_gateway()

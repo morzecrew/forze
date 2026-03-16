@@ -1,7 +1,6 @@
 import logging
 
-from forze.base.logging import getLogger
-from forze.base.logging.helpers import normalize_level
+from forze.base.logging_v2 import getLogger, normalize_level
 
 # ----------------------- #
 
@@ -21,12 +20,15 @@ class InterceptHandler(logging.Handler):
             return
 
         level = normalize_level(record.levelno)
-        _log = server_logger
+        log = server_logger
 
         if record.name == "uvicorn.access":
-            _log = api_logger
+            log = api_logger
 
-        _log.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
+        kw: dict[str, object] = {}
+        if record.exc_info:
+            kw["exc_info"] = record.exc_info
+        log.log(level, record.getMessage(), **kw)
 
 
 # ....................... #

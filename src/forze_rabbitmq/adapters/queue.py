@@ -37,9 +37,7 @@ class RabbitMQQueueCodec[M: BaseModel]:
     def decode(self, queue: str, raw: RabbitMQQueueMessage) -> QueueMessage[M]:
         body = raw["body"]
 
-        if not isinstance(
-            body, (bytes, bytearray)
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not isinstance(body, (bytes, bytearray)):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise CoreError(f"RabbitMQ queue message '{raw['id']}' has invalid payload")
 
         return QueueMessage(

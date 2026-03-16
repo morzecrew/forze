@@ -323,7 +323,9 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
         case _:
             # QueryAnd and fallback
             items = getattr(  # pyright: ignore[reportUnknownVariableType]
-                expr, "items", tuple()  # pyright: ignore[reportUnknownArgumentType]
+                expr,
+                "items",
+                tuple(),  # pyright: ignore[reportUnknownArgumentType]
             )
             return all(
                 _match_expr(doc, item)  # pyright: ignore[reportUnknownArgumentType]
@@ -379,7 +381,10 @@ def _sort_docs(
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDocumentAdapter[
-    R: ReadDocument, D: Document, C: CreateDocumentCmd, U: BaseDTO
+    R: ReadDocument,
+    D: Document,
+    C: CreateDocumentCmd,
+    U: BaseDTO,
 ](
     DocumentReadPort[R],
     DocumentWritePort[R, D, C, U],

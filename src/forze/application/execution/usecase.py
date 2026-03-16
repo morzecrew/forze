@@ -2,7 +2,7 @@ from typing import Self, final
 
 import attrs
 
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from .context import ExecutionContext
 from .middleware import EffectMiddleware, GuardMiddleware, Middleware, NextCall

@@ -98,7 +98,9 @@ class TestSearchFuzzySpecInternal:
         assert f.prefix_length is None
 
     def test_valid_fuzzy(self) -> None:
-        f = SearchFuzzySpecInternal(enabled=True, max_distance_ratio=0.5, prefix_length=2)
+        f = SearchFuzzySpecInternal(
+            enabled=True, max_distance_ratio=0.5, prefix_length=2
+        )
         assert f.enabled is True
         assert f.max_distance_ratio == 0.5
         assert f.prefix_length == 2
@@ -150,9 +152,7 @@ class TestSearchIndexSpecInternal:
 
     def test_duplicate_field_paths_raises(self) -> None:
         with pytest.raises(CoreError, match="must be unique"):
-            SearchIndexSpecInternal(
-                fields=[self._field("title"), self._field("title")]
-            )
+            SearchIndexSpecInternal(fields=[self._field("title"), self._field("title")])
 
     def test_default_group_not_in_groups_raises(self) -> None:
         with pytest.raises(CoreError, match="not found in groups"):

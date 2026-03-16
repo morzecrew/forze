@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Iterator, Optional, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort

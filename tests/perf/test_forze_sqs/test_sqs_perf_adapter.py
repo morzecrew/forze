@@ -80,9 +80,7 @@ async def test_adapter_enqueue_receive_ack_benchmark(
         queue = f"jobs-{uuid4().hex[:8]}"
         await _ensure_queue(sqs_client, sqs_queue, queue)
         await sqs_queue.enqueue(queue, queue_payload_cls(value="roundtrip"))
-        messages = await sqs_queue.receive(
-            queue, limit=1, timeout=timedelta(seconds=2)
-        )
+        messages = await sqs_queue.receive(queue, limit=1, timeout=timedelta(seconds=2))
         assert len(messages) == 1
         assert messages[0]["id"]
         await sqs_queue.ack(queue, [messages[0]["id"]])

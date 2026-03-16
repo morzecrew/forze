@@ -1,20 +1,16 @@
-
-import logging
-
-from loguru import logger
+import pytest
 
 from forze.application.contracts.search.internal.specs import (
     SearchIndexSpecInternal,
     SearchGroupSpecInternal,
     SearchFieldSpecInternal,
 )
+from forze.base.logging_v2 import configure, reset
 from forze_postgres.kernel.gateways.search.utils import fts_map_groups
 
 
-def test_fts_map_groups_truncation(caplog):
-    # Connect loguru to caplog so forze's loguru-based logs are captured
-    handler_id = logger.add(caplog.handler, format="{message}")
-
+def test_fts_map_groups_truncation(capsys: pytest.CaptureFixture[str]):
+    configure(level="WARNING", colorize=False)
     try:
         # Setup: Create a SearchIndexSpecInternal with 5 groups
         groups = [
@@ -25,8 +21,7 @@ def test_fts_map_groups_truncation(caplog):
         spec = SearchIndexSpecInternal(fields=fields, groups=groups)
 
         # Execute
-        with caplog.at_level(logging.WARNING):
-            result = fts_map_groups(spec)
+        result = fts_map_groups(spec)
 
         # Verify: Should only have 4 groups mapped
         assert len(result) == 4
@@ -36,14 +31,14 @@ def test_fts_map_groups_truncation(caplog):
         assert "group_2" in result
         assert "group_1" not in result
 
-        # Verify warning
-        assert any(
-            record.levelname == "WARNING"
-            and "Postgres only supports 4 weights" in record.message
-            for record in caplog.records
-        )
+        # Verify warning (logging_v2 writes to stderr)
+        captured = capsys.readouterr()
+        log_output = captured.err or captured.out
+        assert "WARNING" in log_output or "warning" in log_output
+        assert "Postgres only supports 4 weights" in log_output
     finally:
-        logger.remove(handler_id)
+        reset()
+
 
 def test_fts_map_groups_default():
     # Setup: Create a SearchIndexSpecInternal with no groups
@@ -55,6 +50,7 @@ def test_fts_map_groups_default():
 
     # Verify
     assert result == {"__default__": "A"}
+
 
 def test_fts_map_groups_normal():
     # Setup: Create a SearchIndexSpecInternal with 2 groups

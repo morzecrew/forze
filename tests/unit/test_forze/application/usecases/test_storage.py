@@ -42,9 +42,15 @@ class TestStorageUsecases:
         storage = stub_ctx.storage("files")
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
 
-        await upload_uc(UploadObjectRequestDTO(filename="a.txt", data=b"a", prefix="docs"))
-        await upload_uc(UploadObjectRequestDTO(filename="b.txt", data=b"b", prefix="docs"))
-        await upload_uc(UploadObjectRequestDTO(filename="c.txt", data=b"c", prefix="tmp"))
+        await upload_uc(
+            UploadObjectRequestDTO(filename="a.txt", data=b"a", prefix="docs")
+        )
+        await upload_uc(
+            UploadObjectRequestDTO(filename="b.txt", data=b"b", prefix="docs")
+        )
+        await upload_uc(
+            UploadObjectRequestDTO(filename="c.txt", data=b"c", prefix="tmp")
+        )
 
         list_uc = ListObjects(ctx=stub_ctx, storage=storage)
         result = await list_uc(ListObjectsRequestDTO(page=1, size=10, prefix="docs"))
@@ -59,7 +65,9 @@ class TestStorageUsecases:
     ) -> None:
         storage = stub_ctx.storage("files")
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
-        uploaded = await upload_uc(UploadObjectRequestDTO(filename="gone.txt", data=b"x"))
+        uploaded = await upload_uc(
+            UploadObjectRequestDTO(filename="gone.txt", data=b"x")
+        )
 
         delete_uc = DeleteObject(ctx=stub_ctx, storage=storage)
         await delete_uc(uploaded["key"])

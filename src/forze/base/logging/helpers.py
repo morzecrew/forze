@@ -299,9 +299,7 @@ def _safe_preview_impl(
                 out[key] = _safe_preview_impl(v, depth=depth + 1)
 
         if len(items) > ARGS_MAX_ITEMS:  # pyright: ignore[reportUnknownArgumentType]
-            out["…"] = (
-                f"{len(items) - ARGS_MAX_ITEMS} more"  # pyright: ignore[reportUnknownArgumentType]
-            )
+            out["…"] = f"{len(items) - ARGS_MAX_ITEMS} more"  # pyright: ignore[reportUnknownArgumentType]
 
         return out
 

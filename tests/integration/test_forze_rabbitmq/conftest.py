@@ -69,7 +69,9 @@ class _QueuePayload(BaseModel):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def rabbitmq_queue(rabbitmq_client: RabbitMQClient) -> RabbitMQQueueAdapter[_QueuePayload]:
+async def rabbitmq_queue(
+    rabbitmq_client: RabbitMQClient,
+) -> RabbitMQQueueAdapter[_QueuePayload]:
     """Provide a RabbitMQQueueAdapter with a unique namespace per test."""
     namespace = f"it:rabbitmq:{uuid4().hex[:12]}"
 

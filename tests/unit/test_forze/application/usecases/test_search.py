@@ -11,7 +11,12 @@ from forze.application.contracts.search import (
     SearchIndexSpec,
     SearchSpec,
 )
-from forze.application.dto import Paginated, RawPaginated, RawSearchRequestDTO, SearchRequestDTO
+from forze.application.dto import (
+    Paginated,
+    RawPaginated,
+    RawSearchRequestDTO,
+    SearchRequestDTO,
+)
 from forze.application.usecases.search import RawSearch, TypedSearch
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
@@ -147,7 +152,9 @@ class TestRawSearch:
         await doc_port.create(_SearchCreate(title="y", content="bar"))
 
         usecase = RawSearch(ctx=stub_ctx, search=search_port)
-        args = RawSearchRequestDTO(query="bar", return_fields={"id", "title"}, page=1, size=10)
+        args = RawSearchRequestDTO(
+            query="bar", return_fields={"id", "title"}, page=1, size=10
+        )
         result = await usecase(args)
 
         assert isinstance(result, RawPaginated)

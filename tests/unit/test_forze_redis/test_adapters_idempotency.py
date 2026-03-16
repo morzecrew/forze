@@ -8,9 +8,11 @@ from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
 from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze.base.errors import ConflictError
 
+
 class MockTenantContext:
     def get(self):
         return UUID("12345678-1234-5678-1234-567812345678")
+
 
 @pytest.fixture
 def mock_redis_client():
@@ -19,30 +21,32 @@ def mock_redis_client():
     client.get = AsyncMock(return_value=None)
     return client
 
+
 @pytest.fixture
 def adapter_with_tenant(mock_redis_client):
     return RedisIdempotencyAdapter(
         client=mock_redis_client,
         tenant_context=MockTenantContext(),
-        ttl=timedelta(seconds=60)
+        ttl=timedelta(seconds=60),
     )
+
 
 @pytest.fixture
 def adapter_without_tenant(mock_redis_client):
-    return RedisIdempotencyAdapter(
-        client=mock_redis_client,
-        ttl=timedelta(seconds=60)
-    )
+    return RedisIdempotencyAdapter(client=mock_redis_client, ttl=timedelta(seconds=60))
+
 
 @pytest.mark.asyncio
 async def test_key_generation_with_tenant(adapter_with_tenant):
     key = adapter_with_tenant._RedisIdempotencyAdapter__key("op", "test-key")
     assert key == "idempotency:12345678-1234-5678-1234-567812345678:op:test-key"
 
+
 @pytest.mark.asyncio
 async def test_key_generation_without_tenant(adapter_without_tenant):
     key = adapter_without_tenant._RedisIdempotencyAdapter__key("op", "test-key")
     assert key == "idempotency:op:test-key"
+
 
 @pytest.mark.asyncio
 async def test_begin_success_with_tenant(adapter_with_tenant, mock_redis_client):
@@ -55,16 +59,20 @@ async def test_begin_success_with_tenant(adapter_with_tenant, mock_redis_client)
     assert args[0] == "idempotency:12345678-1234-5678-1234-567812345678:op:test-key"
     assert result is None
 
+
 @pytest.mark.asyncio
 async def test_begin_no_key(adapter_with_tenant, mock_redis_client):
     result = await adapter_with_tenant.begin("op", None, "hash123")
     mock_redis_client.set.assert_not_called()
     assert result is None
 
+
 @pytest.mark.asyncio
 async def test_commit_success_with_tenant(adapter_with_tenant, mock_redis_client):
     mock_redis_client.set.return_value = True
-    snapshot = IdempotencySnapshot(code=200, content_type="application/json", body=b"test-body")
+    snapshot = IdempotencySnapshot(
+        code=200, content_type="application/json", body=b"test-body"
+    )
 
     await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)
 
@@ -72,19 +80,26 @@ async def test_commit_success_with_tenant(adapter_with_tenant, mock_redis_client
     args, kwargs = mock_redis_client.set.call_args
     assert args[0] == "idempotency:12345678-1234-5678-1234-567812345678:op:test-key"
 
+
 @pytest.mark.asyncio
 async def test_commit_no_key(adapter_with_tenant, mock_redis_client):
-    snapshot = IdempotencySnapshot(code=200, content_type="application/json", body=b"test-body")
+    snapshot = IdempotencySnapshot(
+        code=200, content_type="application/json", body=b"test-body"
+    )
     await adapter_with_tenant.commit("op", None, "hash123", snapshot)
     mock_redis_client.set.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_commit_failed_missing_or_expired(adapter_with_tenant, mock_redis_client):
     mock_redis_client.set.return_value = False
-    snapshot = IdempotencySnapshot(code=200, content_type="application/json", body=b"test-body")
+    snapshot = IdempotencySnapshot(
+        code=200, content_type="application/json", body=b"test-body"
+    )
 
     with pytest.raises(ConflictError, match="Idempotency commit failed"):
         await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)
+
 
 @pytest.mark.asyncio
 async def test_begin_conflict_not_readable(adapter_with_tenant, mock_redis_client):
@@ -96,11 +111,13 @@ async def test_begin_conflict_not_readable(adapter_with_tenant, mock_redis_clien
     with pytest.raises(ConflictError, match="not readable"):
         await adapter_with_tenant.begin("op", "test-key", "hash123")
 
+
 @pytest.mark.asyncio
 async def test_begin_conflict_hash_mismatch(adapter_with_tenant, mock_redis_client):
     mock_redis_client.set.return_value = False
     # Return json data with mismatched hash
     import json
+
     mock_redis_client.get.return_value = json.dumps({"st": "P", "ph": "wrong_hash"})
 
     with pytest.raises(ConflictError, match="Payload hash mismatch"):

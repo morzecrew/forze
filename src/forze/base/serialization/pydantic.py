@@ -8,7 +8,7 @@ from typing import Any, Literal, Sequence, TypedDict
 import orjson
 from pydantic import BaseModel, TypeAdapter
 
-from ..logging import getLogger
+from ..logging_v2 import getLogger
 
 # ----------------------- #
 

@@ -9,7 +9,7 @@ import attrs
 
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from .context import ExecutionContext
 from .middleware import (

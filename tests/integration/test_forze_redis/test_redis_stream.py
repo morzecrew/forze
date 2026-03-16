@@ -88,9 +88,7 @@ async def test_stream_group_read(
 
     await redis_client.xgroup_create(stream, group, id="0-0", mkstream=True)
 
-    messages = await redis_stream_group.read(
-        group, consumer, {stream: ">"}, limit=10
-    )
+    messages = await redis_stream_group.read(group, consumer, {stream: ">"}, limit=10)
     assert len(messages) == 2
     values = [m["payload"].value for m in messages]
     assert "one" in values
@@ -112,9 +110,7 @@ async def test_stream_group_ack(
     await redis_stream.append(stream, stream_payload_cls(value="ack-me"))
     await redis_client.xgroup_create(stream, group, id="0-0", mkstream=True)
 
-    messages = await redis_stream_group.read(
-        group, consumer, {stream: ">"}, limit=5
-    )
+    messages = await redis_stream_group.read(group, consumer, {stream: ">"}, limit=5)
     assert len(messages) == 1
     msg_id = messages[0]["id"]
 

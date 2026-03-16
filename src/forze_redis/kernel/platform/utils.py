@@ -109,9 +109,7 @@ def parse_pubsub_message(raw: RawRedisPubSubMessage) -> RedisPubSubMessage | Non
         else str(channel_raw)
     )
     data = (
-        data_raw
-        if isinstance(data_raw, bytes)
-        else str(data_raw).encode("utf-8")  # pyright: ignore[reportUnknownArgumentType]
+        data_raw if isinstance(data_raw, bytes) else str(data_raw).encode("utf-8")  # pyright: ignore[reportUnknownArgumentType]
     )
 
     return channel, data

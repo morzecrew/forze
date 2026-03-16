@@ -15,6 +15,7 @@ class TestAsForm:
 
     def test_rewrites_signature_with_form_annotations(self) -> None:
         """as_form rewrites model signature with Form annotations."""
+
         class CreateDTO(BaseModel):
             title: str
             body: str = ""
@@ -33,6 +34,7 @@ class TestAsForm:
 
     def test_returns_same_class(self) -> None:
         """as_form returns the same class (for chaining)."""
+
         class DTO(BaseModel):
             x: int
 
@@ -41,6 +43,7 @@ class TestAsForm:
 
     def test_model_fields_preserved(self) -> None:
         """as_form preserves model_fields for validation."""
+
         class DTO(BaseModel):
             name: str
             count: int = 0

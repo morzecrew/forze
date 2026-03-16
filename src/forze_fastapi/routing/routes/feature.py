@@ -69,7 +69,6 @@ def compose_route_class(
     captured = tuple(features)
 
     class _ComposedRoute(base):  # type: ignore[misc, valid-type]
-
         def get_route_handler(self) -> RouteHandler:  # type: ignore[override]
             handler: RouteHandler = super().get_route_handler()  # type: ignore[assignment]
 

@@ -76,28 +76,34 @@ async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
     assert client.enqueue_many.await_args.args[0] == "ns:primary-jobs"
     bodies = client.enqueue_many.await_args.args[1]
     assert len(bodies) == 2
-    assert codec.decode(
-        "jobs",
-        {
-            "queue": "ns:primary-jobs",
-            "id": "msg-1",
-            "body": bodies[0],
-            "type": None,
-            "enqueued_at": None,
-            "key": None,
-        },
-    )["payload"].value == "hello"
-    assert codec.decode(
-        "jobs",
-        {
-            "queue": "ns:primary-jobs",
-            "id": "msg-2",
-            "body": bodies[1],
-            "type": None,
-            "enqueued_at": None,
-            "key": None,
-        },
-    )["payload"].value == "world"
+    assert (
+        codec.decode(
+            "jobs",
+            {
+                "queue": "ns:primary-jobs",
+                "id": "msg-1",
+                "body": bodies[0],
+                "type": None,
+                "enqueued_at": None,
+                "key": None,
+            },
+        )["payload"].value
+        == "hello"
+    )
+    assert (
+        codec.decode(
+            "jobs",
+            {
+                "queue": "ns:primary-jobs",
+                "id": "msg-2",
+                "body": bodies[1],
+                "type": None,
+                "enqueued_at": None,
+                "key": None,
+            },
+        )["payload"].value
+        == "world"
+    )
     assert client.enqueue_many.await_args.kwargs["type"] == "created"
     assert client.enqueue_many.await_args.kwargs["key"] == "partition-a"
 

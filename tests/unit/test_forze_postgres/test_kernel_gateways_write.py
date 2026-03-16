@@ -29,7 +29,9 @@ class MyUpdateDoc(BaseDTO):
     name: str | None = None
 
 
-def _build_gateway() -> tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]:
+def _build_gateway() -> tuple[
+    PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock
+]:
     client = MagicMock(spec=PostgresClient)
     client.fetch_all = AsyncMock()
 

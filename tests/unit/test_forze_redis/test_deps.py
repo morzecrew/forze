@@ -29,10 +29,9 @@ def test_redis_counter_with_tenant_context():
     redis_mock = Mock(spec=RedisClient)
     tenant_mock = Mock(spec=TenantContextPort)
 
-    deps = Deps(deps={
-        RedisClientDepKey: redis_mock,
-        TenantContextDepKey: lambda: tenant_mock
-    })
+    deps = Deps(
+        deps={RedisClientDepKey: redis_mock, TenantContextDepKey: lambda: tenant_mock}
+    )
     context = ExecutionContext(deps=deps)
 
     counter = redis_counter(context, namespace="test-namespace")

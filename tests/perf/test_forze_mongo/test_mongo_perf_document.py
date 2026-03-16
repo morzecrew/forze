@@ -77,9 +77,7 @@ async def document_adapter(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_create_benchmark(
-    async_benchmark, document_adapter
-) -> None:
+async def test_document_create_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document create."""
 
     async def run() -> None:
@@ -92,9 +90,7 @@ async def test_document_create_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_get_benchmark(
-    async_benchmark, document_adapter
-) -> None:
+async def test_document_get_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document get by id."""
     doc = await document_adapter.create(PerfCreateDoc(name="bench item"))
 
@@ -107,9 +103,7 @@ async def test_document_get_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_get_many_benchmark(
-    async_benchmark, document_adapter
-) -> None:
+async def test_document_get_many_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document get_many with 10 ids."""
     docs = [
         await document_adapter.create(PerfCreateDoc(name=f"item {i}"))
@@ -141,9 +135,7 @@ async def test_document_create_many_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_find_many_benchmark(
-    async_benchmark, document_adapter
-) -> None:
+async def test_document_find_many_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document find_many with 50 pre-inserted rows."""
     for i in range(50):
         await document_adapter.create(PerfCreateDoc(name=f"find {i}"))

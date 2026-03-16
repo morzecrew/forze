@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, Protocol, Self, final
 
 import attrs
 
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from .context import ExecutionContext
 

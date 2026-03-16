@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- `forze.base.logging_v2`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).
 
 ### Changed
 
-- ...
+- All internal logging now uses :mod:`forze.base.logging_v2` instead of :mod:`forze.base.logging`.
 
 ### Fixed
 

@@ -5,7 +5,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 # ----------------------- #
 

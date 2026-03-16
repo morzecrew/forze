@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any, Iterable, cast
 
 from ..errors import CoreError
-from ..logging import getLogger
+from ..logging_v2 import getLogger
 from ..primitives.types import JsonDict
 
 # ----------------------- #

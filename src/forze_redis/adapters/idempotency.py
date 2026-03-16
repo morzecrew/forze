@@ -16,7 +16,7 @@ from forze.application.contracts.idempotency import IdempotencyPort, Idempotency
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import JsonCodec, KeyCodec
 from forze.base.errors import ConflictError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 
 from ..kernel.platform import RedisClient
 

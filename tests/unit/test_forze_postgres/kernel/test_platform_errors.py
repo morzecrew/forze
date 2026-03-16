@@ -32,11 +32,13 @@ class TestPsycopgErrorHandler:
             _FakeForeignKeyViolation,
         )
         detail = (
-            'Key (user_id)=(a57cf97f-a50f-42eb-bdc6-502f8c7f18af) '
+            "Key (user_id)=(a57cf97f-a50f-42eb-bdc6-502f8c7f18af) "
             'is not present in table "users"'
         )
 
-        err = platform_errors._psycopg_eh(_FakeForeignKeyViolation(detail), "create_doc")
+        err = platform_errors._psycopg_eh(
+            _FakeForeignKeyViolation(detail), "create_doc"
+        )
 
         assert isinstance(err, NotFoundError)
         assert err.message == "Reference document not found."
@@ -56,7 +58,9 @@ class TestPsycopgErrorHandler:
         )
         detail = "insert or update on table orders violates foreign key constraint"
 
-        err = platform_errors._psycopg_eh(_FakeForeignKeyViolation(detail), "create_doc")
+        err = platform_errors._psycopg_eh(
+            _FakeForeignKeyViolation(detail), "create_doc"
+        )
 
         assert isinstance(err, NotFoundError)
         assert err.message == "Reference document not found."

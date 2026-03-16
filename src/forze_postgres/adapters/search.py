@@ -20,7 +20,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze.base.primitives import JsonDict
 
 from ..kernel.gateways import (

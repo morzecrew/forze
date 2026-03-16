@@ -2,7 +2,7 @@
 
 from functools import cached_property
 
-from forze.base.logging import getLogger
+from forze.base.logging_v2 import getLogger
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()

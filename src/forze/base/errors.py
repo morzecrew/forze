@@ -394,7 +394,6 @@ def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyp
     def decorator(fn: Callable[P, R]) -> Callable[P, R]: ...
 
     def decorator(fn: Callable[P, Any]) -> Callable[P, Any]:
-
         if asyncio.iscoroutinefunction(fn):
             operation = _resolve_op(fn, op)
 
@@ -454,7 +453,6 @@ def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyp
 
         @wraps(fn)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> Any:
-
             try:
                 res = fn(*args, **kwargs)
 
