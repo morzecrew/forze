@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `forze.base.logging`: Block format (extra data below log line) now aligns with event text for clearer visual hierarchy.
+- `forze.base.logging`: Block format (extra data below log line) and Rich tracebacks now align with event text for clearer visual hierarchy.
+- `forze_fastapi` idempotent routes: invalid JSON request bodies no longer participate in idempotency; the handler runs and returns 422 without committing a snapshot, so clients can fix the body and retry with the same idempotency key.
 - All internal logging uses :mod:`forze.base.logging` (structlog-based).
 - `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.
 - Console renderer: blank lines around exception tracebacks for clearer separation; TRACE level dims entire record when colorized.

@@ -62,12 +62,6 @@ class _EmptyStub(BaseModel):
     empty: bool = True
 
 
-class _RawStub(BaseModel):
-    """Stub model for hashing non-JSON request bodies."""
-
-    raw: str
-
-
 # ....................... #
 
 
@@ -77,12 +71,7 @@ def _hash_payload(config: IdempotentRouteConfig, raw_body: bytes) -> str:
     if not raw_body:
         return pydantic_model_hash(_EmptyStub())
 
-    try:
-        data = orjson.loads(raw_body)
-
-    except Exception:
-        logger.exception("Failed to load request payload, using raw bytes as stub")
-        return pydantic_model_hash(_RawStub(raw=raw_body.hex()))
+    data = orjson.loads(raw_body)
 
     dto_param = config.get("dto_param")
 

@@ -116,7 +116,7 @@ class ConsoleRenderer:
                 )
                 extra_str = "\n\n" + "\n".join(
                     block_indent + ln for ln in highlighted.rstrip().split("\n")
-                )
+                ) + "\n"
             else:
                 inline = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
                 if colorize:
@@ -147,7 +147,13 @@ class ConsoleRenderer:
             line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}"
 
         if exception_str:
-            line += f"\n\n{indent}{exception_str}"
+            # Align traceback with event text (same as extra block)
+            block_indent = " " * (
+                len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
+            )
+            line += "\n\n" + "\n".join(
+                block_indent + ln for ln in exception_str.rstrip().split("\n")
+            )
 
         return line
 
