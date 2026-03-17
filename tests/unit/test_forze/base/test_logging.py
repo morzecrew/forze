@@ -409,8 +409,8 @@ class TestRichEnhancements:
         log = getLogger("forze.test")
         log.info("msg", x=1)
         captured = capsys.readouterr()
-        # "msg" + 3 spaces + "x=1"
-        assert "msg   x=1" in captured.err
+        # 3 spaces before "x=1" (extra_indent=3)
+        assert "   x=1" in captured.err
 
     def test_extra_indent_not_applied_when_no_extra(
         self, capsys: pytest.CaptureFixture[str]

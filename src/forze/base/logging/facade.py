@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Callable, Mapping, Optional
 import structlog
 
 from .config import (
+    DEFAULT_EVENT_WIDTH,
     DEFAULT_LEVEL,
+    DEFAULT_PREFIX_WIDTH,
     DEFAULT_STEP,
-    DEFAULT_WIDTH,
     LoggingConfig,
     LogLevel,
     LogLevelName,
@@ -46,7 +47,6 @@ def configure(
     level: LogLevel = DEFAULT_LEVEL,
     levels: Optional[Mapping[str, LogLevel]] = None,
     step: str = DEFAULT_STEP,
-    width: int = DEFAULT_WIDTH,
     event_width: Optional[int] = None,
     extra_indent: int = 1,
     prefix_width: Optional[int] = None,
@@ -67,10 +67,9 @@ def configure(
         level=normalize_level(level),
         levels=normalized_levels,
         step=step,
-        width=width,
-        event_width=event_width,
+        event_width=event_width if event_width is not None else DEFAULT_EVENT_WIDTH,
         extra_indent=extra_indent,
-        prefix_width=prefix_width,
+        prefix_width=prefix_width if prefix_width is not None else DEFAULT_PREFIX_WIDTH,
         extra_dim=extra_dim,
         extra_key_sort=extra_key_sort,
         colorize=colorize,

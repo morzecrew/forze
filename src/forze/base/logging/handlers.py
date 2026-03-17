@@ -41,7 +41,6 @@ def _build_single_chain(config: LoggingConfig) -> list[Any]:
         chain.append(
             ConsoleRenderer(
                 step=config.step,
-                width=config.width,
                 event_width=config.event_width,
                 extra_indent=config.extra_indent,
                 prefix_width=config.prefix_width,
@@ -64,7 +63,6 @@ def _build_dual_handlers(config: LoggingConfig) -> tuple[logging.Handler, ...]:
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             ConsoleRenderer(  # type: ignore[list-item]
                 step=config.step,
-                width=config.width,
                 event_width=config.event_width,
                 extra_indent=config.extra_indent,
                 prefix_width=config.prefix_width,

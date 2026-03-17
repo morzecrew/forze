@@ -57,7 +57,6 @@ class ConsoleRenderer:
         self,
         *,
         step: str = "  ",
-        width: int = 36,
         event_width: int | None = None,
         extra_indent: int = 1,
         prefix_width: int | None = None,
@@ -66,7 +65,6 @@ class ConsoleRenderer:
         colorize: bool = False,
     ) -> None:
         self.step = step
-        self.width = width
         self.event_width = event_width
         self.extra_indent = extra_indent
         self.prefix_width = prefix_width
@@ -84,10 +82,9 @@ class ConsoleRenderer:
 
         config = get_config()
         step = self.step or config.step
-        width = self.width or config.width
-        event_width = self.event_width or config.event_width
+        event_width = self.event_width if self.event_width is not None else config.event_width
         extra_indent = self.extra_indent
-        prefix_width = self.prefix_width or config.prefix_width
+        prefix_width = self.prefix_width if self.prefix_width is not None else config.prefix_width
         extra_dim = self.extra_dim if self.extra_dim is not None else config.extra_dim
         extra_key_sort = self.extra_key_sort or config.extra_key_sort
         colorize = self.colorize
@@ -101,16 +98,12 @@ class ConsoleRenderer:
         time_str = _format_ts(ts) if ts else ""
         event = event_dict.get("event", "")
         scope = event_dict.get("scope", "root")
-        scope_str = f"[{scope}]".ljust(width)
+        scope_str = f"[{scope}]"
 
         # Prefix length (time + "   " + level + scope + indent)
         prefix_len = len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
-        # Use prefix_width for alignment when set; else actual prefix length
-        align_width = prefix_width if prefix_width is not None else prefix_len
-        block_indent = " " * align_width
-        prefix_padding = (
-            " " * max(0, align_width - prefix_len) if prefix_width is not None else ""
-        )
+        block_indent = " " * prefix_width
+        prefix_padding = " " * max(0, prefix_width - prefix_len)
 
         standard_keys = {
             "event",
@@ -163,12 +156,8 @@ class ConsoleRenderer:
                 )
                 extra_inline_plain = inline_plain
                 if colorize:
-                    extra_inline_plain = (
-                        extra_dim_str
-                        + indent_str
-                        + _render_rich_to_str(ReprHighlighter()(inline_plain.lstrip()))
-                        + rst
-                    )
+                    # Dim whole inline extra (trace-level color), no syntax highlights
+                    extra_inline_plain = extra_dim_str + inline_plain + rst
 
         colors = {
             "DEBUG": "\033[36m",
@@ -179,39 +168,21 @@ class ConsoleRenderer:
         }
         is_trace = level.strip() == "TRACE"
 
-        # prefix_width + event_width + extra_indent = extra column (all configurable)
+        # prefix_width + event_width + extra_indent = extra column
         event_display = event
+        wrap_width = max(10, event_width)
         if extra_inline_plain:
-            if prefix_width is not None and event_width is not None:
-                # Extra at prefix_width + event_width + extra_indent
-                wrap_width = max(10, event_width)
-                lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
-                if lines:
-                    event_padded = lines[0].ljust(wrap_width)
-                    event_display = event_padded + extra_inline_plain
-                    if len(lines) > 1:
-                        event_display += "\n" + "\n".join(
-                            block_indent + ln for ln in lines[1:]
-                        )
-                else:
-                    event_display = event + extra_inline_plain
-            elif event_width is not None:
-                # No prefix_width: pad event to event_width (alignment per-line only)
-                wrap_width = max(10, event_width)
-                lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
-                if lines:
-                    event_padded = lines[0].ljust(wrap_width)
-                    event_display = event_padded + extra_inline_plain
-                    if len(lines) > 1:
-                        event_display += "\n" + "\n".join(
-                            block_indent + ln for ln in lines[1:]
-                        )
-                else:
-                    event_display = event + extra_inline_plain
+            lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
+            if lines:
+                event_padded = lines[0].ljust(wrap_width)
+                event_display = event_padded + extra_inline_plain
+                if len(lines) > 1:
+                    event_display += "\n" + "\n".join(
+                        block_indent + ln for ln in lines[1:]
+                    )
             else:
                 event_display = event + extra_inline_plain
-        elif event_width is not None and len(event) > event_width:
-            wrap_width = max(10, event_width)
+        elif len(event) > event_width:
             lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
             if len(lines) > 1:
                 event_display = (

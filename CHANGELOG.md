@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `forze.base.logging`: ``max_width`` renamed to ``event_width`` for clarity.
 - `forze.base.logging`: ``extra_dim`` config option to set dim color for extras (inline and block); defaults to ANSI dim when ``colorize=True``.
 - `forze.base.logging`: ``extra_key_sort`` config option: callable ``(str) -> int`` where lower value = earlier in output; controls order of extra keys in inline and block format.
+- `forze.base.logging`: Removed redundant ``width``; kept only ``prefix_width`` for alignment.
+- `forze.base.logging`: Inline extra dimmed as trace-level color (no syntax highlights); block extra keeps ReprHighlighter.
+- `forze.base.logging`: ``prefix_width`` and ``event_width`` default to 100 for consistent extra column alignment across depths.
 - `forze_fastapi` idempotent routes: invalid JSON request bodies no longer participate in idempotency; the handler runs and returns 422 without committing a snapshot, so clients can fix the body and retry with the same idempotency key.
 - All internal logging uses :mod:`forze.base.logging` (structlog-based).
 - `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.
