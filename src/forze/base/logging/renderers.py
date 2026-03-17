@@ -114,9 +114,13 @@ class ConsoleRenderer:
                 block_indent = " " * (
                     len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
                 )
-                extra_str = "\n\n" + "\n".join(
-                    block_indent + ln for ln in highlighted.rstrip().split("\n")
-                ) + "\n"
+                extra_str = (
+                    "\n\n"
+                    + "\n".join(
+                        block_indent + ln for ln in highlighted.rstrip().split("\n")
+                    )
+                    + "\n"
+                )
             else:
                 inline = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
                 if colorize:
@@ -151,8 +155,12 @@ class ConsoleRenderer:
             block_indent = " " * (
                 len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
             )
-            line += "\n\n" + "\n".join(
-                block_indent + ln for ln in exception_str.rstrip().split("\n")
+            line += (
+                "\n\n"
+                + "\n".join(
+                    block_indent + ln for ln in exception_str.rstrip().split("\n")
+                )
+                + "\n"
             )
 
         return line
