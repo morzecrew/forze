@@ -433,13 +433,13 @@ class TestRichEnhancements:
         assert "mapping" in captured.err
         assert "unset" in captured.err
 
-    def test_max_width_pads_event_to_align_inline_extra(
+    def test_event_width_pads_event_to_align_inline_extra(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         configure(
             level="INFO",
             colorize=False,
-            max_width=80,
+            event_width=80,
             extra_indent=1,
         )
         log = getLogger("forze.test")
@@ -448,6 +448,28 @@ class TestRichEnhancements:
         log.info("longer message here", x=1)
         out2 = capsys.readouterr().err
         # Both should have x=1 at same column (event padded)
+        idx1 = out1.find("x=1")
+        idx2 = out2.find("x=1")
+        assert idx1 > 0 and idx2 > 0
+        assert idx1 == idx2
+
+    def test_prefix_width_aligns_inline_extra_across_depths(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(
+            level="INFO",
+            colorize=False,
+            event_width=80,
+            extra_indent=1,
+            prefix_width=80,  # >= max prefix len (timestamp+level+scope+indent)
+        )
+        log = getLogger("forze.test")
+        log.info("depth0", x=1)
+        out1 = capsys.readouterr().err
+        with log.section():
+            log.info("depth1", x=1)
+        out2 = capsys.readouterr().err
+        # x=1 at same column: prefix_width + event_width + extra_indent
         idx1 = out1.find("x=1")
         idx2 = out2.find("x=1")
         assert idx1 > 0 and idx2 > 0

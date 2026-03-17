@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Mapping, Optional, cast
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Optional, cast
 
 if TYPE_CHECKING:
     pass
@@ -40,8 +40,11 @@ NO_TO_LEVEL: dict[int, str] = {v: k for k, v in LEVEL_TO_NO.items()}
 DEFAULT_LEVEL: LogLevelName = "INFO"
 DEFAULT_STEP = "  "
 DEFAULT_WIDTH = 36
-DEFAULT_MAX_WIDTH: Optional[int] = None
+DEFAULT_EVENT_WIDTH: Optional[int] = None
 DEFAULT_EXTRA_INDENT = 1
+DEFAULT_PREFIX_WIDTH: Optional[int] = None
+DEFAULT_EXTRA_DIM: Optional[str] = None  # ANSI dim when None uses \033[2m
+DEFAULT_EXTRA_KEY_SORT: Optional[Callable[[str], int]] = None  # lower = first
 
 # ----------------------- #
 # Config
@@ -55,8 +58,11 @@ class LoggingConfig:
     levels: LevelsMap = None
     step: str = DEFAULT_STEP
     width: int = DEFAULT_WIDTH
-    max_width: Optional[int] = DEFAULT_MAX_WIDTH
+    event_width: Optional[int] = DEFAULT_EVENT_WIDTH
     extra_indent: int = DEFAULT_EXTRA_INDENT
+    prefix_width: Optional[int] = DEFAULT_PREFIX_WIDTH
+    extra_dim: Optional[str] = DEFAULT_EXTRA_DIM
+    extra_key_sort: Optional[Callable[[str], int]] = DEFAULT_EXTRA_KEY_SORT
     colorize: bool = False
     render_json: bool = False
     dual_output: bool = False

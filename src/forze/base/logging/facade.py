@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Mapping, Optional
+from typing import TYPE_CHECKING, Callable, Mapping, Optional
 
 import structlog
 
@@ -47,8 +47,11 @@ def configure(
     levels: Optional[Mapping[str, LogLevel]] = None,
     step: str = DEFAULT_STEP,
     width: int = DEFAULT_WIDTH,
-    max_width: Optional[int] = None,
+    event_width: Optional[int] = None,
     extra_indent: int = 1,
+    prefix_width: Optional[int] = None,
+    extra_dim: Optional[str] = None,
+    extra_key_sort: Optional[Callable[[str], int]] = None,
     colorize: bool = False,
     render_json: bool = False,
     dual_output: bool = False,
@@ -65,8 +68,11 @@ def configure(
         levels=normalized_levels,
         step=step,
         width=width,
-        max_width=max_width,
+        event_width=event_width,
         extra_indent=extra_indent,
+        prefix_width=prefix_width,
+        extra_dim=extra_dim,
+        extra_key_sort=extra_key_sort,
         colorize=colorize,
         render_json=render_json,
         dual_output=dual_output,

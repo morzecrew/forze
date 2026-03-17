@@ -6,7 +6,7 @@ import textwrap
 from datetime import datetime
 from io import StringIO
 from pprint import pformat
-from typing import Any
+from typing import Any, Callable
 
 import structlog
 from rich.console import Console
@@ -58,14 +58,20 @@ class ConsoleRenderer:
         *,
         step: str = "  ",
         width: int = 36,
-        max_width: int | None = None,
+        event_width: int | None = None,
         extra_indent: int = 1,
+        prefix_width: int | None = None,
+        extra_dim: str | None = None,
+        extra_key_sort: Callable[[str], int] | None = None,
         colorize: bool = False,
     ) -> None:
         self.step = step
         self.width = width
-        self.max_width = max_width
+        self.event_width = event_width
         self.extra_indent = extra_indent
+        self.prefix_width = prefix_width
+        self.extra_dim = extra_dim
+        self.extra_key_sort = extra_key_sort
         self.colorize = colorize
 
     def __call__(
@@ -79,8 +85,11 @@ class ConsoleRenderer:
         config = get_config()
         step = self.step or config.step
         width = self.width or config.width
-        max_width = self.max_width or config.max_width
+        event_width = self.event_width or config.event_width
         extra_indent = self.extra_indent
+        prefix_width = self.prefix_width or config.prefix_width
+        extra_dim = self.extra_dim if self.extra_dim is not None else config.extra_dim
+        extra_key_sort = self.extra_key_sort or config.extra_key_sort
         colorize = self.colorize
 
         from .context import get_depth
@@ -94,9 +103,14 @@ class ConsoleRenderer:
         scope = event_dict.get("scope", "root")
         scope_str = f"[{scope}]".ljust(width)
 
-        # Prefix length for alignment (time + "   " + level + scope + indent)
+        # Prefix length (time + "   " + level + scope + indent)
         prefix_len = len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
-        block_indent = " " * prefix_len
+        # Use prefix_width for alignment when set; else actual prefix length
+        align_width = prefix_width if prefix_width is not None else prefix_len
+        block_indent = " " * align_width
+        prefix_padding = (
+            " " * max(0, align_width - prefix_len) if prefix_width is not None else ""
+        )
 
         standard_keys = {
             "event",
@@ -112,6 +126,7 @@ class ConsoleRenderer:
         exception_str = event_dict.get("exception", "")
         dim = "\033[2m" if colorize else ""
         rst = "\033[0m" if colorize else ""
+        extra_dim_str = (extra_dim or "\033[2m") if colorize else ""
 
         extra = {
             k: v
@@ -120,27 +135,39 @@ class ConsoleRenderer:
         }
         extra_inline_plain = ""
         extra_block_str = ""
+
         if extra:
+            ordered_extra = sorted(
+                extra.items(),
+                key=lambda item: (
+                    extra_key_sort(item[0]) if extra_key_sort is not None else item[0]
+                ),
+            )
             if _extra_needs_block(extra):
-                formatted = pformat(extra, width=100)
+                ordered_dict = dict(ordered_extra)
+                formatted = pformat(ordered_dict, width=100)
                 extra_content = formatted.rstrip()
                 if colorize:
                     extra_content = _render_rich_to_str(
                         ReprHighlighter()(extra_content)
                     )
+                extra_content = extra_dim_str + extra_content + rst
                 extra_lines = extra_content.split("\n")
-                extra_block_str = "\n\n" + "\n".join(
-                    block_indent + ln for ln in extra_lines
-                ) + "\n"
+                extra_block_str = (
+                    "\n\n" + "\n".join(block_indent + ln for ln in extra_lines) + "\n"
+                )
             else:
                 indent_str = " " * extra_indent
                 inline_plain = indent_str + " ".join(
-                    f"{k}={v!r}" for k, v in sorted(extra.items())
+                    f"{k}={v!r}" for k, v in ordered_extra
                 )
                 extra_inline_plain = inline_plain
                 if colorize:
-                    extra_inline_plain = indent_str + _render_rich_to_str(
-                        ReprHighlighter()(inline_plain.lstrip())
+                    extra_inline_plain = (
+                        extra_dim_str
+                        + indent_str
+                        + _render_rich_to_str(ReprHighlighter()(inline_plain.lstrip()))
+                        + rst
                     )
 
         colors = {
@@ -152,15 +179,28 @@ class ConsoleRenderer:
         }
         is_trace = level.strip() == "TRACE"
 
-        # max_width applies to event (log message) only; not timestamp, level, scope, or extras
+        # prefix_width + event_width + extra_indent = extra column (all configurable)
         event_display = event
         if extra_inline_plain:
-            if max_width:
-                # Wrap event at max_width; pad first line so extra aligns
-                event_width = max(10, max_width)
-                lines = textwrap.wrap(event, width=event_width, drop_whitespace=False)
+            if prefix_width is not None and event_width is not None:
+                # Extra at prefix_width + event_width + extra_indent
+                wrap_width = max(10, event_width)
+                lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
                 if lines:
-                    event_padded = lines[0].ljust(event_width)
+                    event_padded = lines[0].ljust(wrap_width)
+                    event_display = event_padded + extra_inline_plain
+                    if len(lines) > 1:
+                        event_display += "\n" + "\n".join(
+                            block_indent + ln for ln in lines[1:]
+                        )
+                else:
+                    event_display = event + extra_inline_plain
+            elif event_width is not None:
+                # No prefix_width: pad event to event_width (alignment per-line only)
+                wrap_width = max(10, event_width)
+                lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
+                if lines:
+                    event_padded = lines[0].ljust(wrap_width)
                     event_display = event_padded + extra_inline_plain
                     if len(lines) > 1:
                         event_display += "\n" + "\n".join(
@@ -170,20 +210,19 @@ class ConsoleRenderer:
                     event_display = event + extra_inline_plain
             else:
                 event_display = event + extra_inline_plain
-        elif max_width and len(event) > max_width:
-            lines = textwrap.wrap(event, width=max_width, drop_whitespace=False)
+        elif event_width is not None and len(event) > event_width:
+            wrap_width = max(10, event_width)
+            lines = textwrap.wrap(event, width=wrap_width, drop_whitespace=False)
             if len(lines) > 1:
-                event_display = lines[0] + "\n" + "\n".join(
-                    block_indent + ln for ln in lines[1:]
+                event_display = (
+                    lines[0] + "\n" + "\n".join(block_indent + ln for ln in lines[1:])
                 )
 
         if is_trace and colorize:
-            line = (
-                f"{dim}{time_str}   {level}{scope_str}{indent}{event_display}{extra_block_str}{rst}"
-            )
+            line = f"{dim}{time_str}   {level}{scope_str}{indent}{prefix_padding}{event_display}{extra_block_str}{rst}"
         else:
             lvl_style = colors.get(level.strip(), "") if colorize else ""
-            line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event_display}{extra_block_str}"
+            line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{prefix_padding}{event_display}{extra_block_str}"
 
         if exception_str:
             line += (

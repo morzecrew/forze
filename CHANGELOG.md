@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `forze.base.logging`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).
 - `forze.base.logging`: proper TRACE level support (below DEBUG) for noisy per-operation details; ``Logger.trace()``, ``configure(level="TRACE")``, and per-namespace ``levels={"module": "TRACE"}``.
 - `forze.base.logging`: Rich traceback formatting when ``colorize=True``.
-- `forze.base.logging`: Block format (blank line + pprint + ReprHighlighter) for nested ``extra``; simple extras inline; ``max_width`` wraps event so first line + extra fits.
+- `forze.base.logging`: Block format (blank line + pprint + ReprHighlighter) for nested ``extra``; simple extras inline; ``event_width`` wraps event so first line + extra fits.
 - `forze.base.logging`: Dual output (``dual_output=True``) – pretty to stderr, JSON to stdout for monitoring.
 - `forze.base.logging`: Level patterns use fnmatch (``*``, ``?``); patterns without wildcards match as prefix.
 - `forze_fastapi.middlewares.logging`: ``format_status_for_log(status_code)`` for ANSI-colored HTTP status in access logs.
@@ -22,8 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `forze.base.logging`: Simple extras inline; configurable ``extra_indent`` (spaces between event and inline extra; not applied when no extra or block extra); ``max_width`` applies to event (log message) only—excludes timestamp, level, scope, and extras; event is padded so inline extra aligns; block extras below wrapped event; ReprHighlighter for extras.
+- `forze.base.logging`: Simple extras inline; ``prefix_width`` (reserved for timestamp+level+scope+indent) + ``event_width`` (event) + ``extra_indent`` = extra column; all configurable; block extras below wrapped event; ReprHighlighter for extras.
 - `forze.base.logging`: Block format (extra data below log line) and Rich tracebacks now align with event text for clearer visual hierarchy.
+- `forze.base.logging`: ``max_width`` renamed to ``event_width`` for clarity.
+- `forze.base.logging`: ``extra_dim`` config option to set dim color for extras (inline and block); defaults to ANSI dim when ``colorize=True``.
+- `forze.base.logging`: ``extra_key_sort`` config option: callable ``(str) -> int`` where lower value = earlier in output; controls order of extra keys in inline and block format.
 - `forze_fastapi` idempotent routes: invalid JSON request bodies no longer participate in idempotency; the handler runs and returns 422 without committing a snapshot, so clients can fix the body and retry with the same idempotency key.
 - All internal logging uses :mod:`forze.base.logging` (structlog-based).
 - `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.
