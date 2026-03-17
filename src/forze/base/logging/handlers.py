@@ -42,6 +42,8 @@ def _build_single_chain(config: LoggingConfig) -> list[Any]:
             ConsoleRenderer(
                 step=config.step,
                 width=config.width,
+                max_width=config.max_width,
+                extra_indent=config.extra_indent,
                 colorize=config.colorize,
             )
         )
@@ -60,6 +62,8 @@ def _build_dual_handlers(config: LoggingConfig) -> tuple[logging.Handler, ...]:
             ConsoleRenderer(  # type: ignore[list-item]
                 step=config.step,
                 width=config.width,
+                max_width=config.max_width,
+                extra_indent=config.extra_indent,
                 colorize=config.colorize,
             ),
         ],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import textwrap
 from datetime import datetime
 from io import StringIO
 from pprint import pformat
@@ -49,6 +50,19 @@ def _format_ts(ts: Any) -> str:
     return str(ts)
 
 
+def _wrap_at_width(text: str, width: int, first_line_prefix: str, cont_indent: str) -> str:
+    """Wrap text at width; first line gets prefix, continuation lines get cont_indent."""
+    if width <= 0 or len(text) + len(first_line_prefix) <= width:
+        return first_line_prefix + text
+    usable = width - len(first_line_prefix)
+    lines = textwrap.wrap(text, width=usable, drop_whitespace=False)
+    if len(lines) == 1:
+        return first_line_prefix + lines[0]
+    return first_line_prefix + lines[0] + "\n" + "\n".join(
+        cont_indent + ln for ln in lines[1:]
+    )
+
+
 class ConsoleRenderer:
     """Human-readable console renderer with optional colorization."""
 
@@ -57,10 +71,14 @@ class ConsoleRenderer:
         *,
         step: str = "  ",
         width: int = 36,
+        max_width: int | None = None,
+        extra_indent: int = 1,
         colorize: bool = False,
     ) -> None:
         self.step = step
         self.width = width
+        self.max_width = max_width
+        self.extra_indent = extra_indent
         self.colorize = colorize
 
     def __call__(
@@ -74,6 +92,8 @@ class ConsoleRenderer:
         config = get_config()
         step = self.step or config.step
         width = self.width or config.width
+        max_width = self.max_width or config.max_width
+        extra_indent = self.extra_indent
         colorize = self.colorize
 
         from .context import get_depth
@@ -87,6 +107,10 @@ class ConsoleRenderer:
         scope = event_dict.get("scope", "root")
         scope_str = f"[{scope}]".ljust(width)
 
+        # Prefix length for alignment (time + "   " + level + scope + indent)
+        prefix_len = len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
+        block_indent = " " * prefix_len
+
         standard_keys = {
             "event",
             "level",
@@ -99,40 +123,46 @@ class ConsoleRenderer:
             "exc_info",
         }
         exception_str = event_dict.get("exception", "")
+        dim = "\033[2m" if colorize else ""
+        rst = "\033[0m" if colorize else ""
 
         extra = {
             k: v
             for k, v in event_dict.items()
             if k not in standard_keys and v is not None
         }
-        extra_str = ""
+        extra_inline_plain = ""
+        extra_block_str = ""
         if extra:
-            if colorize and _extra_needs_block(extra):
+            if _extra_needs_block(extra):
                 formatted = pformat(extra, width=100)
-                highlighted = _render_rich_to_str(ReprHighlighter()(formatted))
-                # Align block with event text (prefix: time + "   " + level + scope + indent)
-                block_indent = " " * (
-                    len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
-                )
-                extra_str = (
-                    "\n\n"
-                    + "\n".join(
-                        block_indent + ln for ln in highlighted.rstrip().split("\n")
-                    )
-                    + "\n"
-                )
-            else:
-                inline = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
+                extra_content = formatted.rstrip()
                 if colorize:
-                    highlighted = _render_rich_to_str(
-                        ReprHighlighter()(inline.lstrip())
+                    extra_content = _render_rich_to_str(
+                        ReprHighlighter()(extra_content)
                     )
-                    extra_str = " " + highlighted if highlighted else inline
-                else:
-                    extra_str = inline
+                extra_lines = extra_content.split("\n")
+                wrapped_lines: list[str] = []
+                for ln in extra_lines:
+                    if max_width and len(ln) + len(block_indent) > max_width:
+                        wrapped = _wrap_at_width(
+                            ln, max_width, block_indent, block_indent
+                        )
+                        wrapped_lines.extend(wrapped.split("\n"))
+                    else:
+                        wrapped_lines.append(block_indent + ln)
+                extra_block_str = "\n\n" + "\n".join(wrapped_lines) + "\n"
+            else:
+                indent_str = " " * extra_indent
+                inline_plain = indent_str + " ".join(
+                    f"{k}={v!r}" for k, v in sorted(extra.items())
+                )
+                extra_inline_plain = inline_plain
+                if colorize:
+                    extra_inline_plain = indent_str + _render_rich_to_str(
+                        ReprHighlighter()(inline_plain.lstrip())
+                    )
 
-        dim = "\033[2m" if colorize else ""
-        rst = "\033[0m" if colorize else ""
         colors = {
             "DEBUG": "\033[36m",
             "INFO": "\033[32m",
@@ -142,19 +172,47 @@ class ConsoleRenderer:
         }
         is_trace = level.strip() == "TRACE"
 
+        # Wrap event at max_width; inline extra on first line when simple
+        event_display = event
+        if extra_inline_plain:
+            # Simple extra: wrap event so first line + extra fits
+            extra_len = extra_indent + len(
+                " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
+            )
+            usable = (
+                max(1, max_width - prefix_len - extra_len)
+                if max_width
+                else len(event) + 1
+            )
+            if max_width and prefix_len + len(event) + extra_len > max_width:
+                lines = textwrap.wrap(event, width=usable, drop_whitespace=False)
+                if lines:
+                    event_display = lines[0] + extra_inline_plain
+                    if len(lines) > 1:
+                        event_display += "\n" + "\n".join(
+                            block_indent + ln for ln in lines[1:]
+                        )
+                else:
+                    event_display = event + extra_inline_plain
+            else:
+                event_display = event + extra_inline_plain
+        elif max_width and prefix_len + len(event) > max_width:
+            usable = max_width - prefix_len
+            lines = textwrap.wrap(event, width=usable, drop_whitespace=False)
+            if len(lines) > 1:
+                event_display = lines[0] + "\n" + "\n".join(
+                    block_indent + ln for ln in lines[1:]
+                )
+
         if is_trace and colorize:
             line = (
-                f"{dim}{time_str}   {level}{scope_str}{indent}{event}{extra_str}{rst}"
+                f"{dim}{time_str}   {level}{scope_str}{indent}{event_display}{extra_block_str}{rst}"
             )
         else:
             lvl_style = colors.get(level.strip(), "") if colorize else ""
-            line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event}{extra_str}"
+            line = f"{dim}{time_str}{rst}   {lvl_style}{level}{rst}{dim}{scope_str}{rst}{indent}{event_display}{extra_block_str}"
 
         if exception_str:
-            # Align traceback with event text (same as extra block)
-            block_indent = " " * (
-                len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
-            )
             line += (
                 "\n\n"
                 + "\n".join(

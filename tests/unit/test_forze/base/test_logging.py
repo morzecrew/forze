@@ -387,7 +387,7 @@ class TestRichEnhancements:
         assert "config" in captured.err
         # ReprHighlighter inserts ANSI codes between key and "=", so check values
         assert "1" in captured.err and "4" in captured.err
-        # Inline: no blank line before extra
+        # Simple extras inline on same line
         assert "\n\n" not in captured.err
 
     def test_extra_with_simple_values_emits_inline_when_colorized(
@@ -401,6 +401,37 @@ class TestRichEnhancements:
         # ReprHighlighter inserts ANSI codes between key and "=", so check values
         assert "1" in captured.err
         assert "python" in captured.err
+
+    def test_extra_indent_adds_spaces_before_inline_extra(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False, extra_indent=3)
+        log = getLogger("forze.test")
+        log.info("msg", x=1)
+        captured = capsys.readouterr()
+        # "msg" + 3 spaces + "x=1"
+        assert "msg   x=1" in captured.err
+
+    def test_extra_indent_not_applied_when_no_extra(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False, extra_indent=5)
+        log = getLogger("forze.test")
+        log.info("no extra")
+        captured = capsys.readouterr()
+        assert "no extra" in captured.err
+
+    def test_extra_indent_not_applied_for_block_extra(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False, extra_indent=5)
+        log = getLogger("forze.test")
+        log.info("mapping", exclude={"unset": True, "defaults": True})
+        captured = capsys.readouterr()
+        # Block format: extra below, not inline; no extra_indent between event and block
+        assert "\n\n" in captured.err
+        assert "mapping" in captured.err
+        assert "unset" in captured.err
 
 
 # ----------------------- #

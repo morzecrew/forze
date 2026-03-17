@@ -40,6 +40,8 @@ NO_TO_LEVEL: dict[int, str] = {v: k for k, v in LEVEL_TO_NO.items()}
 DEFAULT_LEVEL: LogLevelName = "INFO"
 DEFAULT_STEP = "  "
 DEFAULT_WIDTH = 36
+DEFAULT_MAX_WIDTH: Optional[int] = None
+DEFAULT_EXTRA_INDENT = 1
 
 # ----------------------- #
 # Config
@@ -53,6 +55,8 @@ class LoggingConfig:
     levels: LevelsMap = None
     step: str = DEFAULT_STEP
     width: int = DEFAULT_WIDTH
+    max_width: Optional[int] = DEFAULT_MAX_WIDTH
+    extra_indent: int = DEFAULT_EXTRA_INDENT
     colorize: bool = False
     render_json: bool = False
     dual_output: bool = False
