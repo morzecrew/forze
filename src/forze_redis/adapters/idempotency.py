@@ -115,12 +115,15 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         payload_hash: str,
     ) -> IdempotencySnapshot | None:
         if not key:
-            logger.debug("Idempotency key is not provided for op '{op}', skipping", sub={"op": op})
+            logger.debug(
+                "Idempotency key is not provided for op '{op}', skipping",
+                sub={"op": op},
+            )
             return None
 
         logger.debug(
             "Beginning idempotency for op '{op}', key '{key}'",
-            sub={"op": op, "key": key[:8] + "..."},
+            sub={"op": op, "key": key[:9] + "..."},
         )
 
         with logger.section():
@@ -176,12 +179,15 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         snapshot: IdempotencySnapshot,
     ) -> None:
         if not key:
-            logger.debug("Idempotency key is not provided for op '{op}', skipping", sub={"op": op})
+            logger.debug(
+                "Idempotency key is not provided for op '{op}', skipping",
+                sub={"op": op},
+            )
             return None
 
         logger.debug(
             "Committing idempotency for op '{op}', key '{key}'",
-            sub={"op": op, "key": key[:8] + "..."},
+            sub={"op": op, "key": key[:9] + "..."},
         )
 
         with logger.section():

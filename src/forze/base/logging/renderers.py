@@ -110,8 +110,12 @@ class ConsoleRenderer:
             if colorize and _extra_needs_block(extra):
                 formatted = pformat(extra, width=100)
                 highlighted = _render_rich_to_str(ReprHighlighter()(formatted))
+                # Align block with event text (prefix: time + "   " + level + scope + indent)
+                block_indent = " " * (
+                    len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
+                )
                 extra_str = "\n\n" + "\n".join(
-                    indent + ln for ln in highlighted.rstrip().split("\n")
+                    block_indent + ln for ln in highlighted.rstrip().split("\n")
                 )
             else:
                 inline = " " + " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))

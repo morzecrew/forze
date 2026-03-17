@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `forze.base.logging`: Block format (extra data below log line) now aligns with event text for clearer visual hierarchy.
 - All internal logging uses :mod:`forze.base.logging` (structlog-based).
 - `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.
 - Console renderer: blank lines around exception tracebacks for clearer separation; TRACE level dims entire record when colorized.
