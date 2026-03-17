@@ -1,7 +1,6 @@
 # Forze
 
 [![PyPI](https://img.shields.io/pypi/v/forze?label=PyPI)](https://pypi.org/project/forze/) [![Python](https://img.shields.io/pypi/pyversions/forze)](https://pypi.org/project/forze/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmorzecrew%2Fforze.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmorzecrew%2Fforze?ref=badge_shield)
 
 **Forze** is a lightweight infrastructure toolkit for building backend services
 with **Domain-Driven Design (DDD)** and **Hexagonal Architecture**.
@@ -133,6 +132,3 @@ Please report security vulnerabilities privately as described in [SECURITY.md](h
 ## License
 
 Forze is licensed under the MIT License - see [LICENSE](https://github.com/morzecrew/forze/blob/main/LICENSE) for details.
-
-
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmorzecrew%2Fforze.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmorzecrew%2Fforze?ref=badge_large)

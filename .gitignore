@@ -215,3 +215,4 @@ pages/site/
 .just/
 
 junit.xml
+.envrc
