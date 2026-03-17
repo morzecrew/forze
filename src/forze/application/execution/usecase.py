@@ -2,7 +2,7 @@ from typing import Self, final
 
 import attrs
 
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .middleware import EffectMiddleware, GuardMiddleware, Middleware, NextCall
@@ -42,9 +42,8 @@ class Usecase[Args, R]:
             return self
 
         logger.trace(
-            "Appending %d middleware(s) to usecase %s",
-            len(middlewares),
-            type(self).__qualname__,
+            "Appending {count} middleware(s) to usecase {qualname}",
+            sub={"count": len(middlewares), "qualname": type(self).__qualname__},
         )
 
         return attrs.evolve(self, middlewares=(*self.middlewares, *middlewares))
@@ -64,12 +63,12 @@ class Usecase[Args, R]:
     @final
     def _build_chain(self) -> NextCall[Args, R]:
         logger.trace(
-            "Building middleware chain with %d middleware(s)",
-            len(self.middlewares),
+            "Building middleware chain with {count} middleware(s)",
+            sub={"count": len(self.middlewares)},
         )
 
         async def last(args: Args) -> R:
-            logger.debug("Calling main: %s", type(self).__qualname__)
+            logger.debug("Calling main: {qualname}", sub={"qualname": type(self).__qualname__})
 
             with logger.section():
                 return await self.main(args)
@@ -89,7 +88,7 @@ class Usecase[Args, R]:
                 else:
                     qualname = type(mw).__qualname__
 
-                logger.trace("Wrapping with %s", qualname)
+                logger.trace("Wrapping with {qualname}", sub={"qualname": qualname})
 
                 async def wrapped(
                     a: Args,
@@ -112,12 +111,12 @@ class Usecase[Args, R]:
         Builds the middleware chain on first call and caches it for reuse.
         """
 
-        logger.debug("Starting usecase execution: %s", type(self).__qualname__)
+        logger.debug("Starting usecase execution: {qualname}", sub={"qualname": type(self).__qualname__})
 
         with logger.section():
             chain = self._build_chain()
             result = await chain(args)
 
-        logger.debug("Usecase execution completed: %s", type(self).__qualname__)
+        logger.debug("Usecase execution completed: {qualname}", sub={"qualname": type(self).__qualname__})
 
         return result

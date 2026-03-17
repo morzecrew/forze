@@ -1,166 +1,158 @@
-"""Stdlib-like Logger wrapper around loguru.
+"""Thin Logger wrapper around structlog.
 
-Provides a familiar API (debug, info, warning, etc.) with %-style
-message formatting, while delegating to loguru for actual emission.
+Strict API: ``log.info("User {user_id} logged in", sub={"user_id": 123}, request_id="x")``.
+- sub: substitution for {key} placeholders; only keys in both message and sub are substituted.
+- kwargs: all go to extras.
 """
 
+import re
 from contextlib import contextmanager
-from typing import Any, Iterator, Self
+from typing import Any, Iterator, Mapping, Self
 
 import attrs
-from loguru._logger import Logger as _LoguruLogger
+import structlog.typing
 
+from .config import LogLevel, effective_level_for_name, level_no, normalize_level
 from .context import log_section
-from .formatting import effective_level_for_name
-from .helpers import escape_loguru_braces, level_no, normalize_level, render_message
-from .types import LogLevel, LogLevelName
 
-# ----------------------- #
+# Keys that must not be passed as user extras (structlog reserved)
+_STRUCTLOG_KEYS = frozenset({"event", "logger", "scope", "source"})
+
+
+def _format_event(
+    message: str,
+    sub: Mapping[str, Any],
+    **kwargs: Any,
+) -> tuple[str, dict[str, Any]]:
+    """Format message with {key} placeholders, return (event, extras) for structlog.
+
+    sub: substitute only when message has {key} and sub provides key; otherwise skip.
+    Values are str()'d for substitution.
+    kwargs: all go to extras.
+    """
+    if "{" in message and "}" in message and sub:
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return str(sub[key]) if key in sub else match.group(0)
+
+        event = re.sub(r"\{(\w+)\}", replace, message)
+    else:
+        event = message
+    extras = {k: v for k, v in kwargs.items() if k not in _STRUCTLOG_KEYS}
+    return event, extras
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class Logger:
-    """Stdlib-like logger bound to a name.
-
-    Wraps a loguru logger with a fixed ``logger_name`` in extra.
-    All methods use %-style formatting and escape braces for loguru.
-    """
+    """Logger bound to a name, scope, and optional source."""
 
     name: str
-    """Logger name used for level resolution and display."""
-
-    logger: _LoguruLogger
-    """The underlying loguru logger with bound context."""
-
-    # ....................... #
+    backend: structlog.typing.FilteringBoundLogger
 
     def isEnabledFor(self, level: LogLevel) -> bool:
-        """Return whether a message at *level* would be emitted.
-
-        Compares the requested level against the effective configured
-        level for this logger's name.
-        """
         want = level_no(normalize_level(level))
         have = level_no(effective_level_for_name(self.name))
         return want >= have
 
-    # ....................... #
-
     def bind(self, **kwargs: Any) -> Self:
-        """Return a logger with additional bound context.
-
-        Forwards to loguru's bind. Useful for request IDs, etc.
-        """
-        bound = self.logger.bind(**kwargs)  # type: ignore[no-untyped-call]
-        return attrs.evolve(self, logger=bound)  # type: ignore[no-untyped-call]
-
-    # ....................... #
-
-    @contextmanager
-    def contextualize(self, **kwargs: Any) -> Iterator[None]:
-        """Return a logger with additional bound context.
-
-        Forwards to loguru's bind. Useful for request IDs, etc.
-        """
-
-        with self.logger.contextualize(  # pyright: ignore[reportUnknownMemberType]
-            **kwargs
-        ):
-            yield
-
-    # ....................... #
+        return attrs.evolve(self, backend=self.backend.bind(**kwargs))
 
     @contextmanager
     def section(self) -> Iterator[None]:
-        """Return a logger with a section bound context.
-
-        Forwards to loguru's with_section. Useful for nested log blocks.
-        """
-
         with log_section():
             yield
 
-    # ....................... #
+    def trace(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log at TRACE level (below DEBUG). Use for noisy per-op details."""
+        self._log("debug", message, sub, {**kwargs, "_forze_level": "trace"})
 
-    def trace(self, message: Any, *args: Any) -> None:
-        """Log at TRACE level."""
+    def debug(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._log("debug", message, sub, kwargs)
 
-        self._log("TRACE", message, *args)
+    def info(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._log("info", message, sub, kwargs)
 
-    # ....................... #
-
-    def debug(self, message: Any, *args: Any) -> None:
-        """Log at DEBUG level."""
-
-        self._log("DEBUG", message, *args)
-
-    # ....................... #
-
-    def info(self, message: Any, *args: Any) -> None:
-        """Log at INFO level."""
-
-        self._log("INFO", message, *args)
-
-    # ....................... #
-
-    def success(self, message: Any, *args: Any) -> None:
-        """Log at SUCCESS level."""
-
-        self._log("SUCCESS", message, *args)
-
-    # ....................... #
-
-    def warning(self, message: Any, *args: Any) -> None:
-        """Log at WARNING level."""
-
-        self._log("WARNING", message, *args)
+    def warning(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._log("warning", message, sub, kwargs)
 
     warn = warning
 
-    # ....................... #
+    def error(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._log("error", message, sub, kwargs)
 
-    def error(self, message: Any, *args: Any) -> None:
-        """Log at ERROR level."""
+    def critical(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._log("critical", message, sub, kwargs)
 
-        self._log("ERROR", message, *args)
+    def critical_exception(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        exc: BaseException | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Log unhandled exception at CRITICAL with full traceback (Rich when colorize)."""
+        event, extras = _format_event(message, sub or {}, **kwargs)
+        exc_info: bool | tuple[type[BaseException], BaseException, object] = (
+            (type(exc), exc, exc.__traceback__) if exc is not None else True
+        )
+        self.backend.critical(event, exc_info=exc_info, **extras)
 
-    # ....................... #
+    def exception(
+        self,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        event, extras = _format_event(message, sub or {}, **kwargs)
+        self.backend.error(event, exc_info=True, **extras)
 
-    def critical(self, message: Any, *args: Any) -> None:
-        """Log at CRITICAL level."""
+    def log(
+        self,
+        level: LogLevel,
+        message: str,
+        sub: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        method = normalize_level(level).lower()
+        self._log(method, message, sub, kwargs)
 
-        self._log("CRITICAL", message, *args)
-
-    # ....................... #
-
-    def exception(self, message: Any, *args: Any) -> None:
-        """Log at ERROR level with exception traceback.
-
-        Call from an except block to include the current exception.
-        """
-        rendered = render_message(message, args)
-        escaped = escape_loguru_braces(rendered)
-        self.logger.opt(exception=True).error(escaped)  # type: ignore[no-untyped-call]
-
-    # ....................... #
-
-    def log(self, level: LogLevel, message: Any, *args: Any) -> None:
-        """Log at an arbitrary level."""
-
-        self._log(normalize_level(level), message, *args)
-
-    # ....................... #
-
-    def _log(self, level: LogLevelName, message: Any, *args: Any) -> None:
-        """Internal call: render, escape, and emit."""
-
-        rendered = render_message(message, args)
-        escaped = escape_loguru_braces(rendered)
-        self.logger.log(level, escaped)  # type: ignore[no-untyped-call]
-
-    # ....................... #
-
-    def opt(self, **kwargs: Any) -> Self:
-        """Return a logger with additional options."""
-
-        return attrs.evolve(self, logger=self.logger.opt(**kwargs))  # type: ignore[no-untyped-call]
+    def _log(
+        self,
+        method: str,
+        message: str,
+        sub: Mapping[str, Any] | None,
+        kwargs: dict[str, Any],
+    ) -> None:
+        event, extras = _format_event(message, sub or {}, **kwargs)
+        getattr(self.backend, method)(event, **extras)

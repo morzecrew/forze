@@ -17,7 +17,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import ExecutionContext
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 from forze.base.serialization import pydantic_model_hash
 
 from .feature import RouteFeature, RouteHandler

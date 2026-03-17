@@ -1,12 +1,16 @@
-"""Unit tests for :mod:`forze.base.logging`.
+"""Unit tests for :mod:`forze.base.logging`."""
 
-Run with ``pytest -s tests/unit/test_forze/base/test_logging*.py`` to preview
-logging output (sections, levels, formatting) in the terminal.
-"""
+import asyncio
 
 import pytest
 
-from forze.base.logging import configure, getLogger, reset, setup_default
+from forze.base.logging import (
+    bound_context,
+    configure,
+    getLogger,
+    register_unhandled_exception_handler,
+    reset,
+)
 
 # ----------------------- #
 # Fixtures
@@ -36,6 +40,13 @@ class TestGetLogger:
         log = getLogger()
         assert log.name == "root"
 
+    def test_get_logger_with_scope(self) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("test.module", scope="usecase")
+        log.info("hello")
+        # scope is bound; we verify via emission
+        assert log.name == "test.module"
+
     def test_log_emits_to_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
         configure(level="DEBUG", colorize=False)
         log = getLogger("forze.test")
@@ -62,6 +73,34 @@ class TestGetLogger:
         captured = capsys.readouterr()
         assert "debug message" in captured.err
         assert "DEBUG" in captured.err
+
+    def test_trace_filtered_at_info_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test")
+        log.trace("should not appear")
+        captured = capsys.readouterr()
+        assert "should not appear" not in captured.err
+
+    def test_trace_filtered_at_debug_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="DEBUG", colorize=False)
+        log = getLogger("forze.test")
+        log.trace("trace should not appear at debug")
+        captured = capsys.readouterr()
+        assert "trace should not appear at debug" not in captured.err
+
+    def test_trace_emitted_at_trace_level(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="TRACE", colorize=False)
+        log = getLogger("forze.test")
+        log.trace("trace message")
+        captured = capsys.readouterr()
+        assert "trace message" in captured.err
+        assert "TRACE" in captured.err
 
 
 # ----------------------- #
@@ -101,18 +140,46 @@ class TestPerNamespaceLevels:
         captured = capsys.readouterr()
         assert "nested debug" in captured.err
 
+    def test_namespace_trace_level(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure(
+            level="INFO",
+            levels={"forze.application": "TRACE"},
+            colorize=False,
+        )
+        app_log = getLogger("forze.application.execution")
+        base_log = getLogger("forze.base.utils")
+        app_log.trace("app trace")
+        base_log.trace("base trace")
+        captured = capsys.readouterr()
+        assert "app trace" in captured.err
+        assert "base trace" not in captured.err
+
+    def test_wildcard_pattern_matches(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure(
+            level="WARNING",
+            levels={"forze.redis.*": "DEBUG"},
+            colorize=False,
+        )
+        redis_log = getLogger("forze.redis.adapters.cache")
+        other_log = getLogger("forze.application.usecase")
+        redis_log.debug("redis debug")
+        other_log.debug("other debug")
+        captured = capsys.readouterr()
+        assert "redis debug" in captured.err
+        assert "other debug" not in captured.err
+
 
 # ----------------------- #
 # Sections (indentation)
 
 
 class TestLogSections:
-    """Tests for :func:`log_section` and indentation."""
+    """Tests for :meth:`Logger.section` and indentation."""
 
     def test_section_increases_indentation(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
+        configure(level="INFO", step="  ", colorize=False)
         log = getLogger("forze.test")
         log.info("before section")
         with log.section():
@@ -121,14 +188,13 @@ class TestLogSections:
         captured = capsys.readouterr()
         lines = captured.err.strip().split("\n")
         assert len(lines) >= 3
-        # Inside section should have extra indentation (step)
         inside_idx = next(i for i, li in enumerate(lines) if "inside section" in li)
         assert "  " in lines[inside_idx] or lines[inside_idx].strip().startswith("  ")
 
     def test_nested_sections_stack_indentation(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
+        configure(level="INFO", step="  ", colorize=False)
         log = getLogger("forze.test")
         with log.section():
             log.info("depth 1")
@@ -141,7 +207,7 @@ class TestLogSections:
     def test_logger_section_context_manager(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        configure(level="INFO", step="  ", prefixes=("forze",), colorize=False)
+        configure(level="INFO", step="  ", colorize=False)
         log = getLogger("forze.test")
         with log.section():
             log.info("via logger.section()")
@@ -161,7 +227,13 @@ class TestIsEnabledFor:
         log = getLogger("forze.test")
         assert log.isEnabledFor("INFO") is True
         assert log.isEnabledFor("DEBUG") is False
+        assert log.isEnabledFor("TRACE") is False
         assert log.isEnabledFor("WARNING") is True
+
+    def test_is_enabled_for_trace_at_trace_level(self) -> None:
+        configure(level="TRACE")
+        log = getLogger("forze.test")
+        assert log.isEnabledFor("TRACE") is True
 
     def test_is_enabled_for_respects_namespace_level(self) -> None:
         configure(level="WARNING", levels={"forze.application": "DEBUG"})
@@ -172,17 +244,181 @@ class TestIsEnabledFor:
 
 
 # ----------------------- #
-# setup_default
+# bound_context (correlation_id, request-scoped)
 
 
-class TestSetupDefault:
-    """Tests for :func:`setup_default`."""
+class TestBoundContext:
+    """Tests for :func:`bound_context` and :func:`bind_context`."""
 
-    def test_setup_default_configures_sink(
+    def test_bound_context_adds_to_log_output(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        setup_default()
+        configure(level="INFO", colorize=False)
         log = getLogger("forze.test")
-        log.info("after setup_default")
+        with bound_context(correlation_id="req-123"):
+            log.info("inside request")
         captured = capsys.readouterr()
-        assert "after setup_default" in captured.err
+        assert "correlation_id" in captured.err or "req-123" in captured.err
+        assert "inside request" in captured.err
+
+
+# ----------------------- #
+# bind and scope
+
+
+class TestBindAndScope:
+    """Tests for :meth:`Logger.bind` and scope in output."""
+
+    def test_bind_scope_appears_in_output(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test").bind(scope="usecase")
+        log.info("message")
+        captured = capsys.readouterr()
+        assert "[usecase]" in captured.err or "usecase" in captured.err
+        assert "message" in captured.err
+
+
+# ----------------------- #
+# Key-based message format (substitution + extras)
+
+
+class TestKeyBasedFormat:
+    """Tests for sub (substitution) and kwargs (extras) separation."""
+
+    def test_substitution_from_sub_extras_from_kwargs(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test")
+        log.info("User {user_id} logged in", sub={"user_id": 123}, request_id="x")
+        captured = capsys.readouterr()
+        assert "User 123 logged in" in captured.err
+        assert "request_id" in captured.err or "x" in captured.err
+
+    def test_partial_substitution_missing_key_in_sub_stays_as_placeholder(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test")
+        log.info("User {user_id} from {region}", sub={"region": "EU"})
+        captured = capsys.readouterr()
+        assert "User {user_id} from EU" in captured.err
+
+    def test_no_placeholders_message_unchanged_extras_passed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test")
+        log.info("Something happened", detail=42)
+        captured = capsys.readouterr()
+        assert "Something happened" in captured.err
+        assert "detail" in captured.err or "42" in captured.err
+
+    def test_critical_exception_logs_at_critical_with_traceback(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=False)
+        log = getLogger("forze.test")
+        try:
+            raise ValueError("test unhandled")
+        except ValueError as e:
+            log.critical_exception(
+                "Unhandled: {exc_type}: {message}",
+                sub={"exc_type": type(e).__name__, "message": str(e)},
+                exc=e,
+            )
+        captured = capsys.readouterr()
+        assert "CRITICAL" in captured.err
+        assert "Unhandled: ValueError: test unhandled" in captured.err
+        assert "ValueError" in captured.err
+        assert "test unhandled" in captured.err
+
+    @pytest.mark.asyncio
+    async def test_register_unhandled_exception_handler_with_loop_logs_task_exceptions(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When loop is provided, asyncio task exceptions are logged at CRITICAL."""
+        configure(level="INFO", colorize=False)
+        loop = asyncio.get_running_loop()
+        register_unhandled_exception_handler(loop=loop)
+
+        async def failing_task() -> None:
+            raise RuntimeError("task exploded")
+
+        asyncio.create_task(failing_task())
+        await asyncio.sleep(0.05)  # Let the task run and hit the handler
+
+        captured = capsys.readouterr()
+        assert "CRITICAL" in captured.err
+        assert "asyncio task exception" in captured.err
+        assert "RuntimeError" in captured.err
+        assert "task exploded" in captured.err
+
+
+# ----------------------- #
+# Rich enhancements (block format, ReprHighlighter)
+
+
+class TestRichEnhancements:
+    """Tests for block format and ReprHighlighter when colorize=True."""
+
+    def test_extra_with_nested_dict_uses_block_when_colorized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=True)
+        log = getLogger("forze.test")
+        log.info("mapping", exclude={"unset": True, "defaults": True})
+        captured = capsys.readouterr()
+        assert "mapping" in captured.err
+        assert "unset" in captured.err
+        assert "defaults" in captured.err
+        # Block format: blank line before extra
+        assert "\n\n" in captured.err
+
+    def test_extra_with_five_keys_stays_inline_when_colorized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=True)
+        log = getLogger("forze.test")
+        log.info("config", a=1, b=2, c=3, d=4)
+        captured = capsys.readouterr()
+        assert "config" in captured.err
+        # ReprHighlighter inserts ANSI codes between key and "=", so check values
+        assert "1" in captured.err and "4" in captured.err
+        # Inline: no blank line before extra
+        assert "\n\n" not in captured.err
+
+    def test_extra_with_simple_values_emits_inline_when_colorized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", colorize=True)
+        log = getLogger("forze.test")
+        log.info("step", n=1, mode="python")
+        captured = capsys.readouterr()
+        assert "step" in captured.err
+        # ReprHighlighter inserts ANSI codes between key and "=", so check values
+        assert "1" in captured.err
+        assert "python" in captured.err
+
+
+# ----------------------- #
+# Dual output (pretty stderr + JSON stdout)
+
+
+class TestDualOutput:
+    """Tests for dual_output: pretty to stderr, JSON to stdout."""
+
+    def test_dual_output_emits_pretty_to_stderr_and_json_to_stdout(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(level="INFO", dual_output=True, colorize=False)
+        log = getLogger("forze.test")
+        log.info("dual test", x=1)
+        captured = capsys.readouterr()
+        assert "dual test" in captured.err
+        assert "x" in captured.err or "1" in captured.err
+        assert '"event"' in captured.out
+        assert '"dual test"' in captured.out
+        assert '"x"' in captured.out or '"logger"' in captured.out

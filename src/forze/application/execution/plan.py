@@ -9,7 +9,7 @@ import attrs
 
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .middleware import (
@@ -132,10 +132,8 @@ class OperationPlan:
         """
 
         logger.trace(
-            "Adding middleware spec to bucket %s (priority=%s, factory_id=%s)",
-            bucket,
-            spec.priority,
-            id(spec.factory),
+            "Adding middleware spec to bucket {bucket} (priority={priority}, factory_id={factory_id})",
+            sub={"bucket": bucket, "priority": spec.priority, "factory_id": id(spec.factory)},
         )
 
         if not hasattr(self, bucket):
@@ -144,7 +142,7 @@ class OperationPlan:
         cur = getattr(self, bucket)
 
         with logger.section():
-            logger.trace("Current bucket size: %d", len(cur))
+            logger.trace("Current bucket size: {size}", sub={"size": len(cur)})
 
         return attrs.evolve(self, **{bucket: (*cur, spec)})  # type: ignore[arg-type, misc]
 
@@ -312,16 +310,13 @@ class UsecasePlan:
 
     def _add(self, op: OpKey, bucket: PlanBucket, spec: MiddlewareSpec) -> Self:
         logger.trace(
-            "Adding middleware to usecase plan (op=%s, bucket=%s, priority=%s, factory_id=%s)",
-            op,
-            bucket,
-            spec.priority,
-            id(spec.factory),
+            "Adding middleware to usecase plan (op={op}, bucket={bucket}, priority={priority}, factory_id={factory_id})",
+            sub={"op": op, "bucket": bucket, "priority": spec.priority, "factory_id": id(spec.factory)},
         )
 
         with logger.section():
             cur = self._op(op)
-            logger.trace("Current operation tx=%s", cur.tx)
+            logger.trace("Current operation tx={tx}", sub={"tx": cur.tx})
 
         return self._put(op, cur.add(bucket, spec))
 
@@ -334,7 +329,7 @@ class UsecasePlan:
         :returns: New plan instance.
         """
 
-        logger.trace("Enabling transaction for operation '%s'", op)
+        logger.trace("Enabling transaction for operation '{op}'", sub={"op": op})
         cur = self._op(op)
 
         return self._put(op, attrs.evolve(cur, tx=True))
@@ -469,7 +464,7 @@ class UsecasePlan:
 
         op = str(op)
 
-        logger.debug("Resolving usecase plan for operation '%s'", op)
+        logger.debug("Resolving usecase plan for operation '{op}'", sub={"op": op})
 
         if op == WILDCARD or op.endswith(WILDCARD):
             raise CoreError(f"Resolve on wildcard operation '{op}' is not allowed")
@@ -489,17 +484,19 @@ class UsecasePlan:
             after_commit = plan.build("after_commit")
 
             logger.trace(
-                "Built plan for '%s' (tx=%s, outer_before=%d, outer_wrap=%d, outer_after=%d, "
-                "in_tx_before=%d, in_tx_wrap=%d, in_tx_after=%d, after_commit=%d)",
-                op,
-                plan.tx,
-                len(outer_before),
-                len(outer_wrap),
-                len(outer_after),
-                len(in_tx_before),
-                len(in_tx_wrap),
-                len(in_tx_after),
-                len(after_commit),
+                "Built plan for '{op}' (tx={tx}, outer_before={outer_before}, outer_wrap={outer_wrap}, outer_after={outer_after}, "
+                "in_tx_before={in_tx_before}, in_tx_wrap={in_tx_wrap}, in_tx_after={in_tx_after}, after_commit={after_commit})",
+                sub={
+                    "op": op,
+                    "tx": plan.tx,
+                    "outer_before": len(outer_before),
+                    "outer_wrap": len(outer_wrap),
+                    "outer_after": len(outer_after),
+                    "in_tx_before": len(in_tx_before),
+                    "in_tx_wrap": len(in_tx_wrap),
+                    "in_tx_after": len(in_tx_after),
+                    "after_commit": len(after_commit),
+                },
             )
 
             after_commit_effects: list[Effect[Any, Any]] = []
@@ -508,9 +505,8 @@ class UsecasePlan:
                 mw = s.factory(ctx)
 
                 logger.trace(
-                    "Built after_commit middleware %s from factory_id=%s",
-                    type(mw).__qualname__,
-                    id(s.factory),
+                    "Built after_commit middleware {qualname} from factory_id={factory_id}",
+                    sub={"qualname": type(mw).__qualname__, "factory_id": id(s.factory)},
                 )
 
                 if not isinstance(mw, EffectMiddleware):
@@ -535,7 +531,8 @@ class UsecasePlan:
 
             chain.extend(s.factory(ctx) for s in outer_after)
             logger.trace(
-                "Constructed middleware chain with %d middleware(s)", len(chain)
+                "Constructed middleware chain with {count} middleware(s)",
+                sub={"count": len(chain)},
             )
 
             uc = factory(ctx)

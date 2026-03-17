@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Iterator, Optional, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
@@ -94,10 +94,12 @@ class ExecutionContext:
             cur = self.__tx_handle.get()
 
             logger.trace(
-                "Transaction state: requested_scope='%s' depth=%d active_scope='%s'",
-                scope.name,
-                depth,
-                cur.scope.name if cur else None,
+                "Transaction state: requested_scope='{scope}' depth={depth} active_scope='{active_scope}'",
+                sub={
+                    "scope": scope.name,
+                    "depth": depth,
+                    "active_scope": cur.scope.name if cur else None,
+                },
             )
 
             if depth > 0:
@@ -111,14 +113,14 @@ class ExecutionContext:
                 token_d = self.__tx_depth.set(depth + 1)
 
                 try:
-                    logger.trace("Reusing nested transaction scope '%s'", scope.name)
+                    logger.trace("Reusing nested transaction scope '{scope}'", sub={"scope": scope.name})
 
                     async with tx.transaction():
                         yield
 
                 finally:
                     self.__tx_depth.reset(token_d)
-                    logger.trace("Leaving nested transaction scope '%s'", scope.name)
+                    logger.trace("Leaving nested transaction scope '{scope}'", sub={"scope": scope.name})
 
                 return
 
@@ -126,13 +128,13 @@ class ExecutionContext:
             token_d = self.__tx_depth.set(1)
 
             try:
-                logger.trace("Entering root transaction scope '%s'", scope.name)
+                logger.trace("Entering root transaction scope '{scope}'", sub={"scope": scope.name})
 
                 async with tx.transaction():
                     yield
 
             finally:
-                logger.trace("Leaving root transaction scope '%s'", scope.name)
+                logger.trace("Leaving root transaction scope '{scope}'", sub={"scope": scope.name})
                 self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
 
@@ -206,9 +208,8 @@ class ExecutionContext:
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
             logger.trace(
-                "Resolving cache for document read namespace '%s' with ttl=%s",
-                spec.namespace,
-                cache_spec.ttl,
+                "Resolving cache for document read namespace '{namespace}' with ttl={ttl}",
+                sub={"namespace": spec.namespace, "ttl": cache_spec.ttl},
             )
             cache = self.cache(cache_spec)
 
@@ -216,9 +217,8 @@ class ExecutionContext:
         self.__validate_tx_scope(dep)
 
         logger.trace(
-            "Resolved document read port for namespace '%s' -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
+            "Resolved document read port for namespace '{namespace}' -> {qualname}",
+            sub={"namespace": spec.namespace, "qualname": type(dep).__qualname__},
         )
 
         return dep
@@ -243,9 +243,8 @@ class ExecutionContext:
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
             logger.trace(
-                "Resolving cache for document write namespace '%s' with ttl=%s",
-                spec.namespace,
-                cache_spec.ttl,
+                "Resolving cache for document write namespace '{namespace}' with ttl={ttl}",
+                sub={"namespace": spec.namespace, "ttl": cache_spec.ttl},
             )
             cache = self.cache(cache_spec)
 
@@ -253,9 +252,8 @@ class ExecutionContext:
         self.__validate_tx_scope(dep)
 
         logger.trace(
-            "Resolved document write port for namespace '%s' -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
+            "Resolved document write port for namespace '{namespace}' -> {qualname}",
+            sub={"namespace": spec.namespace, "qualname": type(dep).__qualname__},
         )
 
         return dep
@@ -272,9 +270,8 @@ class ExecutionContext:
         dep = self.dep(CacheDepKey)(self, spec)
 
         logger.trace(
-            "Resolved cache port for namespace '%s' -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
+            "Resolved cache port for namespace '{namespace}' -> {qualname}",
+            sub={"namespace": spec.namespace, "qualname": type(dep).__qualname__},
         )
 
         return dep
@@ -291,9 +288,8 @@ class ExecutionContext:
         dep = self.dep(CounterDepKey)(self, namespace)
 
         logger.trace(
-            "Resolved counter port for namespace '%s' -> %s",
-            namespace,
-            type(dep).__qualname__,
+            "Resolved counter port for namespace '{namespace}' -> {qualname}",
+            sub={"namespace": namespace, "qualname": type(dep).__qualname__},
         )
 
         return dep
@@ -306,8 +302,8 @@ class ExecutionContext:
         dep = self.dep(TxManagerDepKey)(self)
 
         logger.trace(
-            "Resolved transaction manager port -> %s",
-            type(dep).__qualname__,
+            "Resolved transaction manager port -> {qualname}",
+            sub={"qualname": type(dep).__qualname__},
         )
 
         return dep
@@ -324,9 +320,8 @@ class ExecutionContext:
         dep = self.dep(StorageDepKey)(self, bucket)
 
         logger.trace(
-            "Resolved storage port for bucket '%s' -> %s",
-            bucket,
-            type(dep).__qualname__,
+            "Resolved storage port for bucket '{bucket}' -> {qualname}",
+            sub={"bucket": bucket, "qualname": type(dep).__qualname__},
         )
 
         return dep
@@ -339,8 +334,8 @@ class ExecutionContext:
         dep = self.dep(SearchReadDepKey)(self, spec)
 
         logger.trace(
-            "Resolved search port -> %s",
-            type(dep).__qualname__,
+            "Resolved search port -> {qualname}",
+            sub={"qualname": type(dep).__qualname__},
         )
 
         return dep

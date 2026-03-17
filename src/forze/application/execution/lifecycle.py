@@ -11,7 +11,7 @@ from typing import Protocol, Self, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 
@@ -104,10 +104,10 @@ class LifecyclePlan:
         :raises CoreError: If step names collide.
         """
 
-        logger.trace("Creating lifecycle plan from %d step(s)", len(steps))
+        logger.trace("Creating lifecycle plan from {count} step(s)", sub={"count": len(steps)})
 
         with logger.section():
-            logger.trace("Steps: %s", tuple(step.name for step in steps))
+            logger.trace("Steps: {steps}", sub={"steps": tuple(step.name for step in steps)})
             cls._check_name_collision(*steps)
 
         return cls(steps=steps)
@@ -123,14 +123,13 @@ class LifecyclePlan:
         """
 
         logger.trace(
-            "Appending %d lifecycle step(s) to existing plan with %d step(s)",
-            len(steps),
-            len(self.steps),
+            "Appending {count} lifecycle step(s) to existing plan with {existing} step(s)",
+            sub={"count": len(steps), "existing": len(self.steps)},
         )
 
         with logger.section():
-            logger.trace("Existing steps: %s", tuple(step.name for step in self.steps))
-            logger.trace("New steps: %s", tuple(step.name for step in steps))
+            logger.trace("Existing steps: {steps}", sub={"steps": tuple(step.name for step in self.steps)})
+            logger.trace("New steps: {steps}", sub={"steps": tuple(step.name for step in steps)})
 
             self._check_name_collision(*self.steps, *steps)
 
@@ -145,13 +144,13 @@ class LifecyclePlan:
         re-raises.
         """
 
-        logger.trace("Running lifecycle startup with %d step(s)", len(self.steps))
+        logger.trace("Running lifecycle startup with {count} step(s)", sub={"count": len(self.steps)})
 
         executed: list[LifecycleStep] = []
 
         try:
             for step in self.steps:
-                logger.trace("Executing '%s' startup hook", step.name)
+                logger.trace("Executing '{name}' startup hook", sub={"name": step.name})
 
                 with logger.section():
                     await step.startup(ctx)
@@ -165,22 +164,22 @@ class LifecyclePlan:
                 for step in reversed(executed):
                     try:
                         logger.trace(
-                            "Rolling back '%s' via shutdown",
-                            step.name,
+                            "Rolling back '{name}' via shutdown",
+                            sub={"name": step.name},
                         )
 
                         with logger.section():
                             await step.shutdown(ctx)
 
                         logger.trace(
-                            "Rolled back '%s' successfully",
-                            step.name,
+                            "Rolled back '{name}' successfully",
+                            sub={"name": step.name},
                         )
 
                     except Exception:
                         logger.exception(
-                            "Lifecycle rollback shutdown failed for '%s'",
-                            step.name,
+                            "Lifecycle rollback shutdown failed for '{name}'",
+                            sub={"name": step.name},
                         )
 
             raise
@@ -193,14 +192,14 @@ class LifecyclePlan:
         Exceptions are swallowed so all steps are attempted.
         """
 
-        logger.trace("Running lifecycle shutdown with %d step(s)", len(self.steps))
+        logger.trace("Running lifecycle shutdown with {count} step(s)", sub={"count": len(self.steps)})
 
         for step in reversed(self.steps):
             try:
-                logger.trace("Executing '%s' shutdown hook", step.name)
+                logger.trace("Executing '{name}' shutdown hook", sub={"name": step.name})
 
                 with logger.section():
                     await step.shutdown(ctx)
 
             except Exception:
-                logger.exception("Lifecycle shutdown failed for '%s'", step.name)
+                logger.exception("Lifecycle shutdown failed for '{name}'", sub={"name": step.name})

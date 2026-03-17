@@ -14,7 +14,7 @@ import attrs
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import JsonCodec, KeyCodec, TextCodec
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
@@ -222,7 +222,7 @@ class RedisCacheAdapter(CachePort):
 
     async def get(self, key: str) -> Optional[Any]:
         # Try versioned first
-        logger.debug("Cache lookup for key=%s", key)
+        logger.debug("Cache lookup for key={key}", sub={"key": key})
 
         with logger.section():
             pointers = await self.__mget_pointers([key])
@@ -230,17 +230,17 @@ class RedisCacheAdapter(CachePort):
             if pointers:
                 bodies = await self.__mget_bodies({key: pointers[key]})
                 if key in bodies:
-                    logger.debug("Cache hit (versioned) key=%s", key)
+                    logger.debug("Cache hit (versioned) key={key}", sub={"key": key})
                     return bodies[key]
 
             # Fallback to plain
             kv = await self.__mget_kv([key])
 
             if key in kv:
-                logger.debug("Cache hit (plain) key=%s", key)
+                logger.debug("Cache hit (plain) key={key}", sub={"key": key})
                 return kv[key]
 
-            logger.debug("Cache miss key=%s", key)
+            logger.debug("Cache miss key={key}", sub={"key": key})
             return None
 
     # ....................... #
@@ -250,7 +250,7 @@ class RedisCacheAdapter(CachePort):
             logger.debug("Empty list of keys, skipping")
             return {}, []
 
-        logger.debug("Cache batch lookup for %d keys", len(keys))
+        logger.debug("Cache batch lookup for {count} keys", sub={"count": len(keys)})
 
         with logger.section():
             # 1) versioned hits where pointer exists + body exists
@@ -267,7 +267,10 @@ class RedisCacheAdapter(CachePort):
             hits = {**versioned_hits, **kv_hits}
             misses = [k for k in keys if k not in hits]
 
-            logger.debug("Cache hits=%d, misses=%d", len(hits), len(misses))
+            logger.debug(
+                "Cache hits={hits}, misses={misses}",
+                sub={"hits": len(hits), "misses": len(misses)},
+            )
 
             return hits, misses
 

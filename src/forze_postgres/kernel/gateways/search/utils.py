@@ -3,7 +3,7 @@
 from typing import Literal, Optional
 
 from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 # ----------------------- #
 
@@ -30,9 +30,9 @@ def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
 
     if len(ordered) > 4:
         _logger.warning(
-            "FTS index spec contains %d groups, but Postgres only supports 4 weights (A, B, C, D). "
+            "FTS index spec contains {count} groups, but Postgres only supports 4 weights (A, B, C, D). "
             "Groups after the first 4 (by weight) will be ignored.",
-            len(ordered),
+            sub={"count": len(ordered)},
         )
         ordered = ordered[:4]
 

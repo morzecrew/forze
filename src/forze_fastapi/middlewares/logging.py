@@ -5,7 +5,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from forze.base.logging_v2 import get_config, getLogger
+from forze.base.logging import get_config, getLogger
 
 # ----------------------- #
 
@@ -47,11 +47,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         status_code = format_status_for_log(response.status_code)
 
         logger.info(
-            "%s %s %s (%dms)",
-            status_code,
-            request.method,
-            request.url.path,
-            duration,
+            "{status} {method} {path} ({duration}ms)",
+            sub={
+                "status": status_code,
+                "method": request.method,
+                "path": request.url.path,
+                "duration": duration,
+            },
         )
 
         return response

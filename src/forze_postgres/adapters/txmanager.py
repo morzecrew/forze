@@ -12,7 +12,7 @@ from typing import AsyncIterator, final
 import attrs
 
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from ..kernel.platform import PostgresClient, PostgresTransactionOptions
 

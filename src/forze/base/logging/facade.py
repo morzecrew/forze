@@ -1,127 +1,130 @@
-"""Public facade: getLogger, configure, reset.
+"""Public facade: configure, getLogger, reset."""
 
-This is the main entry point for application code. No automatic
-configuration on import; call :func:`configure` explicitly (or
-:func:`~.setup.setup_default` for sensible defaults).
-"""
+from __future__ import annotations
 
-import sys
-from typing import Mapping, Optional, cast
+import asyncio
+from typing import TYPE_CHECKING, Mapping, Optional
 
-from loguru import logger as _base_logger
-from loguru._logger import Logger as _LoguruLogger
+import structlog
 
-from .config import LoggingConfig, set_config
-from .constants import DEFAULT_LEVEL, DEFAULT_PREFIXES
-from .formatting import record_filter, record_format
-from .helpers import normalize_level
-from .logger import Logger
-from .types import LogLevel, LogLevelName
+from .config import (
+    DEFAULT_LEVEL,
+    DEFAULT_STEP,
+    DEFAULT_WIDTH,
+    LoggingConfig,
+    LogLevel,
+    LogLevelName,
+    normalize_level,
+    set_config,
+)
+from .handlers import configure_logging
 
-# ----------------------- #
-
-# Active sink ids so reconfiguration cleanly replaces previous setup.
-_sink_ids: list[int] = []
-
-# ....................... #
+if TYPE_CHECKING:
+    from .logger import Logger
 
 
-def getLogger(name: str | None = None) -> Logger:
-    """Return a stdlib-like logger bound to *name*.
+def getLogger(
+    name: str | None = None,
+    *,
+    scope: str | None = None,
+    source: str | None = None,
+) -> "Logger":
+    from .logger import Logger
 
-    :param name: Logger name (e.g. ``__name__``). Defaults to ``"root"``.
-    :returns: A :class:`~.logger.Logger` instance.
-    """
     logger_name = name or "root"
-    bound = _base_logger.bind(logger_name=logger_name)  # type: ignore[arg-type]
-    return Logger(logger=cast(_LoguruLogger, bound), name=logger_name)
-
-
-# ....................... #
+    initial: dict[str, object] = {"logger": logger_name}
+    if scope is not None:
+        initial["scope"] = scope
+    if source is not None:
+        initial["source"] = source
+    bound = structlog.get_logger(logger_name).bind(**initial)
+    return Logger(name=logger_name, backend=bound)
 
 
 def configure(
     *,
     level: LogLevel = DEFAULT_LEVEL,
     levels: Optional[Mapping[str, LogLevel]] = None,
-    prefixes: tuple[str, ...] = DEFAULT_PREFIXES,
-    step: str = "  ",
-    keep_sections: Optional[Mapping[str, int]] = None,
-    default_keep_sections: Optional[int] = None,
-    root_aliases: Optional[Mapping[str, str]] = None,
-    width: int = 36,
+    step: str = DEFAULT_STEP,
+    width: int = DEFAULT_WIDTH,
     colorize: bool = False,
+    render_json: bool = False,
+    dual_output: bool = False,
 ) -> None:
-    """Configure global logging.
-
-    Replaces the current sink with a new one. Removes any previously
-    added sinks. Call this at application startup.
-
-    :param level: Default fallback level.
-    :param levels: Optional per-prefix levels, e.g.
-        ``{"forze.application": "DEBUG", "forze.base": "TRACE"}``.
-    :param prefixes: Namespaces that receive indentation in output.
-    :param step: Indentation unit for nested sections.
-    :param keep_sections: Per-namespace truncation of logger name segments.
-    :param default_keep_sections: Default segment count when no prefix matches.
-    :param root_aliases: Root alias replacements for rendered logger names.
-    :param width: Width of the logger-name column.
-    :param colorize: Whether to emit ANSI color codes.
-    """
-    global _sink_ids
-
+    """Configure logging. Level patterns use fnmatch (e.g. ``forze.application.*``)."""
     normalized_levels: dict[str, LogLevelName] | None = None
-
     if levels is not None:
         normalized_levels = {
-            prefix: normalize_level(prefix_level)
-            for prefix, prefix_level in levels.items()
+            pattern: normalize_level(lv) for pattern, lv in levels.items()
         }
 
     config = LoggingConfig(
         level=normalize_level(level),
         levels=normalized_levels,
-        prefixes=prefixes,
         step=step,
-        default_keep_sections=default_keep_sections,
-        keep_sections=keep_sections,
-        root_aliases=root_aliases,
         width=width,
         colorize=colorize,
+        render_json=render_json,
+        dual_output=dual_output,
     )
     set_config(config)
-
-    _base_logger.remove()
-
-    _sink_ids = [  # pyright: ignore[reportUnknownVariableType]
-        _base_logger.add(
-            sys.stderr,
-            level="TRACE",
-            format=record_format,  # type: ignore[arg-type]
-            filter=record_filter,  # type: ignore[arg-type]
-            colorize=colorize,
-            backtrace=False,
-            diagnose=False,
-            enqueue=False,
-        )
-    ]
-
-
-# ....................... #
+    configure_logging(config)
 
 
 def reset() -> None:
-    """Reset logging sinks configured through this facade.
+    structlog.reset_defaults()
 
-    Removes sinks added by :func:`configure`. Does not affect other
-    loguru sinks that may have been added elsewhere.
+
+def register_unhandled_exception_handler(
+    loop: Optional[asyncio.AbstractEventLoop] = None,
+) -> None:
+    """Install sys.excepthook and optionally asyncio exception handler.
+
+    Call after :func:`configure`. Replaces the default traceback with our log output.
+
+    :param loop: If provided (e.g. from ``asyncio.get_running_loop()`` in lifespan),
+        also sets the asyncio exception handler for unhandled task exceptions.
     """
-    global _sink_ids
+    import sys
 
-    for sink_id in _sink_ids:
-        try:
-            _base_logger.remove(sink_id)
-        except ValueError:
-            pass
+    def _forze_excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_tb: object,
+    ) -> None:
+        log = getLogger("forze.unhandled")
+        log.critical_exception(
+            "Unhandled exception: {exc_type}: {message}",
+            sub={"exc_type": exc_type.__name__, "message": str(exc_value)},
+            exc=exc_value,
+        )
 
-    _sink_ids = []
+    sys.excepthook = _forze_excepthook
+
+    if loop is not None:
+
+        def _asyncio_handler(
+            loop: asyncio.AbstractEventLoop,
+            context: dict[str, object],
+        ) -> None:
+            exc = context.get("exception")
+            if isinstance(exc, BaseException):
+                log = getLogger("forze.unhandled")
+                log.critical_exception(
+                    "Unhandled asyncio task exception: {exc_type}: {message}",
+                    sub={
+                        "exc_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                    exc=exc,
+                )
+            else:
+                # No exception in context (e.g. BaseExceptionGroup)
+                msg = context.get("message", "Unknown asyncio error")
+                log = getLogger("forze.unhandled")
+                log.critical(
+                    "Unhandled asyncio error: {message}",
+                    sub={"message": str(msg)},
+                )
+
+        loop.set_exception_handler(_asyncio_handler)

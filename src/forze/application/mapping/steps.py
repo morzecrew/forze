@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import attrs
 from pydantic import BaseModel
 
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 from forze.domain.constants import CREATOR_ID_FIELD, NUMBER_ID_FIELD
 
@@ -54,9 +54,11 @@ class NumberIdStep(MappingStep[BaseModel]):
         counter = ctx.counter(self.namespace)
         number_id = await counter.incr()
         logger.trace(
-            "NumberIdStep: produced number_id=%s for namespace '%s'",
-            number_id,
-            self.namespace,
+            "NumberIdStep: produced number_id={number_id} for namespace '{namespace}'",
+            sub={
+                "number_id": number_id,
+                "namespace": self.namespace,
+            },
         )
         return {NUMBER_ID_FIELD: number_id}
 

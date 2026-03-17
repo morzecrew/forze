@@ -103,3 +103,18 @@ class TestRegisterExceptionHandlers:
         assert response.status_code == 404
         assert response.json() == {"detail": "Not found"}
         assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
+
+    def test_unhandled_exception_returns_500(self) -> None:
+        """Unhandled (non-CoreError) exceptions return 500."""
+        app = FastAPI()
+
+        @app.get("/raise")
+        def raise_unhandled() -> None:
+            raise ValueError("Something broke")
+
+        register_exception_handlers(app)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/raise")
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Internal server error"}

@@ -1,4 +1,4 @@
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -205,14 +205,14 @@ def attach_document_routes(
     if include_create_endpoint:
         if spec.write is None:
             logger.warning(
-                "Write operations are not supported for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Write operations are not supported for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         if not create_dto:
             logger.warning(
-                "Create DTO is not provided for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Create DTO is not provided for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         else:
@@ -238,20 +238,20 @@ def attach_document_routes(
     if include_update_endpoint:
         if spec.write is None:
             logger.warning(
-                "Write operations are not supported for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Write operations are not supported for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         elif not update_dto:
             logger.warning(
-                "Update DTO is not provided for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Update DTO is not provided for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         elif not spec.supports_update():
             logger.warning(
-                "Update is not supported for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Update is not supported for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         else:
@@ -283,14 +283,14 @@ def attach_document_routes(
     if include_soft_delete_endpoints:
         if spec.write is None:
             logger.warning(
-                "Write operations are not supported for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Write operations are not supported for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         elif not spec.supports_soft_delete():
             logger.warning(
-                "Soft delete is not supported for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Soft delete is not supported for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         else:
@@ -340,8 +340,8 @@ def attach_document_routes(
     if include_hard_delete_endpoint:
         if spec.write is None:
             logger.warning(
-                "Write operations are not supported for document %s, skipping",
-                spec.read["model"].__qualname__,
+                "Write operations are not supported for document {qualname}, skipping",
+                sub={"qualname": spec.read["model"].__qualname__},
             )
 
         else:

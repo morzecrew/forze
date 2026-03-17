@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from forze.base.errors import ConflictError, CoreError, NotFoundError, ValidationError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from ..constants import ERROR_CODE_HEADER
 
@@ -41,14 +41,36 @@ def _status_code_mapper(exc: CoreError) -> int:
 # ....................... #
 
 
+async def forze_unhandled_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """Catch unhandled exceptions, log at CRITICAL with Rich traceback, return 500."""
+
+    logger.critical_exception(
+        "Unhandled exception: {exc_type}: {message}",
+        sub={"exc_type": type(exc).__name__, "message": str(exc)},
+        exc=exc,
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+# ....................... #
+
+
 async def forze_exception_handler(request: Request, exc: CoreError) -> JSONResponse:
     """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
 
     logger.exception(
-        "Exception occurred: %s (code=%s, details=%s)",
-        exc.message,
-        exc.code,
-        exc.details,
+        "Exception occurred: {message} (code={code}, details={details})",
+        sub={
+            "message": exc.message,
+            "code": exc.code,
+            "details": exc.details,
+        },
     )
 
     content: dict[str, Any] = {"detail": exc.message}
@@ -67,6 +89,11 @@ async def forze_exception_handler(request: Request, exc: CoreError) -> JSONRespo
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Register the :func:`forze_exception_handler` for :class:`CoreError` on *app*."""
+    """Register exception handlers on *app*.
+
+    - :class:`CoreError` → :func:`forze_exception_handler` (mapped status codes)
+    - :class:`Exception` → :func:`forze_unhandled_exception_handler` (CRITICAL + 500)
+    """
 
     app.exception_handler(CoreError)(forze_exception_handler)
+    app.exception_handler(Exception)(forze_unhandled_exception_handler)

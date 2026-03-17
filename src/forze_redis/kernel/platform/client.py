@@ -14,7 +14,7 @@ from redis.asyncio.client import Pipeline, Redis
 from redis.asyncio.connection import ConnectionPool
 
 from forze.base.errors import InfrastructureError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
 from .errors import redis_handled

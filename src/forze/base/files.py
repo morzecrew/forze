@@ -6,7 +6,7 @@ from typing import Any, Iterator
 
 import yaml
 
-from .logging_v2 import getLogger
+from .logging import getLogger
 
 # ----------------------- #
 
@@ -24,7 +24,7 @@ def read_yaml(path: str | Path) -> dict[str, Any]:
     :returns: Parsed YAML document as a dictionary.
     """
 
-    logger.trace("Reading YAML file %s", path)
+    logger.trace("Reading YAML file {path}", sub={"path": path})
 
     with open(path, "r") as f:
         r = yaml.safe_load(f)
@@ -42,7 +42,7 @@ def read_text(path: str | Path) -> str:
     :returns: File contents as a string.
     """
 
-    logger.trace("Reading text file %s", path)
+    logger.trace("Reading text file {path}", sub={"path": path})
 
     with open(path, "r") as f:
         return f.read()
@@ -86,7 +86,7 @@ def iter_file(b: bytes | io.BytesIO) -> Iterator[bytes]:
     :returns: Iterator over byte chunks.
     """
 
-    logger.trace("Iterating file from %s", type(b).__name__)
+    logger.trace("Iterating file from {source}", sub={"source": type(b).__name__})
 
     if isinstance(b, bytes):
         return _iter_bytes(b)

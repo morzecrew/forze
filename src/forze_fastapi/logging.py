@@ -1,6 +1,6 @@
 import logging
 
-from forze.base.logging_v2 import getLogger, normalize_level
+from forze.base.logging import getLogger, normalize_level
 
 # ----------------------- #
 
@@ -26,9 +26,11 @@ class InterceptHandler(logging.Handler):
             log = api_logger
 
         kw: dict[str, object] = {}
+
         if record.exc_info:
             kw["exc_info"] = record.exc_info
-        log.log(level, record.getMessage(), **kw)
+
+        log.log(level, record.getMessage(), sub=None, **kw)
 
 
 # ....................... #

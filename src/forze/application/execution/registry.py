@@ -11,7 +11,7 @@ import attrs
 
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .plan import OpKey, UsecasePlan
@@ -89,10 +89,8 @@ class UsecaseRegistry:
         op = str(op)
 
         logger.trace(
-            "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
-            op,
-            inplace,
-            id(factory),
+            "Registering usecase factory for operation '{op}' (inplace={inplace}, factory_id={factory_id})",
+            sub={"op": op, "inplace": inplace, "factory_id": id(factory)},
         )
 
         if op in self.defaults:
@@ -156,10 +154,8 @@ class UsecaseRegistry:
         op = str(op)
 
         logger.trace(
-            "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
-            op,
-            inplace,
-            id(factory),
+            "Overriding usecase factory for operation '{op}' (inplace={inplace}, factory_id={factory_id})",
+            sub={"op": op, "inplace": inplace, "factory_id": id(factory)},
         )
 
         if op not in self.defaults:
@@ -224,13 +220,12 @@ class UsecaseRegistry:
         ops = {str(op): factory for op, factory in ops.items()}
 
         logger.trace(
-            "Registering %d usecase factory(s) (inplace=%s)",
-            len(ops),
-            inplace,
+            "Registering {count} usecase factory(s) (inplace={inplace})",
+            sub={"count": len(ops), "inplace": inplace},
         )
 
         with logger.section():
-            logger.trace("Operations: %s", tuple(ops.keys()))
+            logger.trace("Operations: {ops}", sub={"ops": tuple(ops.keys())})
 
             already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
@@ -301,13 +296,12 @@ class UsecaseRegistry:
         ops = {str(op): factory for op, factory in ops.items()}
 
         logger.trace(
-            "Overriding %d usecase factory(s) (inplace=%s)",
-            len(ops),
-            inplace,
+            "Overriding {count} usecase factory(s) (inplace={inplace})",
+            sub={"count": len(ops), "inplace": inplace},
         )
 
         with logger.section():
-            logger.trace("Operations: %s", tuple(ops.keys()))
+            logger.trace("Operations: {ops}", sub={"ops": tuple(ops.keys())})
 
             not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
@@ -372,9 +366,8 @@ class UsecaseRegistry:
         """
 
         logger.trace(
-            "Extending usecase registry plan (inplace=%s, extra_ops=%d)",
-            inplace,
-            len(extra.ops),
+            "Extending usecase registry plan (inplace={inplace}, extra_ops={extra_ops})",
+            sub={"inplace": inplace, "extra_ops": len(extra.ops)},
         )
 
         merged = self.__plan.merge(extra)
@@ -412,7 +405,7 @@ class UsecaseRegistry:
 
         op = str(op)
 
-        logger.debug("Resolving usecase for operation '%s'", op)
+        logger.debug("Resolving usecase for operation '{op}'", sub={"op": op})
         factory = self.defaults.get(op)
 
         with logger.section():
@@ -421,7 +414,7 @@ class UsecaseRegistry:
                     f"Usecase factory is not registered for operation: {op}"
                 )
 
-            logger.trace("Found factory (factory_id=%s)", id(factory))
+            logger.trace("Found factory (factory_id={factory_id})", sub={"factory_id": id(factory)})
 
         resolved = self.__plan.resolve(op, ctx, factory)
 
@@ -447,9 +440,8 @@ class UsecaseRegistry:
         """
 
         logger.trace(
-            "Merging %d usecase registries (on_conflict=%s)",
-            len(registries),
-            on_conflict,
+            "Merging {count} usecase registries (on_conflict={on_conflict})",
+            sub={"count": len(registries), "on_conflict": on_conflict},
         )
 
         acc = cls()
@@ -461,11 +453,13 @@ class UsecaseRegistry:
 
             for idx, reg in enumerate(registries, 1):
                 logger.trace(
-                    "Processing registry #%d (factory_count=%d, plan_ops=%d, registry_id=%s)",
-                    idx,
-                    len(reg.defaults),
-                    len(reg.__plan.ops),
-                    id(reg),
+                    "Processing registry #{idx} (factory_count={factory_count}, plan_ops={plan_ops}, registry_id={registry_id})",
+                    sub={
+                        "idx": idx,
+                        "factory_count": len(reg.defaults),
+                        "plan_ops": len(reg.__plan.ops),
+                        "registry_id": id(reg),
+                    },
                 )
 
                 # Merge factories
@@ -474,10 +468,12 @@ class UsecaseRegistry:
 
                     if existing is not None:
                         logger.trace(
-                            "Conflict for operation '%s' (existing_factory_id=%s, new_factory_id=%s)",
-                            op,
-                            id(existing),
-                            id(factory),
+                            "Conflict for operation '{op}' (existing_factory_id={existing_factory_id}, new_factory_id={new_factory_id})",
+                            sub={
+                                "op": op,
+                                "existing_factory_id": id(existing),
+                                "new_factory_id": id(factory),
+                            },
                         )
 
                         if on_conflict == "error":
@@ -486,32 +482,32 @@ class UsecaseRegistry:
                             )
 
                         logger.trace(
-                            "Overwriting factory for operation '%s' with rightmost registry entry",
-                            op,
+                            "Overwriting factory for operation '{op}' with rightmost registry entry",
+                            sub={"op": op},
                         )
 
                     else:
                         logger.trace(
-                            "Adding factory for operation '%s' (factory_id=%s)",
-                            op,
-                            id(factory),
+                            "Adding factory for operation '{op}' (factory_id={factory_id})",
+                            sub={"op": op, "factory_id": id(factory)},
                         )
 
                     acc.defaults[op] = factory
 
                 # Merge plans
                 logger.trace(
-                    "Merging plan from registry #%d (ops=%d)",
-                    idx,
-                    len(reg.__plan.ops),
+                    "Merging plan from registry #{idx} (ops={ops})",
+                    sub={"idx": idx, "ops": len(reg.__plan.ops)},
                 )
                 acc.extend_plan(reg.__plan, inplace=True)
 
             logger.trace(
-                "Merged %d registries into one (factory_count=%d, plan_ops=%d)",
-                len(registries),
-                len(acc.defaults),
-                len(acc.__plan.ops),
+                "Merged {count} registries into one (factory_count={factory_count}, plan_ops={plan_ops})",
+                sub={
+                    "count": len(registries),
+                    "factory_count": len(acc.defaults),
+                    "plan_ops": len(acc.__plan.ops),
+                },
             )
 
         return acc

@@ -9,25 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `forze.base.logging_v2`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).
-- `forze.base.logging_v2`: proper TRACE level support (below DEBUG) for noisy per-operation details; ``Logger.trace()``, ``configure(level="TRACE")``, and per-namespace ``levels={"module": "TRACE"}``.
-- `forze.base.logging_v2`: Rich traceback formatting when ``colorize=True``.
-- `forze.base.logging_v2`: Rule (horizontal line) before ERROR/CRITICAL when ``colorize=True``.
-- `forze.base.logging_v2`: Pretty formatting for nested ``extra`` dicts when ``colorize=True``.
-- `forze.base.logging_v2`: ReprHighlighter for inline ``extra`` values when ``colorize=True``.
+- `forze.base.logging`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).
+- `forze.base.logging`: proper TRACE level support (below DEBUG) for noisy per-operation details; ``Logger.trace()``, ``configure(level="TRACE")``, and per-namespace ``levels={"module": "TRACE"}``.
+- `forze.base.logging`: Rich traceback formatting when ``colorize=True``.
+- `forze.base.logging`: Block format (blank line + pprint + ReprHighlighter) for nested ``extra`` when ``colorize=True``; inline ReprHighlighter for up to 5 primitive keys.
+- `forze.base.logging`: Dual output (``dual_output=True``) – pretty to stderr, JSON to stdout for monitoring.
+- `forze.base.logging`: Level patterns use fnmatch (``*``, ``?``); patterns without wildcards match as prefix.
 - `forze_fastapi.middlewares.logging`: ``format_status_for_log(status_code)`` for ANSI-colored HTTP status in access logs.
+- `forze.base.logging`: ``Logger.critical_exception()`` for unhandled exceptions at CRITICAL with Rich traceback.
+- `forze.base.logging`: ``register_unhandled_exception_handler(loop=None)`` installs ``sys.excepthook``; when ``loop`` is provided (e.g. from ``asyncio.get_running_loop()`` in lifespan), also sets asyncio exception handler for unhandled task exceptions.
+- `forze_fastapi.handlers`: ``forze_unhandled_exception_handler`` catches non-:class:`CoreError` exceptions, logs at CRITICAL with Rich traceback, returns 500; registered via ``register_exception_handlers``.
 
 ### Changed
 
-- All internal logging now uses :mod:`forze.base.logging_v2` instead of :mod:`forze.base.logging`.
+- All internal logging uses :mod:`forze.base.logging` (structlog-based).
+- `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.
 - Console renderer: blank lines around exception tracebacks for clearer separation; TRACE level dims entire record when colorized.
 - ``LoggingMiddleware`` uses ``format_status_for_log`` (in forze_fastapi) for proper ANSI colors instead of Rich markup tags.
-
-### Fixed
-
-- ...
+- `forze.base.logging`: Restructured into configurable modules (config, context, processors, renderers, handlers, facade).
+- `forze.base.logging`: Removed ``prefixes`` from ``configure()``; indentation applies to all loggers.
 
 ### Removed
+
+- `forze.base.logging`: ``prefixes`` parameter from ``configure()``; use ``levels`` for per-namespace control.
+- `forze.base.logging`: ``render_message`` and ``safe_preview``; use key-based message format with ``**kwargs`` instead.
+- Legacy loguru-based logging implementation; ``forze.base.logging`` is now structlog-only.
+- Loguru dependency.
+
+### Fixed
 
 - ...
 

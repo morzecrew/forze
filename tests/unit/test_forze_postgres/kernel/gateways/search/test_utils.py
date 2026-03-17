@@ -5,7 +5,7 @@ from forze.application.contracts.search.internal.specs import (
     SearchGroupSpecInternal,
     SearchFieldSpecInternal,
 )
-from forze.base.logging_v2 import configure, reset
+from forze.base.logging import configure, reset
 from forze_postgres.kernel.gateways.search.utils import fts_map_groups
 
 
@@ -31,7 +31,7 @@ def test_fts_map_groups_truncation(capsys: pytest.CaptureFixture[str]):
         assert "group_2" in result
         assert "group_1" not in result
 
-        # Verify warning (logging_v2 writes to stderr)
+        # Verify warning (logging writes to stderr)
         captured = capsys.readouterr()
         log_output = captured.err or captured.out
         assert "WARNING" in log_output or "warning" in log_output

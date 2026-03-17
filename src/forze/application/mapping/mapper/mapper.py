@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 from forze.base.serialization import apply_dict_patch, pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO
 
@@ -73,11 +73,13 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
 
         object.__setattr__(self, "_step_fields", tuple(step_fields))
         logger.trace(
-            "DTOMapper initialized: %s -> %s with %d step(s), fields=%s",
-            self.in_.__qualname__,
-            self.out.__qualname__,
-            len(self.steps),
-            tuple(step_fields),
+            "DTOMapper initialized: {in_} -> {out} with {count} step(s), fields={fields}",
+            sub={
+                "in_": self.in_.__qualname__,
+                "out": self.out.__qualname__,
+                "count": len(self.steps),
+                "fields": tuple(step_fields),
+            },
         )
 
     # ....................... #
@@ -112,9 +114,8 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
         """
 
         logger.debug(
-            "Mapping %s -> %s",
-            self.in_.__qualname__,
-            self.out.__qualname__,
+            "Mapping {in_} -> {out}",
+            sub={"in_": self.in_.__qualname__, "out": self.out.__qualname__},
         )
 
         with logger.section():
@@ -125,17 +126,19 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
                 return cast(Out, source)
 
             payload = pydantic_dump(source, exclude={"unset": True})
-            logger.trace("Initial payload keys: %s", tuple(payload.keys()))
+            logger.trace("Initial payload keys: {keys}", sub={"keys": tuple(payload.keys())})
 
             for i, (step, fields) in enumerate(
                 zip(self.steps, self._step_fields, strict=True)
             ):
                 logger.trace(
-                    "Running step %d/%d (%s), produces %s",
-                    i + 1,
-                    len(self.steps),
-                    type(step).__qualname__,
-                    tuple(fields),
+                    "Running step {index}/{total} ({qualname}), produces {fields}",
+                    sub={
+                        "index": i + 1,
+                        "total": len(self.steps),
+                        "qualname": type(step).__qualname__,
+                        "fields": tuple(fields),
+                    },
                 )
                 patch = await step(ctx, source, payload)
 
@@ -147,8 +150,8 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
                             )
 
                         logger.trace(
-                            "Overwriting field %s (allowed by policy)",
-                            k,
+                            "Overwriting field {field} (allowed by policy)",
+                            sub={"field": k},
                         )
 
                 payload = apply_dict_patch(payload, patch)

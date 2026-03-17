@@ -9,7 +9,7 @@ from typing import Any, Protocol, Self, TypeVar, cast, final
 import attrs
 
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from ..contracts.deps import DepKey, DepsPort
 
@@ -67,7 +67,7 @@ class Deps(DepsPort):
         :raises CoreError: If any key is registered in more than one container.
         """
 
-        logger.trace("Merging %d dependency container(s)", len(deps))
+        logger.trace("Merging {count} dependency container(s)", sub={"count": len(deps)})
 
         acc: dict[DepKey[Any], Any] = {}
 
@@ -91,7 +91,7 @@ class Deps(DepsPort):
         :returns: New container without the key.
         """
 
-        logger.trace("Removing dependency %s from container copy", key.name)
+        logger.trace("Removing dependency {key} from container copy", sub={"key": key.name})
 
         new = dict(self.deps)
         new.pop(key)
@@ -160,9 +160,8 @@ class DepsPlan:
         """
 
         logger.trace(
-            "Appending %d module(s) to deps plan with %d existing module(s)",
-            len(modules),
-            len(self.modules),
+            "Appending {count} module(s) to deps plan with {existing} existing module(s)",
+            sub={"count": len(modules), "existing": len(self.modules)},
         )
 
         return attrs.evolve(self, modules=(*self.modules, *modules))
@@ -177,8 +176,8 @@ class DepsPlan:
         """
 
         logger.trace(
-            "Building dependency container from %d module(s)",
-            len(self.modules),
+            "Building dependency container from {count} module(s)",
+            sub={"count": len(self.modules)},
         )
 
         if not self.modules:
@@ -190,9 +189,8 @@ class DepsPlan:
         for i, module in enumerate(self.modules, 1):
             deps = module()
             logger.trace(
-                "Built deps module #%d with %d dependency(ies)",
-                i,
-                len(deps.deps),
+                "Built deps module #{index} with {count} dependency(ies)",
+                sub={"index": i, "count": len(deps.deps)},
             )
             built.append(deps)
 

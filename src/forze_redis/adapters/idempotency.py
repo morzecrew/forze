@@ -16,7 +16,7 @@ from forze.application.contracts.idempotency import IdempotencyPort, Idempotency
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import JsonCodec, KeyCodec
 from forze.base.errors import ConflictError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
@@ -115,10 +115,13 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         payload_hash: str,
     ) -> IdempotencySnapshot | None:
         if not key:
-            logger.debug("Idempotency key is not provided for op '%s', skipping", op)
+            logger.debug("Idempotency key is not provided for op '{op}', skipping", sub={"op": op})
             return None
 
-        logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[:8] + "...")
+        logger.debug(
+            "Beginning idempotency for op '{op}', key '{key}'",
+            sub={"op": op, "key": key[:8] + "..."},
+        )
 
         with logger.section():
             k = self.__key(op, key)
@@ -173,11 +176,12 @@ class RedisIdempotencyAdapter(IdempotencyPort):
         snapshot: IdempotencySnapshot,
     ) -> None:
         if not key:
-            logger.debug("Idempotency key is not provided for op '%s', skipping", op)
+            logger.debug("Idempotency key is not provided for op '{op}', skipping", sub={"op": op})
             return None
 
         logger.debug(
-            "Committing idempotency for op '%s', key '%s'", op, key[:8] + "..."
+            "Committing idempotency for op '{op}', key '{key}'",
+            sub={"op": op, "key": key[:8] + "..."},
         )
 
         with logger.section():

@@ -20,7 +20,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
-from forze.base.logging_v2 import getLogger
+from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
 from ..kernel.gateways import (
@@ -79,7 +79,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         spec: SearchIndexSpecInternal,
     ) -> SearchGateway[M]:
         if index in self.__gw_cache:
-            logger.trace("Returning cached gateway for index %s", index)
+            logger.trace("Returning cached gateway for index {index}", sub={"index": index})
             return self.__gw_cache[index]
 
         q = PostgresQualifiedName.from_string(index)
@@ -96,7 +96,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
 
         match index_info.engine:
             case "pgroonga":
-                logger.trace("Using PGroonga search gateway for index '%s'", index)
+                logger.trace("Using PGroonga search gateway for index '{index}'", sub={"index": index})
 
                 gw = PostgresPGroongaSearchGateway[M](
                     qname=q_source,
@@ -107,7 +107,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
                 )
 
             case "fts":
-                logger.trace("Using FTS search gateway for index '%s'", index)
+                logger.trace("Using FTS search gateway for index '{index}'", sub={"index": index})
 
                 gw = PostgresFTSSearchGateway[M](
                     qname=q_source,
@@ -183,10 +183,12 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         index, spec = self.search_spec.pick_index(options)
 
         logger.debug(
-            "Searching %s in index '%s' (query='%s')",
-            self.model.__qualname__,
-            index,
-            query if len(query) < 10 else query[:10] + "...",
+            "Searching {model} in index '{index}' (query='{query}')",
+            sub={
+                "model": self.model.__qualname__,
+                "index": index,
+                "query": query if len(query) < 10 else query[:10] + "...",
+            },
         )
 
         with logger.section():

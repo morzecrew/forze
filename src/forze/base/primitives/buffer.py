@@ -11,7 +11,7 @@ from typing import Iterator, Sequence, final
 
 import attrs
 
-from ..logging_v2 import getLogger
+from ..logging import getLogger
 
 # ----------------------- #
 
@@ -56,7 +56,7 @@ class ContextualBuffer[T]:
     def push(self, e: Sequence[T]) -> None:
         """Append objects to the buffer. Extends the current list in place."""
 
-        logger.debug("Pushing %d item(s) to contextual buffer", len(e))
+        logger.debug("Pushing {count} item(s) to contextual buffer", sub={"count": len(e)})
 
         buf = self.peek()
         buf.extend(list(e))
@@ -70,7 +70,7 @@ class ContextualBuffer[T]:
 
         buf = self.peek()
 
-        logger.debug("Popping %d item(s) from contextual buffer", len(buf))
+        logger.debug("Popping {count} item(s) from contextual buffer", sub={"count": len(buf)})
 
         self.clear()
 
@@ -96,8 +96,8 @@ class ContextualBuffer[T]:
             buf = self.peek()
 
             logger.debug(
-                "Leaving contextual buffer scope (%d buffered item(s))",
-                len(buf),
+                "Leaving contextual buffer scope ({count} buffered item(s))",
+                sub={"count": len(buf)},
             )
 
             self.__buffer.reset(token)
