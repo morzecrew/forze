@@ -12,18 +12,28 @@ from rich.traceback import Traceback
 from .config import get_config, level_no
 from .context import get_depth
 
+# ----------------------- #
+
 _FORZE_LEVEL_KEY = "_forze_level"
+
+# ....................... #
 
 
 def resolve_forze_level(
-    logger: Any, method_name: str, event_dict: dict[str, Any]
+    logger: Any,
+    method_name: str,
+    event_dict: dict[str, Any],
 ) -> dict[str, Any]:
     """Override structlog level when Logger.trace() passes _forze_level."""
+
     del logger, method_name
     override = event_dict.pop(_FORZE_LEVEL_KEY, None)
     if override is not None:
         event_dict["level"] = override
     return event_dict
+
+
+# ....................... #
 
 
 def maybe_rich_exc_info(
@@ -32,6 +42,7 @@ def maybe_rich_exc_info(
     event_dict: dict[str, Any],
 ) -> dict[str, Any]:
     """Format exception with Rich when colorize; else let format_exc_info handle it."""
+
     del logger, method_name
 
     exc_info = event_dict.get("exc_info")
@@ -55,8 +66,13 @@ def maybe_rich_exc_info(
     return event_dict
 
 
+# ....................... #
+
+
 def add_forze_context(
-    logger: Any, method_name: str, event_dict: dict[str, Any]
+    logger: Any,
+    method_name: str,
+    event_dict: dict[str, Any],
 ) -> dict[str, Any]:
     """Add depth and default scope to event dict."""
     del method_name
@@ -66,14 +82,20 @@ def add_forze_context(
     return event_dict
 
 
+# ....................... #
+
+
 def filter_by_level(
-    logger: Any, method_name: str, event_dict: dict[str, Any]
+    logger: Any,
+    method_name: str,
+    event_dict: dict[str, Any],
 ) -> dict[str, Any]:
     """Drop events below effective level for the logger name.
 
     Only filters forze loggers; third-party and stdlib loggers pass through
     to avoid DropEvent breaking ProcessorFormatter for e.g. asyncio DEBUG.
     """
+
     del method_name
 
     from .config import effective_level_for_name

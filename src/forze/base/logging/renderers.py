@@ -60,6 +60,7 @@ class ConsoleRenderer:
         event_width: int | None = None,
         extra_indent: int = 1,
         prefix_width: int | None = None,
+        scope_width: int | None = None,
         extra_dim: str | None = None,
         extra_key_sort: Callable[[str], int] | None = None,
         colorize: bool = False,
@@ -68,6 +69,7 @@ class ConsoleRenderer:
         self.event_width = event_width
         self.extra_indent = extra_indent
         self.prefix_width = prefix_width
+        self.scope_width = scope_width
         self.extra_dim = extra_dim
         self.extra_key_sort = extra_key_sort
         self.colorize = colorize
@@ -85,25 +87,29 @@ class ConsoleRenderer:
         event_width = self.event_width if self.event_width is not None else config.event_width
         extra_indent = self.extra_indent
         prefix_width = self.prefix_width if self.prefix_width is not None else config.prefix_width
+        scope_width = self.scope_width if self.scope_width is not None else config.scope_width
         extra_dim = self.extra_dim if self.extra_dim is not None else config.extra_dim
         extra_key_sort = self.extra_key_sort or config.extra_key_sort
         colorize = self.colorize
 
-        from .context import get_depth
-
-        indent = step * get_depth()
+        # Use depth from event_dict (set by add_forze_context); get_depth() can be wrong
+        # when renderer runs in ProcessorFormatter's context (different thread/context)
+        depth = event_dict.get("depth", 0)
+        indent = step * depth
 
         level = self._level_display(event_dict.get("level", "INFO")).ljust(9)
         ts = event_dict.get("timestamp", "")
         time_str = _format_ts(ts) if ts else ""
         event = event_dict.get("event", "")
         scope = event_dict.get("scope", "root")
-        scope_str = f"[{scope}]"
+        scope_str = (f"[{scope}] ").ljust(scope_width)
 
         # Prefix length (time + "   " + level + scope + indent)
         prefix_len = len(time_str) + 3 + len(level) + len(scope_str) + len(indent)
-        block_indent = " " * prefix_width
-        prefix_padding = " " * max(0, prefix_width - prefix_len)
+        # Ensure at least one space between prefix and event; use max to handle prefix_width=0
+        align_width = max(prefix_width, prefix_len)
+        block_indent = " " * align_width
+        prefix_padding = " " * max(0, align_width - prefix_len)
 
         standard_keys = {
             "event",

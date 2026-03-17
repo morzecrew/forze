@@ -146,22 +146,28 @@ jobs:
 
       - name: Run tests
         run: |
-          mkdir -p test-results
-          just test-fast --junit-xml=test-results/pytest.xml
+          just test-fast \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term \
+            --junitxml=junit.xml \
+            -o junit_family=legacy
 
-      - name: Publish JUnit report
-        if: success() || failure()
-        uses: mikepenz/action-junit-report@49b2ca06f62aa7ef83ae6769a2179271e160d8e4 # v6.3.1
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
-          report_paths: "test-results/*.xml"
-          check_name: "Pytest report"
-          require_tests: true
-          detailed_summary: true
-          include_passed: false
-          comment: ${{ github.event.pull_request.head.repo.fork == false }}
-          updateComment: ${{ github.event.pull_request.head.repo.fork == false }}
-          check_annotations: true
-          fail_on_failure: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: ./junit.xml
+
+      - name: Upload coverage reports to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: coverage
+          files: ./coverage.xml
 
   required-ci:
     name: Required Continuous Integration

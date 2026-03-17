@@ -23,8 +23,10 @@ def log_section() -> Iterator[None]:
     """Increase indentation depth inside a logical logging section."""
     depth = _log_depth.get()
     token = _log_depth.set(depth + 1)
+
     try:
         yield
+
     finally:
         _log_depth.reset(token)
 
@@ -39,11 +41,13 @@ def bind_context(**kwargs: Any) -> Any:
     Use at the start of a request (e.g. FastAPI middleware) so all loggers
     in that request get the context. Returns tokens for reset_contextvars if needed.
     """
+
     return structlog.contextvars.bind_contextvars(**kwargs)
 
 
 def clear_context() -> None:
     """Clear the context-local context. Call at the start of each request."""
+
     structlog.contextvars.clear_contextvars()
 
 

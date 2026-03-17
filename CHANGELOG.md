@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `forze.base.logging`: Removed redundant ``width``; kept only ``prefix_width`` for alignment.
 - `forze.base.logging`: Inline extra dimmed as trace-level color (no syntax highlights); block extra keeps ReprHighlighter.
 - `forze.base.logging`: ``prefix_width`` and ``event_width`` default to 100 for consistent extra column alignment across depths.
+- `forze.base.logging`: ``scope_width`` (default 22) pads ``[scope]`` so scopes like ``[middleware]`` and ``[context]`` align at the same depth.
+- `forze.base.logging`: Use ``event_dict["depth"]`` instead of ``get_depth()`` in renderer so depth works when ProcessorFormatter runs in a different context (e.g. API/LoggingMiddleware logs).
 - `forze_fastapi` idempotent routes: invalid JSON request bodies no longer participate in idempotency; the handler runs and returns 422 without committing a snapshot, so clients can fix the body and retry with the same idempotency key.
 - All internal logging uses :mod:`forze.base.logging` (structlog-based).
 - `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.

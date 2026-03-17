@@ -213,3 +213,5 @@ pages/site/
 
 # just cache (modules, fetched imports)
 .just/
+
+junit.xml

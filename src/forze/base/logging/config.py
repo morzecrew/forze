@@ -42,6 +42,7 @@ DEFAULT_STEP = "  "
 DEFAULT_EVENT_WIDTH = 100
 DEFAULT_EXTRA_INDENT = 1
 DEFAULT_PREFIX_WIDTH = 100
+DEFAULT_SCOPE_WIDTH = 22  # pad [scope] so [middleware] and [context] align at same depth
 DEFAULT_EXTRA_DIM: Optional[str] = None  # ANSI dim when None uses \033[2m
 DEFAULT_EXTRA_KEY_SORT: Optional[Callable[[str], int]] = None  # lower = first
 
@@ -59,6 +60,7 @@ class LoggingConfig:
     event_width: int = DEFAULT_EVENT_WIDTH
     extra_indent: int = DEFAULT_EXTRA_INDENT
     prefix_width: int = DEFAULT_PREFIX_WIDTH
+    scope_width: int = DEFAULT_SCOPE_WIDTH
     extra_dim: Optional[str] = DEFAULT_EXTRA_DIM
     extra_key_sort: Optional[Callable[[str], int]] = DEFAULT_EXTRA_KEY_SORT
     colorize: bool = False

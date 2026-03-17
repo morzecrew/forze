@@ -15,11 +15,15 @@ import structlog.typing
 from .config import LogLevel, effective_level_for_name, level_no, normalize_level
 from .context import log_section
 
+# ----------------------- #
+
 # Keys that must not be passed as user extras (structlog reserved)
 _STRUCTLOG_KEYS = frozenset({"event", "logger", "scope", "source"})
 
+# ....................... #
 
-def _format_event(
+
+def _format_event(  #! TODO: extract class names if objects are passed
     message: str,
     sub: Mapping[str, Any],
     **kwargs: Any,
@@ -30,6 +34,7 @@ def _format_event(
     Values are str()'d for substitution.
     kwargs: all go to extras.
     """
+
     if "{" in message and "}" in message and sub:
 
         def replace(match: re.Match[str]) -> str:
@@ -37,10 +42,17 @@ def _format_event(
             return str(sub[key]) if key in sub else match.group(0)
 
         event = re.sub(r"\{(\w+)\}", replace, message)
+
     else:
         event = message
+
     extras = {k: v for k, v in kwargs.items() if k not in _STRUCTLOG_KEYS}
+
     return event, extras
+
+
+# ....................... #
+#! TODO: outline difference between methods within the class
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -48,20 +60,31 @@ class Logger:
     """Logger bound to a name, scope, and optional source."""
 
     name: str
+    """Logger name."""
+
     backend: structlog.typing.FilteringBoundLogger
+    """Structlog backend."""
+
+    # ....................... #
 
     def isEnabledFor(self, level: LogLevel) -> bool:
         want = level_no(normalize_level(level))
         have = level_no(effective_level_for_name(self.name))
         return want >= have
 
+    # ....................... #
+
     def bind(self, **kwargs: Any) -> Self:
         return attrs.evolve(self, backend=self.backend.bind(**kwargs))
+
+    # ....................... #
 
     @contextmanager
     def section(self) -> Iterator[None]:
         with log_section():
             yield
+
+    # ....................... #
 
     def trace(
         self,
@@ -70,7 +93,10 @@ class Logger:
         **kwargs: Any,
     ) -> None:
         """Log at TRACE level (below DEBUG). Use for noisy per-op details."""
+
         self._log("debug", message, sub, {**kwargs, "_forze_level": "trace"})
+
+    # ....................... #
 
     def debug(
         self,
@@ -80,6 +106,8 @@ class Logger:
     ) -> None:
         self._log("debug", message, sub, kwargs)
 
+    # ....................... #
+
     def info(
         self,
         message: str,
@@ -87,6 +115,8 @@ class Logger:
         **kwargs: Any,
     ) -> None:
         self._log("info", message, sub, kwargs)
+
+    # ....................... #
 
     def warning(
         self,
@@ -98,6 +128,8 @@ class Logger:
 
     warn = warning
 
+    # ....................... #
+
     def error(
         self,
         message: str,
@@ -106,6 +138,8 @@ class Logger:
     ) -> None:
         self._log("error", message, sub, kwargs)
 
+    # ....................... #
+
     def critical(
         self,
         message: str,
@@ -113,6 +147,8 @@ class Logger:
         **kwargs: Any,
     ) -> None:
         self._log("critical", message, sub, kwargs)
+
+    # ....................... #
 
     def critical_exception(
         self,
@@ -128,6 +164,8 @@ class Logger:
         )
         self.backend.critical(event, exc_info=exc_info, **extras)
 
+    # ....................... #
+
     def exception(
         self,
         message: str,
@@ -136,6 +174,8 @@ class Logger:
     ) -> None:
         event, extras = _format_event(message, sub or {}, **kwargs)
         self.backend.error(event, exc_info=True, **extras)
+
+    # ....................... #
 
     def log(
         self,
@@ -146,6 +186,8 @@ class Logger:
     ) -> None:
         method = normalize_level(level).lower()
         self._log(method, message, sub, kwargs)
+
+    # ....................... #
 
     def _log(
         self,
