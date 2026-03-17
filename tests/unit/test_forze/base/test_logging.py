@@ -433,6 +433,26 @@ class TestRichEnhancements:
         assert "mapping" in captured.err
         assert "unset" in captured.err
 
+    def test_max_width_pads_event_to_align_inline_extra(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure(
+            level="INFO",
+            colorize=False,
+            max_width=80,
+            extra_indent=1,
+        )
+        log = getLogger("forze.test")
+        log.info("short", x=1)
+        out1 = capsys.readouterr().err
+        log.info("longer message here", x=1)
+        out2 = capsys.readouterr().err
+        # Both should have x=1 at same column (event padded)
+        idx1 = out1.find("x=1")
+        idx2 = out2.find("x=1")
+        assert idx1 > 0 and idx2 > 0
+        assert idx1 == idx2
+
 
 # ----------------------- #
 # Dual output (pretty stderr + JSON stdout)

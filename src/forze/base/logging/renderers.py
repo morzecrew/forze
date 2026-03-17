@@ -50,19 +50,6 @@ def _format_ts(ts: Any) -> str:
     return str(ts)
 
 
-def _wrap_at_width(text: str, width: int, first_line_prefix: str, cont_indent: str) -> str:
-    """Wrap text at width; first line gets prefix, continuation lines get cont_indent."""
-    if width <= 0 or len(text) + len(first_line_prefix) <= width:
-        return first_line_prefix + text
-    usable = width - len(first_line_prefix)
-    lines = textwrap.wrap(text, width=usable, drop_whitespace=False)
-    if len(lines) == 1:
-        return first_line_prefix + lines[0]
-    return first_line_prefix + lines[0] + "\n" + "\n".join(
-        cont_indent + ln for ln in lines[1:]
-    )
-
-
 class ConsoleRenderer:
     """Human-readable console renderer with optional colorization."""
 
@@ -142,16 +129,9 @@ class ConsoleRenderer:
                         ReprHighlighter()(extra_content)
                     )
                 extra_lines = extra_content.split("\n")
-                wrapped_lines: list[str] = []
-                for ln in extra_lines:
-                    if max_width and len(ln) + len(block_indent) > max_width:
-                        wrapped = _wrap_at_width(
-                            ln, max_width, block_indent, block_indent
-                        )
-                        wrapped_lines.extend(wrapped.split("\n"))
-                    else:
-                        wrapped_lines.append(block_indent + ln)
-                extra_block_str = "\n\n" + "\n".join(wrapped_lines) + "\n"
+                extra_block_str = "\n\n" + "\n".join(
+                    block_indent + ln for ln in extra_lines
+                ) + "\n"
             else:
                 indent_str = " " * extra_indent
                 inline_plain = indent_str + " ".join(
@@ -172,22 +152,16 @@ class ConsoleRenderer:
         }
         is_trace = level.strip() == "TRACE"
 
-        # Wrap event at max_width; inline extra on first line when simple
+        # max_width applies to event (log message) only; not timestamp, level, scope, or extras
         event_display = event
         if extra_inline_plain:
-            # Simple extra: wrap event so first line + extra fits
-            extra_len = extra_indent + len(
-                " ".join(f"{k}={v!r}" for k, v in sorted(extra.items()))
-            )
-            usable = (
-                max(1, max_width - prefix_len - extra_len)
-                if max_width
-                else len(event) + 1
-            )
-            if max_width and prefix_len + len(event) + extra_len > max_width:
-                lines = textwrap.wrap(event, width=usable, drop_whitespace=False)
+            if max_width:
+                # Wrap event at max_width; pad first line so extra aligns
+                event_width = max(10, max_width)
+                lines = textwrap.wrap(event, width=event_width, drop_whitespace=False)
                 if lines:
-                    event_display = lines[0] + extra_inline_plain
+                    event_padded = lines[0].ljust(event_width)
+                    event_display = event_padded + extra_inline_plain
                     if len(lines) > 1:
                         event_display += "\n" + "\n".join(
                             block_indent + ln for ln in lines[1:]
@@ -196,9 +170,8 @@ class ConsoleRenderer:
                     event_display = event + extra_inline_plain
             else:
                 event_display = event + extra_inline_plain
-        elif max_width and prefix_len + len(event) > max_width:
-            usable = max_width - prefix_len
-            lines = textwrap.wrap(event, width=usable, drop_whitespace=False)
+        elif max_width and len(event) > max_width:
+            lines = textwrap.wrap(event, width=max_width, drop_whitespace=False)
             if len(lines) > 1:
                 event_display = lines[0] + "\n" + "\n".join(
                     block_indent + ln for ln in lines[1:]

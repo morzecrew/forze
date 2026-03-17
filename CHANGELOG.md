@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `forze.base.logging`: Simple extras inline; configurable ``extra_indent`` (spaces between event and inline extra; not applied when no extra or block extra); with ``max_width``, event wraps so first line + extra fits; block extras below wrapped event; ReprHighlighter for extras.
+- `forze.base.logging`: Simple extras inline; configurable ``extra_indent`` (spaces between event and inline extra; not applied when no extra or block extra); ``max_width`` applies to event (log message) only—excludes timestamp, level, scope, and extras; event is padded so inline extra aligns; block extras below wrapped event; ReprHighlighter for extras.
 - `forze.base.logging`: Block format (extra data below log line) and Rich tracebacks now align with event text for clearer visual hierarchy.
 - `forze_fastapi` idempotent routes: invalid JSON request bodies no longer participate in idempotency; the handler runs and returns 422 without committing a snapshot, so clients can fix the body and retry with the same idempotency key.
 - All internal logging uses :mod:`forze.base.logging` (structlog-based).
