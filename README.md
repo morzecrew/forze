@@ -60,7 +60,7 @@ Skills are automatically available once installed. The agent will use them when 
 
 ### Available Skills
 
-#### `forze-wiring`
+#### forze-wiring
 
 Wire Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer (e.g. FastAPI). Covers Deps.merge, LifecyclePlan, ExecutionRuntime, document/search registries, and FastAPI routers with context dependency.
 
@@ -79,7 +79,7 @@ Categories covered:
 - FastAPI Integration (High) — Routers, context dependency, lifespan
 - Testing (Medium) — Mock adapters for local development
 
-#### `forze-framework-usage`
+#### forze-framework-usage
 
 Write code that uses the Forze framework correctly. Covers layered architecture, contracts vs adapters, ExecutionContext port resolution, usecase pattern, transactions, and query/storage patterns.
 
@@ -97,7 +97,7 @@ Categories covered:
 - Usecases (High) — Usecase pattern, transactions, port resolution
 - Query & Storage (Medium) — CRUD, search, cache, counter, object storage patterns
 
-#### `forze-domain-aggregates`
+#### forze-domain-aggregates
 
 Define domain models, document aggregates, and specifications for Forze. Covers Document, CreateDocumentCmd, UpdateCmd, ReadModel, mixins, DocumentSpec, SearchSpec, and database schema alignment.
 

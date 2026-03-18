@@ -108,6 +108,7 @@ async def _response_body_bytes(resp: Response) -> bytes:
         try:
             if isinstance(chunks[0], str):
                 new_body = "".join(chunks).encode(resp.charset or "utf-8")
+
             else:
                 new_body = b"".join(chunks)
 

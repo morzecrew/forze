@@ -4,14 +4,9 @@ Level patterns use fnmatch: ``*`` matches any sequence, ``?`` matches one charac
 Longest matching pattern wins (most specific).
 """
 
-from __future__ import annotations
-
 import fnmatch
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Optional, cast
-
-if TYPE_CHECKING:
-    pass
+from typing import Callable, Literal, Mapping, Optional, cast
 
 # ----------------------- #
 # Types
@@ -42,7 +37,9 @@ DEFAULT_STEP = "  "
 DEFAULT_EVENT_WIDTH = 100
 DEFAULT_EXTRA_INDENT = 1
 DEFAULT_PREFIX_WIDTH = 100
-DEFAULT_SCOPE_WIDTH = 22  # pad [scope] so [middleware] and [context] align at same depth
+DEFAULT_SCOPE_WIDTH = (
+    22  # pad [scope] so [middleware] and [context] align at same depth
+)
 DEFAULT_EXTRA_DIM: Optional[str] = None  # ANSI dim when None uses \033[2m
 DEFAULT_EXTRA_KEY_SORT: Optional[Callable[[str], int]] = None  # lower = first
 
