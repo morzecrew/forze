@@ -60,60 +60,11 @@ Skills are automatically available once installed. The agent will use them when 
 
 ### Available Skills
 
-#### forze-wiring
-
-Wire Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer (e.g. FastAPI). Covers Deps.merge, LifecyclePlan, ExecutionRuntime, document/search registries, and FastAPI routers with context dependency.
-
-Use when:
-
-- Setting up the application bootstrap
-- Configuring adapters and dependency plan
-- Exposing endpoints (FastAPI routers)
-- Building document or search composition
-- Wiring lifecycle (startup/shutdown of connection pools)
-
-Categories covered:
-
-- Runtime & Lifecycle (Critical) — Deps, ExecutionRuntime, scope, connection pools
-- Composition (High) — Document registry, usecase plans, middleware, transactions
-- FastAPI Integration (High) — Routers, context dependency, lifespan
-- Testing (Medium) — Mock adapters for local development
-
-#### forze-framework-usage
-
-Write code that uses the Forze framework correctly. Covers layered architecture, contracts vs adapters, ExecutionContext port resolution, usecase pattern, transactions, and query/storage patterns.
-
-Use when:
-
-- Implementing features or usecases
-- Integrating Forze into an application
-- Writing code that uses Forze (not developing new adapters)
-- Working with ports, context, transactions, or query syntax
-
-Categories covered:
-
-- Architecture (Critical) — Layered boundaries, dependency flow inward
-- Contracts & Ports (Critical) — Resolve ports via context, never import adapters
-- Usecases (High) — Usecase pattern, transactions, port resolution
-- Query & Storage (Medium) — CRUD, search, cache, counter, object storage patterns
-
-#### forze-domain-aggregates
-
-Define domain models, document aggregates, and specifications for Forze. Covers Document, CreateDocumentCmd, UpdateCmd, ReadModel, mixins, DocumentSpec, SearchSpec, and database schema alignment.
-
-Use when:
-
-- Creating entities, models, or domain objects
-- Defining document aggregates
-- Creating specs (DocumentSpec, SearchSpec)
-- Creating DTOs (CreateCmd, UpdateCmd, ReadModel)
-
-Categories covered:
-
-- Aggregate Models (Critical) — Document, CreateCmd, UpdateCmd, ReadModel structure
-- Specifications (Critical) — DocumentSpec, SearchSpec binding to storage and cache
-- Domain Validation (Medium-High) — Update validators, mixins (SoftDeletion, Number, Creator)
-- Schema Alignment (Medium) — DB schema matching Pydantic fields
+| Name | Description |
+| -------- | -------- |
+|**forze-framework-usage** | Write code that uses the framework correctly according to the core concepts. |
+|**forze-domain-aggregates** | Define domain models, document aggregates, and specifications. |
+|**forze-wiring** | Wire runtime, dependencies, lifecycle, usecase composition, and interface layer. |
 
 ## Versioning
 
