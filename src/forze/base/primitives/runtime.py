@@ -5,14 +5,10 @@ from typing import Optional
 
 import attrs
 
+from .._logger import logger
 from ..errors import CoreError
-from ..logging import getLogger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="runtime")
-
-# ....................... #
 
 
 @attrs.define(slots=True)
@@ -43,8 +39,9 @@ class RuntimeVar[T: object]:
             raise CoreError(f"Value cannot be None for '{self.name}'")
 
         logger.trace(
-            "Setting runtime variable '{name}' with value type {value_type}",
-            sub={"name": self.name, "value_type": type(value).__name__},
+            "Setting runtime variable '%s' with value type %s",
+            self.name,
+            type(value).__name__,
         )
 
         with self.__lock:
@@ -70,7 +67,7 @@ class RuntimeVar[T: object]:
     def reset(self) -> None:
         """Clear the stored value so it can be set again. Thread-safe. Useful for testing."""
 
-        logger.trace("Resetting runtime variable '{name}'", sub={"name": self.name})
+        logger.trace("Resetting runtime variable '%s'", self.name)
 
         with self.__lock:
             self.__value = None

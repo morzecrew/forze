@@ -7,7 +7,7 @@ composing usecases with middlewares. Middlewares include guards, effects, and
 transaction wrapping.
 """
 
-from .context import ExecutionContext
+from .context import CallContext, ExecutionContext, PrincipalContext
 from .deps import Deps, DepsModule, DepsPlan
 from .facade import UsecasesFacade, facade_op
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
@@ -15,15 +15,18 @@ from .middleware import Effect, Guard, Middleware, NextCall
 from .plan import UsecasePlan
 from .registry import UsecaseRegistry
 from .runtime import ExecutionRuntime
-from .usecase import Usecase
+from .usecase import Usecase, UsecaseFactory
 
 # ----------------------- #
 
 __all__ = [
     "ExecutionContext",
+    "CallContext",
+    "PrincipalContext",
     "UsecasePlan",
     "UsecaseRegistry",
     "Usecase",
+    "UsecaseFactory",
     "Effect",
     "Guard",
     "Middleware",

@@ -8,16 +8,13 @@ from typing import Any, Protocol, Self, TypeVar, cast, final
 
 import attrs
 
+from forze.application._logger import logger
+from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 
 from ..contracts.deps import DepKey, DepsPort
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="deps")
-
-# ....................... #
 
 T = TypeVar("T")
 
@@ -58,8 +55,8 @@ class Deps(DepsPort):
 
     # ....................... #
 
-    @classmethod
-    def merge(cls, *deps: Self) -> Self:
+    @hybridmethod
+    def merge(cls: type[Self], *deps: Self) -> Self:  # type: ignore[misc, override]
         """Merge multiple dependency containers into a single container.
 
         :param deps: Containers to merge.
@@ -67,7 +64,7 @@ class Deps(DepsPort):
         :raises CoreError: If any key is registered in more than one container.
         """
 
-        logger.trace("Merging {count} dependency container(s)", sub={"count": len(deps)})
+        logger.trace("Merging %s dependency container(s)", len(deps))
 
         acc: dict[DepKey[Any], Any] = {}
 
@@ -84,6 +81,19 @@ class Deps(DepsPort):
 
     # ....................... #
 
+    @merge.instancemethod
+    def _merge_instance(self: Self, *deps: Self) -> Self:  # type: ignore[misc, override]
+        """Merge this dependency container with another containers.
+
+        :param deps: Containers to merge.
+        :returns: New container with all dependencies.
+        :raises CoreError: If any key is registered in more than one container.
+        """
+
+        return type(self).merge(self, *deps)
+
+    # ....................... #
+
     def without(self, key: DepKey[T]) -> Self:
         """Create a new dependency container without the given key.
 
@@ -91,7 +101,7 @@ class Deps(DepsPort):
         :returns: New container without the key.
         """
 
-        logger.trace("Removing dependency {key} from container copy", sub={"key": key.name})
+        logger.trace("Removing dependency '%s' from container copy", key.name)
 
         new = dict(self.deps)
         new.pop(key)
@@ -160,8 +170,9 @@ class DepsPlan:
         """
 
         logger.trace(
-            "Appending {count} module(s) to deps plan with {existing} existing module(s)",
-            sub={"count": len(modules), "existing": len(self.modules)},
+            "Appending %s module(s) to deps plan with %s existing module(s)",
+            len(modules),
+            len(self.modules),
         )
 
         return attrs.evolve(self, modules=(*self.modules, *modules))
@@ -176,8 +187,8 @@ class DepsPlan:
         """
 
         logger.trace(
-            "Building dependency container from {count} module(s)",
-            sub={"count": len(self.modules)},
+            "Building dependency container from %s module(s)",
+            len(self.modules),
         )
 
         if not self.modules:
@@ -189,8 +200,9 @@ class DepsPlan:
         for i, module in enumerate(self.modules, 1):
             deps = module()
             logger.trace(
-                "Built deps module #{index} with {count} dependency(ies)",
-                sub={"index": i, "count": len(deps.deps)},
+                "Built deps module #%s with %s dependency(ies)",
+                i,
+                len(deps.deps),
             )
             built.append(deps)
 

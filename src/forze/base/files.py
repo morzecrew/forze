@@ -6,13 +6,9 @@ from typing import Any, Iterator
 
 import yaml
 
-from .logging import getLogger
+from ._logger import logger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="files")
-
-# ....................... #
 
 
 def read_yaml(path: str | Path) -> dict[str, Any]:
@@ -24,7 +20,7 @@ def read_yaml(path: str | Path) -> dict[str, Any]:
     :returns: Parsed YAML document as a dictionary.
     """
 
-    logger.trace("Reading YAML file {path}", sub={"path": path})
+    logger.trace("Reading YAML file '%s'", path)
 
     with open(path, "r") as f:
         r = yaml.safe_load(f)
@@ -42,7 +38,7 @@ def read_text(path: str | Path) -> str:
     :returns: File contents as a string.
     """
 
-    logger.trace("Reading text file {path}", sub={"path": path})
+    logger.trace("Reading text file '%s'", path)
 
     with open(path, "r") as f:
         return f.read()
@@ -77,19 +73,19 @@ def _iter_fileobj(
         f.close()
 
 
-def iter_file(b: bytes | io.BytesIO) -> Iterator[bytes]:
+def iter_file(b: bytes | io.BytesIO, *, chunk_size: int = 32 * 1024) -> Iterator[bytes]:
     """Yield chunks from raw bytes or a file-like object.
 
-    Uses 32 KB chunks. File-like objects are closed when exhausted.
+    Uses 32 KB chunks by default. File-like objects are closed when exhausted.
 
     :param b: Raw bytes or a readable file-like object.
     :returns: Iterator over byte chunks.
     """
 
-    logger.trace("Iterating file from {source}", sub={"source": type(b).__name__})
+    logger.trace("Iterating file from '%s'", type(b).__name__)
 
     if isinstance(b, bytes):
-        return _iter_bytes(b)
+        return _iter_bytes(b, chunk_size)
 
     else:
-        return _iter_fileobj(b)
+        return _iter_fileobj(b, chunk_size)

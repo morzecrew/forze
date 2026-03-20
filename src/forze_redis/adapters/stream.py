@@ -19,15 +19,10 @@ from forze.application.contracts.stream import (
     StreamWritePort,
 )
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="redis.stream")
-
-# ....................... #
 
 _F_PAYLOAD: Final[str] = "payload"
 _F_TYPE: Final[str] = "type"

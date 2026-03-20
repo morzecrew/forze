@@ -5,7 +5,7 @@ from typing import AsyncIterator, final
 
 import attrs
 
-from forze.base.logging import getLogger
+from forze.application._logger import logger
 from forze.base.primitives import RuntimeVar
 
 from .context import ExecutionContext
@@ -13,10 +13,6 @@ from .deps import DepsPlan
 from .lifecycle import LifecyclePlan
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="runtime")
-
-# ....................... #
 
 
 @final
@@ -64,11 +60,10 @@ class ExecutionRuntime:
 
         logger.info("Creating execution context")
 
-        with logger.section():
-            deps = self.deps.build()
+        deps = self.deps.build()
 
-            ctx = ExecutionContext(deps=deps)
-            self.__ctx.set_once(ctx)
+        ctx = ExecutionContext(deps=deps)
+        self.__ctx.set_once(ctx)
 
         logger.info("Execution context created")
 
@@ -79,9 +74,8 @@ class ExecutionRuntime:
 
         logger.info("Starting execution runtime")
 
-        with logger.section():
-            ctx = self.__ctx.get()
-            await self.lifecycle.startup(ctx)
+        ctx = self.__ctx.get()
+        await self.lifecycle.startup(ctx)
 
         logger.info("Execution runtime startup completed")
 
@@ -96,12 +90,11 @@ class ExecutionRuntime:
 
         logger.info("Shutting down execution runtime")
 
-        with logger.section():
-            try:
-                await self.lifecycle.shutdown(self.__ctx.get())
+        try:
+            await self.lifecycle.shutdown(self.__ctx.get())
 
-            finally:
-                self.__ctx.reset()
+        finally:
+            self.__ctx.reset()
 
         logger.info("Execution runtime shutdown completed")
 

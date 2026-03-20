@@ -52,6 +52,7 @@ class hybridmethod(Generic[OwnerT, P, R]):
         :raises TypeError: When ``cls_method`` is not callable.
         """
 
+        # runtime check
         if not callable(cls_method):
             raise TypeError("hybridmethod requires a callable class-level function")
 

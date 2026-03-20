@@ -12,15 +12,11 @@ from typing import AsyncIterator, final
 import attrs
 
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
-from forze.base.logging import getLogger
 
 from ..kernel.platform import PostgresClient, PostgresTransactionOptions
+from ._logger import logger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="postgres.txmanager")
-
-# ....................... #
 
 PostgresTxScopeKey = TxScopeKey("postgres")
 """Key used to scope the Postgres transaction."""

@@ -19,14 +19,11 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
+
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="validation")
-
-# ....................... #
 
 UPDATE_VALIDATOR_METADATA_FIELD: Final[str] = "__update_validator__"
 """Name of the attribute that stores the update validator metadata."""
@@ -106,53 +103,50 @@ def update_validator(
         params = list(sig.parameters.values())
 
         logger.trace(
-            "Registering update validator {name}",
-            sub={"name": getattr(f, "__qualname__", getattr(f, "__name__", repr(f)))},
+            "Registering update validator %s",
+            getattr(f, "__qualname__", getattr(f, "__name__", repr(f))),
         )
 
-        with logger.section():
-            logger.trace("Validator signature: {sig}", sub={"sig": sig})
-            logger.trace("Validator fields: {fields}", sub={"fields": tuple(fields) if fields else None})
+        logger.trace("Validator signature: %s", sig)
+        logger.trace("Validator fields: %s", tuple(fields) if fields else None)
 
-            if not params:
-                raise CoreError(
-                    "Update validator must have at least one parameter (state before update)"
-                )
+        if not params:
+            raise CoreError(
+                "Update validator must have at least one parameter (state before update)"
+            )
 
-            extra = len(params) - 1
-            fields_meta = frozenset(fields) if fields else None
-            meta = UpdateValidatorMetadata(fields=fields_meta)
+        extra = len(params) - 1
+        fields_meta = frozenset(fields) if fields else None
+        meta = UpdateValidatorMetadata(fields=fields_meta)
 
-            logger.trace("Normalized validator arity: {arity}", sub={"arity": extra + 1})
+        logger.trace("Normalized validator arity: %s", extra + 1)
 
-            if extra == 0:
+        if extra == 0:
 
-                def wrapper(before: M, after: M, diff: JsonDict) -> None:
-                    return cast(Callable[[M], None], f)(before)
+            def wrapper(before: M, after: M, diff: JsonDict) -> None:
+                return cast(Callable[[M], None], f)(before)
 
-            elif extra == 1:
+        elif extra == 1:
 
-                def wrapper(before: M, after: M, diff: JsonDict) -> None:
-                    return cast(Callable[[M, M], None], f)(before, after)
+            def wrapper(before: M, after: M, diff: JsonDict) -> None:
+                return cast(Callable[[M, M], None], f)(before, after)
 
-            elif extra == 2:
+        elif extra == 2:
 
-                def wrapper(before: M, after: M, diff: JsonDict) -> None:
-                    return cast(Callable[[M, M, JsonDict], None], f)(
-                        before, after, diff
-                    )
+            def wrapper(before: M, after: M, diff: JsonDict) -> None:
+                return cast(Callable[[M, M, JsonDict], None], f)(before, after, diff)
 
-            else:
-                raise CoreError(
-                    "Update validator must have at most three parameters (state before update, state after update, diff)"
-                )
+        else:
+            raise CoreError(
+                "Update validator must have at most three parameters (state before update, state after update, diff)"
+            )
 
-            setattr(wrapper, UPDATE_VALIDATOR_METADATA_FIELD, meta)
+        setattr(wrapper, UPDATE_VALIDATOR_METADATA_FIELD, meta)
 
-            wrapper.__name__ = getattr(f, "__name__", "update_validator")
-            wrapper.__qualname__ = getattr(f, "__qualname__", wrapper.__name__)
+        wrapper.__name__ = getattr(f, "__name__", "update_validator")
+        wrapper.__qualname__ = getattr(f, "__qualname__", wrapper.__name__)
 
-            return wrapper
+        return wrapper
 
     if _func is not None:
         return decorator(_func)
@@ -174,60 +168,60 @@ def collect_update_validators(
     """
 
     logger.trace(
-        "Collecting update validators for {cls} (on_conflict={on_conflict})",
-        sub={"cls": cls.__qualname__, "on_conflict": on_conflict},
+        "Collecting update validators for %s (on_conflict=%s)",
+        cls.__qualname__,
+        on_conflict,
     )
 
-    with logger.section():
-        by_name: OrderedDict[str, _ValidatorEntry] = OrderedDict()
+    by_name: OrderedDict[str, _ValidatorEntry] = OrderedDict()
 
-        for b in reversed(cls.mro()[:-1]):
-            logger.trace("Scanning class {cls}", sub={"cls": b.__qualname__})
+    for b in reversed(cls.mro()[:-1]):
+        logger.trace("Scanning class %s", b.__qualname__)
 
-            with logger.section():
-                for name, attr in b.__dict__.items():
-                    meta = getattr(attr, UPDATE_VALIDATOR_METADATA_FIELD, None)
+        for name, attr in b.__dict__.items():
+            meta = getattr(attr, UPDATE_VALIDATOR_METADATA_FIELD, None)
 
-                    if not isinstance(meta, UpdateValidatorMetadata):
-                        continue
+            if not isinstance(meta, UpdateValidatorMetadata):
+                continue
 
-                    logger.trace(
-                        "Found validator {name} on {cls} with fields={fields}",
-                        sub={"name": name, "cls": b.__qualname__, "fields": meta.fields},
-                    )
+            logger.trace(
+                "Found validator %s on %s with fields=%s",
+                name,
+                b.__qualname__,
+                meta.fields,
+            )
 
-                    if name in by_name:
-                        prev = by_name[name]
+            if name in by_name:
+                prev = by_name[name]
 
-                        msg = (
-                            f"Update validator '{name}' is defined in both "
-                            f"{prev.owner.__qualname__} and {b.__qualname__}. "
-                            f"{b.__qualname__} overrides {prev.owner.__qualname__}."
-                        )
+                msg = (
+                    f"Update validator '{name}' is defined in both "
+                    f"{prev.owner.__qualname__} and {b.__qualname__}. "
+                    f"{b.__qualname__} overrides {prev.owner.__qualname__}."
+                )
 
-                        logger.trace(
-                            "Validator conflict for {name}: previous={prev}, current={cur}",
-                            sub={
-                                "name": name,
-                                "prev": prev.owner.__qualname__,
-                                "cur": b.__qualname__,
-                            },
-                        )
+                logger.trace(
+                    "Validator conflict for %s: previous=%s, current=%s",
+                    name,
+                    prev.owner.__qualname__,
+                    b.__qualname__,
+                )
 
-                        if on_conflict == "error":
-                            raise CoreError(msg)
+                if on_conflict == "error":
+                    raise CoreError(msg)
 
-                        elif on_conflict == "warn":
-                            warnings.warn(msg, RuntimeWarning, stacklevel=2)
+                elif on_conflict == "warn":
+                    warnings.warn(msg, RuntimeWarning, stacklevel=2)
 
-                    by_name[name] = _ValidatorEntry(owner=b, meta=meta)
-                    by_name.move_to_end(name)
+            by_name[name] = _ValidatorEntry(owner=b, meta=meta)
+            by_name.move_to_end(name)
 
-        result = [(name, entry.meta) for name, entry in by_name.items()]
+    result = [(name, entry.meta) for name, entry in by_name.items()]
 
     logger.trace(
-        "Collected {count} update validator(s) for {cls}",
-        sub={"count": len(result), "cls": cls.__qualname__},
+        "Collected %s update validator(s) for %s",
+        len(result),
+        cls.__qualname__,
     )
 
     return result

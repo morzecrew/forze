@@ -8,13 +8,9 @@ from typing import Any, Literal, Sequence, TypedDict
 import orjson
 from pydantic import BaseModel, TypeAdapter
 
-from ..logging import getLogger
+from .._logger import logger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="serialization")
-
-# ....................... #
 
 
 @lru_cache(maxsize=128)
@@ -40,11 +36,9 @@ def pydantic_validate[M: BaseModel](
     """
 
     logger.trace(
-        "Validating data into {model} (forbid_extra={forbid_extra})",
-        sub={
-            "model": cls.__name__,
-            "forbid_extra": forbid_extra,
-        },
+        "Validating data into %s (forbid_extra=%s)",
+        cls.__name__,
+        forbid_extra,
     )
 
     return cls.model_validate(data, extra="forbid" if forbid_extra else "ignore")
@@ -60,12 +54,10 @@ def pydantic_validate_many[M: BaseModel](
     forbid_extra: bool = False,
 ) -> list[M]:
     logger.trace(
-        "Validating {count} data items into list[{model}] (forbid_extra={forbid_extra})",
-        sub={
-            "count": len(data),
-            "model": cls.__name__,
-            "forbid_extra": forbid_extra,
-        },
+        "Validating %s data items into list[%s] (forbid_extra=%s)",
+        len(data),
+        cls.__name__,
+        forbid_extra,
     )
     adapter = _list_adapter(cls)
 
@@ -112,12 +104,10 @@ def pydantic_dump(
     """
 
     logger.trace(
-        "Dumping {model} (mode={mode}, exclude={exclude})",
-        sub={
-            "model": type(obj).__name__,
-            "mode": mode,
-            "exclude": exclude,
-        },
+        "Dumping %s (mode=%s, exclude=%s)",
+        type(obj).__name__,
+        mode,
+        exclude,
     )
 
     return obj.model_dump(
@@ -152,12 +142,10 @@ def pydantic_dump_many(
     cls = type(objs[0])
 
     logger.trace(
-        "Dumping {count} models into list[dict[str, Any]] (mode={mode}, exclude={exclude})",
-        sub={
-            "count": len(objs),
-            "mode": mode,
-            "exclude": exclude,
-        },
+        "Dumping %s models into list[dict[str, Any]] (mode=%s, exclude=%s)",
+        len(objs),
+        mode,
+        exclude,
     )
 
     adapter = _list_adapter(cls)
@@ -242,11 +230,9 @@ def pydantic_model_hash(
     """
 
     logger.trace(
-        "Hashing Pydantic model {model} (exclude={exclude})",
-        sub={
-            "model": type(model).__name__,
-            "exclude": exclude,
-        },
+        "Hashing Pydantic model %s (exclude=%s)",
+        type(model).__name__,
+        exclude,
     )
 
     data = pydantic_dump(model, exclude=exclude)

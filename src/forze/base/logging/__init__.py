@@ -1,34 +1,13 @@
-"""Structured logging built on structlog.
-
-Standard keys: ``scope``, ``source``, ``logger``, ``event``, ``level``, ``timestamp``.
-
-Use :func:`configure` at startup. For request-scoped context (e.g. correlation_id),
-use :func:`bound_context` or :func:`bind_context` at the start of each request.
-"""
-
-from .config import (
-    LogLevelName,
-    get_config,
-    level_no,
-    normalize_level,
-)
-from .context import bind_context, bound_context, clear_context
-from .facade import configure, getLogger, register_unhandled_exception_handler, reset
+from .configure import attach_foreign_loggers, configure_logging
+from .excepthook import install_excepthook, uninstall_excepthook
 from .logger import Logger
 
 # ----------------------- #
 
 __all__ = [
-    "LogLevelName",
     "Logger",
-    "bound_context",
-    "bind_context",
-    "clear_context",
-    "configure",
-    "get_config",
-    "getLogger",
-    "level_no",
-    "normalize_level",
-    "register_unhandled_exception_handler",
-    "reset",
+    "configure_logging",
+    "attach_foreign_loggers",
+    "install_excepthook",
+    "uninstall_excepthook",
 ]

@@ -17,16 +17,12 @@ from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import ExecutionContext
-from forze.base.logging import getLogger
 from forze.base.serialization import pydantic_model_hash
 
+from .._logger import logger
 from .feature import RouteFeature, RouteHandler
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="idempotency")
-
-# ....................... #
 
 ExecutionContextDependencyPort = Callable[[], ExecutionContext]
 """Callable that returns an :class:`ExecutionContext` (used as a FastAPI dependency)."""

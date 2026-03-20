@@ -20,7 +20,6 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict
 
 from ..kernel.gateways import (
@@ -30,13 +29,10 @@ from ..kernel.gateways import (
 )
 from ..kernel.introspect import PostgresIntrospector
 from ..kernel.platform import PostgresClient
+from ._logger import logger
 from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="postgres.search")
-
-# ....................... #
 
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
@@ -79,7 +75,9 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         spec: SearchIndexSpecInternal,
     ) -> SearchGateway[M]:
         if index in self.__gw_cache:
-            logger.trace("Returning cached gateway for index {index}", sub={"index": index})
+            logger.trace(
+                "Returning cached gateway for index {index}", sub={"index": index}
+            )
             return self.__gw_cache[index]
 
         q = PostgresQualifiedName.from_string(index)
@@ -96,7 +94,10 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
 
         match index_info.engine:
             case "pgroonga":
-                logger.trace("Using PGroonga search gateway for index '{index}'", sub={"index": index})
+                logger.trace(
+                    "Using PGroonga search gateway for index '{index}'",
+                    sub={"index": index},
+                )
 
                 gw = PostgresPGroongaSearchGateway[M](
                     qname=q_source,
@@ -107,7 +108,9 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
                 )
 
             case "fts":
-                logger.trace("Using FTS search gateway for index '{index}'", sub={"index": index})
+                logger.trace(
+                    "Using FTS search gateway for index '{index}'", sub={"index": index}
+                )
 
                 gw = PostgresFTSSearchGateway[M](
                     qname=q_source,
@@ -191,37 +194,36 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
             },
         )
 
-        with logger.section():
-            gw = await self._pick_gateway(index, spec)
+        gw = await self._pick_gateway(index, spec)
 
-            if return_model is not None:
-                return await gw.search(
-                    query=query,
-                    filters=filters,
-                    limit=limit,
-                    offset=offset,
-                    sorts=sorts,
-                    options=options,
-                    return_model=return_model,
-                )
+        if return_model is not None:
+            return await gw.search(
+                query=query,
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                options=options,
+                return_model=return_model,
+            )
 
-            elif return_fields is not None:
-                return await gw.search(
-                    query=query,
-                    filters=filters,
-                    limit=limit,
-                    offset=offset,
-                    sorts=sorts,
-                    options=options,
-                    return_fields=return_fields,
-                )
+        elif return_fields is not None:
+            return await gw.search(
+                query=query,
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                options=options,
+                return_fields=return_fields,
+            )
 
-            else:
-                return await gw.search(
-                    query=query,
-                    filters=filters,
-                    limit=limit,
-                    offset=offset,
-                    sorts=sorts,
-                    options=options,
-                )
+        else:
+            return await gw.search(
+                query=query,
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                options=options,
+            )

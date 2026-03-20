@@ -3,14 +3,14 @@
 from typing import Literal, Optional
 
 from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
-from forze.base.logging import getLogger
+from forze_postgres.kernel._logger import logger
 
 # ----------------------- #
 
-_logger = getLogger(__name__)
-
 FtsGroupLetter = Literal["A", "B", "C", "D"]
 """One of the four Postgres FTS weight labels."""
+
+# ....................... #
 
 
 def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
@@ -29,10 +29,10 @@ def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
     ordered = sorted(spec.groups, key=lambda g: g.weight, reverse=True)
 
     if len(ordered) > 4:
-        _logger.warning(
-            "FTS index spec contains {count} groups, but Postgres only supports 4 weights (A, B, C, D). "
+        logger.warning(
+            "FTS index spec contains '%s' groups, but Postgres only supports 4 weights (A, B, C, D). "
             "Groups after the first 4 (by weight) will be ignored.",
-            sub={"count": len(ordered)},
+            len(ordered),
         )
         ordered = ordered[:4]
 

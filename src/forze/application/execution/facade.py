@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import attrs
 
@@ -33,20 +33,20 @@ class UsecasesFacade:
 
 @attrs.define(slots=True, frozen=True)
 class facade_op[Args, R]:
-    """Simple descriptor for a facade operation."""
+    """Аacade operation descriptor."""
 
     op: OpKey
     """Operation key."""
 
-    uc: Optional[type[Usecase[Args, R]]] = attrs.field(default=None, kw_only=True)
-    """Optional usecase type to infer from."""
+    uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
+    """Optional usecase type to infer annotations from."""
 
     # ....................... #
 
     def __get__(
         self,
-        obj: Optional[UsecasesFacade],
-        objtype: Optional[type[Any]] = None,
+        obj: UsecasesFacade | None,
+        objtype: type[Any] | None = None,
     ) -> Usecase[Args, R]:
         if obj is None:
             raise AttributeError("facade_op is available only on facade instances")

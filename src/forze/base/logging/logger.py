@@ -1,200 +1,121 @@
-"""Thin Logger wrapper around structlog.
-
-Strict API: ``log.info("User {user_id} logged in", sub={"user_id": 123}, request_id="x")``.
-- sub: substitution for {key} placeholders; only keys in both message and sub are substituted.
-- kwargs: all go to extras.
-"""
-
-import re
-from contextlib import contextmanager
-from typing import Any, Iterator, Mapping, Self
+from typing import Any, Self, cast, final
 
 import attrs
-import structlog.typing
+from structlog import get_logger
+from structlog.typing import ExcInfo, FilteringBoundLogger
 
-from .config import LogLevel, effective_level_for_name, level_no, normalize_level
-from .context import log_section
+from .constants import TRACE_LEVEL_KEY, LogLevel, LogLevelToRank
 
 # ----------------------- #
 
-# Keys that must not be passed as user extras (structlog reserved)
-_STRUCTLOG_KEYS = frozenset({"event", "logger", "scope", "source"})
 
-# ....................... #
-
-
-def _format_event(  #! TODO: extract class names if objects are passed
-    message: str,
-    sub: Mapping[str, Any],
-    **kwargs: Any,
-) -> tuple[str, dict[str, Any]]:
-    """Format message with {key} placeholders, return (event, extras) for structlog.
-
-    sub: substitute only when message has {key} and sub provides key; otherwise skip.
-    Values are str()'d for substitution.
-    kwargs: all go to extras.
-    """
-
-    if "{" in message and "}" in message and sub:
-
-        def replace(match: re.Match[str]) -> str:
-            key = match.group(1)
-            return str(sub[key]) if key in sub else match.group(0)
-
-        event = re.sub(r"\{(\w+)\}", replace, message)
-
-    else:
-        event = message
-
-    extras = {k: v for k, v in kwargs.items() if k not in _STRUCTLOG_KEYS}
-
-    return event, extras
-
-
-# ....................... #
-#! TODO: outline difference between methods within the class
-
-
-@attrs.define(slots=True, frozen=True, kw_only=True)
+@final
+@attrs.define(slots=True, frozen=True)
 class Logger:
-    """Logger bound to a name, scope, and optional source."""
+    """Convenience wrapper around structlog's FilteringBoundLogger."""
 
     name: str
     """Logger name."""
 
-    backend: structlog.typing.FilteringBoundLogger
-    """Structlog backend."""
-
-    # ....................... #
-
-    def isEnabledFor(self, level: LogLevel) -> bool:
-        want = level_no(normalize_level(level))
-        have = level_no(effective_level_for_name(self.name))
-        return want >= have
+    bound: dict[str, Any] = attrs.field(factory=dict, kw_only=True)
+    """Bound context."""
 
     # ....................... #
 
     def bind(self, **kwargs: Any) -> Self:
-        return attrs.evolve(self, backend=self.backend.bind(**kwargs))
+        """Bind additional context to the logger."""
+
+        bound = {**self.bound, **kwargs}
+        return attrs.evolve(self, bound=bound)
 
     # ....................... #
 
-    @contextmanager
-    def section(self) -> Iterator[None]:
-        with log_section():
-            yield
+    @property
+    def backend(self) -> FilteringBoundLogger:
+        log = cast(FilteringBoundLogger, get_logger(self.name))
+
+        if self.bound:
+            log = log.bind(**self.bound)
+
+        return log
 
     # ....................... #
 
-    def trace(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
+    def notset(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at NOTSET level."""
+
+        self.backend.log(LogLevelToRank["notset"], event, *sub, **extras)
+
+    # ....................... #
+
+    def trace(self, event: str, *sub: Any, **extras: Any) -> None:
         """Log at TRACE level (below DEBUG). Use for noisy per-op details."""
 
-        self._log("debug", message, sub, {**kwargs, "_forze_level": "trace"})
+        extras = {**extras, TRACE_LEVEL_KEY: "trace"}
+        self.backend.debug(event, *sub, **extras)
 
     # ....................... #
 
-    def debug(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        self._log("debug", message, sub, kwargs)
+    def debug(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at DEBUG level."""
+
+        self.backend.debug(event, *sub, **extras)
 
     # ....................... #
 
-    def info(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        self._log("info", message, sub, kwargs)
+    def info(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at INFO level."""
+
+        self.backend.info(event, *sub, **extras)
 
     # ....................... #
 
-    def warning(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        self._log("warning", message, sub, kwargs)
+    def warning(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at WARNING level."""
 
-    warn = warning
+        self.backend.warning(event, *sub, **extras)
 
     # ....................... #
 
-    def error(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        self._log("error", message, sub, kwargs)
+    def error(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at ERROR level (no exception info)."""
+
+        self.backend.error(event, *sub, **extras)
 
     # ....................... #
 
-    def critical(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        self._log("critical", message, sub, kwargs)
+    def critical(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at CRITICAL level (no exception info)."""
+
+        self.backend.critical(event, *sub, **extras)
+
+    # ....................... #
+
+    def exception(self, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at ERROR level (with exception info)."""
+
+        self.backend.error(event, *sub, exc_info=True, **extras)
 
     # ....................... #
 
     def critical_exception(
         self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
+        event: str,
+        *sub: Any,
         exc: BaseException | None = None,
-        **kwargs: Any,
+        **extras: Any,
     ) -> None:
-        """Log unhandled exception at CRITICAL with full traceback (Rich when colorize)."""
-        event, extras = _format_event(message, sub or {}, **kwargs)
-        exc_info: bool | tuple[type[BaseException], BaseException, object] = (
+        """Log at CRITICAL level (with exception info). Mostly for unhandled exceptions."""
+
+        exc_info: bool | ExcInfo = (
             (type(exc), exc, exc.__traceback__) if exc is not None else True
         )
-        self.backend.critical(event, exc_info=exc_info, **extras)
+
+        self.backend.critical(event, *sub, exc_info=exc_info, **extras)
 
     # ....................... #
 
-    def exception(
-        self,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        event, extras = _format_event(message, sub or {}, **kwargs)
-        self.backend.error(event, exc_info=True, **extras)
+    def log(self, level: LogLevel, event: str, *sub: Any, **extras: Any) -> None:
+        """Log at the given level."""
 
-    # ....................... #
-
-    def log(
-        self,
-        level: LogLevel,
-        message: str,
-        sub: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        method = normalize_level(level).lower()
-        self._log(method, message, sub, kwargs)
-
-    # ....................... #
-
-    def _log(
-        self,
-        method: str,
-        message: str,
-        sub: Mapping[str, Any] | None,
-        kwargs: dict[str, Any],
-    ) -> None:
-        event, extras = _format_event(message, sub or {}, **kwargs)
-        getattr(self.backend, method)(event, **extras)
+        self.backend.log(LogLevelToRank.get(level, 0), event, *sub, **extras)

@@ -14,15 +14,11 @@ from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import KeyCodec
 from forze.base.errors import ValidationError
-from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
+from ._logger import logger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="redis.counter")
-
-# ....................... #
 
 
 @final
@@ -52,8 +48,7 @@ class RedisCounterAdapter(CounterPort):
 
         logger.debug("Incrementing counter '{key}' by {by}", sub={"key": key, "by": by})
 
-        with logger.section():
-            return await self.client.incr(key, by)
+        return await self.client.incr(key, by)
 
     # ....................... #
 
@@ -73,10 +68,9 @@ class RedisCounterAdapter(CounterPort):
             sub={"key": key, "size": size},
         )
 
-        with logger.section():
-            max_cnt = await self.client.incr(key, size)
+        max_cnt = await self.client.incr(key, size)
 
-            return list(range(max_cnt - size + 1, max_cnt + 1))
+        return list(range(max_cnt - size + 1, max_cnt + 1))
 
     # ....................... #
 
@@ -85,15 +79,15 @@ class RedisCounterAdapter(CounterPort):
 
         logger.debug("Decrementing counter '{key}' by {by}", sub={"key": key, "by": by})
 
-        with logger.section():
-            return await self.client.decr(key, by)
+        return await self.client.decr(key, by)
 
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> int:
         key = self._build_key(suffix)
 
-        logger.debug("Resetting counter '{key}' to {value}", sub={"key": key, "value": value})
+        logger.debug(
+            "Resetting counter '{key}' to {value}", sub={"key": key, "value": value}
+        )
 
-        with logger.section():
-            return await self.client.reset(key, value)
+        return await self.client.reset(key, value)

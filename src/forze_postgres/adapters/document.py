@@ -1,14 +1,12 @@
 """Postgres adapter implementing the document read/write port contracts."""
 
-from functools import cached_property
-
-from forze.base.logging import getLogger
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
 
 # ....................... #
 
+from functools import cached_property
 from typing import Optional, Sequence, TypeVar, final, overload
 from uuid import UUID
 
@@ -29,13 +27,10 @@ from forze.base.serialization import (
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
+from ._logger import logger
 from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="postgres.document")
-
-# ....................... #
 
 R = TypeVar("R", bound=ReadDocument)
 D = TypeVar("D", bound=Document)
@@ -130,19 +125,10 @@ class PostgresDocumentAdapter(
                 await self.cache.set_versioned(
                     str(doc.id), str(doc.rev), self._map_to_cache(doc)
                 )
-                logger.trace(
-                    "Cache set successfully for 1 {qualname} document",
-                    sub={"qualname": self._rgw_qname},
-                )
+                logger.trace("Cache set successfully")
 
-            except Exception as e:
-                logger.debug(
-                    "Cache set failed for 1 {qualname} document, continuing",
-                    sub={"qualname": self._rgw_qname},
-                )
-
-                with logger.section():
-                    logger.trace("Cache exception: {exc}", sub={"exc": e})
+            except Exception:
+                logger.exception("Cache set failed, continuing")
 
     # ....................... #
 
@@ -165,8 +151,7 @@ class PostgresDocumentAdapter(
                     sub={"count": len(docs), "qualname": self._rgw_qname},
                 )
 
-                with logger.section():
-                    logger.trace("Cache exception: {exc}", sub={"exc": e})
+                logger.trace("Cache exception: {exc}", sub={"exc": e})
 
     # ....................... #
 
@@ -179,14 +164,11 @@ class PostgresDocumentAdapter(
                     sub={"count": len(pks), "qualname": self._rgw_qname},
                 )
 
-            except Exception as e:
+            except Exception:
                 logger.debug(
                     "Cache clear failed for {count} {qualname} document(s), continuing",
                     sub={"count": len(pks), "qualname": self._rgw_qname},
                 )
-
-                with logger.section():
-                    logger.trace("Cache exception: {exc}", sub={"exc": e})
 
     # ....................... #
 
@@ -220,45 +202,43 @@ class PostgresDocumentAdapter(
             sub={"qualname": self._rgw_qname, "pk": pk},
         )
 
-        with logger.section():
-            if return_fields is not None or self.cache is None:
-                return await self.read_gw.get(
-                    pk,
-                    for_update=for_update,
-                    return_fields=return_fields,
-                )
+        if return_fields is not None or self.cache is None:
+            return await self.read_gw.get(
+                pk,
+                for_update=for_update,
+                return_fields=return_fields,
+            )
 
-            try:
-                cached = await self.cache.get(str(pk))
+        try:
+            cached = await self.cache.get(str(pk))
 
-            except Exception as e:
-                logger.debug(
-                    "Cache get failed for 1 {qualname} document, falling back to read gateway",
-                    sub={"qualname": self._rgw_qname},
-                )
-
-                with logger.section():
-                    logger.trace("Cache exception: {exc}", sub={"exc": e})
-
-                return await self.read_gw.get(
-                    pk,
-                    for_update=for_update,
-                    return_fields=return_fields,
-                )
-
-            if cached is not None:
-                logger.trace(
-                    "Retrieved 1 cached {qualname} document",
-                    sub={"qualname": self._rgw_qname},
-                )
-                return pydantic_validate(self.read_gw.model, cached)
-
+        except Exception as e:
             logger.debug(
-                "Fetching 1 {qualname} document from database (cache miss)",
+                "Cache get failed for 1 {qualname} document, falling back to read gateway",
                 sub={"qualname": self._rgw_qname},
             )
-            res = await self.read_gw.get(pk)
-            await self._set_cache(res)
+
+            logger.trace("Cache exception: {exc}", sub={"exc": e})
+
+            return await self.read_gw.get(
+                pk,
+                for_update=for_update,
+                return_fields=return_fields,
+            )
+
+        if cached is not None:
+            logger.trace(
+                "Retrieved 1 cached {qualname} document",
+                sub={"qualname": self._rgw_qname},
+            )
+            return pydantic_validate(self.read_gw.model, cached)
+
+        logger.debug(
+            "Fetching 1 {qualname} document from database (cache miss)",
+            sub={"qualname": self._rgw_qname},
+        )
+        res = await self.read_gw.get(pk)
+        await self._set_cache(res)
 
         return res
 
@@ -294,46 +274,42 @@ class PostgresDocumentAdapter(
             sub={"count": len(pks), "qualname": self._rgw_qname, "first_pk": pks[0]},
         )
 
-        with logger.section():
-            if return_fields is not None or self.cache is None:
-                return await self.read_gw.get_many(pks, return_fields=return_fields)
+        if return_fields is not None or self.cache is None:
+            return await self.read_gw.get_many(pks, return_fields=return_fields)
 
-            try:
-                hits, misses = await self.cache.get_many([str(pk) for pk in pks])
+        try:
+            hits, misses = await self.cache.get_many([str(pk) for pk in pks])
 
-                if hits:
-                    logger.trace(
-                        "Retrieved {count} cached {qualname} document(s)",
-                        sub={"count": len(hits), "qualname": self._rgw_qname},
-                    )
-
-            except Exception as e:
-                logger.debug(
-                    "Cache get failed for {count} {qualname} document(s), falling back to read gateway",
-                    sub={"count": len(pks), "qualname": self._rgw_qname},
+            if hits:
+                logger.trace(
+                    "Retrieved {count} cached {qualname} document(s)",
+                    sub={"count": len(hits), "qualname": self._rgw_qname},
                 )
 
-                with logger.section():
-                    logger.trace("Cache exception: {exc}", sub={"exc": e})
-
-                return await self.read_gw.get_many(pks, return_fields=return_fields)
-
-            miss_res: list[R] = []
-
-            if misses:
-                logger.debug(
-                    "Fetching {count} {qualname} document(s) from database (cache miss)",
-                    sub={"count": len(misses), "qualname": self._rgw_qname},
-                )
-
-                miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
-                await self._set_cache_many(miss_res)
-
-            hits_validated = pydantic_validate_many(
-                self.read_gw.model, list(hits.values())
+        except Exception as e:
+            logger.debug(
+                "Cache get failed for {count} {qualname} document(s), falling back to read gateway",
+                sub={"count": len(pks), "qualname": self._rgw_qname},
             )
-            by_pk = {x.id: x for x in hits_validated}
-            by_pk.update({x.id: x for x in miss_res})
+
+            logger.trace("Cache exception: {exc}", sub={"exc": e})
+
+            return await self.read_gw.get_many(pks, return_fields=return_fields)
+
+        miss_res: list[R] = []
+
+        if misses:
+            logger.debug(
+                "Fetching {count} {qualname} document(s) from database (cache miss)",
+                sub={"count": len(misses), "qualname": self._rgw_qname},
+            )
+
+            miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
+            await self._set_cache_many(miss_res)
+
+        hits_validated = pydantic_validate_many(self.read_gw.model, list(hits.values()))
+        by_pk = {x.id: x for x in hits_validated}
+        by_pk.update({x.id: x for x in miss_res})
 
         return [by_pk[pk] for pk in pks]
 
@@ -373,12 +349,11 @@ class PostgresDocumentAdapter(
             },
         )
 
-        with logger.section():
-            return await self.read_gw.find(
-                filters,
-                for_update=for_update,
-                return_fields=return_fields,
-            )
+        return await self.read_gw.find(
+            filters,
+            for_update=for_update,
+            return_fields=return_fields,
+        )
 
     # ....................... #
 
@@ -424,30 +399,29 @@ class PostgresDocumentAdapter(
             },
         )
 
-        with logger.section():
-            cnt = await self.read_gw.count(filters)
+        cnt = await self.read_gw.count(filters)
 
-            if not cnt:
-                logger.debug(
-                    "No {qualname} documents matching filters",
-                    sub={"qualname": self._rgw_qname},
-                )
-                return [], 0
-
+        if not cnt:
             logger.debug(
-                "Found {count} {qualname} documents matching filters",
-                sub={"count": cnt, "qualname": self._rgw_qname},
+                "No {qualname} documents matching filters",
+                sub={"qualname": self._rgw_qname},
             )
+            return [], 0
 
-            res = await self.read_gw.find_many(  # type: ignore[misc]
-                filters=filters,
-                limit=limit,
-                offset=offset,
-                sorts=sorts,
-                return_fields=return_fields,  # type: ignore[arg-type]
-            )
+        logger.debug(
+            "Found {count} {qualname} documents matching filters",
+            sub={"count": cnt, "qualname": self._rgw_qname},
+        )
 
-            return res, cnt
+        res = await self.read_gw.find_many(  # type: ignore[misc]
+            filters=filters,
+            limit=limit,
+            offset=offset,
+            sorts=sorts,
+            return_fields=return_fields,  # type: ignore[arg-type]
+        )
+
+        return res, cnt
 
     # ....................... #
 
@@ -460,22 +434,22 @@ class PostgresDocumentAdapter(
             },
         )
 
-        with logger.section():
-            return await self.read_gw.count(filters)
+        return await self.read_gw.count(filters)
 
     # ....................... #
 
     async def create(self, dto: C) -> R:
         w = self._require_write()
 
-        logger.debug("Creating 1 {qualname} document", sub={"qualname": self._wgw_qname})
+        logger.debug(
+            "Creating 1 {qualname} document", sub={"qualname": self._wgw_qname}
+        )
 
-        with logger.section():
-            domain = await w.create(dto)
+        domain = await w.create(dto)
 
-            # Repeat read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get(domain.id)
-            await self._set_cache(res)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(domain.id)
+        await self._set_cache(res)
 
         return res
 
@@ -496,12 +470,11 @@ class PostgresDocumentAdapter(
             sub={"count": len(dtos), "qualname": self._wgw_qname},
         )
 
-        with logger.section():
-            domains = await w.create_many(dtos)
+        domains = await w.create_many(dtos)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get_many([x.id for x in domains])
-            await self._set_cache_many(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many([x.id for x in domains])
+        await self._set_cache_many(res)
 
         return res
 
@@ -515,13 +488,12 @@ class PostgresDocumentAdapter(
             sub={"qualname": self._rgw_qname, "pk": pk},
         )
 
-        with logger.section():
-            await w.update(pk, dto, rev=rev)
-            await self._clear_cache(pk)
+        await w.update(pk, dto, rev=rev)
+        await self._clear_cache(pk)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get(pk)
-            await self._set_cache(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
+        await self._set_cache(res)
 
         return res
 
@@ -548,13 +520,12 @@ class PostgresDocumentAdapter(
             sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
         )
 
-        with logger.section():
-            await w.update_many(pks, dtos, revs=revs)
-            await self._clear_cache(*pks)
+        await w.update_many(pks, dtos, revs=revs)
+        await self._clear_cache(*pks)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get_many(pks)
-            await self._set_cache_many(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
+        await self._set_cache_many(res)
 
         return res
 
@@ -568,13 +539,12 @@ class PostgresDocumentAdapter(
             sub={"qualname": self._wgw_qname, "pk": pk},
         )
 
-        with logger.section():
-            await w.touch(pk)
-            await self._clear_cache(pk)
+        await w.touch(pk)
+        await self._clear_cache(pk)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get(pk)
-            await self._set_cache(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
+        await self._set_cache(res)
 
         return res
 
@@ -595,13 +565,12 @@ class PostgresDocumentAdapter(
             sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
         )
 
-        with logger.section():
-            await w.touch_many(pks)
-            await self._clear_cache(*pks)
+        await w.touch_many(pks)
+        await self._clear_cache(*pks)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get_many(pks)
-            await self._set_cache_many(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
+        await self._set_cache_many(res)
 
         return res
 
@@ -615,9 +584,8 @@ class PostgresDocumentAdapter(
             sub={"qualname": self._rgw_qname, "pk": pk},
         )
 
-        with logger.section():
-            await w.kill(pk)
-            await self._clear_cache(pk)
+        await w.kill(pk)
+        await self._clear_cache(pk)
 
     # ....................... #
 
@@ -636,9 +604,8 @@ class PostgresDocumentAdapter(
             sub={"count": len(pks), "qualname": self._rgw_qname, "first_pk": pks[0]},
         )
 
-        with logger.section():
-            await w.kill_many(pks)
-            await self._clear_cache(*pks)
+        await w.kill_many(pks)
+        await self._clear_cache(*pks)
 
     # ....................... #
 
@@ -650,13 +617,12 @@ class PostgresDocumentAdapter(
             sub={"qualname": self._rgw_qname, "pk": pk},
         )
 
-        with logger.section():
-            await w.delete(pk, rev=rev)
-            await self._clear_cache(pk)
+        await w.delete(pk, rev=rev)
+        await self._clear_cache(pk)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get(pk)
-            await self._set_cache(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
+        await self._set_cache(res)
 
         return res
 
@@ -682,13 +648,12 @@ class PostgresDocumentAdapter(
             sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
         )
 
-        with logger.section():
-            await w.delete_many(pks, revs=revs)
-            await self._clear_cache(*pks)
+        await w.delete_many(pks, revs=revs)
+        await self._clear_cache(*pks)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get_many(pks)
-            await self._set_cache_many(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
+        await self._set_cache_many(res)
 
         return res
 
@@ -702,13 +667,12 @@ class PostgresDocumentAdapter(
             sub={"qualname": self._wgw_qname, "pk": pk},
         )
 
-        with logger.section():
-            await w.restore(pk, rev=rev)
-            await self._clear_cache(pk)
+        await w.restore(pk, rev=rev)
+        await self._clear_cache(pk)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get(pk)
-            await self._set_cache(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get(pk)
+        await self._set_cache(res)
 
         return res
 
@@ -734,12 +698,11 @@ class PostgresDocumentAdapter(
             sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
         )
 
-        with logger.section():
-            await w.restore_many(pks, revs=revs)
-            await self._clear_cache(*pks)
+        await w.restore_many(pks, revs=revs)
+        await self._clear_cache(*pks)
 
-            # Repeate read is required to meet criteria for diverse read and write sources
-            res = await self.read_gw.get_many(pks)
-            await self._set_cache_many(res)
+        # Repeate read is required to meet criteria for diverse read and write sources
+        res = await self.read_gw.get_many(pks)
+        await self._set_cache_many(res)
 
         return res

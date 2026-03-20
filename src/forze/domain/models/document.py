@@ -11,7 +11,6 @@ from uuid import UUID
 from pydantic import Field
 
 from forze.base.errors import ValidationError
-from forze.base.logging import getLogger
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     apply_dict_patch,
@@ -20,6 +19,7 @@ from forze.base.serialization import (
     split_touches_from_merge_patch,
 )
 
+from .._logger import logger
 from ..validation import (
     UpdateValidator,
     UpdateValidatorMetadata,
@@ -28,10 +28,6 @@ from ..validation import (
 from .base import BaseDTO, CoreModel
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="domain")
-
-# ....................... #
 
 
 class Document(CoreModel):
@@ -65,27 +61,27 @@ class Document(CoreModel):
         super().__init_subclass__(**kwargs)
 
         logger.trace(
-            "Collecting update validators for document subclass {qualname}",
-            sub={"qualname": cls.__qualname__},
+            "Collecting update validators for document subclass %s",
+            cls.__qualname__,
         )
 
-        with logger.section():
-            cls._update_validators_ = collect_update_validators(
-                cls,
-                on_conflict=cls._update_validators_on_conflict,
-            )
+        cls._update_validators_ = collect_update_validators(
+            cls,
+            on_conflict=cls._update_validators_on_conflict,
+        )
 
-            logger.trace(
-                "Collected {count} validator(s) for {qualname}",
-                sub={"count": len(cls._update_validators_), "qualname": cls.__qualname__},
-            )
+        logger.trace(
+            "Collected %s validator(s) for %s",
+            len(cls._update_validators_),
+            cls.__qualname__,
+        )
 
     # ....................... #
 
     def _validate_update_data(self, data: JsonDict) -> JsonDict:
         """Validate incoming update data against model fields and frozen flags."""
 
-        logger.trace("Validating update data for {qualname}", sub={"qualname": type(self).__qualname__})
+        logger.trace("Validating update data for %s", type(self).__qualname__)
 
         valid: JsonDict = {}
         fields = type(self).model_fields
@@ -110,15 +106,14 @@ class Document(CoreModel):
         """Return a minimal merge patch that represents ``data`` applied to self."""
 
         logger.trace(
-            "Calculating update diff for {qualname}",
-            sub={"qualname": type(self).__qualname__},
+            "Calculating update diff for %s",
+            type(self).__qualname__,
         )
 
-        with logger.section():
-            patch = self._validate_update_data(data)
-            before = self.model_dump(mode="json")
-            after = apply_dict_patch(before, patch)
-            diff = calculate_dict_difference(before, after)
+        patch = self._validate_update_data(data)
+        before = self.model_dump(mode="json")
+        after = apply_dict_patch(before, patch)
+        diff = calculate_dict_difference(before, after)
 
         return diff
 
@@ -127,16 +122,14 @@ class Document(CoreModel):
     def _apply_update(self, diff: JsonDict) -> Self:
         if not diff:
             logger.trace(
-                "No diff for {qualname}; returning original instance",
-                sub={"qualname": type(self).__qualname__},
+                "No diff for %s; returning original instance", type(self).__qualname__
             )
             return self
 
         needs_deep = any(isinstance(v, (dict, list)) for v in diff.values())
 
         logger.trace(
-            "Applying diff to {qualname} (needs_deep={needs_deep})",
-            sub={"qualname": type(self).__qualname__, "needs_deep": needs_deep},
+            "Applying diff to %s (needs_deep=%s)", type(self).__qualname__, needs_deep
         )
 
         return self.model_copy(update=diff, deep=needs_deep)
@@ -147,18 +140,17 @@ class Document(CoreModel):
         keys = diff.keys()
         cls = type(self)
 
-        logger.trace("Running update validators for {qualname}", sub={"qualname": cls.__qualname__})
+        logger.trace("Running update validators for %s", cls.__qualname__)
 
-        with logger.section():
-            for name, meta in cls._update_validators_:
-                if meta.fields is not None and keys.isdisjoint(meta.fields):
-                    logger.trace("Skipping validator {name} (fields={fields})", sub={"name": name, "fields": meta.fields})
-                    continue
+        for name, meta in cls._update_validators_:
+            if meta.fields is not None and keys.isdisjoint(meta.fields):
+                logger.trace("Skipping validator %s (fields=%s)", name, meta.fields)
+                continue
 
-                logger.trace("Running validator {name} (fields={fields})", sub={"name": name, "fields": meta.fields})
+            logger.trace("Running validator %s (fields=%s)", name, meta.fields)
 
-                method = cast(UpdateValidator[Self], getattr(cls, name))
-                method(self, after, diff)
+            method = cast(UpdateValidator[Self], getattr(cls, name))
+            method(self, after, diff)
 
     # ....................... #
 
@@ -174,31 +166,31 @@ class Document(CoreModel):
         """
 
         logger.debug(
-            "Updating {qualname} with keys={keys}",
-            sub={"qualname": type(self).__qualname__, "keys": tuple(data.keys())},
+            "Updating %s with keys=%s",
+            type(self).__qualname__,
+            tuple(data.keys()),
         )
 
-        with logger.section():
-            diff = self._calculate_update_diff(data)
+        diff = self._calculate_update_diff(data)
 
-            if diff:
-                diff["last_update_at"] = utcnow()
-                after = self._apply_update(diff)
+        if diff:
+            diff["last_update_at"] = utcnow()
+            after = self._apply_update(diff)
 
-            else:
-                logger.trace("Update diff is empty; document remains unchanged")
-                after = self
+        else:
+            logger.trace("Update diff is empty; document remains unchanged")
+            after = self
 
-            self._run_update_validators(after, diff)
+        self._run_update_validators(after, diff)
 
-            return after, diff
+        return after, diff
 
     # ....................... #
 
     def touch(self) -> tuple[Self, JsonDict]:
         """Update only ``last_update_at`` and return a new instance and diff."""
 
-        logger.debug("Touching {qualname}", sub={"qualname": type(self).__qualname__})
+        logger.debug("Touching %s", type(self).__qualname__)
 
         diff = {"last_update_at": utcnow()}
         model_copy = self.model_copy(update=diff)
@@ -215,34 +207,34 @@ class Document(CoreModel):
         """
 
         logger.debug(
-            "Validating historical consistency for {qualname} with update keys={keys}",
-            sub={"qualname": type(self).__qualname__, "keys": tuple(data.keys())},
+            "Validating historical consistency for %s with update keys=%s",
+            type(self).__qualname__,
+            tuple(data.keys()),
         )
 
-        with logger.section():
-            old_state = old.model_dump(mode="json")
-            self_state = self.model_dump(mode="json")
+        old_state = old.model_dump(mode="json")
+        self_state = self.model_dump(mode="json")
 
-            old_upd_state = apply_dict_patch(old_state, data)
+        old_upd_state = apply_dict_patch(old_state, data)
 
-            old_self_diff = calculate_dict_difference(old_state, self_state)
-            old_upd_diff = calculate_dict_difference(old_state, old_upd_state)
+        old_self_diff = calculate_dict_difference(old_state, self_state)
+        old_upd_diff = calculate_dict_difference(old_state, old_upd_state)
 
-            old_self_scalars, old_self_containers = split_touches_from_merge_patch(
-                old_self_diff
-            )
-            old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(
-                old_upd_diff
-            )
+        old_self_scalars, old_self_containers = split_touches_from_merge_patch(
+            old_self_diff
+        )
+        old_upd_scalars, old_upd_containers = split_touches_from_merge_patch(
+            old_upd_diff
+        )
 
-            has_conflict = has_hybrid_patch_conflict(
-                old_self_scalars,
-                old_self_containers,
-                old_upd_scalars,
-                old_upd_containers,
-            )
+        has_conflict = has_hybrid_patch_conflict(
+            old_self_scalars,
+            old_self_containers,
+            old_upd_scalars,
+            old_upd_containers,
+        )
 
-            logger.trace("Historical consistency conflict={has_conflict}", sub={"has_conflict": has_conflict})
+        logger.trace("Historical consistency conflict=%s", has_conflict)
 
         return not has_conflict
 

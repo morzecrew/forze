@@ -1,0 +1,172 @@
+"""Configure logging for the application.
+
+Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf03759c29e.
+"""
+
+import logging
+import sys
+from typing import Final, Literal, Sequence, TextIO
+
+import structlog
+from structlog._native import (
+    _make_filtering_bound_logger,  # pyright: ignore[reportPrivateUsage]
+)
+from structlog.types import Processor
+
+from .constants import LogLevel, LogLevelToRank, RenderMode
+from .processors import (
+    RedundantKeysDropper,
+    format_exc_info,
+    inject_otel_context,
+    resolve_trace_level,
+)
+
+# ----------------------- #
+
+
+def build_renderer(render_mode: RenderMode) -> structlog.types.Processor:
+    if render_mode == "json":
+        return structlog.processors.JSONRenderer()
+
+    else:
+        return structlog.dev.ConsoleRenderer()
+
+
+# ....................... #
+
+
+def build_common_processors(render_mode: RenderMode) -> list[Processor]:
+    processors: list[Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        inject_otel_context,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    if render_mode == "json":
+        processors.append(format_exc_info)
+
+    return processors
+
+
+# ....................... #
+
+
+def build_structlog_processors() -> list[Processor]:
+    return [
+        resolve_trace_level,
+        structlog.stdlib.PositionalArgumentsFormatter(remove_positional_args=True),
+        structlog.stdlib.ExtraAdder(),
+    ]
+
+
+# ....................... #
+
+
+def build_foreign_formatter(
+    render_mode: RenderMode,
+    drop_keys: list[str] | None = None,
+) -> structlog.stdlib.ProcessorFormatter:
+    return structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=[
+            *build_common_processors(render_mode),
+            RedundantKeysDropper(keys=drop_keys or []),
+        ],
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            build_renderer(render_mode),
+        ],
+    )
+
+
+# ....................... #
+
+DEFAULT_LOGGER_NAMES: Final[tuple[str, ...]] = (
+    "forze",
+    "forze.uncaught",
+    "forze.application",
+    "forze.domain",
+    "forze.base",
+)
+"""Default logger names to configure logging for."""
+
+
+def configure_logging(
+    *,
+    level: LogLevel = "info",
+    render_mode: Literal["console", "json"] = "console",
+    logger_names: Sequence[str] = DEFAULT_LOGGER_NAMES,
+    stream: TextIO = sys.stdout,
+) -> None:
+    """Configure logging for the application.
+
+    :param level: The logging level to use: "notset", "trace", "debug", "info", "warning", "error", "critical".
+    :param render_mode: The render mode to use: "console", "json".
+    :param logger_names: The logger names to configure logging for.
+    :param stream: The stream to use for logging (default: stdout).
+    """
+
+    wrapper_class = (
+        structlog.make_filtering_bound_logger(level)
+        if level != "trace"
+        else _make_filtering_bound_logger(LogLevelToRank.get(level, 0))
+    )
+
+    structlog.configure(
+        processors=[
+            *build_common_processors(render_mode),
+            *build_structlog_processors(),
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=wrapper_class,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=[],
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            build_renderer(render_mode),
+        ],
+    )
+
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        logger.handlers.clear()
+        logger.setLevel(LogLevelToRank.get(level, 0))
+        logger.propagate = False
+
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+
+# ....................... #
+
+
+def attach_foreign_loggers(
+    names: Sequence[str],
+    *,
+    level: LogLevel = "info",
+    render_mode: RenderMode = "console",
+    stream: TextIO = sys.stdout,
+    replace_handlers: bool = True,
+    propagate: bool = False,
+) -> None:
+    formatter = build_foreign_formatter(render_mode)
+
+    for name in names:
+        logger = logging.getLogger(name)
+
+        if replace_handlers:
+            logger.handlers.clear()
+
+        logger.setLevel(LogLevelToRank.get(level, 0))
+        logger.propagate = propagate
+
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)

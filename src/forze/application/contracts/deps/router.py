@@ -115,7 +115,7 @@ class DepRouter(Generic[SpecT, DepPortT]):
                 glob_remainder = remainder
 
             else:
-                glob_remainder = glob_remainder.merge(glob_remainder, remainder)
+                glob_remainder = glob_remainder.merge(remainder)
 
         if glob_remainder is not None and glob_remainder.empty():
             glob_remainder = None
