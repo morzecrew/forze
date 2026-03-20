@@ -1,6 +1,10 @@
 # Forze
 
-[![PyPI](https://img.shields.io/pypi/v/forze?label=PyPI)](https://pypi.org/project/forze/) [![Python](https://img.shields.io/pypi/pyversions/forze)](https://pypi.org/project/forze/) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze) [![CodeFactor](https://www.codefactor.io/repository/github/morzecrew/forze/badge)](https://www.codefactor.io/repository/github/morzecrew/forze)
+[![PyPI](https://img.shields.io/pypi/v/forze?label=PyPI)](https://pypi.org/project/forze/)
+[![Python](https://img.shields.io/pypi/pyversions/forze)](https://pypi.org/project/forze/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze)
+[![CodeFactor](https://www.codefactor.io/repository/github/morzecrew/forze/badge)](https://www.codefactor.io/repository/github/morzecrew/forze)
+[![codecov](https://codecov.io/github/morzecrew/forze/graph/badge.svg?token=WIKAC2IUS9)](https://codecov.io/github/morzecrew/forze)
 
 **Forze** is a lightweight infrastructure toolkit for building backend services
 with Domain-Driven Design and Hexagonal Architecture.
