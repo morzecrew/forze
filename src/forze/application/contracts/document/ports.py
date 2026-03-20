@@ -2,7 +2,6 @@
 
 from typing import (
     Awaitable,
-    Optional,
     Protocol,
     Sequence,
     TypeVar,
@@ -57,7 +56,7 @@ class DocumentReadPort[R](Protocol):
         pk: UUID,
         *,
         for_update: bool = False,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> Awaitable[R | JsonDict]:
         """Fetch a single document by primary key.
 
@@ -94,7 +93,7 @@ class DocumentReadPort[R](Protocol):
         self,
         pks: Sequence[UUID],
         *,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> Awaitable[Sequence[R] | Sequence[JsonDict]]:
         """Fetch multiple documents by primary key."""
         ...  # pragma: no cover
@@ -108,7 +107,7 @@ class DocumentReadPort[R](Protocol):
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> Awaitable[Optional[JsonDict]]:
+    ) -> Awaitable[JsonDict | None]:
         """Find a single document by filters and project selected fields."""
         ...  # pragma: no cover
 
@@ -119,7 +118,7 @@ class DocumentReadPort[R](Protocol):
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> Awaitable[Optional[R]]:
+    ) -> Awaitable[R | None]:
         """Find a single document by filters and return the typed read model."""
         ...  # pragma: no cover
 
@@ -128,8 +127,8 @@ class DocumentReadPort[R](Protocol):
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> Awaitable[Optional[R | JsonDict]]:
+        return_fields: Sequence[str] | None = None,
+    ) -> Awaitable[R | JsonDict | None]:
         """Find a single document by filters or return ``None`` when missing."""
         ...  # pragma: no cover
 
@@ -138,10 +137,10 @@ class DocumentReadPort[R](Protocol):
     @overload
     def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
     ) -> Awaitable[tuple[list[JsonDict], int]]:
@@ -151,10 +150,10 @@ class DocumentReadPort[R](Protocol):
     @overload
     def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
     ) -> Awaitable[tuple[list[R], int]]:
@@ -163,12 +162,12 @@ class DocumentReadPort[R](Protocol):
 
     def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> Awaitable[tuple[list[R] | list[JsonDict], int]]:
         """Find many documents, optionally paginated and sorted.
 
@@ -178,7 +177,7 @@ class DocumentReadPort[R](Protocol):
 
     # ....................... #
 
-    def count(self, filters: Optional[QueryFilterExpression] = None) -> Awaitable[int]:  # type: ignore[valid-type]
+    def count(self, filters: QueryFilterExpression | None = None) -> Awaitable[int]:  # type: ignore[valid-type]
         """Count documents by filters."""
         ...  # pragma: no cover
 
@@ -198,7 +197,7 @@ class DocumentWritePort[R, D, C, U](Protocol):
         """Create multiple documents in a batch."""
         ...  # pragma: no cover
 
-    def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> Awaitable[R]:
+    def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
 
@@ -207,7 +206,7 @@ class DocumentWritePort[R, D, C, U](Protocol):
         pks: Sequence[UUID],
         dtos: Sequence[U],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Awaitable[Sequence[R]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -228,7 +227,7 @@ class DocumentWritePort[R, D, C, U](Protocol):
         """Hard-delete multiple documents."""
         ...  # pragma: no cover
 
-    def delete(self, pk: UUID, *, rev: Optional[int] = None) -> Awaitable[R]:
+    def delete(self, pk: UUID, *, rev: int | None = None) -> Awaitable[R]:
         """Soft-delete a document if the model supports it."""
         ...  # pragma: no cover
 
@@ -236,12 +235,12 @@ class DocumentWritePort[R, D, C, U](Protocol):
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Awaitable[Sequence[R]]:
         """Soft-delete multiple documents."""
         ...  # pragma: no cover
 
-    def restore(self, pk: UUID, *, rev: Optional[int] = None) -> Awaitable[R]:
+    def restore(self, pk: UUID, *, rev: int | None = None) -> Awaitable[R]:
         """Restore a previously soft-deleted document."""
         ...  # pragma: no cover
 
@@ -249,7 +248,7 @@ class DocumentWritePort[R, D, C, U](Protocol):
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Awaitable[Sequence[R]]:
         """Restore multiple previously soft-deleted documents."""
         ...  # pragma: no cover

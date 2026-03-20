@@ -1,4 +1,4 @@
-from typing import Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
 import attrs
 from pydantic import BaseModel
@@ -25,10 +25,10 @@ class SearchDTOs(Generic[M, tS, rS]):
     read: type[M]
     """Read DTO type."""
 
-    typed: Optional[type[tS]] = None
+    typed: type[tS] | None = None
     """Typed search request DTO type. Provided only if typed search has custom DTO."""
 
-    raw: Optional[type[rS]] = None
+    raw: type[rS] | None = None
     """Raw search request DTO type. Provided only if raw search has custom DTO."""
 
 

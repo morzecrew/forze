@@ -7,7 +7,7 @@ require_psycopg()
 # ....................... #
 
 from functools import cached_property
-from typing import Optional, Sequence, TypeVar, final, overload
+from typing import Sequence, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
@@ -55,8 +55,8 @@ class PostgresDocumentAdapter(
     """
 
     read_gw: PostgresReadGateway[R]
-    write_gw: Optional[PostgresWriteGateway[D, C, U]] = None
-    cache: Optional[CachePort] = None
+    write_gw: PostgresWriteGateway[D, C, U] | None = None
+    cache: CachePort | None = None
 
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
@@ -199,7 +199,7 @@ class PostgresDocumentAdapter(
         pk: UUID,
         *,
         for_update: bool = False,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> R | JsonDict:
         logger.debug(
             "Fetching 1 %s document (pk=%s)",
@@ -269,7 +269,7 @@ class PostgresDocumentAdapter(
         self,
         pks: Sequence[UUID],
         *,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> Sequence[R] | Sequence[JsonDict]:
         if not pks:
             return []
@@ -332,7 +332,7 @@ class PostgresDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> Optional[JsonDict]: ...
+    ) -> JsonDict | None: ...
 
     @overload
     async def find(
@@ -341,15 +341,15 @@ class PostgresDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> Optional[R]: ...
+    ) -> R | None: ...
 
     async def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> Optional[R | JsonDict]:
+        return_fields: Sequence[str] | None = None,
+    ) -> R | JsonDict | None:
         logger.debug(
             "Finding 1 %s document (filter by %s, for_update=%s)",
             self._rgw_qname,
@@ -368,10 +368,10 @@ class PostgresDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
@@ -379,22 +379,22 @@ class PostgresDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
     ) -> tuple[list[R], int]: ...
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
         logger.debug(
             "Finding %s documents (filter by %s, limit=%s, offset=%s, sorts=%s)",
@@ -432,7 +432,7 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
+    async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type]
         logger.debug(
             "Counting %s documents (filter by %s)",
             self._rgw_qname,
@@ -484,7 +484,7 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
+    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> R:
         w = self._require_write()
 
         logger.debug(
@@ -509,7 +509,7 @@ class PostgresDocumentAdapter(
         pks: Sequence[UUID],
         dtos: Sequence[U],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[R]:
         w = self._require_write()
 
@@ -622,7 +622,7 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+    async def delete(self, pk: UUID, *, rev: int | None = None) -> R:
         w = self._require_write()
 
         logger.debug(
@@ -646,7 +646,7 @@ class PostgresDocumentAdapter(
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[R]:
         w = self._require_write()
 
@@ -675,7 +675,7 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+    async def restore(self, pk: UUID, *, rev: int | None = None) -> R:
         w = self._require_write()
 
         logger.debug(
@@ -699,7 +699,7 @@ class PostgresDocumentAdapter(
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[R]:
         w = self._require_write()
 

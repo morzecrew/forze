@@ -1,6 +1,6 @@
 """Utilities for mapping search spec groups to Postgres FTS weight letters."""
 
-from typing import Literal, Optional
+from typing import Literal
 
 from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
 from forze_postgres.kernel._logger import logger
@@ -46,7 +46,7 @@ def fts_map_groups(spec: SearchIndexSpecInternal) -> dict[str, FtsGroupLetter]:
 
 def fts_rank_weights_array(
     spec: SearchIndexSpecInternal,
-    options: Optional[SearchOptions] = None,
+    options: SearchOptions | None = None,
 ) -> list[float]:
     """Build the four-element weight array for ``ts_rank_cd`` in ``[D, C, B, A]`` order.
 

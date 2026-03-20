@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Optional, cast, final
+from typing import Any, cast, final
 
 import attrs
 from psycopg import sql
@@ -50,7 +50,7 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    def __normalize_schema(self, schema: Optional[str]) -> str:
+    def __normalize_schema(self, schema: str | None) -> str:
         return schema or "public"
 
     # ....................... #
@@ -58,7 +58,7 @@ class PostgresIntrospector:
     async def get_relation(
         self,
         *,
-        schema: Optional[str],
+        schema: str | None,
         relation: str,
     ) -> PostgresRelationKind:
         """Return the :data:`PostgresRelationKind` of a relation, using the cache when available.
@@ -118,7 +118,7 @@ class PostgresIntrospector:
     async def require_relation(
         self,
         *,
-        schema: Optional[str],
+        schema: str | None,
         relation: str,
         allow: tuple[PostgresRelationKind, ...] = (
             "table",
@@ -152,7 +152,7 @@ class PostgresIntrospector:
     async def get_column_types(
         self,
         *,
-        schema: Optional[str],
+        schema: str | None,
         relation: str,
     ) -> PostgresColumnTypes:
         """Return the column type map for a relation, using the cache when available.
@@ -235,7 +235,7 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def get_index_def(self, *, index: str, schema: Optional[str] = None) -> str:
+    async def get_index_def(self, *, index: str, schema: str | None = None) -> str:
         """Return the raw ``CREATE INDEX`` definition for an index.
 
         :param index: Index name.
@@ -277,7 +277,7 @@ class PostgresIntrospector:
         self,
         *,
         index: str,
-        schema: Optional[str] = None,
+        schema: str | None = None,
     ) -> PostgresIndexInfo:
         """Return full :class:`PostgresIndexInfo` for an index, classifying its engine.
 
@@ -385,7 +385,7 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    def invalidate_relation(self, *, schema: Optional[str], relation: str) -> None:
+    def invalidate_relation(self, *, schema: str | None, relation: str) -> None:
         """Evict cached relation kind and column types for a specific relation."""
 
         schema = self.__normalize_schema(schema)
@@ -394,7 +394,7 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    def invalidate_index(self, *, schema: Optional[str], index: str) -> None:
+    def invalidate_index(self, *, schema: str | None, index: str) -> None:
         """Evict cached index info and definition for a specific index."""
 
         schema = self.__normalize_schema(schema)

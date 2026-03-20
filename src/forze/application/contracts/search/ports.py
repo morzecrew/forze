@@ -1,4 +1,4 @@
-from typing import Awaitable, Optional, Protocol, Sequence, TypeVar, overload
+from typing import Awaitable, Protocol, Sequence, TypeVar, overload
 
 from pydantic import BaseModel
 
@@ -19,12 +19,12 @@ class SearchReadPort[R: BaseModel](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> Awaitable[tuple[list[R], int]]:
@@ -36,12 +36,12 @@ class SearchReadPort[R: BaseModel](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> Awaitable[tuple[list[T], int]]: ...
@@ -50,12 +50,12 @@ class SearchReadPort[R: BaseModel](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> Awaitable[tuple[list[JsonDict], int]]:
@@ -66,14 +66,14 @@ class SearchReadPort[R: BaseModel](Protocol):
     def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: Optional[SearchOptions] = None,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        options: SearchOptions | None = None,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
     ) -> Awaitable[tuple[list[R] | list[T] | list[JsonDict], int]]:
         """Search documents using a query string and optional filters.
 

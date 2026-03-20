@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import attrs
 
@@ -25,7 +25,7 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
     doc: DocumentReadPort[Out]
     """Read-only document port for list operations."""
 
-    mapper: Optional[DTOMapper[In, ListRequestDTO]] = None
+    mapper: DTOMapper[In, ListRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
@@ -66,7 +66,7 @@ class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
     doc: DocumentReadPort[Any]
     """Read-only document port for list operations."""
 
-    mapper: Optional[DTOMapper[In, RawListRequestDTO]] = None
+    mapper: DTOMapper[In, RawListRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #

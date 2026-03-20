@@ -8,7 +8,7 @@ import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, AsyncIterator, Optional, TypedDict, cast, final
+from typing import Any, AsyncIterator, TypedDict, cast, final
 
 import aioboto3
 import attrs
@@ -83,7 +83,7 @@ class _S3ConnectionOpts:
     endpoint: str
     access_key_id: str
     secret_access_key: str | SecretStr
-    config: Optional[AioConfig] = None
+    config: AioConfig | None = None
 
 
 # ....................... #
@@ -99,10 +99,10 @@ class S3Client:
     current context; nested entries reuse the same client via context variables.
     """
 
-    __opts: Optional[_S3ConnectionOpts] = attrs.field(default=None, init=False)
-    __session: Optional[aioboto3.Session] = attrs.field(default=None, init=False)
+    __opts: _S3ConnectionOpts | None = attrs.field(default=None, init=False)
+    __session: aioboto3.Session | None = attrs.field(default=None, init=False)
 
-    __ctx_client: ContextVar[Optional[AsyncS3Client]] = attrs.field(
+    __ctx_client: ContextVar[AsyncS3Client | None] = attrs.field(
         factory=lambda: ContextVar("s3_client", default=None),
         init=False,
     )
@@ -119,7 +119,7 @@ class S3Client:
         endpoint: str,
         access_key_id: str,
         secret_access_key: str | SecretStr,
-        config: Optional[S3Config] = None,
+        config: S3Config | None = None,
     ) -> None:
         """Configure the client with S3 credentials and create a session.
 
@@ -169,7 +169,7 @@ class S3Client:
 
     # ....................... #
 
-    def __current_client(self) -> Optional[AsyncS3Client]:
+    def __current_client(self) -> AsyncS3Client | None:
         return self.__ctx_client.get()
 
     # ....................... #
@@ -347,9 +347,9 @@ class S3Client:
         key: str,
         data: bytes,
         *,
-        content_type: Optional[str] = None,
-        metadata: Optional[dict[str, str]] = None,
-        tags: Optional[dict[str, str]] = None,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         """Upload raw bytes to an S3 object.
 
@@ -420,10 +420,10 @@ class S3Client:
     async def list_objects(
         self,
         bucket: str,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
         *,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> tuple[list[ObjectTypeDef], int]:
         """List objects in a bucket with optional pagination.
 

@@ -4,7 +4,7 @@ require_socketio()
 
 # ....................... #
 
-from typing import Any, Optional
+from typing import Any
 
 import socketio as socketio
 from socketio.async_manager import AsyncManager
@@ -19,7 +19,7 @@ def build_socketio_server(
     redis_url: str | None = None,
     redis_channel: str = "socketio",
     redis_write_only: bool = False,
-    client_manager: Optional[AsyncManager] = None,
+    client_manager: AsyncManager | None = None,
     **kwargs: Any,
 ) -> socketio.AsyncServer:
     """Build an :class:`socketio.AsyncServer` with optional Redis backplane.

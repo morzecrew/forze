@@ -5,7 +5,7 @@ require_sqs()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Optional, Sequence, final
+from typing import AsyncIterator, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -84,9 +84,9 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         queue: str,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
     ) -> str:
         physical_queue = self.__queue_name(queue)
         body = self.codec.encode(payload)
@@ -107,9 +107,9 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         queue: str,
         payloads: Sequence[M],
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
     ) -> list[str]:
         if not payloads:
             return []
@@ -132,8 +132,8 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         self,
         queue: str,
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
         physical_queue = self.__queue_name(queue)
         async with self.client.client():
@@ -151,7 +151,7 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         self,
         queue: str,
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[QueueMessage[M]]:
         physical_queue = self.__queue_name(queue)
 

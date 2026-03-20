@@ -1,4 +1,4 @@
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 import attrs
 
@@ -36,16 +36,16 @@ class DocumentDTOs(Generic[R, C, U, tL, rL]):
     read: type[R]
     """Get command type (e.g. :class:`ReadDocument`)."""
 
-    create: Optional[type[C]] = None
+    create: type[C] | None = None
     """Create command type; optional when create is not supported."""
 
-    update: Optional[type[U]] = None
+    update: type[U] | None = None
     """Update command type; optional when update is not supported."""
 
-    list: Optional[type[tL]] = None
+    list: type[tL] | None = None
     """List request type; provided only if list has custom DTO."""
 
-    raw_list: Optional[type[rL]] = None
+    raw_list: type[rL] | None = None
     """Raw list request type; provided only if raw list has custom DTO."""
 
 

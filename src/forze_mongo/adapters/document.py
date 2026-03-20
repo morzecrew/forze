@@ -7,7 +7,7 @@ require_mongo()
 # ....................... #
 
 import contextlib
-from typing import Optional, Sequence, TypeVar, final, overload
+from typing import Sequence, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
@@ -56,10 +56,10 @@ class MongoDocumentAdapter(
     read_gw: MongoReadGateway[R]
     """Gateway used for all read queries."""
 
-    write_gw: Optional[MongoWriteGateway[D, C, U]] = None
+    write_gw: MongoWriteGateway[D, C, U] | None = None
     """Optional gateway for mutations; ``None`` disables write operations."""
 
-    cache: Optional[CachePort] = None
+    cache: CachePort | None = None
     """Optional cache layer for read-through caching."""
 
     # Non initable fields
@@ -137,7 +137,7 @@ class MongoDocumentAdapter(
         pk: UUID,
         *,
         for_update: bool = False,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> R | JsonDict:
         """Fetch a single document by primary key, using the cache when available.
 
@@ -206,7 +206,7 @@ class MongoDocumentAdapter(
         self,
         pks: Sequence[UUID],
         *,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> Sequence[R] | Sequence[JsonDict]:
         """Fetch multiple documents by primary key with cache-aware batching.
 
@@ -256,7 +256,7 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
-    ) -> Optional[JsonDict]:
+    ) -> JsonDict | None:
         """Find one document matching filters projected to *return_fields*."""
         ...
 
@@ -267,7 +267,7 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: None = ...,
-    ) -> Optional[R]:
+    ) -> R | None:
         """Find one document matching filters as the read model."""
         ...
 
@@ -276,8 +276,8 @@ class MongoDocumentAdapter(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> Optional[R | JsonDict]:
+        return_fields: Sequence[str] | None = None,
+    ) -> R | JsonDict | None:
         """Find a single document matching the given filters.
 
         :param filters: Query filter expression.
@@ -297,10 +297,10 @@ class MongoDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]:
@@ -310,10 +310,10 @@ class MongoDocumentAdapter(
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
     ) -> tuple[list[R], int]:
@@ -322,12 +322,12 @@ class MongoDocumentAdapter(
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        return_fields: Optional[Sequence[str]] = None,
+        return_fields: Sequence[str] | None = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
         """Find documents with pagination and return the total matching count.
 
@@ -358,7 +358,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
+    async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type]
         """Count documents matching the given filters.
 
         :param filters: Optional filter expression.
@@ -423,7 +423,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> R:
+    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> R:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -455,7 +455,7 @@ class MongoDocumentAdapter(
         pks: Sequence[UUID],
         dtos: Sequence[U],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[R]:
         """Bulk-update documents and refresh the cache.
 
@@ -556,7 +556,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+    async def delete(self, pk: UUID, *, rev: int | None = None) -> R:
         """Soft-delete a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -586,7 +586,7 @@ class MongoDocumentAdapter(
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[R]:
         """Soft-delete multiple documents and refresh the cache.
 
@@ -612,7 +612,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> R:
+    async def restore(self, pk: UUID, *, rev: int | None = None) -> R:
         """Restore a soft-deleted document and refresh the cache.
 
         :param pk: Document primary key.
@@ -642,7 +642,7 @@ class MongoDocumentAdapter(
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[R]:
         """Restore multiple soft-deleted documents and refresh the cache.
 

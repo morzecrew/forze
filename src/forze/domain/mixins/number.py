@@ -4,7 +4,6 @@ Provides :class:`NumberMixin` for models requiring a positive integer
 ``number_id``, and corresponding command DTOs for create and update operations.
 """
 
-from typing import Optional
 
 from pydantic import PositiveInt
 
@@ -43,5 +42,5 @@ class NumberUpdateCmdMixin(BaseDTO):
     When provided, updates the document's numeric identifier.
     """
 
-    number_id: Optional[PositiveInt] = None
+    number_id: PositiveInt | None = None
     """Unique number identifier of the document."""

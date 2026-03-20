@@ -16,7 +16,7 @@ import hashlib
 import secrets
 import time
 from datetime import UTC, datetime, timezone
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 from uuid import uuid4 as uuid4_func
 from zoneinfo import ZoneInfo
@@ -30,8 +30,8 @@ from ..errors import CoreError
 
 
 def uuid7(
-    timestamp_ms: Optional[int | float] = None,
-    timestamp_ns: Optional[int | float] = None,
+    timestamp_ms: int | float | None = None,
+    timestamp_ns: int | float | None = None,
 ) -> UUID:
     """Generate a UUIDv7-style UUID with full 64-bit nanosecond timestamp precision.
 
@@ -47,9 +47,9 @@ def uuid7(
     Variant is stored in bits 70–71 (byte 8, bits 6–7), set to 0b10 per RFC 4122.
 
     Args:
-        timestamp_ms (Optional[int | float]): Unix timestamp in milliseconds.
+        timestamp_ms (int | float | None): Unix timestamp in milliseconds.
                                              If None, uses current time.
-        timestamp_ns (Optional[int | float]): Unix timestamp in nanoseconds.
+        timestamp_ns (int | float | None): Unix timestamp in nanoseconds.
                                              If None, uses current time.
                                              Cannot be specified with timestamp_ms.
 
@@ -102,21 +102,21 @@ def uuid7(
 
 def uuid7_to_datetime(
     uuid: UUID | str,
-    tz: Optional[ZoneInfo | timezone] = UTC,
+    tz: ZoneInfo | timezone | None = UTC,
     high_precision: bool = False,
-) -> Optional[datetime]:
+) -> datetime | None:
     """Extract the timestamp from a UUIDv7 and return as a datetime.
 
     Args:
         uuid (UUID | str): A UUIDv7-compliant UUID (can be string or UUID instance).
-        tz (Optional[ZoneInfo | timezone]): Desired timezone. Defaults to UTC.
+        tz (ZoneInfo | timezone | None): Desired timezone. Defaults to UTC.
                                            Use tz=None for naive datetime.
         high_precision (bool): Whether to extract sub-millisecond precision.
                               When True, microsecond precision is included.
                               Defaults to False.
 
     Returns:
-        Optional[datetime]: Timestamp extracted from UUIDv7, or None if UUID is not version 7.
+        datetime | None: Timestamp extracted from UUIDv7, or None if UUID is not version 7.
     """
 
     if isinstance(uuid, str):

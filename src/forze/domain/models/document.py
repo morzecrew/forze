@@ -5,7 +5,7 @@ based on JSON-like diffs and pluggable update validators.
 """
 
 from datetime import datetime
-from typing import Any, ClassVar, Literal, Optional, Self, cast
+from typing import Any, ClassVar, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import Field
@@ -245,10 +245,10 @@ class Document(CoreModel):
 class CreateDocumentCmd(BaseDTO):
     """Create document command DTO."""
 
-    id: Optional[UUID] = None
+    id: UUID | None = None
     """Unique identifier of the document. Added to ensure compatibility with external imports."""
 
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
     """Timestamp of the document creation. Added to ensure compatibility with external imports."""
 
 

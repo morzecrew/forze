@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional, final
+from typing import Literal, final
 
 import attrs
 
@@ -52,7 +52,7 @@ class PostgresIndexInfo:
     indexdef: str
     """Full ``CREATE INDEX`` definition returned by ``pg_get_indexdef``."""
 
-    expr: Optional[str] = None
+    expr: str | None = None
     """Expression extracted from the index definition, if any."""
 
     columns: tuple[str, ...] = ()

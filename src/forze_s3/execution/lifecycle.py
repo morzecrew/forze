@@ -1,6 +1,6 @@
 """Lifecycle hooks for S3 client initialization and shutdown."""
 
-from typing import Optional, final
+from typing import final
 
 import attrs
 
@@ -32,7 +32,7 @@ class S3StartupHook(LifecycleHook):
     secret_access_key: str
     """Secret key for authentication."""
 
-    config: Optional[S3Config] = None
+    config: S3Config | None = None
     """Optional botocore config for retries, timeouts, etc."""
 
     # ....................... #
@@ -73,7 +73,7 @@ def s3_lifecycle_step(
     endpoint: str,
     access_key_id: str,
     secret_access_key: str,
-    config: Optional[S3Config] = None,
+    config: S3Config | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for S3 client init and shutdown.
 

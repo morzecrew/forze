@@ -1,7 +1,6 @@
 """Thread-safe runtime variables for application-wide singletons."""
 
 from threading import RLock
-from typing import Optional
 
 import attrs
 
@@ -27,7 +26,7 @@ class RuntimeVar[T: object]:
     __lock: RLock = attrs.field(factory=RLock, init=False)
     """Thread lock for thread-safe operations."""
 
-    __value: Optional[T] = attrs.field(default=None, init=False)
+    __value: T | None = attrs.field(default=None, init=False)
     """The stored value (``None`` until set)."""
 
     # ....................... #

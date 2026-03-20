@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Optional, Sequence, TypeVar, overload
+from typing import Any, Sequence, TypeVar, overload
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -79,11 +79,11 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         query: str,
         spec: SearchIndexSpecInternal,
         *,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
         q = query.strip()
         options = options or {}
-        lang: Optional[str] = options.get("language")
+        lang: str | None = options.get("language")
         params: list[Any] = []
 
         match spec.mode:
@@ -115,9 +115,9 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def _build_search_parts(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression],  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         *,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> tuple[tuple[sql.Composable, list[Any]], tuple[sql.Composable, list[Any]]]:
         idx_name, idx_spec = self._pick_index(options)
         rank_weights = fts_rank_weights_array(idx_spec)
@@ -153,12 +153,12 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> tuple[list[M], int]: ...
@@ -167,12 +167,12 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> tuple[list[T], int]: ...
@@ -181,12 +181,12 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
@@ -194,14 +194,14 @@ class PostgresFTSSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: Optional[SearchOptions] = None,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        options: SearchOptions | None = None,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         (
             (where_sql, where_params),

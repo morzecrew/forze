@@ -7,7 +7,6 @@ require_psycopg()
 # ....................... #
 
 from functools import cached_property
-from typing import Optional
 
 import attrs
 from pydantic import BaseModel
@@ -39,6 +38,6 @@ class PostgresSearchGateway[M: BaseModel](PostgresGateway[M]):
 
     def _pick_index(
         self,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> tuple[str, SearchIndexSpecInternal]:
         return self.search_spec.pick_index(options)

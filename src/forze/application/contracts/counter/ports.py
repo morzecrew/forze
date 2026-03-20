@@ -1,6 +1,6 @@
 """Port for monotonic application counters."""
 
-from typing import Awaitable, Optional, Protocol, runtime_checkable
+from typing import Awaitable, Protocol, runtime_checkable
 
 # ----------------------- #
 
@@ -9,7 +9,7 @@ from typing import Awaitable, Optional, Protocol, runtime_checkable
 class CounterPort(Protocol):
     """Distributed counter abstraction used for issuing sequential numbers."""
 
-    def incr(self, by: int = 1, *, suffix: Optional[str] = None) -> Awaitable[int]:
+    def incr(self, by: int = 1, *, suffix: str | None = None) -> Awaitable[int]:
         """Increase the counter by ``by`` and return the new value.
 
         :param by: Increment step.
@@ -22,7 +22,7 @@ class CounterPort(Protocol):
         self,
         size: int = 2,
         *,
-        suffix: Optional[str] = None,
+        suffix: str | None = None,
     ) -> Awaitable[list[int]]:
         """Allocate a batch of counter values.
 
@@ -32,10 +32,10 @@ class CounterPort(Protocol):
         """
         ...  # pragma: no cover
 
-    def decr(self, by: int = 1, *, suffix: Optional[str] = None) -> Awaitable[int]:
+    def decr(self, by: int = 1, *, suffix: str | None = None) -> Awaitable[int]:
         """Decrease the counter by ``by`` and return the new value."""
         ...  # pragma: no cover
 
-    def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> Awaitable[int]:
+    def reset(self, value: int = 1, *, suffix: str | None = None) -> Awaitable[int]:
         """Reset the counter to the given value and return it."""
         ...  # pragma: no cover

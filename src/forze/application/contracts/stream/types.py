@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import NotRequired, Optional, TypedDict
+from typing import NotRequired, TypedDict
 
 from pydantic import BaseModel
 
@@ -18,11 +18,11 @@ class StreamMessage[M: BaseModel](TypedDict):
     payload: M
     """Structured payload carried by the message."""
 
-    type: NotRequired[Optional[str]]
+    type: NotRequired[str | None]
     """Optional message type or category."""
 
-    timestamp: NotRequired[Optional[datetime]]
+    timestamp: NotRequired[datetime | None]
     """Optional timestamp associated with the message."""
 
-    key: NotRequired[Optional[str]]
+    key: NotRequired[str | None]
     """Optional partitioning key for the message."""

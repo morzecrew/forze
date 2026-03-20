@@ -8,7 +8,6 @@ from typing import (
     Final,
     Iterable,
     Literal,
-    Optional,
     TypeVar,
     Union,
     cast,
@@ -52,7 +51,7 @@ type UpdateValidatorLike[M] = Union[
 class UpdateValidatorMetadata:
     """Metadata attached to an update validator by :func:`update_validator`."""
 
-    fields: Optional[frozenset[str]] = None
+    fields: frozenset[str] | None = None
     """Fields that trigger the validator. If ``None``, the validator runs on any update."""
 
 
@@ -80,16 +79,16 @@ def update_validator(
 def update_validator(
     _func: None = None,
     *,
-    fields: Optional[Iterable[str]] = None,
+    fields: Iterable[str] | None = None,
 ) -> Callable[[UpdateValidatorLike[M]], UpdateValidator[M]]:
     """Return a decorator that registers a method as an update validator with optional field filter."""
     ...
 
 
 def update_validator(
-    _func: Optional[UpdateValidatorLike[M]] = None,
+    _func: UpdateValidatorLike[M] | None = None,
     *,
-    fields: Optional[Iterable[str]] = None,
+    fields: Iterable[str] | None = None,
 ) -> UpdateValidator[M] | Callable[[UpdateValidatorLike[M]], UpdateValidator[M]]:
     """Decorator that turns a method into a normalized update validator.
 

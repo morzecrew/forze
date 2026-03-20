@@ -8,7 +8,7 @@ require_psycopg()
 
 import asyncio
 from collections import defaultdict
-from typing import Any, Literal, Optional, Sequence, final, get_args
+from typing import Any, Literal, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
@@ -83,7 +83,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     read: PostgresReadGateway[D]
     create_dto: type[C]
     update_dto: type[U]
-    history: Optional[PostgresHistoryGateway[D]] = None
+    history: PostgresHistoryGateway[D] | None = None
     rev_bump_strategy: PostgresRevBumpStrategy = "database"
 
     # ....................... #
@@ -308,9 +308,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     async def __patch(
         self,
         pk: UUID,
-        update: Optional[JsonDict] = None,
+        update: JsonDict | None = None,
         *,
-        rev: Optional[int] = None,
+        rev: int | None = None,
     ) -> D:
         current = await self.read.get(pk)
 
@@ -362,7 +362,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> D:
+    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> D:
         update_data = pydantic_dump(dto, exclude={"unset": True})
 
         return await self.__patch(pk, update_data, rev=rev)
@@ -438,9 +438,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     async def __patch_many(
         self,
         pks: Sequence[UUID],
-        updates: Optional[Sequence[JsonDict]] = None,
+        updates: Sequence[JsonDict] | None = None,
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not pks or (not updates and updates is not None):
@@ -489,7 +489,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
             async def _prepare_update(
                 c: D, u: JsonDict
-            ) -> Optional[tuple[UUID, int, JsonDict]]:
+            ) -> tuple[UUID, int, JsonDict] | None:
                 _, diff = c.update(u)
                 if not diff:
                     return None
@@ -530,7 +530,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         pks: Sequence[UUID],
         dtos: Sequence[U],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
         batch_size: int = 500,
     ) -> Sequence[D]:
         updates = pydantic_dump_many(dtos, exclude={"unset": True})
@@ -549,7 +549,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> D:
+    async def delete(self, pk: UUID, *, rev: int | None = None) -> D:
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -561,7 +561,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
@@ -576,7 +576,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> D:
+    async def restore(self, pk: UUID, *, rev: int | None = None) -> D:
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -588,7 +588,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
         batch_size: int = 500,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():

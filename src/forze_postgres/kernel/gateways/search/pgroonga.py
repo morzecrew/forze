@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Optional, Sequence, TypeVar, overload
+from typing import Any, Final, Sequence, TypeVar, overload
 
 from psycopg import sql
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     def _effective_field_weights(
         self,
         spec: SearchIndexSpecInternal,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> list[tuple[str, float]]:
         options = options or {}
         ov_weights = options.get("weights", {})
@@ -78,7 +78,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         index: str,
         spec: SearchIndexSpecInternal,
         *,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
         options = options or {}
         q = query.strip()
@@ -163,7 +163,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
     def _pgroonga_order(
         self,
-        sorts: Optional[QuerySortExpression] = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
         table_alias: str = _TABLE_ALIAS,
     ) -> sql.Composable:
         if not sorts:
@@ -185,9 +185,9 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def _where_clause(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         *,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
         index, spec = self._pick_index(options)
         sw, sp = await self._pgroonga_where(query, index, spec, options=options)
@@ -205,12 +205,12 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> tuple[list[M], int]: ...
@@ -219,12 +219,12 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> tuple[list[T], int]: ...
@@ -233,12 +233,12 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
-        options: Optional[SearchOptions] = ...,
+        options: SearchOptions | None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
@@ -246,14 +246,14 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
     async def search(
         self,
         query: str,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: Optional[SearchOptions] = None,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        options: SearchOptions | None = None,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         where, params = await self._where_clause(query, filters, options=options)
         order = self._pgroonga_order(sorts, table_alias=_TABLE_ALIAS)

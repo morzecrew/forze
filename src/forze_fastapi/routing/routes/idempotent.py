@@ -6,7 +6,7 @@ require_fastapi()
 
 from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any, Callable, NotRequired, Optional, TypedDict, final
+from typing import Any, Callable, NotRequired, TypedDict, final
 
 import attrs
 import orjson
@@ -45,7 +45,7 @@ class IdempotentRouteConfig(TypedDict):
     adapter: TypeAdapter[Any]
     """Adapter used to validate and hash the request payload."""
 
-    dto_param: NotRequired[Optional[str]]
+    dto_param: NotRequired[str | None]
     """Name of the DTO parameter in the endpoint signature."""
 
 
@@ -271,7 +271,7 @@ def make_idempotent_route_class(
     ttl: timedelta,
     header_key: str,
     adapter: TypeAdapter[Any],
-    dto_param: Optional[str] = None,
+    dto_param: str | None = None,
 ) -> type[IdempotentRoute]:
     """Create a route class pre-configured with idempotency settings."""
 

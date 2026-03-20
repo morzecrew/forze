@@ -5,7 +5,6 @@ optional ``display_name``, ``short_name``, and ``description``, and
 corresponding command DTOs for create and update operations.
 """
 
-from typing import Optional
 
 from forze.base.primitives import LongString, String
 
@@ -17,13 +16,13 @@ from ..models import BaseDTO, CoreModel
 class _NameMixinOptionalFields(CoreModel):
     """Optional name fields shared by :class:`NameMixin` and :class:`NameUpdateCmdMixin`."""
 
-    display_name: Optional[String] = None
+    display_name: String | None = None
     """Display name of the document."""
 
-    short_name: Optional[String] = None
+    short_name: String | None = None
     """Short name of the document."""
 
-    description: Optional[LongString] = None
+    description: LongString | None = None
     """Description of the document."""
 
 
@@ -57,5 +56,5 @@ class NameUpdateCmdMixin(BaseDTO, _NameMixinOptionalFields):
     All fields are optional; only provided values are updated.
     """
 
-    name: Optional[String] = None
+    name: String | None = None
     """Name of the document."""

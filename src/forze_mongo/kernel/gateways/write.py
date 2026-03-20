@@ -6,7 +6,7 @@ require_mongo()
 
 # ....................... #
 
-from typing import Literal, Optional, Sequence, final, get_args
+from typing import Literal, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
@@ -86,7 +86,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     update_dto: type[U]
     """Pydantic model for update payloads."""
 
-    history: Optional[MongoHistoryGateway[D]] = None
+    history: MongoHistoryGateway[D] | None = None
     """Optional history gateway for revision snapshots."""
 
     rev_bump_strategy: MongoRevBumpStrategy = "application"
@@ -250,9 +250,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     async def _patch(
         self,
         pk: UUID,
-        update: Optional[JsonDict] = None,
+        update: JsonDict | None = None,
         *,
-        rev: Optional[int] = None,
+        rev: int | None = None,
     ) -> D:
         current = await self.read.get(pk)
 
@@ -290,9 +290,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     async def _patch_many(
         self,
         pks: Sequence[UUID],
-        updates: Optional[Sequence[JsonDict]] = None,
+        updates: Sequence[JsonDict] | None = None,
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[D]:
         if not pks:
             return []
@@ -346,7 +346,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: Optional[int] = None) -> D:
+    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> D:
         """Apply an update DTO to an existing document.
 
         :param pk: Document primary key.
@@ -365,7 +365,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         pks: Sequence[UUID],
         dtos: Sequence[U],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[D]:
         """Bulk-update documents with corresponding DTOs.
 
@@ -444,7 +444,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: Optional[int] = None) -> D:
+    async def delete(self, pk: UUID, *, rev: int | None = None) -> D:
         """Soft-delete a document by setting the deleted flag.
 
         :param pk: Document primary key.
@@ -463,7 +463,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[D]:
         """Soft-delete multiple documents.
 
@@ -487,7 +487,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: Optional[int] = None) -> D:
+    async def restore(self, pk: UUID, *, rev: int | None = None) -> D:
         """Restore a soft-deleted document by clearing the deleted flag.
 
         :param pk: Document primary key.
@@ -506,7 +506,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         self,
         pks: Sequence[UUID],
         *,
-        revs: Optional[Sequence[int]] = None,
+        revs: Sequence[int] | None = None,
     ) -> Sequence[D]:
         """Restore multiple soft-deleted documents.
 

@@ -6,7 +6,7 @@ require_redis()
 
 # ....................... #
 
-from typing import Optional, final
+from typing import final
 
 import attrs
 
@@ -33,17 +33,17 @@ class RedisCounterAdapter(CounterPort):
 
     client: RedisClient
     key_codec: KeyCodec
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # ....................... #
 
-    def _build_key(self, suffix: Optional[str]) -> str:
+    def _build_key(self, suffix: str | None) -> str:
         tenant_id = str(self.tenant_context.get()) if self.tenant_context else None
         return self.key_codec.cond_join(tenant_id, suffix)
 
     # ....................... #
 
-    async def incr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
+    async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
         key = self._build_key(suffix)
 
         logger.debug("Incrementing counter '%s' by %s", key, by)
@@ -56,7 +56,7 @@ class RedisCounterAdapter(CounterPort):
         self,
         size: int = 2,
         *,
-        suffix: Optional[str] = None,
+        suffix: str | None = None,
     ) -> list[int]:
         if size <= 1:
             raise ValidationError("Size must be greater than 1")
@@ -75,7 +75,7 @@ class RedisCounterAdapter(CounterPort):
 
     # ....................... #
 
-    async def decr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
+    async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
         key = self._build_key(suffix)
 
         logger.debug("Decrementing counter '%s' by %s", key, by)
@@ -84,7 +84,7 @@ class RedisCounterAdapter(CounterPort):
 
     # ....................... #
 
-    async def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> int:
+    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
         key = self._build_key(suffix)
 
         logger.debug("Resetting counter '%s' to %s", key, value)

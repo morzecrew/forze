@@ -1,6 +1,6 @@
 """Port for HTTP-style idempotency handling."""
 
-from typing import Awaitable, Optional, Protocol, runtime_checkable
+from typing import Awaitable, Protocol, runtime_checkable
 
 from .types import IdempotencySnapshot
 
@@ -19,9 +19,9 @@ class IdempotencyPort(Protocol):
     def begin(
         self,
         op: str,
-        key: Optional[str],
+        key: str | None,
         payload_hash: str,
-    ) -> Awaitable[Optional[IdempotencySnapshot]]:
+    ) -> Awaitable[IdempotencySnapshot | None]:
         """Start an idempotent operation and return a cached snapshot if any.
 
         :param op: Operation name.
@@ -34,7 +34,7 @@ class IdempotencyPort(Protocol):
     def commit(
         self,
         op: str,
-        key: Optional[str],
+        key: str | None,
         payload_hash: str,
         snapshot: IdempotencySnapshot,
     ) -> Awaitable[None]:

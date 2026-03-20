@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Optional, Sequence, final
+from typing import Any, Sequence, final
 
 import attrs
 
@@ -39,7 +39,7 @@ class RedisCacheAdapter(CachePort):
 
     client: RedisClient
     key_codec: KeyCodec
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # Non initable fields
     json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
@@ -216,7 +216,7 @@ class RedisCacheAdapter(CachePort):
     # ....................... #
     # Public: read
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         # Try versioned first
         logger.debug("Cache lookup for key=%s", key)
 

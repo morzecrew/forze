@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Any, Callable, Optional, TypedDict, TypeVar
+from typing import Any, Callable, TypedDict, TypeVar
 
 import orjson
 from fastapi import Body, Depends
@@ -361,7 +361,7 @@ def attach_document_routes(
 
 def build_document_router(
     prefix: str,
-    tags: Optional[list[str | Enum]] = None,
+    tags: list[str | Enum] | None = None,
     *,
     registry: UsecaseRegistry,
     spec: DocumentSpec[R, Any, Any, Any],

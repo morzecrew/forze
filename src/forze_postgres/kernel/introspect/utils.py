@@ -2,7 +2,6 @@
 
 import re
 from functools import lru_cache
-from typing import Optional
 
 # ----------------------- #
 
@@ -67,7 +66,7 @@ _INDEXDEF_PARENS_RE = re.compile(
 # ....................... #
 
 
-def extract_index_expr_from_indexdef(indexdef: str) -> Optional[str]:
+def extract_index_expr_from_indexdef(indexdef: str) -> str | None:
     """
     Try to extract the single (...) expression part from:
       CREATE INDEX ... USING gin (<expr>) ...

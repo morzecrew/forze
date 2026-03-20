@@ -1,7 +1,6 @@
 from typing import (
     Any,
     Awaitable,
-    Optional,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -14,7 +13,7 @@ from typing import (
 class CacheReadPort(Protocol):  # pragma: no cover
     """Contract for reading values from a cache backend."""
 
-    def get(self, key: str) -> Awaitable[Optional[Any]]:
+    def get(self, key: str) -> Awaitable[Any | None]:
         """Return the cached value for *key*, or ``None`` on miss."""
         ...
 

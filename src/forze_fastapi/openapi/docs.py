@@ -5,7 +5,6 @@ require_fastapi()
 # ....................... #
 
 import re
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -30,7 +29,7 @@ def _is_valid_dns(address: str) -> bool:
 
 def scalar_docs(
     request: Request,
-    title: Optional[str] = None,
+    title: str | None = None,
     favicon_url: str = "https://fastapi.tiangolo.com/img/icon-white.svg",
     version: str = "1.41.0",
 ) -> HTMLResponse:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Optional, final
+from typing import Any, final
 
 import attrs
 
@@ -85,7 +85,7 @@ MockStateDepKey: DepKey[MockState] = DepKey("mock_state")
 def mock_document(
     context: ExecutionContext,
     spec: DocSpec,
-    cache: Optional[CachePort] = None,
+    cache: CachePort | None = None,
 ) -> MockDocumentAdapter[Any, Any, Any, Any]:
     del cache
     state = context.dep(MockStateDepKey)

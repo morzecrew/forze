@@ -1,6 +1,6 @@
 """Factory functions for Postgres document and tx manager adapters."""
 
-from typing import Any, Optional
+from typing import Any
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import DocumentSpec
@@ -44,7 +44,7 @@ def postgres_document_configurable(  # type: ignore[no-untyped-def]
     def postgres_document(
         context: ExecutionContext,
         spec: DocumentSpec[Any, Any, Any, Any],
-        cache: Optional[CachePort] = None,
+        cache: CachePort | None = None,
     ) -> PostgresDocumentAdapter[Any, Any, Any, Any]:
         read = read_gw(context, spec.read)
 

@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 from datetime import timedelta
-from typing import Generic, Optional, TypedDict, TypeVar, final
+from typing import Generic, TypedDict, TypeVar, final
 
 import attrs
 
@@ -104,13 +104,13 @@ class DocumentSpec(Generic[R, D, C, U]):
     read: DocumentReadSpec[R]
     """Read specification for the document aggregate."""
 
-    write: Optional[DocumentWriteSpec[D, C, U]] = None
+    write: DocumentWriteSpec[D, C, U] | None = None
     """Write specification for the document aggregate."""
 
-    history: Optional[DocumentHistorySpec] = None
+    history: DocumentHistorySpec | None = None
     """History specification for the document aggregate."""
 
-    cache: Optional[DocumentCacheSpec] = None
+    cache: DocumentCacheSpec | None = None
     """Cache specification for the document aggregate."""
 
     # ....................... #

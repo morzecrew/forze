@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncIterator,
     Awaitable,
-    Optional,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -23,8 +22,8 @@ class StreamReadPort[M: BaseModel](Protocol):
         self,
         stream_mapping: dict[str, str],
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[list[StreamMessage[M]]]:
         """Read a batch of messages from the streams in *stream_mapping*."""
         ...
@@ -35,7 +34,7 @@ class StreamReadPort[M: BaseModel](Protocol):
         self,
         stream_mapping: dict[str, str],
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[M]]:
         """Continuously yield new messages from the mapped streams."""
         ...
@@ -54,8 +53,8 @@ class StreamGroupPort[M: BaseModel](Protocol):
         consumer: str,
         stream_mapping: dict[str, str],
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> Awaitable[list[StreamMessage[M]]]:
         """Read pending messages for *consumer* in *group*."""
         ...
@@ -68,7 +67,7 @@ class StreamGroupPort[M: BaseModel](Protocol):
         consumer: str,
         stream_mapping: dict[str, str],
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[M]]:
         """Continuously yield new messages for *consumer* in *group*."""
         ...
@@ -92,9 +91,9 @@ class StreamWritePort[M: BaseModel](Protocol):
         stream: str,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        timestamp: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        timestamp: datetime | None = None,
     ) -> Awaitable[str]:
         """Append a message to *stream* and return its identifier."""
         ...

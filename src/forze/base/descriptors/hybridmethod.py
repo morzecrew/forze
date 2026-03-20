@@ -6,7 +6,6 @@ from typing import (
     Callable,
     Concatenate,
     Generic,
-    Optional,
     ParamSpec,
     TypeVar,
     overload,
@@ -35,12 +34,12 @@ class hybridmethod(Generic[OwnerT, P, R]):
 
     __name__: str
     __qualname__: str
-    __doc__: Optional[str]
+    __doc__: str | None
     __module__: str
     _cls_method: Callable[Concatenate[type[OwnerT], P], R]
-    _instance_method: Optional[Callable[Concatenate[OwnerT, P], R]]
-    _owner: Optional[type[Any]]
-    _attr_name: Optional[str]
+    _instance_method: Callable[Concatenate[OwnerT, P], R] | None
+    _owner: type[Any] | None
+    _attr_name: str | None
 
     # ....................... #
 
@@ -96,7 +95,7 @@ class hybridmethod(Generic[OwnerT, P, R]):
         return self._cls_method
 
     @property
-    def inst_method(self) -> Optional[Callable[Concatenate[OwnerT, P], R]]:
+    def inst_method(self) -> Callable[Concatenate[OwnerT, P], R] | None:
         """Instance-level callable, or ``None`` if not registered."""
 
         return self._instance_method
@@ -124,7 +123,7 @@ class hybridmethod(Generic[OwnerT, P, R]):
     def __get__(
         self,
         obj: Any,
-        objtype: Optional[type[Any]] = None,
+        objtype: type[Any] | None = None,
     ) -> Callable[P, R]:
         """Bind the descriptor to a class or instance and return the appropriate callable.
 

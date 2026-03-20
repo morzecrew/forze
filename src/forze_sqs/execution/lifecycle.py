@@ -1,6 +1,6 @@
 """Lifecycle hooks for SQS client initialization and shutdown."""
 
-from typing import Optional, final
+from typing import final
 
 import attrs
 
@@ -21,7 +21,7 @@ class SQSStartupHook(LifecycleHook):
     region_name: str
     access_key_id: str
     secret_access_key: str
-    config: Optional[SQSConfig] = None
+    config: SQSConfig | None = None
 
     # ....................... #
 
@@ -60,7 +60,7 @@ def sqs_lifecycle_step(
     region_name: str,
     access_key_id: str,
     secret_access_key: str,
-    config: Optional[SQSConfig] = None,
+    config: SQSConfig | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for SQS client init and shutdown."""
     startup_hook = SQSStartupHook(

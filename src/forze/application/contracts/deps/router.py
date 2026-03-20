@@ -1,7 +1,7 @@
 """Dependency router for spec-based provider selection."""
 
 from enum import StrEnum
-from typing import Any, Callable, ClassVar, Generic, Optional, Self, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Self, TypeVar
 
 import attrs
 
@@ -95,7 +95,7 @@ class DepRouter(Generic[SpecT, DepPortT]):
         deps: dict[RoutingKey, DepsPort],
         selector: Selector[SpecT],
         default: RoutingKey,
-    ) -> tuple[Self, Optional[DepsPort]]:
+    ) -> tuple[Self, DepsPort | None]:
         """Create a new dependency router from a dictionary of dependencies.
 
         :param deps: Dictionary of dependencies to use for the router.
@@ -105,7 +105,7 @@ class DepRouter(Generic[SpecT, DepPortT]):
         """
 
         routes: dict[RoutingKey, DepPortT] = {}
-        glob_remainder: Optional[DepsPort] = None
+        glob_remainder: DepsPort | None = None
 
         for key, dep in deps.items():
             routes[key] = dep.provide(cls.dep_key)

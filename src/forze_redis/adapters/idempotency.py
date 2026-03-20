@@ -8,7 +8,7 @@ require_redis()
 
 import base64
 from datetime import timedelta
-from typing import Final, Optional, TypedDict, final
+from typing import Final, TypedDict, final
 
 import attrs
 
@@ -62,7 +62,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     """
 
     client: RedisClient
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # Non initable fields
     key_codec: KeyCodec = attrs.field(  #! Non initable ????
@@ -107,7 +107,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     async def begin(
         self,
         op: str,
-        key: Optional[str],
+        key: str | None,
         payload_hash: str,
     ) -> IdempotencySnapshot | None:
         if not key:
@@ -163,7 +163,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     async def commit(
         self,
         op: str,
-        key: Optional[str],
+        key: str | None,
         payload_hash: str,
         snapshot: IdempotencySnapshot,
     ) -> None:
