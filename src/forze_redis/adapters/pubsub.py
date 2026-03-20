@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Final, Optional, Sequence, final
+from typing import AsyncIterator, Final, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -19,15 +19,10 @@ from forze.application.contracts.pubsub import (
 )
 from forze.base.codecs import JsonCodec
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="redis.pubsub")
-
-# ....................... #
 
 _F_PAYLOAD: Final[str] = "payload"
 _F_TYPE: Final[str] = "type"
@@ -58,9 +53,9 @@ class RedisPubSubCodec[M: BaseModel]:
         self,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        published_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        published_at: datetime | None = None,
     ) -> bytes:
         data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
 
@@ -136,9 +131,9 @@ class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort
         topic: str,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        published_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        published_at: datetime | None = None,
     ) -> None:
         data = self.codec.encode(
             payload,
@@ -154,7 +149,7 @@ class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort
         self,
         topics: Sequence[str],
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[PubSubMessage[M]]:
         async for topic, raw_data in self.client.subscribe(topics, timeout=timeout):
             yield self.codec.decode(topic, raw_data)

@@ -1,4 +1,3 @@
-from typing import Optional
 
 from pydantic import Field
 
@@ -12,10 +11,10 @@ from .paginated import Pagination
 class ListRequestDTO(Pagination):
     """List request payload for typed document list."""
 
-    filters: Optional[QueryFilterExpression] = None  # type: ignore[valid-type]
+    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
     """Optional filter expression (predicates, conjunctions, disjunctions)."""
 
-    sorts: Optional[QuerySortExpression] = None
+    sorts: QuerySortExpression | None = None
     """Optional sort expression (field name to ``"asc"`` or ``"desc"``)."""
 
 

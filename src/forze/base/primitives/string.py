@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from typing import Optional, overload
+from typing import overload
 
 # ----------------------- #
 
@@ -43,7 +43,7 @@ def normalize_string(s: str) -> str: ...
 def normalize_string(s: None) -> None: ...
 
 
-def normalize_string(s: Optional[str]) -> Optional[str]:
+def normalize_string(s: str | None) -> str | None:
     """Normalize user-provided text for consistent storage and comparison.
 
     The normalization:

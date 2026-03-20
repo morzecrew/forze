@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Final, Optional, Sequence, final
+from typing import AsyncIterator, Final, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -19,15 +19,10 @@ from forze.application.contracts.stream import (
     StreamWritePort,
 )
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="redis.stream")
-
-# ....................... #
 
 _F_PAYLOAD: Final[str] = "payload"
 _F_TYPE: Final[str] = "type"
@@ -56,9 +51,9 @@ class RedisStreamCodec[M: BaseModel]:
         self,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        timestamp: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        timestamp: datetime | None = None,
     ) -> dict[str, str]:
         data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
 
@@ -117,8 +112,8 @@ class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
         self,
         stream_mapping: dict[str, str],
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> list[StreamMessage[M]]:
         raw = await self.client.xread(
             stream_mapping,
@@ -140,7 +135,7 @@ class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
         self,
         stream_mapping: dict[str, str],
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
 
@@ -158,9 +153,9 @@ class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
         stream: str,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        timestamp: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        timestamp: datetime | None = None,
     ) -> str:
         data = self.codec.encode(payload, type=type, key=key, timestamp=timestamp)
 
@@ -191,8 +186,8 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
         consumer: str,
         stream_mapping: dict[str, str],
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> list[StreamMessage[M]]:
         raw = await self.client.xgroup_read(
             group=group,
@@ -219,7 +214,7 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
         consumer: str,
         stream_mapping: dict[str, str],
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
 

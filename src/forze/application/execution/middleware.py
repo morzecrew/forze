@@ -10,15 +10,10 @@ from typing import Awaitable, Callable, Protocol, Self, final
 
 import attrs
 
-from forze.base.logging import getLogger
-
+from forze.application._logger import logger
 from .context import ExecutionContext
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="middleware")
-
-# ....................... #
 
 type NextCall[Args, R] = Callable[[Args], Awaitable[R]]
 """Next middleware or usecase in the chain."""
@@ -71,11 +66,8 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        logger.debug("Running guard: {qualname}", sub={"qualname": type(self.guard).__qualname__})
-
-        with logger.section():
-            await self.guard(args)
-
+        logger.debug("Running guard: '%s'", type(self.guard).__qualname__)
+        await self.guard(args)
         result = await next(args)
 
         return result
@@ -96,11 +88,8 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         res = await next(args)
 
-        logger.debug("Running effect: {qualname}", sub={"qualname": type(self.effect).__qualname__})
-
-        with logger.section():
-            res = await self.effect(args, res)
-
+        logger.debug("Running effect: '%s'", type(self.effect).__qualname__)
+        res = await self.effect(args, res)
         return res
 
 
@@ -133,8 +122,9 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
         """
 
         logger.trace(
-            "Appending {count} after-commit effect(s) to {qualname}",
-            sub={"count": len(effects), "qualname": type(self).__qualname__},
+            "Appending %s after-commit effect(s) to %s",
+            len(effects),
+            type(self).__qualname__,
         )
 
         return attrs.evolve(self, after_commit=(*self.after_commit, *effects))
@@ -142,16 +132,14 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
     # ....................... #
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
-        logger.debug("Running transaction middleware: {qualname}", sub={"qualname": type(self).__qualname__})
+        logger.debug("Running transaction middleware: '%s'", type(self).__qualname__)
 
         async with self.ctx.transaction():
             res = await next(args)
 
         if self.after_commit:
             for eff in self.after_commit:
-                logger.debug("Running after-commit effect {qualname}", sub={"qualname": type(eff).__qualname__})
-
-                with logger.section():
-                    res = await eff(args, res)
+                logger.debug("Running after-commit effect '%s'", type(eff).__qualname__)
+                res = await eff(args, res)
 
         return res

@@ -3,12 +3,14 @@
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, Iterator, Optional, final
+from typing import Any, AsyncIterator, Iterator, final
+from uuid import UUID
 
 import attrs
+from structlog.contextvars import bound_contextvars
 
+from forze.application._logger import logger
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort
@@ -25,8 +27,36 @@ from ..contracts.storage import StorageDepKey, StoragePort
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPort
 
 # ----------------------- #
+#! TODO: review call and principal ctx
 
-logger = getLogger(__name__).bind(scope="context")
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class CallContext:
+    """Context for a single application call."""
+
+    execution_id: UUID
+    """The id of the execution."""
+
+    correlation_id: UUID
+    """The correlation id of the call."""
+
+    causation_id: UUID | None = None
+    """The causation id of the call."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class PrincipalContext:
+    """Context for a principal on behalf of which the call is being executed."""
+
+    tenant_id: UUID | None = None
+    """The id of the tenant on behalf of which the call is being executed."""
+
+    actor_id: UUID | None = None
+    """The id of the actor on behalf of which the call is being executed."""
+
 
 # ....................... #
 
@@ -51,7 +81,7 @@ class ExecutionContext:
     )
     """Per-task dependency resolution stack used to detect cycles."""
 
-    __tx_handle: ContextVar[Optional[TxHandle]] = attrs.field(
+    __tx_handle: ContextVar[TxHandle | None] = attrs.field(
         factory=lambda: ContextVar("tx_handle", default=None),
         init=False,
         repr=False,
@@ -65,9 +95,89 @@ class ExecutionContext:
     )
     """Current transaction depth."""
 
+    __call_context: ContextVar[CallContext | None] = attrs.field(
+        factory=lambda: ContextVar("call_context", default=None),
+        init=False,
+        repr=False,
+    )
+    """Current call context."""
+
+    __principal_context: ContextVar[PrincipalContext | None] = attrs.field(
+        factory=lambda: ContextVar("principal_context", default=None),
+        init=False,
+        repr=False,
+    )
+    """Current principal context."""
+
     # ....................... #
 
-    def active_tx(self) -> Optional[TxHandle]:
+    @property
+    def call_ctx(self) -> CallContext | None:
+        """Return the current call context.
+
+        :returns: Call context.
+        """
+
+        return self.__call_context.get()
+
+    # ....................... #
+
+    @property
+    def principal_ctx(self) -> PrincipalContext | None:
+        """Return the current principal context.
+
+        :returns: Principal context.
+        """
+
+        return self.__principal_context.get()
+
+    # ....................... #
+
+    @contextmanager
+    def bind_call(
+        self,
+        *,
+        call: CallContext,
+        principal: PrincipalContext | None = None,
+    ) -> Iterator[None]:
+        """Bind a call and principal context to the execution context.
+
+        NEVER call this inside a usecase or factory, only on the application boundary.
+
+        :param call: Call context to bind.
+        :param principal: Principal context to bind.
+        :returns: Context manager that binds the call context to the execution context.
+        """
+
+        call_token = self.__call_context.set(call)
+        principal_token = self.__principal_context.set(principal)
+
+        bound: dict[str, Any] = {
+            "execution_id": str(call.execution_id),
+            "correlation_id": str(call.correlation_id),
+        }
+
+        if call.causation_id is not None:
+            bound["causation_id"] = str(call.causation_id)
+
+        if principal is not None:
+            if principal.tenant_id is not None:
+                bound["tenant_id"] = str(principal.tenant_id)
+
+            if principal.actor_id is not None:
+                bound["actor_id"] = str(principal.actor_id)
+
+        try:
+            with bound_contextvars(**bound):
+                yield
+
+        finally:
+            self.__call_context.reset(call_token)
+            self.__principal_context.reset(principal_token)
+
+    # ....................... #
+
+    def active_tx(self) -> TxHandle | None:
         """Return the current active transaction handle.
 
         Returns ``None`` when no transaction is active.
@@ -87,56 +197,65 @@ class ExecutionContext:
 
         logger.debug("Entering transaction scope")
 
-        with logger.section():
-            tx = self.txmanager()
-            scope = tx.scope_key()
-            depth = self.__tx_depth.get()
-            cur = self.__tx_handle.get()
+        tx = self.txmanager()
+        scope = tx.scope_key()
+        depth = self.__tx_depth.get()
+        cur = self.__tx_handle.get()
 
-            logger.trace(
-                "Transaction state: requested_scope='{scope}' depth={depth} active_scope='{active_scope}'",
-                sub={
-                    "scope": scope.name,
-                    "depth": depth,
-                    "active_scope": cur.scope.name if cur else None,
-                },
-            )
+        logger.trace(
+            "Transaction state: requested_scope='%s' depth=%s active_scope='%s'",
+            scope.name,
+            depth,
+            cur.scope.name if cur else None,
+        )
 
-            if depth > 0:
-                # Protect against different kind (implementations) of tx opened simultaneously
-                if cur is None or cur.scope != scope:
-                    raise CoreError(
-                        f"Nested tx scope mismatch: active={cur.scope.name if cur else None} "
-                        f"requested={scope.name}"
-                    )
+        if depth > 0:
+            # Protect against different kind (implementations) of tx opened simultaneously
+            if cur is None or cur.scope != scope:
+                raise CoreError(
+                    f"Nested tx scope mismatch: active={cur.scope.name if cur else None} "
+                    f"requested={scope.name}"
+                )
 
-                token_d = self.__tx_depth.set(depth + 1)
-
-                try:
-                    logger.trace("Reusing nested transaction scope '{scope}'", sub={"scope": scope.name})
-
-                    async with tx.transaction():
-                        yield
-
-                finally:
-                    self.__tx_depth.reset(token_d)
-                    logger.trace("Leaving nested transaction scope '{scope}'", sub={"scope": scope.name})
-
-                return
-
-            token_h = self.__tx_handle.set(TxHandle(scope=scope))
-            token_d = self.__tx_depth.set(1)
+            token_d = self.__tx_depth.set(depth + 1)
 
             try:
-                logger.trace("Entering root transaction scope '{scope}'", sub={"scope": scope.name})
+                logger.trace(
+                    "Reusing nested transaction scope '%s'",
+                    scope.name,
+                )
 
                 async with tx.transaction():
                     yield
 
             finally:
-                logger.trace("Leaving root transaction scope '{scope}'", sub={"scope": scope.name})
-                self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
+                logger.trace(
+                    "Leaving nested transaction scope '%s'",
+                    scope.name,
+                )
+
+            return
+
+        token_h = self.__tx_handle.set(TxHandle(scope=scope))
+        token_d = self.__tx_depth.set(1)
+
+        try:
+            logger.trace(
+                "Entering root transaction scope '%s'",
+                scope.name,
+            )
+
+            async with tx.transaction():
+                yield
+
+        finally:
+            logger.trace(
+                "Leaving root transaction scope '%s'",
+                scope.name,
+            )
+            self.__tx_handle.reset(token_h)
+            self.__tx_depth.reset(token_d)
 
         logger.debug("Transaction scope exited")
 
@@ -156,25 +275,6 @@ class ExecutionContext:
 
     # ....................... #
 
-    @contextmanager
-    def __resolving(self, key: DepKey[Any]) -> Iterator[None]:
-        stack = self.__resolve_stack.get()
-
-        if key in stack:
-            chain = " -> ".join(k.name for k in (*stack, key))
-            raise CoreError(f"Dependency cycle detected: {chain}")
-
-        token = self.__resolve_stack.set(stack + (key,))
-
-        try:
-            with logger.section():
-                yield
-
-        finally:
-            self.__resolve_stack.reset(token)
-
-    # ....................... #
-
     def dep[T](self, key: DepKey[T]) -> T:
         """Resolve a dependency by key using the underlying container.
 
@@ -183,9 +283,7 @@ class ExecutionContext:
         :raises CoreError: If the dependency is not registered or a cycle is detected.
         """
 
-        with self.__resolving(key):
-            dep = self.deps.provide(key)
-            return dep
+        return self.deps.provide(key)
 
     # ....................... #
     # Convenient namespace methods for resolving ports
@@ -208,8 +306,9 @@ class ExecutionContext:
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
             logger.trace(
-                "Resolving cache for document read namespace '{namespace}' with ttl={ttl}",
-                sub={"namespace": spec.namespace, "ttl": cache_spec.ttl},
+                "Resolving cache for document read namespace '%s' with ttl=%s",
+                spec.namespace,
+                cache_spec.ttl,
             )
             cache = self.cache(cache_spec)
 
@@ -217,8 +316,9 @@ class ExecutionContext:
         self.__validate_tx_scope(dep)
 
         logger.trace(
-            "Resolved document read port for namespace '{namespace}' -> {qualname}",
-            sub={"namespace": spec.namespace, "qualname": type(dep).__qualname__},
+            "Resolved document read port for namespace '%s' -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
         )
 
         return dep
@@ -243,8 +343,9 @@ class ExecutionContext:
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
             logger.trace(
-                "Resolving cache for document write namespace '{namespace}' with ttl={ttl}",
-                sub={"namespace": spec.namespace, "ttl": cache_spec.ttl},
+                "Resolving cache for document write namespace '%s' with ttl=%s",
+                spec.namespace,
+                cache_spec.ttl,
             )
             cache = self.cache(cache_spec)
 
@@ -252,8 +353,9 @@ class ExecutionContext:
         self.__validate_tx_scope(dep)
 
         logger.trace(
-            "Resolved document write port for namespace '{namespace}' -> {qualname}",
-            sub={"namespace": spec.namespace, "qualname": type(dep).__qualname__},
+            "Resolved document write port for namespace '%s' -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
         )
 
         return dep
@@ -270,8 +372,9 @@ class ExecutionContext:
         dep = self.dep(CacheDepKey)(self, spec)
 
         logger.trace(
-            "Resolved cache port for namespace '{namespace}' -> {qualname}",
-            sub={"namespace": spec.namespace, "qualname": type(dep).__qualname__},
+            "Resolved cache port for namespace '%s' -> %s",
+            spec.namespace,
+            type(dep).__qualname__,
         )
 
         return dep
@@ -288,8 +391,9 @@ class ExecutionContext:
         dep = self.dep(CounterDepKey)(self, namespace)
 
         logger.trace(
-            "Resolved counter port for namespace '{namespace}' -> {qualname}",
-            sub={"namespace": namespace, "qualname": type(dep).__qualname__},
+            "Resolved counter port for namespace '%s' -> %s",
+            namespace,
+            type(dep).__qualname__,
         )
 
         return dep
@@ -302,8 +406,8 @@ class ExecutionContext:
         dep = self.dep(TxManagerDepKey)(self)
 
         logger.trace(
-            "Resolved transaction manager port -> {qualname}",
-            sub={"qualname": type(dep).__qualname__},
+            "Resolved transaction manager port -> %s",
+            type(dep).__qualname__,
         )
 
         return dep
@@ -320,8 +424,9 @@ class ExecutionContext:
         dep = self.dep(StorageDepKey)(self, bucket)
 
         logger.trace(
-            "Resolved storage port for bucket '{bucket}' -> {qualname}",
-            sub={"bucket": bucket, "qualname": type(dep).__qualname__},
+            "Resolved storage port for bucket '%s' -> %s",
+            bucket,
+            type(dep).__qualname__,
         )
 
         return dep
@@ -334,8 +439,8 @@ class ExecutionContext:
         dep = self.dep(SearchReadDepKey)(self, spec)
 
         logger.trace(
-            "Resolved search port -> {qualname}",
-            sub={"qualname": type(dep).__qualname__},
+            "Resolved search read port -> %s",
+            type(dep).__qualname__,
         )
 
         return dep

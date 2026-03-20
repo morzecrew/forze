@@ -1,4 +1,3 @@
-from typing import Optional
 
 from pydantic import Field
 
@@ -21,13 +20,13 @@ class SearchRequestDTO(Pagination):
     query: str = ""
     """Full-text search query; empty string for filter-only mode."""
 
-    filters: Optional[QueryFilterExpression] = None  # type: ignore[valid-type]
+    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
     """Optional filter expression (predicates, conjunctions, disjunctions)."""
 
-    sorts: Optional[QuerySortExpression] = None
+    sorts: QuerySortExpression | None = None
     """Optional sort expression (field name to ``"asc"`` or ``"desc"``)."""
 
-    options: Optional[SearchOptions] = None
+    options: SearchOptions | None = None
     """Optional search options."""
 
 

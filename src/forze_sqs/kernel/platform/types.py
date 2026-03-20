@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, TypedDict
+from typing import TypedDict
 
 # ----------------------- #
 
@@ -8,6 +8,6 @@ class SQSQueueMessage(TypedDict):
     queue: str
     id: str
     body: bytes
-    type: Optional[str]
-    enqueued_at: Optional[datetime]
-    key: Optional[str]
+    type: str | None
+    enqueued_at: datetime | None
+    key: str | None

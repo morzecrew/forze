@@ -121,6 +121,7 @@ class TestUsecaseRegistry:
 
     def test_resolve_returns_usecase(self) -> None:
         reg = UsecaseRegistry().register("get", _stub_factory)
+        reg.finalize("test")
         ctx = ExecutionContext(deps=Deps())
         uc = reg.resolve("get", ctx)
         assert isinstance(uc, StubUsecase)
@@ -129,6 +130,7 @@ class TestUsecaseRegistry:
         from forze.base.errors import CoreError
 
         reg = UsecaseRegistry()
+        reg.finalize("test")
         ctx = ExecutionContext(deps=Deps())
         with pytest.raises(CoreError, match="not registered for operation"):
             reg.resolve("get", ctx)
@@ -238,6 +240,7 @@ class TestUsecaseRegistryMerge:
         reg_b.extend_plan(plan_b, inplace=True)
 
         merged = UsecaseRegistry.merge(reg_a, reg_b)
+        merged.finalize("merged")
         assert merged.exists("get")
         assert merged.exists("create")
         ctx = ExecutionContext(deps=Deps())

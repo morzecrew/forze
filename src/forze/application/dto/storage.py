@@ -1,6 +1,5 @@
 """Storage-specific request DTOs."""
 
-from typing import Optional
 
 from forze.domain.models import BaseDTO
 
@@ -18,10 +17,10 @@ class UploadObjectRequestDTO(BaseDTO):
     data: bytes
     """Raw bytes payload to store."""
 
-    description: Optional[str] = None
+    description: str | None = None
     """Optional human-readable description."""
 
-    prefix: Optional[str] = None
+    prefix: str | None = None
     """Optional key prefix (folder-like namespace)."""
 
 
@@ -31,5 +30,5 @@ class UploadObjectRequestDTO(BaseDTO):
 class ListObjectsRequestDTO(Pagination):
     """Request payload for listing objects in storage."""
 
-    prefix: Optional[str] = None
+    prefix: str | None = None
     """Optional key prefix filter."""

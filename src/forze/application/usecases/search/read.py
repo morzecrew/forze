@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import attrs
 from pydantic import BaseModel
@@ -23,7 +23,7 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Ou
     search: SearchReadPort[Out]
     """Search port for search operations."""
 
-    mapper: Optional[DTOMapper[In, SearchRequestDTO]] = None
+    mapper: DTOMapper[In, SearchRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
@@ -67,7 +67,7 @@ class RawSearch[In: RawSearchRequestDTO](Usecase[In, RawPaginated]):
     search: SearchReadPort[Any]
     """Search port for search operations."""
 
-    mapper: Optional[DTOMapper[In, RawSearchRequestDTO]] = None
+    mapper: DTOMapper[In, RawSearchRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #

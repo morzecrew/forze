@@ -1,4 +1,4 @@
-from typing import NotRequired, Optional, TypedDict
+from typing import NotRequired, TypedDict
 
 import attrs
 from pydantic import BaseModel
@@ -91,5 +91,5 @@ class SearchSpec[M: BaseModel]:
     indexes: dict[str, SearchIndexSpec]
     """Named index definitions for the namespace."""
 
-    default_index: Optional[str] = None
+    default_index: str | None = None
     """Index used when no explicit index name is provided in a query."""

@@ -40,10 +40,12 @@ class TestDocumentUsecasesFacade:
                 now = datetime.now(timezone.utc)
                 return ReadDocument(id=args, rev=1, created_at=now, last_update_at=now)
 
-        return UsecaseRegistry().register(
+        reg = UsecaseRegistry().register(
             DocumentOperation.GET,
             lambda ctx: StubGetUsecase(ctx=ctx),
         )
+        reg.finalize("document_facade")
+        return reg
 
     def test_get_returns_usecase(
         self,

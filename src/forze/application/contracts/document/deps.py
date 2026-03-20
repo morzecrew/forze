@@ -1,6 +1,6 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Any, Optional, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -34,7 +34,7 @@ class DocumentReadDepPort(Protocol):
         self,
         context: "ExecutionContext",
         spec: DocSpec,
-        cache: Optional[CachePort] = None,
+        cache: CachePort | None = None,
     ) -> DocReadPort:
         """Build a document read port, optionally backed by a cache."""
         ...
@@ -51,7 +51,7 @@ class DocumentWriteDepPort(Protocol):
         self,
         context: "ExecutionContext",
         spec: DocSpec,
-        cache: Optional[CachePort] = None,
+        cache: CachePort | None = None,
     ) -> DocWritePort:
         """Build a document write port, optionally backed by a cache."""
         ...
@@ -81,7 +81,7 @@ class DocumentReadDepRouter(
         self,
         context: "ExecutionContext",
         spec: DocSpec,
-        cache: Optional[CachePort] = None,
+        cache: CachePort | None = None,
     ) -> DocReadPort:
         route = self._select(spec)
 
@@ -104,7 +104,7 @@ class DocumentWriteDepRouter(
         self,
         context: "ExecutionContext",
         spec: DocSpec,
-        cache: Optional[CachePort] = None,
+        cache: CachePort | None = None,
     ) -> DocWritePort:
         route = self._select(spec)
 

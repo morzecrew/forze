@@ -8,7 +8,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Mapping, Optional, Sequence, final
+from typing import AsyncIterator, Mapping, Sequence, final
 from uuid import uuid4
 
 import attrs
@@ -36,7 +36,7 @@ _KEY_HEADER = "forze_key"
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class RabbitMQConfig:
     heartbeat: int = 60
-    connect_timeout: Optional[float] = 5.0
+    connect_timeout: float | None = 5.0
     queue_durable: bool = True
     persistent_messages: bool = True
     publisher_confirms: bool = True
@@ -49,12 +49,12 @@ class RabbitMQConfig:
 @final
 @attrs.define(slots=True)
 class RabbitMQClient:
-    __connection: Optional[AbstractRobustConnection] = attrs.field(
+    __connection: AbstractRobustConnection | None = attrs.field(
         default=None, init=False
     )
     __config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, init=False)
 
-    __ctx_channel: ContextVar[Optional[AbstractChannel]] = attrs.field(
+    __ctx_channel: ContextVar[AbstractChannel | None] = attrs.field(
         factory=lambda: ContextVar("rabbitmq_channel", default=None),
         init=False,
     )
@@ -68,7 +68,7 @@ class RabbitMQClient:
         init=False,
     )
     __pending_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __pending_channel: Optional[AbstractChannel] = attrs.field(
+    __pending_channel: AbstractChannel | None = attrs.field(
         default=None,
         init=False,
     )
@@ -134,7 +134,7 @@ class RabbitMQClient:
     # ....................... #
     # Context helpers
 
-    def __current_channel(self) -> Optional[AbstractChannel]:
+    def __current_channel(self) -> AbstractChannel | None:
         return self.__ctx_channel.get()
 
     # ....................... #
@@ -211,7 +211,7 @@ class RabbitMQClient:
     # ....................... #
 
     @staticmethod
-    def __extract_key(headers: Optional[Mapping[str, object]]) -> Optional[str]:
+    def __extract_key(headers: Mapping[str, object] | None) -> str | None:
         if not headers:
             return None
 
@@ -228,7 +228,7 @@ class RabbitMQClient:
     # ....................... #
 
     @staticmethod
-    def __extract_timestamp(raw_timestamp: object) -> Optional[datetime]:
+    def __extract_timestamp(raw_timestamp: object) -> datetime | None:
         if isinstance(raw_timestamp, datetime):
             return raw_timestamp
 
@@ -288,10 +288,10 @@ class RabbitMQClient:
         queue: str,
         body: bytes,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
-        message_id: Optional[str] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
+        message_id: str | None = None,
     ) -> str:
         return (
             await self.enqueue_many(
@@ -312,10 +312,10 @@ class RabbitMQClient:
         queue: str,
         bodies: Sequence[bytes],
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
-        message_ids: Optional[Sequence[str]] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
+        message_ids: Sequence[str] | None = None,
     ) -> list[str]:
         if not bodies:
             return []
@@ -365,8 +365,8 @@ class RabbitMQClient:
         self,
         queue: str,
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> list[RabbitMQQueueMessage]:
         max_messages = 1 if limit is None else limit
 
@@ -399,7 +399,7 @@ class RabbitMQClient:
         self,
         queue: str,
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[RabbitMQQueueMessage]:
         timeout_seconds = timeout.total_seconds() if timeout is not None else 1.0
         channel = await self.__require_pending_channel()

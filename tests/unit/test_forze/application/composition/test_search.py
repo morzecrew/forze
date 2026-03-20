@@ -65,6 +65,7 @@ class TestBuildSearchRegistry:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize("search")
         uc = reg.resolve(SearchOperation.RAW_SEARCH, composition_ctx)
         assert uc is not None
 
@@ -81,6 +82,7 @@ class TestSearchFacadeWithRegistry:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize("search")
         facade = SearchUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.raw_search
         assert uc is not None

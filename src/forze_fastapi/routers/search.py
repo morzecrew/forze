@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from enum import Enum
-from typing import Callable, Optional, TypedDict, TypeVar
+from typing import Callable, TypedDict, TypeVar
 
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
@@ -117,7 +117,7 @@ def attach_search_routes(
 
 def build_search_router(
     prefix: str,
-    tags: Optional[list[str | Enum]] = None,
+    tags: list[str | Enum] | None = None,
     *,
     registry: UsecaseRegistry,
     spec: SearchSpec[M],

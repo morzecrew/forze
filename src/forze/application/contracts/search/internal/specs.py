@@ -1,5 +1,4 @@
 from functools import cached_property
-from typing import Optional
 
 import attrs
 from more_itertools import first
@@ -39,8 +38,8 @@ class SearchFieldSpecInternal:
     """Indexed field specification"""
 
     path: str
-    group: Optional[str] = None
-    weight: Optional[float] = None
+    group: str | None = None
+    weight: float | None = None
     hints: JsonDict = attrs.field(factory=dict)
 
     # ....................... #
@@ -68,8 +67,8 @@ class SearchFieldSpecInternal:
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchFuzzySpecInternal:
     enabled: bool = False
-    max_distance_ratio: Optional[float] = None
-    prefix_length: Optional[int] = None
+    max_distance_ratio: float | None = None
+    prefix_length: int | None = None
     hints: JsonDict = attrs.field(factory=dict)
 
     # ....................... #
@@ -93,10 +92,10 @@ class SearchFuzzySpecInternal:
 class SearchIndexSpecInternal:
     fields: list[SearchFieldSpecInternal]
     groups: list[SearchGroupSpecInternal] = attrs.field(factory=list)
-    default_group: Optional[str] = None
+    default_group: str | None = None
     mode: SearchIndexMode = "fulltext"
-    fuzzy: Optional[SearchFuzzySpecInternal] = None
-    source: Optional[str] = None
+    fuzzy: SearchFuzzySpecInternal | None = None
+    source: str | None = None
     hints: JsonDict = attrs.field(factory=dict)
 
     # ....................... #
@@ -141,7 +140,7 @@ class SearchSpecInternal[M: BaseModel]:
     namespace: str
     model: type[M]
     indexes: dict[str, SearchIndexSpecInternal]
-    default_index: Optional[str] = None
+    default_index: str | None = None
 
     # ....................... #
 
@@ -164,7 +163,7 @@ class SearchSpecInternal[M: BaseModel]:
 
     def pick_index(
         self,
-        options: Optional[SearchOptions] = None,
+        options: SearchOptions | None = None,
     ) -> tuple[str, SearchIndexSpecInternal]:
         options = options or {}
         index = options.get("use_index", self.stable_default_index)

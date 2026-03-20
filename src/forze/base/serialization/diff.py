@@ -3,15 +3,11 @@
 from copy import deepcopy
 from typing import Any, Iterable, cast
 
+from .._logger import logger
 from ..errors import CoreError
-from ..logging import getLogger
 from ..primitives.types import JsonDict
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="serialization")
-
-# ....................... #
 
 
 def _set_nested(
@@ -68,17 +64,17 @@ def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
     """
 
     logger.trace(
-        "Applying dict patch (before_keys={before_keys}, patch_keys={patch_keys})",
-        sub={"before_keys": len(before), "patch_keys": len(patch)},
+        "Applying dict patch (before_keys=%s, patch_keys=%s)",
+        len(before),
+        len(patch),
     )
 
-    with logger.section():
-        if patch:
-            logger.trace("Patch keys: {keys}", sub={"keys": tuple(patch.keys())})
+    if patch:
+        logger.trace("Patch keys: %s", tuple(patch.keys()))
 
-        res = _shallow_merge(before, patch)
+    res = _shallow_merge(before, patch)
 
-        logger.trace("Patched result has {count} top-level key(s)", sub={"count": len(res)})
+    logger.trace("Patched result has %s top-level key(s)", len(res))
 
     return res
 
@@ -103,7 +99,7 @@ def _diff_recursive(
             child_path = path + (k,)
 
             if k not in before:
-                logger.trace("Diff added key at {path}", sub={"path": child_path})
+                logger.trace("Diff added key at %s", child_path)
                 _set_nested(patch, child_path, deepcopy(after[k]))
 
             else:
@@ -118,7 +114,7 @@ def _diff_recursive(
         if deletions_as_none:
             for k in before:
                 if k not in after:
-                    logger.trace("Diff removed key at {path}", sub={"path": path + (k,)})
+                    logger.trace("Diff removed key at %s", path + (k,))
                     _set_nested(patch, path + (k,), None)
 
         return
@@ -128,13 +124,13 @@ def _diff_recursive(
         after = cast(list[Any], after)  # type: ignore[redundant-cast]
 
         if before != after:
-            logger.trace("Diff replaced list at {path}", sub={"path": path})
+            logger.trace("Diff replaced list at %s", path)
             _set_nested(patch, path, deepcopy(after))
 
         return
 
     if before != after:
-        logger.trace("Diff changed value at {path}", sub={"path": path})
+        logger.trace("Diff changed value at %s", path)
         _set_nested(
             patch,
             path,
@@ -162,22 +158,19 @@ def calculate_dict_difference(
     """
 
     logger.trace(
-        "Calculating dict difference (deletions_as_none={deletions_as_none}, before_keys={before_keys}, after_keys={after_keys})",
-        sub={
-            "deletions_as_none": deletions_as_none,
-            "before_keys": len(before),
-            "after_keys": len(after),
-        },
+        "Calculating dict difference (deletions_as_none=%s, before_keys=%s, after_keys=%s)",
+        deletions_as_none,
+        len(before),
+        len(after),
     )
 
-    with logger.section():
-        patch: JsonDict = {}
-        _diff_recursive(before, after, patch, (), deletions_as_none)
+    patch: JsonDict = {}
+    _diff_recursive(before, after, patch, (), deletions_as_none)
 
-        logger.trace("Calculated diff with {count} top-level key(s)", sub={"count": len(patch)})
+    logger.trace("Calculated diff with %s top-level key(s)", len(patch))
 
-        if patch:
-            logger.trace("Diff keys: {keys}", sub={"keys": tuple(patch.keys())})
+    if patch:
+        logger.trace("Diff keys: %s", tuple(patch.keys()))
 
     return patch
 
@@ -215,10 +208,7 @@ def split_touches_from_merge_patch(
     :returns: A tuple of scalar-path→value mapping and a set of container paths.
     """
 
-    logger.trace(
-        "Splitting touches from merge patch (top_level_keys={count})",
-        sub={"count": len(patch)},
-    )
+    logger.trace("Splitting touches from merge patch (top_level_keys=%s)", len(patch))
 
     scalar_map: dict[DictPath, Any] = {}
     container_paths: set[DictPath] = set()
@@ -243,16 +233,13 @@ def split_touches_from_merge_patch(
         else:
             scalar_map[prefix] = node
 
-    with logger.section():
-        walk(patch, ())
+    walk(patch, ())
 
-        logger.trace(
-            "Split patch into {scalar_count} scalar touch(es) and {container_count} container touch(es)",
-            sub={
-                "scalar_count": len(scalar_map),
-                "container_count": len(container_paths),
-            },
-        )
+    logger.trace(
+        "Split patch into %s scalar touch(es) and %s container touch(es)",
+        len(scalar_map),
+        len(container_paths),
+    )
 
     return scalar_map, container_paths
 
@@ -274,32 +261,29 @@ def has_hybrid_patch_conflict(
 
     logger.trace(
         "Checking for hybrid patch conflict "
-        "(a_scalars={a_scalars}, a_containers={a_containers}, b_scalars={b_scalars}, b_containers={b_containers})",
-        sub={
-            "a_scalars": len(a_scalars),
-            "a_containers": len(a_containers),
-            "b_scalars": len(b_scalars),
-            "b_containers": len(b_containers),
-        },
+        "(a_scalars=%s, a_containers=%s, b_scalars=%s, b_containers=%s)",
+        len(a_scalars),
+        len(a_containers),
+        len(b_scalars),
+        len(b_containers),
     )
 
-    with logger.section():
-        all_a = set(a_containers) | set(a_scalars.keys())
-        all_b = set(b_containers) | set(b_scalars.keys())
+    all_a = set(a_containers) | set(a_scalars.keys())
+    all_b = set(b_containers) | set(b_scalars.keys())
 
-        for pa in all_a:
-            for pb in all_b:
-                if not is_prefix(pa, pb):
-                    continue
+    for pa in all_a:
+        for pb in all_b:
+            if not is_prefix(pa, pb):
+                continue
 
-                is_both_scalar = pa in a_scalars and pb in b_scalars
+            is_both_scalar = pa in a_scalars and pb in b_scalars
 
-                if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
-                    logger.trace("Ignoring compatible scalar overlap at {path}", sub={"path": pa})
-                    continue
+            if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
+                logger.trace("Ignoring compatible scalar overlap at '%s'", pa)
+                continue
 
-                logger.trace("Conflict detected between {pa} and {pb}", sub={"pa": pa, "pb": pb})
-                return True
+            logger.trace("Conflict detected between '%s' and '%s'", pa, pb)
+            return True
 
-        logger.trace("No conflict detected")
-        return False
+    logger.trace("No conflict detected")
+    return False

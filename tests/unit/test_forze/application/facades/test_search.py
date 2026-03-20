@@ -38,10 +38,12 @@ class TestSearchUsecasesFacade:
             async def main(self, args: dict) -> dict:
                 return {"hits": [], "count": 0}
 
-        return UsecaseRegistry().register(
+        reg = UsecaseRegistry().register(
             SearchOperation.RAW_SEARCH,
             lambda ctx: StubRawSearchUsecase(ctx=ctx),
         )
+        reg.finalize("search_facade")
+        return reg
 
     def test_raw_search_returns_usecase(
         self,

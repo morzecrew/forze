@@ -6,7 +6,7 @@ require_fastapi()
 
 from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any, Callable, NotRequired, Optional, TypedDict, final
+from typing import Any, Callable, NotRequired, TypedDict, final
 
 import attrs
 import orjson
@@ -17,16 +17,12 @@ from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import ExecutionContext
-from forze.base.logging import getLogger
 from forze.base.serialization import pydantic_model_hash
 
+from .._logger import logger
 from .feature import RouteFeature, RouteHandler
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="idempotency")
-
-# ....................... #
 
 ExecutionContextDependencyPort = Callable[[], ExecutionContext]
 """Callable that returns an :class:`ExecutionContext` (used as a FastAPI dependency)."""
@@ -49,7 +45,7 @@ class IdempotentRouteConfig(TypedDict):
     adapter: TypeAdapter[Any]
     """Adapter used to validate and hash the request payload."""
 
-    dto_param: NotRequired[Optional[str]]
+    dto_param: NotRequired[str | None]
     """Name of the DTO parameter in the endpoint signature."""
 
 
@@ -108,6 +104,7 @@ async def _response_body_bytes(resp: Response) -> bytes:
         try:
             if isinstance(chunks[0], str):
                 new_body = "".join(chunks).encode(resp.charset or "utf-8")
+
             else:
                 new_body = b"".join(chunks)
 
@@ -274,7 +271,7 @@ def make_idempotent_route_class(
     ttl: timedelta,
     header_key: str,
     adapter: TypeAdapter[Any],
-    dto_param: Optional[str] = None,
+    dto_param: str | None = None,
 ) -> type[IdempotentRoute]:
     """Create a route class pre-configured with idempotency settings."""
 

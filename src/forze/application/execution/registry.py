@@ -5,28 +5,20 @@ and attach :class:`UsecasePlan` middleware composition. :meth:`resolve` builds
 a fully composed usecase for an operation.
 """
 
-from typing import Any, Callable, Literal, Optional, Self, final, overload
+from typing import Any, Literal, Self, final, overload
 
 import attrs
+from structlog.contextvars import bind_contextvars
 
+from forze.application._logger import logger
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 
 from .context import ExecutionContext
 from .plan import OpKey, UsecasePlan
-from .usecase import Usecase
+from .usecase import Usecase, UsecaseFactory
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="registry")
-
-# ....................... #
-
-UsecaseFactory = Callable[[ExecutionContext], Usecase[Any, Any]]
-"""Factory that builds a usecase from execution context."""
-
-# ....................... #
 
 
 @final
@@ -45,6 +37,52 @@ class UsecaseRegistry:
     # Non initable fields
     __plan: UsecasePlan = attrs.field(factory=UsecasePlan, init=False, repr=False)
     """Composition plan for middleware and transaction wrapping."""
+
+    __registry_id: str | None = attrs.field(default=None, init=False, repr=False)
+    """The id of the registry."""
+
+    __finalized: bool = attrs.field(default=False, init=False, repr=False)
+    """Whether the registry is finalized and immutable."""
+
+    # ....................... #
+
+    def _raise_if_finalized(self) -> None:
+        """Raise an error if the registry is finalized."""
+
+        if self.__finalized:
+            raise CoreError("Registry is finalized")
+
+    # ....................... #
+
+    def finalize(self, registry_id: str) -> None:
+        """Finalize the registry and set the registry id.
+
+        :param registry_id: The id of the registry.
+        :raises CoreError: If the registry is already finalized.
+        """
+
+        self._raise_if_finalized()
+
+        if not registry_id:
+            raise CoreError("Registry id cannot be empty")
+
+        self.__finalized = True
+        self.__registry_id = registry_id
+
+    # ....................... #
+
+    def _qualify_operation(self, op: OpKey) -> str:
+        """Resolve an operation id for an operation.
+
+        :param op: The operation to resolve the id for.
+        :returns: The operation id.
+        :raises CoreError: If the registry id is not set.
+        """
+
+        if not self.__registry_id:
+            raise CoreError("Registry id is not set")
+
+        return f"{self.__registry_id}.{op}"
 
     # ....................... #
 
@@ -76,7 +114,7 @@ class UsecaseRegistry:
         factory: UsecaseFactory,
         *,
         inplace: bool = False,
-    ) -> Optional[Self]:
+    ) -> Self | None:
         """Register a usecase factory for an operation.
 
         :param op: Logical operation name.
@@ -86,11 +124,15 @@ class UsecaseRegistry:
         :raises CoreError: If a factory is already registered for ``op``.
         """
 
+        self._raise_if_finalized()
+
         op = str(op)
 
         logger.trace(
-            "Registering usecase factory for operation '{op}' (inplace={inplace}, factory_id={factory_id})",
-            sub={"op": op, "inplace": inplace, "factory_id": id(factory)},
+            "Registering usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
+            op,
+            inplace,
+            id(factory),
         )
 
         if op in self.defaults:
@@ -139,7 +181,7 @@ class UsecaseRegistry:
         factory: UsecaseFactory,
         *,
         inplace: bool = False,
-    ) -> Optional[Self]:
+    ) -> Self | None:
         """Override an existing usecase factory for an operation.
 
         The override is tracked so that conflicting :class:`UsecasePlan`
@@ -151,11 +193,15 @@ class UsecaseRegistry:
         :raises CoreError: If ``op`` has not been registered yet.
         """
 
+        self._raise_if_finalized()
+
         op = str(op)
 
         logger.trace(
-            "Overriding usecase factory for operation '{op}' (inplace={inplace}, factory_id={factory_id})",
-            sub={"op": op, "inplace": inplace, "factory_id": id(factory)},
+            "Overriding usecase factory for operation '%s' (inplace=%s, factory_id=%s)",
+            op,
+            inplace,
+            id(factory),
         )
 
         if op not in self.defaults:
@@ -209,7 +255,7 @@ class UsecaseRegistry:
         ops: dict[OpKey, UsecaseFactory],
         *,
         inplace: bool = False,
-    ) -> Optional[Self]:
+    ) -> Self | None:
         """Register several operations at once.
 
         :param ops: Mapping from operation name to factory.
@@ -217,33 +263,35 @@ class UsecaseRegistry:
         :raises CoreError: When any of the operations is already registered.
         """
 
+        self._raise_if_finalized()
+
         ops = {str(op): factory for op, factory in ops.items()}
 
         logger.trace(
-            "Registering {count} usecase factory(s) (inplace={inplace})",
-            sub={"count": len(ops), "inplace": inplace},
+            "Registering %s usecase factory(s) (inplace=%s)",
+            len(ops),
+            inplace,
         )
 
-        with logger.section():
-            logger.trace("Operations: {ops}", sub={"ops": tuple(ops.keys())})
+        logger.trace("Operations: %s", tuple(ops.keys()))
 
-            already_registered = set(self.defaults.keys()).intersection(ops.keys())
+        already_registered = set(self.defaults.keys()).intersection(ops.keys())
 
-            if already_registered:
-                raise CoreError(
-                    f"Usecase factories are already registered for operations: {already_registered}"
-                )
+        if already_registered:
+            raise CoreError(
+                f"Usecase factories are already registered for operations: {already_registered}"
+            )
 
-            new = dict(self.defaults)
-            new.update(ops)
+        new = dict(self.defaults)
+        new.update(ops)
 
-            if inplace:
-                self.defaults = new
-                return None
+        if inplace:
+            self.defaults = new
+            return None
 
-            else:
-                new_instance = type(self)(defaults=new)
-                return new_instance
+        else:
+            new_instance = type(self)(defaults=new)
+            return new_instance
 
     # ....................... #
 
@@ -284,7 +332,7 @@ class UsecaseRegistry:
         ops: dict[OpKey, UsecaseFactory],
         *,
         inplace: bool = False,
-    ) -> Optional[Self]:
+    ) -> Self | None:
         """Override several operations in a single call.
 
         :param ops: Mapping from operation name to replacement factory.
@@ -293,33 +341,35 @@ class UsecaseRegistry:
             registered.
         """
 
+        self._raise_if_finalized()
+
         ops = {str(op): factory for op, factory in ops.items()}
 
         logger.trace(
-            "Overriding {count} usecase factory(s) (inplace={inplace})",
-            sub={"count": len(ops), "inplace": inplace},
+            "Overriding %s usecase factory(s) (inplace=%s)",
+            len(ops),
+            inplace,
         )
 
-        with logger.section():
-            logger.trace("Operations: {ops}", sub={"ops": tuple(ops.keys())})
+        logger.trace("Operations: %s", tuple(ops.keys()))
 
-            not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
+        not_yet_registered = set(ops.keys()).difference(self.defaults.keys())
 
-            if not_yet_registered:
-                raise CoreError(
-                    f"Usecase factories are not registered for operations: {not_yet_registered}"
-                )
+        if not_yet_registered:
+            raise CoreError(
+                f"Usecase factories are not registered for operations: {not_yet_registered}"
+            )
 
-            new = dict(self.defaults)
-            new.update(ops)
+        new = dict(self.defaults)
+        new.update(ops)
 
-            if inplace:
-                self.defaults = new
-                return None
+        if inplace:
+            self.defaults = new
+            return None
 
-            else:
-                new_instance = type(self)(defaults=new)
-                return new_instance
+        else:
+            new_instance = type(self)(defaults=new)
+            return new_instance
 
     # ....................... #
 
@@ -358,16 +408,19 @@ class UsecaseRegistry:
         extra: UsecasePlan,
         *,
         inplace: bool = False,
-    ) -> Optional[Self]:
+    ) -> Self | None:
         """Attach additional planning information to the registry.
 
         :param extra: Plan to merge into the existing registry plan.
         :param inplace: When ``True``, mutate the registry in place.
         """
 
+        self._raise_if_finalized()
+
         logger.trace(
-            "Extending usecase registry plan (inplace={inplace}, extra_ops={extra_ops})",
-            sub={"inplace": inplace, "extra_ops": len(extra.ops)},
+            "Extending usecase registry plan (inplace=%s, extra_ops=%s)",
+            inplace,
+            len(extra.ops),
         )
 
         merged = self.__plan.merge(extra)
@@ -404,21 +457,21 @@ class UsecaseRegistry:
         """
 
         op = str(op)
+        operation_id = self._qualify_operation(op)
 
-        logger.debug("Resolving usecase for operation '{op}'", sub={"op": op})
+        bind_contextvars(operation_id=operation_id)
+
+        logger.debug("Resolving usecase")
         factory = self.defaults.get(op)
 
-        with logger.section():
-            if not factory:
-                raise CoreError(
-                    f"Usecase factory is not registered for operation: {op}"
-                )
+        if not factory:
+            raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
-            logger.trace("Found factory (factory_id={factory_id})", sub={"factory_id": id(factory)})
-
+        logger.trace("Found factory (factory_id=%s)", id(factory))
         resolved = self.__plan.resolve(op, ctx, factory)
+        assigned = resolved.with_operation_id(operation_id)
 
-        return resolved
+        return assigned
 
     # ....................... #
 
@@ -439,76 +492,79 @@ class UsecaseRegistry:
         :raises CoreError: If a factory is registered for the same operation in multiple registries and ``on_conflict`` is ``"error"``.
         """
 
+        for reg in registries:
+            try:
+                reg._raise_if_finalized()
+
+            except CoreError as e:
+                raise CoreError("Cannot merge finalized registry") from e
+
         logger.trace(
-            "Merging {count} usecase registries (on_conflict={on_conflict})",
-            sub={"count": len(registries), "on_conflict": on_conflict},
+            "Merging %s usecase registries (on_conflict=%s)",
+            len(registries),
+            on_conflict,
         )
 
         acc = cls()
 
-        with logger.section():
-            if not registries:
-                logger.trace("No registries provided, returning empty registry")
-                return acc
+        if not registries:
+            logger.trace("No registries provided, returning empty registry")
+            return acc
 
-            for idx, reg in enumerate(registries, 1):
-                logger.trace(
-                    "Processing registry #{idx} (factory_count={factory_count}, plan_ops={plan_ops}, registry_id={registry_id})",
-                    sub={
-                        "idx": idx,
-                        "factory_count": len(reg.defaults),
-                        "plan_ops": len(reg.__plan.ops),
-                        "registry_id": id(reg),
-                    },
-                )
-
-                # Merge factories
-                for op, factory in reg.defaults.items():
-                    existing = acc.defaults.get(op)
-
-                    if existing is not None:
-                        logger.trace(
-                            "Conflict for operation '{op}' (existing_factory_id={existing_factory_id}, new_factory_id={new_factory_id})",
-                            sub={
-                                "op": op,
-                                "existing_factory_id": id(existing),
-                                "new_factory_id": id(factory),
-                            },
-                        )
-
-                        if on_conflict == "error":
-                            raise CoreError(
-                                f"Usecase factory is already registered for operation: {op}"
-                            )
-
-                        logger.trace(
-                            "Overwriting factory for operation '{op}' with rightmost registry entry",
-                            sub={"op": op},
-                        )
-
-                    else:
-                        logger.trace(
-                            "Adding factory for operation '{op}' (factory_id={factory_id})",
-                            sub={"op": op, "factory_id": id(factory)},
-                        )
-
-                    acc.defaults[op] = factory
-
-                # Merge plans
-                logger.trace(
-                    "Merging plan from registry #{idx} (ops={ops})",
-                    sub={"idx": idx, "ops": len(reg.__plan.ops)},
-                )
-                acc.extend_plan(reg.__plan, inplace=True)
-
+        for idx, reg in enumerate(registries, 1):
             logger.trace(
-                "Merged {count} registries into one (factory_count={factory_count}, plan_ops={plan_ops})",
-                sub={
-                    "count": len(registries),
-                    "factory_count": len(acc.defaults),
-                    "plan_ops": len(acc.__plan.ops),
-                },
+                "Processing registry #%s (factory_count=%s, plan_ops=%s, registry_id=%s)",
+                idx,
+                len(reg.defaults),
+                len(reg.__plan.ops),
+                id(reg),
             )
+
+            # Merge factories
+            for op, factory in reg.defaults.items():
+                existing = acc.defaults.get(op)
+
+                if existing is not None:
+                    logger.trace(
+                        "Conflict for operation '%s' (existing_factory_id=%s, new_factory_id=%s)",
+                        op,
+                        id(existing),
+                        id(factory),
+                    )
+
+                    if on_conflict == "error":
+                        raise CoreError(
+                            f"Usecase factory is already registered for operation: {op}"
+                        )
+
+                    logger.trace(
+                        "Overwriting factory for operation '%s' with rightmost registry entry",
+                        op,
+                    )
+
+                else:
+                    logger.trace(
+                        "Adding factory for operation '%s' (factory_id=%s)",
+                        op,
+                        id(factory),
+                    )
+
+                acc.defaults[op] = factory
+
+            # Merge plans
+            logger.trace(
+                "Merging plan from registry #%s (ops=%s)",
+                idx,
+                len(reg.__plan.ops),
+            )
+            acc.extend_plan(reg.__plan, inplace=True)
+
+        logger.trace(
+            "Merged %s registries into one (factory_count=%s, plan_ops=%s)",
+            len(registries),
+            len(acc.defaults),
+            len(acc.__plan.ops),
+        )
 
         return acc
 

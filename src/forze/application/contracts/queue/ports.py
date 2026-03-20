@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncIterator,
     Awaitable,
-    Optional,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -23,8 +22,8 @@ class QueueReadPort[M: BaseModel](Protocol):
         self,
         queue: str,  # noqa: F841
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,  # noqa: F841
+        limit: int | None = None,
+        timeout: timedelta | None = None,  # noqa: F841
     ) -> Awaitable[list[QueueMessage[M]]]:
         """Fetch a batch of messages from *queue*."""
         ...
@@ -35,7 +34,7 @@ class QueueReadPort[M: BaseModel](Protocol):
         self,
         queue: str,  # noqa: F841
         *,
-        timeout: Optional[timedelta] = None,  # noqa: F841
+        timeout: timedelta | None = None,  # noqa: F841
     ) -> AsyncIterator[QueueMessage[M]]:
         """Yield messages continuously from *queue* until *timeout* elapses."""
         ...
@@ -71,9 +70,9 @@ class QueueWritePort[M: BaseModel](Protocol):
         queue: str,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
     ) -> Awaitable[str]:
         """Enqueue a single message and return its identifier."""
         ...
@@ -85,9 +84,9 @@ class QueueWritePort[M: BaseModel](Protocol):
         queue: str,
         payloads: Sequence[M],
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
     ) -> Awaitable[list[str]]:
         """Enqueue multiple messages and return their identifiers."""
         ...

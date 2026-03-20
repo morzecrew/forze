@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import NotRequired, Optional, TypedDict
+from typing import NotRequired, TypedDict
 
 # ----------------------- #
 
@@ -13,7 +13,7 @@ class StoredObject(TypedDict):
     filename: str
     """Original filename associated with the upload."""
 
-    description: Optional[str]
+    description: str | None
     """Optional human-friendly description."""
 
     content_type: str

@@ -19,7 +19,6 @@ from typing import (
     Any,
     AsyncIterator,
     Literal,
-    Optional,
     Sequence,
     TypedDict,
     final,
@@ -101,8 +100,8 @@ class PostgresClient:
     context and auto-commit when not inside a transaction.
     """
 
-    __pool: Optional[AsyncConnectionPool] = attrs.field(default=None, init=False)
-    __ctx_conn: ContextVar[Optional[AsyncConnection]] = attrs.field(
+    __pool: AsyncConnectionPool | None = attrs.field(default=None, init=False)
+    __ctx_conn: ContextVar[AsyncConnection | None] = attrs.field(
         factory=lambda: ContextVar(
             "pg_conn",
             default=None,
@@ -197,7 +196,7 @@ class PostgresClient:
     # ....................... #
     # Context helpers
 
-    def __current_conn(self) -> Optional[AsyncConnection]:
+    def __current_conn(self) -> AsyncConnection | None:
         """Connection bound to the current context, or ``None``."""
 
         return self.__ctx_conn.get()
@@ -365,7 +364,7 @@ class PostgresClient:
 
     @staticmethod
     def _rows_to_dicts(
-        description: Optional[Sequence[Column]],
+        description: Sequence[Column] | None,
         rows: Sequence[Sequence[Any]],
     ) -> list[JsonDict]:
         """Builds a list of column-keyed dicts from cursor description and rows."""
@@ -376,7 +375,7 @@ class PostgresClient:
 
     @staticmethod
     def _row_to_dict(
-        description: Optional[Sequence[Column]],
+        description: Sequence[Column] | None,
         row: Sequence[Any],
     ) -> JsonDict:
         """Builds a single column-keyed dict from cursor description and a row."""
@@ -391,7 +390,7 @@ class PostgresClient:
     async def execute(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         return_rowcount: Literal[False] = False,
     ) -> None: ...
@@ -400,7 +399,7 @@ class PostgresClient:
     async def execute(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         return_rowcount: Literal[True],
     ) -> int: ...
@@ -409,10 +408,10 @@ class PostgresClient:
     async def execute(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         return_rowcount: bool = False,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Executes a statement.
 
         When not inside a transaction, commits automatically. Optionally
@@ -463,7 +462,7 @@ class PostgresClient:
     async def fetch_all(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
@@ -473,7 +472,7 @@ class PostgresClient:
     async def fetch_all(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         row_factory: Literal["tuple"] = "tuple",
         commit: bool = False,
@@ -483,7 +482,7 @@ class PostgresClient:
     async def fetch_all(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
@@ -524,31 +523,31 @@ class PostgresClient:
     async def fetch_one(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
-    ) -> Optional[JsonDict]: ...
+    ) -> JsonDict | None: ...
 
     @overload
     async def fetch_one(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         row_factory: Literal["tuple"] = "tuple",
         commit: bool = False,
-    ) -> Optional[tuple[Any, ...]]: ...
+    ) -> tuple[Any, ...] | None: ...
 
     @psycopg_handled("postgres.fetch_one")  # type: ignore[untyped-decorator]
     async def fetch_one(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> Optional[JsonDict | tuple[Any, ...]]:
+    ) -> JsonDict | tuple[Any, ...] | None:
         """Executes a query and returns the first row.
 
         Returns ``None`` when no rows match. When ``commit`` is ``True`` and
@@ -566,7 +565,7 @@ class PostgresClient:
                 await cur.execute(query, params)
 
                 row = await cur.fetchone()
-                res: Optional[JsonDict | tuple[Any, ...]]
+                res: JsonDict | tuple[Any, ...] | None
 
                 if row is None:
                     res = None
@@ -588,7 +587,7 @@ class PostgresClient:
     async def fetch_value(
         self,
         query: QueryNoTemplate,
-        params: Optional[Params] = None,
+        params: Params | None = None,
         *,
         default: Any = None,
     ) -> Any:

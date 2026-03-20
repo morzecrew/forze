@@ -7,22 +7,18 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Optional, Sequence, final
+from typing import Any, Sequence, final
 
 import attrs
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import JsonCodec, KeyCodec, TextCodec
-from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
+from ._logger import logger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="redis.cache")
-
-# ....................... #
 
 
 @final
@@ -43,7 +39,7 @@ class RedisCacheAdapter(CachePort):
 
     client: RedisClient
     key_codec: KeyCodec
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # Non initable fields
     json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
@@ -220,28 +216,27 @@ class RedisCacheAdapter(CachePort):
     # ....................... #
     # Public: read
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         # Try versioned first
-        logger.debug("Cache lookup for key={key}", sub={"key": key})
+        logger.debug("Cache lookup for key=%s", key)
 
-        with logger.section():
-            pointers = await self.__mget_pointers([key])
+        pointers = await self.__mget_pointers([key])
 
-            if pointers:
-                bodies = await self.__mget_bodies({key: pointers[key]})
-                if key in bodies:
-                    logger.debug("Cache hit (versioned) key={key}", sub={"key": key})
-                    return bodies[key]
+        if pointers:
+            bodies = await self.__mget_bodies({key: pointers[key]})
+            if key in bodies:
+                logger.debug("Cache hit (versioned) key=%s", key)
+                return bodies[key]
 
-            # Fallback to plain
-            kv = await self.__mget_kv([key])
+        # Fallback to plain
+        kv = await self.__mget_kv([key])
 
-            if key in kv:
-                logger.debug("Cache hit (plain) key={key}", sub={"key": key})
-                return kv[key]
+        if key in kv:
+            logger.debug("Cache hit (plain) key=%s", key)
+            return kv[key]
 
-            logger.debug("Cache miss key={key}", sub={"key": key})
-            return None
+        logger.debug("Cache miss key=%s", key)
+        return None
 
     # ....................... #
 
@@ -250,29 +245,29 @@ class RedisCacheAdapter(CachePort):
             logger.debug("Empty list of keys, skipping")
             return {}, []
 
-        logger.debug("Cache batch lookup for {count} keys", sub={"count": len(keys)})
+        logger.debug("Cache batch lookup for %s keys", len(keys))
 
-        with logger.section():
-            # 1) versioned hits where pointer exists + body exists
-            pointers = await self.__mget_pointers(keys)
-            versioned_hits: dict[str, Any] = {}
+        # 1) versioned hits where pointer exists + body exists
+        pointers = await self.__mget_pointers(keys)
+        versioned_hits: dict[str, Any] = {}
 
-            if pointers:
-                versioned_hits = await self.__mget_bodies(pointers)
+        if pointers:
+            versioned_hits = await self.__mget_bodies(pointers)
 
-            # 2) for the rest, try plain KV
-            remaining = [k for k in keys if k not in versioned_hits]
-            kv_hits = await self.__mget_kv(remaining) if remaining else {}
+        # 2) for the rest, try plain KV
+        remaining = [k for k in keys if k not in versioned_hits]
+        kv_hits = await self.__mget_kv(remaining) if remaining else {}
 
-            hits = {**versioned_hits, **kv_hits}
-            misses = [k for k in keys if k not in hits]
+        hits = {**versioned_hits, **kv_hits}
+        misses = [k for k in keys if k not in hits]
 
-            logger.debug(
-                "Cache hits={hits}, misses={misses}",
-                sub={"hits": len(hits), "misses": len(misses)},
-            )
+        logger.debug(
+            "Cache hits=%s, misses=%s",
+            len(hits),
+            len(misses),
+        )
 
-            return hits, misses
+        return hits, misses
 
     # ....................... #
     # Public: write

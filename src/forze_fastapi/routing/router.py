@@ -10,7 +10,6 @@ from enum import Enum
 from typing import (
     Any,
     Callable,
-    Optional,
     Sequence,
     TypedDict,
     Union,
@@ -141,18 +140,18 @@ class ForzeAPIRouter(APIRouter):
         self,
         *,
         prefix: str = "",
-        tags: Optional[list[str | Enum]] = None,
-        dependencies: Optional[Sequence[Depends]] = None,
+        tags: list[str | Enum] | None = None,
+        dependencies: Sequence[Depends] | None = None,
         default_response_class: type[Response] = Default(JSONResponse),
-        responses: Optional[dict[int | str, dict[str, Any]]] = None,
-        callbacks: Optional[list[BaseRoute]] = None,
-        routes: Optional[list[BaseRoute]] = None,
+        responses: dict[int | str, dict[str, Any]] | None = None,
+        callbacks: list[BaseRoute] | None = None,
+        routes: list[BaseRoute] | None = None,
         redirect_slashes: bool = True,
-        default: Optional[ASGIApp] = None,
-        dependency_overrides_provider: Optional[Any] = None,
+        default: ASGIApp | None = None,
+        dependency_overrides_provider: Any | None = None,
         route_class: type[APIRoute] = APIRoute,
-        lifespan: Optional[Lifespan[Any]] = None,
-        deprecated: Optional[bool] = None,
+        lifespan: Lifespan[Any] | None = None,
+        deprecated: bool | None = None,
         include_in_schema: bool = True,
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
@@ -160,8 +159,8 @@ class ForzeAPIRouter(APIRouter):
         strict_content_type: bool = Default(True),
         # extra parameters
         context_dependency: ExecutionContextDependencyPort,
-        idempotency_config: Optional[RouterIdempotencyConfig] = None,
-        etag_config: Optional[RouterETagConfig] = None,
+        idempotency_config: RouterIdempotencyConfig | None = None,
+        etag_config: RouterETagConfig | None = None,
     ) -> None:
         super().__init__(
             prefix=prefix,
@@ -194,18 +193,18 @@ class ForzeAPIRouter(APIRouter):
         endpoint: Callable[..., Any],
         *,
         response_model: Any = Default(None),
-        status_code: Optional[int] = None,
-        tags: Optional[list[Union[str, Enum]]] = None,
-        dependencies: Optional[Sequence[Depends]] = None,
-        summary: Optional[str] = None,
-        description: Optional[str] = None,
+        status_code: int | None = None,
+        tags: list[Union[str, Enum]] | None = None,
+        dependencies: Sequence[Depends] | None = None,
+        summary: str | None = None,
+        description: str | None = None,
         response_description: str = "Successful Response",
-        responses: Optional[dict[Union[int, str], dict[str, Any]]] = None,
-        deprecated: Optional[bool] = None,
-        methods: Optional[Union[set[str], list[str]]] = None,
-        operation_id: Optional[str] = None,
-        response_model_include: Optional[IncEx] = None,
-        response_model_exclude: Optional[IncEx] = None,
+        responses: dict[Union[int, str], dict[str, Any]] | None = None,
+        deprecated: bool | None = None,
+        methods: Union[set[str], list[str]] | None = None,
+        operation_id: str | None = None,
+        response_model_include: IncEx | None = None,
+        response_model_exclude: IncEx | None = None,
         response_model_by_alias: bool = True,
         response_model_exclude_unset: bool = False,
         response_model_exclude_defaults: bool = False,
@@ -214,20 +213,20 @@ class ForzeAPIRouter(APIRouter):
         response_class: Union[type[Response], DefaultPlaceholder] = Default(
             JSONResponse
         ),
-        name: Optional[str] = None,
-        route_class_override: Optional[type[APIRoute]] = None,
-        callbacks: Optional[list[BaseRoute]] = None,
-        openapi_extra: Optional[dict[str, Any]] = None,
+        name: str | None = None,
+        route_class_override: type[APIRoute] | None = None,
+        callbacks: list[BaseRoute] | None = None,
+        openapi_extra: dict[str, Any] | None = None,
         generate_unique_id_function: Union[
             Callable[[APIRoute], str], DefaultPlaceholder
         ] = Default(generate_unique_id),
         strict_content_type: bool | DefaultPlaceholder = Default(True),
         # extra parameters
         idempotent: bool = False,
-        idempotency_config: Optional[RouteIdempotencyConfig] = None,
+        idempotency_config: RouteIdempotencyConfig | None = None,
         etag: bool = False,
-        etag_config: Optional[RouteETagConfig] = None,
-        route_features: Optional[Sequence[RouteFeature]] = None,
+        etag_config: RouteETagConfig | None = None,
+        route_features: Sequence[RouteFeature] | None = None,
     ) -> None:
         """Register a route with optional composable feature wrapping.
 
@@ -285,7 +284,7 @@ class ForzeAPIRouter(APIRouter):
 
         if etag:
             merged: RouteETagConfig = {**self.__etag_config, **(etag_config or {})}
-            provider: Optional[ETagProvider] = merged.get("provider")
+            provider: ETagProvider | None = merged.get("provider")
 
             if provider is None:
                 raise CoreError("ETag provider is required when ETag is enabled")
@@ -344,33 +343,33 @@ class ForzeAPIRouter(APIRouter):
         path: str,
         *,
         response_model: Any = Default(None),
-        status_code: Optional[int] = None,
-        tags: Optional[list[Union[str, Enum]]] = None,
-        dependencies: Optional[Sequence[Depends]] = None,
-        summary: Optional[str] = None,
-        description: Optional[str] = None,
+        status_code: int | None = None,
+        tags: list[Union[str, Enum]] | None = None,
+        dependencies: Sequence[Depends] | None = None,
+        summary: str | None = None,
+        description: str | None = None,
         response_description: str = "Successful Response",
-        responses: Optional[dict[Union[int, str], dict[str, Any]]] = None,
-        deprecated: Optional[bool] = None,
-        operation_id: Optional[str] = None,
-        response_model_include: Optional[IncEx] = None,
-        response_model_exclude: Optional[IncEx] = None,
+        responses: dict[Union[int, str], dict[str, Any]] | None = None,
+        deprecated: bool | None = None,
+        operation_id: str | None = None,
+        response_model_include: IncEx | None = None,
+        response_model_exclude: IncEx | None = None,
         response_model_by_alias: bool = True,
         response_model_exclude_unset: bool = False,
         response_model_exclude_defaults: bool = False,
         response_model_exclude_none: bool = False,
         include_in_schema: bool = True,
         response_class: type[Response] = Default(JSONResponse),
-        name: Optional[str] = None,
-        callbacks: Optional[list[BaseRoute]] = None,
-        openapi_extra: Optional[dict[str, Any]] = None,
+        name: str | None = None,
+        callbacks: list[BaseRoute] | None = None,
+        openapi_extra: dict[str, Any] | None = None,
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
         ),
         # extra parameters
         idempotent: bool = False,
-        idempotency_config: Optional[RouteIdempotencyConfig] = None,
-        route_features: Optional[Sequence[RouteFeature]] = None,
+        idempotency_config: RouteIdempotencyConfig | None = None,
+        route_features: Sequence[RouteFeature] | None = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """Add a *path operation* using an HTTP POST operation."""
 
@@ -416,33 +415,33 @@ class ForzeAPIRouter(APIRouter):
         path: str,
         *,
         response_model: Any = Default(None),
-        status_code: Optional[int] = None,
-        tags: Optional[list[Union[str, Enum]]] = None,
-        dependencies: Optional[Sequence[Depends]] = None,
-        summary: Optional[str] = None,
-        description: Optional[str] = None,
+        status_code: int | None = None,
+        tags: list[Union[str, Enum]] | None = None,
+        dependencies: Sequence[Depends] | None = None,
+        summary: str | None = None,
+        description: str | None = None,
         response_description: str = "Successful Response",
-        responses: Optional[dict[Union[int, str], dict[str, Any]]] = None,
-        deprecated: Optional[bool] = None,
-        operation_id: Optional[str] = None,
-        response_model_include: Optional[IncEx] = None,
-        response_model_exclude: Optional[IncEx] = None,
+        responses: dict[Union[int, str], dict[str, Any]] | None = None,
+        deprecated: bool | None = None,
+        operation_id: str | None = None,
+        response_model_include: IncEx | None = None,
+        response_model_exclude: IncEx | None = None,
         response_model_by_alias: bool = True,
         response_model_exclude_unset: bool = False,
         response_model_exclude_defaults: bool = False,
         response_model_exclude_none: bool = False,
         include_in_schema: bool = True,
         response_class: type[Response] = Default(JSONResponse),
-        name: Optional[str] = None,
-        callbacks: Optional[list[BaseRoute]] = None,
-        openapi_extra: Optional[dict[str, Any]] = None,
+        name: str | None = None,
+        callbacks: list[BaseRoute] | None = None,
+        openapi_extra: dict[str, Any] | None = None,
         generate_unique_id_function: Callable[[APIRoute], str] = Default(
             generate_unique_id
         ),
         # extra parameters
         etag: bool = False,
-        etag_config: Optional[RouteETagConfig] = None,
-        route_features: Optional[Sequence[RouteFeature]] = None,
+        etag_config: RouteETagConfig | None = None,
+        route_features: Sequence[RouteFeature] | None = None,
     ) -> Callable[[DecoratedCallable], DecoratedCallable]:
         """Add a *path operation* using an HTTP GET operation."""
 

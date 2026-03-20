@@ -3,8 +3,8 @@ from typing import TYPE_CHECKING, Self, cast, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.base.errors import CoreError
-from forze.base.logging import getLogger
 from forze.base.serialization import apply_dict_patch, pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO
 
@@ -15,10 +15,6 @@ if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="mapping")
-
-# ....................... #
 
 
 @final
@@ -72,14 +68,13 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
             step_fields.append(frozenset(produces))
 
         object.__setattr__(self, "_step_fields", tuple(step_fields))
+
         logger.trace(
-            "DTOMapper initialized: {in_} -> {out} with {count} step(s), fields={fields}",
-            sub={
-                "in_": self.in_.__qualname__,
-                "out": self.out.__qualname__,
-                "count": len(self.steps),
-                "fields": tuple(step_fields),
-            },
+            "DTOMapper initialized: %s -> %s with %s step(s), fields=%s",
+            self.in_.__qualname__,
+            self.out.__qualname__,
+            len(self.steps),
+            tuple(step_fields),
         )
 
     # ....................... #
@@ -114,48 +109,42 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
         """
 
         logger.debug(
-            "Mapping {in_} -> {out}",
-            sub={"in_": self.in_.__qualname__, "out": self.out.__qualname__},
+            "Mapping %s -> %s",
+            self.in_.__qualname__,
+            self.out.__qualname__,
         )
 
-        with logger.section():
-            if self.in_ is self.out and not self.steps:
-                logger.trace(
-                    "Source and target are the same class and no steps are defined, returning source directly"
-                )
-                return cast(Out, source)
+        if self.in_ is self.out and not self.steps:
+            logger.trace(
+                "Source and target are the same class and no steps are defined, returning source directly"
+            )
+            return cast(Out, source)
 
-            payload = pydantic_dump(source, exclude={"unset": True})
-            logger.trace("Initial payload keys: {keys}", sub={"keys": tuple(payload.keys())})
+        payload = pydantic_dump(source, exclude={"unset": True})
+        logger.trace("Initial payload keys: %s", tuple(payload.keys()))
 
-            for i, (step, fields) in enumerate(
-                zip(self.steps, self._step_fields, strict=True)
-            ):
-                logger.trace(
-                    "Running step {index}/{total} ({qualname}), produces {fields}",
-                    sub={
-                        "index": i + 1,
-                        "total": len(self.steps),
-                        "qualname": type(step).__qualname__,
-                        "fields": tuple(fields),
-                    },
-                )
-                patch = await step(ctx, source, payload)
+        for i, (step, fields) in enumerate(
+            zip(self.steps, self._step_fields, strict=True),
+            start=1,
+        ):
+            logger.trace(
+                "Running step %s/%s (%s), produces %s",
+                i,
+                len(self.steps),
+                step.__qualname__,  # type: ignore[attr-defined]
+                fields,
+            )
+            patch = await step(ctx, source, payload)
 
-                for k in fields:
-                    if k in payload and payload.get(k) != patch.get(k):
-                        if not self.policy.can_overwrite(k):
-                            raise CoreError(
-                                f"Field {k} is not allowed to be overwritten"
-                            )
+            for k in fields:
+                if k in payload and payload.get(k) != patch.get(k):
+                    if not self.policy.can_overwrite(k):
+                        raise CoreError(f"Field {k} is not allowed to be overwritten")
 
-                        logger.trace(
-                            "Overwriting field {field} (allowed by policy)",
-                            sub={"field": k},
-                        )
+                    logger.trace("Overwriting field %s (allowed by policy)", k)
 
-                payload = apply_dict_patch(payload, patch)
+            payload = apply_dict_patch(payload, patch)
 
-            result = pydantic_validate(self.out, payload)
+        result = pydantic_validate(self.out, payload)
 
         return result

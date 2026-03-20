@@ -14,7 +14,7 @@ require_mongo()
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, Mapping, Optional, Sequence, TypedDict, final
+from typing import Any, AsyncIterator, Mapping, Sequence, TypedDict, final
 
 import attrs
 from bson import ObjectId
@@ -88,11 +88,11 @@ class MongoClient:
     nested transactions).
     """
 
-    __client: Optional[AsyncMongoClient[JsonDict]] = attrs.field(
+    __client: AsyncMongoClient[JsonDict] | None = attrs.field(
         default=None, init=False
     )
 
-    __ctx_session: ContextVar[Optional[AsyncClientSession]] = attrs.field(
+    __ctx_session: ContextVar[AsyncClientSession | None] = attrs.field(
         factory=lambda: ContextVar("mongo_session", default=None),
         init=False,
         repr=False,
@@ -103,7 +103,7 @@ class MongoClient:
         repr=False,
     )
 
-    __db_name: Optional[str] = attrs.field(default=None, init=False, repr=False)
+    __db_name: str | None = attrs.field(default=None, init=False, repr=False)
 
     # ....................... #
     # Lifecycle
@@ -181,7 +181,7 @@ class MongoClient:
     # ....................... #
     # DB/collection helpers
 
-    def db(self, name: Optional[str] = None) -> AsyncDatabase[JsonDict]:
+    def db(self, name: str | None = None) -> AsyncDatabase[JsonDict]:
         """Return an async database handle.
 
         :param name: Database name. Defaults to the name passed to :meth:`initialize`.
@@ -199,7 +199,7 @@ class MongoClient:
         self,
         name: str,
         *,
-        db_name: Optional[str] = None,
+        db_name: str | None = None,
     ) -> AsyncCollection[JsonDict]:
         """Return an async collection handle bound to :meth:`db`."""
 
@@ -208,7 +208,7 @@ class MongoClient:
     # ....................... #
     # Context helpers
 
-    def __current_session(self) -> Optional[AsyncClientSession]:
+    def __current_session(self) -> AsyncClientSession | None:
         """Session bound to the current context, or ``None``."""
 
         return self.__ctx_session.get()
@@ -309,9 +309,9 @@ class MongoClient:
         coll: AsyncCollection[JsonDict],
         filter: Mapping[str, Any],
         *,
-        projection: Optional[Mapping[str, Any]] = None,
-        sort: Optional[Sequence[tuple[str, int]]] = None,
-    ) -> Optional[JsonDict]:
+        projection: Mapping[str, Any] | None = None,
+        sort: Sequence[tuple[str, int]] | None = None,
+    ) -> JsonDict | None:
         """Find a single document.
 
         Automatically attaches the current session when in a transaction.
@@ -334,10 +334,10 @@ class MongoClient:
         coll: AsyncCollection[JsonDict],
         filter: Mapping[str, Any],
         *,
-        projection: Optional[Mapping[str, Any]] = None,
-        sort: Optional[Sequence[tuple[str, int]]] = None,
-        limit: Optional[int] = None,
-        skip: Optional[int] = None,
+        projection: Mapping[str, Any] | None = None,
+        sort: Sequence[tuple[str, int]] | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
     ) -> list[JsonDict]:
         """Find many documents and return them as a list."""
 

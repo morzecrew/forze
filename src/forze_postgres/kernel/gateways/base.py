@@ -7,7 +7,7 @@ require_psycopg()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Final, Optional, Self, Sequence, final
+from typing import Any, Final, Self, Sequence, final
 
 import attrs
 import orjson
@@ -95,7 +95,7 @@ class PostgresGateway[M: BaseModel]:
     introspector: PostgresIntrospector
 
     #! We should be able to disable tenant context (document spec or ... ???)
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # ....................... #
 
@@ -117,7 +117,7 @@ class PostgresGateway[M: BaseModel]:
 
     async def where_clause(
         self,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
     ) -> tuple[sql.Composable, list[Any]]:
         if not filters:
             return sql.SQL("TRUE"), []
@@ -147,7 +147,7 @@ class PostgresGateway[M: BaseModel]:
 
     def sort_clause(
         self,
-        sorts: Optional[QuerySortExpression] = None,
+        sorts: QuerySortExpression | None = None,
     ) -> sql.Composable:
         if not sorts:
             #! That's quite bad because there no assumption about id column presented
@@ -166,10 +166,10 @@ class PostgresGateway[M: BaseModel]:
 
     def return_clause(
         self,
-        return_model: Optional[type[BaseModel]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        return_model: type[BaseModel] | None = None,
+        return_fields: Sequence[str] | None = None,
         *,
-        table_alias: Optional[str] = None,
+        table_alias: str | None = None,
     ) -> sql.Composable:
         if return_fields is not None and return_model is not None:
             raise CoreError(
@@ -206,7 +206,7 @@ class PostgresGateway[M: BaseModel]:
 
     # ....................... #
 
-    def adapt_value_for_write(self, v: Any, *, t: Optional[PostgresType]) -> Any:
+    def adapt_value_for_write(self, v: Any, *, t: PostgresType | None) -> Any:
         if v is None or t is None:
             return v
 

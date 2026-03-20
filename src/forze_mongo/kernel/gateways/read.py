@@ -6,7 +6,7 @@ require_mongo()
 
 # ....................... #
 
-from typing import Never, Optional, Sequence, TypeVar, final, overload
+from typing import Never, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -86,8 +86,8 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         pk: UUID,
         *,
         for_update: bool = False,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict:
         """Fetch a single document by primary key.
 
@@ -172,8 +172,8 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         pks: Sequence[UUID],
         *,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         """Fetch multiple documents by primary key, preserving input order.
 
@@ -222,7 +222,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         for_update: bool = ...,
         return_model: None = ...,
         return_fields: None = ...,
-    ) -> Optional[M]:
+    ) -> M | None:
         """Find one document matching filters as the gateway model."""
         ...
 
@@ -234,7 +234,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         for_update: bool = ...,
         return_model: type[T],
         return_fields: None = ...,
-    ) -> Optional[T]:
+    ) -> T | None:
         """Find one document matching filters validated against *return_model*."""
         ...
 
@@ -246,7 +246,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         for_update: bool = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
-    ) -> Optional[JsonDict]:
+    ) -> JsonDict | None:
         """Find one document matching filters projected to *return_fields*."""
         ...
 
@@ -267,9 +267,9 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
-    ) -> Optional[M | T | JsonDict]:
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> M | T | JsonDict | None:
         """Find a single document matching the given filter expression.
 
         Returns ``None`` when no document matches.
@@ -308,10 +308,10 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_model: None = ...,
         return_fields: None = ...,
@@ -322,10 +322,10 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_model: type[T],
         return_fields: None = ...,
@@ -336,10 +336,10 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_model: None = ...,
         return_fields: Sequence[str],
@@ -350,10 +350,10 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     @overload
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = ...,  # type: ignore[valid-type]
-        limit: Optional[int] = ...,
-        offset: Optional[int] = ...,
-        sorts: Optional[QuerySortExpression] = ...,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
         *,
         return_model: type[T],
         return_fields: Sequence[str],
@@ -363,13 +363,13 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
     async def find_many(
         self,
-        filters: Optional[QueryFilterExpression] = None,  # type: ignore[valid-type]
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        sorts: Optional[QuerySortExpression] = None,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        return_model: Optional[type[T]] = None,
-        return_fields: Optional[Sequence[str]] = None,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         """Find multiple documents with optional filters, sorting, and pagination.
 
@@ -409,7 +409,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
+    async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type]
         """Count documents matching the given filters.
 
         :param filters: Optional filter expression; ``None`` counts all

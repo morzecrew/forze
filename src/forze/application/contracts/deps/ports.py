@@ -2,6 +2,8 @@
 
 from typing import Protocol, Self, TypeVar
 
+from forze.base.descriptors import hybridmethod
+
 from .key import DepKey
 
 # ----------------------- #
@@ -31,9 +33,16 @@ class DepsPort(Protocol):
 
     # ....................... #
 
-    @classmethod
-    def merge(cls, *deps: Self) -> Self:
+    @hybridmethod
+    def merge(cls: type[Self], *deps: Self) -> Self:  # type: ignore[misc]
         """Merge multiple dependency containers into a single container."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @merge.instancemethod
+    def _merge_instance(self, *deps: Self) -> Self:
+        """Merge this dependency container with another containers."""
         ...  # pragma: no cover
 
     # ....................... #

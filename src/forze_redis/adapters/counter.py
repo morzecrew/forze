@@ -6,7 +6,7 @@ require_redis()
 
 # ....................... #
 
-from typing import Optional, final
+from typing import final
 
 import attrs
 
@@ -14,15 +14,11 @@ from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.tenant import TenantContextPort
 from forze.base.codecs import KeyCodec
 from forze.base.errors import ValidationError
-from forze.base.logging import getLogger
 
 from ..kernel.platform import RedisClient
+from ._logger import logger
 
 # ----------------------- #
-
-logger = getLogger(__name__).bind(scope="redis.counter")
-
-# ....................... #
 
 
 @final
@@ -37,23 +33,22 @@ class RedisCounterAdapter(CounterPort):
 
     client: RedisClient
     key_codec: KeyCodec
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # ....................... #
 
-    def _build_key(self, suffix: Optional[str]) -> str:
+    def _build_key(self, suffix: str | None) -> str:
         tenant_id = str(self.tenant_context.get()) if self.tenant_context else None
         return self.key_codec.cond_join(tenant_id, suffix)
 
     # ....................... #
 
-    async def incr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
+    async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
         key = self._build_key(suffix)
 
-        logger.debug("Incrementing counter '{key}' by {by}", sub={"key": key, "by": by})
+        logger.debug("Incrementing counter '%s' by %s", key, by)
 
-        with logger.section():
-            return await self.client.incr(key, by)
+        return await self.client.incr(key, by)
 
     # ....................... #
 
@@ -61,7 +56,7 @@ class RedisCounterAdapter(CounterPort):
         self,
         size: int = 2,
         *,
-        suffix: Optional[str] = None,
+        suffix: str | None = None,
     ) -> list[int]:
         if size <= 1:
             raise ValidationError("Size must be greater than 1")
@@ -69,31 +64,29 @@ class RedisCounterAdapter(CounterPort):
         key = self._build_key(suffix)
 
         logger.debug(
-            "Incrementing counter '{key}' by {size}, returning batch range",
-            sub={"key": key, "size": size},
+            "Incrementing counter '%s' by %s, returning batch range",
+            key,
+            size,
         )
 
-        with logger.section():
-            max_cnt = await self.client.incr(key, size)
+        max_cnt = await self.client.incr(key, size)
 
-            return list(range(max_cnt - size + 1, max_cnt + 1))
-
-    # ....................... #
-
-    async def decr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
-        key = self._build_key(suffix)
-
-        logger.debug("Decrementing counter '{key}' by {by}", sub={"key": key, "by": by})
-
-        with logger.section():
-            return await self.client.decr(key, by)
+        return list(range(max_cnt - size + 1, max_cnt + 1))
 
     # ....................... #
 
-    async def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> int:
+    async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
         key = self._build_key(suffix)
 
-        logger.debug("Resetting counter '{key}' to {value}", sub={"key": key, "value": value})
+        logger.debug("Decrementing counter '%s' by %s", key, by)
 
-        with logger.section():
-            return await self.client.reset(key, value)
+        return await self.client.decr(key, by)
+
+    # ....................... #
+
+    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        key = self._build_key(suffix)
+
+        logger.debug("Resetting counter '%s' to %s", key, value)
+
+        return await self.client.reset(key, value)

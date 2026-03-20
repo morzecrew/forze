@@ -1,4 +1,4 @@
-from typing import Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
 import attrs
 
@@ -23,10 +23,10 @@ L = TypeVar("L", bound=ListObjectsRequestDTO, default=ListObjectsRequestDTO)
 class StorageDTOs(Generic[U, L]):
     """DTO type mapping for storage operations."""
 
-    upload: Optional[type[U]] = None
+    upload: type[U] | None = None
     """Upload request DTO type."""
 
-    list: Optional[type[L]] = None
+    list: type[L] | None = None
     """List request DTO type."""
 
 

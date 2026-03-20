@@ -1,6 +1,6 @@
 """Gateway factory helpers for building Postgres read, write, search, and history gateways."""
 
-from typing import Any, Optional
+from typing import Any
 
 from forze.application.contracts.document import (
     DocumentHistorySpec,
@@ -74,7 +74,7 @@ def _doc_history_gw(
 def doc_write_gw(
     ctx: ExecutionContext,
     spec: DocumentWriteSpec[Any, Any, Any],
-    history_spec: Optional[DocumentHistorySpec] = None,
+    history_spec: DocumentHistorySpec | None = None,
     *,
     rev_bump_strategy: PostgresRevBumpStrategy = "database",
     history_write_strategy: PostgresHistoryWriteStrategy = "database",

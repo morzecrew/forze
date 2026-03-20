@@ -5,7 +5,7 @@ namespace/key construction used across the application.
 """
 
 import base64
-from typing import Any, Optional
+from typing import Any
 
 import attrs
 import orjson
@@ -156,7 +156,7 @@ class KeyCodec:
 
     # ....................... #
 
-    def cond_join(self, *parts: Optional[str]) -> str:
+    def cond_join(self, *parts: str | None) -> str:
         """Join only non-``None`` parts into a namespaced key."""
 
         items = list(filter(None, parts))
@@ -196,7 +196,7 @@ class PathCodec:
 
     # ....................... #
 
-    def cond_join(self, *parts: Optional[str]) -> str:
+    def cond_join(self, *parts: str | None) -> str:
         """Join only non-``None`` parts into a path."""
 
         items = list(filter(None, parts))

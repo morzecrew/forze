@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from typing import (
     AsyncIterator,
     Awaitable,
-    Optional,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -24,9 +23,9 @@ class PubSubPublishPort[M: BaseModel](Protocol):
         topic: str,
         payload: M,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        published_at: Optional[datetime] = None,
+        type: str | None = None,
+        key: str | None = None,
+        published_at: datetime | None = None,
     ) -> Awaitable[None]:
         """Publish a single message to *topic*."""
         ...
@@ -43,7 +42,7 @@ class PubSubSubscribePort[M: BaseModel](Protocol):
         self,
         topics: Sequence[str],
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[PubSubMessage[M]]:
         """Yield messages from the given *topics* until *timeout* elapses."""
         ...

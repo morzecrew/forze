@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Optional
+from typing import Any
 
 import attrs
 from psycopg import sql
@@ -43,7 +43,7 @@ class PsycopgValueCoercer:
 
     # ....................... #
 
-    def scalar(self, v: Any, *, t: Optional[PostgresType]) -> Any:
+    def scalar(self, v: Any, *, t: PostgresType | None) -> Any:
         if v is None:
             return None
 
@@ -84,7 +84,7 @@ class PsycopgValueCoercer:
         self,
         v: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
         raise_on_scalar_t: bool = False,
     ) -> list[Any]:
         if v is None:
@@ -115,7 +115,7 @@ class PsycopgQueryRenderer:
     type and array operators are normalized automatically.
     """
 
-    types: Optional[PostgresColumnTypes] = None
+    types: PostgresColumnTypes | None = None
 
     # Non initable fields
     binder: PsycopgPositionalBinder = attrs.field(
@@ -185,7 +185,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.All,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         op, value = self._normalize_op(op, value, t=t)
 
@@ -216,7 +216,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.Unary,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         v = self.coercer.bool_flag(value)
 
@@ -234,7 +234,7 @@ class PsycopgQueryRenderer:
         col: sql.Composable,
         value: bool,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         return (
             sql.SQL("{} IS NULL").format(col)
@@ -249,7 +249,7 @@ class PsycopgQueryRenderer:
         col: sql.Composable,
         value: bool,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         return (
             sql.SQL("cardinality({}) = 0").format(col)
@@ -265,7 +265,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.Ord,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         op_map: dict[QueryOp.Ord, str] = {  # type: ignore[valid-type]
             "$gt": ">",
@@ -286,7 +286,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.Eq,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         op_map: dict[QueryOp.Eq, str] = {  # type: ignore[valid-type]
             "$eq": "=",
@@ -305,7 +305,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.Memb,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         value = self.coercer.array(value, t=t)
         expr = sql.SQL("{} = ANY({})").format(col, self.binder.add(value))
@@ -320,7 +320,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.SetRel,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> sql.Composable:
         op_map: dict[QueryOp.SetRel, str] = {  # type: ignore[valid-type]
             "$superset": "@>",
@@ -345,7 +345,7 @@ class PsycopgQueryRenderer:
         op: QueryOp.All,  # type: ignore[valid-type]
         value: Any,
         *,
-        t: Optional[PostgresType],
+        t: PostgresType | None,
     ) -> tuple[QueryOp.All, Any]:  # type: ignore[valid-type]
         if t is not None and t.is_array:
             if op == "$eq":

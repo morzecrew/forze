@@ -7,7 +7,7 @@ require_mongo()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 import attrs
@@ -48,7 +48,7 @@ class MongoGateway[M: BaseModel]:
     model: type[M]
     """Pydantic model used for deserialization."""
 
-    db_name: Optional[str] = None
+    db_name: str | None = None
     """Override database name; ``None`` uses the client default."""
 
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
@@ -126,7 +126,7 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _render_filters(self, filters: Optional[QueryFilterExpression]) -> JsonDict:  # type: ignore[valid-type]
+    def _render_filters(self, filters: QueryFilterExpression | None) -> JsonDict:  # type: ignore[valid-type]
         """Parse and render a filter expression into a Mongo query dict."""
 
         if not filters:
@@ -139,7 +139,7 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _sorts(self, sorts: Optional[QuerySortExpression]) -> list[tuple[str, int]]:
+    def _sorts(self, sorts: QuerySortExpression | None) -> list[tuple[str, int]]:
         """Convert a sort expression to Mongo ``(field, direction)`` pairs.
 
         Defaults to descending by ID when no sorts are provided.
@@ -158,7 +158,7 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _projection(self, return_fields: Optional[Sequence[str]]) -> Optional[JsonDict]:
+    def _projection(self, return_fields: Sequence[str] | None) -> JsonDict | None:
         """Build a Mongo projection dict, excluding ``_id``."""
 
         if return_fields is None:

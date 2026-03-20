@@ -18,7 +18,6 @@ from typing import (
     ContextManager,
     Iterator,
     Mapping,
-    Optional,
     ParamSpec,
     Protocol,
     TypeGuard,
@@ -47,7 +46,7 @@ class CoreError(Exception):
     code: str = attrs.field(default="internal_error", kw_only=True)
     """Code of the error."""
 
-    details: Optional[Mapping[str, Any]] = attrs.field(default=None, kw_only=True)
+    details: Mapping[str, Any] | None = attrs.field(default=None, kw_only=True)
     """Optional details of the error."""
 
     # ....................... #
@@ -120,10 +119,10 @@ class ErrorHandler(Protocol):
     def __call__(self, e: Exception, op: str, **kwargs: Any) -> CoreError: ...
 
 
-def _default_error_hanlder(e: Exception, op: str, **kwargs: Any) -> Optional[CoreError]:
+def _default_error_hanlder(e: Exception, op: str, **kwargs: Any) -> CoreError | None:
     """Best-effort mapping of low-level exceptions to :class:`CoreError`."""
 
-    err: Optional[CoreError] = None
+    err: CoreError | None = None
 
     match e:
         case PydanticValidationError():
@@ -328,7 +327,7 @@ def _cached_signature(fn: Callable[..., Any]) -> inspect.Signature:
     return inspect.signature(fn)
 
 
-def _resolve_op(fn: Callable[..., Any], op: Optional[str]) -> str:
+def _resolve_op(fn: Callable[..., Any], op: str | None) -> str:
     """Return the operation name, falling back to the callable's ``__name__``."""
 
     return op or fn.__name__
@@ -336,7 +335,7 @@ def _resolve_op(fn: Callable[..., Any], op: Optional[str]) -> str:
 
 def _prepare_fn(  # pragma: no cover  # pyright: ignore[reportUnusedFunction]
     fn: Callable[P, Any],
-    op: Optional[str],
+    op: str | None,
     *args: P.args,
     **kwargs: P.kwargs,
 ) -> tuple[str, dict[str, Any]]:
@@ -358,7 +357,7 @@ def _prepare_fn(  # pragma: no cover  # pyright: ignore[reportUnusedFunction]
 # ....................... #
 
 
-def handled(h: ErrorHandler, op: Optional[str] = None):  # type: ignore[no-untyped-def]
+def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-def]
     """Decorator that wraps a callable to convert exceptions via *h*.
 
     Handles coroutines, sync/async generators, context managers, and plain

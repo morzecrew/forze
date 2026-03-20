@@ -40,6 +40,7 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Getting Started: getting-started.md
+
   - Concepts:
     - Overview: core-concepts/index.md
     - Layered Architecture: core-concepts/layered-architecture.md
@@ -48,6 +49,7 @@ nav:
     - Contracts and Adapters: core-concepts/contracts-adapters.md
     - Aggregate Specification: core-concepts/aggregate-specification.md
     - Usecase Composition: core-concepts/usecase-composition.md
+
   - Core Package:
     - Overview: core-package/index.md
     - Base Layer: core-package/base-layer.md
@@ -57,6 +59,7 @@ nav:
     - Middleware & Plans: core-package/middleware-plans.md
     - Composition & Mapping: core-package/composition.md
     - Query Syntax: core-package/query-syntax.md
+
   - Integrations:
     - FastAPI: integrations/fastapi.md
     - Socket.IO: integrations/socketio.md
@@ -68,5 +71,3 @@ nav:
     - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md
     - Mock: integrations/mock.md
-  # - API Reference:
-  #   - Core: api/core.md

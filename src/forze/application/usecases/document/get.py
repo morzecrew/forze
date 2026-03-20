@@ -10,19 +10,19 @@ from forze.domain.models import ReadDocument
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class GetDocument[Out: ReadDocument](Usecase[UUID, Out]):
+class GetDocument[R: ReadDocument](Usecase[UUID, R]):
     """Usecase that fetches a single document by primary key.
 
     Delegates to :meth:`DocumentReadPort.get`. Read-only; uses the lighter
     :class:`DocumentReadPort`.
     """
 
-    doc: DocumentReadPort[Out]
+    doc: DocumentReadPort[R]
     """Read-only document port for get operations."""
 
     # ....................... #
 
-    async def main(self, args: UUID) -> Out:
+    async def main(self, args: UUID) -> R:
         """Fetch a document by primary key.
 
         :param args: Document primary key.

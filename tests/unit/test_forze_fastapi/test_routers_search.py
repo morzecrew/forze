@@ -79,6 +79,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize("test_search")
 
         def ctx_dep():
             return composition_ctx

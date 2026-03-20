@@ -1,18 +1,34 @@
-import pytest
+import io
+import json
+import logging
+
+import structlog
 
 from forze.application.contracts.search.internal.specs import (
-    SearchIndexSpecInternal,
-    SearchGroupSpecInternal,
     SearchFieldSpecInternal,
+    SearchGroupSpecInternal,
+    SearchIndexSpecInternal,
 )
-from forze.base.logging import configure, reset
+from forze.base.logging import configure_logging
 from forze_postgres.kernel.gateways.search.utils import fts_map_groups
 
 
-def test_fts_map_groups_truncation(capsys: pytest.CaptureFixture[str]):
-    configure(level="WARNING", colorize=False)
+def _cleanup_postgres_logging() -> None:
+    structlog.reset_defaults()
+    lg = logging.getLogger("forze_postgres.kernel")
+    lg.handlers.clear()
+    lg.propagate = True
+
+
+def test_fts_map_groups_truncation() -> None:
+    buf = io.StringIO()
     try:
-        # Setup: Create a SearchIndexSpecInternal with 5 groups
+        configure_logging(
+            level="warning",
+            logger_names=["forze_postgres.kernel"],
+            stream=buf,
+            render_mode="json",
+        )
         groups = [
             SearchGroupSpecInternal(name=f"group_{i}", weight=float(i))
             for i in range(5, 0, -1)
@@ -20,10 +36,8 @@ def test_fts_map_groups_truncation(capsys: pytest.CaptureFixture[str]):
         fields = [SearchFieldSpecInternal(path="title", group="group_5")]
         spec = SearchIndexSpecInternal(fields=fields, groups=groups)
 
-        # Execute
         result = fts_map_groups(spec)
 
-        # Verify: Should only have 4 groups mapped
         assert len(result) == 4
         assert "group_5" in result
         assert "group_4" in result
@@ -31,29 +45,29 @@ def test_fts_map_groups_truncation(capsys: pytest.CaptureFixture[str]):
         assert "group_2" in result
         assert "group_1" not in result
 
-        # Verify warning (logging writes to stderr)
-        captured = capsys.readouterr()
-        log_output = captured.err or captured.out
-        assert "WARNING" in log_output or "warning" in log_output
-        assert "Postgres only supports 4 weights" in log_output
+        records = [
+            json.loads(line)
+            for line in buf.getvalue().splitlines()
+            if line.strip().startswith("{")
+        ]
+        warning_rows = [r for r in records if r.get("level") == "warning"]
+        assert warning_rows
+        event = warning_rows[-1]["event"]
+        assert "Postgres only supports 4 weights" in event
     finally:
-        reset()
+        _cleanup_postgres_logging()
 
 
-def test_fts_map_groups_default():
-    # Setup: Create a SearchIndexSpecInternal with no groups
+def test_fts_map_groups_default() -> None:
     fields = [SearchFieldSpecInternal(path="title")]
     spec = SearchIndexSpecInternal(fields=fields, groups=[])
 
-    # Execute
     result = fts_map_groups(spec)
 
-    # Verify
     assert result == {"__default__": "A"}
 
 
-def test_fts_map_groups_normal():
-    # Setup: Create a SearchIndexSpecInternal with 2 groups
+def test_fts_map_groups_normal() -> None:
     groups = [
         SearchGroupSpecInternal(name="A_group", weight=10.0),
         SearchGroupSpecInternal(name="B_group", weight=5.0),
@@ -61,8 +75,6 @@ def test_fts_map_groups_normal():
     fields = [SearchFieldSpecInternal(path="title", group="A_group")]
     spec = SearchIndexSpecInternal(fields=fields, groups=groups)
 
-    # Execute
     result = fts_map_groups(spec)
 
-    # Verify
     assert result == {"A_group": "A", "B_group": "B"}

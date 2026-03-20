@@ -1,6 +1,6 @@
 """Storage port and object metadata TypedDicts."""
 
-from typing import Awaitable, Optional, Protocol, runtime_checkable
+from typing import Awaitable, Protocol, runtime_checkable
 
 from .types import DownloadedObject, StoredObject
 
@@ -15,9 +15,9 @@ class StoragePort(Protocol):
         self,
         filename: str,
         data: bytes,
-        description: Optional[str] = None,
+        description: str | None = None,
         *,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
     ) -> Awaitable[StoredObject]:
         """Upload an object and return its stored metadata.
 
@@ -41,7 +41,7 @@ class StoragePort(Protocol):
         limit: int,
         offset: int,
         *,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
     ) -> Awaitable[tuple[list[StoredObject], int]]:
         """List stored objects with pagination.
 

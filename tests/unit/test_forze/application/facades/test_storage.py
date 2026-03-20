@@ -39,10 +39,12 @@ class TestStorageUsecasesFacade:
             async def main(self, args: dict) -> dict:
                 return {"ok": True}
 
-        return UsecaseRegistry().register(
+        reg = UsecaseRegistry().register(
             StorageOperation.UPLOAD,
             lambda ctx: StubUploadUsecase(ctx=ctx),
         )
+        reg.finalize("storage_facade")
+        return reg
 
     def test_upload_descriptor_resolves_usecase(
         self,

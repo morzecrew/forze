@@ -1,6 +1,6 @@
 """Port for long-running workflow orchestration engines."""
 
-from typing import Any, Awaitable, Optional, Protocol, Sequence
+from typing import Any, Awaitable, Protocol, Sequence
 
 from forze.base.primitives import JsonDict
 
@@ -20,7 +20,7 @@ class WorkflowPort(Protocol):
         name: str,
         id: str,  # ? UUID?
         args: Sequence[Any],
-        queue: Optional[str] = None,  # noqa: F841
+        queue: str | None = None,  # noqa: F841
     ) -> Awaitable[None]:
         """Start a new workflow instance.
 

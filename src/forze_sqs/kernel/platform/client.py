@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from re import Pattern
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Optional, Sequence, TypedDict, cast, final
+from typing import Any, AsyncIterator, Sequence, TypedDict, cast, final
 from uuid import uuid4
 
 import aioboto3
@@ -71,7 +71,7 @@ class _SQSConnectionOpts:
     region_name: str  #! Should NOT be required
     access_key_id: str
     secret_access_key: str | SecretStr
-    config: Optional[AioConfig] = None
+    config: AioConfig | None = None
 
 
 # ....................... #
@@ -80,10 +80,10 @@ class _SQSConnectionOpts:
 @final
 @attrs.define(slots=True)
 class SQSClient:
-    __opts: Optional[_SQSConnectionOpts] = attrs.field(default=None, init=False)
-    __session: Optional[aioboto3.Session] = attrs.field(default=None, init=False)
+    __opts: _SQSConnectionOpts | None = attrs.field(default=None, init=False)
+    __session: aioboto3.Session | None = attrs.field(default=None, init=False)
 
-    __ctx_client: ContextVar[Optional[AsyncSQSClient]] = attrs.field(
+    __ctx_client: ContextVar[AsyncSQSClient | None] = attrs.field(
         factory=lambda: ContextVar("sqs_client", default=None),
         init=False,
     )
@@ -104,7 +104,7 @@ class SQSClient:
         secret_access_key: str | SecretStr,
         *,
         region_name: str,
-        config: Optional[SQSConfig] = None,
+        config: SQSConfig | None = None,
     ) -> None:
         """Initialize the SQS session with endpoint and credentials."""
         if self.__session is not None:
@@ -138,7 +138,7 @@ class SQSClient:
 
     # ....................... #
 
-    def __current_client(self) -> Optional[AsyncSQSClient]:
+    def __current_client(self) -> AsyncSQSClient | None:
         return self.__ctx_client.get()
 
     # ....................... #
@@ -262,7 +262,7 @@ class SQSClient:
         self,
         queue: str,
         *,
-        attributes: Optional[dict[str, str]] = None,
+        attributes: dict[str, str] | None = None,
     ) -> str:
         """Create a queue and return its URL."""
 
@@ -322,9 +322,9 @@ class SQSClient:
     @staticmethod
     def __build_message_attributes(
         *,
-        type: Optional[str],
-        key: Optional[str],
-        enqueued_at: Optional[datetime],
+        type: str | None,
+        key: str | None,
+        enqueued_at: datetime | None,
     ) -> dict[str, dict[str, str]]:
         attrs: dict[str, dict[str, str]] = {
             _ENCODING_ATTR: {"StringValue": _ENCODING_B64, "DataType": "String"}
@@ -348,9 +348,9 @@ class SQSClient:
 
     @staticmethod
     def __extract_attr(
-        attrs: Optional[dict[str, dict[str, str]]],
+        attrs: dict[str, dict[str, str]] | None,
         key: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         if not attrs:
             return None
 
@@ -372,7 +372,7 @@ class SQSClient:
     @staticmethod
     def __decode_body(
         body: str,
-        attrs: Optional[dict[str, dict[str, str]]],
+        attrs: dict[str, dict[str, str]] | None,
     ) -> bytes:
         encoding = SQSClient.__extract_attr(attrs, _ENCODING_ATTR)
 
@@ -390,9 +390,9 @@ class SQSClient:
 
     @staticmethod
     def __extract_enqueued_at(
-        attrs: Optional[dict[str, dict[str, str]]],
-        system_attrs: Optional[dict[str, str]],
-    ) -> Optional[datetime]:
+        attrs: dict[str, dict[str, str]] | None,
+        system_attrs: dict[str, str] | None,
+    ) -> datetime | None:
         from_message_attr = SQSClient.__extract_attr(attrs, _ENQUEUED_AT_ATTR)
 
         if from_message_attr:
@@ -422,10 +422,10 @@ class SQSClient:
         queue: str,
         body: bytes,
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
-        message_id: Optional[str] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
+        message_id: str | None = None,
     ) -> str:
         """Send a single message and return its message identifier."""
         return (
@@ -447,10 +447,10 @@ class SQSClient:
         queue: str,
         bodies: Sequence[bytes],
         *,
-        type: Optional[str] = None,
-        key: Optional[str] = None,
-        enqueued_at: Optional[datetime] = None,
-        message_ids: Optional[Sequence[str]] = None,
+        type: str | None = None,
+        key: str | None = None,
+        enqueued_at: datetime | None = None,
+        message_ids: Sequence[str] | None = None,
     ) -> list[str]:
         """Send a batch of messages and return resolved message identifiers."""
         if not bodies:
@@ -514,8 +514,8 @@ class SQSClient:
         self,
         queue: str,
         *,
-        limit: Optional[int] = None,
-        timeout: Optional[timedelta] = None,
+        limit: int | None = None,
+        timeout: timedelta | None = None,
     ) -> list[SQSQueueMessage]:
         """Receive up to ``limit`` messages from the queue."""
         max_messages = 1 if limit is None else min(limit, 10)
@@ -573,7 +573,7 @@ class SQSClient:
         self,
         queue: str,
         *,
-        timeout: Optional[timedelta] = None,
+        timeout: timedelta | None = None,
     ) -> AsyncIterator[SQSQueueMessage]:
         """Yield queue messages continuously using long polling."""
 

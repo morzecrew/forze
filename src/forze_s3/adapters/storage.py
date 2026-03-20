@@ -10,7 +10,7 @@ import asyncio
 import mimetypes
 import re
 from datetime import datetime
-from typing import Optional, final
+from typing import final
 
 import attrs
 import magic
@@ -46,7 +46,7 @@ class S3StorageAdapter(StoragePort):
 
     client: S3Client
     bucket: str
-    tenant_context: Optional[TenantContextPort] = None
+    tenant_context: TenantContextPort | None = None
 
     # Non initable fields
     path_codec: PathCodec = attrs.field(factory=PathCodec, init=False)
@@ -54,7 +54,7 @@ class S3StorageAdapter(StoragePort):
 
     # ....................... #
 
-    def __build_key(self, prefix: Optional[str] = None) -> str:
+    def __build_key(self, prefix: str | None = None) -> str:
         uid = str(uuid7())
 
         parts: list[str] = []
@@ -71,7 +71,7 @@ class S3StorageAdapter(StoragePort):
 
     # ....................... #
 
-    def _validate_prefix(self, prefix: Optional[str]) -> None:
+    def _validate_prefix(self, prefix: str | None) -> None:
         if prefix is None:
             return
 
@@ -84,9 +84,9 @@ class S3StorageAdapter(StoragePort):
         self,
         filename: str,
         data: bytes,
-        description: Optional[str] = None,
+        description: str | None = None,
         *,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
     ) -> StoredObject:
         """Upload a file to S3 and return its stored representation.
 
@@ -181,7 +181,7 @@ class S3StorageAdapter(StoragePort):
         limit: int,
         offset: int,
         *,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
     ) -> tuple[list[StoredObject], int]:
         """List stored objects with pagination.
 
