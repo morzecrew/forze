@@ -94,6 +94,8 @@ class TestDTOMapper:
             ) -> JsonDict:
                 return {"extra": 42}
 
-        mapper = DTOMapper(in_=InputModel, out=OutputModel).with_steps(ExtraStep())
+        step = ExtraStep()
+        step.__qualname__ = "ExtraStep"  # type: ignore[attr-defined]
+        mapper = DTOMapper(in_=InputModel, out=OutputModel).with_steps(step)
         result = await mapper(ctx, InputModel(name="test"))
         assert result.extra == 42

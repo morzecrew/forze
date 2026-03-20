@@ -29,6 +29,7 @@ class TestBuildStorageRegistry:
         composition_ctx,
     ) -> None:
         reg = build_storage_registry("files")
+        reg.finalize("storage")
         uc = reg.resolve(StorageOperation.UPLOAD, composition_ctx)
         assert uc is not None
 
@@ -41,6 +42,7 @@ class TestStorageFacadeWithRegistry:
         composition_ctx,
     ) -> None:
         reg = build_storage_registry("files")
+        reg.finalize("storage")
         facade = StorageUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.upload
         assert uc is not None

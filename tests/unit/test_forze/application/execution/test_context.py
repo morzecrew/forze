@@ -10,7 +10,6 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
 from forze_mock import MockDepsModule, MockState
@@ -79,7 +78,7 @@ class TestExecutionContextDep:
                 return ctx.dep(key)
 
         ctx = ExecutionContext(deps=CyclicDeps())  # type: ignore[arg-type]
-        with pytest.raises(CoreError, match="cycle"):
+        with pytest.raises(RecursionError):
             ctx.dep(key)
 
 
