@@ -141,17 +141,19 @@ class PostgresDocumentAdapter(
                 }
                 await self.cache.set_many_versioned(res_cache_map)
                 logger.trace(
-                    "Cache set successfully for {count} {qualname} document(s)",
-                    sub={"count": len(docs), "qualname": self._rgw_qname},
+                    "Cache set successfully for %s %s document(s)",
+                    len(docs),
+                    self._rgw_qname,
                 )
 
             except Exception as e:
                 logger.debug(
-                    "Cache set failed for {count} {qualname} document(s), continuing",
-                    sub={"count": len(docs), "qualname": self._rgw_qname},
+                    "Cache set failed for %s %s document(s), continuing",
+                    len(docs),
+                    self._rgw_qname,
                 )
 
-                logger.trace("Cache exception: {exc}", sub={"exc": e})
+                logger.trace("Cache exception: %s", e)
 
     # ....................... #
 
@@ -160,14 +162,16 @@ class PostgresDocumentAdapter(
             try:
                 await self.cache.delete_many([str(pk) for pk in pks], hard=True)
                 logger.trace(
-                    "Cache cleared successfully for {count} {qualname} document(s)",
-                    sub={"count": len(pks), "qualname": self._rgw_qname},
+                    "Cache cleared successfully for %s %s document(s)",
+                    len(pks),
+                    self._rgw_qname,
                 )
 
             except Exception:
                 logger.debug(
-                    "Cache clear failed for {count} {qualname} document(s), continuing",
-                    sub={"count": len(pks), "qualname": self._rgw_qname},
+                    "Cache clear failed for %s %s document(s), continuing",
+                    len(pks),
+                    self._rgw_qname,
                 )
 
     # ....................... #
@@ -198,8 +202,9 @@ class PostgresDocumentAdapter(
         return_fields: Optional[Sequence[str]] = None,
     ) -> R | JsonDict:
         logger.debug(
-            "Fetching 1 {qualname} document (pk={pk})",
-            sub={"qualname": self._rgw_qname, "pk": pk},
+            "Fetching 1 %s document (pk=%s)",
+            self._rgw_qname,
+            pk,
         )
 
         if return_fields is not None or self.cache is None:
@@ -214,11 +219,11 @@ class PostgresDocumentAdapter(
 
         except Exception as e:
             logger.debug(
-                "Cache get failed for 1 {qualname} document, falling back to read gateway",
-                sub={"qualname": self._rgw_qname},
+                "Cache get failed for 1 %s document, falling back to read gateway",
+                self._rgw_qname,
             )
 
-            logger.trace("Cache exception: {exc}", sub={"exc": e})
+            logger.trace("Cache exception: %s", e)
 
             return await self.read_gw.get(
                 pk,
@@ -228,14 +233,14 @@ class PostgresDocumentAdapter(
 
         if cached is not None:
             logger.trace(
-                "Retrieved 1 cached {qualname} document",
-                sub={"qualname": self._rgw_qname},
+                "Retrieved 1 cached %s document",
+                self._rgw_qname,
             )
             return pydantic_validate(self.read_gw.model, cached)
 
         logger.debug(
-            "Fetching 1 {qualname} document from database (cache miss)",
-            sub={"qualname": self._rgw_qname},
+            "Fetching 1 %s document from database (cache miss)",
+            self._rgw_qname,
         )
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
@@ -270,8 +275,10 @@ class PostgresDocumentAdapter(
             return []
 
         logger.debug(
-            "Fetching {count} {qualname} document(s) (first_pk={first_pk})",
-            sub={"count": len(pks), "qualname": self._rgw_qname, "first_pk": pks[0]},
+            "Fetching %s %s document(s) (first_pk=%s)",
+            len(pks),
+            self._rgw_qname,
+            pks[0],
         )
 
         if return_fields is not None or self.cache is None:
@@ -282,17 +289,19 @@ class PostgresDocumentAdapter(
 
             if hits:
                 logger.trace(
-                    "Retrieved {count} cached {qualname} document(s)",
-                    sub={"count": len(hits), "qualname": self._rgw_qname},
+                    "Retrieved %s cached %s document(s)",
+                    len(hits),
+                    self._rgw_qname,
                 )
 
         except Exception as e:
             logger.debug(
-                "Cache get failed for {count} {qualname} document(s), falling back to read gateway",
-                sub={"count": len(pks), "qualname": self._rgw_qname},
+                "Cache get failed for %s %s document(s), falling back to read gateway",
+                len(pks),
+                self._rgw_qname,
             )
 
-            logger.trace("Cache exception: {exc}", sub={"exc": e})
+            logger.trace("Cache exception: %s", e)
 
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
@@ -300,8 +309,9 @@ class PostgresDocumentAdapter(
 
         if misses:
             logger.debug(
-                "Fetching {count} {qualname} document(s) from database (cache miss)",
-                sub={"count": len(misses), "qualname": self._rgw_qname},
+                "Fetching %s %s document(s) from database (cache miss)",
+                len(misses),
+                self._rgw_qname,
             )
 
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
@@ -341,12 +351,10 @@ class PostgresDocumentAdapter(
         return_fields: Optional[Sequence[str]] = None,
     ) -> Optional[R | JsonDict]:
         logger.debug(
-            "Finding 1 {qualname} document (filter by {filters}, for_update={for_update})",
-            sub={
-                "qualname": self._rgw_qname,
-                "filters": list(filters.keys()),  # type: ignore[attr-defined]
-                "for_update": for_update,
-            },
+            "Finding 1 %s document (filter by %s, for_update=%s)",
+            self._rgw_qname,
+            list(filters.keys()),  # type: ignore[attr-defined]
+            for_update,
         )
 
         return await self.read_gw.find(
@@ -389,28 +397,27 @@ class PostgresDocumentAdapter(
         return_fields: Optional[Sequence[str]] = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
         logger.debug(
-            "Finding {qualname} documents (filter by {filters}, limit={limit}, offset={offset}, sorts={sorts})",
-            sub={
-                "qualname": self._rgw_qname,
-                "filters": list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
-                "limit": limit if limit is not None else "N/A",
-                "offset": offset if offset is not None else "N/A",
-                "sorts": sorts if sorts is not None else "N/A",
-            },
+            "Finding %s documents (filter by %s, limit=%s, offset=%s, sorts=%s)",
+            self._rgw_qname,
+            list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
+            limit if limit is not None else "N/A",
+            offset if offset is not None else "N/A",
+            sorts if sorts is not None else "N/A",
         )
 
         cnt = await self.read_gw.count(filters)
 
         if not cnt:
             logger.debug(
-                "No {qualname} documents matching filters",
-                sub={"qualname": self._rgw_qname},
+                "No %s documents matching filters",
+                self._rgw_qname,
             )
             return [], 0
 
         logger.debug(
-            "Found {count} {qualname} documents matching filters",
-            sub={"count": cnt, "qualname": self._rgw_qname},
+            "Found %s %s documents matching filters",
+            cnt,
+            self._rgw_qname,
         )
 
         res = await self.read_gw.find_many(  # type: ignore[misc]
@@ -427,11 +434,9 @@ class PostgresDocumentAdapter(
 
     async def count(self, filters: Optional[QueryFilterExpression] = None) -> int:  # type: ignore[valid-type]
         logger.debug(
-            "Counting {qualname} documents (filter by {filters})",
-            sub={
-                "qualname": self._rgw_qname,
-                "filters": list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
-            },
+            "Counting %s documents (filter by %s)",
+            self._rgw_qname,
+            list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
         )
 
         return await self.read_gw.count(filters)
@@ -441,9 +446,7 @@ class PostgresDocumentAdapter(
     async def create(self, dto: C) -> R:
         w = self._require_write()
 
-        logger.debug(
-            "Creating 1 {qualname} document", sub={"qualname": self._wgw_qname}
-        )
+        logger.debug("Creating 1 %s document", self._wgw_qname)
 
         domain = await w.create(dto)
 
@@ -460,14 +463,15 @@ class PostgresDocumentAdapter(
 
         if not dtos:
             logger.debug(
-                "Empty list of payloads, skipping creation for {qualname}",
-                sub={"qualname": self._wgw_qname},
+                "Empty list of payloads, skipping creation for %s",
+                self._wgw_qname,
             )
             return []
 
         logger.debug(
-            "Creating {count} {qualname} documents",
-            sub={"count": len(dtos), "qualname": self._wgw_qname},
+            "Creating %s %s documents",
+            len(dtos),
+            self._wgw_qname,
         )
 
         domains = await w.create_many(dtos)
@@ -484,8 +488,9 @@ class PostgresDocumentAdapter(
         w = self._require_write()
 
         logger.debug(
-            "Updating 1 {qualname} document (pk={pk})",
-            sub={"qualname": self._rgw_qname, "pk": pk},
+            "Updating 1 %s document (pk=%s)",
+            self._rgw_qname,
+            pk,
         )
 
         await w.update(pk, dto, rev=rev)
@@ -510,14 +515,16 @@ class PostgresDocumentAdapter(
 
         if not pks or not dtos:
             logger.debug(
-                "Empty list of primary keys or payloads, skipping update for {qualname}",
-                sub={"qualname": self._wgw_qname},
+                "Empty list of primary keys or payloads, skipping update for %s",
+                self._wgw_qname,
             )
             return []
 
         logger.debug(
-            "Updating {count} {qualname} documents (first_pk={first_pk})",
-            sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
+            "Updating %s %s documents (first_pk=%s)",
+            len(pks),
+            self._wgw_qname,
+            pks[0],
         )
 
         await w.update_many(pks, dtos, revs=revs)
@@ -535,8 +542,9 @@ class PostgresDocumentAdapter(
         w = self._require_write()
 
         logger.debug(
-            "Touching 1 {qualname} document (pk={pk})",
-            sub={"qualname": self._wgw_qname, "pk": pk},
+            "Touching 1 %s document (pk=%s)",
+            self._wgw_qname,
+            pk,
         )
 
         await w.touch(pk)
@@ -555,14 +563,16 @@ class PostgresDocumentAdapter(
 
         if not pks:
             logger.debug(
-                "Empty list of primary keys, skipping touch for {qualname}",
-                sub={"qualname": self._wgw_qname},
+                "Empty list of primary keys, skipping touch for %s",
+                self._wgw_qname,
             )
             return []
 
         logger.debug(
-            "Touching {count} {qualname} documents (first_pk={first_pk})",
-            sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
+            "Touching %s %s documents (first_pk=%s)",
+            len(pks),
+            self._wgw_qname,
+            pks[0],
         )
 
         await w.touch_many(pks)
@@ -580,8 +590,9 @@ class PostgresDocumentAdapter(
         w = self._require_write()
 
         logger.debug(
-            "Hard-deleting 1 {qualname} document (pk={pk})",
-            sub={"qualname": self._rgw_qname, "pk": pk},
+            "Hard-deleting 1 %s document (pk=%s)",
+            self._rgw_qname,
+            pk,
         )
 
         await w.kill(pk)
@@ -594,14 +605,16 @@ class PostgresDocumentAdapter(
 
         if not pks:
             logger.debug(
-                "Empty list of primary keys, skipping hard-delete for {qualname}",
-                sub={"qualname": self._wgw_qname},
+                "Empty list of primary keys, skipping hard-delete for %s",
+                self._wgw_qname,
             )
             return None
 
         logger.debug(
-            "Hard-deleting {count} {qualname} documents (first_pk={first_pk})",
-            sub={"count": len(pks), "qualname": self._rgw_qname, "first_pk": pks[0]},
+            "Hard-deleting %s %s documents (first_pk=%s)",
+            len(pks),
+            self._rgw_qname,
+            pks[0],
         )
 
         await w.kill_many(pks)
@@ -613,8 +626,9 @@ class PostgresDocumentAdapter(
         w = self._require_write()
 
         logger.debug(
-            "Soft-deleting 1 {qualname} document (pk={pk})",
-            sub={"qualname": self._rgw_qname, "pk": pk},
+            "Soft-deleting 1 %s document (pk=%s)",
+            self._rgw_qname,
+            pk,
         )
 
         await w.delete(pk, rev=rev)
@@ -638,14 +652,16 @@ class PostgresDocumentAdapter(
 
         if not pks:
             logger.debug(
-                "Empty list of primary keys, skipping soft-delete for {qualname}",
-                sub={"qualname": self._wgw_qname},
+                "Empty list of primary keys, skipping soft-delete for %s",
+                self._wgw_qname,
             )
             return []
 
         logger.debug(
-            "Soft-deleting {count} {qualname} documents (first_pk={first_pk})",
-            sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
+            "Soft-deleting %s %s documents (first_pk=%s)",
+            len(pks),
+            self._wgw_qname,
+            pks[0],
         )
 
         await w.delete_many(pks, revs=revs)
@@ -663,8 +679,9 @@ class PostgresDocumentAdapter(
         w = self._require_write()
 
         logger.debug(
-            "Restoring 1 {qualname} document (pk={pk})",
-            sub={"qualname": self._wgw_qname, "pk": pk},
+            "Restoring 1 %s document (pk=%s)",
+            self._wgw_qname,
+            pk,
         )
 
         await w.restore(pk, rev=rev)
@@ -688,14 +705,16 @@ class PostgresDocumentAdapter(
 
         if not pks:
             logger.debug(
-                "Empty list of primary keys, skipping restore for {qualname}",
-                sub={"qualname": self._wgw_qname},
+                "Empty list of primary keys, skipping restore for %s",
+                self._wgw_qname,
             )
             return []
 
         logger.debug(
-            "Restoring {count} {qualname} documents (first_pk={first_pk})",
-            sub={"count": len(pks), "qualname": self._wgw_qname, "first_pk": pks[0]},
+            "Restoring %s %s documents (first_pk=%s)",
+            len(pks),
+            self._wgw_qname,
+            pks[0],
         )
 
         await w.restore_many(pks, revs=revs)

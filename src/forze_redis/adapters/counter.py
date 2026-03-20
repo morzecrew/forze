@@ -46,7 +46,7 @@ class RedisCounterAdapter(CounterPort):
     async def incr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
         key = self._build_key(suffix)
 
-        logger.debug("Incrementing counter '{key}' by {by}", sub={"key": key, "by": by})
+        logger.debug("Incrementing counter '%s' by %s", key, by)
 
         return await self.client.incr(key, by)
 
@@ -64,8 +64,9 @@ class RedisCounterAdapter(CounterPort):
         key = self._build_key(suffix)
 
         logger.debug(
-            "Incrementing counter '{key}' by {size}, returning batch range",
-            sub={"key": key, "size": size},
+            "Incrementing counter '%s' by %s, returning batch range",
+            key,
+            size,
         )
 
         max_cnt = await self.client.incr(key, size)
@@ -77,7 +78,7 @@ class RedisCounterAdapter(CounterPort):
     async def decr(self, by: int = 1, *, suffix: Optional[str] = None) -> int:
         key = self._build_key(suffix)
 
-        logger.debug("Decrementing counter '{key}' by {by}", sub={"key": key, "by": by})
+        logger.debug("Decrementing counter '%s' by %s", key, by)
 
         return await self.client.decr(key, by)
 
@@ -86,8 +87,6 @@ class RedisCounterAdapter(CounterPort):
     async def reset(self, value: int = 1, *, suffix: Optional[str] = None) -> int:
         key = self._build_key(suffix)
 
-        logger.debug(
-            "Resetting counter '{key}' to {value}", sub={"key": key, "value": value}
-        )
+        logger.debug("Resetting counter '%s' to %s", key, value)
 
         return await self.client.reset(key, value)

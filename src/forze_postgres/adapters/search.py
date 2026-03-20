@@ -75,9 +75,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         spec: SearchIndexSpecInternal,
     ) -> SearchGateway[M]:
         if index in self.__gw_cache:
-            logger.trace(
-                "Returning cached gateway for index {index}", sub={"index": index}
-            )
+            logger.trace("Returning cached gateway for index %s", index)
             return self.__gw_cache[index]
 
         q = PostgresQualifiedName.from_string(index)
@@ -95,8 +93,8 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         match index_info.engine:
             case "pgroonga":
                 logger.trace(
-                    "Using PGroonga search gateway for index '{index}'",
-                    sub={"index": index},
+                    "Using PGroonga search gateway for index '%s'",
+                    index,
                 )
 
                 gw = PostgresPGroongaSearchGateway[M](
@@ -108,9 +106,7 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
                 )
 
             case "fts":
-                logger.trace(
-                    "Using FTS search gateway for index '{index}'", sub={"index": index}
-                )
+                logger.trace("Using FTS search gateway for index '%s'", index)
 
                 gw = PostgresFTSSearchGateway[M](
                     qname=q_source,
@@ -186,12 +182,10 @@ class PostgresSearchAdapter(SearchReadPort[M], TxScopedPort):
         index, spec = self.search_spec.pick_index(options)
 
         logger.debug(
-            "Searching {model} in index '{index}' (query='{query}')",
-            sub={
-                "model": self.model.__qualname__,
-                "index": index,
-                "query": query if len(query) < 10 else query[:10] + "...",
-            },
+            "Searching %s in index '%s' (query='%s')",
+            self.model.__qualname__,
+            index,
+            query if len(query) < 10 else query[:10] + "...",
         )
 
         gw = await self._pick_gateway(index, spec)

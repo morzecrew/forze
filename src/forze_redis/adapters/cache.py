@@ -218,24 +218,24 @@ class RedisCacheAdapter(CachePort):
 
     async def get(self, key: str) -> Optional[Any]:
         # Try versioned first
-        logger.debug("Cache lookup for key={key}", sub={"key": key})
+        logger.debug("Cache lookup for key=%s", key)
 
         pointers = await self.__mget_pointers([key])
 
         if pointers:
             bodies = await self.__mget_bodies({key: pointers[key]})
             if key in bodies:
-                logger.debug("Cache hit (versioned) key={key}", sub={"key": key})
+                logger.debug("Cache hit (versioned) key=%s", key)
                 return bodies[key]
 
         # Fallback to plain
         kv = await self.__mget_kv([key])
 
         if key in kv:
-            logger.debug("Cache hit (plain) key={key}", sub={"key": key})
+            logger.debug("Cache hit (plain) key=%s", key)
             return kv[key]
 
-        logger.debug("Cache miss key={key}", sub={"key": key})
+        logger.debug("Cache miss key=%s", key)
         return None
 
     # ....................... #
@@ -245,7 +245,7 @@ class RedisCacheAdapter(CachePort):
             logger.debug("Empty list of keys, skipping")
             return {}, []
 
-        logger.debug("Cache batch lookup for {count} keys", sub={"count": len(keys)})
+        logger.debug("Cache batch lookup for %s keys", len(keys))
 
         # 1) versioned hits where pointer exists + body exists
         pointers = await self.__mget_pointers(keys)
@@ -262,8 +262,9 @@ class RedisCacheAdapter(CachePort):
         misses = [k for k in keys if k not in hits]
 
         logger.debug(
-            "Cache hits={hits}, misses={misses}",
-            sub={"hits": len(hits), "misses": len(misses)},
+            "Cache hits=%s, misses=%s",
+            len(hits),
+            len(misses),
         )
 
         return hits, misses
