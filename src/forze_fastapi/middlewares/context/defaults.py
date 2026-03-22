@@ -8,7 +8,7 @@ from typing import final
 from uuid import UUID
 
 import attrs
-from fastapi import Request, Response
+from fastapi import Request
 
 from forze.application.execution import CallContext
 from forze.base.primitives import uuid7
@@ -53,11 +53,30 @@ class DefaultCallContextResolverInjector(
 
     # ....................... #
 
-    def inject(self, response: Response, ctx: CallContext) -> Response:
-        response.headers[self.exec_header] = str(ctx.execution_id)
-        response.headers[self.corr_header] = str(ctx.correlation_id)
+    def inject(
+        self,
+        headers: list[tuple[bytes, bytes]],
+        ctx: CallContext,
+    ) -> list[tuple[bytes, bytes]]:
+        headers.extend(
+            [
+                (
+                    self.exec_header.encode("latin-1"),
+                    str(ctx.execution_id).encode("latin-1"),
+                ),
+                (
+                    self.corr_header.encode("latin-1"),
+                    str(ctx.correlation_id).encode("latin-1"),
+                ),
+            ]
+        )
 
         if ctx.causation_id is not None:
-            response.headers[self.caus_header] = str(ctx.causation_id)
+            headers.append(
+                (
+                    self.caus_header.encode("latin-1"),
+                    str(ctx.causation_id).encode("latin-1"),
+                )
+            )
 
-        return response
+        return headers

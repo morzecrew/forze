@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import sys
 from io import StringIO
-from types import TracebackType
-from typing import Any, Final, cast
+from typing import Any, Final
 
 import attrs
-from rich.console import Console
+from rich.console import Console, Group
+from rich.syntax import Syntax
 from rich.text import Text
-from structlog.dev import plain_traceback
-from structlog.typing import EventDict, ExcInfo, WrappedLogger
+from structlog.typing import EventDict, WrappedLogger
+
+from .constants import ERR_MESSAGE_KEY, ERR_STACK_KEY, ERR_TYPE_KEY
 
 # ----------------------- #
 
@@ -74,6 +74,14 @@ def _format_extra_pair_plain(key: str, value: Any) -> str:
     return f"{display_key}={display_val}"
 
 
+def _extra_display_value(key: str, value: Any) -> str:
+    if key in _ID_SHORT_NAMES:
+        if key in _ID_SHORTEN:
+            return _last_six_chars(value)
+        return _repr_extra_value(value)
+    return _repr_extra_value(value)
+
+
 def _rich_capture_print(text: Text, *, min_width: int) -> str:
     """Render *text* to a string with ANSI styles.
 
@@ -107,27 +115,67 @@ def _rich_capture_print(text: Text, *, min_width: int) -> str:
     return buf.getvalue()
 
 
-def _normalize_exc_info(raw: Any) -> ExcInfo | None:
-    if isinstance(raw, BaseException):
-        return (type(raw), raw, raw.__traceback__)
+def _error_header_line(err_type: str | None, err_message: str | None) -> str | None:
+    if err_type is None and err_message is None:
+        return None
+    t = err_type or "Exception"
+    m = err_message or ""
+    return f"{t}: {m}".rstrip()
 
-    match raw:
-        case (exc_type, exc_val, tb):
-            if (
-                isinstance(exc_type, type)
-                and issubclass(exc_type, BaseException)
-                and isinstance(exc_val, BaseException)
-                and (tb is None or isinstance(tb, TracebackType))
-            ):
-                return exc_type, exc_val, tb
-        case _:
-            pass
 
-    if raw:
-        info = sys.exc_info()
-        if info != (None, None, None):
-            return cast(ExcInfo, info)
-    return None
+def _format_error_block_plain(
+    *,
+    err_type: str | None,
+    err_message: str | None,
+    err_stack: str | None,
+) -> str:
+    header = _error_header_line(err_type, err_message)
+    parts: list[str] = []
+    if header:
+        parts.append(header)
+    if err_stack:
+        parts.append(err_stack.rstrip("\n"))
+    if not parts:
+        return ""
+    return "\n" + "\n".join(parts) + "\n"
+
+
+def _format_error_block_rich(
+    *,
+    err_type: str | None,
+    err_message: str | None,
+    err_stack: str | None,
+    min_width: int,
+) -> str:
+    header = _error_header_line(err_type, err_message)
+    if not header and not err_stack:
+        return ""
+
+    buf = StringIO()
+    width = max(120, min(min_width, 160))
+    console = Console(
+        file=buf,
+        force_terminal=True,
+        color_system="standard",
+        width=width,
+        no_color=False,
+        highlight=False,
+        legacy_windows=False,
+    )
+    group_parts: list[Text | Syntax] = []
+    if header:
+        group_parts.append(Text(header, style="bold red"))
+    if err_stack:
+        group_parts.append(
+            Syntax(
+                err_stack.rstrip("\n"),
+                lexer="pytb",
+                theme="ansi_dark",
+                word_wrap=True,
+            )
+        )
+    console.print(Group(*group_parts))
+    return "\n" + buf.getvalue()
 
 
 # ....................... #
@@ -137,9 +185,10 @@ def _normalize_exc_info(raw: Any) -> ExcInfo | None:
 class ForzeConsoleRenderer:
     """Render *event_dict* as ``ts  LEVEL  [logger]  event  |  extra``.
 
-    When ``colors`` is true, styles are applied with Rich_ (a direct
-    dependency). No colorama import is required; Rich handles Windows consoles
-    that support VT sequences.
+    Exception data is expected under ``error.type``, ``error.message``, and
+    ``error.stack`` (from :func:`~forze.base.logging.processors.format_exc_info`
+    in the common processor chain). When ``colors`` is true, Rich renders the
+    stack with the ``pytb`` lexer.
 
     .. _Rich: https://github.com/Textualize/rich
     """
@@ -154,7 +203,11 @@ class ForzeConsoleRenderer:
         ed: dict[str, Any] = dict(event_dict)
         stack = ed.pop("stack", None)
         exc_str = ed.pop("exception", None)
-        exc_raw = ed.pop("exc_info", None)
+        ed.pop("exc_info", None)
+
+        err_type = ed.pop(ERR_TYPE_KEY, None)
+        err_message = ed.pop(ERR_MESSAGE_KEY, None)
+        err_stack = ed.pop(ERR_STACK_KEY, None)
 
         ts = str(ed.pop("timestamp", ""))
         level = str(ed.pop("level", ""))
@@ -162,6 +215,8 @@ class ForzeConsoleRenderer:
         event = str(ed.pop("event", ""))
 
         extra_keys = sorted(k for k in ed if not k.startswith("_"))
+
+        min_width = self.logger_name_width + self.event_width + 80
 
         if self.colors:
             level_plain = f"{level:<8}"
@@ -184,12 +239,7 @@ class ForzeConsoleRenderer:
 
                 for key in extra_keys:
                     display_key = _ID_SHORT_NAMES.get(key, key)
-
-                    if key in _ID_SHORT_NAMES:
-                        display_val = _last_six_chars(ed[key])
-
-                    else:
-                        display_val = _repr_extra_value(ed[key])
+                    display_val = _extra_display_value(key, ed[key])
 
                     if not first:
                         line.append(_SEP)
@@ -199,7 +249,6 @@ class ForzeConsoleRenderer:
                     line.append("=")
                     line.append(display_val, style="magenta")
 
-            min_width = self.logger_name_width + self.event_width + 80
             main = _rich_capture_print(line, min_width=min_width)
 
         else:
@@ -215,12 +264,30 @@ class ForzeConsoleRenderer:
         if stack is not None:
             sio.write("\n" + stack)
 
-        exc_info = _normalize_exc_info(exc_raw)
-
-        if exc_info is not None:
-            plain_traceback(sio, exc_info)
+        if err_stack is not None or err_type is not None or err_message is not None:
+            if self.colors:
+                sio.write(
+                    _format_error_block_rich(
+                        err_type=err_type,
+                        err_message=err_message,
+                        err_stack=err_stack,
+                        min_width=min_width,
+                    )
+                )
+            else:
+                sio.write(
+                    _format_error_block_plain(
+                        err_type=err_type,
+                        err_message=err_message,
+                        err_stack=err_stack,
+                    )
+                )
 
         elif exc_str:
             sio.write("\n" + exc_str)
 
         return sio.getvalue()
+
+
+# Default processor instance.
+forze_console_renderer: ForzeConsoleRenderer = ForzeConsoleRenderer()

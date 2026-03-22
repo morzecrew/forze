@@ -48,11 +48,8 @@ def build_common_processors(render_mode: RenderMode) -> list[Processor]:
         inject_otel_context,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        format_exc_info,
     ]
-
-    #! We should always normalize exceptions, noy only in JSON mode
-    if render_mode == "json":
-        processors.append(format_exc_info)
 
     return processors
 

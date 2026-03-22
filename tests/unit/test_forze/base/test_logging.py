@@ -358,8 +358,8 @@ class TestForzeConsoleRenderer:
             },
         )
         assert "\033[2mt\033[0m" in line
-        assert "\033[32m    info\033[0m" in line
-        assert "\033[2m             [pkg.mod]\033[0m" in line
+        assert "\033[32minfo    \033[0m" in line
+        assert "\033[2m[pkg.mod]             \033[0m" in line
         assert "\033[1m" in line and "done" in line
         assert "\033[36mx\033[0m=\033[35m1\033[0m" in line
 
@@ -375,7 +375,48 @@ class TestForzeConsoleRenderer:
                 "event": "e",
             },
         )
-        assert "\033[2m   trace\033[0m" in line
+        assert "\033[2mtrace   \033[0m" in line
+
+    def test_normalized_error_fields_plain(self) -> None:
+        render = ForzeConsoleRenderer(colors=False)
+        stack = "Traceback (most recent call last):\n  File \"t.py\", line 1, in <module>\nValueError: test unhandled"
+        line = render(
+            None,  # type: ignore[arg-type]
+            "critical",
+            {
+                "timestamp": "t",
+                "level": "critical",
+                "logger": "forze.test",
+                "event": "Unhandled failure",
+                "error.type": "ValueError",
+                "error.message": "test unhandled",
+                "error.stack": stack,
+            },
+        )
+        assert "Unhandled failure" in line
+        assert "ValueError: test unhandled" in line
+        assert "Traceback (most recent call last)" in line
+        assert "error.type" not in line
+
+    def test_normalized_error_fields_rich(self) -> None:
+        render = ForzeConsoleRenderer(colors=True)
+        stack = "Traceback (most recent call last):\n  File \"t.py\", line 1, in <module>\nValueError: x\n"
+        line = render(
+            None,  # type: ignore[arg-type]
+            "error",
+            {
+                "timestamp": "t",
+                "level": "error",
+                "logger": "x",
+                "event": "boom",
+                "error.type": "RuntimeError",
+                "error.message": "oops",
+                "error.stack": stack,
+            },
+        )
+        assert "RuntimeError: oops" in line
+        assert "\x1b" in line
+        assert "Traceback" in line
 
     def test_configure_console_uses_renderer(self) -> None:
         buf = io.StringIO()
@@ -392,3 +433,22 @@ class TestForzeConsoleRenderer:
         assert "[forze.test]" in out
         assert "hello" in out
         assert "foo=bar" in out
+
+    def test_configure_console_critical_exception_uses_normalized_error(self) -> None:
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=["forze.test"],
+            stream=buf,
+            render_mode="console",
+            custom_console_renderer=ForzeConsoleRenderer(colors=False),
+        )
+        log = Logger("forze.test")
+        try:
+            raise ValueError("pipe")
+        except ValueError as e:
+            log.critical_exception("fail", exc=e)
+        out = buf.getvalue()
+        assert "fail" in out
+        assert "ValueError: pipe" in out
+        assert "Traceback" in out

@@ -9,7 +9,6 @@ require_fastapi()
 from typing import Callable
 
 from starlette.requests import Request
-from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.application.execution import ExecutionContext
@@ -72,16 +71,9 @@ class ContextBindingMiddleware:
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
-                response = Response(status_code=int(message["status"]))
-
-                for key, value in message.get("headers", []):
-                    response.headers.append(
-                        key.decode("latin-1"),
-                        value.decode("latin-1"),
-                    )
-
-                response = self.call_ctx_injector.inject(response, call_ctx)
-                message["headers"] = list(response.raw_headers)
+                headers = list(message.get("headers", []))
+                headers = self.call_ctx_injector.inject(headers, call_ctx)
+                message["headers"] = headers
 
             await send(message)
 

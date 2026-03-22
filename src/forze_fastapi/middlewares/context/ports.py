@@ -6,7 +6,7 @@ require_fastapi()
 
 from typing import Protocol
 
-from fastapi import Request, Response
+from fastapi import Request
 
 from forze.application.execution import CallContext, PrincipalContext
 
@@ -25,7 +25,9 @@ class CallContextResolverPort(Protocol):
 class CallContextInjectorPort(Protocol):
     """Inject the call context headers into the FastAPI response."""
 
-    def inject(self, response: Response, ctx: CallContext) -> Response: ...
+    def inject(
+        self, headers: list[tuple[bytes, bytes]], ctx: CallContext
+    ) -> list[tuple[bytes, bytes]]: ...
 
 
 # ....................... #
