@@ -131,7 +131,7 @@ class DTOMapper[In: BaseModel, Out: BaseDTO]:
                 "Running step %s/%s (%s), produces %s",
                 i,
                 len(self.steps),
-                step.__qualname__,  # type: ignore[attr-defined]
+                type(step).__qualname__,
                 fields,
             )
             patch = await step(ctx, source, payload)

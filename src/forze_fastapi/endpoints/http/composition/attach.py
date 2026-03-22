@@ -57,6 +57,7 @@ def attach_http_endpoint(
     spec: HttpEndpointSpec[Q, P, H, C, B, In, R, F],
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
+    exclude_none: bool = True,
 ) -> APIRouter:
     # Fail fast if route already exists
     path = spec.http["path"]
@@ -124,6 +125,7 @@ def attach_http_endpoint(
         status_code=spec.http.get("status_code"),
         operation_id=operation_id,
         summary=metadata.get("summary"),
+        response_model_exclude_none=exclude_none,
     )
 
     return router
@@ -138,8 +140,15 @@ def attach_http_endpoints(
     specs: Sequence[HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]],
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
+    exclude_none: bool = True,
 ) -> APIRouter:
     for spec in specs:
-        attach_http_endpoint(router, spec=spec, registry=registry, ctx_dep=ctx_dep)
+        attach_http_endpoint(
+            router,
+            spec=spec,
+            registry=registry,
+            ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
+        )
 
     return router

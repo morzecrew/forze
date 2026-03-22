@@ -40,6 +40,7 @@ def attach_document_endpoints(
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     endpoints: DocumentEndpointsSpec | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
@@ -66,6 +67,7 @@ def attach_document_endpoints(
             spec=get_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
         )
 
     if not list_endpoint.get("disable", False):
@@ -79,6 +81,7 @@ def attach_document_endpoints(
             spec=list_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
         )
 
     if not raw_list_endpoint.get("disable", False):
@@ -92,6 +95,7 @@ def attach_document_endpoints(
             spec=raw_list_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
         )
 
     if not create_endpoint.get("disable", False):
@@ -127,6 +131,7 @@ def attach_document_endpoints(
                 spec=create_endpoint_spec,
                 registry=registry,
                 ctx_dep=ctx_dep,
+                exclude_none=exclude_none,
             )
 
     if not update_endpoint.get("disable", False):
@@ -159,6 +164,7 @@ def attach_document_endpoints(
                 spec=update_endpoint_spec,
                 registry=registry,
                 ctx_dep=ctx_dep,
+                exclude_none=exclude_none,
             )
 
     if not kill_endpoint.get("disable", False):
@@ -178,6 +184,7 @@ def attach_document_endpoints(
                 spec=kill_endpoint_spec,
                 registry=registry,
                 ctx_dep=ctx_dep,
+                exclude_none=exclude_none,
             )
 
     if not delete_endpoint.get("disable", False):
@@ -204,6 +211,7 @@ def attach_document_endpoints(
                 spec=delete_endpoint_spec,
                 registry=registry,
                 ctx_dep=ctx_dep,
+                exclude_none=exclude_none,
             )
 
     if not restore_endpoint.get("disable", False):
@@ -230,6 +238,7 @@ def attach_document_endpoints(
                 spec=restore_endpoint_spec,
                 registry=registry,
                 ctx_dep=ctx_dep,
+                exclude_none=exclude_none,
             )
 
     return router

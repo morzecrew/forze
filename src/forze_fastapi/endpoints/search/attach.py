@@ -28,6 +28,7 @@ def attach_search_endpoints(
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     endpoints: SearchEndpointsSpec | None = None,
+    exclude_none: bool = True,
 ) -> APIRouter:
     endpoints = endpoints or {}
 
@@ -45,6 +46,7 @@ def attach_search_endpoints(
             spec=search_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
         )
 
     if not raw_search_endpoint.get("disable", False):
@@ -58,6 +60,7 @@ def attach_search_endpoints(
             spec=raw_search_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
         )
 
     return router
