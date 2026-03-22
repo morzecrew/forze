@@ -21,6 +21,7 @@ _ID_SHORT_NAMES: Final[dict[str, str]] = {
     "causation_id": "caus",
     "operation_id": "op",
 }
+_ID_SHORTEN: Final[set[str]] = {"correlation_id", "execution_id", "causation_id"}
 _SEP: Final[str] = "  "
 
 
@@ -61,7 +62,11 @@ def _format_extra_pair_plain(key: str, value: Any) -> str:
     display_key = _ID_SHORT_NAMES.get(key, key)
 
     if key in _ID_SHORT_NAMES:
-        display_val = _last_six_chars(value)
+        if key in _ID_SHORTEN:
+            display_val = _last_six_chars(value)
+
+        else:
+            display_val = _repr_extra_value(value)
 
     else:
         display_val = _repr_extra_value(value)

@@ -1,15 +1,16 @@
+import attrs
+
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
 
 # ....................... #
 
-from typing import Awaitable, Callable
+from typing import Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.application.execution import ExecutionContext
 
@@ -23,35 +24,45 @@ from .ports import (
 # ----------------------- #
 
 
-class ContextBindingMiddleware(BaseHTTPMiddleware):
+@attrs.define(slots=True, frozen=True)
+class ContextBindingMiddleware:
     """
     Middleware that binds the call and principal context to the request
     and injects the call context headers into the response.
     """
 
-    def __init__(
-        self,
-        app: ASGIApp,
-        *,
-        ctx_dep: Callable[[], ExecutionContext],
-        call_ctx_resolver: CallContextResolverPort = DefaultCallContextResolverInjector(),
-        call_ctx_injector: CallContextInjectorPort = DefaultCallContextResolverInjector(),
-        principal_ctx_resolver: PrincipalContextResolverPort | None = None,
-    ) -> None:
-        super().__init__(app)
+    app: ASGIApp
+    """The next ASGI application."""
 
-        self.ctx_dep = ctx_dep
-        self.call_ctx_resolver = call_ctx_resolver
-        self.principal_ctx_resolver = principal_ctx_resolver
-        self.call_ctx_injector = call_ctx_injector
+    ctx_dep: Callable[[], ExecutionContext] = attrs.field(kw_only=True)
+    """The dependency to resolve the execution context."""
+
+    call_ctx_resolver: CallContextResolverPort = attrs.field(
+        kw_only=True,
+        factory=DefaultCallContextResolverInjector,
+    )
+    """The resolver to resolve the call context."""
+
+    call_ctx_injector: CallContextInjectorPort = attrs.field(
+        kw_only=True,
+        factory=DefaultCallContextResolverInjector,
+    )
+    """The injector to inject the call context headers into the response."""
+
+    principal_ctx_resolver: PrincipalContextResolverPort | None = attrs.field(
+        kw_only=True,
+        default=None,
+    )
+    """The resolver to resolve the principal context."""
 
     # ....................... #
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         ctx = self.ctx_dep()
         call_ctx = self.call_ctx_resolver.resolve(request)
         principal_ctx = None
@@ -59,13 +70,20 @@ class ContextBindingMiddleware(BaseHTTPMiddleware):
         if self.principal_ctx_resolver is not None:
             principal_ctx = self.principal_ctx_resolver.resolve(request)
 
-        response = Response(status_code=500)
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                response = Response(status_code=int(message["status"]))
+
+                for key, value in message.get("headers", []):
+                    response.headers.append(
+                        key.decode("latin-1"),
+                        value.decode("latin-1"),
+                    )
+
+                response = self.call_ctx_injector.inject(response, call_ctx)
+                message["headers"] = list(response.raw_headers)
+
+            await send(message)
 
         with ctx.bind_call(call=call_ctx, principal=principal_ctx):
-            try:
-                response = await call_next(request)
-
-            finally:
-                response = self.call_ctx_injector.inject(response, call_ctx)
-
-        return response
+            await self.app(scope, receive, send_wrapper)
