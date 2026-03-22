@@ -1,5 +1,9 @@
 from .._utils import facade_dependency
-from .composition import attach_http_endpoint, build_http_endpoint_spec
+from .composition import (
+    attach_http_endpoint,
+    attach_http_endpoints,
+    build_http_endpoint_spec,
+)
 from .contracts import (
     HttpEndpointContext,
     HttpEndpointHandlerPort,
@@ -24,6 +28,7 @@ from .mapping import BodyAsIsMapper, QueryAsIsBodyAssignMapper, QueryAsIsMapper
 
 __all__ = [
     "attach_http_endpoint",
+    "attach_http_endpoints",
     "build_http_endpoint_spec",
     "HttpEndpointContext",
     "HttpEndpointHandlerPort",

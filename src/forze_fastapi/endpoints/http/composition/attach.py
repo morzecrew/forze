@@ -6,7 +6,7 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter, Depends, Request
 
@@ -125,5 +125,21 @@ def attach_http_endpoint(
         operation_id=operation_id,
         summary=metadata.get("summary"),
     )
+
+    return router
+
+
+# ....................... #
+
+
+def attach_http_endpoints(
+    router: APIRouter,
+    *,
+    specs: Sequence[HttpEndpointSpec[Q, P, H, C, B, In, R, F]],
+    registry: UsecaseRegistry,
+    ctx_dep: Callable[[], ExecutionContext],
+) -> APIRouter:
+    for spec in specs:
+        attach_http_endpoint(router, spec=spec, registry=registry, ctx_dep=ctx_dep)
 
     return router
