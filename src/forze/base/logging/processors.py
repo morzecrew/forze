@@ -107,9 +107,12 @@ class TraceLevelResolver:
             event_dict["level"] = override
 
         configured_rank = LogLevelToRank.get(self.configured_level, 0)
-        override_rank = LogLevelToRank.get(event_dict["level"], 0)
+        event_rank = LogLevelToRank.get(event_dict["level"], 0)
 
-        if override_rank < configured_rank:
+        # Trace is logged via FilteringBoundLogger.debug (structlog has no trace
+        # level); rank ordering (trace < debug) drops trace here unless the
+        # configured minimum is trace or lower.
+        if event_rank < configured_rank:
             raise DropEvent()
 
         return event_dict

@@ -17,16 +17,24 @@ from .processors import (
     format_exc_info,
     inject_otel_context,
 )
+from .renderers import forze_console_renderer
 
 # ----------------------- #
 
 
-def build_renderer(render_mode: RenderMode) -> structlog.types.Processor:
+def build_renderer(
+    render_mode: RenderMode,
+    *,
+    custom_console_renderer: structlog.types.Processor | None = None,
+) -> structlog.types.Processor:
     if render_mode == "json":
         return structlog.processors.JSONRenderer()
 
+    elif custom_console_renderer:
+        return custom_console_renderer
+
     else:
-        return structlog.dev.ConsoleRenderer()
+        return forze_console_renderer
 
 
 # ....................... #
@@ -42,6 +50,7 @@ def build_common_processors(render_mode: RenderMode) -> list[Processor]:
         structlog.processors.StackInfoRenderer(),
     ]
 
+    #! We should always normalize exceptions, noy only in JSON mode
     if render_mode == "json":
         processors.append(format_exc_info)
 
@@ -94,6 +103,7 @@ def configure_logging(
     *,
     level: LogLevel = "info",
     render_mode: Literal["console", "json"] = "console",
+    custom_console_renderer: structlog.types.Processor | None = None,
     logger_names: Sequence[str] = DEFAULT_LOGGER_NAMES,
     stream: TextIO = sys.stdout,
 ) -> None:
@@ -101,6 +111,7 @@ def configure_logging(
 
     :param level: The logging level to use: "notset", "trace", "debug", "info", "warning", "error", "critical".
     :param render_mode: The render mode to use: "console", "json".
+    :param custom_console_renderer: A custom console renderer to use for the console mode.
     :param logger_names: The logger names to configure logging for.
     :param stream: The stream to use for logging (default: stdout).
     """
@@ -126,7 +137,10 @@ def configure_logging(
         foreign_pre_chain=[],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            build_renderer(render_mode),
+            build_renderer(
+                render_mode,
+                custom_console_renderer=custom_console_renderer,
+            ),
         ],
     )
 

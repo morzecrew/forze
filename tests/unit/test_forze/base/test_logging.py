@@ -9,6 +9,7 @@ import structlog
 from structlog.contextvars import bound_contextvars
 
 from forze.base.logging import Logger, configure_logging
+from forze.base.logging.renderers import forze_console_renderer
 
 # ----------------------- #
 # Helpers
@@ -125,17 +126,15 @@ class TestLogger:
         log.trace("should not appear")
         assert _json_records(buf) == []
 
-    def test_trace_emitted_at_debug_level(self) -> None:
-        """Trace uses the debug path; at debug level it is emitted with level ``trace``."""
+    def test_trace_filtered_at_debug_level(self) -> None:
+        """Trace is sent through the debug API but ranked below debug; it is dropped here."""
         buf = io.StringIO()
         configure_logging(
             level="debug", logger_names=["forze.test"], stream=buf, render_mode="json"
         )
         log = Logger("forze.test")
-        log.trace("trace at debug")
-        records = _json_records(buf)
-        assert records[-1]["event"] == "trace at debug"
-        assert records[-1]["level"] == "trace"
+        log.trace("should not appear")
+        assert _json_records(buf) == []
 
     def test_trace_emitted_at_trace_level(self) -> None:
         buf = io.StringIO()
@@ -297,3 +296,63 @@ class TestJsonRender:
         row = records[-1]
         assert row["n"] == 1
         assert row["mode"] == "python"
+
+
+# ----------------------- #
+# Console renderer
+
+
+class TestForzeConsoleRenderer:
+    """Layout and ID shortening for :func:`forze_console_renderer`."""
+
+    def test_layout_timestamp_level_logger_event_and_extra(self) -> None:
+        line = forze_console_renderer(
+            None,  # type: ignore[arg-type]
+            "info",
+            {
+                "timestamp": "2026-03-22T12:00:00Z",
+                "level": "info",
+                "logger": "forze.test",
+                "event": "started",
+                "detail": 1,
+            },
+        )
+        assert line.startswith(
+            "2026-03-22T12:00:00Z  info  [forze.test]  started  |  detail=1"
+        )
+
+    def test_shortens_correlation_execution_causation_ids(self) -> None:
+        line = forze_console_renderer(
+            None,  # type: ignore[arg-type]
+            "info",
+            {
+                "timestamp": "t",
+                "level": "info",
+                "logger": "x",
+                "event": "e",
+                "correlation_id": "prefix-ABCDEF",
+                "execution_id": "run-uuid-XYZZYX",
+                "causation_id": "short",
+            },
+        )
+        assert "corr=ABCDEF" in line
+        assert "exec=XYZZYX" in line
+        assert "caus=short" in line
+        assert "correlation_id" not in line
+        assert "execution_id" not in line
+        assert "causation_id" not in line
+
+    def test_configure_console_uses_renderer(self) -> None:
+        buf = io.StringIO()
+        configure_logging(
+            level="info",
+            logger_names=["forze.test"],
+            stream=buf,
+            render_mode="console",
+        )
+        log = Logger("forze.test")
+        log.info("hello", foo="bar")
+        out = buf.getvalue().strip()
+        assert "[forze.test]" in out
+        assert "hello" in out
+        assert "foo=bar" in out

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `forze.base.logging`: Default console output uses a compact line layout (`timestamp`, `level`, `[logger]`, `event`, `|`, extras) with shortened labels and trailing ID fragments for `correlation_id`, `execution_id`, and `causation_id` (`corr`, `exec`, `caus`).
 - `forze.base.logging`: Simple extras inline; ``prefix_width`` (reserved for timestamp+level+scope+indent) + ``event_width`` (event) + ``extra_indent`` = extra column; all configurable; block extras below wrapped event; ReprHighlighter for extras.
 - `forze.base.logging`: Block format (extra data below log line) and Rich tracebacks now align with event text for clearer visual hierarchy.
 - `forze.base.logging`: ``max_width`` renamed to ``event_width`` for clarity.

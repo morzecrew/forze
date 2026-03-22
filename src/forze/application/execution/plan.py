@@ -463,10 +463,10 @@ class UsecasePlan:
 
         op = str(op)
 
-        logger.debug("Resolving usecase plan for operation '%s'", op)
+        logger.debug("Resolving usecase plan")
 
         if op == WILDCARD or op.endswith(WILDCARD):
-            raise CoreError(f"Resolve on wildcard operation '{op}' is not allowed")
+            raise CoreError("Resolve on wildcard operation is not allowed")
 
         plan = OperationPlan.merge(self._base(), self._op(op))
         plan.validate()
@@ -481,19 +481,7 @@ class UsecasePlan:
 
         after_commit = plan.build("after_commit")
 
-        logger.trace(
-            "Built plan for '%s' (tx=%s, outer_before=%s, outer_wrap=%s, outer_after=%s, "
-            "in_tx_before=%s, in_tx_wrap=%s, in_tx_after=%s, after_commit=%s)",
-            op,
-            plan.tx,
-            len(outer_before),
-            len(outer_wrap),
-            len(outer_after),
-            len(in_tx_before),
-            len(in_tx_wrap),
-            len(in_tx_after),
-            len(after_commit),
-        )
+        logger.trace("Built plan for '%s' (tx=%s)", op, plan.tx)
 
         after_commit_effects: list[Effect[Any, Any]] = []
 
@@ -501,7 +489,7 @@ class UsecasePlan:
             mw = s.factory(ctx)
 
             logger.trace(
-                "Built after_commit middleware '%s' from factory_id=%s",
+                "Built after_commit middleware %s (factory_id=%s)",
                 type(mw).__qualname__,
                 id(s.factory),
             )

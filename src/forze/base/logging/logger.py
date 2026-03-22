@@ -49,7 +49,12 @@ class Logger:
     # ....................... #
 
     def trace(self, event: str, *sub: Any, **extras: Any) -> None:
-        """Log at TRACE level (below DEBUG). Use for noisy per-op details."""
+        """Log at TRACE level (below DEBUG). Use for noisy per-op details.
+
+        Structlog's bound logger has no trace level, so this calls ``debug`` and
+        relies on :class:`~forze.base.logging.processors.TraceLevelResolver` to
+        label or drop the event according to the configured minimum level.
+        """
 
         extras = {**extras, TRACE_LEVEL_KEY: "trace"}
         self.backend.debug(event, *sub, **extras)
