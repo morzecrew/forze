@@ -135,7 +135,7 @@ def attach_http_endpoint(
 def attach_http_endpoints(
     router: APIRouter,
     *,
-    specs: Sequence[HttpEndpointSpec[Q, P, H, C, B, In, R, F]],
+    specs: Sequence[HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]],
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
 ) -> APIRouter:
