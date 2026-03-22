@@ -9,7 +9,6 @@ from .context import HttpEndpointContext
 from .ports import HttpEndpointFeaturePort, HttpEndpointHandlerPort
 from .specs import (
     HttpEndpointSpec,
-    HttpFeaturesSpec,
     HttpMetadataSpec,
     HttpRequestDTO,
     HttpRequestSpec,
@@ -22,7 +21,6 @@ __all__ = [
     "HttpEndpointSpec",
     "HttpRequestDTO",
     "HttpRequestSpec",
-    "HttpFeaturesSpec",
     "HttpMetadataSpec",
     "HttpSpec",
     "HttpEndpointHandlerPort",

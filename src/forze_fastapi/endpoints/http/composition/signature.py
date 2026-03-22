@@ -7,7 +7,7 @@ require_fastapi()
 import inspect
 from typing import Callable
 
-from fastapi import Request
+from fastapi import Header, Request
 
 from forze.application.execution import ExecutionContext
 
@@ -19,6 +19,12 @@ from ..contracts import (
     HttpEndpointSpec,
 )
 from ..contracts.typevars import B, C, F, H, In, P, Q, R
+from ..features import (
+    IDEMPOTENCY_KEY_HEADER,
+    IF_NONE_MATCH_HEADER_KEY,
+    ETagFeature,
+    IdempotencyFeature,
+)
 from .utils import (
     build_body_parameters,
     build_cookie_parameter,
@@ -107,6 +113,36 @@ def build_http_endpoint_signature(
             dependency=facade_dep,
         )
     )
+
+    if spec.features:
+        idempotency_presented = (
+            next((f for f in spec.features if isinstance(f, IdempotencyFeature)), None)
+            is not None
+        )
+        etag_presented = (
+            next((f for f in spec.features if isinstance(f, ETagFeature)), None)
+            is not None
+        )
+
+        if idempotency_presented:
+            params.append(
+                inspect.Parameter(
+                    name="__idempotency_key",
+                    kind=inspect.Parameter.KEYWORD_ONLY,
+                    annotation=str,
+                    default=Header(..., alias=IDEMPOTENCY_KEY_HEADER),
+                )
+            )
+
+        if etag_presented:
+            params.append(
+                inspect.Parameter(
+                    name="__if_none_match",
+                    kind=inspect.Parameter.KEYWORD_ONLY,
+                    annotation=str | None,
+                    default=Header(default=None, alias=IF_NONE_MATCH_HEADER_KEY),
+                )
+            )
 
     return inspect.Signature(
         parameters=params,

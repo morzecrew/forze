@@ -79,7 +79,7 @@ def common_kwargs(field: Any) -> dict[str, Any]:
 # ....................... #
 
 
-#! move to base utils or so
+#! move to base utils or so (most likely redundant thing)
 def model_from_kwargs[M: BaseModel](
     *,
     model_type: type[M] | None,
@@ -156,8 +156,16 @@ def query_from_field(field: Any) -> Any:
     return Query(default=default_from_field(field), **common_kwargs(field))
 
 
-def header_from_field(field: Any) -> Any:
-    return Header(default=default_from_field(field), **common_kwargs(field))
+def snake_to_header(name: str) -> str:
+    return "-".join(part.capitalize() for part in name.split("_"))
+
+
+def header_from_field(field: Any, field_name: str) -> Any:
+    kwargs = common_kwargs(field)
+    kwargs["alias"] = snake_to_header(field_name)
+    res = Header(default=default_from_field(field), **kwargs)
+
+    return res
 
 
 def cookie_from_field(field: Any) -> Any:
@@ -203,7 +211,7 @@ def build_header_parameter(field_name: str, field: Any) -> inspect.Parameter:
         name=field_name,
         kind=inspect.Parameter.KEYWORD_ONLY,
         annotation=field.annotation,
-        default=header_from_field(field),
+        default=header_from_field(field, field_name),
     )
 
 

@@ -14,6 +14,7 @@ from forze.application.execution import (
 )
 from forze.base.logging import configure_logging, install_excepthook
 from forze_fastapi.endpoints.http import (
+    ETagFeature,
     HttpRequestDTO,
     attach_http_endpoint,
     build_http_endpoint_spec,
@@ -118,6 +119,11 @@ endpoint_spec = build_http_endpoint_spec(
     },
     response=HelloOutput,
     mapper=map_hello,
+    features=[
+        ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any](
+            provider=lambda response_body: "1234"
+        ),
+    ],
 )
 
 attach_http_endpoint(

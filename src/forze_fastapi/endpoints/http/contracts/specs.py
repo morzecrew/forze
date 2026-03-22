@@ -90,22 +90,6 @@ class HttpRequestDTO(BaseDTO, Generic[Q, P, H, C, B]):
 # ....................... #
 
 
-# ....................... #
-
-
-class HttpFeaturesSpec(TypedDict, total=False):
-    """Specification for endpoint features."""
-
-    idempotent: bool
-    """Whether the endpoint is idempotent."""
-
-    etag: bool
-    """Whether the endpoint supports ETag."""
-
-
-# ....................... #
-
-
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
     """Specification for an HTTP endpoint."""
