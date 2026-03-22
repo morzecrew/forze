@@ -1,4 +1,4 @@
-from typing import Any, Final, Literal
+from typing import Any, Literal
 
 import attrs
 from structlog.typing import EventDict
@@ -6,18 +6,9 @@ from structlog.typing import EventDict
 from ..constants import ERR_MESSAGE_KEY, ERR_STACK_KEY, ERR_TYPE_KEY
 
 # ----------------------- #
-
-_ID_SHORT_NAMES: Final[dict[str, str]] = {
-    "correlation_id": "corr",
-    "execution_id": "exec",
-    "causation_id": "caus",
-    "operation_id": "op",
-}
-_ID_SHORTEN: Final[set[str]] = {"correlation_id", "execution_id", "causation_id"}
-
-EventKind = Literal["common", "access"]
-
-# ....................... #
+#! Yes we leak some information here, but it's for the sake of readability.
+#! It's super tricky to maintain strict isolation :/
+#! Or we need to put renderer somewhere else.
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -30,7 +21,7 @@ class NormalizedEvent:
     err_header: str | None = None
     err_stack: str | None = None
     stack: str | None = None
-    kind: EventKind = "common"
+    kind: Literal["common", "access"] = "common"
 
 
 # ....................... #
@@ -62,24 +53,11 @@ def is_access_log(event: EventDict) -> bool:
 # ....................... #
 
 
-def _last_six_chars(value: object) -> str:
-    s = str(value)
-    return s[-6:] if len(s) > 6 else s
-
-
-def _repr_extra_value(value: Any) -> str:
+def sanitize_extra_value(value: Any) -> str:
     if isinstance(value, str) and not any(c in value for c in ' \t\r\n="'):
         return value
 
     return repr(value)
-
-
-def _extra_display_value(key: str, value: Any) -> str:
-    if key in _ID_SHORT_NAMES:
-        if key in _ID_SHORTEN:
-            return _last_six_chars(value)
-        return _repr_extra_value(value)
-    return _repr_extra_value(value)
 
 
 # ....................... #
@@ -89,7 +67,7 @@ def process_common_log(
     event: EventDict,
     *,
     max_traceback_lines: int = 18,
-) -> NormalizedEvent:
+) -> tuple[dict[str, Any], NormalizedEvent]:
     ed = dict(event)
 
     stack = ed.pop("stack", None)
@@ -117,11 +95,11 @@ def process_common_log(
         err_header = f"{err_type or 'Exception'}: {err_message or ''}".rstrip()
 
     extras = tuple(
-        (k, _extra_display_value(k, ed[k]))
+        (k, sanitize_extra_value(ed[k]))
         for k in sorted(k for k in ed if not k.startswith("_"))
     )
 
-    return NormalizedEvent(
+    return ed, NormalizedEvent(
         timestamp=ts,
         level=level,
         logger_name=logger_name,
@@ -148,10 +126,10 @@ def process_access_log(
 
     method = str(http.get("method", ""))
     url = str(http.get("url", ""))
-    status_code = str(http.get("status_code", ""))
+    status_code = str(http.get("status_code", "500"))
 
-    message = f"{method} {url} {status_code}".strip()
-    extras: list[tuple[str, str]] = []
+    message = f"{method} {url}".strip()
+    extras: list[tuple[str, str]] = [("status_code", status_code)]
 
     if duration is not None:
         extras.append(("duration", f"{duration}ms"))
@@ -167,7 +145,7 @@ def process_access_log(
                 extras.append(("client", f"{ip}:{port}"))
 
     for key in sorted(k for k in ed if not k.startswith("_")):
-        extras.append((key, _extra_display_value(key, ed[key])))
+        extras.append((key, sanitize_extra_value(ed[key])))
 
     return attrs.evolve(
         common_event,
@@ -186,12 +164,11 @@ def normalize_event_dict(
     max_traceback_lines: int = 18,
 ) -> NormalizedEvent:
     ed = dict(event)
-    rendered_event = process_common_log(ed, max_traceback_lines=max_traceback_lines)
+
+    # We chain `ed` here to avoid keeping error keys in the event dict.
+    ed, rendered_event = process_common_log(ed, max_traceback_lines=max_traceback_lines)
 
     if is_access_log(ed):
         rendered_event = process_access_log(ed, rendered_event)
 
     return rendered_event
-
-
-# ....................... #

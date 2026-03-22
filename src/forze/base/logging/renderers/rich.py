@@ -1,5 +1,5 @@
 from io import StringIO
-from typing import Final
+from typing import Any, Callable, Final
 
 from rich.console import Console, Group
 from rich.syntax import Syntax
@@ -9,7 +9,7 @@ from .normalization import NormalizedEvent
 
 # ----------------------- #
 
-_SEP: Final[str] = "  "
+_SEP: Final[str] = " "
 
 # ....................... #
 
@@ -38,6 +38,19 @@ def _rich_level_style(level: str) -> str:
 # ....................... #
 
 
+def _rich_status_code_style(status_code: int) -> str:
+    if status_code < 300:
+        return "green"
+
+    elif status_code < 400:
+        return "yellow"
+
+    return "red"
+
+
+# ....................... #
+
+
 def _make_console(sio: StringIO, *, colors: bool, width: int) -> Console:
     return Console(
         file=sio,
@@ -53,7 +66,12 @@ def _make_console(sio: StringIO, *, colors: bool, width: int) -> Console:
 # ....................... #
 
 
-def _render_extras(ev: NormalizedEvent) -> Text:
+def _render_extras(
+    ev: NormalizedEvent,
+    *,
+    aliases: dict[str, str],
+    transforms: dict[str, Callable[[Any], str]],
+) -> Text:
     line = Text()
     first = True
 
@@ -62,17 +80,28 @@ def _render_extras(ev: NormalizedEvent) -> Text:
             line.append(_SEP)
 
         first = False
-        style = "cyan"
+        key_style = "cyan"
 
         if key == "duration":
-            style = "yellow"
+            key_style = "yellow"
 
         elif key == "client":
-            style = "blue"
+            key_style = "blue"
 
-        line.append(key, style=style)
+        value_style = "magenta"
+
+        if key == "status_code":
+            value_style = _rich_status_code_style(int(value))
+
+        if key in transforms:
+            value = transforms[key](value)
+
+        if key in aliases:
+            key = aliases[key]
+
+        line.append(key, style=key_style)
         line.append("=")
-        line.append(value, style="magenta")
+        line.append(value, style=value_style)
 
     return line
 
@@ -85,6 +114,9 @@ def _render_main_line(
     *,
     logger_name_width: int,
     message_width: int,
+    sep_width: int,
+    aliases: dict[str, str],
+    transforms: dict[str, Callable[[Any], str]],
 ) -> Text:
     level_plain = f"{ev.level:<8}"
     logger_plain = f"[{ev.logger_name}]".ljust(logger_name_width)
@@ -92,16 +124,16 @@ def _render_main_line(
 
     line = Text()
     line.append(ev.timestamp, style="dim")
-    line.append(_SEP)
+    line.append(_SEP * sep_width)
     line.append(level_plain, style=_rich_level_style(ev.level))
-    line.append(_SEP)
+    line.append(_SEP * sep_width)
     line.append(logger_plain, style="dim")
-    line.append(_SEP)
+    line.append(_SEP * sep_width)
     line.append(message_plain, style="bold")
 
     if ev.extras:
-        line.append(_SEP)
-        line.append(_render_extras(ev))
+        line.append(_SEP * sep_width)
+        line.append(_render_extras(ev, aliases=aliases, transforms=transforms))
 
     return line
 
@@ -143,6 +175,9 @@ def render_event(
     colors: bool,
     logger_name_width: int,
     message_width: int,
+    sep_width: int,
+    aliases: dict[str, str],
+    transforms: dict[str, Callable[[Any], str]],
 ) -> str:
     width = max(logger_name_width + message_width + 80, 160)
     sio = StringIO()
@@ -150,7 +185,12 @@ def render_event(
 
     console.print(
         _render_main_line(
-            ev, logger_name_width=logger_name_width, message_width=message_width
+            ev,
+            logger_name_width=logger_name_width,
+            message_width=message_width,
+            sep_width=sep_width,
+            aliases=aliases,
+            transforms=transforms,
         ),
         end="",
         no_wrap=True,

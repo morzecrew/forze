@@ -1,3 +1,5 @@
+from typing import Any, Callable
+
 import attrs
 from structlog.typing import EventDict, WrappedLogger
 
@@ -23,6 +25,24 @@ class ForzeConsoleRenderer:
     max_traceback_lines: int = 18
     """Maximum number of traceback lines to render."""
 
+    sep_width: int = attrs.field(default=1, validator=attrs.validators.ge(1))
+    """Width of the separator between the parts."""
+
+    aliases: dict[str, str] = {
+        "correlation_id": "corr",
+        "execution_id": "exec",
+        "causation_id": "caus",
+        "operation_id": "op",
+    }
+    """Aliases for extra keys (will be replaced by the alias)."""
+
+    transforms: dict[str, Callable[[Any], str]] = {
+        "correlation_id": lambda value: str(value)[-6:],
+        "execution_id": lambda value: str(value)[-6:],
+        "causation_id": lambda value: str(value)[-6:],
+    }
+    """Transforms for extra keys (will be applied to the value)."""
+
     # ....................... #
 
     def __call__(self, _: WrappedLogger, __: str, event_dict: EventDict) -> str:
@@ -36,4 +56,7 @@ class ForzeConsoleRenderer:
             colors=self.colors,
             logger_name_width=self.logger_name_width,
             message_width=self.message_width,
+            sep_width=self.sep_width,
+            aliases=self.aliases,
+            transforms=self.transforms,
         )
