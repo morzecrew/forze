@@ -154,8 +154,8 @@ class ForzeConsoleRenderer:
 
         if self.colors:
             level_plain = f"{level:>8}"
-            logger_plain = f"[{logger_name}]".rjust(self.logger_name_width)
-            event_plain = event.rjust(self.event_width)
+            logger_plain = f"[{logger_name}]".ljust(self.logger_name_width)
+            event_plain = event.ljust(self.event_width)
 
             line = Text()
             line.append(ts, style="dim")
