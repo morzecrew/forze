@@ -52,7 +52,7 @@ class Logger:
         """Log at TRACE level (below DEBUG). Use for noisy per-op details."""
 
         extras = {**extras, TRACE_LEVEL_KEY: "trace"}
-        self.backend.debug(event, *sub, **extras)
+        self.backend.log(LogLevelToRank["trace"], event, *sub, **extras)
 
     # ....................... #
 

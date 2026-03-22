@@ -26,7 +26,7 @@ class DefaultCallContextResolverInjector(
 ):
     """Header based call context resolver and injector for FastAPI."""
 
-    exec_header: str = "X-Execution-ID"
+    exec_header: str = "X-Request-ID"
     """Header name for the execution id. Only for injection purposes."""
 
     corr_header: str = "X-Correlation-ID"
