@@ -9,7 +9,7 @@ transaction wrapping.
 
 from .context import CallContext, ExecutionContext, PrincipalContext
 from .deps import Deps, DepsModule, DepsPlan
-from .facade import UsecasesFacade, facade_op
+from .facade import FacadeOpRef, UsecasesFacade, facade_call, facade_op
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
 from .middleware import Effect, Guard, Middleware, NextCall
 from .plan import UsecasePlan
@@ -40,4 +40,6 @@ __all__ = [
     "LifecycleStep",
     "UsecasesFacade",
     "facade_op",
+    "FacadeOpRef",
+    "facade_call",
 ]

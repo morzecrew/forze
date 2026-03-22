@@ -26,7 +26,7 @@ from .operations import DocumentOperation
 
 def build_document_create_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
@@ -56,7 +56,7 @@ def build_document_create_mapper(
 
 def build_document_update_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
@@ -85,15 +85,13 @@ def build_document_update_mapper(
 
 
 def build_document_list_mapper(
-    spec: DocumentSpec[Any, Any, Any, Any],
-    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for list requests with optional steps."""
 
     mapper = DTOMapper(
-        in_=dtos.list or ListRequestDTO,
+        in_=ListRequestDTO,
         out=ListRequestDTO,
     )
 
@@ -104,8 +102,6 @@ def build_document_list_mapper(
 
 
 def build_document_raw_list_mapper(
-    spec: DocumentSpec[Any, Any, Any, Any],
-    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
@@ -118,7 +114,7 @@ def build_document_raw_list_mapper(
     """
 
     mapper = DTOMapper(
-        in_=dtos.raw_list or RawListRequestDTO,
+        in_=RawListRequestDTO,
         out=RawListRequestDTO,
     )
 
@@ -130,7 +126,7 @@ def build_document_raw_list_mapper(
 
 def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
-    dtos: DocumentDTOs[Any, Any, Any, Any, Any],
+    dtos: DocumentDTOs[Any, Any, Any],
     *,
     create_steps: tuple[MappingStep[Any], ...] = (),
     update_steps: tuple[MappingStep[Any], ...] = (),
@@ -148,16 +144,8 @@ def build_document_registry(
     :returns: Usecase registry with all supported operations.
     """
 
-    list_mapper = build_document_list_mapper(
-        spec,
-        dtos,
-        steps=list_steps,
-    )
-    raw_list_mapper = build_document_raw_list_mapper(
-        spec,
-        dtos,
-        steps=raw_list_steps,
-    )
+    list_mapper = build_document_list_mapper(steps=list_steps)
+    raw_list_mapper = build_document_raw_list_mapper(steps=raw_list_steps)
 
     reg = UsecaseRegistry(
         {

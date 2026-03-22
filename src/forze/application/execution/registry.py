@@ -71,7 +71,7 @@ class UsecaseRegistry:
 
     # ....................... #
 
-    def _qualify_operation(self, op: OpKey) -> str:
+    def qualify_operation(self, op: OpKey) -> str:
         """Resolve an operation id for an operation.
 
         :param op: The operation to resolve the id for.
@@ -457,7 +457,7 @@ class UsecaseRegistry:
         """
 
         op = str(op)
-        operation_id = self._qualify_operation(op)
+        operation_id = self.qualify_operation(op)
 
         bind_contextvars(operation_id=operation_id)
 

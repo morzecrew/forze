@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()

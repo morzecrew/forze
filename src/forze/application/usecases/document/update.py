@@ -1,54 +1,37 @@
-from typing import Any, TypedDict, final
-from uuid import UUID
+from typing import Any
 
 import attrs
 
 from forze.application.contracts.document import DocumentWritePort
+from forze.application.contracts.mapper import MapperPort
+from forze.application.dto import DocumentUpdateDTO
 from forze.application.execution import Usecase
-from forze.application.mapping import DTOMapper
 from forze.domain.models import BaseDTO, ReadDocument
 
 # ----------------------- #
 
 
-@final  #! TODO: replace with BaseDTO
-class UpdateArgs[In: BaseDTO](TypedDict):
-    """Arguments for update usecases."""
-
-    pk: UUID
-    """Document primary key."""
-
-    dto: In
-    """Update payload DTO."""
-
-    rev: int
-    """Expected revision for optimistic concurrency."""
-
-
-# ....................... #
-
-
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
-    Usecase[UpdateArgs[In], Out]
+    Usecase[DocumentUpdateDTO[In], Out]
 ):
     """Usecase that updates an existing document from a mapped command."""
 
     doc: DocumentWritePort[Out, Any, Any, Cmd]
     """Document port for update operations."""
 
-    mapper: DTOMapper[In, Cmd]
+    mapper: MapperPort[In, Cmd]
     """Mapper that converts input DTO to update command."""
 
     # ....................... #
 
-    async def main(self, args: UpdateArgs[In]) -> Out:
+    async def main(self, args: DocumentUpdateDTO[In]) -> Out:
         """Update a document from the mapped command.
 
         :param args: Update arguments (pk, dto, rev).
         :returns: Updated read model.
         """
 
-        cmd = await self.mapper(self.ctx, args["dto"])
+        cmd = await self.mapper(self.ctx, args.dto)
 
-        return await self.doc.update(args["pk"], cmd, rev=args.get("rev"))
+        return await self.doc.update(args.id, cmd, rev=args.rev)

@@ -1,0 +1,98 @@
+from forze_fastapi._compat import require_fastapi
+
+require_fastapi()
+
+# ....................... #
+
+from typing import Any
+
+from pydantic import BaseModel
+
+from forze.application.composition.search import SearchDTOs, SearchUsecasesFacade
+from forze.application.dto import (
+    Paginated,
+    RawPaginated,
+    RawSearchRequestDTO,
+    SearchRequestDTO,
+)
+from forze_fastapi.endpoints.http import (
+    BodyAsIsMapper,
+    HttpEndpointSpec,
+    HttpMetadataSpec,
+    build_http_endpoint_spec,
+)
+
+from .._utils import path_coerce
+
+# ----------------------- #
+
+Facade = SearchUsecasesFacade[Any]
+
+# ....................... #
+
+type TypedSearchDTOs[M: BaseModel] = SearchDTOs[M]
+type TypedSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
+    Any,
+    Any,
+    Any,
+    Any,
+    SearchRequestDTO,
+    SearchRequestDTO,
+    Paginated[M],
+    Facade,
+]
+
+
+def build_typed_search_endpoint_spec[M: BaseModel](
+    dtos: TypedSearchDTOs[M],
+    *,
+    path_override: str | None = None,
+    metadata: HttpMetadataSpec | None = None,
+) -> TypedSearchEndpointSpec[M]:
+    path = path_override or "/search"
+    path = path_coerce(path)
+
+    return build_http_endpoint_spec(
+        Facade,
+        Facade.search,  # type: ignore[misc]
+        http={"method": "POST", "path": path},
+        request={"body_type": SearchRequestDTO},
+        metadata=metadata,
+        response=Paginated[dtos.read],  # type: ignore[name-defined]
+        mapper=BodyAsIsMapper(SearchRequestDTO),
+    )
+
+
+# ....................... #
+
+type RawSearchDTOs[M: BaseModel] = SearchDTOs[M]
+type RawSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
+    Any,
+    Any,
+    Any,
+    Any,
+    RawSearchRequestDTO,
+    RawSearchRequestDTO,
+    RawPaginated,
+    Facade,
+]
+
+
+def build_raw_search_endpoint_spec[M: BaseModel](
+    dtos: RawSearchDTOs[M],
+    *,
+    path_override: str | None = None,
+    metadata: HttpMetadataSpec | None = None,
+) -> RawSearchEndpointSpec[M]:
+    path = path_override or "/raw-search"
+    path = path_coerce(path)
+
+    return build_http_endpoint_spec(
+        Facade,
+        Facade.raw_search,  # type: ignore[misc]
+        http={"method": "POST", "path": path},
+        request={"body_type": RawSearchRequestDTO},
+        metadata=metadata,
+        response=RawPaginated,
+        mapper=BodyAsIsMapper(RawSearchRequestDTO),
+    )

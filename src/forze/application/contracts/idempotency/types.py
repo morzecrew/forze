@@ -19,3 +19,5 @@ class IdempotencySnapshot(TypedDict):
 
     body: bytes
     """Response body bytes."""
+
+    #! should we have headers here?
