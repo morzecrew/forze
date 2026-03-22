@@ -15,14 +15,14 @@ from forze.application.dto import (
     RawSearchRequestDTO,
     SearchRequestDTO,
 )
-from forze_fastapi.endpoints.http import (
+
+from .._utils import path_coerce
+from ..http import (
     BodyAsIsMapper,
     HttpEndpointSpec,
     HttpMetadataSpec,
     build_http_endpoint_spec,
 )
-
-from .._utils import path_coerce
 
 # ----------------------- #
 

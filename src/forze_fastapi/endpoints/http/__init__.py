@@ -8,6 +8,7 @@ from .contracts import (
     HttpRequestDTO,
     HttpRequestSpec,
     HttpSpec,
+    SimpleHttpEndpointSpec,
 )
 from .features import (
     ETAG_HEADER_KEY,
@@ -41,4 +42,5 @@ __all__ = [
     "QueryAsIsBodyAssignMapper",
     "QueryAsIsMapper",
     "facade_dependency",
+    "SimpleHttpEndpointSpec",
 ]

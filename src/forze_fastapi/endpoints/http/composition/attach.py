@@ -1,3 +1,5 @@
+from fastapi.routing import APIRoute
+
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -9,16 +11,44 @@ from typing import Any, Callable
 from fastapi import APIRouter, Depends, Request
 
 from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.base.errors import CoreError
 
 from ..._utils import facade_dependency
 from ..contracts import HttpEndpointContext, HttpEndpointSpec
 from ..contracts.typevars import B, C, F, H, In, P, Q, R
 from .dto import build_request_dto
 from .handler import UsecaseHttpEndpointHandler
-from .helpers import compose_endpoint_features
+from .helpers import compose_endpoint_features, validate_http_features
 from .signature import build_http_endpoint_signature
 
 # ----------------------- #
+
+
+def _join_paths(prefix: str, path: str) -> str:
+    if not prefix:
+        return path
+
+    if not path:
+        return prefix
+
+    return f"{prefix.rstrip('/')}/{path.lstrip('/')}"
+
+
+# ....................... #
+
+
+def _has_route(router: APIRouter, *, path: str, method: str) -> bool:
+    method = method.upper()
+    full_path = _join_paths(router.prefix, path)
+
+    for r in router.routes:
+        if isinstance(r, APIRoute) and r.path == full_path and method in r.methods:
+            return True
+
+    return False
+
+
+# ....................... #
 
 
 def attach_http_endpoint(
@@ -28,6 +58,16 @@ def attach_http_endpoint(
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
 ) -> APIRouter:
+    # Fail fast if route already exists
+    path = spec.http["path"]
+    method = spec.http["method"]
+
+    if _has_route(router, path=path, method=method):
+        raise CoreError(f"Route already exists: {path} {method}")
+
+    # Fail fast if features are invalid
+    validate_http_features(spec.http, spec.features)
+
     facade_dep = facade_dependency(
         facade=spec.facade_type,
         reg=registry,
@@ -77,9 +117,9 @@ def attach_http_endpoint(
         endpoint.__doc__ = description
 
     router.add_api_route(
-        spec.http["path"],
+        path,
         endpoint,
-        methods=[spec.http["method"]],
+        methods=[method],
         response_model=spec.response,
         status_code=spec.http.get("status_code"),
         operation_id=operation_id,

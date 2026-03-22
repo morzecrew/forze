@@ -6,8 +6,8 @@ from fastapi import HTTPException, Response
 
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.base.serialization import pydantic_model_hash
+from forze_fastapi.endpoints._logger import logger
 
-from ..._logger import logger
 from ...contracts import (
     HttpEndpointContext,
     HttpEndpointFeaturePort,

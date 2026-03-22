@@ -28,3 +28,16 @@ def facade_dependency[F: UsecasesFacade](
         return facade(ctx=ctx, reg=reg)
 
     return dependency
+
+
+# ....................... #
+
+
+def path_coerce(path: str) -> str:
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    if path.endswith("/"):
+        path = path[:-1]
+
+    return path

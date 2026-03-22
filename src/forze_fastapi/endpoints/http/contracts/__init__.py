@@ -13,6 +13,7 @@ from .specs import (
     HttpRequestDTO,
     HttpRequestSpec,
     HttpSpec,
+    SimpleHttpEndpointSpec,
 )
 
 # ----------------------- #
@@ -31,4 +32,5 @@ __all__ = [
     "HTTP_CTX_KEY",
     "HttpBodyMode",
     "HTTP_FACADE_KEY",
+    "SimpleHttpEndpointSpec",
 ]

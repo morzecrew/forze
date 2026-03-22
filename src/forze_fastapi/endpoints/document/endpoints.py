@@ -20,7 +20,9 @@ from forze.application.dto import (
 )
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, ReadDocument
-from forze_fastapi.endpoints.http import (
+
+from .._utils import path_coerce
+from ..http import (
     BodyAsIsMapper,
     ETagFeature,
     HttpEndpointSpec,
@@ -30,8 +32,6 @@ from forze_fastapi.endpoints.http import (
     QueryAsIsMapper,
     build_http_endpoint_spec,
 )
-
-from .._utils import path_coerce
 from .features import document_etag
 
 # ----------------------- #
@@ -42,8 +42,8 @@ ETag = ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any]
 
 # ....................... #
 
-type MetaDTOs[R: ReadDocument] = DocumentDTOs[R, Any, Any]
-type MetaEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
+type GetDTOs[R: ReadDocument] = DocumentDTOs[R, Any, Any]
+type GetEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
     DocumentIdDTO,
     Any,
     Any,
@@ -55,15 +55,15 @@ type MetaEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
 ]
 
 
-def build_document_metadata_endpoint_spec[R: ReadDocument](
-    dtos: MetaDTOs[R],
+def build_document_get_endpoint_spec[R: ReadDocument](
+    dtos: GetDTOs[R],
     *,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
     etag: bool = True,
     etag_auto_304: bool = True,
-) -> MetaEndpointSpec[R]:
-    path = path_override or "/metadata"
+) -> GetEndpointSpec[R]:
+    path = path_override or "/get"
     path = path_coerce(path)
 
     features = (

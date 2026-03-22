@@ -143,9 +143,13 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
             if self.response is not None:
                 raise CoreError("DELETE method must not have a response model")
 
-        # if self.features is not None:
-        #     if self.features.get("idempotent") and self.http["method"] != "POST":
-        #         raise CoreError("Idempotent endpoints must be POST methods")
 
-        #     if self.features.get("etag") and self.http["method"] != "GET":
-        #         raise CoreError("ETag endpoints must be GET methods")
+# ....................... #
+
+
+class SimpleHttpEndpointSpec(TypedDict, total=False):
+    """Extra contract for built-in HTTP endpoints."""
+
+    disable: bool
+    path_override: str
+    metadata: HttpMetadataSpec
