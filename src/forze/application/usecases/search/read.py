@@ -3,6 +3,7 @@ from typing import Any
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.mapper import MapperPort
 from forze.application.contracts.search import SearchReadPort
 from forze.application.dto import (
     Paginated,
@@ -11,24 +12,23 @@ from forze.application.dto import (
     SearchRequestDTO,
 )
 from forze.application.execution import Usecase
-from forze.application.mapping import DTOMapper
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Out]]):
+class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
     """Usecase that searches with typed results."""
 
     search: SearchReadPort[Out]
     """Search port for search operations."""
 
-    mapper: DTOMapper[In, SearchRequestDTO] | None = None
+    mapper: MapperPort[SearchRequestDTO, SearchRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def main(self, args: In) -> Paginated[Out]:
+    async def main(self, args: SearchRequestDTO) -> Paginated[Out]:
         """Search with typed paginated results.
 
         :param args: Search arguments (body, page, size).
@@ -61,18 +61,18 @@ class TypedSearch[In: SearchRequestDTO, Out: BaseModel](Usecase[In, Paginated[Ou
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RawSearch[In: RawSearchRequestDTO](Usecase[In, RawPaginated]):
+class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
     """Usecase that searches with raw results."""
 
     search: SearchReadPort[Any]
     """Search port for search operations."""
 
-    mapper: DTOMapper[In, RawSearchRequestDTO] | None = None
+    mapper: MapperPort[RawSearchRequestDTO, RawSearchRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def main(self, args: In) -> RawPaginated:
+    async def main(self, args: RawSearchRequestDTO) -> RawPaginated:
         """Search with raw results.
 
         :param args: Search arguments (body, page, size).

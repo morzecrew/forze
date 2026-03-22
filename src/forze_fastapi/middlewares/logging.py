@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -41,44 +39,36 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         start = time.perf_counter()
-        response = Response(status_code=500)
+        response = await call_next(request)
 
-        try:
-            response = await call_next(request)
+        process_time_ms = int((time.perf_counter() - start) * 1000)
+        status_code = response.status_code
+        url = _get_path_with_query_string(request.scope)  # type: ignore
 
-        except Exception:
-            # log
-            raise
+        if request.client is not None:
+            client_host = request.client.host
+            client_port = str(request.client.port)
 
-        finally:
-            process_time_ms = int((time.perf_counter() - start) * 1000)
-            status_code = response.status_code
-            url = _get_path_with_query_string(request.scope)  # type: ignore
+        else:
+            client_host = "unknown"
+            client_port = "unknown"
 
-            if request.client is not None:
-                client_host = request.client.host
-                client_port = str(request.client.port)
+        http_method = request.method
+        http_version = request.scope.get("http_version", "unknown")
 
-            else:
-                client_host = "unknown"
-                client_port = "unknown"
+        response.headers[self.process_time_header] = str(process_time_ms)
 
-            http_method = request.method
-            http_version = request.scope.get("http_version", "unknown")
-
-            response.headers[self.process_time_header] = str(process_time_ms)
-
-            self.logger.info(
-                f"""{client_host}:{client_port} - "{http_method} {url} HTTP/{http_version}" {status_code}""",
-                http={
-                    "url": url,
-                    "status_code": status_code,
-                    "method": http_method,
-                    "version": http_version,
-                },
-                network={"client": {"ip": client_host, "port": client_port}},
-                duration=process_time_ms,
-            )
+        self.logger.info(
+            f"""{client_host}:{client_port} - "{http_method} {url} HTTP/{http_version}" {status_code}""",
+            http={
+                "url": url,
+                "status_code": status_code,
+                "method": http_method,
+                "version": http_version,
+            },
+            network={"client": {"ip": client_host, "port": client_port}},
+            duration=process_time_ms,
+        )
 
         return response
 

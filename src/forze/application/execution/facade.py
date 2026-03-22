@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Self, overload
 
 import attrs
 
@@ -32,6 +32,30 @@ class UsecasesFacade:
 
 
 @attrs.define(slots=True, frozen=True)
+class FacadeOpRef[Args, R]:
+    """Reference to a facade operation."""
+
+    op: OpKey
+    """Operation key."""
+
+    uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
+    """Optional usecase type to infer annotations from."""
+
+    name: str | None = None
+    """Attribute name assigned on facade class."""
+
+    # ....................... #
+
+    def bind(self, facade: UsecasesFacade) -> Usecase[Args, R]:
+        """Bind the reference to a facade instance and resolve the usecase."""
+
+        return facade.resolve(self.op)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
 class facade_op[Args, R]:
     """Аacade operation descriptor."""
 
@@ -41,14 +65,56 @@ class facade_op[Args, R]:
     uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
     """Optional usecase type to infer annotations from."""
 
+    name: str | None = attrs.field(default=None, init=False, repr=False)
+    """Attribute name assigned on facade class."""
+
     # ....................... #
+
+    def __set_name__(self, owner: type[Any], name: str) -> None:
+        object.__setattr__(self, "name", name)
+
+    # ....................... #
+
+    @overload
+    def __get__(
+        self,
+        obj: None,
+        objtype: type[Any] | None = None,
+    ) -> Self:
+        """Return the descriptor itself when accessed on the class."""
+        ...
+
+    @overload
+    def __get__(
+        self,
+        obj: UsecasesFacade,
+        objtype: type[Any] | None = None,
+    ) -> Usecase[Args, R]:
+        """Return the resolved usecase when accessed on a facade instance."""
+        ...
 
     def __get__(
         self,
         obj: UsecasesFacade | None,
         objtype: type[Any] | None = None,
-    ) -> Usecase[Args, R]:
+    ) -> Usecase[Args, R] | Self:
         if obj is None:
-            raise AttributeError("facade_op is available only on facade instances")
+            return self
 
         return obj.resolve(self.op)
+
+    # ....................... #
+
+    def ref(self) -> FacadeOpRef[Args, R]:
+        """Create a reference to the operation."""
+
+        return FacadeOpRef(op=self.op, uc=self.uc, name=self.name)
+
+
+# ....................... #
+
+
+def facade_call[Args, R](d: facade_op[Args, R]) -> FacadeOpRef[Args, R]:
+    """Create a reference to the operation."""
+
+    return d.ref()

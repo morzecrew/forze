@@ -2,7 +2,6 @@ from typing import Any, Generic, TypeVar
 
 import attrs
 
-from forze.application.dto import ListRequestDTO, RawListRequestDTO
 from forze.application.execution import UsecasesFacade, facade_op
 from forze.application.usecases.document import (
     CreateDocument,
@@ -23,14 +22,12 @@ from .operations import DocumentOperation
 R = TypeVar("R", bound=ReadDocument)
 C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
-tL = TypeVar("tL", bound=ListRequestDTO, default=ListRequestDTO)
-rL = TypeVar("rL", bound=RawListRequestDTO, default=RawListRequestDTO)
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentDTOs(Generic[R, C, U, tL, rL]):
+class DocumentDTOs(Generic[R, C, U]):
     """DTO type mapping for a document aggregate."""
 
     read: type[R]
@@ -42,27 +39,21 @@ class DocumentDTOs(Generic[R, C, U, tL, rL]):
     update: type[U] | None = None
     """Update command type; optional when update is not supported."""
 
-    list: type[tL] | None = None
-    """List request type; provided only if list has custom DTO."""
-
-    raw_list: type[rL] | None = None
-    """Raw list request type; provided only if raw list has custom DTO."""
-
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U, tL, rL]):
+class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
     """Typed facade for document usecases."""
 
     get = facade_op(DocumentOperation.GET, uc=GetDocument[R])
     """Get document usecase."""
 
-    list = facade_op(DocumentOperation.LIST, uc=TypedListDocuments[tL, R])
+    list = facade_op(DocumentOperation.LIST, uc=TypedListDocuments[R])
     """List documents usecase."""
 
-    raw_list = facade_op(DocumentOperation.RAW_LIST, uc=RawListDocuments[rL])
+    raw_list = facade_op(DocumentOperation.RAW_LIST, uc=RawListDocuments)
     """Raw list documents usecase."""
 
     create = facade_op(DocumentOperation.CREATE, uc=CreateDocument[C, Any, R])

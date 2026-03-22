@@ -1,128 +1,59 @@
-"""Unit tests for forze_fastapi.routing.router."""
+"""Unit tests for HTTP endpoint signatures (idempotency header injection)."""
 
-import pytest
+from pydantic import BaseModel
 
-from fastapi import Depends
-from starlette.testclient import TestClient
-
-from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
-from forze_fastapi.routing.router import (
-    ForzeAPIRouter,
-    make_idem_header_dependency,
+from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+from forze_fastapi.endpoints.http import (
+    IDEMPOTENCY_KEY_HEADER,
+    BodyAsIsMapper,
+    IdempotencyFeature,
 )
-
+from forze_fastapi.endpoints.http.composition.signature import (
+    build_http_endpoint_signature,
+)
+from forze_fastapi.endpoints.http.contracts.specs import HttpEndpointSpec
 
 # ----------------------- #
 
 
-def _ctx_factory() -> ExecutionContext:
-    return ExecutionContext()
+class TestIdempotencyHeaderOnSignature:
+    """Regression: idempotent endpoints expose the Idempotency-Key header param."""
 
+    def test_idempotency_header_constant(self) -> None:
+        """Header name matches expected wire value."""
+        assert IDEMPOTENCY_KEY_HEADER == "Idempotency-Key"
 
-class TestMakeIdemHeaderDependency:
-    """Tests for make_idem_header_dependency."""
+    def test_signature_includes_required_idempotency_header(self) -> None:
+        """When IdempotencyFeature is present, FastAPI sees a required header param."""
 
-    def test_raises_when_header_missing(self) -> None:
-        """Dependency raises when idempotency key header is missing."""
-        dep = make_idem_header_dependency("X-Idempotency-Key")
-        app = __import__("fastapi").FastAPI()
-
-        @app.post("/")
-        async def route(idem=Depends(dep)) -> dict:
-            return {}
-
-        client = TestClient(app)
-        response = client.post("/", json={})
-        # FastAPI returns 422 for missing required Header params
-        assert response.status_code == 422
-
-    def test_passes_when_header_present(self) -> None:
-        """Dependency passes when header is present."""
-        dep = make_idem_header_dependency("X-Idempotency-Key")
-        app = __import__("fastapi").FastAPI()
-
-        @app.post("/")
-        async def route(idem=Depends(dep)) -> dict:
-            return {"ok": True}
-
-        client = TestClient(app)
-        response = client.post(
-            "/",
-            json={},
-            headers={"X-Idempotency-Key": "key-123"},
-        )
-        assert response.status_code == 200
-        assert response.json() == {"ok": True}
-
-
-class TestForzeAPIRouter:
-    """Tests for ForzeAPIRouter."""
-
-    def test_init_requires_context_dependency(self) -> None:
-        """ForzeAPIRouter requires context_dependency."""
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=_ctx_factory,
-        )
-        assert router.prefix == "/api"
-
-    def test_add_api_route_non_idempotent_works(self) -> None:
-        """Non-idempotent route is added normally."""
-        app = __import__("fastapi").FastAPI()
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=_ctx_factory,
-        )
-
-        @router.get("/items")
-        async def get_items() -> dict:
-            return {"items": []}
-
-        app.include_router(router)
-        client = TestClient(app)
-        response = client.get("/api/items")
-        assert response.status_code == 200
-        assert response.json() == {"items": []}
-
-    def test_add_api_route_idempotent_requires_operation_id(self) -> None:
-        """Idempotent POST without operation_id raises CoreError."""
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=_ctx_factory,
-        )
-
-        with pytest.raises(CoreError, match="Operation ID is required"):
-
-            @router.post("/create", idempotent=True)
-            async def create(dto: dict) -> dict:
-                return {}
-
-    def test_post_idempotent_requires_header(self) -> None:
-        """Idempotent POST returns 400 when idempotency key header is missing."""
-        from pydantic import BaseModel
-
-        class CreateDTO(BaseModel):
+        class BodyDTO(BaseModel):
             name: str
 
-        app = __import__("fastapi").FastAPI()
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=_ctx_factory,
+        class Facade:
+            pass
+
+        spec = HttpEndpointSpec(
+            http={"method": "POST", "path": "/create"},
+            features=[IdempotencyFeature()],
+            request={"body_type": BodyDTO},
+            response=None,
+            mapper=BodyAsIsMapper(BodyDTO),
+            facade_type=Facade,
+            call=FacadeOpRef(op="test.create"),
         )
 
-        @router.post(
-            "/create",
-            idempotent=True,
-            idempotency_config={"dto_param": "dto"},
-            operation_id="test.create",
+        def ctx_dep() -> ExecutionContext:
+            return ExecutionContext(deps=Deps())
+
+        def facade_dep(_ctx: ExecutionContext) -> Facade:
+            return Facade()
+
+        sig = build_http_endpoint_signature(
+            spec=spec,
+            facade_dep=facade_dep,
+            ctx_dep=ctx_dep,
         )
-        async def create(dto: CreateDTO) -> dict:
-            return {"name": dto.name}
-
-        app.include_router(router)
-        client = TestClient(app)
-
-        response = client.post("/api/create", json={"name": "foo"})
-        assert response.status_code == 400
-        assert "Idempotency key" in response.json()["detail"]
+        idem_params = [p for p in sig.parameters.values() if p.name == "__idempotency_key"]
+        assert len(idem_params) == 1
+        default = idem_params[0].default
+        assert getattr(default, "alias", None) == IDEMPOTENCY_KEY_HEADER

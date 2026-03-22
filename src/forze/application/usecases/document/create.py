@@ -3,8 +3,8 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.document import DocumentWritePort
+from forze.application.contracts.mapper import MapperPort
 from forze.application.execution import Usecase
-from forze.application.mapping import DTOMapper
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
@@ -24,7 +24,7 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
     doc: DocumentWritePort[Out, Any, Cmd, Any]
     """Document port for create operations."""
 
-    mapper: DTOMapper[In, Cmd]
+    mapper: MapperPort[In, Cmd]
     """Mapper that converts input DTO to create command."""
 
     # ....................... #

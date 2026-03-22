@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.testclient import TestClient
@@ -14,12 +13,11 @@ from forze.base.errors import (
     NotFoundError,
     ValidationError,
 )
-from forze_fastapi.constants import ERROR_CODE_HEADER
-from forze_fastapi.handlers.exceptions import (
-    forze_exception_handler,
+from forze_fastapi.exceptions import (
+    ERROR_CODE_HEADER,
+    _forze_exception_handler,
     register_exception_handlers,
 )
-
 
 # ----------------------- #
 
@@ -32,7 +30,7 @@ class TestForzeExceptionHandler:
         """NotFoundError maps to 404."""
         exc = NotFoundError(message="Document not found")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, exc)
         assert response.status_code == 404
         assert response.body == b'{"detail":"Document not found"}'
         assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
@@ -42,7 +40,7 @@ class TestForzeExceptionHandler:
         """ConflictError maps to 409."""
         exc = ConflictError(message="Revision mismatch")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, exc)
         assert response.status_code == 409
         assert response.headers.get(ERROR_CODE_HEADER) == "conflict"
 
@@ -51,7 +49,7 @@ class TestForzeExceptionHandler:
         """ValidationError maps to 422."""
         exc = ValidationError(message="Invalid input")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, exc)
         assert response.status_code == 422
         assert response.headers.get(ERROR_CODE_HEADER) == "validation_error"
 
@@ -60,7 +58,7 @@ class TestForzeExceptionHandler:
         """Unmapped CoreError maps to 500."""
         exc = CoreError(message="Something went wrong", code="internal")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, exc)
         assert response.status_code == 500
         assert response.headers.get(ERROR_CODE_HEADER) == "internal"
 
@@ -72,7 +70,7 @@ class TestForzeExceptionHandler:
             details={"table": "users", "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af"},
         )
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, exc)
 
         assert response.status_code == 404
         assert response.headers.get(ERROR_CODE_HEADER) == "not_found"

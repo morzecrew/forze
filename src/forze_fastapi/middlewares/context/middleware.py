@@ -65,10 +65,6 @@ class ContextBindingMiddleware(BaseHTTPMiddleware):
             try:
                 response = await call_next(request)
 
-            except Exception:
-                # log
-                raise
-
             finally:
                 response = self.call_ctx_injector.inject(response, call_ctx)
 

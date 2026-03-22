@@ -1,4 +1,4 @@
-"""Unit tests for forze_fastapi.routing.params and related DTOs."""
+"""Unit tests for application DTOs used by FastAPI-mounted endpoints (e.g. Pagination)."""
 
 import pytest
 

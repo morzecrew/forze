@@ -13,15 +13,13 @@ from .operations import SearchOperation
 
 
 def build_search_typed_mapper(
-    spec: SearchSpec[Any],
-    dtos: SearchDTOs[Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for typed search requests."""
 
     mapper = DTOMapper(
-        in_=dtos.typed or SearchRequestDTO,
+        in_=SearchRequestDTO,
         out=SearchRequestDTO,
     )
     return mapper.with_steps(*steps)
@@ -31,15 +29,13 @@ def build_search_typed_mapper(
 
 
 def build_search_raw_mapper(
-    spec: SearchSpec[Any],
-    dtos: SearchDTOs[Any, Any, Any],
     *,
     steps: tuple[MappingStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for raw search requests."""
 
     mapper = DTOMapper(
-        in_=dtos.raw or RawSearchRequestDTO,
+        in_=RawSearchRequestDTO,
         out=RawSearchRequestDTO,
     )
     return mapper.with_steps(*steps)
@@ -50,13 +46,13 @@ def build_search_raw_mapper(
 
 def build_search_registry(
     spec: SearchSpec[Any],
-    dtos: SearchDTOs[Any, Any, Any],
+    dtos: SearchDTOs[Any],
     *,
     search_steps: tuple[MappingStep[Any], ...] = (),
     raw_search_steps: tuple[MappingStep[Any], ...] = (),
 ) -> UsecaseRegistry:
-    typed_mapper = build_search_typed_mapper(spec, dtos, steps=search_steps)
-    raw_mapper = build_search_raw_mapper(spec, dtos, steps=raw_search_steps)
+    typed_mapper = build_search_typed_mapper(steps=search_steps)
+    raw_mapper = build_search_raw_mapper(steps=raw_search_steps)
 
     reg = UsecaseRegistry(
         {

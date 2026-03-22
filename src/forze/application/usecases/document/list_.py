@@ -3,6 +3,7 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.document import DocumentReadPort
+from forze.application.contracts.mapper import MapperPort
 from forze.application.dto import (
     ListRequestDTO,
     Paginated,
@@ -10,27 +11,24 @@ from forze.application.dto import (
     RawPaginated,
 )
 from forze.application.execution import Usecase
-from forze.application.mapping import DTOMapper
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
-    Usecase[In, Paginated[Out]]
-):
+class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Out]]):
     """Usecase that fetches multiple documents by filters and sorts."""
 
     doc: DocumentReadPort[Out]
     """Read-only document port for list operations."""
 
-    mapper: DTOMapper[In, ListRequestDTO] | None = None
+    mapper: MapperPort[ListRequestDTO, ListRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def main(self, args: In) -> Paginated[Out]:
+    async def main(self, args: ListRequestDTO) -> Paginated[Out]:
         """Fetch multiple documents by filters and sorts.
 
         :param args: List arguments (body, page, size).
@@ -60,18 +58,18 @@ class TypedListDocuments[In: ListRequestDTO, Out: ReadDocument](
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RawListDocuments[In: RawListRequestDTO](Usecase[In, RawPaginated]):
+class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
     """Usecase that fetches multiple documents by filters and sorts with raw results."""
 
     doc: DocumentReadPort[Any]
     """Read-only document port for list operations."""
 
-    mapper: DTOMapper[In, RawListRequestDTO] | None = None
+    mapper: MapperPort[RawListRequestDTO, RawListRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
 
-    async def main(self, args: In) -> RawPaginated:
+    async def main(self, args: RawListRequestDTO) -> RawPaginated:
         """Fetch multiple documents by filters and sorts with raw results.
 
         :param args: List arguments (body, page, size).

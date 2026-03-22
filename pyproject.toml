@@ -78,8 +78,10 @@ docs = [
 fastapi = [
     "fastapi>=0.135.1",
     "httpx>=0.28.0",
+    "python-multipart>=0.0.22",
     "scalar-fastapi>=1.8.0",
     "starlette>=0.52.1",
+    "uvicorn[standard]>=0.42.0",
 ]
 postgres = ["psycopg-pool>=3.3.0", "psycopg[binary]>=3.3.3"]
 redis = ["redis>=7.3.0"]
@@ -262,14 +264,14 @@ protected_modules = [
 allowed_importers = []
 as_packages = true
 
-[[tool.importlinter.contracts]]
-name = "Layered `forze_fastapi` package architecture"
-type = "layers"
-layers = [
-    "forze_fastapi.routers",
-    "forze_fastapi.routing",
-    "forze_fastapi.constants",
-]
+# [[tool.importlinter.contracts]]
+# name = "Layered `forze_fastapi` package architecture"
+# type = "layers"
+# layers = [
+#     "forze_fastapi.routers",
+#     "forze_fastapi.routing",
+#     "forze_fastapi.constants",
+# ]
 
 # ....................... #
 # Dead code
@@ -327,8 +329,14 @@ DEP002 = [
     "temporalio",
     "httpx",                 # required by starlette.testclient.TestClient
     "python-socketio-stubs",
+    "python-multipart",
 ]
-DEP003 = ["types_aiobotocore_s3", "types_aiobotocore_sqs", "typing_extensions"]
+DEP003 = [
+    "types_aiobotocore_s3",
+    "types_aiobotocore_sqs",
+    "typing_extensions",
+    "pydantic_core",
+]
 
 # ....................... #
 # Ruff configuration

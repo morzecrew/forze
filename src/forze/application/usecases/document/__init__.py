@@ -6,10 +6,10 @@ backed by :class:`forze.application.contracts.document.DocumentWritePort` and
 """
 
 from .create import CreateDocument
-from .delete import DeleteDocument, KillDocument, RestoreDocument, SoftDeleteArgs
+from .delete import DeleteDocument, KillDocument, RestoreDocument
 from .get import GetDocument
 from .list_ import RawListDocuments, TypedListDocuments
-from .update import UpdateArgs, UpdateDocument
+from .update import UpdateDocument
 
 # ----------------------- #
 
@@ -20,8 +20,6 @@ __all__ = [
     "RestoreDocument",
     "GetDocument",
     "UpdateDocument",
-    "UpdateArgs",
-    "SoftDeleteArgs",
     "TypedListDocuments",
     "RawListDocuments",
 ]

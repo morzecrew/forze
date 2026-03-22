@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentReadPort
+from forze.application.dto import DocumentIdDTO
 from forze.application.usecases.document import GetDocument
 from forze.base.errors import NotFoundError
 from forze.domain.models import CreateDocumentCmd
@@ -27,7 +28,7 @@ class TestGetDocument:
         pk = created.id
 
         usecase = GetDocument(ctx=stub_ctx, doc=doc_port)
-        result = await usecase(pk)
+        result = await usecase(DocumentIdDTO(id=pk))
 
         assert result.id == pk
         assert result.rev == 1
@@ -40,4 +41,4 @@ class TestGetDocument:
     ) -> None:
         usecase = GetDocument(ctx=stub_ctx, doc=stub_document_port)
         with pytest.raises(NotFoundError, match="not found"):
-            await usecase(uuid4())
+            await usecase(DocumentIdDTO(id=uuid4()))
