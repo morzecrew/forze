@@ -17,7 +17,7 @@ from .processors import (
     format_exc_info,
     inject_otel_context,
 )
-from .renderers import forze_console_renderer
+from .renderers import ForzeConsoleRenderer
 
 # ----------------------- #
 
@@ -34,7 +34,7 @@ def build_renderer(
         return custom_console_renderer
 
     else:
-        return forze_console_renderer
+        return ForzeConsoleRenderer()
 
 
 # ....................... #

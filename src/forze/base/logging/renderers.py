@@ -19,7 +19,9 @@ _ID_SHORT_NAMES: Final[dict[str, str]] = {
     "correlation_id": "corr",
     "execution_id": "exec",
     "causation_id": "caus",
+    "operation_id": "op",
 }
+_SEP: Final[str] = "  "
 
 
 def _rich_level_style(level: str) -> str:
@@ -51,15 +53,19 @@ def _last_six_chars(value: object) -> str:
 def _repr_extra_value(value: Any) -> str:
     if isinstance(value, str) and not any(c in value for c in ' \t\r\n="'):
         return value
+
     return repr(value)
 
 
 def _format_extra_pair_plain(key: str, value: Any) -> str:
     display_key = _ID_SHORT_NAMES.get(key, key)
+
     if key in _ID_SHORT_NAMES:
         display_val = _last_six_chars(value)
+
     else:
         display_val = _repr_extra_value(value)
+
     return f"{display_key}={display_val}"
 
 
@@ -153,21 +159,22 @@ class ForzeConsoleRenderer:
         extra_keys = sorted(k for k in ed if not k.startswith("_"))
 
         if self.colors:
-            level_plain = f"{level:>8}"
+            level_plain = f"{level:<8}"
             logger_plain = f"[{logger_name}]".ljust(self.logger_name_width)
             event_plain = event.ljust(self.event_width)
 
             line = Text()
+
             line.append(ts, style="dim")
-            line.append("  ")
+            line.append(_SEP)
             line.append(level_plain, style=_rich_level_style(level))
-            line.append("  ")
+            line.append(_SEP)
             line.append(logger_plain, style="dim")
-            line.append("  ")
+            line.append(_SEP)
             line.append(event_plain, style="bold")
 
             if extra_keys:
-                line.append("  |  ")
+                line.append(_SEP)
                 first = True
 
                 for key in extra_keys:
@@ -180,7 +187,7 @@ class ForzeConsoleRenderer:
                         display_val = _repr_extra_value(ed[key])
 
                     if not first:
-                        line.append(" ")
+                        line.append(_SEP)
 
                     first = False
                     line.append(display_key, style="cyan")
@@ -212,7 +219,3 @@ class ForzeConsoleRenderer:
             sio.write("\n" + exc_str)
 
         return sio.getvalue()
-
-
-# Default processor instance.
-forze_console_renderer: ForzeConsoleRenderer = ForzeConsoleRenderer()
