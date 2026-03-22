@@ -41,6 +41,7 @@ dependencies = [
     "rich>=14.0.0",
     "structlog>=25.0.0",
     "tenacity>=9.1.4",
+    "types-colorama>=0.4.15.20250801",
 ]
 
 [dependency-groups]
@@ -330,6 +331,7 @@ DEP002 = [
     "httpx",                 # required by starlette.testclient.TestClient
     "python-socketio-stubs",
     "python-multipart",
+    "types-colorama",
 ]
 DEP003 = [
     "types_aiobotocore_s3",

@@ -9,7 +9,7 @@ import structlog
 from structlog.contextvars import bound_contextvars
 
 from forze.base.logging import Logger, configure_logging
-from forze.base.logging.renderers import forze_console_renderer
+from forze.base.logging.renderers import ForzeConsoleRenderer
 
 # ----------------------- #
 # Helpers
@@ -303,10 +303,11 @@ class TestJsonRender:
 
 
 class TestForzeConsoleRenderer:
-    """Layout and ID shortening for :func:`forze_console_renderer`."""
+    """Layout and ID shortening for :class:`ForzeConsoleRenderer`."""
 
     def test_layout_timestamp_level_logger_event_and_extra(self) -> None:
-        line = forze_console_renderer(
+        render = ForzeConsoleRenderer(colors=False)
+        line = render(
             None,  # type: ignore[arg-type]
             "info",
             {
@@ -322,7 +323,8 @@ class TestForzeConsoleRenderer:
         )
 
     def test_shortens_correlation_execution_causation_ids(self) -> None:
-        line = forze_console_renderer(
+        render = ForzeConsoleRenderer(colors=False)
+        line = render(
             None,  # type: ignore[arg-type]
             "info",
             {
@@ -342,6 +344,39 @@ class TestForzeConsoleRenderer:
         assert "execution_id" not in line
         assert "causation_id" not in line
 
+    def test_colors_level_and_extras(self) -> None:
+        render = ForzeConsoleRenderer(colors=True)
+        line = render(
+            None,  # type: ignore[arg-type]
+            "info",
+            {
+                "timestamp": "t",
+                "level": "info",
+                "logger": "pkg.mod",
+                "event": "done",
+                "x": 1,
+            },
+        )
+        assert "\033[2mt\033[0m" in line
+        assert "\033[32m    info\033[0m" in line
+        assert "\033[2m             [pkg.mod]\033[0m" in line
+        assert "\033[1m" in line and "done" in line
+        assert "\033[36mx\033[0m=\033[35m1\033[0m" in line
+
+    def test_trace_level_uses_dim_not_green(self) -> None:
+        render = ForzeConsoleRenderer(colors=True)
+        line = render(
+            None,  # type: ignore[arg-type]
+            "debug",
+            {
+                "timestamp": "t",
+                "level": "trace",
+                "logger": "x",
+                "event": "e",
+            },
+        )
+        assert "\033[2m   trace\033[0m" in line
+
     def test_configure_console_uses_renderer(self) -> None:
         buf = io.StringIO()
         configure_logging(
@@ -349,6 +384,7 @@ class TestForzeConsoleRenderer:
             logger_names=["forze.test"],
             stream=buf,
             render_mode="console",
+            custom_console_renderer=ForzeConsoleRenderer(colors=False),
         )
         log = Logger("forze.test")
         log.info("hello", foo="bar")
