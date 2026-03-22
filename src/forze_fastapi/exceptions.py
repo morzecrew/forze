@@ -4,17 +4,19 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any
+from typing import Any, Final
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from forze.base.errors import ConflictError, CoreError, NotFoundError, ValidationError
 
-from ..constants import ERROR_CODE_HEADER
-
 # ----------------------- #
-#! TODO: review, maybe repurpose to a middleware or so
+
+ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
+"""Key of the header used for error code."""
+
+# ....................... #
 
 
 def _status_code_mapper(exc: CoreError) -> int:
@@ -37,7 +39,7 @@ def _status_code_mapper(exc: CoreError) -> int:
 # ....................... #
 
 
-async def uncaught_exception_handler(_: Request, __: Exception) -> JSONResponse:
+async def _uncaught_exception_handler(_: Request, __: Exception) -> JSONResponse:
     """Catch uncaught exceptions."""
 
     return JSONResponse(
@@ -49,7 +51,7 @@ async def uncaught_exception_handler(_: Request, __: Exception) -> JSONResponse:
 # ....................... #
 
 
-async def forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
+async def _forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
     """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
 
     content: dict[str, Any] = {"detail": exc.message}
@@ -70,5 +72,5 @@ async def forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
 def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers on *app*."""
 
-    app.exception_handler(CoreError)(forze_exception_handler)
-    app.exception_handler(Exception)(uncaught_exception_handler)
+    app.exception_handler(CoreError)(_forze_exception_handler)
+    app.exception_handler(Exception)(_uncaught_exception_handler)
