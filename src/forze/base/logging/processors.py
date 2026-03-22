@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import attrs
 from opentelemetry import trace as otel_trace
+from structlog import DropEvent
 from structlog.typing import EventDict, ExcInfo
 
 from .constants import (
@@ -13,6 +14,8 @@ from .constants import (
     OTEL_SPAN_ID_KEY,
     OTEL_TRACE_ID_KEY,
     TRACE_LEVEL_KEY,
+    LogLevel,
+    LogLevelToRank,
 )
 
 # ----------------------- #
@@ -40,20 +43,6 @@ def format_exc_info(_: Any, __: str, event_dict: EventDict) -> EventDict:
     event_dict[ERR_TYPE_KEY] = exc_type.__name__
     event_dict[ERR_MESSAGE_KEY] = str(exc)
     event_dict[ERR_STACK_KEY] = "".join(traceback.format_exception(exc_type, exc, tb))
-
-    return event_dict
-
-
-# ....................... #
-
-
-def resolve_trace_level(_: Any, __: str, event_dict: EventDict) -> EventDict:
-    """Override structlog level when Logger.trace() passes ``_trace_level``."""
-
-    override = event_dict.pop(TRACE_LEVEL_KEY, None)
-
-    if override:
-        event_dict["level"] = override
 
     return event_dict
 
@@ -93,5 +82,34 @@ class RedundantKeysDropper:
 
         for key in self.keys:
             event_dict.pop(key, None)
+
+        return event_dict
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class TraceLevelResolver:
+    """Processor to resolve the trace level."""
+
+    configured_level: LogLevel
+    """Minimum level (from configuration)."""
+
+    # ....................... #
+
+    def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
+        """Resolve the trace level or drop the event if 'trace' is below the configured level."""
+
+        override = event_dict.pop(TRACE_LEVEL_KEY, None)
+
+        if override:
+            event_dict["level"] = override
+
+        configured_rank = LogLevelToRank.get(self.configured_level, 0)
+        override_rank = LogLevelToRank.get(event_dict["level"], 0)
+
+        if override_rank < configured_rank:
+            raise DropEvent()
 
         return event_dict

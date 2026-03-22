@@ -8,17 +8,14 @@ import sys
 from typing import Final, Literal, Sequence, TextIO
 
 import structlog
-from structlog._native import (
-    _make_filtering_bound_logger,  # pyright: ignore[reportPrivateUsage]
-)
 from structlog.types import Processor
 
 from .constants import LogLevel, LogLevelToRank, RenderMode
 from .processors import (
     RedundantKeysDropper,
+    TraceLevelResolver,
     format_exc_info,
     inject_otel_context,
-    resolve_trace_level,
 )
 
 # ----------------------- #
@@ -54,9 +51,9 @@ def build_common_processors(render_mode: RenderMode) -> list[Processor]:
 # ....................... #
 
 
-def build_structlog_processors() -> list[Processor]:
+def build_structlog_processors(level: LogLevel) -> list[Processor]:
     return [
-        resolve_trace_level,
+        TraceLevelResolver(configured_level=level),
         structlog.stdlib.PositionalArgumentsFormatter(remove_positional_args=True),
         structlog.stdlib.ExtraAdder(),
     ]
@@ -111,13 +108,13 @@ def configure_logging(
     wrapper_class = (
         structlog.make_filtering_bound_logger(level)
         if level != "trace"
-        else _make_filtering_bound_logger(LogLevelToRank.get(level, 0))
+        else structlog.make_filtering_bound_logger("debug")
     )
 
     structlog.configure(
         processors=[
             *build_common_processors(render_mode),
-            *build_structlog_processors(),
+            *build_structlog_processors(level),
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=wrapper_class,
