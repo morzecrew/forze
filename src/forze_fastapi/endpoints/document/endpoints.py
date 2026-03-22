@@ -270,10 +270,11 @@ def build_document_kill_endpoint_spec(
     return build_http_endpoint_spec(
         Facade,
         Facade.kill,  # type: ignore[misc]
-        http={"method": "DELETE", "path": path},
+        http={"method": "DELETE", "path": path, "status_code": 204},
         request={"query_type": DocumentIdDTO},
         metadata=metadata,
         mapper=QueryAsIsMapper(DocumentIdDTO),
+        response=None,
     )
 
 
@@ -304,7 +305,7 @@ def build_document_delete_endpoint_spec[R: ReadDocument](
     return build_http_endpoint_spec(
         Facade,
         Facade.delete,  # type: ignore[misc]
-        http={"method": "DELETE", "path": path},
+        http={"method": "PATCH", "path": path},
         request={"query_type": DocumentIdRevDTO},
         response=dtos.read,
         metadata=metadata,

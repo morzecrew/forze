@@ -1,88 +1,87 @@
-"""Unit tests for forze_fastapi.routers._utils."""
+"""Unit tests for forze_fastapi.endpoints._utils."""
 
-from forze_fastapi.routers._utils import extend_doc, override_annotations, override_doc
+from unittest.mock import MagicMock
 
+import pytest
+from fastapi import Depends
+from starlette.testclient import TestClient
+
+from forze.application.execution import Deps, ExecutionContext, UsecaseRegistry
+from forze_fastapi.endpoints._utils import facade_dependency, path_coerce
 
 # ----------------------- #
 
 
-class TestOverrideDoc:
-    """Tests for override_doc decorator."""
+class TestPathCoerce:
+    """Tests for path_coerce."""
 
-    def test_sets_docstring(self) -> None:
-        """override_doc sets the docstring of the decorated object."""
+    def test_adds_leading_slash(self) -> None:
+        """Relative paths gain a leading slash."""
+        assert path_coerce("items") == "/items"
 
-        @override_doc("New docstring")
-        def fn() -> None:
-            """Original."""
-            pass
+    def test_preserves_leading_slash(self) -> None:
+        """Already-absolute paths stay normalized without double slashes."""
+        assert path_coerce("/items") == "/items"
 
-        assert fn.__doc__ == "New docstring"
-
-    def test_overrides_existing(self) -> None:
-        """override_doc replaces existing docstring."""
-
-        def fn() -> None:
-            """Original."""
-            pass
-
-        decorated = override_doc("Replaced")(fn)
-        assert decorated.__doc__ == "Replaced"
+    def test_strips_trailing_slash(self) -> None:
+        """Trailing slash is removed for consistent route keys."""
+        assert path_coerce("/items/") == "/items"
+        assert path_coerce("items/") == "/items"
 
 
-class TestExtendDoc:
-    """Tests for extend_doc decorator."""
+class TestFacadeDependency:
+    """Tests for facade_dependency."""
 
-    def test_appends_to_existing(self) -> None:
-        """extend_doc appends to existing docstring with default sep."""
+    def test_resolves_facade_from_context(self) -> None:
+        """Depends() wiring returns the facade built from registry + context."""
 
-        @extend_doc("Additional content")
-        def fn() -> None:
-            """Base."""
-            pass
+        class _Facade:
+            def __init__(self, *, ctx: ExecutionContext, reg: UsecaseRegistry) -> None:
+                self.ctx = ctx
+                self.reg = reg
 
-        assert "Base" in (fn.__doc__ or "")
-        assert "Additional content" in (fn.__doc__ or "")
+        reg = MagicMock(spec=UsecaseRegistry)
+        ctx = ExecutionContext(deps=Deps())
 
-    def test_custom_sep(self) -> None:
-        """extend_doc uses custom separator."""
+        def ctx_dep():
+            return ctx
 
-        @extend_doc("Extra", sep=" | ")
-        def fn() -> None:
-            """Base"""
-            pass
+        dep = facade_dependency(_Facade, reg, ctx_dep)
 
-        assert fn.__doc__ == "Base | Extra"
+        from fastapi import FastAPI
 
-    def test_empty_base_uses_extra_only(self) -> None:
-        """extend_doc with no base uses extra as docstring."""
+        app = FastAPI()
 
-        def fn() -> None:
-            pass
+        @app.get("/x")
+        async def route(f: _Facade = Depends(dep)) -> dict:
+            return {"same_ctx": f.ctx is ctx}
 
-        decorated = extend_doc("Only this")(fn)
-        assert decorated.__doc__ == "Only this"
+        client = TestClient(app)
+        out = client.get("/x").json()
+        assert out == {"same_ctx": True}
 
+    def test_missing_context_dependency_fails_at_runtime(self) -> None:
+        """If ctx_dep does not inject ExecutionContext, dependency resolution fails."""
 
-class TestOverrideAnnotations:
-    """Tests for override_annotations decorator."""
+        class _Facade:
+            def __init__(self, *, ctx: ExecutionContext, reg: UsecaseRegistry) -> None:
+                pass
 
-    def test_sets_annotations(self) -> None:
-        """override_annotations sets annotations on the decorated object."""
+        reg = MagicMock(spec=UsecaseRegistry)
 
-        @override_annotations({"x": int, "y": str})
-        def fn(x, y) -> None:
-            pass
+        def bad_ctx_dep():
+            raise RuntimeError("no ctx")
 
-        assert fn.__annotations__["x"] is int
-        assert fn.__annotations__["y"] is str
+        dep = facade_dependency(_Facade, reg, bad_ctx_dep)
 
-    def test_overrides_existing_annotations(self) -> None:
-        """override_annotations replaces existing annotations."""
+        from fastapi import FastAPI
 
-        def fn(x: float, y: str) -> None:
-            pass
+        app = FastAPI()
 
-        decorated = override_annotations({"x": int})(fn)
-        assert decorated.__annotations__["x"] is int
-        assert decorated.__annotations__["y"] is str
+        @app.get("/y")
+        async def route(f: _Facade = Depends(dep)) -> dict:
+            return {}
+
+        client = TestClient(app, raise_server_exceptions=True)
+        with pytest.raises(RuntimeError, match="no ctx"):
+            client.get("/y")

@@ -138,10 +138,9 @@ class TestBuildDocumentListMapper:
     def test_returns_mapper(self) -> None:
         from forze.application.dto import ListRequestDTO
 
-        spec = _minimal_spec()
-        dtos = _minimal_dtos()
-        mapper = build_document_list_mapper(spec, dtos)
+        mapper = build_document_list_mapper()
         assert isinstance(mapper, DTOMapper)
+        assert mapper.in_ == ListRequestDTO
         assert mapper.out == ListRequestDTO
 
 
@@ -151,10 +150,9 @@ class TestBuildDocumentRawListMapper:
     def test_returns_mapper(self) -> None:
         from forze.application.dto import RawListRequestDTO
 
-        spec = _minimal_spec()
-        dtos = _minimal_dtos()
-        mapper = build_document_raw_list_mapper(spec, dtos)
+        mapper = build_document_raw_list_mapper()
         assert isinstance(mapper, DTOMapper)
+        assert mapper.in_ == RawListRequestDTO
         assert mapper.out == RawListRequestDTO
 
 

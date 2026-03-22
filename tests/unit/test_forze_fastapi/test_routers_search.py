@@ -1,6 +1,6 @@
-"""Unit tests for forze_fastapi.routers.search."""
+"""Unit tests for forze_fastapi.endpoints.search."""
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
@@ -9,11 +9,7 @@ from forze.application.composition.search import (
     build_search_registry,
 )
 from forze.application.contracts.search import SearchSpec
-from forze_fastapi.routers.search import (
-    attach_search_routes,
-    build_search_router,
-)
-from forze_fastapi.routing.router import ForzeAPIRouter
+from forze_fastapi.endpoints.search import attach_search_endpoints
 
 # ----------------------- #
 
@@ -40,29 +36,26 @@ def _minimal_search_dtos() -> SearchDTOs:
 
 
 class TestAttachSearchRoutes:
-    """Tests for attach_search_router."""
+    """Tests for attach_search_endpoints."""
 
     def test_adds_search_routes(
         self,
         composition_ctx,
     ) -> None:
-        """attach_search_routes adds /search and /raw-search routes."""
+        """attach_search_endpoints adds /search and /raw-search routes."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize(spec.namespace)
 
         def ctx_dep():
             return composition_ctx
 
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=ctx_dep,
-        )
-        result = attach_search_routes(
+        router = APIRouter(prefix="/api")
+        result = attach_search_endpoints(
             router,
-            registry=reg,
-            spec=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
         )
 
@@ -79,20 +72,16 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        reg.finalize("test_search")
+        reg.finalize(spec.namespace)
 
         def ctx_dep():
             return composition_ctx
 
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=ctx_dep,
-        )
-        attach_search_routes(
+        router = APIRouter(prefix="/api")
+        attach_search_endpoints(
             router,
-            registry=reg,
-            spec=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
         )
 
@@ -113,26 +102,25 @@ class TestAttachSearchRoutes:
         self,
         composition_ctx,
     ) -> None:
-        """attach_search_routes can skip typed search while keeping raw search."""
+        """Typed search can be disabled while raw search remains."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize(spec.namespace)
 
         def ctx_dep():
             return composition_ctx
 
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=ctx_dep,
-        )
-        attach_search_routes(
+        router = APIRouter(prefix="/api")
+        attach_search_endpoints(
             router,
-            registry=reg,
-            spec=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
-            include_typed_search_endpoint=False,
-            include_raw_search_endpoint=True,
+            endpoints={
+                "search": {"disable": True},
+                "raw_search": {},
+            },
         )
 
         paths = {r.path for r in router.routes}
@@ -141,29 +129,30 @@ class TestAttachSearchRoutes:
 
 
 class TestBuildSearchRouter:
-    """Tests for build_search_router."""
+    """Tests for composing a prefixed router with attach_search_endpoints."""
 
     def test_returns_router_with_search_routes(
         self,
         composition_ctx,
     ) -> None:
-        """build_search_router returns a router with search routes."""
+        """Router under /search exposes nested /search and /raw-search paths."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize(spec.namespace)
 
         def ctx_dep():
             return composition_ctx
 
-        router = build_search_router(
-            prefix="/search",
-            registry=reg,
-            spec=spec,
+        router = APIRouter(prefix="/search")
+        attach_search_endpoints(
+            router,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
         )
 
-        assert isinstance(router, ForzeAPIRouter)
+        assert isinstance(router, APIRouter)
         paths = {r.path for r in router.routes}
         assert "/search/search" in paths or "/search" in paths
         assert "/search/raw-search" in paths or "/raw-search" in paths
@@ -172,23 +161,25 @@ class TestBuildSearchRouter:
         self,
         composition_ctx,
     ) -> None:
-        """build_search_router applies endpoint flags and overridden paths."""
+        """SearchEndpointsSpec path_override and disable flags apply."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
+        reg.finalize(spec.namespace)
 
         def ctx_dep():
             return composition_ctx
 
-        router = build_search_router(
-            prefix="/search",
-            registry=reg,
-            spec=spec,
+        router = APIRouter(prefix="/search")
+        attach_search_endpoints(
+            router,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
-            include_typed_search_endpoint=True,
-            include_raw_search_endpoint=False,
-            path_overrides={"typed_search": "query"},
+            endpoints={
+                "search": {"path_override": "/query"},
+                "raw_search": {"disable": True},
+            },
         )
 
         paths = {r.path for r in router.routes}

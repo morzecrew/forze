@@ -1,54 +1,47 @@
-"""Unit tests for forze_fastapi.routing.forms."""
-
-import inspect
+"""Unit tests for HTTP body parameter building (form mode)."""
 
 from pydantic import BaseModel
+from fastapi.params import Form
 
-from forze_fastapi.routing.forms import as_form
-
+from forze_fastapi.endpoints.http.composition.utils import build_body_parameters
 
 # ----------------------- #
 
 
-class TestAsForm:
-    """Tests for as_form decorator."""
+class TestBuildBodyParametersForm:
+    """Form mode expands a Pydantic model into per-field Form() parameters."""
 
     def test_rewrites_signature_with_form_annotations(self) -> None:
-        """as_form rewrites model signature with Form annotations."""
+        """Each model field becomes a keyword-only parameter backed by Form."""
 
         class CreateDTO(BaseModel):
             title: str
             body: str = ""
 
-        decorated = as_form(CreateDTO)
-        sig = inspect.signature(decorated)
-        params = list(sig.parameters.values())
-
+        params = build_body_parameters(CreateDTO, "form")
         assert len(params) == 2
         assert params[0].name == "title"
         assert params[1].name == "body"
-        # Each param should have Form in annotation (Annotated[..., Form()])
         for p in params:
-            ann = p.annotation
-            assert hasattr(ann, "__metadata__")
+            assert isinstance(p.default, Form)
 
-    def test_returns_same_class(self) -> None:
-        """as_form returns the same class (for chaining)."""
+    def test_model_class_unchanged(self) -> None:
+        """build_body_parameters does not mutate the model class."""
 
         class DTO(BaseModel):
             x: int
 
-        result = as_form(DTO)
-        assert result is DTO
+        build_body_parameters(DTO, "form")
+        assert "x" in DTO.model_fields
 
     def test_model_fields_preserved(self) -> None:
-        """as_form preserves model_fields for validation."""
+        """Field defaults remain on the model after building params."""
 
         class DTO(BaseModel):
             name: str
             count: int = 0
 
-        as_form(DTO)
+        build_body_parameters(DTO, "form")
         assert "name" in DTO.model_fields
         assert "count" in DTO.model_fields
         assert DTO.model_fields["count"].default == 0

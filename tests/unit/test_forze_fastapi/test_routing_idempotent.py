@@ -1,21 +1,19 @@
-"""Unit tests for forze_fastapi.routing.routes.idempotent."""
+"""Unit tests for idempotency behavior on composed HTTP endpoints."""
 
 from datetime import timedelta
 from typing import Optional
 
-import orjson
-import pytest
-
-from fastapi import FastAPI
-from pydantic import BaseModel, TypeAdapter
+from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySnapshot
 from forze.application.execution import Deps, ExecutionContext
-from forze_fastapi.constants import IDEMPOTENCY_KEY_HEADER
-from forze_fastapi.routing.routes.idempotent import IdempotentRouteConfig, _hash_payload
-from forze_fastapi.routing.router import ForzeAPIRouter
-
+from forze.application.composition.document import DocumentDTOs, build_document_registry
+from forze.application.contracts.document import DocumentSpec
+from forze.application.execution import UsecasePlan
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_fastapi.endpoints.document import attach_document_endpoints
+from forze_fastapi.endpoints.http import IDEMPOTENCY_KEY_HEADER
 
 # ----------------------- #
 
@@ -62,35 +60,35 @@ class _SpyIdempotencyFactory:
         return self.port
 
 
-# ----------------------- #
+def _doc_spec_and_dtos() -> tuple[DocumentSpec, DocumentDTOs]:
+    class UpdateCmd(BaseDTO):
+        title: str | None = None
+
+    spec = DocumentSpec(
+        namespace="test",
+        read={"source": "test_read", "model": ReadDocument},
+        write={
+            "source": "test_write",
+            "models": {
+                "domain": Document,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": UpdateCmd,
+            },
+        },
+    )
+    dtos = DocumentDTOs(
+        read=ReadDocument,
+        create=CreateDocumentCmd,
+        update=UpdateCmd,
+    )
+    return spec, dtos
 
 
-class TestHashPayload:
-    """Tests for _hash_payload helper."""
-
-    def test_raises_for_invalid_json_payload(self) -> None:
-        """Malformed JSON raises and is handled by the route wrapper."""
-
-        class _CreateDTO(BaseModel):
-            name: str
-
-        config = IdempotentRouteConfig(
-            operation="test.create",
-            ttl=timedelta(seconds=30),
-            header_key=IDEMPOTENCY_KEY_HEADER,
-            adapter=TypeAdapter(_CreateDTO),
-            dto_param="dto",
-        )
-
-        with pytest.raises(orjson.JSONDecodeError):
-            _hash_payload(config, b'{"dto":')
-
-
-class TestForzeAPIRouterIdempotency:
-    """Regression tests for idempotent POST behavior."""
+class TestDocumentCreateIdempotencyIntegration:
+    """Invalid JSON must fail validation before idempotency runs."""
 
     def test_invalid_json_bypasses_idempotency_snapshotting(self) -> None:
-        """Invalid JSON should skip idempotency begin/commit and let FastAPI validate."""
+        """Malformed body yields 422 and never calls the idempotency port."""
         spy_port = _SpyIdempotencyPort()
         spy_factory = _SpyIdempotencyFactory(spy_port)
 
@@ -103,16 +101,20 @@ class TestForzeAPIRouterIdempotency:
                 )
             )
 
-        class CreateDTO(BaseModel):
-            name: str
+        spec, dtos = _doc_spec_and_dtos()
+        reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
+        reg.finalize(spec.namespace)
 
         app = FastAPI()
-        router = ForzeAPIRouter(prefix="/api", context_dependency=_ctx_factory)
-
-        @router.post("/create", idempotent=True, operation_id="test.create")
-        async def create(dto: CreateDTO) -> dict:
-            return {"name": dto.name}
-
+        router = APIRouter(prefix="/api")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=_ctx_factory,
+            endpoints={"get_": {"disable": True}, "list_": {"disable": True}, "raw_list": {"disable": True}},
+        )
         app.include_router(router)
         client = TestClient(app)
 

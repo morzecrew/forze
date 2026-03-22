@@ -1,7 +1,7 @@
-"""Unit tests for forze_fastapi.routers.document."""
+"""Unit tests for forze_fastapi.endpoints.document."""
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.composition.document import (
@@ -12,11 +12,7 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import UsecasePlan
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_fastapi.routers.document import (
-    attach_document_routes,
-    build_document_router,
-)
-from forze_fastapi.routing.router import ForzeAPIRouter
+from forze_fastapi.endpoints.document import attach_document_endpoints
 
 # ----------------------- #
 
@@ -67,19 +63,25 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 
 
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
-    """Build registry with plan merged."""
-    reg = build_document_registry(spec, dtos)
-    return reg.extend_plan(UsecasePlan().tx("*"))
+    """Build registry with plan merged and id set (required for attach_http_endpoint)."""
+    reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
+    reg.finalize(spec.namespace)
+    return reg
+
+
+def _metadata_endpoints() -> dict:
+    """Map legacy /metadata path onto the document GET endpoint."""
+    return {"get_": {"path_override": "/metadata"}}
 
 
 class TestBuildDocumentRouter:
-    """Tests for build_document_router."""
+    """Tests for attaching document routes on an APIRouter (formerly build_document_router)."""
 
     def test_returns_router_with_metadata_route(
         self,
         composition_ctx,
     ) -> None:
-        """build_document_router returns a router with /metadata route."""
+        """attach_document_endpoints adds a GET route for document metadata/read."""
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = _build_registry(spec, dtos)
@@ -87,17 +89,19 @@ class TestBuildDocumentRouter:
         def ctx_dep():
             return composition_ctx
 
-        router = build_document_router(
-            prefix="/docs",
-            registry=reg,
-            spec=spec,
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
+            endpoints=_metadata_endpoints(),
         )
 
-        assert isinstance(router, ForzeAPIRouter)
+        assert isinstance(router, APIRouter)
         paths = {r.path for r in router.routes}
-        assert "/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
+        assert "/docs/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
 
     def test_metadata_endpoint_invokes_get_usecase(
         self,
@@ -108,19 +112,21 @@ class TestBuildDocumentRouter:
 
         from forze.base.errors import NotFoundError
 
-        spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
-        dtos = _minimal_dtos(supports_update=True)
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
         reg = _build_registry(spec, dtos)
 
         def ctx_dep():
             return composition_ctx
 
-        router = build_document_router(
-            prefix="/docs",
-            registry=reg,
-            spec=spec,
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
+            endpoints=_metadata_endpoints(),
         )
 
         app = FastAPI()
@@ -131,11 +137,11 @@ class TestBuildDocumentRouter:
         with pytest.raises(NotFoundError, match="not found"):
             client.get(f"/docs/metadata?id={pk}")
 
-    def test_metadata_endpoint_uses_etag_feature(
+    def test_metadata_endpoint_uses_composed_handler_not_plain_route_subclass(
         self,
         composition_ctx,
     ) -> None:
-        """GET /metadata route uses composed route class with ETag feature."""
+        """GET /metadata is registered; ETag is applied inside the HTTP handler pipeline."""
         from fastapi.routing import APIRoute
 
         spec = _minimal_spec()
@@ -145,12 +151,14 @@ class TestBuildDocumentRouter:
         def ctx_dep():
             return composition_ctx
 
-        router = build_document_router(
-            prefix="/docs",
-            registry=reg,
-            spec=spec,
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
+            endpoints=_metadata_endpoints(),
         )
 
         metadata_routes = [
@@ -160,116 +168,13 @@ class TestBuildDocumentRouter:
         ]
         assert len(metadata_routes) == 1
         route = metadata_routes[0]
-        assert type(route) is not APIRoute
-
-
-class TestAttachDocumentRoutes:
-    """Tests for attach_document_routes."""
-
-    def test_attach_adds_routes_to_existing_router(
-        self,
-        composition_ctx,
-    ) -> None:
-        """attach_document_routes adds document endpoints to an existing router."""
-        spec = _minimal_spec()
-        dtos = _minimal_dtos()
-        reg = _build_registry(spec, dtos)
-
-        def ctx_dep():
-            return composition_ctx
-
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=ctx_dep,
-        )
-        result = attach_document_routes(
-            router,
-            registry=reg,
-            spec=spec,
-            dtos=dtos,
-            ctx_dep=ctx_dep,
-        )
-
-        assert result is router
-        paths = {r.path for r in router.routes}
-        assert "/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
-
-    def test_can_enable_list_and_raw_list_endpoints(
-        self,
-        composition_ctx,
-    ) -> None:
-        """attach_document_routes can include typed and raw list endpoints."""
-        spec = _minimal_spec()
-        dtos = _minimal_dtos()
-        reg = _build_registry(spec, dtos)
-
-        def ctx_dep():
-            return composition_ctx
-
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=ctx_dep,
-        )
-        attach_document_routes(
-            router,
-            registry=reg,
-            spec=spec,
-            dtos=dtos,
-            ctx_dep=ctx_dep,
-            include_list_endpoint=True,
-            include_raw_list_endpoint=True,
-        )
-
-        paths = {r.path for r in router.routes}
-        assert any(path.endswith("/list") for path in paths)
-        assert any(path.endswith("/raw-list") for path in paths)
-
-    def test_can_disable_metadata_and_write_related_endpoints(
-        self,
-        composition_ctx,
-    ) -> None:
-        """attach_document_routes can skip metadata and all write endpoints."""
-        spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
-        dtos = _minimal_dtos(supports_update=True)
-        reg = _build_registry(spec, dtos)
-
-        def ctx_dep():
-            return composition_ctx
-
-        router = ForzeAPIRouter(
-            prefix="/api",
-            context_dependency=ctx_dep,
-        )
-        attach_document_routes(
-            router,
-            registry=reg,
-            spec=spec,
-            dtos=dtos,
-            ctx_dep=ctx_dep,
-            include_metadata_endpoint=False,
-            include_create_endpoint=False,
-            include_update_endpoint=False,
-            include_soft_delete_endpoints=False,
-            include_hard_delete_endpoint=False,
-        )
-
-        paths = {r.path for r in router.routes}
-        assert all(not path.endswith("/metadata") for path in paths)
-        assert all(not path.endswith("/create") for path in paths)
-        assert all(not path.endswith("/update") for path in paths)
-        assert all(not path.endswith("/delete") for path in paths)
-        assert all(not path.endswith("/restore") for path in paths)
-        assert all(not path.endswith("/kill") for path in paths)
-
-
-class TestBuildDocumentRouter:
-    """Additional tests for build_document_router options."""
+        assert isinstance(route, APIRoute)
 
     def test_respects_path_overrides(
         self,
         composition_ctx,
     ) -> None:
-        """build_document_router applies overridden endpoint paths."""
+        """Path overrides apply per endpoint via DocumentEndpointsSpec."""
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
         reg = _build_registry(spec, dtos)
@@ -277,23 +182,22 @@ class TestBuildDocumentRouter:
         def ctx_dep():
             return composition_ctx
 
-        router = build_document_router(
-            prefix="/docs",
-            registry=reg,
-            spec=spec,
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
             dtos=dtos,
+            registry=reg,
             ctx_dep=ctx_dep,
-            include_list_endpoint=True,
-            include_raw_list_endpoint=True,
-            path_overrides={
-                "get": "meta",
-                "typed_list": "query",
-                "raw_list": "raw-query",
-                "create": "new",
-                "update": "edit",
-                "delete": "archive",
-                "restore": "unarchive",
-                "kill": "purge",
+            endpoints={
+                "get_": {"path_override": "/meta"},
+                "list_": {"path_override": "/query"},
+                "raw_list": {"path_override": "/raw-query"},
+                "create": {"path_override": "/new"},
+                "update": {"path_override": "/edit"},
+                "delete": {"path_override": "/archive"},
+                "restore": {"path_override": "/unarchive"},
+                "kill": {"path_override": "/purge"},
             },
         )
 
@@ -306,3 +210,97 @@ class TestBuildDocumentRouter:
         assert any(path.endswith("/archive") for path in paths)
         assert any(path.endswith("/unarchive") for path in paths)
         assert any(path.endswith("/purge") for path in paths)
+
+
+class TestAttachDocumentRoutes:
+    """Tests for attach_document_endpoints."""
+
+    def test_attach_adds_routes_to_existing_router(
+        self,
+        composition_ctx,
+    ) -> None:
+        """attach_document_endpoints adds document endpoints to an existing router."""
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = APIRouter(prefix="/api")
+        result = attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints=_metadata_endpoints(),
+        )
+
+        assert result is router
+        paths = {r.path for r in router.routes}
+        assert "/api/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
+
+    def test_can_enable_list_and_raw_list_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """List and raw-list endpoints are attached by default."""
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = APIRouter(prefix="/api")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints=_metadata_endpoints(),
+        )
+
+        paths = {r.path for r in router.routes}
+        assert any(path.endswith("/list") for path in paths)
+        assert any(path.endswith("/raw-list") for path in paths)
+
+    def test_can_disable_metadata_and_write_related_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """Endpoint flags can skip GET metadata and all write endpoints."""
+        spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
+        dtos = _minimal_dtos(supports_update=True)
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = APIRouter(prefix="/api")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints={
+                "get_": {"disable": True},
+                "create": {"disable": True},
+                "update": {"disable": True},
+                "delete": {"disable": True},
+                "restore": {"disable": True},
+                "kill": {"disable": True},
+            },
+        )
+
+        paths = {r.path for r in router.routes}
+        assert all(not path.endswith("/metadata") for path in paths)
+        assert all(not path.endswith("/get") for path in paths)
+        assert all(not path.endswith("/create") for path in paths)
+        assert all(not path.endswith("/update") for path in paths)
+        assert all(not path.endswith("/delete") for path in paths)
+        assert all(not path.endswith("/restore") for path in paths)
+        assert all(not path.endswith("/kill") for path in paths)
