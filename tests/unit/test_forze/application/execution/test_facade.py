@@ -33,7 +33,7 @@ class TestUsecasesFacade:
     ) -> None:
         """resolve returns usecase from registry."""
         reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
-        reg.finalize("test")
+        reg.finalize("test", inplace=True)
         facade = MinimalFacade(ctx=stub_ctx, reg=reg)
         uc = facade.resolve("get")
         assert uc is not None
@@ -49,7 +49,7 @@ class TestFacadeOp:
     ) -> None:
         """Accessing facade_op on instance returns resolved usecase."""
         reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
-        reg.finalize("test")
+        reg.finalize("test", inplace=True)
         facade = MinimalFacade(ctx=stub_ctx, reg=reg)
         uc = facade.get
         assert uc is not None

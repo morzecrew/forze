@@ -46,7 +46,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace)
+        reg.finalize(spec.namespace, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -72,7 +72,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace)
+        reg.finalize(spec.namespace, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -106,7 +106,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace)
+        reg.finalize(spec.namespace, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -139,7 +139,7 @@ class TestBuildSearchRouter:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace)
+        reg.finalize(spec.namespace, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -165,7 +165,7 @@ class TestBuildSearchRouter:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace)
+        reg.finalize(spec.namespace, inplace=True)
 
         def ctx_dep():
             return composition_ctx

@@ -43,7 +43,7 @@ class TestStorageUsecasesFacade:
             StorageOperation.UPLOAD,
             lambda ctx: StubUploadUsecase(ctx=ctx),
         )
-        reg.finalize("storage_facade")
+        reg.finalize("storage_facade", inplace=True)
         return reg
 
     def test_upload_descriptor_resolves_usecase(

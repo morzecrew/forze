@@ -103,7 +103,7 @@ class TestDocumentCreateIdempotencyIntegration:
 
         spec, dtos = _doc_spec_and_dtos()
         reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
-        reg.finalize(spec.namespace)
+        reg.finalize(spec.namespace, inplace=True)
 
         app = FastAPI()
         router = APIRouter(prefix="/api")

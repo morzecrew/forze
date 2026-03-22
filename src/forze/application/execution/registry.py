@@ -54,7 +54,26 @@ class UsecaseRegistry:
 
     # ....................... #
 
-    def finalize(self, registry_id: str) -> None:
+    @overload
+    def finalize(self, registry_id: str, *, inplace: Literal[True]) -> None:
+        """Finalize the registry and set the registry id.
+
+        :param registry_id: The id of the registry.
+        :raises CoreError: If the registry is already finalized.
+        """
+        ...
+
+    @overload
+    def finalize(self, registry_id: str, *, inplace: Literal[False] = False) -> Self:
+        """Finalize the registry and set the registry id.
+
+        :param registry_id: The id of the registry.
+        :raises CoreError: If the registry is already finalized.
+        :returns: New registry instance.
+        """
+        ...
+
+    def finalize(self, registry_id: str, *, inplace: bool = False) -> Self | None:
         """Finalize the registry and set the registry id.
 
         :param registry_id: The id of the registry.
@@ -66,8 +85,16 @@ class UsecaseRegistry:
         if not registry_id:
             raise CoreError("Registry id cannot be empty")
 
-        self.__finalized = True
-        self.__registry_id = registry_id
+        if inplace:
+            self.__finalized = True
+            self.__registry_id = registry_id
+            return None
+
+        else:
+            new_instance = type(self)(defaults=self.defaults)
+            new_instance.__finalized = True
+            new_instance.__registry_id = registry_id
+            return new_instance
 
     # ....................... #
 

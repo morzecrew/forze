@@ -89,7 +89,7 @@ class TestSocketIORouting:
 
         plan = UsecasePlan().before("chat.echo", guard_factory, priority=10)
         registry = registry.extend_plan(plan)
-        registry.finalize("socketio")
+        registry.finalize("socketio", inplace=True)
         resolver = make_registry_usecase_resolver(registry)
 
         def context_factory(request: SocketIORequest) -> ExecutionContext:
@@ -174,7 +174,7 @@ class TestSocketIORouting:
 async def test_event_dispatch_without_ack_type_returns_raw_value() -> None:
     sio = StubSocketIOServer()
     registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
-    registry.finalize("socketio")
+    registry.finalize("socketio", inplace=True)
     resolver = make_registry_usecase_resolver(registry)
 
     def context_factory(request: SocketIORequest) -> ExecutionContext:
@@ -246,7 +246,7 @@ def test_adapter_include_routers() -> None:
 async def test_async_context_factory() -> None:
     sio = StubSocketIOServer()
     registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
-    registry.finalize("socketio")
+    registry.finalize("socketio", inplace=True)
     resolver = make_registry_usecase_resolver(registry)
 
     async def async_context_factory(request: SocketIORequest) -> ExecutionContext:

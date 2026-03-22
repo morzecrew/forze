@@ -44,7 +44,7 @@ class TestDocumentUsecasesFacade:
             DocumentOperation.GET,
             lambda ctx: StubGetUsecase(ctx=ctx),
         )
-        reg.finalize("document_facade")
+        reg.finalize("document_facade", inplace=True)
         return reg
 
     def test_get_returns_usecase(

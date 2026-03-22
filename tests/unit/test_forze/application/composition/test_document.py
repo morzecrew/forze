@@ -192,7 +192,7 @@ class TestBuildDocumentRegistry:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        reg.finalize("document")
+        reg.finalize("document", inplace=True)
         uc = reg.resolve(DocumentOperation.GET, composition_ctx)
         assert uc is not None
 
@@ -210,7 +210,7 @@ class TestDocumentFacadeWithRegistry:
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
         reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
-        reg.finalize("document")
+        reg.finalize("document", inplace=True)
         facade = DocumentUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.get
         assert uc is not None

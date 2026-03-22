@@ -42,7 +42,7 @@ class TestSearchUsecasesFacade:
             SearchOperation.RAW_SEARCH,
             lambda ctx: StubRawSearchUsecase(ctx=ctx),
         )
-        reg.finalize("search_facade")
+        reg.finalize("search_facade", inplace=True)
         return reg
 
     def test_raw_search_returns_usecase(
