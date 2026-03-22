@@ -15,10 +15,10 @@ ERR_MESSAGE_KEY: Final[str] = "error.message"
 ERR_STACK_KEY: Final[str] = "error.stack"
 """Error stack (traceback) key."""
 
-OTEL_SPAN_ID_KEY: Final[str] = "span_id"
+OTEL_DEFAULT_SPAN_ID_KEY: Final[str] = "span_id"
 """OpenTelemetry span id key."""
 
-OTEL_TRACE_ID_KEY: Final[str] = "trace_id"
+OTEL_DEFAULT_TRACE_ID_KEY: Final[str] = "trace_id"
 """OpenTelemetry trace id key."""
 
 # ....................... #

@@ -11,8 +11,8 @@ from .constants import (
     ERR_MESSAGE_KEY,
     ERR_STACK_KEY,
     ERR_TYPE_KEY,
-    OTEL_SPAN_ID_KEY,
-    OTEL_TRACE_ID_KEY,
+    OTEL_DEFAULT_SPAN_ID_KEY,
+    OTEL_DEFAULT_TRACE_ID_KEY,
     TRACE_LEVEL_KEY,
     LogLevel,
     LogLevelToRank,
@@ -50,19 +50,31 @@ def format_exc_info(_: Any, __: str, event_dict: EventDict) -> EventDict:
 # ....................... #
 
 
-def inject_otel_context(_: Any, __: str, event_dict: EventDict) -> EventDict:
-    """Inject OpenTelemetry context into the event dict."""
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class OpenTelemetryContextInjector:
+    """Processor to inject OpenTelemetry context into the event dict."""
 
-    span = otel_trace.get_current_span()
-    ctx = span.get_span_context()
+    span_key: str = OTEL_DEFAULT_SPAN_ID_KEY
+    """Key to inject the span id into."""
 
-    if not ctx or not ctx.is_valid:
+    trace_key: str = OTEL_DEFAULT_TRACE_ID_KEY
+    """Key to inject the trace id into."""
+
+    # ....................... #
+
+    def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
+        """Inject OpenTelemetry context into the event dict."""
+
+        span = otel_trace.get_current_span()
+        ctx = span.get_span_context()
+
+        if not ctx or not ctx.is_valid:
+            return event_dict
+
+        event_dict[self.span_key] = format(ctx.span_id, "016x")
+        event_dict[self.trace_key] = format(ctx.trace_id, "032x")
+
         return event_dict
-
-    event_dict[OTEL_SPAN_ID_KEY] = format(ctx.trace_id, "032x")
-    event_dict[OTEL_TRACE_ID_KEY] = format(ctx.span_id, "016x")
-
-    return event_dict
 
 
 # ....................... #

@@ -58,6 +58,13 @@ class DefaultCallContextResolverInjector(
         headers: list[tuple[bytes, bytes]],
         ctx: CallContext,
     ) -> list[tuple[bytes, bytes]]:
+        """Inject the call context headers into the FastAPI response.
+
+        Here we use pure ASGI format to avoid corrupting the response.
+        For more details check the implementation of
+        :class:`forze_fastapi.middlewares.context.middleware.ContextBindingMiddleware`
+        """
+
         headers.extend(
             [
                 (
