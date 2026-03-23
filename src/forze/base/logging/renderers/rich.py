@@ -149,7 +149,16 @@ def _render_main_line(
     line.append(_SEP * sep_width)
     line.append(logger_plain, style="dim")
     line.append(_SEP * sep_width)
-    line.append(message_plain, style="bold")
+
+    msg_style = "bold"
+
+    if ev.level in ["trace", "notset"]:
+        msg_style = "bold dim"
+
+    elif ev.level in ["error", "critical"]:
+        msg_style = "bold red"
+
+    line.append(message_plain, style=msg_style)
 
     if ev.extras:
         line.append(_SEP * sep_width)
