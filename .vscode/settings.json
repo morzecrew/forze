@@ -1,5 +1,4 @@
 {
-    "editor.codeLens": true,
     "files.associations": {
         "*.env*": "env",
         ".coveragerc": "ini",
@@ -17,6 +16,7 @@
         "**/.mypy_cache": true,
         "**/__marimo__": true,
         "**/.coverage": true,
+        "**/.cache": true,
         "dist/": true,
         "**/.devcontainer/": true,
         "**/.venv/": true,
@@ -63,6 +63,9 @@
     "[markdown]": {
         "editor.tabSize": 4,
     },
+    "[d2]": {
+        "editor.tabSize": 2,
+    },
     "emeraldwalk.runonsave": {
         "shell": "zsh",
         "commands": [
@@ -71,8 +74,5 @@
                 "cmd": "just pages diagrams"
             }
         ]
-    },
-    "[d2]": {
-        "editor.tabSize": 2,
     },
 }
