@@ -4,6 +4,7 @@ from typing import Any, Callable, Final
 from rich.console import Console, Group
 from rich.syntax import Syntax
 from rich.text import Text
+from rich.traceback import Traceback
 
 from .normalization import NormalizedEvent
 
@@ -141,13 +142,31 @@ def _render_main_line(
 # ....................... #
 
 
-def _render_error_group(ev: NormalizedEvent) -> Group | None:
-    parts: list[Text | Syntax] = []
+def _render_error_group(
+    ev: NormalizedEvent,
+    *,
+    traceback_supress: list[str] | None = None,
+) -> Group | None:
+    parts: list[Any] = []
 
     if ev.err_header:
         parts.append(Text(ev.err_header, style="bold red"))
 
-    if ev.err_stack:
+    if ev.exc_info is not None:
+        exc_type, exc, tb = ev.exc_info
+
+        parts.append(
+            Traceback.from_exception(
+                exc_type,
+                exc,
+                tb,
+                show_locals=False,
+                max_frames=8,
+                suppress=traceback_supress or [],
+            )
+        )
+
+    elif ev.err_stack:
         parts.append(
             Syntax(
                 ev.err_stack,
@@ -156,9 +175,6 @@ def _render_error_group(ev: NormalizedEvent) -> Group | None:
                 word_wrap=True,
             )
         )
-
-    if ev.stack:
-        parts.append(Text(str(ev.stack), style="dim"))
 
     if not parts:
         return None
@@ -178,6 +194,7 @@ def render_event(
     sep_width: int,
     aliases: dict[str, str],
     transforms: dict[str, Callable[[Any], str]],
+    traceback_supress: list[str] | None = None,
 ) -> str:
     width = max(logger_name_width + message_width + 80, 160)
     sio = StringIO()
@@ -198,7 +215,7 @@ def render_event(
         crop=False,
     )
 
-    err_group = _render_error_group(ev)
+    err_group = _render_error_group(ev, traceback_supress=traceback_supress)
 
     if err_group is not None:
         console.print()

@@ -13,38 +13,55 @@ from .constants import (
     ERR_TYPE_KEY,
     OTEL_DEFAULT_SPAN_ID_KEY,
     OTEL_DEFAULT_TRACE_ID_KEY,
+    RICH_EXC_INFO_KEY,
     TRACE_LEVEL_KEY,
     LogLevel,
     LogLevelToRank,
+    RenderMode,
 )
 
 # ----------------------- #
 
 
-def format_exc_info(_: Any, __: str, event_dict: EventDict) -> EventDict:
-    """Format exception info to a dictionary."""
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ExceptionInfoFormatter:
+    """Processor to format exception info to a dictionary."""
 
-    exc_info = event_dict.pop("exc_info", None)
+    render_mode: RenderMode
+    """Render mode."""
 
-    if not exc_info:
+    # ....................... #
+
+    def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
+        """Format exception info to a dictionary."""
+
+        exc_info = event_dict.pop("exc_info", None)
+
+        if not exc_info:
+            return event_dict
+
+        if exc_info is True:
+            exc_info = sys.exc_info()
+
+        if isinstance(exc_info, tuple):
+            exc_type, exc, tb = cast(ExcInfo, exc_info)
+
+        else:
+            exc_type = type(cast(Exception, exc_info))
+            exc = exc_info
+            tb = exc.__traceback__
+
+        event_dict[ERR_TYPE_KEY] = exc_type.__name__
+        event_dict[ERR_MESSAGE_KEY] = str(exc)
+        event_dict[ERR_STACK_KEY] = "".join(
+            traceback.format_exception(exc_type, exc, tb)
+        )
+
+        # only for console renderer / dev output
+        if self.render_mode == "console":
+            event_dict[RICH_EXC_INFO_KEY] = (exc_type, exc, tb)
+
         return event_dict
-
-    if exc_info is True:
-        exc_info = sys.exc_info()
-
-    if isinstance(exc_info, tuple):
-        exc_type, exc, tb = cast(ExcInfo, exc_info)
-
-    else:
-        exc_type = type(cast(Exception, exc_info))
-        exc = exc_info
-        tb = exc.__traceback__
-
-    event_dict[ERR_TYPE_KEY] = exc_type.__name__
-    event_dict[ERR_MESSAGE_KEY] = str(exc)
-    event_dict[ERR_STACK_KEY] = "".join(traceback.format_exception(exc_type, exc, tb))
-
-    return event_dict
 
 
 # ....................... #

@@ -33,6 +33,7 @@ class ForzeConsoleRenderer:
         "execution_id": "exec",
         "causation_id": "caus",
         "operation_id": "op",
+        "status_code": "status",
     }
     """Aliases for extra keys (will be replaced by the alias)."""
 
@@ -42,6 +43,9 @@ class ForzeConsoleRenderer:
         "causation_id": lambda value: str(value)[-6:],
     }
     """Transforms for extra keys (will be applied to the value)."""
+
+    traceback_supress: list[str] = attrs.field(factory=list)
+    """Traceback suppress list."""
 
     # ....................... #
 
@@ -59,4 +63,5 @@ class ForzeConsoleRenderer:
             sep_width=self.sep_width,
             aliases=self.aliases,
             transforms=self.transforms,
+            traceback_supress=self.traceback_supress,
         )

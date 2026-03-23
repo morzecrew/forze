@@ -18,10 +18,10 @@ from .constants import (
     RenderMode,
 )
 from .processors import (
+    ExceptionInfoFormatter,
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
     TraceLevelResolver,
-    format_exc_info,
 )
 from .renderers import ForzeConsoleRenderer
 
@@ -46,7 +46,6 @@ class OpenTelemetryConfig(TypedDict, total=False):
 
 def build_renderer(
     render_mode: RenderMode,
-    *,
     custom_console_renderer: structlog.types.Processor | None = None,
 ) -> structlog.types.Processor:
     if render_mode == "json":
@@ -63,6 +62,7 @@ def build_renderer(
 
 
 def build_common_processors(
+    render_mode: RenderMode,
     otel_config: OpenTelemetryConfig | None = None,
 ) -> list[Processor]:
     processors: list[Processor] = [
@@ -85,7 +85,7 @@ def build_common_processors(
         [
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
-            format_exc_info,
+            ExceptionInfoFormatter(render_mode=render_mode),
         ]
     )
 
@@ -114,7 +114,7 @@ def build_foreign_formatter(
 ) -> structlog.stdlib.ProcessorFormatter:
     return structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
-            *build_common_processors(otel_config),
+            *build_common_processors(render_mode, otel_config),
             RedundantKeysDropper(keys=drop_keys or []),
         ],
         processors=[
@@ -162,7 +162,7 @@ def configure_logging(
 
     structlog.configure(
         processors=[
-            *build_common_processors(otel_config),
+            *build_common_processors(render_mode, otel_config),
             *build_structlog_processors(level),
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],

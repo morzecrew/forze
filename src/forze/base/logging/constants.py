@@ -15,6 +15,9 @@ ERR_MESSAGE_KEY: Final[str] = "error.message"
 ERR_STACK_KEY: Final[str] = "error.stack"
 """Error stack (traceback) key."""
 
+RICH_EXC_INFO_KEY: Final[str] = "_rich_exc_info"
+"""Rich exception info key (only for console renderer / dev output)."""
+
 OTEL_DEFAULT_SPAN_ID_KEY: Final[str] = "span_id"
 """OpenTelemetry span id key."""
 

@@ -1,9 +1,9 @@
 from typing import Any, Literal
 
 import attrs
-from structlog.typing import EventDict
+from structlog.typing import EventDict, ExcInfo
 
-from ..constants import ERR_MESSAGE_KEY, ERR_STACK_KEY, ERR_TYPE_KEY
+from ..constants import ERR_MESSAGE_KEY, ERR_STACK_KEY, ERR_TYPE_KEY, RICH_EXC_INFO_KEY
 
 # ----------------------- #
 #! Yes we leak some information here, but it's for the sake of readability.
@@ -20,7 +20,7 @@ class NormalizedEvent:
     extras: tuple[tuple[str, str], ...] = ()
     err_header: str | None = None
     err_stack: str | None = None
-    stack: str | None = None
+    exc_info: ExcInfo | None = None
     kind: Literal["common", "access"] = "common"
 
 
@@ -70,13 +70,11 @@ def process_common_log(
 ) -> tuple[dict[str, Any], NormalizedEvent]:
     ed = dict(event)
 
-    stack = ed.pop("stack", None)
     exc_str = ed.pop("exception", None)
-    ed.pop("exc_info", None)
-
     err_type = ed.pop(ERR_TYPE_KEY, None)
     err_message = ed.pop(ERR_MESSAGE_KEY, None)
     err_stack = ed.pop(ERR_STACK_KEY, None)
+    exc_info = ed.pop(RICH_EXC_INFO_KEY, None)
 
     ts = str(ed.pop("timestamp", ""))
     level = str(ed.pop("level", ""))
@@ -106,8 +104,8 @@ def process_common_log(
         message=message,
         err_header=err_header,
         err_stack=err_stack,
-        stack=stack,
         extras=extras,
+        exc_info=exc_info,
     )
 
 
@@ -166,7 +164,10 @@ def normalize_event_dict(
     ed = dict(event)
 
     # We chain `ed` here to avoid keeping error keys in the event dict.
-    ed, rendered_event = process_common_log(ed, max_traceback_lines=max_traceback_lines)
+    ed, rendered_event = process_common_log(
+        ed,
+        max_traceback_lines=max_traceback_lines,
+    )
 
     if is_access_log(ed):
         rendered_event = process_access_log(ed, rendered_event)

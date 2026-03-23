@@ -39,18 +39,6 @@ def _status_code_mapper(exc: CoreError) -> int:
 # ....................... #
 
 
-async def _uncaught_exception_handler(_: Request, __: Exception) -> JSONResponse:
-    """Catch uncaught exceptions."""
-
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
-
-
-# ....................... #
-
-
 async def _forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
     """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
 
@@ -73,4 +61,3 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers on *app*."""
 
     app.exception_handler(CoreError)(_forze_exception_handler)
-    app.exception_handler(Exception)(_uncaught_exception_handler)

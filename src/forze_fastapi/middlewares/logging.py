@@ -1,3 +1,6 @@
+from starlette.responses import JSONResponse
+
+from forze.base.errors import CoreError
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -71,12 +74,20 @@ class LoggingMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
 
+        except CoreError:
+            # Pass through CoreError to be handled by the exception handler
+            raise
+
         except Exception:
             # fallback only for unhandled exceptions
             process_time_ms = int((time.perf_counter() - start_time) * 1000)
             self._log_exception(request, scope, process_time_ms)
 
-            raise
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+            )
+            await response(scope, receive, send)
 
     # ....................... #
 
