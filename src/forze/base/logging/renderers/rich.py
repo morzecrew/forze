@@ -122,7 +122,13 @@ def _render_main_line(
 ) -> Text:
     level_plain = f"{ev.level:<8}"
     logger_plain = f"[{ev.logger_name}]".ljust(logger_name_width)
-    message_plain = ev.message.ljust(message_width)
+
+    msg = ev.message.strip()
+
+    # if len(msg) > message_width:
+    #     msg = msg[: message_width - 3] + "..."  # ???
+
+    message_plain = msg.ljust(message_width)
 
     line = Text()
     line.append(ev.timestamp, style="dim")

@@ -108,7 +108,7 @@ def build_structlog_processors(level: LogLevel) -> list[Processor]:
 
 def build_foreign_formatter(
     render_mode: RenderMode,
-    *,
+    custom_console_renderer: structlog.types.Processor | None = None,
     drop_keys: list[str] | None = None,
     otel_config: OpenTelemetryConfig | None = None,
 ) -> structlog.stdlib.ProcessorFormatter:
@@ -119,7 +119,9 @@ def build_foreign_formatter(
         ],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            build_renderer(render_mode),
+            build_renderer(
+                render_mode, custom_console_renderer=custom_console_renderer
+            ),
         ],
     )
 
@@ -201,6 +203,7 @@ def attach_foreign_loggers(
     *,
     level: LogLevel = "info",
     render_mode: RenderMode = "console",
+    custom_console_renderer: structlog.types.Processor | None = None,
     stream: TextIO = sys.stdout,
     replace_handlers: bool = True,
     propagate: bool = False,
@@ -208,6 +211,7 @@ def attach_foreign_loggers(
 ) -> None:
     formatter = build_foreign_formatter(
         render_mode,
+        custom_console_renderer=custom_console_renderer,
         otel_config=otel_config,
     )
 
