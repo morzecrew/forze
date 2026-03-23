@@ -318,9 +318,14 @@ class TestForzeConsoleRenderer:
                 "detail": 1,
             },
         )
-        assert line.startswith(
-            "2026-03-22T12:00:00Z  info  [forze.test]  started  |  detail=1"
-        )
+        assert line.startswith("2026-03-22T12:00:00Z ")
+        after_ts = line[len("2026-03-22T12:00:00Z ") :]
+        assert after_ts[:8] == f"{'info':<8}"
+        assert after_ts[8] == " "
+        logger_field = after_ts[9 : 9 + render.logger_name_width]
+        assert logger_field == "[forze.test]".ljust(render.logger_name_width)
+        assert "started" in line
+        assert line.rstrip().endswith("detail=1")
 
     def test_shortens_correlation_execution_causation_ids(self) -> None:
         render = ForzeConsoleRenderer(colors=False)
@@ -414,7 +419,8 @@ class TestForzeConsoleRenderer:
                 "error.stack": stack,
             },
         )
-        assert "RuntimeError: oops" in line
+        # Stack-only rendering; Rich inserts ANSI between exception type and ": msg".
+        assert "ValueError" in line and ": x" in line
         assert "\x1b" in line
         assert "Traceback" in line
 

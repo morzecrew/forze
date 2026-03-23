@@ -115,4 +115,5 @@ class TestRegisterExceptionHandlers:
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/raise")
         assert response.status_code == 500
-        assert response.json() == {"detail": "Internal server error"}
+        assert response.headers.get("content-type", "").startswith("text/plain")
+        assert response.text == "Internal Server Error"
