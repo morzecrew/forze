@@ -7,7 +7,6 @@ consistent naming across the application.
 from typing import Final
 
 # ----------------------- #
-#! Maybe these constants as well ...
 
 ID_FIELD: Final[str] = "id"
 """Document identifier field."""
@@ -25,7 +24,6 @@ CREATOR_ID_FIELD: Final[str] = "creator_id"
 """Creator identifier field."""
 
 # ....................... #
-#! Move these constants to the infra layer ! at least not domain definitely
 
 HISTORY_SOURCE_FIELD: Final[str] = "source"
 """History source field."""

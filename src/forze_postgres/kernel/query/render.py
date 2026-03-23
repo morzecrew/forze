@@ -20,6 +20,7 @@ from forze.application.contracts.query import (
     QueryValue,
     QueryValueCaster,
 )
+from forze.base.errors import CoreError
 
 from ..introspect import PostgresColumnTypes, PostgresType
 from .utils import PsycopgPositionalBinder
@@ -51,7 +52,7 @@ class PsycopgValueCoercer:
             return self.caster.pass_through(v)
 
         if t.is_array:
-            raise ValueError(f"Array type not supported: {t!r}")
+            raise CoreError(f"Array type not supported: {t!r}")
 
         match t.base:
             case "uuid":
@@ -91,13 +92,13 @@ class PsycopgValueCoercer:
             return []
 
         if isinstance(v, QueryValue.Scalar):
-            raise ValueError(f"Scalar value not supported: {v!r}")
+            raise CoreError(f"Scalar value not supported: {v!r}")
 
         if t is None:
             return [self.scalar(x, t=None) for x in v]
 
         if not t.is_array and raise_on_scalar_t:
-            raise ValueError("Expected array column, got scalar")
+            raise CoreError("Expected array column, got scalar")
 
         elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
 
@@ -144,7 +145,7 @@ class PsycopgQueryRenderer:
                     t = self.types.get(name)
 
                     if t is None:
-                        raise ValueError(f"Unknown column: {name!r}")
+                        raise CoreError(f"Unknown column: {name!r}")
 
                 else:
                     t = None
@@ -175,7 +176,7 @@ class PsycopgQueryRenderer:
                 return sql.SQL("(") + sql.SQL(" OR ").join(or_parts) + sql.SQL(")")
 
             case _:
-                raise ValueError(f"Unknown expression: {expr!r}")
+                raise CoreError(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
@@ -206,7 +207,7 @@ class PsycopgQueryRenderer:
                 return self._render_set_rel(col, op, value, t=t)
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise ValueError(f"Unknown operator: {op!r}")
+                raise CoreError(f"Unknown operator: {op!r}")
 
     # ....................... #
 
