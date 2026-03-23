@@ -18,7 +18,6 @@ class NormalizedEvent:
     logger_name: str
     message: str
     extras: tuple[tuple[str, str], ...] = ()
-    err_header: str | None = None
     err_stack: str | None = None
     exc_info: ExcInfo | None = None
     kind: Literal["common", "access"] = "common"
@@ -71,8 +70,8 @@ def process_common_log(
     ed = dict(event)
 
     exc_str = ed.pop("exception", None)
-    err_type = ed.pop(ERR_TYPE_KEY, None)
-    err_message = ed.pop(ERR_MESSAGE_KEY, None)
+    ed.pop(ERR_TYPE_KEY, None)
+    ed.pop(ERR_MESSAGE_KEY, None)
     err_stack = ed.pop(ERR_STACK_KEY, None)
     exc_info = ed.pop(RICH_EXC_INFO_KEY, None)
 
@@ -87,11 +86,6 @@ def process_common_log(
     elif exc_str:
         err_stack = shorten_traceback_text(exc_str, max_lines=max_traceback_lines)
 
-    err_header = None
-
-    if err_type is not None or err_message is not None:
-        err_header = f"{err_type or 'Exception'}: {err_message or ''}".rstrip()
-
     extras = tuple(
         (k, sanitize_extra_value(ed[k]))
         for k in sorted(k for k in ed if not k.startswith("_"))
@@ -102,7 +96,6 @@ def process_common_log(
         level=level,
         logger_name=logger_name,
         message=message,
-        err_header=err_header,
         err_stack=err_stack,
         extras=extras,
         exc_info=exc_info,

@@ -1,3 +1,4 @@
+from types import ModuleType
 from typing import Any, Callable
 
 import attrs
@@ -23,12 +24,12 @@ class ForzeConsoleRenderer:
     """Width of the message (event)."""
 
     max_traceback_lines: int = 18
-    """Maximum number of traceback lines to render."""
+    """Maximum number of traceback lines to render (option for fallback stack rendering)."""
 
     sep_width: int = attrs.field(default=1, validator=attrs.validators.ge(1))
     """Width of the separator between the parts."""
 
-    aliases: dict[str, str] = {
+    extra_aliases: dict[str, str] = {
         "correlation_id": "corr",
         "execution_id": "exec",
         "causation_id": "caus",
@@ -37,14 +38,14 @@ class ForzeConsoleRenderer:
     }
     """Aliases for extra keys (will be replaced by the alias)."""
 
-    transforms: dict[str, Callable[[Any], str]] = {
+    extra_transforms: dict[str, Callable[[Any], str]] = {
         "correlation_id": lambda value: str(value)[-6:],
         "execution_id": lambda value: str(value)[-6:],
         "causation_id": lambda value: str(value)[-6:],
     }
     """Transforms for extra keys (will be applied to the value)."""
 
-    traceback_supress: list[str] = attrs.field(factory=list)
+    traceback_supress: list[str | ModuleType] = attrs.field(factory=list)
     """Traceback suppress list."""
 
     # ....................... #
@@ -61,7 +62,7 @@ class ForzeConsoleRenderer:
             logger_name_width=self.logger_name_width,
             message_width=self.message_width,
             sep_width=self.sep_width,
-            aliases=self.aliases,
-            transforms=self.transforms,
+            aliases=self.extra_aliases,
+            transforms=self.extra_transforms,
             traceback_supress=self.traceback_supress,
         )

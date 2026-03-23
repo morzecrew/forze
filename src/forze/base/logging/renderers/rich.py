@@ -1,4 +1,5 @@
 from io import StringIO
+from types import ModuleType
 from typing import Any, Callable, Final
 
 from rich.console import Console, Group
@@ -145,12 +146,9 @@ def _render_main_line(
 def _render_error_group(
     ev: NormalizedEvent,
     *,
-    traceback_supress: list[str] | None = None,
+    traceback_supress: list[str | ModuleType] | None = None,
 ) -> Group | None:
     parts: list[Any] = []
-
-    if ev.err_header:
-        parts.append(Text(ev.err_header, style="bold red"))
 
     if ev.exc_info is not None:
         exc_type, exc, tb = ev.exc_info
@@ -194,7 +192,7 @@ def render_event(
     sep_width: int,
     aliases: dict[str, str],
     transforms: dict[str, Callable[[Any], str]],
-    traceback_supress: list[str] | None = None,
+    traceback_supress: list[str | ModuleType] | None = None,
 ) -> str:
     width = max(logger_name_width + message_width + 80, 160)
     sio = StringIO()
@@ -218,7 +216,6 @@ def render_event(
     err_group = _render_error_group(ev, traceback_supress=traceback_supress)
 
     if err_group is not None:
-        console.print()
-        console.print(err_group)
+        console.print("\n", err_group)
 
-    return sio.getvalue().rstrip("\n")
+    return sio.getvalue()
