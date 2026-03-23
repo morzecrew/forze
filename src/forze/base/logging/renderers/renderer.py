@@ -48,6 +48,14 @@ class ForzeConsoleRenderer:
     traceback_supress: list[str | ModuleType] = attrs.field(factory=list)
     """Traceback suppress list."""
 
+    extra_dim: list[str] = [
+        "correlation_id",
+        "execution_id",
+        "causation_id",
+        "operation_id",
+    ]
+    """Keys to dim. Works only if colors are enabled."""
+
     # ....................... #
 
     def __call__(self, _: WrappedLogger, __: str, event_dict: EventDict) -> str:
@@ -65,4 +73,5 @@ class ForzeConsoleRenderer:
             aliases=self.extra_aliases,
             transforms=self.extra_transforms,
             traceback_supress=self.traceback_supress,
+            dim_extra_keys=self.extra_dim,
         )

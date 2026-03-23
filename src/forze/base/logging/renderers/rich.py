@@ -71,11 +71,16 @@ def _make_console(sio: StringIO, *, colors: bool, width: int) -> Console:
 def _render_extras(
     ev: NormalizedEvent,
     *,
-    aliases: dict[str, str],
-    transforms: dict[str, Callable[[Any], str]],
+    aliases: dict[str, str] | None = None,
+    transforms: dict[str, Callable[[Any], str]] | None = None,
+    dim_extra_keys: list[str] | None = None,
 ) -> Text:
     line = Text()
     first = True
+
+    aliases = aliases or {}
+    transforms = transforms or {}
+    dim_extra_keys = dim_extra_keys or []
 
     for key, value in ev.extras:
         if not first:
@@ -94,6 +99,10 @@ def _render_extras(
 
         if key == "status_code":
             value_style = _rich_status_code_style(int(value))
+
+        if key in dim_extra_keys:
+            key_style = "dim"
+            value_style = "dim"
 
         if key in transforms:
             value = transforms[key](value)
@@ -117,8 +126,9 @@ def _render_main_line(
     logger_name_width: int,
     message_width: int,
     sep_width: int,
-    aliases: dict[str, str],
-    transforms: dict[str, Callable[[Any], str]],
+    aliases: dict[str, str] | None = None,
+    transforms: dict[str, Callable[[Any], str]] | None = None,
+    dim_extra_keys: list[str] | None = None,
 ) -> Text:
     level_plain = f"{ev.level:<8}"
     logger_plain = f"[{ev.logger_name}]".ljust(logger_name_width)
@@ -141,7 +151,14 @@ def _render_main_line(
 
     if ev.extras:
         line.append(_SEP * sep_width)
-        line.append(_render_extras(ev, aliases=aliases, transforms=transforms))
+        line.append(
+            _render_extras(
+                ev,
+                aliases=aliases,
+                transforms=transforms,
+                dim_extra_keys=dim_extra_keys,
+            )
+        )
 
     return line
 
@@ -196,9 +213,10 @@ def render_event(
     logger_name_width: int,
     message_width: int,
     sep_width: int,
-    aliases: dict[str, str],
-    transforms: dict[str, Callable[[Any], str]],
+    aliases: dict[str, str] = {},
+    transforms: dict[str, Callable[[Any], str]] = {},
     traceback_supress: list[str | ModuleType] | None = None,
+    dim_extra_keys: list[str] | None = None,
 ) -> str:
     width = max(logger_name_width + message_width + 80, 160)
     sio = StringIO()
@@ -212,6 +230,7 @@ def render_event(
             sep_width=sep_width,
             aliases=aliases,
             transforms=transforms,
+            dim_extra_keys=dim_extra_keys,
         ),
         end="",
         no_wrap=True,

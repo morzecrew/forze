@@ -151,7 +151,7 @@ class LoggingMiddleware:
         process_time_ms: int,
     ) -> None:
         log_extra = self._prepare_log_extra(request, scope, 500, process_time_ms)
-        self._logger.exception("Unhandled exception", **log_extra)
+        self._logger.critical_exception("Unhandled exception", **log_extra)
 
 
 # ....................... #
