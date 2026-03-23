@@ -29,7 +29,7 @@ class ForzeConsoleRenderer:
     sep_width: int = attrs.field(default=1, validator=attrs.validators.ge(1))
     """Width of the separator between the parts."""
 
-    extra_aliases: dict[str, str] = {
+    extra_aliases: dict[str, str] | None = {
         "correlation_id": "corr",
         "execution_id": "exec",
         "causation_id": "caus",
@@ -38,17 +38,17 @@ class ForzeConsoleRenderer:
     }
     """Aliases for extra keys (will be replaced by the alias)."""
 
-    extra_transforms: dict[str, Callable[[Any], str]] = {
+    extra_transforms: dict[str, Callable[[Any], str]] | None = {
         "correlation_id": lambda value: str(value)[-6:],
         "execution_id": lambda value: str(value)[-6:],
         "causation_id": lambda value: str(value)[-6:],
     }
     """Transforms for extra keys (will be applied to the value)."""
 
-    traceback_supress: list[str | ModuleType] = attrs.field(factory=list)
+    traceback_supress: list[str | ModuleType] | None = attrs.field(factory=list)
     """Traceback suppress list."""
 
-    extra_dim: list[str] = [
+    extra_dim: list[str] | None = [
         "correlation_id",
         "execution_id",
         "causation_id",

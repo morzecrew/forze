@@ -88,6 +88,7 @@ def _render_extras(
 
         first = False
         key_style = "cyan"
+        sep_style: str | None = None
 
         if key == "duration":
             key_style = "yellow"
@@ -103,6 +104,7 @@ def _render_extras(
         if key in dim_extra_keys:
             key_style = "dim"
             value_style = "dim"
+            sep_style = "dim"
 
         if key in transforms:
             value = transforms[key](value)
@@ -111,7 +113,7 @@ def _render_extras(
             key = aliases[key]
 
         line.append(key, style=key_style)
-        line.append("=")
+        line.append("=", style=sep_style)
         line.append(value, style=value_style)
 
     return line
@@ -213,8 +215,8 @@ def render_event(
     logger_name_width: int,
     message_width: int,
     sep_width: int,
-    aliases: dict[str, str] = {},
-    transforms: dict[str, Callable[[Any], str]] = {},
+    aliases: dict[str, str] | None = None,
+    transforms: dict[str, Callable[[Any], str]] | None = None,
     traceback_supress: list[str | ModuleType] | None = None,
     dim_extra_keys: list[str] | None = None,
 ) -> str:
