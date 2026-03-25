@@ -42,7 +42,9 @@ U = TypeVar("U", bound=BaseDTO)
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoDocumentAdapter(
-    DocumentReadPort[R], DocumentWritePort[R, D, C, U], TxScopedPort
+    DocumentReadPort[R],
+    DocumentWritePort[R, D, C, U],
+    TxScopedPort,
 ):
     """Mongo adapter bridging domain document ports to gateway operations.
 
@@ -167,7 +169,7 @@ class MongoDocumentAdapter(
             )
 
         if cached is not None:
-            return pydantic_validate(self.read_gw.model, cached)
+            return pydantic_validate(self.read_gw.model_type, cached)
 
         res = await self.read_gw.get(pk)
 
@@ -241,7 +243,9 @@ class MongoDocumentAdapter(
             with contextlib.suppress(Exception):
                 await self.cache.set_many_versioned(miss_res_cache_map)
 
-        hits_validated = pydantic_validate_many(self.read_gw.model, list(hits.values()))
+        hits_validated = pydantic_validate_many(
+            self.read_gw.model_type, list(hits.values())
+        )
         by_pk = {x.id: x for x in hits_validated}
         by_pk.update({x.id: x for x in miss_res})
 
@@ -423,7 +427,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> R:
+    async def update(self, pk: UUID, rev: int, dto: U) -> R:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -450,13 +454,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def update_many(
-        self,
-        pks: Sequence[UUID],
-        dtos: Sequence[U],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
+    async def update_many(self, updates: Sequence[tuple[UUID, int, U]]) -> Sequence[R]:
         """Bulk-update documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -465,6 +463,10 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
+
+        pks = [x[0] for x in updates]
+        revs = [x[1] for x in updates]
+        dtos = [x[2] for x in updates]
 
         await w.update_many(pks, dtos, revs=revs)
         await self._clear_cache(*pks)
@@ -556,7 +558,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> R:
+    async def delete(self, pk: UUID, rev: int) -> R:
         """Soft-delete a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -582,12 +584,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
+    async def delete_many(self, deletes: Sequence[tuple[UUID, int]]) -> Sequence[R]:
         """Soft-delete multiple documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -595,6 +592,9 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
+
+        pks = [x[0] for x in deletes]
+        revs = [x[1] for x in deletes]
 
         await w.delete_many(pks, revs=revs)
         await self._clear_cache(*pks)
@@ -612,7 +612,7 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> R:
+    async def restore(self, pk: UUID, rev: int) -> R:
         """Restore a soft-deleted document and refresh the cache.
 
         :param pk: Document primary key.
@@ -640,9 +640,7 @@ class MongoDocumentAdapter(
 
     async def restore_many(
         self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
+        restores: Sequence[tuple[UUID, int]],
     ) -> Sequence[R]:
         """Restore multiple soft-deleted documents and refresh the cache.
 
@@ -651,6 +649,10 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
+
+        pks = [x[0] for x in restores]
+        revs = [x[1] for x in restores]
+
         await w.restore_many(pks, revs=revs)
         await self._clear_cache(*pks)
 

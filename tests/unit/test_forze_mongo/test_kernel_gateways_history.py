@@ -6,7 +6,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.errors import CoreError
 from forze.domain.models import Document
 from forze_mongo.kernel.gateways import MongoHistoryGateway
 from forze_mongo.kernel.platform import MongoClient
@@ -29,23 +28,27 @@ def _build_client() -> MagicMock:
     return client
 
 
+_DB = "test_db"
+
+
 class TestMongoHistoryGateway:
     @pytest.mark.asyncio
     async def test_write_many_persists_history_records(self) -> None:
         client = _build_client()
         gw = MongoHistoryGateway(
-            source="docs_history",
-            target_source="docs",
-            strategy="application",
+            model_type=MyDoc,
+            collection="docs_history",
+            database=_DB,
             client=client,
-            model=MyDoc,
+            target_database=_DB,
+            target_collection="docs",
         )
         doc = _domain_doc(uuid4(), rev=2, name="beta")
 
         await gw.write_many([doc])
 
         payload = client.insert_many.await_args.args[1][0]
-        assert payload["source"] == "docs"
+        assert payload["source"] == f"{_DB}.docs"
         assert payload["id"] == str(doc.id)
         assert payload["rev"] == 2
         assert payload["data"]["id"] == str(doc.id)
@@ -57,7 +60,7 @@ class TestMongoHistoryGateway:
         client = _build_client()
         client.find_many.return_value = [
             {
-                "source": "docs",
+                "source": f"{_DB}.docs",
                 "id": str(pk),
                 "rev": 1,
                 "data": {
@@ -70,11 +73,12 @@ class TestMongoHistoryGateway:
             }
         ]
         gw = MongoHistoryGateway(
-            source="docs_history",
-            target_source="docs",
-            strategy="application",
+            model_type=MyDoc,
+            collection="docs_history",
+            database=_DB,
             client=client,
-            model=MyDoc,
+            target_database=_DB,
+            target_collection="docs",
         )
 
         result = await gw.read_many([pk], [1])
@@ -82,15 +86,3 @@ class TestMongoHistoryGateway:
         assert len(result) == 1
         assert result[0].id == pk
         assert result[0].rev == 1
-
-    def test_init_rejects_non_application_history_strategy(self) -> None:
-        client = _build_client()
-
-        with pytest.raises(CoreError, match="Invalid history write strategy"):
-            MongoHistoryGateway(
-                source="docs_history",
-                target_source="docs",
-                strategy="database",  # pyright: ignore[reportArgumentType]
-                client=client,
-                model=MyDoc,
-            )

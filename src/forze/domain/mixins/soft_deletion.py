@@ -15,6 +15,11 @@ from ..validation import update_validator
 
 # ----------------------- #
 
+# :meth:`~forze.domain.models.Document.update` always appends ``last_update_at`` to the
+# diff, so restores (``is_deleted`` -> ``False``) must allow that key alongside
+# :data:`~forze.domain.constants.SOFT_DELETE_FIELD`.
+_ALLOWED_SOFT_DELETE_DIFF_KEYS = frozenset({SOFT_DELETE_FIELD, "last_update_at"})
+
 
 class SoftDeletionMixin(CoreModel):
     """Mixin adding soft-deletion semantics via ``is_deleted``.
@@ -33,7 +38,7 @@ class SoftDeletionMixin(CoreModel):
         """Reject updates to soft-deleted documents unless only ``is_deleted`` changes."""
 
         keys = set(diff.keys())
-        soft_deletion = keys == {SOFT_DELETE_FIELD}
+        soft_deletion = SOFT_DELETE_FIELD in keys and keys <= _ALLOWED_SOFT_DELETE_DIFF_KEYS
 
         if before.is_deleted and not soft_deletion:
             raise ValidationError("Cannot update a soft-deleted document.")

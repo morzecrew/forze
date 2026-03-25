@@ -23,6 +23,8 @@ from .base import MongoGateway
 
 T = TypeVar("T", bound=BaseModel)
 
+# ....................... #
+
 
 @final
 class MongoReadGateway[M: BaseModel](MongoGateway[M]):
@@ -103,10 +105,13 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         if for_update:
             self.client.require_transaction()
 
+        filters = {"_id": self._storage_pk(pk)}
+        filters = self._add_tenant_filter(filters)
+
         raw = await self.client.find_one(
             self.coll(),
-            {"_id": self._storage_pk(pk)},
-            projection=self._projection(return_fields),
+            filters,
+            projection=self.render_projection(return_fields),
         )
 
         if raw is None:
@@ -118,9 +123,9 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return pydantic_validate(return_model, data)
 
         if return_fields is not None:
-            return self._return_subset(data, return_fields)
+            return self.return_subset(data, return_fields)
 
-        return pydantic_validate(self.model, data)
+        return pydantic_validate(self.model_type, data)
 
     # ....................... #
 
@@ -187,18 +192,23 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return []
 
         ids = [self._storage_pk(pk) for pk in pks]
+        filters = {"_id": {"$in": ids}}
+        filters = self._add_tenant_filter(filters)
+
         rows = await self.client.find_many(
             self.coll(),
-            {"_id": {"$in": ids}},
-            projection=self._projection(return_fields),
+            filters,
+            projection=self.render_projection(return_fields),
         )
 
         by_pk: dict[str, JsonDict] = {}
+
         for row in rows:
             normalized = self._from_storage_doc(row)
             by_pk[str(normalized[ID_FIELD])] = normalized
 
         missing = [pk for pk in pks if self._storage_pk(pk) not in by_pk]
+
         if missing:
             raise NotFoundError(f"Some records not found: {missing}")
 
@@ -208,9 +218,9 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return pydantic_validate_many(return_model, ordered)
 
         if return_fields is not None:
-            return [self._return_subset(row, return_fields) for row in ordered]
+            return [self.return_subset(row, return_fields) for row in ordered]
 
-        return pydantic_validate_many(self.model, ordered)
+        return pydantic_validate_many(self.model_type, ordered)
 
     # ....................... #
 
@@ -283,11 +293,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         if for_update:
             self.client.require_transaction()
 
-        query = self._render_filters(filters)
+        query = self.render_filters(filters)
+
         raw = await self.client.find_one(
             self.coll(),
             query,
-            projection=self._projection(return_fields),
+            projection=self.render_projection(return_fields),
         )
 
         if raw is None:
@@ -299,9 +310,9 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return pydantic_validate(return_model, data)
 
         if return_fields is not None:
-            return self._return_subset(data, return_fields)
+            return self.return_subset(data, return_fields)
 
-        return pydantic_validate(self.model, data)
+        return pydantic_validate(self.model_type, data)
 
     # ....................... #
 
@@ -388,12 +399,12 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         if not filters and limit is None:
             raise ValidationError("Filters or limit must be provided")
 
-        query = self._render_filters(filters)
+        query = self.render_filters(filters)
         rows = await self.client.find_many(
             self.coll(),
             query,
-            projection=self._projection(return_fields),
-            sort=self._sorts(sorts),
+            projection=self.render_projection(return_fields),
+            sort=self.render_sorts(sorts),
             limit=limit,
             skip=offset,
         )
@@ -403,9 +414,9 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return pydantic_validate_many(return_model, normalized)
 
         if return_fields is not None:
-            return [self._return_subset(row, return_fields) for row in normalized]
+            return [self.return_subset(row, return_fields) for row in normalized]
 
-        return pydantic_validate_many(self.model, normalized)
+        return pydantic_validate_many(self.model_type, normalized)
 
     # ....................... #
 
@@ -416,5 +427,6 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             documents in the collection.
         """
 
-        query = self._render_filters(filters)
+        query = self.render_filters(filters)
+
         return await self.client.count(self.coll(), query)

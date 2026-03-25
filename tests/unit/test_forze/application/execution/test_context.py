@@ -1,14 +1,12 @@
 """Tests for forze.application.execution.context."""
 
+from datetime import timedelta
+
 import pytest
 
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -33,15 +31,12 @@ def _doc_spec(
     cache: dict | None = None,
 ) -> DocumentSpec:
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_read", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_write",
-            "models": {
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": CreateDocumentCmd,
-            },
+            "domain": Document,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": CreateDocumentCmd,
         },
         cache=cache,
     )
@@ -49,12 +44,9 @@ def _doc_spec(
 
 def _search_spec() -> SearchSpec[ReadDocument]:
     return SearchSpec(
-        namespace="test",
-        model=ReadDocument,
-        indexes={
-            "default": SearchIndexSpec(fields=[SearchFieldSpec(path="id")]),
-        },
-        default_index="default",
+        name="test",
+        model_type=ReadDocument,
+        fields=["id"],
     )
 
 
@@ -114,7 +106,9 @@ class TestExecutionContextPorts:
         assert port is not None
 
     def test_doc_read_with_cache(self, ctx: ExecutionContext) -> None:
-        spec = _doc_spec(cache={"enabled": True, "ttl": 60})
+        spec = _doc_spec(
+            cache={"enabled": True, "ttl": timedelta(seconds=60)},
+        )
         port = ctx.doc_read(spec)
         assert port is not None
 
@@ -129,7 +123,7 @@ class TestExecutionContextPorts:
         assert port is not None
 
     def test_cache(self, ctx: ExecutionContext) -> None:
-        spec = CacheSpec(namespace="test")
+        spec = CacheSpec(name="test")
         port = ctx.cache(spec)
         assert port is not None
 

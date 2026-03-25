@@ -84,7 +84,8 @@ def redis_cache(
     redis_client = context.dep(RedisClientDepKey)
 
     return RedisCacheAdapter(
-        client=redis_client, key_codec=KeyCodec(namespace=spec.namespace)
+        client=redis_client,
+        key_codec=KeyCodec(namespace=spec.name),
     )
 
 

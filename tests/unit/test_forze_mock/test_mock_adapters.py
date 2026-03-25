@@ -6,11 +6,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.base.errors import ConcurrencyError
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -69,18 +65,9 @@ def _document_adapter(
 
 def _search_adapter(state: MockState) -> MockSearchAdapter[_ProductSearch]:
     spec = SearchSpec(
-        namespace="products",
-        model=_ProductSearch,
-        indexes={
-            "main": SearchIndexSpec(
-                fields=[
-                    SearchFieldSpec(path="title"),
-                    SearchFieldSpec(path="category"),
-                    SearchFieldSpec(path="tags"),
-                ]
-            )
-        },
-        default_index="main",
+        name="products",
+        model_type=_ProductSearch,
+        fields=["title", "category", "tags"],
     )
     return MockSearchAdapter(state=state, spec=spec)
 
@@ -127,9 +114,9 @@ async def test_document_filter_sort_projection_and_search() -> None:
     assert raw_hits == [{"title": "Rust Book"}]
 
     # Soft delete + restore.
-    deleted = await doc.delete(created.id, rev=created.rev)
+    deleted = await doc.delete(created.id, created.rev)
     assert deleted.is_deleted is True
-    restored = await doc.restore(created.id, rev=deleted.rev)
+    restored = await doc.restore(created.id, deleted.rev)
     assert restored.is_deleted is False
 
 
@@ -140,7 +127,7 @@ async def test_document_update_detects_revision_conflict() -> None:
     created = await doc.create(_ProductCreate(title="A", category="x"))
 
     with pytest.raises(ConcurrencyError):
-        await doc.update(created.id, _ProductUpdate(title="B"), rev=created.rev + 1)
+        await doc.update(created.id, created.rev + 1, _ProductUpdate(title="B"))
 
 
 @pytest.mark.asyncio

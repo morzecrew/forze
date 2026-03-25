@@ -27,7 +27,6 @@ from ..contracts.storage import StorageDepKey, StoragePort
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPort
 
 # ----------------------- #
-#! TODO: review call and principal ctx
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -111,8 +110,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    @property
-    def call_ctx(self) -> CallContext | None:
+    def get_call_ctx(self) -> CallContext | None:
         """Return the current call context.
 
         :returns: Call context.
@@ -122,14 +120,28 @@ class ExecutionContext:
 
     # ....................... #
 
-    @property
-    def principal_ctx(self) -> PrincipalContext | None:
+    def get_principal_ctx(self) -> PrincipalContext | None:
         """Return the current principal context.
 
         :returns: Principal context.
         """
 
         return self.__principal_context.get()
+
+    # ....................... #
+
+    def get_tenant_id(self) -> UUID | None:
+        """Return the current tenant ID.
+
+        :returns: Tenant ID.
+        """
+
+        principal = self.get_principal_ctx()
+
+        if principal is None:
+            return None
+
+        return principal.tenant_id
 
     # ....................... #
 
@@ -302,12 +314,12 @@ class ExecutionContext:
 
         if spec.cache is not None and spec.cache.get("enabled", False):
             cache_spec = CacheSpec(
-                namespace=spec.namespace,
+                name=spec.name,
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
             logger.trace(
-                "Resolving cache for document read namespace '%s' with ttl=%s",
-                spec.namespace,
+                "Resolving cache for document read name '%s' with ttl=%s",
+                spec.name,
                 cache_spec.ttl,
             )
             cache = self.cache(cache_spec)
@@ -316,8 +328,8 @@ class ExecutionContext:
         self.__validate_tx_scope(dep)
 
         logger.trace(
-            "Resolved document read port for namespace '%s' -> %s",
-            spec.namespace,
+            "Resolved document read port for name '%s' -> %s",
+            spec.name,
             type(dep).__qualname__,
         )
 
@@ -339,12 +351,12 @@ class ExecutionContext:
 
         if spec.cache is not None and spec.cache.get("enabled", False):
             cache_spec = CacheSpec(
-                namespace=spec.namespace,
+                name=spec.name,
                 ttl=spec.cache.get("ttl", timedelta(seconds=300)),
             )
             logger.trace(
-                "Resolving cache for document write namespace '%s' with ttl=%s",
-                spec.namespace,
+                "Resolving cache for document write name '%s' with ttl=%s",
+                spec.name,
                 cache_spec.ttl,
             )
             cache = self.cache(cache_spec)
@@ -353,8 +365,8 @@ class ExecutionContext:
         self.__validate_tx_scope(dep)
 
         logger.trace(
-            "Resolved document write port for namespace '%s' -> %s",
-            spec.namespace,
+            "Resolved document write port for name '%s' -> %s",
+            spec.name,
             type(dep).__qualname__,
         )
 
@@ -373,7 +385,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved cache port for namespace '%s' -> %s",
-            spec.namespace,
+            spec.name,
             type(dep).__qualname__,
         )
 

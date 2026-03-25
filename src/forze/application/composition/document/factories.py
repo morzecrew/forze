@@ -46,7 +46,7 @@ def build_document_create_mapper(
     if create_dto is None:
         raise CoreError("Document specification does not support create operations")
 
-    mapper = DTOMapper(in_=create_dto, out=spec.write["models"]["create_cmd"])
+    mapper = DTOMapper(in_=create_dto, out=spec.write["create_cmd"])
 
     return mapper.with_steps(*steps)
 
@@ -76,7 +76,7 @@ def build_document_update_mapper(
     if update_dto is None:
         raise CoreError("Document specification does not support update operations")
 
-    mapper = DTOMapper(in_=update_dto, out=spec.write["models"]["update_cmd"])
+    mapper = DTOMapper(in_=update_dto, out=spec.write["update_cmd"])
 
     return mapper.with_steps(*steps)
 

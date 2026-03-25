@@ -1,32 +1,27 @@
 from .deps import (
-    SearchDepRouter,
     SearchReadDepKey,
     SearchReadDepPort,
+    SearchReadDepRouter,
     SearchWriteDepKey,
     SearchWriteDepPort,
     SearchWriteDepRouter,
 )
-from .internal import SearchIndexSpecInternal, SearchSpecInternal, parse_search_spec
 from .ports import SearchReadPort, SearchWritePort
-from .specs import SearchFieldSpec, SearchIndexSpec, SearchSpec
+from .specs import FederatedSearchSpec, SearchSpec
 from .types import SearchOptions
 
 # ----------------------- #
 
 __all__ = [
-    "SearchSpecInternal",
-    "SearchIndexSpecInternal",
+    "SearchSpec",
+    "FederatedSearchSpec",
     "SearchOptions",
     "SearchReadPort",
     "SearchWritePort",
-    "SearchReadDepKey",
     "SearchReadDepPort",
-    "SearchWriteDepKey",
     "SearchWriteDepPort",
-    "SearchDepRouter",
+    "SearchReadDepKey",
+    "SearchWriteDepKey",
+    "SearchReadDepRouter",
     "SearchWriteDepRouter",
-    "SearchSpec",
-    "SearchIndexSpec",
-    "SearchFieldSpec",
-    "parse_search_spec",
 ]

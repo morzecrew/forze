@@ -1,4 +1,4 @@
-"""PGroonga-based search gateway using the ``&@~`` operator."""
+"""PGroonga-based search adapter."""
 
 from forze_postgres._compat import require_psycopg
 
@@ -6,116 +6,123 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Sequence, TypeVar, overload
+from typing import Any, Final, Sequence, TypeVar, final, overload
 
+import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchIndexSpecInternal, SearchOptions
-from forze.base.errors import CoreError
+from forze.application.contracts.search import SearchOptions, SearchReadPort, SearchSpec
+from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
-from ..base import PostgresQualifiedName
-from .base import PostgresSearchGateway
+from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
+from ..txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
-
-# ....................... #
 
 _TABLE_ALIAS: Final[str] = "t"
 
 # ....................... #
 
 
-class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
-    """Search gateway that builds PGroonga ``&@~`` queries with per-field weighting and optional fuzzy matching."""
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresPGroongaSearchAdapter[M: BaseModel](
+    PostgresGateway[M],
+    SearchReadPort[M],
+    TxScopedPort,
+):
+    """Postgres-backend implementation of :class:`SearchReadPort` for PGroonga search engine."""
 
-    def _effective_field_weights(
+    spec: SearchSpec[M]
+    """Search specification."""
+
+    source_qname: PostgresQualifiedName
+    """Source table qualified name (where search index resides)."""
+
+    # Non initable fields
+    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
+
+    # ....................... #
+
+    def _effective_weights(
         self,
-        spec: SearchIndexSpecInternal,
         options: SearchOptions | None = None,
-    ) -> list[tuple[str, float]]:
+    ) -> dict[str, int]:
+        """Calculate effective field weights based on options."""
+
         options = options or {}
-        ov_weights = options.get("weights", {})
+        provided_weights = options.get("weights", {})
+        fields_to_search = list(options.get("fields", []))
 
-        ov_groups = ov_weights.get("groups", {})
-        ov_fields = ov_weights.get("fields", {})
+        # First priority - provided weights
+        if provided_weights:
+            weights = {f: provided_weights.get(f, 0.0) for f in self.spec.fields}
 
-        res: list[tuple[str, float]] = []
+        # Second priority - fields to search
+        elif fields_to_search:
+            weights = {
+                f: 1.0 if f in fields_to_search else 0.0 for f in self.spec.fields
+            }
 
-        for f in spec.fields:
-            p = f.path_safe
+        # First fallback - default weights
+        elif self.spec.default_weights:
+            weights = self.spec.default_weights
 
-            if f.group:
-                group = spec.groups_dict.get(f.group)
-                base_group_weight = group.weight if group else 1.0
+        # Last fallback - all fields with weight 1.0
+        else:
+            weights = {f: 1.0 for f in self.spec.fields}
 
-            else:
-                base_group_weight = 1.0
+        # renormalize weights
+        norm_weights = {f: int(w * 100) for f, w in weights.items()}
 
-            if f.group and f.group in ov_groups:
-                base_group_weight = ov_groups[f.group]
-
-            base_field_weight = f.weight if f.weight is not None else 1.0
-
-            if p in ov_fields:
-                base_field_weight = ov_fields[p]
-
-            effective = base_group_weight * base_field_weight
-            res.append((p, effective))
-
-        return res
+        return norm_weights
 
     # ....................... #
 
     async def _pgroonga_where(
         self,
         query: str,
-        index: str,
-        spec: SearchIndexSpecInternal,
         *,
         options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
-        options = options or {}
-        q = query.strip()
+        """Build PGroonga ``&@~`` query based on options."""
 
-        if not q:
+        options = options or {}
+        query = query.strip()
+        index = self.qname.string()
+
+        if not query:
             return sql.SQL("TRUE"), []
 
-        eff = self._effective_field_weights(spec, options)
-        fields = [p for p, _ in eff]
-        weights = [int(w * 100) for _, w in eff]
-
-        fuzzy = options.get("fuzzy", {})
-        use_fuzzy = fuzzy.get("enabled", False)
-        ratio = fuzzy.get("max_distance_ratio")
-
-        if ratio is None and spec.fuzzy is not None:
-            ratio = spec.fuzzy.max_distance_ratio
-
-        if ratio is None:
-            ratio = 0.34  # default value for fuzzy search
-
-        params: list[Any] = [q, index]
+        params: list[Any] = [query, index]
 
         q_ph = sql.Placeholder()
         idx_ph = sql.Placeholder()
         r_ph = sql.Placeholder()
         w_ph = sql.Placeholder()
 
-        qualified_name = PostgresQualifiedName.from_string(index)
-        index_info = await self.introspector.get_index_info(
-            index=qualified_name.name, schema=qualified_name.schema
-        )
+        eff_weights = self._effective_weights(options)
+        fields = list(eff_weights.keys())
+        weights = list(eff_weights.values())
 
-        if index_info.engine != "pgroonga":
-            raise CoreError(
-                f"Index {qualified_name.string()} has unsupported engine: {index_info.engine} (required: pgroonga)"
-            )
+        use_fuzzy = options.get("fuzzy", False)
+
+        if self.spec.fuzzy is not None:
+            ratio = self.spec.fuzzy.get("max_distance_ratio", 0.34)
+
+        else:
+            ratio = 0.34
+
+        index_info = await self.introspector.get_index_info(
+            index=self.qname.name,
+            schema=self.qname.schema,
+        )
 
         # check expression for array or single field
         if index_info.expr is None or ("ARRAY" not in index_info.expr.upper()):
@@ -126,7 +133,11 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
             if use_fuzzy:
                 params.append(float(ratio))
                 cond = sql.SQL(
-                    "pgroonga_condition({}::text, index_name => {}::text, fuzzy_max_distance_ratio => {}::float4)"
+                    (
+                        "pgroonga_condition({}::text, "
+                        "index_name => {}::text, "
+                        "fuzzy_max_distance_ratio => {}::float4)"
+                    )
                 ).format(q_ph, idx_ph, r_ph)
 
             else:
@@ -143,42 +154,46 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
                 for f in fields
             )
         )
-
         params.append(weights)
 
         if use_fuzzy:
             params.append(float(ratio))
             cond = sql.SQL(
-                "pgroonga_condition({}::text, index_name => {}::text, weights => {}::int[], fuzzy_max_distance_ratio => {}::float4)"
+                (
+                    "pgroonga_condition({}::text, "
+                    "index_name => {}::text, "
+                    "weights => {}::int[], "
+                    "fuzzy_max_distance_ratio => {}::float4)"
+                )
             ).format(q_ph, idx_ph, w_ph, r_ph)
 
         else:
             cond = sql.SQL(
-                "pgroonga_condition({}::text, index_name => {}::text, weights => {}::int[])"
+                (
+                    "pgroonga_condition({}::text, "
+                    "index_name => {}::text, "
+                    "weights => {}::int[])"
+                )
             ).format(q_ph, idx_ph, w_ph)
 
         return sql.SQL("{} &@~ {}").format(array_expr, cond), params
 
     # ....................... #
 
-    def _pgroonga_order(
+    def _pgroonga_order_by(
         self,
         sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
-        table_alias: str = _TABLE_ALIAS,
     ) -> sql.Composable:
-        if not sorts:
-            return sql.SQL("pgroonga_score({}) DESC").format(
-                sql.Identifier(table_alias)
+        """Build PGroonga order clause based on options."""
+
+        order_by = self.order_by_clause(sorts)
+
+        if order_by is None:
+            order_by = sql.SQL("pgroonga_score({}) DESC").format(
+                sql.Identifier(_TABLE_ALIAS)
             )
 
-        parts: list[sql.Composable] = []
-
-        for field, order in sorts.items():
-            parts.append(
-                sql.SQL("{} {}").format(sql.Identifier(field), sql.SQL(order.upper()))
-            )
-
-        return sql.SQL(", ").join(parts)
+        return order_by
 
     # ....................... #
 
@@ -189,8 +204,9 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         *,
         options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
-        index, spec = self._pick_index(options)
-        sw, sp = await self._pgroonga_where(query, index, spec, options=options)
+        """Build WHERE clause based on options."""
+
+        sw, sp = await self._pgroonga_where(query, options=options)
         fw, fp = await self.where_clause(filters)
 
         where_parts = sql.SQL(" AND ").join([sw, fw])
@@ -211,7 +227,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
     ) -> tuple[list[M], int]: ...
 
@@ -225,7 +241,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: type[T],
+        return_type: type[T],
         return_fields: None = ...,
     ) -> tuple[list[T], int]: ...
 
@@ -239,7 +255,7 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
 
@@ -252,15 +268,17 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_model: type[T] | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
+        """Search documents."""
+
         where, params = await self._where_clause(query, filters, options=options)
-        order = self._pgroonga_order(sorts, table_alias=_TABLE_ALIAS)
+        order_by = self._pgroonga_order_by(sorts)
 
         # total
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
         total = int(await self.client.fetch_value(count_stmt, params, default=0))
@@ -271,13 +289,18 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
         # rows
         stmt = sql.SQL(
-            "SELECT {cols} FROM {table} {table_alias} WHERE {where} ORDER BY {order}"
+            """
+            SELECT {cols}
+            FROM {table} {table_alias}
+            WHERE {where}
+            ORDER BY {order_by}
+            """
         ).format(
-            cols=self.return_clause(return_model, return_fields),
-            table=self.qname.ident(),
+            cols=self.return_clause(return_type, return_fields),
+            table=self.source_qname.ident(),
             table_alias=sql.Identifier(_TABLE_ALIAS),
             where=where,
-            order=order,
+            order_by=order_by,
         )
 
         if limit is not None:
@@ -290,10 +313,10 @@ class PostgresPGroongaSearchGateway[M: BaseModel](PostgresSearchGateway[M]):
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
 
-        if return_model is not None:
-            return pydantic_validate_many(return_model, rows), total
+        if return_type is not None:
+            return pydantic_validate_many(return_type, rows), total
 
         if return_fields is not None:
             return [{k: r.get(k, None) for k in return_fields} for r in rows], total
 
-        return pydantic_validate_many(self.model, rows), total
+        return pydantic_validate_many(self.model_type, rows), total

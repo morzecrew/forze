@@ -42,15 +42,17 @@ def _build_gateway() -> tuple[
     read = MagicMock(spec=PostgresReadGateway)
     read.qname = qname
     read.client = client
+    read.tenant_aware = False
 
     gw = PostgresWriteGateway(
         qname=qname,
         client=client,
-        model=MyDoc,
+        model_type=MyDoc,
         introspector=introspector,
-        read=read,
-        create_dto=MyCreateDoc,
-        update_dto=MyUpdateDoc,
+        read_gw=read,
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        strategy="application",
     )
     return gw, client
 

@@ -133,6 +133,7 @@ class DocumentReadPort[R](Protocol):
         ...  # pragma: no cover
 
     # ....................... #
+    #! add `return_type` support for `find_many`
 
     @overload
     def find_many(
@@ -197,16 +198,13 @@ class DocumentWritePort[R, D, C, U](Protocol):
         """Create multiple documents in a batch."""
         ...  # pragma: no cover
 
-    def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> Awaitable[R]:
+    def update(self, pk: UUID, rev: int, dto: U) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
 
     def update_many(
         self,
-        pks: Sequence[UUID],
-        dtos: Sequence[U],
-        *,
-        revs: Sequence[int] | None = None,
+        updates: Sequence[tuple[UUID, int, U]],
     ) -> Awaitable[Sequence[R]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -227,28 +225,24 @@ class DocumentWritePort[R, D, C, U](Protocol):
         """Hard-delete multiple documents."""
         ...  # pragma: no cover
 
-    def delete(self, pk: UUID, *, rev: int | None = None) -> Awaitable[R]:
+    def delete(self, pk: UUID, rev: int) -> Awaitable[R]:
         """Soft-delete a document if the model supports it."""
         ...  # pragma: no cover
 
     def delete_many(
         self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
+        deletes: Sequence[tuple[UUID, int]],
     ) -> Awaitable[Sequence[R]]:
         """Soft-delete multiple documents."""
         ...  # pragma: no cover
 
-    def restore(self, pk: UUID, *, rev: int | None = None) -> Awaitable[R]:
+    def restore(self, pk: UUID, rev: int) -> Awaitable[R]:
         """Restore a previously soft-deleted document."""
         ...  # pragma: no cover
 
     def restore_many(
         self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
+        restores: Sequence[tuple[UUID, int]],
     ) -> Awaitable[Sequence[R]]:
         """Restore multiple previously soft-deleted documents."""
         ...  # pragma: no cover

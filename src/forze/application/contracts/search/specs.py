@@ -1,47 +1,15 @@
-from typing import NotRequired, TypedDict
+from typing import Sequence, TypedDict
 
 import attrs
 from pydantic import BaseModel
 
-from .types import SearchIndexMode
+from forze.base.errors import CoreError
 
 # ----------------------- #
 
 
-class SearchGroupSpec(TypedDict):
-    """Configuration for a named search-field group and its weighting."""
-
-    name: str
-    """Group identifier."""
-
-    weight: NotRequired[float]
-    """Relative weight applied to fields in this group during ranking."""
-
-
-# ....................... #
-
-
-class SearchFieldSpec(TypedDict):
-    """Configuration for a single field within a search index."""
-
-    path: str
-    """Dot-separated path to the document field."""
-
-    group: NotRequired[str]
-    """Optional group this field belongs to."""
-
-    weight: NotRequired[float]
-    """Relative weight for ranking; overrides the group weight when set."""
-
-
-# ....................... #
-
-
 class SearchFuzzySpec(TypedDict, total=False):
     """Fuzzy matching configuration for a search index."""
-
-    enabled: bool
-    """Whether fuzzy matching is enabled."""
 
     max_distance_ratio: float
     """Maximum edit-distance ratio (0.0–1.0) for fuzzy matches."""
@@ -53,43 +21,61 @@ class SearchFuzzySpec(TypedDict, total=False):
 # ....................... #
 
 
-class SearchIndexSpec(TypedDict):
-    """Full specification of a search index: fields, groups, and behavior."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchSpec[M: BaseModel]:
+    """Specification for simple search (one index).
 
-    fields: list[SearchFieldSpec]
-    """Fields included in this index."""
+    #! TODO: add a proper description
+    """
 
-    groups: NotRequired[list[SearchGroupSpec]]
-    """Optional field groups for grouped weighting."""
+    name: str
+    """Logical search namespace name."""
 
-    default_group: NotRequired[str]
-    """Group applied to fields that do not specify one explicitly."""
+    model_type: type[M]
+    """Pydantic model class for searchable documents."""
 
-    mode: NotRequired[SearchIndexMode]
-    """Indexing mode (e.g. full-text search engine variant)."""
+    fields: Sequence[str] = attrs.field(validator=attrs.validators.min_len(1))
+    """Indexed fields."""
 
-    fuzzy: NotRequired[SearchFuzzySpec]
-    """Fuzzy matching settings."""
+    default_weights: dict[str, float] | None = None
+    """Default weights for fields."""
 
-    source: NotRequired[str]
-    """Optional source identifier for multi-source indexes."""
+    fuzzy: SearchFuzzySpec | None = None
+    """Fuzzy matching configuration."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if len(self.fields) != len(set(self.fields)):
+            raise CoreError("Search fields must be unique.")
+
+        if not self.default_weights:
+            return
+
+        for f, w in self.default_weights.items():
+            if f not in self.fields:
+                raise CoreError(f"Default weight for unknown search field '{f}'.")
+
+            if w < 0 or w > 1:
+                raise CoreError(
+                    f"Default weight for search field '{f}' should be between 0.0 and 1.0."
+                )
+
+        if not all(f in self.default_weights for f in self.fields):
+            raise CoreError("Default weights must be provided for all search fields.")
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchSpec[M: BaseModel]:
-    """Specification binding a search namespace to its model and index definitions."""
+class FederatedSearchSpec[M: BaseModel]:
+    """Specification for federated search (many indexes)."""
 
-    namespace: str
-    """Logical search namespace."""
+    name: str
+    """Logical search namespace name."""
 
-    model: type[M]
+    model_type: type[M]
     """Pydantic model class for searchable documents."""
 
-    indexes: dict[str, SearchIndexSpec]
-    """Named index definitions for the namespace."""
-
-    default_index: str | None = None
-    """Index used when no explicit index name is provided in a query."""
+    #! container with simple search specs ????

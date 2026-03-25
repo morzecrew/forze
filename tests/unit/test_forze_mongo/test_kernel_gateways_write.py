@@ -6,9 +6,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.errors import ConcurrencyError, CoreError
+from forze.base.errors import ConcurrencyError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-from forze_mongo.kernel.gateways import MongoWriteGateway
+from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from forze_mongo.kernel.gateways.write import optimistic_retry
 from forze_mongo.kernel.platform import MongoClient
 
@@ -38,12 +38,13 @@ def _build_client() -> MagicMock:
     return client
 
 
-def _build_read(client: MagicMock, source: str = "docs") -> MagicMock:
-    read = MagicMock()
+def _build_read(client: MagicMock, *, collection: str = "docs") -> MagicMock:
+    read = MagicMock(spec=MongoReadGateway)
     read.client = client
-    read.source = source
-    read.db_name = None
-    read.model = MyDoc
+    read.collection = collection
+    read.database = None
+    read.tenant_aware = False
+    read.model_type = MyDoc
     read.get = AsyncMock()
     return read
 
@@ -63,13 +64,13 @@ class TestMongoWriteGateway:
         ]  # read-before-write, then read-after-write
 
         gw = MongoWriteGateway(
-            source="docs",
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
             client=client,
-            model=MyDoc,
-            read=read,
-            create_dto=MyCreateDoc,
-            update_dto=MyUpdateDoc,
-            rev_bump_strategy="application",
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
         )
         updated = await gw.update(pk, MyUpdateDoc(name="after"))
 
@@ -79,21 +80,6 @@ class TestMongoWriteGateway:
         update_payload = client.update_one.await_args.args[2]
         assert update_filter == {"_id": str(pk), "rev": 1}
         assert update_payload["$set"]["rev"] == 2
-
-    def test_init_rejects_non_application_rev_strategy(self) -> None:
-        client = _build_client()
-        read = _build_read(client)
-
-        with pytest.raises(CoreError, match="Invalid revision bump strategy"):
-            MongoWriteGateway(
-                source="docs",
-                client=client,
-                model=MyDoc,
-                read=read,
-                create_dto=MyCreateDoc,
-                update_dto=MyUpdateDoc,
-                rev_bump_strategy="database",  # pyright: ignore[reportArgumentType]
-            )
 
     @pytest.mark.asyncio
     async def test_update_retries_on_concurrency_error(self) -> None:
@@ -113,13 +99,13 @@ class TestMongoWriteGateway:
         ]  # attempt 1 before write, attempt 2 before+after write
 
         gw = MongoWriteGateway(
-            source="docs",
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
             client=client,
-            model=MyDoc,
-            read=read,
-            create_dto=MyCreateDoc,
-            update_dto=MyUpdateDoc,
-            rev_bump_strategy="application",
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
         )
         updated = await gw.update(pk, MyUpdateDoc(name="after"))
 
@@ -136,13 +122,13 @@ class TestMongoWriteGateway:
         read.get.return_value = current
 
         gw = MongoWriteGateway(
-            source="docs",
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
             client=client,
-            model=MyDoc,
-            read=read,
-            create_dto=MyCreateDoc,
-            update_dto=MyUpdateDoc,
-            rev_bump_strategy="application",
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
         )
 
         with pytest.raises(ConcurrencyError, match="Failed to update record"):

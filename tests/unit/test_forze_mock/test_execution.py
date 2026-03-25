@@ -9,11 +9,7 @@ from forze.application.contracts.queue import (
     QueueSpec,
     QueueWriteDepKey,
 )
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.stream import (
     StreamGroupDepKey,
     StreamWriteDepKey,
@@ -51,25 +47,21 @@ class _Msg(BaseModel):
 
 def _doc_spec() -> DocumentSpec[_Read, _Doc, _Create, _Update]:
     return DocumentSpec(
-        namespace="items",
-        read={"source": "items", "model": _Read},
+        name="items",
+        read=_Read,
         write={
-            "source": "items",
-            "models": {
-                "domain": _Doc,
-                "create_cmd": _Create,
-                "update_cmd": _Update,
-            },
+            "domain": _Doc,
+            "create_cmd": _Create,
+            "update_cmd": _Update,
         },
     )
 
 
 def _search_spec() -> SearchSpec[_Read]:
     return SearchSpec(
-        namespace="items",
-        model=_Read,
-        indexes={"main": SearchIndexSpec(fields=[SearchFieldSpec(path="title")])},
-        default_index="main",
+        name="items",
+        model_type=_Read,
+        fields=["title"],
     )
 
 

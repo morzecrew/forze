@@ -3,11 +3,7 @@
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -50,15 +46,12 @@ def stub_ctx(stub_deps: Deps) -> ExecutionContext:
 def _minimal_document_spec() -> DocumentSpec:
     """Minimal DocumentSpec for document port fixtures."""
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_read", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_write",
-            "models": {
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": CreateDocumentCmd,
-            },
+            "domain": Document,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": CreateDocumentCmd,
         },
     )
 
@@ -66,14 +59,9 @@ def _minimal_document_spec() -> DocumentSpec:
 def _minimal_search_spec() -> SearchSpec[ReadDocument]:
     """Minimal SearchSpec for search port fixtures."""
     return SearchSpec(
-        namespace="test",
-        model=ReadDocument,
-        indexes={
-            "default": SearchIndexSpec(
-                fields=[SearchFieldSpec(path="id")],
-            ),
-        },
-        default_index="default",
+        name="test",
+        model_type=ReadDocument,
+        fields=["id"],
     )
 
 
@@ -114,4 +102,4 @@ def stub_cache_port(stub_ctx: ExecutionContext) -> MockCacheAdapter:
     """Cache port for usecase tests."""
     from forze.application.contracts.cache import CacheSpec
 
-    return stub_ctx.cache(CacheSpec(namespace="test"))
+    return stub_ctx.cache(CacheSpec(name="test"))

@@ -182,7 +182,7 @@ class TestDocumentWritePortViaMock:
     async def test_update_bumps_rev(self) -> None:
         port = _document_adapter_with_title()
         created = await port.create(_CreateWithTitle())
-        updated = await port.update(created.id, _UpdateTitle(title="x"))
+        updated = await port.update(created.id, created.rev, _UpdateTitle(title="x"))
         assert updated.rev == 2
 
     @pytest.mark.asyncio
@@ -191,7 +191,10 @@ class TestDocumentWritePortViaMock:
         c1 = await port.create(_CreateWithTitle())
         c2 = await port.create(_CreateWithTitle())
         result = await port.update_many(
-            [c1.id, c2.id], [_UpdateTitle(title="a"), _UpdateTitle(title="b")]
+            [
+                (c1.id, c1.rev, _UpdateTitle(title="a")),
+                (c2.id, c2.rev, _UpdateTitle(title="b")),
+            ]
         )
         assert len(result) == 2
 
@@ -249,7 +252,7 @@ class TestDocumentWritePortViaMock:
         )
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        deleted = await port.delete(created.id)
+        deleted = await port.delete(created.id, created.rev)
         assert deleted is not None
         assert deleted.is_deleted is True
         # Soft-deleted doc is still retrievable via get()
@@ -274,7 +277,7 @@ class TestDocumentWritePortViaMock:
         cmd = CreateDocumentCmd()
         c1 = await port.create(cmd)
         c2 = await port.create(cmd)
-        result = await port.delete_many([c1.id, c2.id])
+        result = await port.delete_many([(c1.id, c1.rev), (c2.id, c2.rev)])
         assert len(result) == 2
 
     @pytest.mark.asyncio
@@ -294,8 +297,8 @@ class TestDocumentWritePortViaMock:
         )
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        await port.delete(created.id)
-        restored = await port.restore(created.id)
+        d = await port.delete(created.id, created.rev)
+        restored = await port.restore(created.id, d.rev)
         assert restored is not None
         got = await port.get(created.id)
         assert got is not None
@@ -318,6 +321,8 @@ class TestDocumentWritePortViaMock:
         cmd = CreateDocumentCmd()
         c1 = await port.create(cmd)
         c2 = await port.create(cmd)
-        await port.delete_many([c1.id, c2.id])
-        result = await port.restore_many([c1.id, c2.id])
+        dr = await port.delete_many([(c1.id, c1.rev), (c2.id, c2.rev)])
+        result = await port.restore_many(
+            [(c1.id, dr[0].rev), (c2.id, dr[1].rev)],
+        )
         assert len(result) == 2

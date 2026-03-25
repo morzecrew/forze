@@ -5,11 +5,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
 from forze_mock import MockState
@@ -55,14 +51,9 @@ def _doc_adapter(state: MockState) -> MockDocumentAdapter:
 
 def _search_adapter(state: MockState) -> MockSearchAdapter[_SearchHit]:
     spec = SearchSpec(
-        namespace="search_stub",
-        model=_SearchHit,
-        indexes={
-            "main": SearchIndexSpec(
-                fields=[SearchFieldSpec(path="title"), SearchFieldSpec(path="a")],
-            ),
-        },
-        default_index="main",
+        name="search_stub",
+        model_type=_SearchHit,
+        fields=["title", "a"],
     )
     return MockSearchAdapter(state=state, spec=spec)
 

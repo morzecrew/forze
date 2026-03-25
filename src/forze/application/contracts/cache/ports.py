@@ -6,6 +6,8 @@ from typing import (
     runtime_checkable,
 )
 
+from forze.base.primitives import JsonDict
+
 # ----------------------- #
 
 
@@ -17,10 +19,7 @@ class CacheReadPort(Protocol):  # pragma: no cover
         """Return the cached value for *key*, or ``None`` on miss."""
         ...
 
-    def get_many(
-        self,
-        keys: Sequence[str],
-    ) -> Awaitable[tuple[dict[str, Any], list[str]]]:
+    def get_many(self, keys: Sequence[str]) -> Awaitable[tuple[JsonDict, list[str]]]:
         """Return found entries and a list of missing keys."""
         ...
 
@@ -36,15 +35,12 @@ class CacheWritePort(Protocol):  # pragma: no cover
         """Store *value* under *key*."""
         ...
 
-    def set_versioned(self, key: str, version: str, value: Any) -> Awaitable[None]:
-        """Store *value* under *key* tagged with a *version* identifier."""
+    def set_many(self, key_mapping: JsonDict) -> Awaitable[None]:
+        """Bulk-store multiple key/value pairs."""
         ...
 
-    def set_many(
-        self,
-        key_mapping: dict[str, Any],
-    ) -> Awaitable[None]:
-        """Bulk-store multiple key/value pairs."""
+    def set_versioned(self, key: str, version: str, value: Any) -> Awaitable[None]:
+        """Store *value* under *key* tagged with a *version* identifier."""
         ...
 
     def set_many_versioned(

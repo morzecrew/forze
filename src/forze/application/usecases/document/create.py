@@ -38,4 +38,4 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
 
         cmd = await self.mapper(self.ctx, args)
 
-        return await self.doc.create(cmd)
+        return await self.doc.create(dto=cmd)

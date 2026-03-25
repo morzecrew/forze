@@ -29,6 +29,8 @@ class CounterDepPort(Protocol):
 CounterDepKey = DepKey[CounterDepPort]("counter")
 """Key used to register the :class:`CounterDepPort` implementation."""
 
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)

@@ -1,40 +1,22 @@
-from typing import Literal, TypedDict
+from typing import Sequence, TypedDict
 
 # ----------------------- #
-
-SearchIndexMode = Literal["fulltext", "phrase", "prefix", "exact"]
-SearchFieldType = Literal["text", "keyword"]
-SearchWeightsPolicy = Literal["strict", "groups", "fields", "multiply"]
-
-# ....................... #
-
-
-class SearchFuzzyOptions(TypedDict, total=False):
-    enabled: bool
-    max_distance_ratio: float
-    prefix_length: int
-
-
-# ....................... #
-
-
-class SearchWeightOptions(TypedDict, total=False):
-    policy: SearchWeightsPolicy
-    groups: dict[str, float]
-    fields: dict[str, float]
-
-
-#!? fields options ? mb makes sense to select "fields to search on" or specify weights instead
-#! or 'simplified' way to specify fields to search on (transform to weights with 0 and 1 internally)
-
-# ....................... #
+#! Switch to support `mode` with values: fulltext, phrase, prefix, exact, fuzzy
+#! instead of separate `fuzzy` bool flag
 
 
 class SearchOptions(TypedDict, total=False):
     """Optional tuning parameters for search backends."""
 
-    use_index: str
-    mode: SearchIndexMode
-    fuzzy: SearchFuzzyOptions
-    weights: SearchWeightOptions
-    language: str
+    fuzzy: bool
+    """Whether fuzzy matching is enabled."""
+
+    weights: dict[str, float]
+    """Field weights (between 0.0 and 1.0). If field weight is not specified, it will be set to 0.0."""
+
+    fields: Sequence[str]
+    """Simple alternative to weights for specifying fields to search on.
+
+    For specified fields weights will be set to 1.0, for other fields weights will be set to 0.0.
+    Ignored if weights are provided.
+    """

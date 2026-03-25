@@ -7,10 +7,14 @@ import pytest_asyncio
 
 pytest.importorskip("psycopg")
 
-from forze.application.contracts.document.specs import DocumentSpec
+from forze.application.contracts.document import (
+    DocumentReadDepKey,
+    DocumentSpec,
+    DocumentWriteDepKey,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.deps import postgres_document_configurable
+from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -43,13 +47,27 @@ class PerfReadDoc(ReadDocument):
     name: str
 
 
+_PG_PERF_DOC_CONFIG = {
+    "perf_docs_ns": {
+        "read": ("public", "perf_docs"),
+        "write": ("public", "perf_docs"),
+    }
+}
+
+
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
     """Build execution context with Postgres deps."""
+    configurable = ConfigurablePostgresDocument(
+        bookkeeping_strategy="application",
+        configs=_PG_PERF_DOC_CONFIG,
+    )
     deps = Deps(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            DocumentReadDepKey: configurable,
+            DocumentWriteDepKey: configurable,
         }
     )
     return ExecutionContext(deps=deps)
@@ -71,20 +89,16 @@ async def document_adapter(pg_client: PostgresClient, execution_context):
     )
 
     spec = DocumentSpec(
-        namespace="perf_docs_ns",
-        read={"source": "perf_docs", "model": PerfReadDoc},
+        name="perf_docs_ns",
+        read=PerfReadDoc,
         write={
-            "source": "perf_docs",
-            "models": {
-                "domain": PerfDoc,
-                "create_cmd": PerfCreateDoc,
-                "update_cmd": PerfUpdateDoc,
-            },
+            "domain": PerfDoc,
+            "create_cmd": PerfCreateDoc,
+            "update_cmd": PerfUpdateDoc,
         },
     )
 
-    factory = postgres_document_configurable(rev_bump_strategy="application")
-    return factory(execution_context, spec)
+    return execution_context.doc_write(spec)
 
 
 @pytest.mark.perf

@@ -7,10 +7,14 @@ import pytest_asyncio
 
 pytest.importorskip("pymongo")
 
-from forze.application.contracts.document.specs import DocumentSpec
+from forze.application.contracts.document import (
+    DocumentReadDepKey,
+    DocumentSpec,
+    DocumentWriteDepKey,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_mongo.execution.deps.deps import mongo_document_configurable
+from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
@@ -42,37 +46,43 @@ class PerfReadDoc(ReadDocument):
 @pytest.fixture
 def execution_context(mongo_client: MongoClient) -> ExecutionContext:
     """Build execution context with Mongo deps."""
-    deps = Deps({MongoClientDepKey: mongo_client})
+    db_name = mongo_client.db().name
+    configurable = ConfigurableMongoDocument(
+        configs={
+            "perf_docs_ns": {
+                "read": (db_name, "perf_docs"),
+                "write": (db_name, "perf_docs"),
+                "history": (db_name, "perf_docs_history"),
+            }
+        }
+    )
+    deps = Deps(
+        {
+            MongoClientDepKey: mongo_client,
+            DocumentReadDepKey: configurable,
+            DocumentWriteDepKey: configurable,
+        }
+    )
     return ExecutionContext(deps=deps)
 
 
 @pytest_asyncio.fixture
 async def document_adapter(
-    mongo_client: MongoClient, execution_context: ExecutionContext
+    _mongo_client: MongoClient, execution_context: ExecutionContext
 ):
     """Create document adapter with collection and spec."""
-    collection = "perf_docs"
-    history_collection = "perf_docs_history"
-
     spec = DocumentSpec(
-        namespace="perf_docs_ns",
-        read={"source": collection, "model": PerfReadDoc},
+        name="perf_docs_ns",
+        read=PerfReadDoc,
         write={
-            "source": collection,
-            "models": {
-                "domain": PerfDoc,
-                "create_cmd": PerfCreateDoc,
-                "update_cmd": PerfUpdateDoc,
-            },
+            "domain": PerfDoc,
+            "create_cmd": PerfCreateDoc,
+            "update_cmd": PerfUpdateDoc,
         },
-        history={"source": history_collection},
+        history_enabled=True,
     )
 
-    factory = mongo_document_configurable(
-        rev_bump_strategy="application",
-        history_write_strategy="application",
-    )
-    return factory(execution_context, spec)
+    return execution_context.doc_write(spec)
 
 
 @pytest.mark.perf

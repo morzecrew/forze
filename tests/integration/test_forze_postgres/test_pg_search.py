@@ -3,9 +3,9 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search.specs import SearchSpec
+from forze.application.contracts.search import SearchReadDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps.deps import postgres_search
+from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -26,6 +26,15 @@ def execution_context(pg_client: PostgresClient):
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            SearchReadDepKey: ConfigurablePostgresSearch(
+                configs={
+                    "search_ns": {
+                        "index": ("public", "idx_search_items_pgroonga"),
+                        "source": ("public", "search_items"),
+                        "engine": "pgroonga",
+                    }
+                }
+            ),
         }
     )
     return ExecutionContext(deps=deps)
@@ -82,19 +91,12 @@ async def test_postgres_search_adapter(
         )
 
     spec = SearchSpec(
-        namespace="search_ns",
-        model=SearchableModel,
-        indexes={
-            "idx_search_items_pgroonga": {
-                "source": "search_items",
-                "mode": "pgroonga",
-                "fields": [{"path": "title"}, {"path": "content"}],
-            }
-        },
-        default_index="idx_search_items_pgroonga",
+        name="search_ns",
+        model_type=SearchableModel,
+        fields=["title", "content"],
     )
 
-    adapter = postgres_search(execution_context, spec)
+    adapter = execution_context.search(spec)
 
     res, cnt = await adapter.search("python")
     assert cnt == 3

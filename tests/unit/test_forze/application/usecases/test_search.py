@@ -6,11 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.application.dto import (
     Paginated,
     RawPaginated,
@@ -61,15 +57,12 @@ class _HitModel(BaseModel):
 def _search_document_spec() -> DocumentSpec:
     """DocumentSpec for search tests (namespace shared with search)."""
     return DocumentSpec(
-        namespace="search_test",
-        read={"source": "search_read", "model": _SearchRead},
+        name="search_test",
+        read=_SearchRead,
         write={
-            "source": "search_write",
-            "models": {
-                "domain": _SearchDoc,
-                "create_cmd": _SearchCreate,
-                "update_cmd": _SearchUpdate,
-            },
+            "domain": _SearchDoc,
+            "create_cmd": _SearchCreate,
+            "update_cmd": _SearchUpdate,
         },
     )
 
@@ -77,17 +70,9 @@ def _search_document_spec() -> DocumentSpec:
 def _search_spec() -> SearchSpec[_HitModel]:
     """SearchSpec for search tests."""
     return SearchSpec(
-        namespace="search_test",
-        model=_HitModel,
-        indexes={
-            "main": SearchIndexSpec(
-                fields=[
-                    SearchFieldSpec(path="title"),
-                    SearchFieldSpec(path="content"),
-                ]
-            ),
-        },
-        default_index="main",
+        name="search_test",
+        model_type=_HitModel,
+        fields=["title", "content"],
     )
 
 

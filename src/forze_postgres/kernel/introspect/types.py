@@ -24,6 +24,8 @@ class PostgresType:
     """Whether the column carries a ``NOT NULL`` constraint."""
 
 
+# ....................... #
+
 PostgresColumnTypes = dict[str, PostgresType]
 """Column name to :class:`PostgresType` mapping for one relation."""
 

@@ -8,7 +8,7 @@ require_psycopg()
 
 import asyncio
 from collections import defaultdict
-from typing import Any, Literal, Sequence, final, get_args
+from typing import Any, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
@@ -35,18 +35,15 @@ from forze.base.serialization import (
     pydantic_validate_many,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
+from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
+from .types import PostgresBookkeepingStrategy
 
 # ----------------------- #
-
-PostgresRevBumpStrategy = Literal["database", "application"]
-"""Strategy for incrementing the document revision: ``"database"`` (trigger) or ``"application"``."""
-
-# ....................... #
 
 
 def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
@@ -80,49 +77,59 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     All mutating operations are decorated with :func:`optimistic_retry`.
     """
 
-    read: PostgresReadGateway[D]
-    create_dto: type[C]
-    update_dto: type[U]
-    history: PostgresHistoryGateway[D] | None = None
-    rev_bump_strategy: PostgresRevBumpStrategy = "database"
+    read_gw: PostgresReadGateway[D]
+    create_cmd_type: type[C]
+    update_cmd_type: type[U]
+    history_gw: PostgresHistoryGateway[D] | None = None
+    strategy: PostgresBookkeepingStrategy
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.qname != self.read.qname:
+        if self.qname != self.read_gw.qname:
             raise CoreError(
                 "Table specification mismatch. Write gateway and nested read gateway must have the same specification."
             )
 
-        if self.client is not self.read.client:
+        if self.client is not self.read_gw.client:
             raise CoreError(
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
             )
 
-        if self.history is not None:
-            if self.client is not self.history.client:
+        if self.tenant_aware != self.read_gw.tenant_aware:
+            raise CoreError(
+                "Tenant awareness mismatch. Write gateway and nested read gateway must have the same tenant awareness."
+            )
+
+        if self.history_gw is not None:
+            if self.client is not self.history_gw.client:
                 raise CoreError(
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
                 )
 
-            if self.qname != self.history.target_qname:
+            if self.qname != self.history_gw.target_qname:
                 raise CoreError(
                     "Table specification mismatch. Write gateway and nested history gateway must have the same specification."
                 )
 
-        if self.rev_bump_strategy not in get_args(PostgresRevBumpStrategy):
-            raise CoreError(f"Invalid revision bump strategy: {self.rev_bump_strategy}")
+            if self.tenant_aware != self.history_gw.tenant_aware:
+                raise CoreError(
+                    "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
+                )
+
+        if self.strategy not in get_args(PostgresBookkeepingStrategy):
+            raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
 
     # ....................... #
 
     async def _write_history(self, *data: D) -> None:
-        if self.history is not None:
-            await self.history.write_many(data)
+        if self.history_gw is not None:
+            await self.history_gw.write_many(data)
 
     # ....................... #
 
     async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
-        if self.history is None:
+        if self.history_gw is None:
             for current, rev, _ in data:
                 if rev != current.rev:
                     raise ConflictError("Revision mismatch", code="revision_mismatch")
@@ -142,7 +149,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if to_check:
             pks_to_check = [c.id for c, _, _ in to_check]
             revs_to_check = [r for _, r, _ in to_check]
-            hist_records = await self.history.read_many(pks_to_check, revs_to_check)
+            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
             if len(hist_records) != len(to_check):
                 raise NotFoundError(
@@ -162,23 +169,25 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         return sql.Identifier(REV_FIELD)
 
     # ....................... #
-    #! TODO: get rid of this or replace with mixin check (subclass or so)
 
     def supports_soft_delete(self) -> bool:
-        return SOFT_DELETE_FIELD in self.read_fields
+        return issubclass(self.model_type, SoftDeletionMixin)
 
     # ....................... #
 
+    #! TODO: canonical mapper from there
     def _from_cdto(self, dto: C) -> D:
         data = pydantic_dump(dto, exclude={"unset": True})
 
-        return pydantic_validate(self.model, data)
+        return pydantic_validate(self.model_type, data)
 
     # ....................... #
 
+    #! TODO: canonical batch mapper from there
     def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
         data = pydantic_dump_many(dtos, exclude={"unset": True})
-        return pydantic_validate_many(self.model, data)
+
+        return pydantic_validate_many(self.model_type, data)
 
     # ....................... #
 
@@ -195,8 +204,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
         model = self._from_cdto(dto)
-        insert_data_raw = pydantic_dump(model)  #! mode=python ??????
-        insert_data = await self.adapt_payload_for_write(insert_data_raw)
+        insert_data_raw = pydantic_dump(model)
+        insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
         cols = [sql.Identifier(k) for k in insert_data.keys()]
         vals = [sql.Placeholder() for _ in insert_data.keys()]
@@ -219,7 +228,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 code="create_failed",
             )
 
-        res = pydantic_validate(self.model, row)
+        res = pydantic_validate(self.model_type, row)
         await self._write_history(res)
 
         return res
@@ -238,7 +247,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         models = self._from_cdto_many(dtos)
         insert_data_raw = pydantic_dump_many(models)
-        insert_data = await self.adapt_many_payload_for_write(insert_data_raw)
+        insert_data = await self.adapt_many_payload_for_write(
+            insert_data_raw,
+            create=True,
+        )
 
         keys = list(insert_data[0].keys())
         col_idents = [sql.Identifier(k) for k in keys]
@@ -289,7 +301,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if len(result_raw) != len(dtos):
             raise CoreError("Failed to create all records")
 
-        result = pydantic_validate_many(self.model, result_raw)
+        result = pydantic_validate_many(self.model_type, result_raw)
         await self._write_history(*result)
 
         return result
@@ -297,7 +309,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def __bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
-        if self.rev_bump_strategy == "application":
+        if self.strategy == "application":
             diff[REV_FIELD] = current.rev + 1
 
         return diff
@@ -312,7 +324,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         *,
         rev: int | None = None,
     ) -> D:
-        current = await self.read.get(pk)
+        current = await self.read_gw.get(pk)
 
         if update is not None:
             if rev is not None:
@@ -329,7 +341,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         diff = self.__bump_rev(current, diff)
 
-        diff = await self.adapt_payload_for_write(diff)
+        diff = await self.adapt_payload_for_write(diff, create=False)
         set_parts: list[sql.Composable] = []
         params: list[Any] = []
 
@@ -355,7 +367,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if row is None:
             raise ConcurrencyError("Failed to update record")
 
-        res = pydantic_validate(self.model, row)
+        res = pydantic_validate(self.model_type, row)
         await self._write_history(res)
 
         return res
@@ -431,7 +443,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if missing:
             raise ConcurrencyError("Failed to update records")
 
-        return pydantic_validate_many(self.model, rows)
+        return pydantic_validate_many(self.model_type, rows)
 
     # ....................... #
 
@@ -452,7 +464,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        currents = await self.read.get_many(pks)
+        currents = await self.read_gw.get_many(pks)
 
         groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = defaultdict(
             list
@@ -463,7 +475,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                 _, diff = c.touch()
                 diff = self.__bump_rev(c, diff)
-                adapted_diff = await self.adapt_payload_for_write(diff)
+                adapted_diff = await self.adapt_payload_for_write(diff, create=False)
 
                 return c.id, c.rev, adapted_diff
 
@@ -495,7 +507,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     return None
 
                 diff = self.__bump_rev(c, diff)
-                return c.id, c.rev, await self.adapt_payload_for_write(diff)
+                return (
+                    c.id,
+                    c.rev,
+                    await self.adapt_payload_for_write(diff, create=False),
+                )
 
             results = await asyncio.gather(  # type: ignore[assignment]
                 *(_prepare_update(c, u) for c, u in zip(currents, updates))

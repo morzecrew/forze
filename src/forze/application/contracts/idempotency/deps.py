@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
+#! TODO: add spec instead of plain ttl
 
 
 @runtime_checkable

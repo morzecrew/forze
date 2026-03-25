@@ -34,23 +34,20 @@ def _write_spec(
     update_cmd: type = _UpdateCmd,
 ) -> DocumentSpec:
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_r", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_w",
-            "models": {
-                "domain": domain,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": update_cmd,
-            },
+            "domain": domain,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": update_cmd,
         },
     )
 
 
 def _read_only_spec() -> DocumentSpec:
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_r", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
     )
 
 

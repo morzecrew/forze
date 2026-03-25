@@ -26,7 +26,7 @@ class KillDocument(Usecase[DocumentIdDTO, None]):
         :returns: ``None``.
         """
 
-        return await self.doc.kill(args.id)
+        return await self.doc.kill(pk=args.id)
 
 
 # ....................... #
@@ -48,7 +48,7 @@ class DeleteDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
         :returns: Updated read model.
         """
 
-        return await self.doc.delete(args.id, rev=args.rev)
+        return await self.doc.delete(pk=args.id, rev=args.rev)
 
 
 # ....................... #
@@ -70,4 +70,4 @@ class RestoreDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
         :returns: Updated read model.
         """
 
-        return await self.doc.restore(args.id, rev=args.rev)
+        return await self.doc.restore(pk=args.id, rev=args.rev)

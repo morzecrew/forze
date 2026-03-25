@@ -38,21 +38,7 @@ class DocumentCacheSpec(TypedDict, total=False):
 
 
 @final
-class DocumentReadSpec(TypedDict, Generic[R]):
-    """Read specification for a document aggregate."""
-
-    source: str
-    """Source name for the read operations."""
-
-    model: type[R]
-    """Model type for the read operations."""
-
-
-# ....................... #
-
-
-@final
-class DocumentWriteModels(TypedDict, Generic[D, C, U]):
+class DocumentWriteTypes(TypedDict, Generic[D, C, U]):
     """Write models for a document aggregate."""
 
     domain: type[D]
@@ -69,48 +55,23 @@ class DocumentWriteModels(TypedDict, Generic[D, C, U]):
 
 
 @final
-class DocumentWriteSpec(TypedDict, Generic[D, C, U]):
-    """Write specification for a document aggregate."""
-
-    source: str
-    """Source name for the write operations."""
-
-    models: DocumentWriteModels[D, C, U]
-    """Write models for the document aggregate."""
-
-
-# ....................... #
-
-
-@final
-class DocumentHistorySpec(TypedDict):
-    """History specification for a document aggregate."""
-
-    source: str
-    """Source name for the history operations."""
-
-
-# ....................... #
-
-
-@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentSpec(Generic[R, D, C, U]):
     """Declarative specification for a document aggregate."""
 
-    namespace: str
-    """Primary namespace for the document aggregate."""
+    name: str
+    """Name for the document aggregate."""
 
-    read: DocumentReadSpec[R]
+    read: type[R]
     """Read specification for the document aggregate."""
 
-    write: DocumentWriteSpec[D, C, U] | None = None
+    write: DocumentWriteTypes[D, C, U] | None = None
     """Write specification for the document aggregate."""
 
-    history: DocumentHistorySpec | None = None
-    """History specification for the document aggregate."""
+    history_enabled: bool = False
+    """Enable history for the document aggregate. Defaults to ``False``."""
 
-    cache: DocumentCacheSpec | None = None
+    cache: DocumentCacheSpec | None = None  #! something strange ....
     """Cache specification for the document aggregate."""
 
     # ....................... #
@@ -121,7 +82,7 @@ class DocumentSpec(Generic[R, D, C, U]):
         if self.write is None:
             return False
 
-        return issubclass(self.write["models"]["domain"], SoftDeletionMixin)
+        return issubclass(self.write["domain"], SoftDeletionMixin)
 
     # ....................... #
 
@@ -131,4 +92,4 @@ class DocumentSpec(Generic[R, D, C, U]):
         if self.write is None:
             return False
 
-        return self.write["models"]["update_cmd"].model_fields != {}
+        return self.write["update_cmd"].model_fields != {}

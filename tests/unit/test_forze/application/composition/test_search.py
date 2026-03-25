@@ -8,11 +8,7 @@ from forze.application.composition.search import (
     SearchUsecasesFacade,
     build_search_registry,
 )
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchSpec,
-)
+from forze.application.contracts.search import SearchSpec
 from forze.application.execution import UsecaseRegistry
 
 # ----------------------- #
@@ -27,13 +23,9 @@ class _MinimalSearchModel(BaseModel):
 def _minimal_search_spec() -> SearchSpec[_MinimalSearchModel]:
     """Build a minimal SearchSpec for testing."""
     return SearchSpec(
-        namespace="test",
-        model=_MinimalSearchModel,
-        indexes={
-            "default": SearchIndexSpec(
-                fields=[SearchFieldSpec(path="title")],
-            ),
-        },
+        name="test",
+        model_type=_MinimalSearchModel,
+        fields=["title"],
     )
 
 

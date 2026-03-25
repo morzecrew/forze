@@ -106,7 +106,7 @@ class TestMongoDocumentAdapter:
         read_gw.get.return_value = expected_read
 
         adapter = MongoDocumentAdapter(read_gw=read_gw, write_gw=write_gw)
-        updated = await adapter.update(pk, MyUpdateDoc(name="after"), rev=1)
+        updated = await adapter.update(pk, 1, MyUpdateDoc(name="after"))
 
         assert isinstance(updated, MyReadDoc)
         assert updated.id == pk
@@ -119,4 +119,4 @@ class TestMongoDocumentAdapter:
         adapter = MongoDocumentAdapter(read_gw=_build_read_gateway())
 
         with pytest.raises(CoreError, match="Write gateway is not configured"):
-            await adapter.update(uuid4(), MyUpdateDoc(name="x"))
+            await adapter.update(uuid4(), 1, MyUpdateDoc(name="x"))

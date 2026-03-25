@@ -220,8 +220,10 @@ class PostgresIntrospector:
 
             if is_array:
                 elem = r["array_elem_type"]
+
                 if not elem:
                     base = normalize_pg_type(str(r["full_type"]).rstrip("[]"))
+
                 else:
                     base = normalize_pg_type(str(elem))
             else:

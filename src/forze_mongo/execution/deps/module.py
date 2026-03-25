@@ -8,9 +8,9 @@ from forze.application.contracts.document import DocumentReadDepKey, DocumentWri
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.gateways import MongoHistoryWriteStrategy, MongoRevBumpStrategy
 from ...kernel.platform import MongoClient
-from .deps import mongo_document_configurable, mongo_txmanager
+from .configs import MongoDocumentConfigs
+from .deps import ConfigurableMongoDocument, mongo_txmanager
 from .keys import MongoClientDepKey
 
 # ----------------------- #
@@ -24,27 +24,23 @@ class MongoDepsModule(DepsModule):
     client: MongoClient
     """Pre-constructed Mongo client (not yet initialized)."""
 
-    rev_bump_strategy: MongoRevBumpStrategy = "application"
-    """Strategy for revision bumps in Mongo document writes."""
-
-    history_write_strategy: MongoHistoryWriteStrategy = "application"
-    """Strategy for history writes in Mongo document writes."""
+    document_configs: MongoDocumentConfigs = attrs.field(factory=dict)
+    """Mapping from document names to their Mongo-specific configurations."""
 
     # ....................... #
 
     def __call__(self) -> Deps:
         """Build a dependency container with Mongo-backed ports."""
+
         return Deps(
             {
                 MongoClientDepKey: self.client,
                 TxManagerDepKey: mongo_txmanager,
-                DocumentReadDepKey: mongo_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy,
-                    history_write_strategy=self.history_write_strategy,
+                DocumentReadDepKey: ConfigurableMongoDocument(
+                    configs=self.document_configs,
                 ),
-                DocumentWriteDepKey: mongo_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy,
-                    history_write_strategy=self.history_write_strategy,
+                DocumentWriteDepKey: ConfigurableMongoDocument(
+                    configs=self.document_configs,
                 ),
             }
         )

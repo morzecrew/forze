@@ -57,10 +57,12 @@ SearchWriteDepKey = DepKey[SearchWriteDepPort]("search_write")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SearchDepRouter(DepRouter[SearchSpec[Any], SearchReadDepPort], SearchReadDepPort):
+class SearchReadDepRouter(
+    DepRouter[SearchSpec[Any], SearchReadDepPort],
+    SearchReadDepPort,
+    dep_key=SearchReadDepKey,
+):
     """Router that dispatches :class:`SearchReadDepPort` calls by spec."""
-
-    dep_key = SearchReadDepKey
 
     def __call__(
         self,
@@ -78,11 +80,11 @@ class SearchDepRouter(DepRouter[SearchSpec[Any], SearchReadDepPort], SearchReadD
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class SearchWriteDepRouter(
-    DepRouter[SearchSpec[Any], SearchWriteDepPort], SearchWriteDepPort
+    DepRouter[SearchSpec[Any], SearchWriteDepPort],
+    SearchWriteDepPort,
+    dep_key=SearchWriteDepKey,
 ):
     """Router that dispatches :class:`SearchWriteDepPort` calls by spec."""
-
-    dep_key = SearchWriteDepKey
 
     def __call__(
         self,

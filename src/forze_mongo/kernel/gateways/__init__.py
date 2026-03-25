@@ -1,7 +1,7 @@
 from .base import MongoGateway
-from .history import MongoHistoryGateway, MongoHistoryWriteStrategy
+from .history import MongoHistoryGateway
 from .read import MongoReadGateway
-from .write import MongoRevBumpStrategy, MongoWriteGateway
+from .write import MongoWriteGateway
 
 # ----------------------- #
 
@@ -10,6 +10,4 @@ __all__ = [
     "MongoReadGateway",
     "MongoHistoryGateway",
     "MongoWriteGateway",
-    "MongoRevBumpStrategy",
-    "MongoHistoryWriteStrategy",
 ]

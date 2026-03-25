@@ -91,12 +91,12 @@ def mock_document(
     state = context.dep(MockStateDepKey)
     domain_model = None
     if spec.write is not None:
-        domain_model = spec.write["models"]["domain"]
+        domain_model = spec.write["domain"]
 
     return MockDocumentAdapter[Any, Any, Any, Any](
         state=state,
-        namespace=spec.namespace,
-        read_model=spec.read["model"],
+        namespace=spec.name,
+        read_model=spec.read,
         domain_model=domain_model,
     )
 
@@ -116,7 +116,7 @@ def mock_counter(context: ExecutionContext, namespace: str) -> CounterPort:
 
 def mock_cache(context: ExecutionContext, spec: CacheSpec) -> CachePort:
     state = context.dep(MockStateDepKey)
-    return MockCacheAdapter(state=state, namespace=spec.namespace)
+    return MockCacheAdapter(state=state, namespace=spec.name)
 
 
 def mock_idempotency(

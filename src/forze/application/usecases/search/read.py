@@ -42,8 +42,7 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
         body = args
 
         if self.mapper:
-            # typevar ensures that the incoming body is subclass of SearchRequestDTO, so the assignment is safe
-            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+            body = await self.mapper(self.ctx, body)
 
         hits, count = await self.search.search(
             query=body.query,
@@ -86,8 +85,7 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
         body = args
 
         if self.mapper:
-            # typevar ensures that the incoming body is subclass of RawSearchRequestDTO, so the assignment is safe
-            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+            body = await self.mapper(self.ctx, body)
 
         hits, count = await self.search.search(
             query=body.query,

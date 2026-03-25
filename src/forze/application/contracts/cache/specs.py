@@ -1,6 +1,7 @@
-import attrs
 from datetime import timedelta
 from typing import final
+
+import attrs
 
 # ----------------------- #
 
@@ -10,7 +11,7 @@ from typing import final
 class CacheSpec:
     """Cache specification."""
 
-    namespace: str
+    name: str
     """Namespace used for cache keys."""
 
     ttl: timedelta = timedelta(seconds=300)

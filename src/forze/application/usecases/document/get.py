@@ -28,4 +28,4 @@ class GetDocument[R: ReadDocument](Usecase[DocumentIdDTO, R]):
         :returns: Read model.
         """
 
-        return await self.doc.get(args.id)
+        return await self.doc.get(pk=args.id)

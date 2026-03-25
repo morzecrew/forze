@@ -34,4 +34,4 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
 
         cmd = await self.mapper(self.ctx, args.dto)
 
-        return await self.doc.update(args.id, cmd, rev=args.rev)
+        return await self.doc.update(pk=args.id, rev=args.rev, dto=cmd)

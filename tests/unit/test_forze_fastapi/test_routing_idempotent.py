@@ -65,15 +65,12 @@ def _doc_spec_and_dtos() -> tuple[DocumentSpec, DocumentDTOs]:
         title: str | None = None
 
     spec = DocumentSpec(
-        namespace="test",
-        read={"source": "test_read", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_write",
-            "models": {
-                "domain": Document,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": UpdateCmd,
-            },
+            "domain": Document,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": UpdateCmd,
         },
     )
     dtos = DocumentDTOs(
@@ -103,7 +100,7 @@ class TestDocumentCreateIdempotencyIntegration:
 
         spec, dtos = _doc_spec_and_dtos()
         reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
-        reg.finalize(spec.namespace, inplace=True)
+        reg.finalize(spec.name, inplace=True)
 
         app = FastAPI()
         router = APIRouter(prefix="/api")

@@ -102,13 +102,13 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         if dtos.create is None:
             logger.warning(
                 "Create DTO is not provided for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -138,19 +138,19 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not dtos.update:
             logger.warning(
                 "Update DTO is not provided for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not document.supports_update():
             logger.warning(
                 "Update is not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -171,7 +171,7 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -191,13 +191,13 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not document.supports_soft_delete():
             logger.warning(
                 "Soft delete is not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -218,13 +218,13 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not document.supports_soft_delete():
             logger.warning(
                 "Soft delete is not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:

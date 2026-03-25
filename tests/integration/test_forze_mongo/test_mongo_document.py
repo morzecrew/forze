@@ -2,19 +2,23 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.document.specs import DocumentSpec
+from forze.application.contracts.document import (
+    DocumentReadDepKey,
+    DocumentSpec,
+    DocumentWriteDepKey,
+)
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import ConflictError
+from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_mongo.execution.deps.deps import mongo_document_configurable
+from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
 
-class MyDoc(Document):
+class MyDoc(Document, SoftDeletionMixin):
     name: str
-    is_deleted: bool = False
 
 
 class MyCreateDoc(CreateDocumentCmd):
@@ -34,27 +38,37 @@ class MyReadDoc(ReadDocument):
 async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> None:
     collection = f"docs_{uuid4().hex[:8]}"
     history_collection = f"{collection}_history"
-    deps = Deps({MongoClientDepKey: mongo_client})
-    ctx = ExecutionContext(deps=deps)
+    db_name = mongo_client.db().name
+
     spec = DocumentSpec(
-        namespace="my_docs_ns",
-        read={"source": collection, "model": MyReadDoc},
+        name="my_docs_ns",
+        read=MyReadDoc,
         write={
-            "source": collection,
-            "models": {
-                "domain": MyDoc,
-                "create_cmd": MyCreateDoc,
-                "update_cmd": MyUpdateDoc,
-            },
+            "domain": MyDoc,
+            "create_cmd": MyCreateDoc,
+            "update_cmd": MyUpdateDoc,
         },
-        history={"source": history_collection},
+        history_enabled=True,
     )
 
-    factory = mongo_document_configurable(
-        rev_bump_strategy="application",
-        history_write_strategy="application",
+    configurable = ConfigurableMongoDocument(
+        configs={
+            "my_docs_ns": {
+                "read": (db_name, collection),
+                "write": (db_name, collection),
+                "history": (db_name, history_collection),
+            }
+        }
     )
-    adapter = factory(ctx, spec)
+    deps = Deps(
+        {
+            MongoClientDepKey: mongo_client,
+            DocumentReadDepKey: configurable,
+            DocumentWriteDepKey: configurable,
+        }
+    )
+    ctx = ExecutionContext(deps=deps)
+    adapter = ctx.doc_write(spec)
 
     created = await adapter.create(MyCreateDoc(name="alpha"))
     created_2 = await adapter.create(MyCreateDoc(name="beta"))
@@ -74,21 +88,23 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert {x.id for x in docs} == {created.id, created_2.id}
 
     updated = await adapter.update(
-        created.id, MyUpdateDoc(name="alpha-2"), rev=created.rev
+        created.id,
+        created.rev,
+        MyUpdateDoc(name="alpha-2"),
     )
     assert updated.name == "alpha-2"
     assert updated.rev == 2
 
     with pytest.raises(ConflictError, match="Historical consistency violation"):
-        await adapter.update(created.id, MyUpdateDoc(name="alpha-3"), rev=1)
+        await adapter.update(created.id, 1, MyUpdateDoc(name="alpha-3"))
 
     touched = await adapter.touch(created.id)
     assert touched.rev == 3
 
-    deleted = await adapter.delete(created.id)
+    deleted = await adapter.delete(created.id, touched.rev)
     assert deleted.is_deleted is True
 
-    restored = await adapter.restore(created.id)
+    restored = await adapter.restore(created.id, deleted.rev)
     assert restored.is_deleted is False
 
     await adapter.kill(created_2.id)
@@ -96,7 +112,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
 
     history_rows = await mongo_client.find_many(
         mongo_client.collection(history_collection),
-        {"source": collection, "id": str(created.id)},
+        {"source": f"{db_name}.{collection}", "id": str(created.id)},
     )
     assert len(history_rows) >= 3
 

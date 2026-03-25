@@ -30,9 +30,10 @@ from psycopg import AsyncConnection, Column, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool
 
-from forze.base.errors import InfrastructureError
+from forze.base.errors import CoreError, InfrastructureError
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
 from .errors import psycopg_handled
 
 # ----------------------- #
@@ -46,7 +47,7 @@ IsolationLevel = Literal["repeatable read", "serializable"]
 # ....................... #
 
 
-@final
+@final  #! very questionable thing ... and we need to move tx options to the tx manager (?)
 class PostgresTransactionOptions(TypedDict, total=False):
     """Options for :meth:`PostgresClient.transaction`."""
 
@@ -83,6 +84,35 @@ class PostgresConfig:
 
     num_workers: int = 4
     """Number of worker threads for the pool."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.min_size > self.max_size:
+            raise CoreError("Minimum size must be less than or equal to maximum size")
+
+        if self.min_size < 0:
+            raise CoreError("Minimum size must be greater than 0")
+
+        if self.max_size < 0:
+            raise CoreError("Maximum size must be greater than 0")
+
+        if self.num_workers < 0:
+            raise CoreError("Number of workers must be greater than 0")
+
+        if self.min_size > 10:
+            logger.warning(
+                "Minimum size is greater than 10 (%s), this is not recommended. Consider using a smaller value.",
+                self.min_size,
+            )
+
+        if self.max_size > 100:
+            logger.warning(
+                "Maximum size is greater than 100 (%s), this is not recommended. Consider using a smaller value.",
+                self.max_size,
+            )
+
+        #! add warnings for timeouts
 
 
 # ....................... #
@@ -273,6 +303,11 @@ class PostgresClient:
                     )
 
             except Exception:
+                logger.exception(
+                    "Error in nested transaction, rolling back to savepoint '%s'",
+                    sp_name,
+                )
+
                 async with parent_conn.cursor() as cur:
                     await cur.execute(
                         sql.SQL("ROLLBACK TO SAVEPOINT {}").format(
@@ -316,6 +351,7 @@ class PostgresClient:
                 await parent_conn.commit()
 
             except Exception:
+                logger.exception("Error in top-level transaction, rolling back")
                 await parent_conn.rollback()
                 raise
 
@@ -352,6 +388,7 @@ class PostgresClient:
                 await conn.commit()
 
             except Exception:
+                logger.exception("Error in transaction, rolling back")
                 await conn.rollback()
                 raise
 

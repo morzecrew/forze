@@ -2,33 +2,37 @@
 
 from typing import Any
 
-from forze.application.contracts.document import (
-    DocumentHistorySpec,
-    DocumentReadSpec,
-    DocumentWriteSpec,
-)
+from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.execution import ExecutionContext
 
-from ...kernel.gateways import (
-    MongoHistoryGateway,
-    MongoHistoryWriteStrategy,
-    MongoReadGateway,
-    MongoRevBumpStrategy,
-    MongoWriteGateway,
-)
+from ...kernel.gateways import MongoHistoryGateway, MongoReadGateway, MongoWriteGateway
 from .keys import MongoClientDepKey
 
 # ----------------------- #
 
+DocWriteTypes = DocumentWriteTypes[Any, Any, Any]
+
+# ....................... #
+
 
 def read_gw(
     ctx: ExecutionContext,
-    spec: DocumentReadSpec[Any],
+    *,
+    read_type: type[Any],
+    read_relation: tuple[str, str],
+    tenant_aware: bool,
 ) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
     client = ctx.dep(MongoClientDepKey)
 
-    return MongoReadGateway(source=spec["source"], client=client, model=spec["model"])
+    return MongoReadGateway(
+        database=read_relation[0],
+        collection=read_relation[1],
+        client=client,
+        model_type=read_type,
+        tenant_provider=ctx.get_tenant_id,
+        tenant_aware=tenant_aware,
+    )
 
 
 # ....................... #
@@ -36,19 +40,25 @@ def read_gw(
 
 def _doc_history_gw(
     ctx: ExecutionContext,
-    spec: DocumentHistorySpec,
-    write_spec: DocumentWriteSpec[Any, Any, Any],
-    history_write_strategy: MongoHistoryWriteStrategy = "application",
+    *,
+    domain_type: type[Any],
+    history_relation: tuple[str, str],
+    write_relation: tuple[str, str],
+    tenant_aware: bool,
 ) -> MongoHistoryGateway[Any]:
     """Build a history gateway for document audit trails."""
+
     client = ctx.dep(MongoClientDepKey)
 
     return MongoHistoryGateway(
-        source=spec["source"],
-        target_source=write_spec["source"],
-        strategy=history_write_strategy,
+        database=history_relation[0],
+        collection=history_relation[1],
+        target_database=write_relation[0],
+        target_collection=write_relation[1],
         client=client,
-        model=write_spec["models"]["domain"],
+        model_type=domain_type,
+        tenant_provider=ctx.get_tenant_id,
+        tenant_aware=tenant_aware,
     )
 
 
@@ -57,32 +67,42 @@ def _doc_history_gw(
 
 def doc_write_gw(
     ctx: ExecutionContext,
-    spec: DocumentWriteSpec[Any, Any, Any],
-    history_spec: DocumentHistorySpec | None = None,
     *,
-    rev_bump_strategy: MongoRevBumpStrategy = "application",
-    history_write_strategy: MongoHistoryWriteStrategy = "application",
+    write_types: DocWriteTypes,
+    write_relation: tuple[str, str],
+    history_relation: tuple[str, str] | None = None,
+    history_enabled: bool = False,
+    tenant_aware: bool,
 ) -> MongoWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history."""
     client = ctx.dep(MongoClientDepKey)
-    read = read_gw(ctx, {"source": spec["source"], "model": spec["models"]["domain"]})
+
+    read = read_gw(
+        ctx,
+        read_type=write_types["domain"],
+        read_relation=write_relation,
+        tenant_aware=tenant_aware,
+    )
     hist = None
 
-    if history_spec:
+    if history_relation is not None and history_enabled:
         hist = _doc_history_gw(
             ctx,
-            history_spec,
-            spec,
-            history_write_strategy,
+            domain_type=write_types["domain"],
+            history_relation=history_relation,
+            write_relation=write_relation,
+            tenant_aware=tenant_aware,
         )
 
     return MongoWriteGateway(
-        source=spec["source"],
+        database=write_relation[0],
+        collection=write_relation[1],
         client=client,
-        model=spec["models"]["domain"],
-        read=read,
-        create_dto=spec["models"]["create_cmd"],
-        update_dto=spec["models"]["update_cmd"],
-        history=hist,
-        rev_bump_strategy=rev_bump_strategy,
+        model_type=write_types["domain"],
+        create_cmd_type=write_types["create_cmd"],
+        update_cmd_type=write_types["update_cmd"],
+        read_gw=read,
+        history_gw=hist,
+        tenant_provider=ctx.get_tenant_id,
+        tenant_aware=tenant_aware,
     )

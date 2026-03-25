@@ -42,15 +42,12 @@ def _minimal_spec(
     update_cmd = UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
     domain = _SoftDoc if supports_soft_delete else Document
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_read", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_write",
-            "models": {
-                "domain": domain,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": update_cmd,
-            },
+            "domain": domain,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": update_cmd,
         },
     )
 
@@ -85,8 +82,8 @@ class TestBuildDocumentCreateMapper:
         from forze.base.errors import CoreError
 
         spec = DocumentSpec(
-            namespace="test",
-            read={"source": "test_read", "model": ReadDocument},
+            name="test",
+            read=ReadDocument,
             write=None,
         )
         dtos = _minimal_dtos()
@@ -115,8 +112,8 @@ class TestBuildDocumentUpdateMapper:
         from forze.base.errors import CoreError
 
         spec = DocumentSpec(
-            namespace="test",
-            read={"source": "test_read", "model": ReadDocument},
+            name="test",
+            read=ReadDocument,
             write=None,
         )
         dtos = _minimal_dtos(supports_update=True)

@@ -7,10 +7,13 @@ adapters.
 
 from .keys import PostgresClientDepKey
 from .module import PostgresDepsModule
+from .configs import PostgresDocumentConfig, PostgresSearchConfig
 
 # ----------------------- #
 
 __all__ = [
     "PostgresDepsModule",
     "PostgresClientDepKey",
+    "PostgresDocumentConfig",
+    "PostgresSearchConfig",
 ]

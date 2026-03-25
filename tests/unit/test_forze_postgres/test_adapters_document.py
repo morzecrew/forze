@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.application.contracts.document import DocumentSpec
 from forze.domain.models import ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
 from forze_postgres.kernel.gateways import PostgresReadGateway
@@ -16,9 +17,13 @@ def _build_read_doc(pk: UUID, *, rev: int = 1) -> ReadDocument:
     return ReadDocument(id=pk, rev=rev, created_at=now, last_update_at=now)
 
 
+def _adapter_spec() -> DocumentSpec:
+    return DocumentSpec(name="pytest_doc", read=ReadDocument)
+
+
 def _build_read_gateway() -> MagicMock:
     gateway = MagicMock(spec=PostgresReadGateway)
-    gateway.model = ReadDocument
+    gateway.model_type = ReadDocument
     gateway.client = object()
     gateway.get = AsyncMock()
     gateway.get_many = AsyncMock()
@@ -37,7 +42,11 @@ class TestPostgresDocumentAdapter:
         cache.get = AsyncMock(side_effect=RuntimeError("cache unavailable"))
         cache.set_versioned = AsyncMock()
 
-        adapter = PostgresDocumentAdapter(read_gw=read_gw, cache=cache)
+        adapter = PostgresDocumentAdapter(
+            spec=_adapter_spec(),
+            read_gw=read_gw,
+            cache=cache,
+        )
 
         result = await adapter.get(pk, for_update=True)
 
@@ -56,7 +65,11 @@ class TestPostgresDocumentAdapter:
         cache.get = AsyncMock(return_value=None)
         cache.set_versioned = AsyncMock(side_effect=RuntimeError("cache unavailable"))
 
-        adapter = PostgresDocumentAdapter(read_gw=read_gw, cache=cache)
+        adapter = PostgresDocumentAdapter(
+            spec=_adapter_spec(),
+            read_gw=read_gw,
+            cache=cache,
+        )
 
         result = await adapter.get(pk)
 
@@ -77,7 +90,11 @@ class TestPostgresDocumentAdapter:
         cache.get_many = AsyncMock(side_effect=RuntimeError("cache unavailable"))
         cache.set_many_versioned = AsyncMock()
 
-        adapter = PostgresDocumentAdapter(read_gw=read_gw, cache=cache)
+        adapter = PostgresDocumentAdapter(
+            spec=_adapter_spec(),
+            read_gw=read_gw,
+            cache=cache,
+        )
 
         result = await adapter.get_many(pks)
 
@@ -100,10 +117,14 @@ class TestPostgresDocumentAdapter:
             side_effect=RuntimeError("cache unavailable")
         )
 
-        adapter = PostgresDocumentAdapter(read_gw=read_gw, cache=cache)
+        adapter = PostgresDocumentAdapter(
+            spec=_adapter_spec(),
+            read_gw=read_gw,
+            cache=cache,
+        )
 
         result = await adapter.get_many(pks)
 
         assert result == expected
-        read_gw.get_many.assert_awaited_once_with(pks)
+        read_gw.get_many.assert_awaited_once_with([pks[0], pks[1]])
         cache.set_many_versioned.assert_awaited_once()
