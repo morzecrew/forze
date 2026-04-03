@@ -1,6 +1,6 @@
 """Dependency keys for RabbitMQ-related services."""
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.base import DepKey
 
 from ...kernel.platform import RabbitMQClient
 

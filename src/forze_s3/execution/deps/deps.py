@@ -1,31 +1,33 @@
-"""Factory function for S3 storage port adapter."""
+from typing import final
 
-from forze.application.contracts.storage import StoragePort
-from forze.application.contracts.tenant.deps import TenantContextDepKey
+import attrs
+
+from forze.application.contracts.storage import StorageDepPort, StorageSpec
 from forze.application.execution import ExecutionContext
 
 from ...adapters import S3StorageAdapter
+from .configs import S3StorageConfig
 from .keys import S3ClientDepKey
 
 # ----------------------- #
 
 
-def s3_storage(context: ExecutionContext, bucket: str) -> StoragePort:
-    """Build a S3-backed storage port for the given bucket.
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableS3Storage(StorageDepPort):
+    """Configurable S3 storage adapter."""
 
-    :param context: Execution context for resolving the S3 client.
-    :param bucket: Bucket name for object storage operations.
-    :returns: Storage port backed by :class:`S3StorageAdapter`.
-    """
-    s3_client = context.dep(S3ClientDepKey)
+    config: S3StorageConfig
+    """Configuration for the storage."""
 
-    tenant_context = None
+    # ....................... #
 
-    if context.deps.exists(TenantContextDepKey):
-        tenant_context = context.dep(TenantContextDepKey)()
+    def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
+        client = ctx.dep(S3ClientDepKey)
 
-    return S3StorageAdapter(
-        client=s3_client,
-        bucket=bucket,
-        tenant_context=tenant_context,
-    )
+        return S3StorageAdapter(
+            client=client,
+            bucket=self.config["bucket"],
+            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_provider=ctx.get_tenant_id,
+        )

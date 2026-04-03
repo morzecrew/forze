@@ -1271,12 +1271,7 @@ class MockStorageAdapter(StoragePort):
 class MockTxManagerAdapter(TxManagerPort):
     """No-op transaction manager for mock environments."""
 
-    scope: TxScopeKey = attrs.field(factory=lambda: TxScopeKey(name="mock"))
-
-    # ....................... #
-
-    def scope_key(self) -> TxScopeKey:
-        return self.scope
+    scope_key: TxScopeKey = attrs.field(factory=lambda: TxScopeKey(name="mock"))
 
     # ....................... #
 

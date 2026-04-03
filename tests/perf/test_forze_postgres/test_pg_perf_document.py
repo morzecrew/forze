@@ -62,7 +62,7 @@ def execution_context(pg_client: PostgresClient):
         bookkeeping_strategy="application",
         configs=_PG_PERF_DOC_CONFIG,
     )
-    deps = Deps(
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

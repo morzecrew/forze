@@ -57,10 +57,10 @@ class _StubQueue(QueueReadPort[_QueuePayload], QueueWritePort[_QueuePayload]):
 
 
 class TestQueueSpec:
-    def test_spec_contains_namespace_and_model(self) -> None:
-        spec = QueueSpec(namespace="jobs", model=_QueuePayload)
+    def test_spec_contains_name_and_model(self) -> None:
+        spec = QueueSpec(name="jobs", model=_QueuePayload)
 
-        assert spec.namespace == "jobs"
+        assert spec.name == "jobs"
         assert spec.model is _QueuePayload
 
 

@@ -22,17 +22,15 @@ class SearchableModel(BaseModel):
 
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
-    deps = Deps(
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
             SearchReadDepKey: ConfigurablePostgresSearch(
-                configs={
-                    "search_ns": {
-                        "index": ("public", "idx_search_items_pgroonga"),
-                        "source": ("public", "search_items"),
-                        "engine": "pgroonga",
-                    }
+                config={
+                    "index": ("public", "idx_search_items_pgroonga"),
+                    "source": ("public", "search_items"),
+                    "engine": "pgroonga",
                 }
             ),
         }
@@ -96,7 +94,7 @@ async def test_postgres_search_adapter(
         fields=["title", "content"],
     )
 
-    adapter = execution_context.search(spec)
+    adapter = execution_context.search_read(spec)
 
     res, cnt = await adapter.search("python")
     assert cnt == 3

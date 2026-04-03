@@ -7,8 +7,7 @@ require_psycopg()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Callable, Self, Sequence, final
-from uuid import UUID
+from typing import Any, Self, Sequence, final
 
 import attrs
 import orjson
@@ -25,6 +24,7 @@ from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
+from forze.infra.tenancy import MultiTenancyMixin
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClient
@@ -90,11 +90,10 @@ class PostgresQualifiedName:
 
 
 # ....................... #
-#! TODO: add multi-tenancy support (row level)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresGateway[M: BaseModel]:
+class PostgresGateway[M: BaseModel](MultiTenancyMixin):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
     qname: PostgresQualifiedName
@@ -108,12 +107,6 @@ class PostgresGateway[M: BaseModel]:
 
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
-
-    tenant_aware: bool = False
-    """Whether tenant ID is required for the gateway."""
-
-    tenant_provider: Callable[[], UUID | None] | None = None
-    """Callable to provide the tenant ID."""
 
     # ....................... #
 
@@ -132,23 +125,18 @@ class PostgresGateway[M: BaseModel]:
         return sql.Identifier(TENANT_ID_FIELD)
 
     # ....................... #
+    #! We need introspection to make sure of tenancy compatibility
 
-    def _add_tenant_where(
+    def _add_tenant_where(  #! ..._if_aware ?
         self,
         query: sql.Composable,
         params: list[Any],
     ) -> tuple[sql.Composable, list[Any]]:
-        """Add tenant ID filter to the query if tenant provider is declared and tenant ID is not None."""
+        """Add tenant ID filter to the query if gateway is tenant aware."""
 
-        if self.tenant_aware:
-            if self.tenant_provider is None:
-                raise CoreError("Tenant provider is required for the gateway")
+        tenant_id = self.require_tenant_if_aware()
 
-            tenant_id = self.tenant_provider()
-
-            if tenant_id is None:
-                raise CoreError("Tenant ID is required for the gateway")
-
+        if tenant_id is not None:
             cond_sql = sql.SQL("{ident} = {value}").format(
                 ident=self.ident_tenant_id(),
                 value=sql.Placeholder(),
@@ -159,19 +147,16 @@ class PostgresGateway[M: BaseModel]:
         return query, params
 
     # ....................... #
+    #! We need introspection to make sure of tenancy compatibility
 
-    def _add_tenant_id(self, data: JsonDict) -> JsonDict:
+    def _add_tenant_id(self, data: JsonDict) -> JsonDict:  #! ..._if_aware ?
+        """Add tenant ID to the data if gateway is tenant aware."""
+
         out = dict(data)
 
-        if self.tenant_aware:
-            if self.tenant_provider is None:
-                raise CoreError("Tenant provider is required for the gateway")
+        tenant_id = self.require_tenant_if_aware()
 
-            tenant_id = self.tenant_provider()
-
-            if tenant_id is None:
-                raise CoreError("Tenant ID is required for the gateway")
-
+        if tenant_id is not None:
             out[TENANT_ID_FIELD] = tenant_id
 
         return out
@@ -197,26 +182,6 @@ class PostgresGateway[M: BaseModel]:
         query, params = self._add_tenant_where(query, params)  # type: ignore[assignment]
 
         return query, params
-
-    # ....................... #
-
-    # def sort_clause(
-    #     self,
-    #     sorts: QuerySortExpression | None = None,
-    # ) -> sql.Composable:
-    #     #! TODO: change this shit
-    #     if not sorts:
-    #         #! That's quite bad because there no assumption about id column presented
-    #         sorts = {ID_FIELD: "desc"}
-
-    #     parts: list[sql.Composable] = []
-
-    #     for field, order in sorts.items():
-    #         parts.append(
-    #             sql.SQL("{} {}").format(sql.Identifier(field), sql.SQL(order.upper()))
-    #         )
-
-    #     return sql.SQL(", ").join(parts)
 
     # ....................... #
 

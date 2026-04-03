@@ -56,15 +56,15 @@ class TestSearchReadDepKey:
         assert SearchReadDepKey.name == "search_read"
 
 
-class TestExecutionContextSearch:
-    """Tests for ExecutionContext.search() resolution."""
+class TestExecutionContextSearchRead:
+    """Tests for ExecutionContext.search_read() resolution."""
 
-    def test_search_resolves_registered_port(
+    def test_search_read_resolves_registered_port(
         self,
         stub_ctx,
     ) -> None:
-        """ctx.search(spec) returns SearchReadPort from SearchReadDepKey."""
+        """ctx.search_read(spec) returns SearchReadPort from SearchReadDepKey."""
         spec = _minimal_search_spec()
-        port = stub_ctx.search(spec)
+        port = stub_ctx.search_read(spec)
         assert port is not None
         assert hasattr(port, "search")

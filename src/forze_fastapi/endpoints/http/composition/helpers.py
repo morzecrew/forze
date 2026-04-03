@@ -1,6 +1,6 @@
 from typing import Sequence
 
-from forze.application.contracts.mapper import LocalMapperPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import facade_call, facade_op
 from forze.base.errors import CoreError
 
@@ -49,7 +49,7 @@ def build_http_endpoint_spec(
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
-    mapper: LocalMapperPort[HttpRequestDTO[Q, P, H, C, B], In],
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In],
     metadata: HttpMetadataSpec | None = None,
     response: type[R] | None = None,
     features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = None,

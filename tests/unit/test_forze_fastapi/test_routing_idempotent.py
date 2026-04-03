@@ -91,15 +91,17 @@ class TestDocumentCreateIdempotencyIntegration:
 
         def _ctx_factory() -> ExecutionContext:
             return ExecutionContext(
-                deps=Deps(
-                    deps={
+                deps=Deps.plain(
+                    {
                         IdempotencyDepKey: spy_factory,
                     }
                 )
             )
 
         spec, dtos = _doc_spec_and_dtos()
-        reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
+        reg = build_document_registry(spec, dtos).extend_plan(
+            UsecasePlan().tx("*", route="mock")
+        )
         reg.finalize(spec.name, inplace=True)
 
         app = FastAPI()

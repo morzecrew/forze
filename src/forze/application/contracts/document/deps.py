@@ -1,11 +1,9 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Any, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import attrs
-
+from ..base import DepKey
 from ..cache import CachePort
-from ..deps import DepKey, DepRouter
 from .ports import DocumentReadPort, DocumentWritePort
 from .specs import DocumentSpec
 
@@ -64,48 +62,3 @@ DocumentReadDepKey = DepKey[DocumentReadDepPort]("document_read")
 
 DocumentWriteDepKey = DepKey[DocumentWriteDepPort]("document_write")
 """Key used to register the :class:`DocumentWriteDepPort` implementation."""
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentReadDepRouter(
-    DepRouter[DocSpec, DocumentReadDepPort],
-    DocumentReadDepPort,
-    dep_key=DocumentReadDepKey,
-):
-    """Router that dispatches :class:`DocumentReadDepPort` calls by spec."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: DocSpec,
-        cache: CachePort | None = None,
-    ) -> DocReadPort:
-        route = self._select(spec)
-
-        return route(context, spec, cache=cache)
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentWriteDepRouter(
-    DepRouter[DocSpec, DocumentWriteDepPort],
-    DocumentWriteDepPort,
-    dep_key=DocumentWriteDepKey,
-):
-    """Router that dispatches :class:`DocumentWriteDepPort` calls by spec."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: DocSpec,
-        cache: CachePort | None = None,
-    ) -> DocWritePort:
-        route = self._select(spec)
-
-        return route(context, spec, cache=cache)

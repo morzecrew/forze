@@ -4,9 +4,19 @@ import pytest
 
 pytest.importorskip("aioboto3")
 
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.platform.client import S3Client
+
+
+def _s3_ctx(client: S3Client, bucket: str) -> ExecutionContext:
+    return ExecutionContext(
+        deps=S3DepsModule(
+            client=client,
+            storages={bucket: {"bucket": bucket}},
+        )()
+    )
 
 
 @pytest.mark.perf
@@ -16,8 +26,8 @@ async def test_storage_upload_benchmark(
 ) -> None:
     """Benchmark storage adapter upload."""
 
-    ctx = ExecutionContext(deps=S3DepsModule(client=s3_client)())
-    storage = ctx.storage(s3_bucket)
+    ctx = _s3_ctx(s3_client, s3_bucket)
+    storage = ctx.storage(StorageSpec(name=s3_bucket))
 
     async def run() -> None:
         uploaded = await storage.upload(
@@ -37,8 +47,8 @@ async def test_storage_list_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark storage adapter list."""
-    ctx = ExecutionContext(deps=S3DepsModule(client=s3_client)())
-    storage = ctx.storage(s3_bucket)
+    ctx = _s3_ctx(s3_client, s3_bucket)
+    storage = ctx.storage(StorageSpec(name=s3_bucket))
 
     uploaded = await storage.upload(
         filename="list-bench.txt",
@@ -62,8 +72,8 @@ async def test_storage_download_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark storage adapter download (object pre-seeded)."""
-    ctx = ExecutionContext(deps=S3DepsModule(client=s3_client)())
-    storage = ctx.storage(s3_bucket)
+    ctx = _s3_ctx(s3_client, s3_bucket)
+    storage = ctx.storage(StorageSpec(name=s3_bucket))
 
     uploaded = await storage.upload(
         filename="download-bench.txt",
@@ -88,8 +98,8 @@ async def test_storage_upload_list_download_delete_benchmark(
 ) -> None:
     """Benchmark storage adapter full round-trip."""
 
-    ctx = ExecutionContext(deps=S3DepsModule(client=s3_client)())
-    storage = ctx.storage(s3_bucket)
+    ctx = _s3_ctx(s3_client, s3_bucket)
+    storage = ctx.storage(StorageSpec(name=s3_bucket))
 
     async def run() -> None:
         uploaded = await storage.upload(

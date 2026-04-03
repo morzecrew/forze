@@ -8,7 +8,8 @@ from forze.application.contracts.queue import QueueReadDepKey, QueueWriteDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import RabbitMQClient
-from .deps import rabbitmq_queue
+from .configs import RabbitMQQueueConfig
+from .deps import ConfigurableRabbitMQQueueRead, ConfigurableRabbitMQQueueWrite
 from .keys import RabbitMQClientDepKey
 
 # ----------------------- #
@@ -22,14 +23,43 @@ class RabbitMQDepsModule(DepsModule):
     client: RabbitMQClient
     """Pre-constructed RabbitMQ client (connection not yet initialized)."""
 
+    queue_readers: dict[str, RabbitMQQueueConfig] = attrs.field(factory=dict)
+    """Mapping from queue names to their RabbitMQ-specific configurations."""
+
+    queue_writers: dict[str, RabbitMQQueueConfig] = attrs.field(factory=dict)
+    """Mapping from queue names to their RabbitMQ-specific configurations."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
         """Build a dependency container with RabbitMQ-backed ports."""
-        return Deps(
-            {
-                RabbitMQClientDepKey: self.client,
-                QueueReadDepKey: rabbitmq_queue,
-                QueueWriteDepKey: rabbitmq_queue,
-            }
-        )
+
+        plain_deps = Deps.plain({RabbitMQClientDepKey: self.client})
+        queue_reader_deps = Deps()
+        queue_writer_deps = Deps()
+
+        if self.queue_readers:
+            queue_reader_deps = queue_reader_deps.merge(
+                Deps.routed(
+                    {
+                        QueueReadDepKey: {
+                            name: ConfigurableRabbitMQQueueRead(config=config)
+                            for name, config in self.queue_readers.items()
+                        }
+                    }
+                )
+            )
+
+        if self.queue_writers:
+            queue_writer_deps = queue_writer_deps.merge(
+                Deps.routed(
+                    {
+                        QueueWriteDepKey: {
+                            name: ConfigurableRabbitMQQueueWrite(config=config)
+                            for name, config in self.queue_writers.items()
+                        }
+                    }
+                )
+            )
+
+        return plain_deps.merge(queue_reader_deps, queue_writer_deps)

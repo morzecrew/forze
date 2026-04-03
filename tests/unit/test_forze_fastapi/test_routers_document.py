@@ -61,7 +61,9 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
     """Build registry with plan merged and id set (required for attach_http_endpoint)."""
-    reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
+    reg = build_document_registry(spec, dtos).extend_plan(
+        UsecasePlan().tx("*", route="mock")
+    )
     reg.finalize(spec.name, inplace=True)
     return reg
 

@@ -1,11 +1,4 @@
-from .deps import (
-    SearchReadDepKey,
-    SearchReadDepPort,
-    SearchReadDepRouter,
-    SearchWriteDepKey,
-    SearchWriteDepPort,
-    SearchWriteDepRouter,
-)
+from .deps import SearchReadDepKey, SearchWriteDepKey
 from .ports import SearchReadPort, SearchWritePort
 from .specs import FederatedSearchSpec, SearchSpec
 from .types import SearchOptions
@@ -18,10 +11,6 @@ __all__ = [
     "SearchOptions",
     "SearchReadPort",
     "SearchWritePort",
-    "SearchReadDepPort",
-    "SearchWriteDepPort",
     "SearchReadDepKey",
     "SearchWriteDepKey",
-    "SearchReadDepRouter",
-    "SearchWriteDepRouter",
 ]

@@ -15,58 +15,50 @@ from forze.application.contracts.queue import (
     QueueReadPort,
     QueueWritePort,
 )
-from forze.base.errors import CoreError
+from forze.infra.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import RabbitMQClient, RabbitMQQueueMessage
+from ..kernel.platform import RabbitMQClient
+from .codecs import RabbitMQQueueCodec
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RabbitMQQueueCodec[M: BaseModel]:
-    model: type[M]
+class RabbitMQQueueAdapter[M: BaseModel](
+    QueueReadPort[M],
+    QueueWritePort[M],
+    MultiTenancyMixin,
+):
+    """RabbitMQ queue adapter."""
 
-    # ....................... #
-
-    def encode(self, payload: M) -> bytes:
-        return payload.model_dump_json().encode("utf-8")
-
-    # ....................... #
-
-    def decode(self, queue: str, raw: RabbitMQQueueMessage) -> QueueMessage[M]:
-        body = raw["body"]
-
-        if not isinstance(body, (bytes, bytearray)):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise CoreError(f"RabbitMQ queue message '{raw['id']}' has invalid payload")
-
-        return QueueMessage(
-            queue=queue,
-            id=raw["id"],
-            payload=self.model.model_validate_json(body),
-            type=raw.get("type"),
-            enqueued_at=raw.get("enqueued_at"),
-            key=raw.get("key"),
-        )
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class RabbitMQQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
     client: RabbitMQClient
+    """RabbitMQ client instance."""
+
     codec: RabbitMQQueueCodec[M]
-    namespace: str = ""
+    """RabbitMQ queue codec instance."""
+
+    namespace: str | None = None
+    """RabbitMQ queue namespace."""
 
     # ....................... #
 
     def __queue_name(self, queue: str) -> str:
-        if not self.namespace:
-            return queue
+        tenant_id = self.require_tenant_if_aware()
 
-        return f"{self.namespace}:{queue}"
+        if tenant_id is not None:
+            tenant_prefix = f"tenant:{tenant_id}"
+
+        else:
+            tenant_prefix = ""
+
+        if self.namespace:
+            namespaced_queue = f"{self.namespace}:{queue}"
+
+        else:
+            namespaced_queue = queue
+
+        return f"{tenant_prefix}:{namespaced_queue}".lstrip(":")
 
     # ....................... #
 

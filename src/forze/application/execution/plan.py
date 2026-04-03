@@ -23,6 +23,7 @@ from .middleware import (
 from .usecase import Usecase
 
 # ----------------------- #
+#! TODO: Consider replacement of CoreError to RuntimeError
 
 U = TypeVar("U", bound=Usecase[Any, Any])
 
@@ -78,6 +79,18 @@ class MiddlewareSpec:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class TransactionSpec:
+    """Specification for a transaction attached to an operation plan."""
+
+    route: str
+    """Routing key for the transaction."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class OperationPlan:
     """Per-operation middleware composition with transaction support.
 
@@ -86,8 +99,8 @@ class OperationPlan:
     When ``tx`` is ``True``, in-tx and after-commit buckets are used.
     """
 
-    tx: bool = False
-    """Whether the operation runs inside a transaction."""
+    tx: TransactionSpec | None = None
+    """Transaction spec for the operation. None means non-transactional."""
 
     # outer
     outer_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
@@ -156,7 +169,7 @@ class OperationPlan:
             or self.in_tx_after
             or self.in_tx_wrap
             or self.after_commit
-        ) and not self.tx:
+        ) and self.tx is None:
             raise CoreError(
                 "Operation plan uses IN_TX_* middlewares but tx() is not enabled"
             )
@@ -321,17 +334,32 @@ class UsecasePlan:
 
     # ....................... #
 
-    def tx(self, op: OpKey) -> Self:
+    def tx(self, op: OpKey, *, route: str) -> Self:
         """Enable transaction wrapping for the operation.
+
+        :param op: Operation key.
+        :param route: Routing key for the transaction.
+        :returns: New plan instance.
+        """
+
+        logger.trace("Enabling transaction for operation '%s' (route=%s)", op, route)
+        cur = self._op(op)
+
+        return self._put(op, attrs.evolve(cur, tx=TransactionSpec(route=route)))
+
+    # ....................... #
+
+    def no_tx(self, op: OpKey) -> Self:
+        """Disable transaction wrapping for the operation.
 
         :param op: Operation key.
         :returns: New plan instance.
         """
 
-        logger.trace("Enabling transaction for operation '%s'", op)
+        logger.trace("Disabling transaction for operation '%s'", op)
         cur = self._op(op)
 
-        return self._put(op, attrs.evolve(cur, tx=True))
+        return self._put(op, attrs.evolve(cur, tx=None))
 
     # ....................... #
 
@@ -504,9 +532,13 @@ class UsecasePlan:
         chain.extend(s.factory(ctx) for s in outer_before)
         chain.extend(s.factory(ctx) for s in outer_wrap)
 
-        if plan.tx:
+        if plan.tx is not None:
+            # is it correct order of the chain?
             chain.append(
-                TxMiddleware[Any, Any](ctx=ctx).with_after_commit(*after_commit_effects)
+                TxMiddleware[Any, Any](
+                    ctx=ctx,
+                    route=plan.tx.route,
+                ).with_after_commit(*after_commit_effects)
             )
             chain.extend(s.factory(ctx) for s in in_tx_before)
             chain.extend(s.factory(ctx) for s in in_tx_wrap)

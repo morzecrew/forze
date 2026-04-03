@@ -4,21 +4,25 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.document import DocumentReadDepKey, DocumentWriteDepKey
+from forze.application.contracts.document import (
+    DocumentReadDepKey,
+    DocumentWriteDepKey,
+)
 from forze.application.contracts.search import SearchReadDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.gateways import PostgresBookkeepingStrategy
 from ...kernel.introspect import PostgresIntrospector
 from ...kernel.platform import PostgresClient
 from .configs import (
-    PostgresDocumentConfigs,
-    PostgresSearchConfigs,
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
+    PostgresSearchConfig,
     validate_pg_search_conf,
 )
 from .deps import (
     ConfigurablePostgresDocument,
+    ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
 )
@@ -30,52 +34,88 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresDepsModule(DepsModule):
-    """Dependency module that registers Postgres client, introspector, tx manager, search index, and document read and write adapters.
-
-    Invoke to produce a :class:`Deps` container with all Postgres-backed
-    dependencies. The client must be initialized separately (e.g. via
-    :func:`postgres_lifecycle_step`) before usecases run.
-    """
+    """Dependency module that registers Postgres clients and adapters."""
 
     client: PostgresClient
     """Pre-constructed Postgres client (pool not yet initialized)."""
 
-    bookkeeping_strategy: PostgresBookkeepingStrategy
-    """Strategy for bookkeeping: ``"database"`` or ``"application"``."""
+    ro_documents: dict[str, PostgresReadOnlyDocumentConfig] = attrs.field(factory=dict)
+    """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    document_configs: PostgresDocumentConfigs = attrs.field(factory=dict)
-    """Mapping from document names to their Postgres-specific configurations."""
+    rw_documents: dict[str, PostgresDocumentConfig] = attrs.field(factory=dict)
+    """Mapping from read-write document names to their Postgres-specific configurations."""
 
-    search_configs: PostgresSearchConfigs = attrs.field(factory=dict)
+    searches: dict[str, PostgresSearchConfig] = attrs.field(factory=dict)
     """Mapping from search names to their Postgres-specific configurations."""
+
+    tx: set[str] = attrs.field(factory=set)
+    """Set of transaction routes to register."""
 
     # ....................... #
 
     def __call__(self) -> Deps:
-        """Build a dependency container with Postgres-backed ports.
+        """Build a dependency container with Postgres-backed ports."""
 
-        :returns: Deps with client, types provider, tx manager, and document port.
-        """
-
-        if self.search_configs:
-            for cfg in self.search_configs.values():
-                validate_pg_search_conf(cfg)
-
-        return Deps(
+        plain_deps = Deps.plain(
             {
                 PostgresClientDepKey: self.client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=self.client),
-                TxManagerDepKey: postgres_txmanager,
-                SearchReadDepKey: ConfigurablePostgresSearch(
-                    configs=self.search_configs,
-                ),
-                DocumentReadDepKey: ConfigurablePostgresDocument(
-                    bookkeeping_strategy=self.bookkeeping_strategy,
-                    configs=self.document_configs,
-                ),
-                DocumentWriteDepKey: ConfigurablePostgresDocument(
-                    bookkeeping_strategy=self.bookkeeping_strategy,
-                    configs=self.document_configs,
-                ),
             }
         )
+
+        doc_deps = Deps()
+        search_deps = Deps()
+        tx_deps = Deps()
+
+        if self.ro_documents:
+            doc_deps = doc_deps.merge(
+                Deps.routed(
+                    {
+                        DocumentReadDepKey: {
+                            name: ConfigurablePostgresReadOnlyDocument(config=config)
+                            for name, config in self.ro_documents.items()
+                        }
+                    }
+                )
+            )
+
+        if self.rw_documents:
+            doc_deps = doc_deps.merge(
+                Deps.routed(
+                    {
+                        DocumentReadDepKey: {
+                            name: ConfigurablePostgresReadOnlyDocument(config=config)
+                            for name, config in self.ro_documents.items()
+                        },
+                        DocumentWriteDepKey: {
+                            name: ConfigurablePostgresDocument(config=config)
+                            for name, config in self.rw_documents.items()
+                        },
+                    }
+                ),
+            )
+
+        if self.searches:
+            # fail fast on invalid configurations
+            for cfg in self.searches.values():
+                validate_pg_search_conf(cfg)
+
+            search_deps = search_deps.merge(
+                Deps.routed(
+                    {
+                        SearchReadDepKey: {
+                            name: ConfigurablePostgresSearch(config=config)
+                            for name, config in self.searches.items()
+                        }
+                    }
+                )
+            )
+
+        if self.tx:
+            tx_deps = tx_deps.merge(
+                Deps.routed(
+                    {TxManagerDepKey: {name: postgres_txmanager for name in self.tx}}
+                )
+            )
+
+        return plain_deps.merge(doc_deps, search_deps, tx_deps)

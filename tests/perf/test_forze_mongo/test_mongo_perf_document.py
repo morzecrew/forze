@@ -56,7 +56,7 @@ def execution_context(mongo_client: MongoClient) -> ExecutionContext:
             }
         }
     )
-    deps = Deps(
+    deps = Deps.plain(
         {
             MongoClientDepKey: mongo_client,
             DocumentReadDepKey: configurable,

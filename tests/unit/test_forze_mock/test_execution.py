@@ -82,7 +82,7 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
     found = await ctx.doc_read(spec).get(created.id)
     assert found.id == created.id
 
-    search_hits, count = await ctx.search(_search_spec()).search("hello")
+    search_hits, count = await ctx.search_read(_search_spec()).search("hello")
     assert count == 1
     assert search_hits[0].id == created.id
 
@@ -90,15 +90,11 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
 async def test_execution_context_resolves_optional_contract_ports() -> None:
     ctx = ExecutionContext(deps=MockDepsModule()())
 
-    queue_read = ctx.dep(QueueReadDepKey)(ctx, QueueSpec(namespace="q", model=_Msg))
-    queue_write = ctx.dep(QueueWriteDepKey)(ctx, QueueSpec(namespace="q", model=_Msg))
-    pubsub = ctx.dep(PubSubPublishDepKey)(ctx, PubSubSpec(namespace="p", model=_Msg))
-    stream_write = ctx.dep(StreamWriteDepKey)(
-        ctx, StreamSpec(namespace="s", model=_Msg)
-    )
-    stream_group = ctx.dep(StreamGroupDepKey)(
-        ctx, StreamSpec(namespace="s", model=_Msg)
-    )
+    queue_read = ctx.dep(QueueReadDepKey)(ctx, QueueSpec(name="q", model=_Msg))
+    queue_write = ctx.dep(QueueWriteDepKey)(ctx, QueueSpec(name="q", model=_Msg))
+    pubsub = ctx.dep(PubSubPublishDepKey)(ctx, PubSubSpec(name="p", model=_Msg))
+    stream_write = ctx.dep(StreamWriteDepKey)(ctx, StreamSpec(name="s", model=_Msg))
+    stream_group = ctx.dep(StreamGroupDepKey)(ctx, StreamSpec(name="s", model=_Msg))
 
     msg_id = await queue_write.enqueue("tasks", _Msg(value="x"))
     received = await queue_read.receive("tasks")

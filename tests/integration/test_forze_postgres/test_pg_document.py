@@ -34,21 +34,16 @@ class MyReadDoc(ReadDocument):
     name: str
 
 
-_PG_DOC_CONFIG = {
-    "my_docs_ns": {
-        "read": ("public", "my_docs"),
-        "write": ("public", "my_docs"),
-    }
-}
-
-
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
     configurable = ConfigurablePostgresDocument(
-        bookkeeping_strategy="application",
-        configs=_PG_DOC_CONFIG,
+        config={
+            "read": ("public", "my_docs"),
+            "write": ("public", "my_docs"),
+            "bookkeeping_strategy": "application",
+        }
     )
-    deps = Deps(
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),

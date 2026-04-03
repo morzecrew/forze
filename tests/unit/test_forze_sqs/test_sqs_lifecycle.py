@@ -16,7 +16,7 @@ from forze_sqs.kernel.platform import SQSClient, SQSConfig
 async def test_sqs_startup_hook_initializes_client() -> None:
     client = Mock(spec=SQSClient)
     client.initialize = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps(deps={SQSClientDepKey: client}))
+    ctx = ExecutionContext(deps=Deps.plain({SQSClientDepKey: client}))
     config = SQSConfig(connect_timeout=10)
     hook = SQSStartupHook(
         endpoint="http://localhost:4566",
@@ -40,7 +40,7 @@ async def test_sqs_startup_hook_initializes_client() -> None:
 @pytest.mark.asyncio
 async def test_sqs_shutdown_hook_closes_client() -> None:
     client = Mock(spec=SQSClient)
-    ctx = ExecutionContext(deps=Deps(deps={SQSClientDepKey: client}))
+    ctx = ExecutionContext(deps=Deps.plain({SQSClientDepKey: client}))
     hook = SQSShutdownHook()
 
     await hook(ctx)

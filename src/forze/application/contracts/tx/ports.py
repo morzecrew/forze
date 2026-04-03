@@ -8,6 +8,7 @@ import attrs
 from forze.base.primitives import uuid7
 
 # ----------------------- #
+#! questionable as shit
 
 
 @final
@@ -46,14 +47,6 @@ class TxScopedPort(Protocol):
 
 # ....................... #
 
-# @attrs.define(slots=True, frozen=True)
-# class TxOptions: ...
-
-
-# #! ^^^ And how to make it abstract ????
-
-# ....................... #
-
 
 @runtime_checkable
 class TxManagerPort(Protocol):
@@ -64,11 +57,9 @@ class TxManagerPort(Protocol):
     must not assume a specific strategy unless documented by the implementation.
     """
 
-    def scope_key(self) -> TxScopeKey:
-        """Return the key used to scope the transaction."""
-        ...
+    scope_key: TxScopeKey
+    """The key used to scope the transaction."""
 
-    #! we should add tx options to this protocol method
     def transaction(self) -> AsyncContextManager[None]:
         """Return an async context manager that scopes a transaction.
 

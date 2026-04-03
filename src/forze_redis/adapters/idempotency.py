@@ -13,22 +13,21 @@ from typing import Final, TypedDict, final
 import attrs
 
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
-from forze.application.contracts.tenant import TenantContextPort
-from forze.base.codecs import JsonCodec, KeyCodec
 from forze.base.errors import ConflictError
 
-from ..kernel.platform import RedisClient
 from ._logger import logger
+from .base import RedisBaseAdapter
+from .codecs import default_json_codec
 
 # ----------------------- #
 
 _PENDING: Final[str] = "P"
 _DONE: Final[str] = "D"
+_IDEMPOTENCY_SCOPE: Final[str] = "idempotency"
 
 # ....................... #
 
 
-@final
 class _Payload(TypedDict, total=False):
     """Internal JSON envelope stored in Redis for each idempotency record.
 
@@ -49,38 +48,22 @@ class _Payload(TypedDict, total=False):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisIdempotencyAdapter(IdempotencyPort):
+class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.idempotency.IdempotencyPort`.
 
     Stores a JSON :class:`_Payload` per ``(op, key)`` pair using ``SET NX``
     with a configurable TTL.  :meth:`begin` acquires the slot (pending state)
     and returns a cached snapshot when the operation was already completed.
     :meth:`commit` overwrites the slot with the final response snapshot.
-
-    :raises ~forze.base.errors.ConflictError: On payload-hash mismatch or
-        concurrent in-progress operations.
     """
 
-    client: RedisClient
-    tenant_context: TenantContextPort | None = None
-
-    # Non initable fields
-    key_codec: KeyCodec = attrs.field(  #! Non initable ????
-        factory=lambda: KeyCodec(namespace="idempotency"),
-        init=False,
-    )
-    json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
-
-    # Defaults (overrideable)
     ttl: timedelta = timedelta(seconds=30)
+    """TTL for the idempotency keys."""
 
     # ....................... #
 
     def __key(self, op: str, key: str) -> str:
-        if self.tenant_context is not None:
-            return self.key_codec.join(str(self.tenant_context.get()), op, key)
-
-        return self.key_codec.join(op, key)
+        return self.construct_key(_IDEMPOTENCY_SCOPE, op, key)
 
     # ....................... #
 
@@ -97,7 +80,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
     async def __acuire(self, key: str, p: _Payload) -> bool:
         return await self.client.set(
             key,
-            self.json_codec.dumps(p),
+            default_json_codec.dumps(p),
             ex=int(self.ttl.total_seconds()),
             nx=True,
         )
@@ -132,7 +115,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
 
             raise ConflictError("Idempotency is in progress (not readable)")
 
-        data: _Payload = self.json_codec.loads(raw)
+        data: _Payload = default_json_codec.loads(raw)
 
         data_st = data.get("st", "")
         data_ph = data.get("ph", "")
@@ -188,7 +171,7 @@ class RedisIdempotencyAdapter(IdempotencyPort):
 
         ok = await self.client.set(
             k,
-            self.json_codec.dumps(idem_p),
+            default_json_codec.dumps(idem_p),
             ex=int(self.ttl.total_seconds()),
             xx=True,
         )

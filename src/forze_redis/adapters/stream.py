@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Final, Sequence, final
+from typing import AsyncIterator, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -18,80 +18,12 @@ from forze.application.contracts.stream import (
     StreamReadPort,
     StreamWritePort,
 )
-from forze.base.errors import CoreError
 
 from ..kernel.platform import RedisClient
+from .codecs import RedisStreamCodec
 
 # ----------------------- #
-
-_F_PAYLOAD: Final[str] = "payload"
-_F_TYPE: Final[str] = "type"
-_F_TIMESTAMP: Final[str] = "timestamp"
-_F_KEY: Final[str] = "key"
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamCodec[M: BaseModel]:
-    """JSON codec for Redis Stream entries.
-
-    :meth:`encode` converts a Pydantic model into a ``dict[str, str]`` suitable
-    for ``XADD``.  :meth:`decode` reconstructs a
-    :class:`~forze.application.contracts.stream.StreamMessage` from the raw
-    bytes-keyed field map returned by ``XREAD`` / ``XREADGROUP``.
-    """
-
-    model: type[M]
-
-    # ....................... #
-
-    def encode(
-        self,
-        payload: M,
-        *,
-        type: str | None = None,
-        key: str | None = None,
-        timestamp: datetime | None = None,
-    ) -> dict[str, str]:
-        data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
-
-        if type is not None:
-            data[_F_TYPE] = type
-
-        if key is not None:
-            data[_F_KEY] = key
-
-        if timestamp is not None:
-            data[_F_TIMESTAMP] = timestamp.isoformat()
-
-        return data
-
-    # ....................... #
-
-    def decode(
-        self, stream: str, id: str, raw_data: dict[bytes, bytes]
-    ) -> StreamMessage[M]:
-        decoded = {k.decode("utf-8"): v.decode("utf-8") for k, v in raw_data.items()}
-        payload_raw = decoded.get(_F_PAYLOAD)
-
-        if payload_raw is None:
-            raise CoreError(f"Redis stream message '{id}' in '{stream}' has no payload")
-
-        timestamp_raw = decoded.get(_F_TIMESTAMP)
-
-        return StreamMessage(
-            stream=stream,
-            id=id,
-            payload=self.model.model_validate_json(payload_raw),
-            type=decoded.get(_F_TYPE),
-            key=decoded.get(_F_KEY),
-            timestamp=datetime.fromisoformat(timestamp_raw) if timestamp_raw else None,
-        )
-
-
-# ....................... #
+#! TODO: add multi-tenancy support
 
 
 @final

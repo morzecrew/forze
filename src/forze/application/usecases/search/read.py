@@ -3,7 +3,7 @@ from typing import Any
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.mapper import MapperPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.contracts.search import SearchReadPort
 from forze.application.dto import (
     Paginated,
@@ -42,7 +42,7 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
         body = args
 
         if self.mapper:
-            body = await self.mapper(self.ctx, body)
+            body = await self.mapper(body, ctx=self.ctx)
 
         hits, count = await self.search.search(
             query=body.query,
@@ -85,7 +85,7 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
         body = args
 
         if self.mapper:
-            body = await self.mapper(self.ctx, body)
+            body = await self.mapper(body, ctx=self.ctx)
 
         hits, count = await self.search.search(
             query=body.query,

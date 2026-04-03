@@ -20,9 +20,9 @@ def mongo_txmanager(mongo_client_replica: MongoClient) -> MongoTxManagerAdapter:
 
 @pytest.mark.asyncio
 async def test_scope_key(mongo_txmanager: MongoTxManagerAdapter) -> None:
-    """scope_key returns MongoTxScopeKey."""
-    assert mongo_txmanager.scope_key() == MongoTxScopeKey
-    assert mongo_txmanager.scope_key().name == "mongo"
+    """scope_key is MongoTxScopeKey."""
+    assert mongo_txmanager.scope_key is MongoTxScopeKey
+    assert mongo_txmanager.scope_key.name == "mongo"
 
 
 @pytest.mark.asyncio

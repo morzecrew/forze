@@ -3,7 +3,7 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.document import DocumentWritePort
-from forze.application.contracts.mapper import MapperPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.dto import DocumentUpdateDTO
 from forze.application.execution import Usecase
 from forze.domain.models import BaseDTO, ReadDocument
@@ -32,6 +32,6 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
         :returns: Updated read model.
         """
 
-        cmd = await self.mapper(self.ctx, args.dto)
+        cmd = await self.mapper(args.dto, ctx=self.ctx)
 
         return await self.doc.update(pk=args.id, rev=args.rev, dto=cmd)

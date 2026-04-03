@@ -41,7 +41,7 @@ from .errors import psycopg_handled
 RowFactory = Literal["tuple", "dict"]
 """Row format for :meth:`PostgresClient.fetch_all` and :meth:`PostgresClient.fetch_one`: ``\"dict\"`` for column-keyed dicts, ``\"tuple\"`` for sequences."""
 
-IsolationLevel = Literal["repeatable read", "serializable"]
+IsolationLevel = Literal["read committed", "repeatable read", "serializable"]
 """Supported transaction isolation levels."""
 
 # ....................... #

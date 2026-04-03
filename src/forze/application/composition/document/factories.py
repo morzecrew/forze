@@ -5,7 +5,6 @@ from typing import Any
 from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import ListRequestDTO, RawListRequestDTO
 from forze.application.execution import UsecaseRegistry
-from forze.application.mapping import DTOMapper, MappingStep
 from forze.application.usecases.document import (
     CreateDocument,
     DeleteDocument,
@@ -18,6 +17,7 @@ from forze.application.usecases.document import (
 )
 from forze.base.errors import CoreError
 
+from ..mapping import DTOMapper, DTOMapperStep
 from .facades import DocumentDTOs
 from .operations import DocumentOperation
 
@@ -28,7 +28,7 @@ def build_document_create_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for create commands.
 
@@ -58,7 +58,7 @@ def build_document_update_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for update commands.
 
@@ -86,7 +86,7 @@ def build_document_update_mapper(
 
 def build_document_list_mapper(
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for list requests with optional steps."""
 
@@ -103,7 +103,7 @@ def build_document_list_mapper(
 
 def build_document_raw_list_mapper(
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for raw list requests.
 
@@ -128,10 +128,10 @@ def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
-    create_steps: tuple[MappingStep[Any], ...] = (),
-    update_steps: tuple[MappingStep[Any], ...] = (),
-    list_steps: tuple[MappingStep[Any], ...] = (),
-    raw_list_steps: tuple[MappingStep[Any], ...] = (),
+    create_steps: tuple[DTOMapperStep[Any], ...] = (),
+    update_steps: tuple[DTOMapperStep[Any], ...] = (),
+    list_steps: tuple[DTOMapperStep[Any], ...] = (),
+    raw_list_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec.
 

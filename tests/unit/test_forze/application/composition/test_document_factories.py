@@ -9,7 +9,8 @@ from forze.application.composition.document.factories import (
 )
 from forze.application.composition.document.operations import DocumentOperation
 from forze.application.contracts.document import DocumentSpec
-from forze.application.mapping import DTOMapper, NumberIdStep
+from forze.application.composition.mapping import DTOMapper, NumberIdStep
+from forze.application.contracts.counter import CounterSpec
 from forze.base.errors import CoreError
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -77,7 +78,7 @@ class TestBuildDocumentCreateMapper:
         spec = _write_spec()
         dtos = _write_dtos()
         mapper = build_document_create_mapper(
-            spec, dtos, steps=(NumberIdStep(namespace="test"),)
+            spec, dtos, steps=(NumberIdStep(spec=CounterSpec(name="test")),)
         )
         assert isinstance(mapper, DTOMapper)
 
@@ -139,6 +140,6 @@ class TestBuildDocumentRegistry:
         spec = _write_spec()
         dtos = _write_dtos()
         reg = build_document_registry(
-            spec, dtos, create_steps=(NumberIdStep(namespace="test"),)
+            spec, dtos, create_steps=(NumberIdStep(spec=CounterSpec(name="test")),)
         )
         assert reg.exists(DocumentOperation.CREATE)

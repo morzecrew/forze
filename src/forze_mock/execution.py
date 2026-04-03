@@ -7,6 +7,7 @@ from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.base import DepKey
 from forze.application.contracts.cache import (
     CacheDepKey,
     CachePort,
@@ -16,7 +17,6 @@ from forze.application.contracts.counter import (
     CounterDepKey,
     CounterPort,
 )
-from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import (
     DocumentReadDepKey,
     DocumentSpec,
@@ -143,7 +143,7 @@ def mock_queue(
     spec: QueueSpec[Any],
 ) -> MockQueueAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    return MockQueueAdapter(state=state, namespace=spec.namespace, model=spec.model)
+    return MockQueueAdapter(state=state, namespace=spec.name, model=spec.model)
 
 
 def mock_pubsub(
@@ -151,7 +151,7 @@ def mock_pubsub(
     spec: PubSubSpec[Any],
 ) -> MockPubSubAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    return MockPubSubAdapter(state=state, namespace=spec.namespace, model=spec.model)
+    return MockPubSubAdapter(state=state, namespace=spec.name, model=spec.model)
 
 
 def mock_stream(
@@ -159,7 +159,7 @@ def mock_stream(
     spec: StreamSpec[Any],
 ) -> MockStreamAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    return MockStreamAdapter(state=state, namespace=spec.namespace, model=spec.model)
+    return MockStreamAdapter(state=state, namespace=spec.name, model=spec.model)
 
 
 def mock_stream_group(
@@ -167,8 +167,8 @@ def mock_stream_group(
     spec: StreamSpec[Any],
 ) -> MockStreamGroupAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    stream = MockStreamAdapter(state=state, namespace=spec.namespace, model=spec.model)
-    return MockStreamGroupAdapter(stream=stream, state=state, namespace=spec.namespace)
+    stream = MockStreamAdapter(state=state, namespace=spec.name, model=spec.model)
+    return MockStreamGroupAdapter(stream=stream, state=state, namespace=spec.name)
 
 
 # ----------------------- #
@@ -184,7 +184,7 @@ class MockDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
-        return Deps(
+        return Deps.plain(
             {
                 MockStateDepKey: self.state,
                 DocumentReadDepKey: mock_document,

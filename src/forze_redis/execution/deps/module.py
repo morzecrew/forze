@@ -7,25 +7,14 @@ import attrs
 from forze.application.contracts.cache import CacheDepKey
 from forze.application.contracts.counter import CounterDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
-from forze.application.contracts.pubsub import (
-    PubSubPublishDepKey,
-    PubSubSubscribeDepKey,
-)
-from forze.application.contracts.stream import (
-    StreamGroupDepKey,
-    StreamReadDepKey,
-    StreamWriteDepKey,
-)
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import RedisClient
+from .configs import RedisCacheConfig, RedisCounterConfig, RedisIdempotencyConfig
 from .deps import (
-    redis_cache,
-    redis_counter,
-    redis_idempotency,
-    redis_pubsub,
-    redis_stream,
-    redis_stream_group,
+    ConfigurableRedisCache,
+    ConfigurableRedisCounter,
+    ConfigurableRedisIdempotency,
 )
 from .keys import RedisClientDepKey
 
@@ -35,35 +24,76 @@ from .keys import RedisClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class RedisDepsModule(DepsModule):
-    """Dependency module that registers Redis client, cache, counter, idempotency,
-    pubsub, and stream ports.
-
-    Invoke to produce a :class:`Deps` container with all Redis-backed
-    dependencies. The client must be initialized separately (e.g. via
-    :func:`redis_lifecycle_step`) before usecases run.
-    """
+    """Dependency module that registers Redis clients and adapters."""
 
     client: RedisClient
     """Pre-constructed Redis client (pool not yet initialized)."""
 
+    caches: dict[str, RedisCacheConfig] = attrs.field(factory=dict)
+    """Mapping from cache names to their Redis-specific configurations."""
+
+    counters: dict[str, RedisCounterConfig] = attrs.field(factory=dict)
+    """Mapping from counter names to their Redis-specific configurations."""
+
+    idempotency: dict[str, RedisIdempotencyConfig] = attrs.field(factory=dict)
+    """Mapping from idempotency names to their Redis-specific configurations."""
+
+    #! read and write separately?
+
+    # pubsub: dict[str, RedisPubSubConfig] = attrs.field(factory=dict)
+    # """Mapping from pubsub names to their Redis-specific configurations."""
+
+    # streams: dict[str, RedisStreamConfig] = attrs.field(factory=dict)
+    # """Mapping from stream names to their Redis-specific configurations."""
+
+    # stream_groups: dict[str, RedisStreamGroupConfig] = attrs.field(factory=dict)
+    # """Mapping from stream group names to their Redis-specific configurations."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
-        """Build a dependency container with Redis-backed ports.
+        """Build a dependency container with Redis-backed ports."""
 
-        :returns: Deps with client, cache, counter, idempotency, pubsub, and stream ports.
-        """
+        plain_deps = Deps.plain({RedisClientDepKey: self.client})
 
-        return Deps(
-            {
-                RedisClientDepKey: self.client,
-                CacheDepKey: redis_cache,
-                CounterDepKey: redis_counter,
-                IdempotencyDepKey: redis_idempotency,
-                PubSubPublishDepKey: redis_pubsub,
-                PubSubSubscribeDepKey: redis_pubsub,
-                StreamReadDepKey: redis_stream,
-                StreamWriteDepKey: redis_stream,
-                StreamGroupDepKey: redis_stream_group,
-            }
-        )
+        cache_deps = Deps()
+        counter_deps = Deps()
+        idempotency_deps = Deps()
+
+        if self.caches:
+            cache_deps = cache_deps.merge(
+                Deps.routed(
+                    {
+                        CacheDepKey: {
+                            name: ConfigurableRedisCache(config=config)
+                            for name, config in self.caches.items()
+                        }
+                    }
+                )
+            )
+
+        if self.counters:
+            counter_deps = counter_deps.merge(
+                Deps.routed(
+                    {
+                        CounterDepKey: {
+                            name: ConfigurableRedisCounter(config=config)
+                            for name, config in self.counters.items()
+                        }
+                    }
+                )
+            )
+
+        if self.idempotency:
+            idempotency_deps = idempotency_deps.merge(
+                Deps.routed(
+                    {
+                        IdempotencyDepKey: {
+                            name: ConfigurableRedisIdempotency(config=config)
+                            for name, config in self.idempotency.items()
+                        }
+                    }
+                )
+            )
+
+        return plain_deps.merge(cache_deps, counter_deps, idempotency_deps)

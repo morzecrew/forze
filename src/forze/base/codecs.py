@@ -100,13 +100,12 @@ class AsciiB64Codec:
     def dumps(self, value: str) -> str:
         """Return value as-is if ASCII, otherwise base64-encode with prefix."""
 
-        try:
-            value.encode("ascii")
+        if value.isascii():
             return value
 
-        except UnicodeEncodeError:
-            encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-            return f"{self.prefix}{encoded}"
+        encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+        return f"{self.prefix}{encoded}"
 
     # ....................... #
 
@@ -119,86 +118,3 @@ class AsciiB64Codec:
             return base64.b64decode(raw.encode("ascii")).decode("utf-8")
 
         return raw
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class KeyCodec:
-    """Namespace-prefixed key builder for Redis-style or similar key schemes.
-
-    Joins parts with :attr:`sep`, stripping leading/trailing separators from
-    each part. The namespace is always prepended.
-    """
-
-    namespace: str
-    """Namespace prefix for all keys."""
-
-    sep: str = ":"
-    """Separator between key parts."""
-
-    # ....................... #
-
-    def join(self, *parts: str) -> str:
-        """Build a namespaced key from non-empty parts."""
-
-        items = [p.strip(self.sep) for p in (self.namespace, *parts) if p]
-
-        return self.sep.join(items)
-
-    # ....................... #
-
-    def split(self, key: str) -> list[str]:
-        """Split a key by :attr:`sep`."""
-
-        return key.split(self.sep)
-
-    # ....................... #
-
-    def cond_join(self, *parts: str | None) -> str:
-        """Join only non-``None`` parts into a namespaced key."""
-
-        items = list(filter(None, parts))
-
-        return self.join(*items)
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class PathCodec:
-    """Path-style segment joiner for slash-separated paths.
-
-    Similar to :class:`KeyCodec` but without a namespace. Strips leading and
-    trailing slashes from each part.
-    """
-
-    sep: str = attrs.field(default="/", init=False)
-    """Path separator (fixed as ``"/"``)."""
-
-    # ....................... #
-
-    def join(self, *parts: str) -> str:
-        """Build a path from non-empty parts."""
-
-        items = [p.strip(self.sep) for p in parts if p]
-
-        return self.sep.join(items)
-
-    # ....................... #
-
-    def split(self, key: str) -> list[str]:
-        """Split a path by :attr:`sep`."""
-
-        return key.split(self.sep)
-
-    # ....................... #
-
-    def cond_join(self, *parts: str | None) -> str:
-        """Join only non-``None`` parts into a path."""
-
-        items = list(filter(None, parts))
-
-        return self.join(*items)

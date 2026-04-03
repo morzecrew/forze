@@ -2,8 +2,10 @@
 
 import pytest
 
+from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -15,6 +17,7 @@ from forze_mock.adapters import (
     MockSearchAdapter,
     MockStorageAdapter,
 )
+from forze_mock.execution import MockStateDepKey
 
 # ----------------------- #
 
@@ -31,10 +34,22 @@ def mock_deps_module(mock_state: MockState) -> MockDepsModule:
     return MockDepsModule(state=mock_state)
 
 
+def _stub_counter_fac(ctx: ExecutionContext, spec: CounterSpec) -> CounterPort:
+    return MockCounterAdapter(state=ctx.dep(MockStateDepKey), namespace=spec.name)
+
+
+def _stub_storage_fac(ctx: ExecutionContext, spec: StorageSpec) -> MockStorageAdapter:
+    return MockStorageAdapter(state=ctx.dep(MockStateDepKey), bucket=spec.name)
+
+
 @pytest.fixture
 def stub_deps(mock_deps_module: MockDepsModule) -> Deps:
     """Deps container with forze_mock adapters registered."""
-    return mock_deps_module()
+    base = mock_deps_module()
+    plain = dict(base.plain_deps)
+    plain[CounterDepKey] = _stub_counter_fac
+    plain[StorageDepKey] = _stub_storage_fac
+    return Deps.plain(plain)
 
 
 @pytest.fixture
@@ -76,25 +91,25 @@ def stub_document_port(stub_ctx: ExecutionContext) -> MockDocumentAdapter:
 def stub_search_port(stub_ctx: ExecutionContext) -> MockSearchAdapter:
     """Search port for usecase tests (shares state with stub_ctx)."""
     spec = _minimal_search_spec()
-    return stub_ctx.search(spec)
+    return stub_ctx.search_read(spec)
 
 
 @pytest.fixture
 def stub_storage_port(stub_ctx: ExecutionContext) -> MockStorageAdapter:
     """Storage port for usecase tests."""
-    return stub_ctx.storage("test-bucket")
+    return stub_ctx.storage(StorageSpec(name="test-bucket"))
 
 
 @pytest.fixture
 def stub_tx_manager(stub_ctx: ExecutionContext):
     """Transaction manager for usecase tests."""
-    return stub_ctx.txmanager()
+    return stub_ctx.txmanager("mock")
 
 
 @pytest.fixture
 def stub_counter(stub_ctx: ExecutionContext) -> MockCounterAdapter:
     """Counter port for usecase tests."""
-    return stub_ctx.counter("test")
+    return stub_ctx.counter(CounterSpec(name="test"))
 
 
 @pytest.fixture

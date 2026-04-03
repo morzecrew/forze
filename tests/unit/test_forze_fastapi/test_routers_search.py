@@ -45,7 +45,7 @@ class TestAttachSearchRoutes:
         """attach_search_endpoints adds /search and /raw-search routes."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
+        reg = build_search_registry(spec)
         reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
@@ -71,7 +71,7 @@ class TestAttachSearchRoutes:
         """POST /search returns paginated results."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
+        reg = build_search_registry(spec)
         reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
@@ -105,7 +105,7 @@ class TestAttachSearchRoutes:
         """Typed search can be disabled while raw search remains."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
+        reg = build_search_registry(spec)
         reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
@@ -138,7 +138,7 @@ class TestBuildSearchRouter:
         """Router under /search exposes nested /search and /raw-search paths."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
+        reg = build_search_registry(spec)
         reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
@@ -164,7 +164,7 @@ class TestBuildSearchRouter:
         """SearchEndpointsSpec path_override and disable flags apply."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
+        reg = build_search_registry(spec)
         reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():

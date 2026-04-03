@@ -1,6 +1,6 @@
 """Dependency keys for S3-related services."""
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.base import DepKey
 
 from ...kernel.platform import S3Client
 

@@ -1,26 +1,75 @@
 """Factory functions for RabbitMQ queue adapters."""
 
-from typing import Any
+from typing import Any, final
 
-from forze.application.contracts.queue import QueueSpec
+import attrs
+
+from forze.application.contracts.queue import (
+    QueueReadDepPort,
+    QueueSpec,
+    QueueWriteDepPort,
+)
 from forze.application.execution import ExecutionContext
 
 from ...adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
+from .configs import RabbitMQQueueConfig
 from .keys import RabbitMQClientDepKey
 
 # ----------------------- #
 
 
-def rabbitmq_queue(
-    context: ExecutionContext,
-    spec: QueueSpec[Any],
-) -> RabbitMQQueueAdapter[Any]:
-    """Build a RabbitMQ-backed queue port for the given spec."""
-    rabbitmq_client = context.dep(RabbitMQClientDepKey)
-    codec = RabbitMQQueueCodec(model=spec.model)
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableRabbitMQQueueRead(QueueReadDepPort):
+    """Configurable RabbitMQ queue read adapter."""
 
-    return RabbitMQQueueAdapter(
-        client=rabbitmq_client,
-        codec=codec,
-        namespace=spec.namespace,
-    )
+    config: RabbitMQQueueConfig
+    """Configuration for the queue."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: QueueSpec[Any],
+    ) -> RabbitMQQueueAdapter[Any]:
+        client = ctx.dep(RabbitMQClientDepKey)
+        codec = RabbitMQQueueCodec(model=spec.model)
+
+        return RabbitMQQueueAdapter(
+            client=client,
+            codec=codec,
+            namespace=self.config.get("namespace"),
+            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_provider=ctx.get_tenant_id,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableRabbitMQQueueWrite(QueueWriteDepPort):
+    """Configurable RabbitMQ queue write adapter."""
+
+    config: RabbitMQQueueConfig
+    """Configuration for the queue."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: QueueSpec[Any],
+    ) -> RabbitMQQueueAdapter[Any]:
+        client = ctx.dep(RabbitMQClientDepKey)
+        codec = RabbitMQQueueCodec(model=spec.model)
+
+        return RabbitMQQueueAdapter(
+            client=client,
+            codec=codec,
+            namespace=self.config.get("namespace"),
+            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_provider=ctx.get_tenant_id,
+        )

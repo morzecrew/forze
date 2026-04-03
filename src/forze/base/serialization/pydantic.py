@@ -3,7 +3,7 @@
 import hashlib
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any, Literal, Sequence, TypedDict
+from typing import Any, Final, Literal, Sequence, TypedDict
 
 import orjson
 from pydantic import BaseModel, TypeAdapter
@@ -241,3 +241,58 @@ def pydantic_model_hash(
     digest = hashlib.sha256(raw).hexdigest()
 
     return digest
+
+
+# ....................... #
+
+_CACHE_EXCLUDE_OPTS: Final[_PydanticDumpExcludeOptions] = _PydanticDumpExcludeOptions(
+    none=True,
+    defaults=True,
+    computed_fields=True,
+)
+
+
+def pydantic_cache_dump(obj: BaseModel) -> dict[str, Any]:
+    """Convenience helper for dumping a Pydantic model for cache storage."""
+
+    return pydantic_dump(obj, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
+
+
+def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[dict[str, Any]]:
+    """Convenience helper for dumping a list of Pydantic models for cache storage."""
+
+    return pydantic_dump_many(objs, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
+
+
+# ....................... #
+
+
+def pydantic_transform[Out: BaseModel](
+    cls: type[Out],
+    model: BaseModel,
+    *,
+    mode: Literal["json", "python"] = "python",
+    exclude: _PydanticDumpExcludeOptions = {"unset": True},
+) -> Out:
+    """Convenience helper for model-to-model transformations."""
+
+    dump = pydantic_dump(model, mode=mode, exclude=exclude)
+
+    return pydantic_validate(cls, dump)
+
+
+# ....................... #
+
+
+def pydantic_transform_many[Out: BaseModel](
+    cls: type[Out],
+    models: Sequence[BaseModel],
+    *,
+    mode: Literal["json", "python"] = "python",
+    exclude: _PydanticDumpExcludeOptions = {"unset": True},
+) -> list[Out]:
+    """Convenience helper for model-to-model batch transformations."""
+
+    dumps = pydantic_dump_many(models, mode=mode, exclude=exclude)
+
+    return pydantic_validate_many(cls, dumps)

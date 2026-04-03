@@ -44,10 +44,10 @@ class _StubPubSub(
 
 
 class TestPubSubSpec:
-    def test_spec_contains_namespace_and_model(self) -> None:
-        spec = PubSubSpec(namespace="events", model=_PubSubPayload)
+    def test_spec_contains_name_and_model(self) -> None:
+        spec = PubSubSpec(name="events", model=_PubSubPayload)
 
-        assert spec.namespace == "events"
+        assert spec.name == "events"
         assert spec.model is _PubSubPayload
 
 

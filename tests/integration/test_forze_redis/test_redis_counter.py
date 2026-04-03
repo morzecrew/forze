@@ -2,7 +2,6 @@
 
 import pytest
 
-from forze.base.errors import ValidationError
 from forze_redis.adapters import RedisCounterAdapter
 
 
@@ -43,14 +42,14 @@ async def test_counter_incr_batch(redis_counter: RedisCounterAdapter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_counter_incr_batch_invalid_size(
+async def test_counter_incr_batch_size_one(
     redis_counter: RedisCounterAdapter,
 ) -> None:
-    """incr_batch with size <= 1 raises ValidationError."""
-    with pytest.raises(ValidationError, match="Size must be greater than 1"):
-        await redis_counter.incr_batch(size=1)
-    with pytest.raises(ValidationError, match="Size must be greater than 1"):
-        await redis_counter.incr_batch(size=0)
+    """incr_batch with size=1 returns a single allocated value."""
+    one = await redis_counter.incr_batch(size=1)
+    assert one == [1]
+    two = await redis_counter.incr_batch(size=1)
+    assert two == [2]
 
 
 @pytest.mark.asyncio

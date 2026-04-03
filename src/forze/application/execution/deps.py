@@ -12,46 +12,144 @@ from forze.application._logger import logger
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 
-from ..contracts.deps import DepKey, DepsPort
+from ..contracts.base import DepKey, DepsPort
 
 # ----------------------- #
 
 T = TypeVar("T")
 
+PlainDepsMap = dict[DepKey[Any], Any]
+RoutedDepsMap = dict[DepKey[Any], dict[str, Any]]
+
 # ....................... #
 
 
 @final
-@attrs.define(slots=True, frozen=True)
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class Deps(DepsPort):
-    """In-memory dependency container used by the kernel."""
+    """In-memory dependency container used by the kernel.
 
-    deps: dict[DepKey[Any], Any] = attrs.field(factory=dict)
-    """Dependencies by key (type-parameterized)."""
+    Supports two registration modes:
+
+    - plain dependencies: ``DepKey -> provider``
+    - routed dependencies: ``DepKey -> {routing_key -> provider}``
+    """
+
+    plain_deps: PlainDepsMap = attrs.field(factory=dict)
+    """Dependencies registered without affinity."""
+
+    routed_deps: RoutedDepsMap = attrs.field(factory=dict)
+    """Dependencies registered for specific affinity groups."""
 
     # ....................... #
 
-    def provide(self, key: DepKey[T]) -> T:
+    def __attrs_post_init__(self) -> None:
+        # validate routed deps
+        for key, routes in self.routed_deps.items():
+            if not routes:
+                raise CoreError(f"Routed dependency {key.name} has no routes")
+
+    # ....................... #
+
+    @classmethod
+    def plain(cls, deps: PlainDepsMap) -> Self:
+        """Create a new dependency container from plain dependencies."""
+
+        return cls(plain_deps=deps)
+
+    # ....................... #
+
+    @classmethod
+    def routed(cls, deps: RoutedDepsMap) -> Self:
+        """Create a new dependency container from routed dependencies."""
+
+        return cls(routed_deps=deps)
+
+    # ....................... #
+
+    @classmethod
+    def routed_group(
+        cls,
+        deps: PlainDepsMap,
+        *,
+        routes: set[str] | frozenset[str],
+    ) -> Self:
+        """Create routed dependencies by expanding one provider per many routing keys.
+
+        This is a convenience helper only. Internally routed dependencies are
+        always normalized to ``DepKey -> {route -> provider}``.
+        """
+
+        if not routes:
+            raise CoreError("Routes must not be empty")
+
+        expanded: RoutedDepsMap = {
+            key: {name: dep for name in routes} for key, dep in deps.items()
+        }
+
+        return cls(routed_deps=expanded)
+
+    # ....................... #
+
+    def provide(
+        self,
+        key: DepKey[T],
+        *,
+        route: str | None = None,
+        fallback_to_plain: bool = True,
+    ) -> T:
         """Return a dependency value for the given key.
 
         :param key: Dependency key identifying the provider.
+        :param route: Optional route for routed dependencies.
+        :param fallback_to_plain: If True, fallback to plain dependencies if the routed dependency is not found.
         :returns: Cached or newly constructed instance of the dependency.
         :raises CoreError: If the dependency is not registered.
         """
 
-        dep = self.deps.get(key)
+        if route is None:
+            dep = self.plain_deps.get(key)
 
-        if not dep:
-            raise CoreError(f"Dependency {key.name} not found")
+            if not dep:
+                raise CoreError(f"Plain dependency '{key.name}' not found")
+
+        else:
+            routes = self.routed_deps.get(key)
+
+            if routes is None:
+                if fallback_to_plain:
+                    return self.provide(key, route=None, fallback_to_plain=False)
+
+                raise CoreError(
+                    f"Routed dependency '{key.name}' not found for route '{route}'"
+                )
+
+            dep = routes.get(route)
+
+            if dep is None:
+                if fallback_to_plain:
+                    return self.provide(key, route=None, fallback_to_plain=False)
+
+                raise CoreError(
+                    f"Dependency '{key.name}' not found for route '{route}'"
+                )
 
         return cast(T, dep)
 
     # ....................... #
 
-    def exists(self, key: DepKey[T]) -> bool:
+    def exists(self, key: DepKey[T], *, route: str | None = None) -> bool:
         """Return ``True`` if the dependency is registered."""
 
-        return key in self.deps
+        if route is None:
+            return key in self.plain_deps
+
+        routes = self.routed_deps.get(key)
+
+        if routes is None:
+            return False
+
+        return route in routes
 
     # ....................... #
 
@@ -66,18 +164,55 @@ class Deps(DepsPort):
 
         logger.trace("Merging %s dependency container(s)", len(deps))
 
-        acc: dict[DepKey[Any], Any] = {}
+        plain_acc: PlainDepsMap = {}
+        routed_acc: RoutedDepsMap = {}
 
         for d in deps:
-            overlap = set(acc.keys()).intersection(d.deps.keys())
+            # 1. merge plain
+            plain_overlap = set(plain_acc).intersection(d.plain_deps)
 
-            if overlap:
-                names = ", ".join(k.name for k in overlap)
-                raise CoreError(f"Conflicting dependencies: {names}")
+            if plain_overlap:
+                names = ", ".join(sorted(k.name for k in plain_overlap))
+                raise CoreError(f"Conflicting plain dependencies: {names}")
 
-            acc.update(d.deps)
+            # 2. plain vs routed conflicts
+            cross_overlap_left = set(plain_acc).intersection(d.routed_deps)
 
-        return cls(deps=acc)
+            if cross_overlap_left:
+                names = ", ".join(sorted(k.name for k in cross_overlap_left))
+                raise CoreError(
+                    f"Dependency keys registered both as plain and routed: {names}"
+                )
+
+            cross_overlap_right = set(routed_acc).intersection(d.plain_deps)
+
+            if cross_overlap_right:
+                names = ", ".join(sorted(k.name for k in cross_overlap_right))
+                raise CoreError(
+                    f"Dependency keys registered both as plain and routed: {names}"
+                )
+
+            plain_acc.update(d.plain_deps)
+
+            # 3. merge affine
+            for key, routes in d.routed_deps.items():
+                existing = routed_acc.get(key)
+
+                if existing is None:
+                    routed_acc[key] = dict(routes)
+                    continue
+
+                routing_key_overlap = set(existing).intersection(routes)
+
+                if routing_key_overlap:
+                    names = ", ".join(sorted(routing_key_overlap))
+                    raise CoreError(
+                        f"Conflicting routed dependencies for '{key.name}': {names}"
+                    )
+
+                existing.update(routes)
+
+        return cls(plain_deps=plain_acc, routed_deps=routed_acc)
 
     # ....................... #
 
@@ -103,17 +238,59 @@ class Deps(DepsPort):
 
         logger.trace("Removing dependency '%s' from container copy", key.name)
 
-        new = dict(self.deps)
-        new.pop(key)
+        new_plain = dict(self.plain_deps)
+        new_routed = dict(self.routed_deps)
 
-        return type(self)(deps=new)
+        new_plain.pop(key, None)
+        new_routed.pop(key, None)
+
+        return type(self)(plain_deps=new_plain, routed_deps=new_routed)
+
+    # ....................... #
+
+    def without_route(self, key: DepKey[T], route: str) -> Self:
+        """Create a new dependency container without one routed route."""
+
+        logger.trace(
+            "Removing dependency '%s' for route '%s' from container copy",
+            key.name,
+            route,
+        )
+
+        if key not in self.routed_deps:
+            return self
+
+        new_routed = dict(self.routed_deps)
+        routes = dict(new_routed[key])
+        routes.pop(route, None)
+
+        if routes:
+            new_routed[key] = routes
+
+        else:
+            new_routed.pop(key)
+
+        return type(self)(plain_deps=dict(self.plain_deps), routed_deps=new_routed)
 
     # ....................... #
 
     def empty(self) -> bool:
         """Return ``True`` if the dependency container is empty."""
 
-        return len(self.deps) == 0
+        return not self.plain_deps and not self.routed_deps
+
+    # ....................... #
+
+    def count(self) -> int:
+        """Return total number of registered dependency entries.
+
+        Plain deps count as 1 entry each.
+        Routed deps count as 1 entry per route.
+        """
+
+        return len(self.plain_deps) + sum(
+            len(routes) for routes in self.routed_deps.values()
+        )
 
 
 # ....................... #
@@ -202,7 +379,7 @@ class DepsPlan:
             logger.trace(
                 "Built deps module #%s with %s dependency(ies)",
                 i,
-                len(deps.deps),
+                deps.count(),
             )
             built.append(deps)
 

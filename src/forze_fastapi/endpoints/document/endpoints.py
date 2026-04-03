@@ -1,5 +1,3 @@
-from datetime import timedelta
-
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -9,6 +7,7 @@ require_fastapi()
 from typing import Any
 
 from forze.application.composition.document import DocumentDTOs, DocumentUsecasesFacade
+from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.dto import (
     DocumentIdDTO,
     DocumentIdRevDTO,
@@ -179,7 +178,7 @@ def build_document_create_endpoint_spec[R: ReadDocument, C: BaseDTO](
     *,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
-    idempotency: Idempotency | None = Idempotency(ttl=timedelta(seconds=30)),
+    idempotency: IdempotencySpec | None = None,
 ) -> CreateEndpointSpec[R, C]:
     path = path_override or "/create"
     path = path_coerce(path)
@@ -187,7 +186,7 @@ def build_document_create_endpoint_spec[R: ReadDocument, C: BaseDTO](
     if dtos.create is None:
         raise CoreError("Create DTO is not provided")
 
-    features = [idempotency] if idempotency is not None else None
+    features = [Idempotency(spec=idempotency)] if idempotency is not None else None
 
     return build_http_endpoint_spec(
         Facade,

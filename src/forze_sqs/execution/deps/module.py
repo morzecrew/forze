@@ -8,7 +8,8 @@ from forze.application.contracts.queue import QueueReadDepKey, QueueWriteDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import SQSClient
-from .deps import sqs_queue
+from .configs import SQSQueueConfig
+from .deps import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
 from .keys import SQSClientDepKey
 
 # ----------------------- #
@@ -22,14 +23,43 @@ class SQSDepsModule(DepsModule):
     client: SQSClient
     """Pre-constructed SQS client (session not yet initialized)."""
 
+    queue_readers: dict[str, SQSQueueConfig] = attrs.field(factory=dict)
+    """Mapping from queue names to their SQS-specific configurations."""
+
+    queue_writers: dict[str, SQSQueueConfig] = attrs.field(factory=dict)
+    """Mapping from queue names to their SQS-specific configurations."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
         """Build a dependency container with SQS-backed ports."""
-        return Deps(
-            {
-                SQSClientDepKey: self.client,
-                QueueReadDepKey: sqs_queue,
-                QueueWriteDepKey: sqs_queue,
-            }
-        )
+
+        plain_deps = Deps.plain({SQSClientDepKey: self.client})
+        queue_reader_deps = Deps()
+        queue_writer_deps = Deps()
+
+        if self.queue_readers:
+            queue_reader_deps = queue_reader_deps.merge(
+                Deps.routed(
+                    {
+                        QueueReadDepKey: {
+                            name: ConfigurableSQSQueueRead(config=config)
+                            for name, config in self.queue_readers.items()
+                        }
+                    }
+                )
+            )
+
+        if self.queue_writers:
+            queue_writer_deps = queue_writer_deps.merge(
+                Deps.routed(
+                    {
+                        QueueWriteDepKey: {
+                            name: ConfigurableSQSQueueWrite(config=config)
+                            for name, config in self.queue_writers.items()
+                        }
+                    }
+                )
+            )
+
+        return plain_deps.merge(queue_reader_deps, queue_writer_deps)

@@ -3,7 +3,7 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.document import DocumentReadPort
-from forze.application.contracts.mapper import MapperPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.dto import (
     ListRequestDTO,
     Paginated,
@@ -41,7 +41,7 @@ class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Ou
         body = args
 
         if self.mapper:
-            body = await self.mapper(self.ctx, body)
+            body = await self.mapper(body, ctx=self.ctx)
 
         hits, count = await self.doc.find_many(
             filters=body.filters,
@@ -82,7 +82,7 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
         body = args
 
         if self.mapper:
-            body = await self.mapper(self.ctx, body)
+            body = await self.mapper(body, ctx=self.ctx)
 
         hits, count = await self.doc.find_many(
             filters=body.filters,

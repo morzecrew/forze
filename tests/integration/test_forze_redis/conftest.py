@@ -11,7 +11,6 @@ from testcontainers.redis import RedisContainer
 
 pytest.importorskip("redis")
 
-from forze.base.codecs import KeyCodec
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
@@ -22,6 +21,7 @@ from forze_redis.adapters import (
     RedisStreamCodec,
     RedisStreamGroupAdapter,
 )
+from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig
 
 
@@ -69,7 +69,7 @@ async def redis_cache(redis_client: RedisClient) -> RedisCacheAdapter:
     namespace = f"it:cache:{uuid4().hex[:12]}"
     return RedisCacheAdapter(
         client=redis_client,
-        key_codec=KeyCodec(namespace=namespace),
+        key_codec=RedisKeyCodec(namespace=namespace),
     )
 
 
@@ -79,15 +79,18 @@ async def redis_counter(redis_client: RedisClient) -> RedisCounterAdapter:
     namespace = f"it:counter:{uuid4().hex[:12]}"
     return RedisCounterAdapter(
         client=redis_client,
-        key_codec=KeyCodec(namespace=namespace),
-        tenant_context=None,
+        key_codec=RedisKeyCodec(namespace=namespace),
     )
 
 
 @pytest_asyncio.fixture(scope="function")
 async def redis_idempotency(redis_client: RedisClient) -> RedisIdempotencyAdapter:
     """Provide a RedisIdempotencyAdapter for integration tests."""
-    return RedisIdempotencyAdapter(client=redis_client)
+    namespace = f"it:idempotency:{uuid4().hex[:12]}"
+    return RedisIdempotencyAdapter(
+        client=redis_client,
+        key_codec=RedisKeyCodec(namespace=namespace),
+    )
 
 
 class _StreamPayload(BaseModel):

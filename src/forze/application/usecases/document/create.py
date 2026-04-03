@@ -3,7 +3,7 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.document import DocumentWritePort
-from forze.application.contracts.mapper import MapperPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import Usecase
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
@@ -36,6 +36,6 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         :returns: Created read model.
         """
 
-        cmd = await self.mapper(self.ctx, args)
+        cmd = await self.mapper(args, ctx=self.ctx)
 
         return await self.doc.create(dto=cmd)

@@ -1,6 +1,5 @@
 """Specifications for document models and storage layout."""
 
-from datetime import timedelta
 from typing import Generic, TypedDict, TypeVar, final
 
 import attrs
@@ -13,26 +12,15 @@ from forze.domain.models import (
     ReadDocument,
 )
 
+from ..base import BaseSpec
+from ..cache import CacheSpec
+
 # ----------------------- #
 
 R = TypeVar("R", bound=ReadDocument)  #! Arbitrary read model (CoreModel or so)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
-
-# ....................... #
-
-
-@final
-class DocumentCacheSpec(TypedDict, total=False):
-    """Cache specification for a document aggregate."""
-
-    enabled: bool
-    """Enable caching for the document aggregate."""
-
-    ttl: timedelta
-    """Default TTL for cache entries."""
-
 
 # ....................... #
 
@@ -56,11 +44,8 @@ class DocumentWriteTypes(TypedDict, Generic[D, C, U]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentSpec(Generic[R, D, C, U]):
+class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     """Declarative specification for a document aggregate."""
-
-    name: str
-    """Name for the document aggregate."""
 
     read: type[R]
     """Read specification for the document aggregate."""
@@ -71,7 +56,7 @@ class DocumentSpec(Generic[R, D, C, U]):
     history_enabled: bool = False
     """Enable history for the document aggregate. Defaults to ``False``."""
 
-    cache: DocumentCacheSpec | None = None  #! something strange ....
+    cache: CacheSpec | None = None  #! something strange ....
     """Cache specification for the document aggregate."""
 
     # ....................... #

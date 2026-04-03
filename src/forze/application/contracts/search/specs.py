@@ -5,6 +5,8 @@ from pydantic import BaseModel
 
 from forze.base.errors import CoreError
 
+from ..base import BaseSpec
+
 # ----------------------- #
 
 
@@ -22,14 +24,11 @@ class SearchFuzzySpec(TypedDict, total=False):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchSpec[M: BaseModel]:
+class SearchSpec[M: BaseModel](BaseSpec):
     """Specification for simple search (one index).
 
     #! TODO: add a proper description
     """
-
-    name: str
-    """Logical search namespace name."""
 
     model_type: type[M]
     """Pydantic model class for searchable documents."""

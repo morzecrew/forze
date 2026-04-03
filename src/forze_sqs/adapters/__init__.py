@@ -1,4 +1,5 @@
-from .queue import SQSQueueAdapter, SQSQueueCodec
+from .codecs import SQSQueueCodec
+from .queue import SQSQueueAdapter
 
 # ----------------------- #
 

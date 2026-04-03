@@ -7,23 +7,29 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Sequence, final
+from typing import Any, Final, Sequence, final
 
 import attrs
 
 from forze.application.contracts.cache import CachePort
-from forze.application.contracts.tenant import TenantContextPort
-from forze.base.codecs import JsonCodec, KeyCodec, TextCodec
 
-from ..kernel.platform import RedisClient
 from ._logger import logger
+from .base import RedisBaseAdapter
+from .codecs import default_json_codec, default_text_codec
 
 # ----------------------- #
+
+_CACHE_SCOPE: Final[str] = "cache"
+_KV_SCOPE: Final[str] = "kv"
+_POINTER_SCOPE: Final[str] = "pointer"
+_BODY_SCOPE: Final[str] = "body"
+
+# ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisCacheAdapter(CachePort):
+class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.cache.CachePort`.
 
     Supports two caching strategies:
@@ -31,51 +37,32 @@ class RedisCacheAdapter(CachePort):
     * **Plain key-value** — a single Redis key per cache entry.
     * **Versioned** — a pointer key that maps to a version-tagged body key,
       enabling atomic cache invalidation without deleting the body.
-
-    Keys are namespaced via :class:`~forze.base.codecs.KeyCodec` and optionally
-    prefixed with a tenant identifier when a
-    :class:`~forze.application.contracts.tenant.TenantContextPort` is provided.
     """
 
-    client: RedisClient
-    key_codec: KeyCodec
-    tenant_context: TenantContextPort | None = None
-
-    # Non initable fields
-    json_codec: JsonCodec = attrs.field(factory=JsonCodec, init=False)
-    text_codec: TextCodec = attrs.field(factory=TextCodec, init=False)
-
-    # Defaults (overrideable)
     ttl_pointer: timedelta = timedelta(seconds=60)
+    """TTL for the cache pointers (when using versioned cache)."""
+
     ttl_body: timedelta = timedelta(seconds=300)
+    """TTL for the cache bodies (when using versioned cache)."""
+
     ttl_kv: timedelta = timedelta(seconds=300)
+    """TTL for the cache key-value pairs (when using plain cache)."""
 
     # ....................... #
     # Helpers
 
     def __kv_key(self, key: str) -> str:
-        if self.tenant_context is not None:
-            return self.key_codec.join(
-                str(self.tenant_context.get()), "cache", "kv", key
-            )
+        return self.construct_key((_CACHE_SCOPE, _KV_SCOPE), key)
 
-        return self.key_codec.join("cache", "kv", key)
+    # ....................... #
 
     def __pointer_key(self, key: str) -> str:
-        if self.tenant_context is not None:
-            return self.key_codec.join(
-                str(self.tenant_context.get()), "cache", "pointer", key
-            )
+        return self.construct_key((_CACHE_SCOPE, _POINTER_SCOPE), key)
 
-        return self.key_codec.join("cache", "pointer", key)
+    # ....................... #
 
     def __body_key(self, key: str, version: str) -> str:
-        if self.tenant_context is not None:
-            return self.key_codec.join(
-                str(self.tenant_context.get()), "cache", "body", key, version
-            )
-
-        return self.key_codec.join("cache", "body", key, version)
+        return self.construct_key((_CACHE_SCOPE, _BODY_SCOPE), key, version)
 
     # ....................... #
     # Internal: pointer
@@ -94,7 +81,7 @@ class RedisCacheAdapter(CachePort):
                 continue
 
             try:
-                res[k] = self.text_codec.loads(rv)
+                res[k] = default_text_codec.loads(rv)
 
             except ValueError:
                 continue
@@ -136,7 +123,7 @@ class RedisCacheAdapter(CachePort):
                 continue
 
             try:
-                res[k] = self.json_codec.loads(rb)
+                res[k] = default_json_codec.loads(rb)
 
             except ValueError:
                 continue
@@ -155,7 +142,7 @@ class RedisCacheAdapter(CachePort):
             return
 
         redis_mapping = {
-            self.__body_key(k, v): self.json_codec.dumps(val)
+            self.__body_key(k, v): default_json_codec.dumps(val)
             for (k, v), val in mapping.items()
         }
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
@@ -186,7 +173,7 @@ class RedisCacheAdapter(CachePort):
                 continue
 
             try:
-                res[k] = self.json_codec.loads(rv)
+                res[k] = default_json_codec.loads(rv)
 
             except ValueError:
                 continue
@@ -200,7 +187,7 @@ class RedisCacheAdapter(CachePort):
             return
 
         redis_mapping = {
-            self.__kv_key(k): self.json_codec.dumps(v) for k, v in mapping.items()
+            self.__kv_key(k): default_json_codec.dumps(v) for k, v in mapping.items()
         }
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
 

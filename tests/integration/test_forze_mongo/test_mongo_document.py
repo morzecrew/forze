@@ -52,15 +52,13 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     )
 
     configurable = ConfigurableMongoDocument(
-        configs={
-            "my_docs_ns": {
-                "read": (db_name, collection),
-                "write": (db_name, collection),
-                "history": (db_name, history_collection),
-            }
+        config={
+            "read": (db_name, collection),
+            "write": (db_name, collection),
+            "history": (db_name, history_collection),
         }
     )
-    deps = Deps(
+    deps = Deps.plain(
         {
             MongoClientDepKey: mongo_client,
             DocumentReadDepKey: configurable,

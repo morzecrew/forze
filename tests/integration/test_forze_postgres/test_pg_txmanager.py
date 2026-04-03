@@ -14,9 +14,9 @@ def pg_txmanager(pg_client: PostgresClient) -> PostgresTxManagerAdapter:
 
 @pytest.mark.asyncio
 async def test_scope_key(pg_txmanager: PostgresTxManagerAdapter) -> None:
-    """scope_key returns PostgresTxScopeKey."""
-    assert pg_txmanager.scope_key() == PostgresTxScopeKey
-    assert pg_txmanager.scope_key().name == "postgres"
+    """scope_key matches PostgresTxScopeKey."""
+    assert pg_txmanager.scope_key == PostgresTxScopeKey
+    assert pg_txmanager.scope_key.name == "postgres"
 
 
 @pytest.mark.asyncio

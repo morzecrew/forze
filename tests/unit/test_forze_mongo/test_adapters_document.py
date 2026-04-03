@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.application.contracts.document import DocumentSpec
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters.document import MongoDocumentAdapter
@@ -44,14 +45,28 @@ def _build_read_gateway() -> MagicMock:
     gateway = MagicMock(spec=MongoReadGateway)
     gateway.model = MyReadDoc
     gateway.client = object()
+    gateway.tenant_aware = False
     gateway.get = AsyncMock()
     gateway.get_many = AsyncMock()
     return gateway
 
 
+def _doc_spec() -> DocumentSpec[MyReadDoc, MyDoc, MyCreateDoc, MyUpdateDoc]:
+    return DocumentSpec(
+        name="mongo-adapter-test",
+        read=MyReadDoc,
+        write={
+            "domain": MyDoc,
+            "create_cmd": MyCreateDoc,
+            "update_cmd": MyUpdateDoc,
+        },
+    )
+
+
 def _build_write_gateway(client: object) -> MagicMock:
     gateway = MagicMock(spec=MongoWriteGateway)
     gateway.client = client
+    gateway.tenant_aware = False
     gateway.update = AsyncMock()
     return gateway
 
@@ -68,7 +83,7 @@ class TestMongoDocumentAdapter:
         cache.get = AsyncMock(side_effect=RuntimeError("cache unavailable"))
         cache.set_versioned = AsyncMock()
 
-        adapter = MongoDocumentAdapter(read_gw=read_gw, cache=cache)
+        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw, cache=cache)
         result = await adapter.get(pk, for_update=True)
 
         assert result == expected
@@ -88,7 +103,7 @@ class TestMongoDocumentAdapter:
         cache.get_many = AsyncMock(side_effect=RuntimeError("cache unavailable"))
         cache.set_many_versioned = AsyncMock()
 
-        adapter = MongoDocumentAdapter(read_gw=read_gw, cache=cache)
+        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw, cache=cache)
         result = await adapter.get_many(pks)
 
         assert result == expected
@@ -105,7 +120,7 @@ class TestMongoDocumentAdapter:
         expected_read = _read_doc(pk, rev=2, name="after")
         read_gw.get.return_value = expected_read
 
-        adapter = MongoDocumentAdapter(read_gw=read_gw, write_gw=write_gw)
+        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw, write_gw=write_gw)
         updated = await adapter.update(pk, 1, MyUpdateDoc(name="after"))
 
         assert isinstance(updated, MyReadDoc)
@@ -116,7 +131,7 @@ class TestMongoDocumentAdapter:
 
     @pytest.mark.asyncio
     async def test_update_requires_write_gateway(self) -> None:
-        adapter = MongoDocumentAdapter(read_gw=_build_read_gateway())
+        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=_build_read_gateway())
 
         with pytest.raises(CoreError, match="Write gateway is not configured"):
             await adapter.update(uuid4(), 1, MyUpdateDoc(name="x"))

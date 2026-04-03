@@ -63,6 +63,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         )
         where_params = [pk, rev]
 
+        # if gateway is tenant aware, add tenant ID filter to the query
         where, where_params = self._add_tenant_where(where, where_params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(

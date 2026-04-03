@@ -1,5 +1,7 @@
 """Postgres adapter implementing the document read/write port contracts."""
 
+from functools import cached_property
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -22,8 +24,8 @@ from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
+    pydantic_cache_dump,
+    pydantic_cache_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -71,6 +73,9 @@ class PostgresDocumentAdapter(
     cache: CachePort | None = None
     """Optional cache layer for read-through caching."""
 
+    batch_size: int = 200
+    """Batch size for writing."""
+
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
@@ -88,6 +93,22 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
+    @cached_property
+    def eff_batch_size(self) -> int:
+        if self.batch_size < 10:
+            logger.warning("Batch size is too small, using default value of 200")
+
+            return 200
+
+        if self.batch_size > 1000:
+            logger.warning("Batch size is too large, using default value of 200")
+
+            return 200
+
+        return self.batch_size
+
+    # ....................... #
+
     def _require_write(self) -> PostgresWriteGateway[D, C, U]:
         if self.write_gw is None:
             raise CoreError("Write gateway is not configured")
@@ -98,18 +119,11 @@ class PostgresDocumentAdapter(
 
     async def _set_cache(self, doc: R) -> None:
         if self.cache is not None:
+
             try:
-                #! TODO: transform to canonical mapper
-                dump = pydantic_dump(
-                    doc,
-                    exclude={
-                        "none": True,
-                        "defaults": True,
-                        "computed_fields": True,
-                    },
-                    mode="json",
-                )
+                dump = pydantic_cache_dump(doc)
                 await self.cache.set_versioned(str(doc.id), str(doc.rev), dump)
+
                 logger.trace("Cache set successfully")
 
             except Exception:
@@ -120,18 +134,9 @@ class PostgresDocumentAdapter(
     async def _set_cache_many(self, docs: Sequence[R]) -> None:
         if self.cache is not None:
             try:
-                #! TODO: transform to canonical mapper
-                dumps = pydantic_dump_many(
-                    docs,
-                    exclude={
-                        "none": True,
-                        "defaults": True,
-                        "computed_fields": True,
-                    },
-                    mode="json",
-                )
+                dumps = pydantic_cache_dump_many(docs)
                 res_cache_map = {
-                    (str(x.id), str(x.rev)): y for x, y in zip(docs, dumps)
+                    (str(x.id), str(x.rev)): y for x, y in zip(docs, dumps, strict=True)
                 }
                 await self.cache.set_many_versioned(res_cache_map)
 
@@ -217,6 +222,7 @@ class PostgresDocumentAdapter(
         logger.debug(
             "Fetching 1 '%s' document from database (cache miss)", self.spec.name
         )
+
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
 
@@ -452,7 +458,7 @@ class PostgresDocumentAdapter(
             self.spec.name,
         )
 
-        domains = await w.create_many(dtos)
+        domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many([x.id for x in domains])
@@ -503,7 +509,7 @@ class PostgresDocumentAdapter(
             pks[0],
         )
 
-        await w.update_many(pks, dtos, revs=revs)
+        await w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources
@@ -551,7 +557,7 @@ class PostgresDocumentAdapter(
             pks[0],
         )
 
-        await w.touch_many(pks)
+        await w.touch_many(pks, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources
@@ -593,7 +599,7 @@ class PostgresDocumentAdapter(
             pks[0],
         )
 
-        await w.kill_many(pks)
+        await w.kill_many(pks, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
     # ....................... #
@@ -641,7 +647,7 @@ class PostgresDocumentAdapter(
             pks[0],
         )
 
-        await w.delete_many(pks, revs=revs)
+        await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources
@@ -695,7 +701,7 @@ class PostgresDocumentAdapter(
             pks[0],
         )
 
-        await w.restore_many(pks, revs=revs)
+        await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources

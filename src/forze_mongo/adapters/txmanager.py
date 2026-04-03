@@ -14,6 +14,7 @@ import attrs
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 
 from ..kernel.platform import MongoClient, MongoTransactionOptions
+from ._logger import logger
 
 # ----------------------- #
 
@@ -26,31 +27,35 @@ MongoTxScopeKey = TxScopeKey("mongo")
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoTxManagerAdapter(TxManagerPort):
-    """Mongo adapter for managing transactions through :class:`MongoClient`.
-
-    Wraps the client's :meth:`~MongoClient.transaction` context manager and
-    exposes the :data:`MongoTxScopeKey` so the execution plan can group
-    Mongo-scoped operations under a single transaction boundary.
-    """
+    """Mongo-backed :class:`TxManagerPort` that delegates to :meth:`MongoClient.transaction`."""
 
     client: MongoClient
-    """Shared :class:`MongoClient` instance."""
+    """Client instance instance."""
 
     options: MongoTransactionOptions = attrs.field(factory=MongoTransactionOptions)
     """Transaction options forwarded to the Mongo session."""
 
-    # ....................... #
-
-    def scope_key(self) -> TxScopeKey:
-        """Return the Mongo transaction scope key."""
-
-        return MongoTxScopeKey
+    # Non initable fields
+    scope_key: TxScopeKey = attrs.field(default=MongoTxScopeKey, init=False)
+    """The key used to scope the transaction."""
 
     # ....................... #
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
-        """Open a Mongo transaction for the duration of the context."""
+        """Open Mongo transaction for the duration of the context."""
+
+        #! TODO: log options
+        logger.debug("Starting transaction")
 
         async with self.client.transaction(options=self.options):
-            yield
+            try:
+                yield
+
+            #! Hmmm.. should it be like that?
+            except Exception:
+                logger.debug("Transaction rolled back")
+                raise
+
+            else:
+                logger.debug("Transaction committed")

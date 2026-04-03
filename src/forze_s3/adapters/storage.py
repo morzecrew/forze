@@ -10,7 +10,7 @@ import asyncio
 import mimetypes
 import re
 from datetime import datetime
-from typing import final
+from typing import Callable, final
 
 import attrs
 import magic
@@ -21,56 +21,84 @@ from forze.application.contracts.storage import (
     StoragePort,
     StoredObject,
 )
-from forze.application.contracts.tenant import TenantContextPort
-from forze.base.codecs import AsciiB64Codec, PathCodec
 from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
+from forze.infra.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import S3Client
+from .codecs import default_b64_codec, default_path_codec
 
 # ----------------------- #
-#! TODO: add tenant context support on prefix level!
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class S3StorageAdapter(StoragePort):
+class S3StorageAdapter(StoragePort, MultiTenancyMixin):
     """Storage adapter that persists files in an S3-compatible bucket.
 
     Implements :class:`~forze.application.contracts.storage.StoragePort`.
     Object keys are built from an optional tenant prefix, a user-supplied
-    prefix, and a UUID v7 to guarantee uniqueness. File names and
+    prefix, and a key generator to guarantee uniqueness (defaults to a UUID v7). File names and
     descriptions are base-64 encoded into S3 user metadata so they survive
     round-trips through S3 ``HeadObject``.
     """
 
     client: S3Client
+    """S3 client."""
+
     bucket: str
-    tenant_context: TenantContextPort | None = None
+    """S3 bucket name."""
 
-    # Non initable fields
-    path_codec: PathCodec = attrs.field(factory=PathCodec, init=False)
-    ascii_b64_codec: AsciiB64Codec = attrs.field(factory=AsciiB64Codec, init=False)
-
-    # ....................... #
-
-    def __build_key(self, prefix: str | None = None) -> str:
-        uid = str(uuid7())
-
-        parts: list[str] = []
-
-        if self.tenant_context is not None:
-            parts.append(str(self.tenant_context.get()))
-
-        if prefix:
-            parts.append(prefix)
-
-        parts.append(uid)
-
-        return self.path_codec.cond_join(*parts)
+    key_generator: Callable[[], str] = attrs.field(default=lambda: str(uuid7))
+    """Callable to generate a unique key. Defaults to a UUID v7."""
 
     # ....................... #
 
+    def __tenant_prefix(self) -> str | None:
+        """Construct a tenant prefix from attached tenant ID if any."""
+
+        tenant_id = self.require_tenant_if_aware()
+
+        if tenant_id is not None:
+            return f"tenant_{tenant_id}"
+
+        return None
+
+    # ....................... #
+
+    def construct_path(self, prefix: tuple[str, ...] | str | None) -> str:
+        """Construct a path for the given prefix."""
+
+        tenant_prefix = self.__tenant_prefix()
+
+        if isinstance(prefix, tuple):
+            prefix = default_path_codec.join(*prefix)
+
+        return default_path_codec.cond_join(tenant_prefix, prefix)
+
+    # ....................... #
+
+    def construct_key(self, prefix: tuple[str, ...] | str | None) -> str:
+        """Construct a unique key for the given prefix."""
+
+        key = self.key_generator()
+
+        parts: tuple[str, ...]
+
+        if prefix is None:
+            parts = (key,)
+
+        elif isinstance(prefix, str):
+            parts = (prefix, key)
+
+        else:
+            parts = (*prefix, key)
+
+        return self.construct_path(parts)
+
+    # ....................... #
+
+    #! move outside (func)
     def _validate_prefix(self, prefix: str | None) -> None:
         if prefix is None:
             return
@@ -86,7 +114,7 @@ class S3StorageAdapter(StoragePort):
         data: bytes,
         description: str | None = None,
         *,
-        prefix: str | None = None,
+        prefix: tuple[str, ...] | str | None = None,
     ) -> StoredObject:
         """Upload a file to S3 and return its stored representation.
 
@@ -97,19 +125,22 @@ class S3StorageAdapter(StoragePort):
         :returns: A :class:`StoredObject` with the generated key and metadata.
         """
 
+        prefix = default_path_codec.join(prefix)
+
         self._validate_prefix(prefix)
-        key = self.__build_key(prefix)
+        key = self.construct_key(prefix)
+
         content_type = self._guess_content_type(filename, data)
-        now = utcnow().isoformat()
+        now = utcnow()
 
         metadata = ObjectMetadata(
-            filename=self.ascii_b64_codec.dumps(filename),
-            created_at=now,
+            filename=default_b64_codec.dumps(filename),
+            created_at=now.isoformat(),
             size=str(len(data)),
         )
 
         if description:
-            metadata["description"] = self.ascii_b64_codec.dumps(description)
+            metadata["description"] = default_b64_codec.dumps(description)
 
         safe_meta = {k: str(v) for k, v in metadata.items() if v is not None}
 
@@ -130,7 +161,7 @@ class S3StorageAdapter(StoragePort):
             description=description,
             content_type=content_type,
             size=len(data),
-            created_at=datetime.fromisoformat(now),
+            created_at=now,
         )
 
     # ....................... #
@@ -160,7 +191,7 @@ class S3StorageAdapter(StoragePort):
             return DownloadedObject(
                 data=data,
                 content_type=str(h["content_type"]),  # type: ignore[arg-type]
-                filename=self.ascii_b64_codec.loads(meta["filename"]),
+                filename=default_b64_codec.loads(meta["filename"]),
             )
 
     # ....................... #
@@ -181,7 +212,7 @@ class S3StorageAdapter(StoragePort):
         limit: int,
         offset: int,
         *,
-        prefix: str | None = None,
+        prefix: tuple[str, ...] | str | None = None,
     ) -> tuple[list[StoredObject], int]:
         """List stored objects with pagination.
 
@@ -194,23 +225,18 @@ class S3StorageAdapter(StoragePort):
         :returns: A tuple of ``(objects, total_count)``.
         """
 
+        prefix = default_path_codec.join(prefix)
         self._validate_prefix(prefix)
-
-        parts: list[str] = []
-
-        if self.tenant_context is not None:
-            parts.append(str(self.tenant_context.get()))
-
-        if prefix:
-            parts.append(prefix)
-
-        p = self.path_codec.cond_join(*parts)
+        path = self.construct_path(prefix)
 
         async with self.client.client():
             await self.client.ensure_bucket(self.bucket)
 
             objects, total_count = await self.client.list_objects(
-                bucket=self.bucket, prefix=p, limit=limit, offset=offset
+                bucket=self.bucket,
+                prefix=path,
+                limit=limit,
+                offset=offset,
             )
 
             for o in objects:
@@ -239,9 +265,9 @@ class S3StorageAdapter(StoragePort):
                 out.append(
                     StoredObject(
                         key=o["Key"],  # type: ignore[typeddict-item]
-                        filename=self.ascii_b64_codec.loads(meta["filename"]),
+                        filename=default_b64_codec.loads(meta["filename"]),
                         description=(
-                            self.ascii_b64_codec.loads(meta["description"])
+                            default_b64_codec.loads(meta["description"])
                             if "description" in meta
                             else None
                         ),

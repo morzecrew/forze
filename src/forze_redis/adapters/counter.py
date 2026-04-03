@@ -6,45 +6,34 @@ require_redis()
 
 # ....................... #
 
-from typing import final
-
-import attrs
+from typing import Final, final
 
 from forze.application.contracts.counter import CounterPort
-from forze.application.contracts.tenant import TenantContextPort
-from forze.base.codecs import KeyCodec
-from forze.base.errors import ValidationError
 
-from ..kernel.platform import RedisClient
 from ._logger import logger
+from .base import RedisBaseAdapter
 
 # ----------------------- #
 
+_COUNTER_SCOPE: Final[str] = "counter"
+
+# ....................... #
+
 
 @final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisCounterAdapter(CounterPort):
+class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.counter.CounterPort`.
 
     Uses ``INCRBY`` / ``DECRBY`` / ``GETSET`` for atomic counter operations.
-    Keys are namespaced via :class:`~forze.base.codecs.KeyCodec` and optionally
-    prefixed with a tenant identifier.
     """
 
-    client: RedisClient
-    key_codec: KeyCodec
-    tenant_context: TenantContextPort | None = None
-
-    # ....................... #
-
-    def _build_key(self, suffix: str | None) -> str:
-        tenant_id = str(self.tenant_context.get()) if self.tenant_context else None
-        return self.key_codec.cond_join(tenant_id, suffix)
+    def __key(self, suffix: str | None) -> str:
+        return self.construct_key(_COUNTER_SCOPE, suffix)
 
     # ....................... #
 
     async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
-        key = self._build_key(suffix)
+        key = self.__key(suffix)
 
         logger.debug("Incrementing counter '%s' by %s", key, by)
 
@@ -58,10 +47,7 @@ class RedisCounterAdapter(CounterPort):
         *,
         suffix: str | None = None,
     ) -> list[int]:
-        if size <= 1:
-            raise ValidationError("Size must be greater than 1")
-
-        key = self._build_key(suffix)
+        key = self.__key(suffix)
 
         logger.debug(
             "Incrementing counter '%s' by %s, returning batch range",
@@ -76,7 +62,7 @@ class RedisCounterAdapter(CounterPort):
     # ....................... #
 
     async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
-        key = self._build_key(suffix)
+        key = self.__key(suffix)
 
         logger.debug("Decrementing counter '%s' by %s", key, by)
 
@@ -85,7 +71,7 @@ class RedisCounterAdapter(CounterPort):
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
-        key = self._build_key(suffix)
+        key = self.__key(suffix)
 
         logger.debug("Resetting counter '%s' to %s", key, value)
 

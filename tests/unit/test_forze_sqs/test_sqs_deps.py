@@ -10,7 +10,7 @@ from forze.application.contracts.queue import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_sqs.adapters import SQSQueueAdapter
 from forze_sqs.execution.deps import SQSClientDepKey, SQSDepsModule
-from forze_sqs.execution.deps.deps import sqs_queue
+from forze_sqs.execution.deps.deps import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
 from forze_sqs.kernel.platform import SQSClient
 
 
@@ -18,27 +18,39 @@ class _QueuePayload(BaseModel):
     value: str
 
 
-def test_sqs_queue_builds_adapter() -> None:
+def test_sqs_queue_factory_builds_adapter() -> None:
     sqs_mock = Mock(spec=SQSClient)
-    deps = Deps(deps={SQSClientDepKey: sqs_mock})
+    deps = Deps.plain({SQSClientDepKey: sqs_mock})
     context = ExecutionContext(deps=deps)
-    spec = QueueSpec(namespace="events", model=_QueuePayload)
+    spec = QueueSpec(name="events", model=_QueuePayload)
 
-    queue = sqs_queue(context, spec)
+    reader = ConfigurableSQSQueueRead(
+        config={"namespace": "events", "tenant_aware": False},
+    )
+    queue = reader(context, spec)
 
     assert isinstance(queue, SQSQueueAdapter)
     assert queue.client is sqs_mock
     assert queue.codec.model is _QueuePayload
     assert queue.namespace == "events"
 
+    writer = ConfigurableSQSQueueWrite(
+        config={"namespace": "events", "tenant_aware": False},
+    )
+    assert isinstance(writer(context, spec), SQSQueueAdapter)
+
 
 def test_sqs_deps_module_registers_expected_keys() -> None:
     client = Mock(spec=SQSClient)
-    module = SQSDepsModule(client=client)
+    module = SQSDepsModule(
+        client=client,
+        queue_readers={"events": {"namespace": "ns"}},
+        queue_writers={"events": {"namespace": "ns"}},
+    )
 
     deps = module()
 
     assert isinstance(deps, Deps)
     assert deps.exists(SQSClientDepKey)
-    assert deps.exists(QueueReadDepKey)
-    assert deps.exists(QueueWriteDepKey)
+    assert deps.exists(QueueReadDepKey, route="events")
+    assert deps.exists(QueueWriteDepKey, route="events")

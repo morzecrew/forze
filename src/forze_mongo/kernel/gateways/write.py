@@ -220,7 +220,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     # ....................... #
 
     @optimistic_retry()  # type: ignore[untyped-decorator]
-    async def create_many(self, dtos: Sequence[C]) -> Sequence[D]:
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
         """Bulk-insert documents from creation DTOs and record their history.
 
         :param dtos: Creation payloads. No-ops when empty.
@@ -234,7 +239,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         payloads = list(map(self._storage_doc, payloads))
 
-        await self.client.insert_many(self.coll(), payloads)
+        await self.client.insert_many(self.coll(), payloads, batch_size=batch_size)
 
         created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -298,6 +303,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         updates: Sequence[JsonDict] | None = None,
         *,
         revs: Sequence[int] | None = None,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         if not pks:
             return []
@@ -341,7 +347,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 )
             )
 
-        matched = await self.client.bulk_update(self.coll(), operations)
+        matched = await self.client.bulk_update(
+            self.coll(), operations, batch_size=batch_size
+        )
         if matched != len(to_patch):
             raise ConcurrencyError("Failed to update one or more records")
 
@@ -372,6 +380,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         dtos: Sequence[U],
         *,
         revs: Sequence[int] | None = None,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk-update documents with corresponding DTOs.
 
@@ -392,7 +401,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise CoreError("Length mismatch between primary keys and revisions")
 
         updates = pydantic_dump_many(dtos, exclude={"unset": True})
-        return await self._patch_many(pks, updates, revs=revs)
+        return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
 
     # ....................... #
 
@@ -406,17 +415,23 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    async def touch_many(self, pks: Sequence[UUID]) -> Sequence[D]:
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
         """Bump revisions for multiple documents without changing their data.
 
         :param pks: Document primary keys (must be unique).
+        :param batch_size: Batch size for the bulk operation.
         :raises ValidationError: If *pks* contains duplicates.
         """
 
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        return await self._patch_many(pks)
+        return await self._patch_many(pks, batch_size=batch_size)
 
     # ....................... #
 
@@ -470,11 +485,13 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         pks: Sequence[UUID],
         *,
         revs: Sequence[int] | None = None,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         """Soft-delete multiple documents.
 
         :param pks: Document primary keys (must be unique).
         :param revs: Optional expected revisions for history validation.
+        :param batch_size: Batch size for the bulk operation.
         :raises CoreError: If the model does not support soft deletion.
         :raises ValidationError: If *pks* contains duplicates.
         """
@@ -489,7 +506,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise CoreError("Length mismatch between primary keys and revisions")
 
         updates = [{SOFT_DELETE_FIELD: True} for _ in pks]
-        return await self._patch_many(pks, updates, revs=revs)
+        return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
 
     # ....................... #
 
@@ -513,11 +530,13 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         pks: Sequence[UUID],
         *,
         revs: Sequence[int] | None = None,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         """Restore multiple soft-deleted documents.
 
         :param pks: Document primary keys (must be unique).
         :param revs: Optional expected revisions for history validation.
+        :param batch_size: Batch size for the bulk operation.
         :raises CoreError: If the model does not support soft deletion.
         :raises ValidationError: If *pks* contains duplicates.
         """
@@ -533,4 +552,4 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         updates = [{SOFT_DELETE_FIELD: False} for _ in pks]
 
-        return await self._patch_many(pks, updates, revs=revs)
+        return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)

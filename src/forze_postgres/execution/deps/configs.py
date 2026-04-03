@@ -1,33 +1,56 @@
 from functools import reduce
-from typing import Literal, NotRequired, Sequence, TypedDict
+from typing import Literal, NotRequired, Sequence, TypedDict, final
 
 from forze.base.errors import CoreError
 
 from ...adapters import FtsGroupLetter
+from ...kernel.gateways import PostgresBookkeepingStrategy
 
 # ----------------------- #
 
 
-class PostgresDocumentConfig(TypedDict):
-    """Configuration for a Postgres document."""
-
-    read: tuple[str, str]
-    """Read relation (schema, table / view / materialized view)"""
-
-    write: NotRequired[tuple[str, str]]
-    """Write relation (schema, table), optional."""
-
-    history: NotRequired[tuple[str, str]]
-    """History relation (schema, table), optional."""
+class _BasePostgresConfig(TypedDict):
+    """Base configuration for a Postgres resource."""
 
     tenant_aware: NotRequired[bool]
-    """Whether the document is tenant-aware."""
+    """Whether the resource is tenant-aware."""
 
 
 # ....................... #
 
 
-class PostgresSearchConfig(TypedDict):
+class PostgresReadOnlyDocumentConfig(_BasePostgresConfig):
+    """Configuration for a Postgres read-only document."""
+
+    read: tuple[str, str]
+    """Read relation (schema, table / view / materialized view)"""
+
+
+# ....................... #
+
+
+@final
+class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):
+    """Configuration for a Postgres document."""
+
+    write: tuple[str, str]
+    """Write relation (schema, table)."""
+
+    bookkeeping_strategy: PostgresBookkeepingStrategy
+    """Bookkeeping strategy."""
+
+    history: NotRequired[tuple[str, str]]
+    """History relation (schema, table), optional."""
+
+    batch_size: NotRequired[int]
+    """Batch size for writing, optional. Defaults to 200."""
+
+
+# ....................... #
+
+
+@final
+class PostgresSearchConfig(_BasePostgresConfig):
     """Configuration for a Postgres search."""
 
     index: tuple[str, str]
@@ -39,21 +62,14 @@ class PostgresSearchConfig(TypedDict):
     engine: Literal["pgroonga", "fts"]
     """Search engine to use for the index."""
 
-    tenant_aware: NotRequired[bool]
-    """Whether the document is tenant-aware."""
-
     fts_groups: NotRequired[dict[FtsGroupLetter, Sequence[str]]]
     """Mapping of FTS weight letters to field names (required only for FTS engines)."""
 
 
 # ....................... #
 
-PostgresDocumentConfigs = dict[str, PostgresDocumentConfig]
-PostgresSearchConfigs = dict[str, PostgresSearchConfig]
 
-# ....................... #
-
-
+#! TODO: move to deps class
 def validate_pg_search_conf(cfg: PostgresSearchConfig) -> None:
     """Validate a Postgres search configuration."""
 

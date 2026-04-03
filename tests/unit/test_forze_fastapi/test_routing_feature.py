@@ -2,6 +2,7 @@
 
 import pytest
 
+from forze.application.contracts.idempotency import IdempotencySpec
 from forze.base.errors import CoreError
 from forze_fastapi.endpoints.http.composition.helpers import (
     compose_endpoint_features,
@@ -12,6 +13,8 @@ from forze_fastapi.endpoints.http.features import ETagFeature, IdempotencyFeatur
 
 # ----------------------- #
 
+_IDEM = IdempotencySpec(name="test-idempotency")
+
 
 class TestValidateHttpFeatures:
     """Rules tying HTTP method to optional endpoint features."""
@@ -19,7 +22,7 @@ class TestValidateHttpFeatures:
     def test_post_with_idempotency_ok(self) -> None:
         validate_http_features(
             {"method": "POST", "path": "/x"},
-            [IdempotencyFeature()],
+            [IdempotencyFeature(spec=_IDEM)],
         )
 
     def test_get_with_etag_ok(self) -> None:
@@ -32,7 +35,7 @@ class TestValidateHttpFeatures:
         with pytest.raises(CoreError, match="Idempotent endpoints must be POST"):
             validate_http_features(
                 {"method": "GET", "path": "/x"},
-                [IdempotencyFeature()],
+                [IdempotencyFeature(spec=_IDEM)],
             )
 
     def test_post_with_etag_raises(self) -> None:

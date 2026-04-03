@@ -1,17 +1,12 @@
-"""Counter contracts for monotonic sequence generation.
-
-Provides :class:`CounterPort` and dependency keys/routers for building
-counter instances from execution context and namespace.
-"""
-
-from .deps import CounterDepKey, CounterDepPort, CounterDepRouter
+from .deps import CounterDepKey, CounterDepPort
 from .ports import CounterPort
+from .specs import CounterSpec
 
 # ----------------------- #
 
 __all__ = [
     "CounterPort",
-    "CounterDepKey",
     "CounterDepPort",
-    "CounterDepRouter",
+    "CounterDepKey",
+    "CounterSpec",
 ]

@@ -16,7 +16,7 @@ from forze_rabbitmq.kernel.platform import RabbitMQClient, RabbitMQConfig
 async def test_rabbitmq_startup_hook_initializes_client() -> None:
     client = Mock(spec=RabbitMQClient)
     client.initialize = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps(deps={RabbitMQClientDepKey: client}))
+    ctx = ExecutionContext(deps=Deps.plain({RabbitMQClientDepKey: client}))
     config = RabbitMQConfig(prefetch_count=10)
     hook = RabbitMQStartupHook(dsn="amqp://guest:guest@localhost/", config=config)
 
@@ -32,7 +32,7 @@ async def test_rabbitmq_startup_hook_initializes_client() -> None:
 async def test_rabbitmq_shutdown_hook_closes_client() -> None:
     client = Mock(spec=RabbitMQClient)
     client.close = AsyncMock(return_value=None)
-    ctx = ExecutionContext(deps=Deps(deps={RabbitMQClientDepKey: client}))
+    ctx = ExecutionContext(deps=Deps.plain({RabbitMQClientDepKey: client}))
     hook = RabbitMQShutdownHook()
 
     await hook(ctx)

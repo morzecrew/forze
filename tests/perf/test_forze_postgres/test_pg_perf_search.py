@@ -30,7 +30,7 @@ class SearchableModel(BaseModel):
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
     """Build execution context with Postgres deps."""
-    deps = Deps(
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
@@ -88,7 +88,7 @@ async def search_adapter(pg_client: PostgresClient, execution_context):
         fields=["title", "content"],
     )
 
-    return execution_context.search(spec)
+    return execution_context.search_read(spec)
 
 
 @pytest.mark.perf

@@ -31,6 +31,8 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_dump_many,
+    pydantic_transform,
+    pydantic_transform_many,
     pydantic_validate,
     pydantic_validate_many,
 )
@@ -175,22 +177,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    #! TODO: canonical mapper from there
-    def _from_cdto(self, dto: C) -> D:
-        data = pydantic_dump(dto, exclude={"unset": True})
-
-        return pydantic_validate(self.model_type, data)
-
-    # ....................... #
-
-    #! TODO: canonical batch mapper from there
-    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
-        data = pydantic_dump_many(dtos, exclude={"unset": True})
-
-        return pydantic_validate_many(self.model_type, data)
-
-    # ....................... #
-
     def _where_pk_rev(self) -> sql.Composable:
         return sql.SQL("{} = {} AND {} = {}").format(
             self.ident_pk(),
@@ -203,7 +189,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
-        model = self._from_cdto(dto)
+        model = pydantic_transform(self.model_type, dto)
         insert_data_raw = pydantic_dump(model)
         insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
@@ -240,12 +226,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         dtos: Sequence[C],
         *,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         if not dtos:
             return []
 
-        models = self._from_cdto_many(dtos)
+        models = pydantic_transform_many(self.model_type, dtos)
         insert_data_raw = pydantic_dump_many(models)
         insert_data = await self.adapt_many_payload_for_write(
             insert_data_raw,
@@ -453,7 +439,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         updates: Sequence[JsonDict] | None = None,
         *,
         revs: Sequence[int] | None = None,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         if not pks or (not updates and updates is not None):
             return []
@@ -547,7 +533,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         dtos: Sequence[U],
         *,
         revs: Sequence[int] | None = None,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         updates = pydantic_dump_many(dtos, exclude={"unset": True})
 
@@ -559,7 +545,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         return await self.__patch_many(pks, None, batch_size=batch_size)
 
@@ -578,7 +564,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         pks: Sequence[UUID],
         *,
         revs: Sequence[int] | None = None,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
@@ -605,7 +591,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         pks: Sequence[UUID],
         *,
         revs: Sequence[int] | None = None,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> Sequence[D]:
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
@@ -634,7 +620,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
-        batch_size: int = 500,
+        batch_size: int = 200,
     ) -> None:
         if not pks:
             return

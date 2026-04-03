@@ -94,7 +94,7 @@ class TestTxMiddleware:
         async def next_fn(args: str) -> str:
             return "ok"
 
-        mw = TxMiddleware(ctx=stub_ctx)
+        mw = TxMiddleware(ctx=stub_ctx, route="mock")
         result = await mw(next_fn, "x")
         assert result == "ok"
 
@@ -108,7 +108,7 @@ class TestTxMiddleware:
             seen.append(f"commit:{res}")
             return res
 
-        mw = TxMiddleware(ctx=stub_ctx).with_after_commit(after_commit)
+        mw = TxMiddleware(ctx=stub_ctx, route="mock").with_after_commit(after_commit)
 
         async def next_fn(args: str) -> str:
             return "result"

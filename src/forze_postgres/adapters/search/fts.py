@@ -22,6 +22,7 @@ from forze.base.serialization import pydantic_validate_many
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
+from ._utils import calculate_effective_field_weights
 
 # ----------------------- #
 
@@ -111,28 +112,9 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         might be unexpected.
         """
 
-        #! code duplication here ... might need to move to contract level as calculations are similar
+        weights = calculate_effective_field_weights(self.spec, options)
 
-        options = options or {}
-        provided_weights = options.get("weights", {})
-        fields_to_search = options.get("fields", [])
-
-        # Firstly calculate field level weights canonically
-        if provided_weights:
-            weights = {f: provided_weights.get(f, 0.0) for f in self.spec.fields}
-
-        elif fields_to_search:
-            weights = {
-                f: 1.0 if f in fields_to_search else 0.0 for f in self.spec.fields
-            }
-
-        elif self.spec.default_weights:
-            weights = self.spec.default_weights
-
-        else:
-            weights = {f: 1.0 for f in self.spec.fields}
-
-        # Then map weights to FTS group letters
+        # M `ap weights to FTS group letters
         group_weights: dict[FtsGroupLetter, list[float]] = {
             k: [weights[x] for x in v] for k, v in self.fts_groups.items()
         }
@@ -159,6 +141,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
 
         query = query.strip()
         tsv = await self._resolve_tsvector_expr()
+
+        # Note: tenant ID is injected automatically
         fw, fp = await self.where_clause(filters)
 
         # empty query: only filters, no rank
@@ -171,6 +155,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         where_params = [*tsp, *fp]
 
         gw = self._effective_weights(options=options)
+
+        # Canonical order of FTS group letters
         fts_weights = [
             gw.get("D", 0.0),
             gw.get("C", 0.0),

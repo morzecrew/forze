@@ -4,8 +4,8 @@ from uuid import uuid4
 import pytest
 
 from forze.base.errors import ConflictError
-from forze.base.codecs import KeyCodec
 from forze_redis.adapters.cache import RedisCacheAdapter
+from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
 from forze_redis.kernel.platform.client import RedisClient
@@ -15,7 +15,7 @@ from forze_redis.kernel.platform.client import RedisClient
 async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:
     namespace = f"it:redis-cache:{uuid4()}"
     cache = RedisCacheAdapter(
-        client=redis_client, key_codec=KeyCodec(namespace=namespace)
+        client=redis_client, key_codec=RedisKeyCodec(namespace=namespace)
     )
 
     await cache.set("plain", {"name": "plain"})
@@ -37,7 +37,7 @@ async def test_redis_cache_adapter_roundtrip(redis_client: RedisClient) -> None:
 async def test_redis_counter_adapter_operations(redis_client: RedisClient) -> None:
     counter = RedisCounterAdapter(
         client=redis_client,
-        key_codec=KeyCodec(namespace=f"it:redis-counter:{uuid4()}"),
+        key_codec=RedisKeyCodec(namespace=f"it:redis-counter:{uuid4()}"),
     )
 
     assert await counter.incr() == 1
@@ -51,7 +51,11 @@ async def test_redis_counter_adapter_operations(redis_client: RedisClient) -> No
 async def test_redis_idempotency_adapter_replays_snapshot(
     redis_client: RedisClient,
 ) -> None:
-    adapter = RedisIdempotencyAdapter(client=redis_client, ttl=timedelta(seconds=30))
+    adapter = RedisIdempotencyAdapter(
+        client=redis_client,
+        ttl=timedelta(seconds=30),
+        key_codec=RedisKeyCodec(namespace=f"it:redis-idempotency:{uuid4()}"),
+    )
     op = f"orders:{uuid4()}"
     key = f"request:{uuid4()}"
     payload_hash = "hash-1"

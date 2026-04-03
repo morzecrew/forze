@@ -2,6 +2,7 @@
 
 import pytest
 
+from forze.application.contracts.storage import StorageSpec
 from forze.application.dto import ListObjectsRequestDTO, UploadObjectRequestDTO
 from forze.application.usecases.storage import (
     DeleteObject,
@@ -21,7 +22,7 @@ class TestStorageUsecases:
         self,
         stub_ctx,
     ) -> None:
-        storage = stub_ctx.storage("files")
+        storage = stub_ctx.storage(StorageSpec(name="files"))
 
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
         uploaded = await upload_uc(
@@ -39,7 +40,7 @@ class TestStorageUsecases:
         self,
         stub_ctx,
     ) -> None:
-        storage = stub_ctx.storage("files")
+        storage = stub_ctx.storage(StorageSpec(name="files"))
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
 
         await upload_uc(
@@ -63,7 +64,7 @@ class TestStorageUsecases:
         self,
         stub_ctx,
     ) -> None:
-        storage = stub_ctx.storage("files")
+        storage = stub_ctx.storage(StorageSpec(name="files"))
         upload_uc = UploadObject(ctx=stub_ctx, storage=storage)
         uploaded = await upload_uc(
             UploadObjectRequestDTO(filename="gone.txt", data=b"x")
