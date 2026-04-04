@@ -4,7 +4,7 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.queue import QueueReadDepKey, QueueWriteDepKey
+from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import RabbitMQClient
@@ -42,7 +42,7 @@ class RabbitMQDepsModule(DepsModule):
             queue_reader_deps = queue_reader_deps.merge(
                 Deps.routed(
                     {
-                        QueueReadDepKey: {
+                        QueueQueryDepKey: {
                             name: ConfigurableRabbitMQQueueRead(config=config)
                             for name, config in self.queue_readers.items()
                         }
@@ -54,7 +54,7 @@ class RabbitMQDepsModule(DepsModule):
             queue_writer_deps = queue_writer_deps.merge(
                 Deps.routed(
                     {
-                        QueueWriteDepKey: {
+                        QueueCommandDepKey: {
                             name: ConfigurableRabbitMQQueueWrite(config=config)
                             for name, config in self.queue_writers.items()
                         }

@@ -1,23 +1,19 @@
 from typing import Any
 
 from ..base import BaseDepPort, DepKey
-from .ports import PubSubPublishPort, PubSubSubscribePort
+from .ports import PubSubCommandPort, PubSubQueryPort
 from .specs import PubSubSpec
 
 # ----------------------- #
 
-PubSubPublishDepKey = DepKey[
-    BaseDepPort[
-        PubSubSpec[Any],
-        PubSubPublishPort[Any],
-    ]
-]("pubsub_publish")
-"""Key used to register the :class:`PubSubPublishPort` builder implementation."""
+PubSubQueryDepPort = BaseDepPort[PubSubSpec[Any], PubSubQueryPort[Any]]
+"""Pubsub query dependency port."""
 
-PubSubSubscribeDepKey = DepKey[
-    BaseDepPort[
-        PubSubSpec[Any],
-        PubSubSubscribePort[Any],
-    ]
-]("pubsub_subscribe")
-"""Key used to register the :class:`PubSubSubscribePort` builder implementation."""
+PubSubCommandDepPort = BaseDepPort[PubSubSpec[Any], PubSubCommandPort[Any]]
+"""Pubsub command dependency port."""
+
+PubSubQueryDepKey = DepKey[PubSubQueryDepPort]("pubsub_query")
+"""Key used to register the :class:`PubSubQueryPort` builder implementation."""
+
+PubSubCommandDepKey = DepKey[PubSubCommandDepPort]("pubsub_command")
+"""Key used to register the :class:`PubSubCommandPort` builder implementation."""

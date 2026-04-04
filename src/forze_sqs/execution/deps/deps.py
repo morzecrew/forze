@@ -5,9 +5,9 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.queue import (
-    QueueReadDepPort,
+    QueueCommandDepPort,
+    QueueQueryDepPort,
     QueueSpec,
-    QueueWriteDepPort,
 )
 from forze.application.execution import ExecutionContext
 
@@ -20,8 +20,8 @@ from .keys import SQSClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableSQSQueueRead(QueueReadDepPort):
-    """Configurable SQS queue read adapter."""
+class ConfigurableSQSQueueRead(QueueQueryDepPort):
+    """Configurable SQS queue query adapter."""
 
     config: SQSQueueConfig
     """Configuration for the queue."""
@@ -50,8 +50,8 @@ class ConfigurableSQSQueueRead(QueueReadDepPort):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableSQSQueueWrite(QueueWriteDepPort):
-    """Configurable SQS queue write adapter."""
+class ConfigurableSQSQueueWrite(QueueCommandDepPort):
+    """Configurable SQS queue command adapter."""
 
     config: SQSQueueConfig
     """Configuration for the queue."""

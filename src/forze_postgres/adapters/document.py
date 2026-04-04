@@ -15,9 +15,9 @@ import attrs
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
-    DocumentReadPort,
+    DocumentCommandPort,
+    DocumentQueryPort,
     DocumentSpec,
-    DocumentWritePort,
 )
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
@@ -50,16 +50,11 @@ U = TypeVar("U", bound=BaseDTO)
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresDocumentAdapter(
-    DocumentReadPort[R],
-    DocumentWritePort[R, D, C, U],
+    DocumentQueryPort[R],
+    DocumentCommandPort[R, D, C, U],
     TxScopedPort,
 ):
-    """Postgres-backed implementation of :class:`DocumentReadPort` and :class:`DocumentWritePort`.
-
-    Delegates to :class:`PostgresReadGateway` and :class:`PostgresWriteGateway` for
-    database access. Supports optional :class:`CachePort` integration for
-    read-through caching with versioned invalidation.
-    """
+    """Postgres-backed implementation of :class:`DocumentQueryPort` and :class:`DocumentCommandPort`."""
 
     spec: DocumentSpec[R, D, C, U]
     """Document specification."""

@@ -11,9 +11,9 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
+    QueueCommandPort,
     QueueMessage,
-    QueueReadPort,
-    QueueWritePort,
+    QueueQueryPort,
 )
 from forze.infra.tenancy import MultiTenancyMixin
 
@@ -26,8 +26,8 @@ from .codecs import SQSQueueCodec
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SQSQueueAdapter[M: BaseModel](
-    QueueReadPort[M],
-    QueueWritePort[M],
+    QueueQueryPort[M],
+    QueueCommandPort[M],
     MultiTenancyMixin,
 ):
     """SQS queue adapter."""

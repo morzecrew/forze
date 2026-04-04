@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperPort
-from forze.application.contracts.search import SearchReadPort
+from forze.application.contracts.search import SearchQueryPort
 from forze.application.dto import (
     Paginated,
     RawPaginated,
@@ -20,7 +20,7 @@ from forze.application.execution import Usecase
 class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
     """Usecase that searches with typed results."""
 
-    search: SearchReadPort[Out]
+    search: SearchQueryPort[Out]
     """Search port for search operations."""
 
     mapper: MapperPort[SearchRequestDTO, SearchRequestDTO] | None = None
@@ -63,7 +63,7 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
 class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
     """Usecase that searches with raw results."""
 
-    search: SearchReadPort[Any]
+    search: SearchQueryPort[Any]
     """Search port for search operations."""
 
     mapper: MapperPort[RawSearchRequestDTO, RawSearchRequestDTO] | None = None

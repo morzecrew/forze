@@ -2,7 +2,7 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.document import DocumentWritePort
+from forze.application.contracts.document import DocumentCommandPort
 from forze.application.dto import DocumentIdDTO, DocumentIdRevDTO
 from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
@@ -14,7 +14,7 @@ from forze.domain.models import ReadDocument
 class KillDocument(Usecase[DocumentIdDTO, None]):
     """Usecase that permanently deletes a document (hard delete)."""
 
-    doc: DocumentWritePort[Any, Any, Any, Any]
+    doc: DocumentCommandPort[Any, Any, Any, Any]
     """Document port for kill operations."""
 
     # ....................... #
@@ -36,7 +36,7 @@ class KillDocument(Usecase[DocumentIdDTO, None]):
 class DeleteDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
     """Usecase that soft-deletes a document."""
 
-    doc: DocumentWritePort[Out, Any, Any, Any]
+    doc: DocumentCommandPort[Out, Any, Any, Any]
     """Document port for delete operations."""
 
     # ....................... #
@@ -58,7 +58,7 @@ class DeleteDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
 class RestoreDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
     """Usecase that restores a soft-deleted document."""
 
-    doc: DocumentWritePort[Out, Any, Any, Any]
+    doc: DocumentCommandPort[Out, Any, Any, Any]
     """Document port for restore operations."""
 
     # ....................... #

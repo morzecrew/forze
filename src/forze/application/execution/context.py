@@ -15,13 +15,13 @@ from ..contracts.base import DepKey, DepsPort
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from ..contracts.document import (
-    DocumentReadDepKey,
-    DocumentReadPort,
+    DocumentCommandDepKey,
+    DocumentCommandPort,
+    DocumentQueryDepKey,
+    DocumentQueryPort,
     DocumentSpec,
-    DocumentWriteDepKey,
-    DocumentWritePort,
 )
-from ..contracts.search import SearchReadDepKey, SearchReadPort, SearchSpec
+from ..contracts.search import SearchQueryDepKey, SearchQueryPort, SearchSpec
 from ..contracts.storage import StorageDepKey, StoragePort, StorageSpec
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 
@@ -280,14 +280,14 @@ class ExecutionContext:
     #! transactional: bool ? how to forward it through ?
     #! if we add this key then it forces extra complexity...
 
-    def doc_read(
+    def doc_query(
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentReadPort[Any]:
-        """Resolve a document read port for the given spec.
+    ) -> DocumentQueryPort[Any]:
+        """Resolve a document query port for the given spec.
 
         :param spec: Document resource specification.
-        :returns: Document read port instance.
+        :returns: Document query port instance.
         """
 
         cache = None
@@ -295,11 +295,11 @@ class ExecutionContext:
         if spec.cache is not None:
             cache = self.cache(spec.cache)
 
-        dep = self.dep(DocumentReadDepKey, route=spec.name)
+        dep = self.dep(DocumentQueryDepKey, route=spec.name)
         doc = dep(self, spec, cache=cache)
 
         logger.trace(
-            "Resolved document read port for name '%s' -> %s",
+            "Resolved document query port for name '%s' -> %s",
             spec.name,
             type(doc).__qualname__,
         )
@@ -308,14 +308,14 @@ class ExecutionContext:
 
     # ....................... #
 
-    def doc_write(
+    def doc_command(
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentWritePort[Any, Any, Any, Any]:
-        """Resolve a document write port for the given spec.
+    ) -> DocumentCommandPort[Any, Any, Any, Any]:
+        """Resolve a document command port for the given spec.
 
         :param spec: Document resource specification.
-        :returns: Document write port instance.
+        :returns: Document command port instance.
         """
 
         cache = None
@@ -323,11 +323,11 @@ class ExecutionContext:
         if spec.cache is not None:
             cache = self.cache(spec.cache)
 
-        dep = self.dep(DocumentWriteDepKey, route=spec.name)
+        dep = self.dep(DocumentCommandDepKey, route=spec.name)
         doc = dep(self, spec, cache=cache)
 
         logger.trace(
-            "Resolved document write port for name '%s' -> %s",
+            "Resolved document command port for name '%s' -> %s",
             spec.name,
             type(doc).__qualname__,
         )
@@ -418,18 +418,19 @@ class ExecutionContext:
 
     # ....................... #
 
-    def search_read(self, spec: SearchSpec[Any]) -> SearchReadPort[Any]:
-        """Resolve a search read port.
+    def search_query(self, spec: SearchSpec[Any]) -> SearchQueryPort[Any]:
+        """Resolve a search query port.
 
         :param spec: Search resource specification.
-        :returns: Search read port instance.
+        :returns: Search query port instance.
         """
 
-        dep = self.dep(SearchReadDepKey, route=spec.name)
+        dep = self.dep(SearchQueryDepKey, route=spec.name)
         se = dep(self, spec)
 
         logger.trace(
-            "Resolved search read port -> %s",
+            "Resolved search query port '%s' -> %s",
+            spec.name,
             type(se).__qualname__,
         )
 

@@ -15,7 +15,7 @@ from .types import PubSubMessage
 
 
 @runtime_checkable
-class PubSubPublishPort[M: BaseModel](Protocol):
+class PubSubCommandPort[M: BaseModel](Protocol):
     """Contract for publishing messages to a pubsub backend."""
 
     def publish(
@@ -35,7 +35,7 @@ class PubSubPublishPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class PubSubSubscribePort[M: BaseModel](Protocol):
+class PubSubQueryPort[M: BaseModel](Protocol):
     """Contract for subscribing to messages from a pubsub backend."""
 
     def subscribe(

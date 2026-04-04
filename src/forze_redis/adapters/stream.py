@@ -13,10 +13,10 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.stream import (
-    StreamGroupPort,
+    StreamCommandPort,
+    StreamGroupQueryPort,
     StreamMessage,
-    StreamReadPort,
-    StreamWritePort,
+    StreamQueryPort,
 )
 
 from ..kernel.platform import RedisClient
@@ -28,8 +28,8 @@ from .codecs import RedisStreamCodec
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
-    """Redis implementation of :class:`~forze.application.contracts.stream.StreamReadPort` and :class:`~forze.application.contracts.stream.StreamWritePort`.
+class RedisStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
+    """Redis implementation of :class:`~forze.application.contracts.stream.StreamQueryPort` and :class:`~forze.application.contracts.stream.StreamCommandPort`.
 
     Reads via ``XREAD`` and appends via ``XADD``.  :meth:`tail` polls
     continuously, advancing the per-stream cursor after each message.
@@ -99,8 +99,8 @@ class RedisStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
-    """Redis implementation of :class:`~forze.application.contracts.stream.StreamGroupPort`.
+class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
+    """Redis implementation of :class:`~forze.application.contracts.stream.StreamGroupQueryPort`.
 
     Reads via ``XREADGROUP`` with ``noack=True`` and acknowledges messages
     explicitly through :meth:`ack`.  :meth:`tail` polls continuously,

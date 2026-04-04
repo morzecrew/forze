@@ -1,19 +1,19 @@
 from typing import Any
 
 from ..base import BaseDepPort, DepKey
-from .ports import QueueReadPort, QueueWritePort
+from .ports import QueueCommandPort, QueueQueryPort
 from .specs import QueueSpec
 
 # ----------------------- #
 
-QueueReadDepPort = BaseDepPort[QueueSpec[Any], QueueReadPort[Any]]
-"""Queue read dependency port."""
+QueueQueryDepPort = BaseDepPort[QueueSpec[Any], QueueQueryPort[Any]]
+"""Queue query dependency port."""
 
-QueueWriteDepPort = BaseDepPort[QueueSpec[Any], QueueWritePort[Any]]
-"""Queue write dependency port."""
+QueueCommandDepPort = BaseDepPort[QueueSpec[Any], QueueCommandPort[Any]]
+"""Queue command dependency port."""
 
-QueueReadDepKey = DepKey[QueueReadDepPort]("queue_read")
-"""Key used to register the :class:`QueueReadPort` builder implementation."""
+QueueQueryDepKey = DepKey[QueueQueryDepPort]("queue_query")
+"""Key used to register the :class:`QueueQueryPort` builder implementation."""
 
-QueueWriteDepKey = DepKey[QueueWriteDepPort]("queue_write")
-"""Key used to register the :class:`QueueWritePort` builder implementation."""
+QueueCommandDepKey = DepKey[QueueCommandDepPort]("queue_command")
+"""Key used to register the :class:`QueueCommandPort` builder implementation."""

@@ -1,5 +1,5 @@
-from .deps import StreamGroupDepKey, StreamReadDepKey, StreamWriteDepKey
-from .ports import StreamGroupPort, StreamReadPort, StreamWritePort
+from .deps import StreamCommandDepKey, StreamGroupQueryDepKey, StreamQueryDepKey
+from .ports import StreamCommandPort, StreamGroupQueryPort, StreamQueryPort
 from .specs import StreamSpec
 from .types import StreamMessage
 
@@ -7,11 +7,11 @@ from .types import StreamMessage
 
 __all__ = [
     "StreamMessage",
-    "StreamGroupPort",
-    "StreamReadPort",
-    "StreamWritePort",
-    "StreamReadDepKey",
-    "StreamWriteDepKey",
-    "StreamGroupDepKey",
+    "StreamGroupQueryPort",
+    "StreamQueryPort",
+    "StreamCommandPort",
+    "StreamGroupQueryDepKey",
+    "StreamQueryDepKey",
+    "StreamCommandDepKey",
     "StreamSpec",
 ]

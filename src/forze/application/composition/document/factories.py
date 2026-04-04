@@ -151,16 +151,16 @@ def build_document_registry(
         {
             DocumentOperation.GET: lambda ctx: GetDocument(
                 ctx=ctx,
-                doc=ctx.doc_read(spec),
+                doc=ctx.doc_query(spec),
             ),
             DocumentOperation.LIST: lambda ctx: TypedListDocuments(
                 ctx=ctx,
-                doc=ctx.doc_read(spec),
+                doc=ctx.doc_query(spec),
                 mapper=list_mapper,
             ),
             DocumentOperation.RAW_LIST: lambda ctx: RawListDocuments(
                 ctx=ctx,
-                doc=ctx.doc_read(spec),
+                doc=ctx.doc_query(spec),
                 mapper=raw_list_mapper,
             ),
         }
@@ -182,12 +182,12 @@ def build_document_registry(
             {
                 DocumentOperation.CREATE: lambda ctx: CreateDocument(
                     ctx=ctx,
-                    doc=ctx.doc_write(spec),
+                    doc=ctx.doc_command(spec),
                     mapper=create_mapper,
                 ),
                 DocumentOperation.KILL: lambda ctx: KillDocument(
                     ctx=ctx,
-                    doc=ctx.doc_write(spec),
+                    doc=ctx.doc_command(spec),
                 ),
             }
         )
@@ -197,7 +197,7 @@ def build_document_registry(
                 DocumentOperation.UPDATE,
                 lambda ctx: UpdateDocument[Any, Any, Any](
                     ctx=ctx,
-                    doc=ctx.doc_write(spec),
+                    doc=ctx.doc_command(spec),
                     mapper=update_mapper,
                 ),
                 inplace=True,
@@ -208,11 +208,11 @@ def build_document_registry(
                 {
                     DocumentOperation.DELETE: lambda ctx: DeleteDocument(
                         ctx=ctx,
-                        doc=ctx.doc_write(spec),
+                        doc=ctx.doc_command(spec),
                     ),
                     DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
                         ctx=ctx,
-                        doc=ctx.doc_write(spec),
+                        doc=ctx.doc_command(spec),
                     ),
                 },
                 inplace=True,

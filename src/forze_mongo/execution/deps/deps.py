@@ -6,9 +6,9 @@ import attrs
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
-    DocumentReadDepPort,
+    DocumentCommandDepPort,
+    DocumentQueryDepPort,
     DocumentSpec,
-    DocumentWriteDepPort,
 )
 from forze.application.contracts.tx import TxManagerPort
 from forze.application.execution import ExecutionContext
@@ -25,7 +25,7 @@ from .utils import doc_write_gw, read_gw
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableMongoReadOnlyDocument(DocumentReadDepPort):
+class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort):
     """Configurable Mongo read-only document adapter."""
 
     config: MongoReadOnlyDocumentConfig
@@ -58,7 +58,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentReadDepPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableMongoDocument(DocumentWriteDepPort):
+class ConfigurableMongoDocument(DocumentCommandDepPort):
     """Configurable Mongo document adapter."""
 
     config: MongoDocumentConfig

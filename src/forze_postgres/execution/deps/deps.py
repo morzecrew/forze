@@ -7,11 +7,11 @@ import attrs
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
-    DocumentReadDepPort,
+    DocumentCommandDepPort,
+    DocumentQueryDepPort,
     DocumentSpec,
-    DocumentWriteDepPort,
 )
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import SearchQueryDepPort, SearchSpec
 from forze.application.contracts.tx import TxManagerPort
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
@@ -38,7 +38,7 @@ from .utils import doc_write_gw, read_gw
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurablePostgresReadOnlyDocument(DocumentReadDepPort):
+class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort):
     """Configurable Postgres read-only document adapter."""
 
     config: PostgresReadOnlyDocumentConfig
@@ -72,7 +72,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentReadDepPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurablePostgresDocument(DocumentWriteDepPort):
+class ConfigurablePostgresDocument(DocumentCommandDepPort):
     """Configurable Postgres document adapter."""
 
     config: PostgresDocumentConfig
@@ -136,8 +136,9 @@ class ConfigurablePostgresDocument(DocumentWriteDepPort):
 # ....................... #
 
 
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurablePostgresSearch:
+class ConfigurablePostgresSearch(SearchQueryDepPort):
     """Configurable Postgres search adapter."""
 
     config: PostgresSearchConfig

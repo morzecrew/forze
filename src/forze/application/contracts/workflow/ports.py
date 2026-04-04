@@ -1,46 +1,102 @@
-"""Port for long-running workflow orchestration engines."""
+from typing import Awaitable, Generic, Protocol
 
-from typing import Any, Awaitable, Protocol, Sequence
+from pydantic import BaseModel
 
-from forze.base.primitives import JsonDict
+from .specs import (
+    In,
+    Out,
+    WorkflowHandle,
+    WorkflowQuerySpec,
+    WorkflowSignalSpec,
+    WorkflowSpec,
+    WorkflowUpdateSpec,
+)
 
 # ----------------------- #
-#! TODO: support status retrieval and success / failure handling or/and tracing
 
 
-class WorkflowPort(Protocol):
-    """Abstraction over a workflow engine such as Temporal or similar.
+class BaseWorkflowPort(Protocol, Generic[In, Out]):
+    """Base port for long-running workflow orchestration engines."""
 
-    The port is intentionally minimal and models only the operations the
-    application kernel needs for starting and signalling workflows.
-    """
+    spec: WorkflowSpec[In, Out]
+    """The specification of the workflow."""
+
+
+# ....................... #
+
+
+class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol):
+    """Port for commands on long-running workflow orchestration engines."""
 
     def start(
         self,
-        name: str,
-        id: str,  # ? UUID?
-        args: Sequence[Any],
-        queue: str | None = None,  # noqa: F841
-    ) -> Awaitable[None]:
-        """Start a new workflow instance.
-
-        :param name: Workflow type/name registered in the engine.
-        :param id: External identifier for the workflow instance.
-        :param args: Positional arguments forwarded to the workflow start call.
-        :param queue: Optional task queue or routing key.
-        """
+        args: In,
+        *,
+        workflow_id: str | None = None,
+    ) -> Awaitable[WorkflowHandle]:
+        """Start a new workflow run."""
         ...
 
-    def signal(
-        self,
-        id: str,  # ? UUID?
-        signal: str,  # noqa: F841
-        data: Sequence[JsonDict],  # ? support for pydantic models ?
-    ) -> Awaitable[None]:
-        """Send a signal to an existing workflow instance.
+    # ....................... #
 
-        :param id: Workflow instance identifier.
-        :param signal: Signal name to invoke.
-        :param data: Payload items delivered with the signal.
-        """
+    def signal[S: BaseModel](
+        self,
+        handle: WorkflowHandle,
+        *,
+        signal: WorkflowSignalSpec[S],
+        args: S,
+    ) -> Awaitable[None]:
+        """Send a signal to an existing workflow instance."""
+        ...
+
+    # ....................... #
+
+    def update[U: BaseModel, Res: BaseModel](
+        self,
+        handle: WorkflowHandle,
+        *,
+        update: WorkflowUpdateSpec[U, Res],
+        args: U,
+    ) -> Awaitable[Res]:
+        """Update an existing workflow instance."""
+        ...
+
+    # ....................... #
+
+    def cancel(self, handle: WorkflowHandle) -> Awaitable[None]:
+        """Cancel a running workflow instance."""
+        ...
+
+    # ....................... #
+
+    def terminate(
+        self,
+        handle: WorkflowHandle,
+        *,
+        reason: str | None = None,
+    ) -> Awaitable[None]:
+        """Terminate a running workflow instance."""
+        ...
+
+
+# ....................... #
+
+
+class WorkflowQueryPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol):
+    """Port for queries on long-running workflow orchestration engines."""
+
+    def query[Q: BaseModel, Res: BaseModel](
+        self,
+        handle: WorkflowHandle,
+        *,
+        query: WorkflowQuerySpec[Q, Res],
+        args: Q,
+    ) -> Awaitable[Res]:
+        """Query an existing workflow instance."""
+        ...
+
+    # ....................... #
+
+    def result(self, handle: WorkflowHandle) -> Awaitable[Out]:
+        """Get the result of a workflow run."""
         ...

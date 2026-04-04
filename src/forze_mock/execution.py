@@ -18,26 +18,26 @@ from forze.application.contracts.counter import (
     CounterPort,
 )
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
     DocumentSpec,
-    DocumentWriteDepKey,
 )
 from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
     IdempotencyPort,
 )
 from forze.application.contracts.pubsub import (
-    PubSubPublishDepKey,
+    PubSubCommandDepKey,
+    PubSubQueryDepKey,
     PubSubSpec,
-    PubSubSubscribeDepKey,
 )
 from forze.application.contracts.queue import (
-    QueueReadDepKey,
+    QueueCommandDepKey,
+    QueueQueryDepKey,
     QueueSpec,
-    QueueWriteDepKey,
 )
 from forze.application.contracts.search import (
-    SearchReadDepKey,
+    SearchQueryDepKey,
     SearchSpec,
 )
 from forze.application.contracts.storage import (
@@ -45,9 +45,9 @@ from forze.application.contracts.storage import (
     StoragePort,
 )
 from forze.application.contracts.stream import (
-    StreamGroupDepKey,
-    StreamReadDepKey,
-    StreamWriteDepKey,
+    StreamCommandDepKey,
+    StreamGroupQueryDepKey,
+    StreamQueryDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tx import (
@@ -187,20 +187,20 @@ class MockDepsModule(DepsModule):
         return Deps.plain(
             {
                 MockStateDepKey: self.state,
-                DocumentReadDepKey: mock_document,
-                DocumentWriteDepKey: mock_document,
-                SearchReadDepKey: mock_search,
+                DocumentQueryDepKey: mock_document,
+                DocumentCommandDepKey: mock_document,
+                SearchQueryDepKey: mock_search,
                 CounterDepKey: mock_counter,
                 CacheDepKey: mock_cache,
                 IdempotencyDepKey: mock_idempotency,
                 StorageDepKey: mock_storage,
                 TxManagerDepKey: mock_txmanager,
-                QueueReadDepKey: mock_queue,
-                QueueWriteDepKey: mock_queue,
-                PubSubPublishDepKey: mock_pubsub,
-                PubSubSubscribeDepKey: mock_pubsub,
-                StreamReadDepKey: mock_stream,
-                StreamWriteDepKey: mock_stream,
-                StreamGroupDepKey: mock_stream_group,
+                QueueQueryDepKey: mock_queue,
+                QueueCommandDepKey: mock_queue,
+                PubSubCommandDepKey: mock_pubsub,
+                PubSubQueryDepKey: mock_pubsub,
+                StreamQueryDepKey: mock_stream,
+                StreamCommandDepKey: mock_stream,
+                StreamGroupQueryDepKey: mock_stream_group,
             }
         )

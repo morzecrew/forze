@@ -5,9 +5,9 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.queue import (
-    QueueReadDepPort,
+    QueueCommandDepPort,
+    QueueQueryDepPort,
     QueueSpec,
-    QueueWriteDepPort,
 )
 from forze.application.execution import ExecutionContext
 
@@ -20,8 +20,8 @@ from .keys import RabbitMQClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableRabbitMQQueueRead(QueueReadDepPort):
-    """Configurable RabbitMQ queue read adapter."""
+class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
+    """Configurable RabbitMQ queue query adapter."""
 
     config: RabbitMQQueueConfig
     """Configuration for the queue."""
@@ -50,8 +50,8 @@ class ConfigurableRabbitMQQueueRead(QueueReadDepPort):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableRabbitMQQueueWrite(QueueWriteDepPort):
-    """Configurable RabbitMQ queue write adapter."""
+class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
+    """Configurable RabbitMQ queue command adapter."""
 
     config: RabbitMQQueueConfig
     """Configuration for the queue."""

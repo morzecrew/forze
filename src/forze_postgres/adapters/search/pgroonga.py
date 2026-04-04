@@ -13,7 +13,11 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchOptions, SearchReadPort, SearchSpec
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchQueryPort,
+    SearchSpec,
+)
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
@@ -35,10 +39,10 @@ _TABLE_ALIAS: Final[str] = "t"
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresPGroongaSearchAdapter[M: BaseModel](
     PostgresGateway[M],
-    SearchReadPort[M],
+    SearchQueryPort[M],
     TxScopedPort,
 ):
-    """Postgres-backend implementation of :class:`SearchReadPort` for PGroonga search engine."""
+    """Postgres-backend implementation of :class:`SearchQueryPort` for PGroonga search engine."""
 
     spec: SearchSpec[M]
     """Search specification."""

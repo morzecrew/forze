@@ -5,10 +5,10 @@ from typing import final
 import attrs
 
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
-    DocumentWriteDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
 )
-from forze.application.contracts.search import SearchReadDepKey
+from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
@@ -71,7 +71,7 @@ class PostgresDepsModule(DepsModule):
             doc_deps = doc_deps.merge(
                 Deps.routed(
                     {
-                        DocumentReadDepKey: {
+                        DocumentQueryDepKey: {
                             name: ConfigurablePostgresReadOnlyDocument(config=config)
                             for name, config in self.ro_documents.items()
                         }
@@ -83,11 +83,11 @@ class PostgresDepsModule(DepsModule):
             doc_deps = doc_deps.merge(
                 Deps.routed(
                     {
-                        DocumentReadDepKey: {
+                        DocumentQueryDepKey: {
                             name: ConfigurablePostgresReadOnlyDocument(config=config)
                             for name, config in self.ro_documents.items()
                         },
-                        DocumentWriteDepKey: {
+                        DocumentCommandDepKey: {
                             name: ConfigurablePostgresDocument(config=config)
                             for name, config in self.rw_documents.items()
                         },
@@ -103,7 +103,7 @@ class PostgresDepsModule(DepsModule):
             search_deps = search_deps.merge(
                 Deps.routed(
                     {
-                        SearchReadDepKey: {
+                        SearchQueryDepKey: {
                             name: ConfigurablePostgresSearch(config=config)
                             for name, config in self.searches.items()
                         }

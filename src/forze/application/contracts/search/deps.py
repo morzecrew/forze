@@ -3,23 +3,19 @@
 from typing import Any
 
 from ..base import BaseDepPort, DepKey
-from .ports import SearchReadPort, SearchWritePort
+from .ports import SearchCommandPort, SearchQueryPort
 from .specs import SearchSpec
 
 # ----------------------- #
 
-SearchReadDepKey = DepKey[
-    BaseDepPort[
-        SearchSpec[Any],
-        SearchReadPort[Any],
-    ]
-]("search_read")
-"""Key used to register the :class:`SearchReadPort` builder implementation."""
+SearchQueryDepPort = BaseDepPort[SearchSpec[Any], SearchQueryPort[Any]]
+"""Search query dependency port."""
 
-SearchWriteDepKey = DepKey[
-    BaseDepPort[
-        SearchSpec[Any],
-        SearchWritePort[Any],
-    ]
-]("search_write")
-"""Key used to register the :class:`SearchWritePort` builder implementation."""
+SearchCommandDepPort = BaseDepPort[SearchSpec[Any], SearchCommandPort[Any]]
+"""Search command dependency port."""
+
+SearchQueryDepKey = DepKey[SearchQueryDepPort]("search_query")
+"""Key used to register the :class:`SearchQueryPort` builder implementation."""
+
+SearchCommandDepKey = DepKey[SearchCommandDepPort]("search_command")
+"""Key used to register the :class:`SearchCommandPort` builder implementation."""

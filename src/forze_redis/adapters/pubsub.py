@@ -1,6 +1,5 @@
 """Redis-backed pub/sub adapters implementing publish and subscribe ports."""
 
-from forze.infra.tenancy import MultiTenancyMixin
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -14,10 +13,11 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.pubsub import (
+    PubSubCommandPort,
     PubSubMessage,
-    PubSubPublishPort,
-    PubSubSubscribePort,
+    PubSubQueryPort,
 )
+from forze.infra.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import RedisClient
 from .codecs import RedisPubSubCodec
@@ -28,9 +28,11 @@ from .codecs import RedisPubSubCodec
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisPubSubAdapter[M: BaseModel](
-    PubSubPublishPort[M], PubSubSubscribePort[M], MultiTenancyMixin
+    PubSubCommandPort[M],
+    PubSubQueryPort[M],
+    MultiTenancyMixin,
 ):
-    """Redis implementation of :class:`~forze.application.contracts.pubsub.PubSubPublishPort` and :class:`~forze.application.contracts.pubsub.PubSubSubscribePort`.
+    """Redis implementation of :class:`~forze.application.contracts.pubsub.PubSubCommandPort` and :class:`~forze.application.contracts.pubsub.PubSubQueryPort`.
 
     Publishes JSON-encoded messages via ``PUBLISH`` and yields decoded
     :class:`~forze.application.contracts.pubsub.PubSubMessage` instances by

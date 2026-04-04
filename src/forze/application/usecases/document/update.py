@@ -2,7 +2,7 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.document import DocumentWritePort
+from forze.application.contracts.document import DocumentCommandPort
 from forze.application.contracts.mapping import MapperPort
 from forze.application.dto import DocumentUpdateDTO
 from forze.application.execution import Usecase
@@ -17,7 +17,7 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
 ):
     """Usecase that updates an existing document from a mapped command."""
 
-    doc: DocumentWritePort[Out, Any, Any, Cmd]
+    doc: DocumentCommandPort[Out, Any, Any, Cmd]
     """Document port for update operations."""
 
     mapper: MapperPort[In, Cmd]

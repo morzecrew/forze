@@ -56,12 +56,12 @@ def build_search_registry(
         {
             SearchOperation.TYPED_SEARCH: lambda ctx: TypedSearch(
                 ctx=ctx,
-                search=ctx.search_read(spec),
+                search=ctx.search_query(spec),
                 mapper=typed_mapper,
             ),
             SearchOperation.RAW_SEARCH: lambda ctx: RawSearch(
                 ctx=ctx,
-                search=ctx.search_read(spec),
+                search=ctx.search_query(spec),
                 mapper=raw_mapper,
             ),
         }

@@ -1,10 +1,4 @@
-from typing import (
-    Any,
-    Awaitable,
-    Protocol,
-    Sequence,
-    runtime_checkable,
-)
+from typing import Any, Awaitable, Protocol, Sequence, runtime_checkable
 
 from forze.base.primitives import JsonDict
 
@@ -12,7 +6,7 @@ from forze.base.primitives import JsonDict
 
 
 @runtime_checkable
-class CacheReadPort(Protocol):  # pragma: no cover
+class CacheQueryPort(Protocol):  # pragma: no cover
     """Contract for reading values from a cache backend."""
 
     def get(self, key: str) -> Awaitable[Any | None]:
@@ -29,7 +23,7 @@ class CacheReadPort(Protocol):  # pragma: no cover
 
 
 @runtime_checkable
-class CacheWritePort(Protocol):  # pragma: no cover
+class CacheCommandPort(Protocol):  # pragma: no cover
     """Contract for writing, versioning, and deleting cached values."""
 
     def set(self, key: str, value: Any) -> Awaitable[None]:
@@ -64,5 +58,5 @@ class CacheWritePort(Protocol):  # pragma: no cover
 
 
 @runtime_checkable
-class CachePort(CacheReadPort, CacheWritePort, Protocol):
+class CachePort(CacheQueryPort, CacheCommandPort, Protocol):
     """Combined read/write cache contract."""

@@ -26,8 +26,8 @@ U = TypeVar("U", bound=BaseDTO)
 
 
 @runtime_checkable
-class DocumentReadPort[R](Protocol):
-    """Read-only operations for document aggregates."""
+class DocumentQueryPort[R](Protocol):
+    """Query operations for document aggregates."""
 
     @overload
     def get(
@@ -187,8 +187,8 @@ class DocumentReadPort[R](Protocol):
 
 
 @runtime_checkable
-class DocumentWritePort[R, D, C, U](Protocol):
-    """Write operations for document aggregates."""
+class DocumentCommandPort[R, D, C, U](Protocol):
+    """Command operations for document aggregates."""
 
     def create(self, dto: C) -> Awaitable[R]:
         """Create a new document from the given command DTO."""

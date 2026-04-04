@@ -4,7 +4,10 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.document import DocumentReadDepKey, DocumentWriteDepKey
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+)
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
@@ -50,7 +53,7 @@ class MongoDepsModule(DepsModule):
             doc_deps = doc_deps.merge(
                 Deps.routed(
                     {
-                        DocumentReadDepKey: {
+                        DocumentQueryDepKey: {
                             name: ConfigurableMongoReadOnlyDocument(config=config)
                             for name, config in self.ro_documents.items()
                         }
@@ -62,11 +65,11 @@ class MongoDepsModule(DepsModule):
             doc_deps = doc_deps.merge(
                 Deps.routed(
                     {
-                        DocumentReadDepKey: {
+                        DocumentQueryDepKey: {
                             name: ConfigurableMongoReadOnlyDocument(config=config)
                             for name, config in self.ro_documents.items()
                         },
-                        DocumentWriteDepKey: {
+                        DocumentCommandDepKey: {
                             name: ConfigurableMongoDocument(config=config)
                             for name, config in self.rw_documents.items()
                         },

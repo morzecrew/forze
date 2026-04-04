@@ -28,12 +28,12 @@ from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.counter import CounterPort
-from forze.application.contracts.document import DocumentReadPort, DocumentWritePort
+from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.pubsub import (
+    PubSubCommandPort,
     PubSubMessage,
-    PubSubPublishPort,
-    PubSubSubscribePort,
+    PubSubQueryPort,
 )
 from forze.application.contracts.query import (
     QueryExpr,
@@ -44,21 +44,25 @@ from forze.application.contracts.query import (
     QuerySortExpression,
 )
 from forze.application.contracts.queue import (
+    QueueCommandPort,
     QueueMessage,
-    QueueReadPort,
-    QueueWritePort,
+    QueueQueryPort,
 )
-from forze.application.contracts.search import SearchOptions, SearchReadPort, SearchSpec
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchQueryPort,
+    SearchSpec,
+)
 from forze.application.contracts.storage import (
     DownloadedObject,
     StoragePort,
     StoredObject,
 )
 from forze.application.contracts.stream import (
-    StreamGroupPort,
+    StreamCommandPort,
+    StreamGroupQueryPort,
     StreamMessage,
-    StreamReadPort,
-    StreamWritePort,
+    StreamQueryPort,
 )
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
@@ -385,8 +389,8 @@ class MockDocumentAdapter[
     C: CreateDocumentCmd,
     U: BaseDTO,
 ](
-    DocumentReadPort[R],
-    DocumentWritePort[R, D, C, U],
+    DocumentQueryPort[R],
+    DocumentCommandPort[R, D, C, U],
 ):
     """In-memory document adapter with filter/sort/projection support."""
 
@@ -761,7 +765,7 @@ class MockDocumentAdapter[
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
+class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     """In-memory search adapter over documents in :class:`MockState`."""
 
     state: MockState
@@ -1295,7 +1299,7 @@ def _sleep_interval(timeout: timedelta | None) -> float:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
+class MockQueueAdapter[M: BaseModel](QueueQueryPort[M], QueueCommandPort[M]):
     """In-memory queue adapter with ack/nack support."""
 
     state: MockState
@@ -1438,7 +1442,7 @@ class MockQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[M]):
+class MockPubSubAdapter[M: BaseModel](PubSubCommandPort[M], PubSubQueryPort[M]):
     """In-memory pub/sub adapter backed by append-only topic logs."""
 
     state: MockState
@@ -1510,7 +1514,7 @@ class MockPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
+class MockStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
     """In-memory stream adapter with monotonic message identifiers."""
 
     state: MockState
@@ -1600,7 +1604,7 @@ class MockStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
+class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
     """In-memory stream group adapter."""
 
     stream: MockStreamAdapter[M]

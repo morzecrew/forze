@@ -3,6 +3,7 @@
 from typing import Awaitable, Protocol, runtime_checkable
 
 # ----------------------- #
+#! Command port... query (most likely) is not necessary
 
 
 @runtime_checkable

@@ -14,7 +14,11 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchOptions, SearchReadPort, SearchSpec
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchQueryPort,
+    SearchSpec,
+)
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -38,10 +42,10 @@ FtsGroupLetter = Literal["A", "B", "C", "D"]
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresFTSSearchAdapter[M: BaseModel](
     PostgresGateway[M],
-    SearchReadPort[M],
+    SearchQueryPort[M],
     TxScopedPort,
 ):
-    """Postgres-backend implementation of :class:`SearchReadPort` for FTS search engine."""
+    """Postgres-backend implementation of :class:`SearchQueryPort` for FTS search engine."""
 
     spec: SearchSpec[M]
     """Search specification."""

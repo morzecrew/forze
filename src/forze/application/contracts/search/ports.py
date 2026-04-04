@@ -12,9 +12,10 @@ from .types import SearchOptions
 T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
+#! Consider wrapping many arguments into a single model / value object
 
 
-class SearchReadPort[R: BaseModel](Protocol):
+class SearchQueryPort[R: BaseModel](Protocol):
     @overload
     def search(
         self,
@@ -94,4 +95,4 @@ class SearchReadPort[R: BaseModel](Protocol):
 
 
 #! Not implemented yet
-class SearchWritePort[M: BaseModel](Protocol): ...
+class SearchCommandPort[M: BaseModel](Protocol): ...

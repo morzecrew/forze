@@ -1,21 +1,21 @@
 from .deps import (
-    DocumentReadDepKey,
-    DocumentReadDepPort,
-    DocumentWriteDepKey,
-    DocumentWriteDepPort,
+    DocumentCommandDepKey,
+    DocumentCommandDepPort,
+    DocumentQueryDepKey,
+    DocumentQueryDepPort,
 )
-from .ports import DocumentReadPort, DocumentWritePort
+from .ports import DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec, DocumentWriteTypes
 
 # ----------------------- #
 
 __all__ = [
-    "DocumentReadPort",
-    "DocumentWritePort",
+    "DocumentQueryPort",
+    "DocumentCommandPort",
     "DocumentSpec",
     "DocumentWriteTypes",
-    "DocumentReadDepPort",
-    "DocumentReadDepKey",
-    "DocumentWriteDepPort",
-    "DocumentWriteDepKey",
+    "DocumentQueryDepKey",
+    "DocumentCommandDepKey",
+    "DocumentQueryDepPort",
+    "DocumentCommandDepPort",
 ]
