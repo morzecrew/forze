@@ -2,9 +2,9 @@ import pytest
 from uuid import UUID
 
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
     DocumentSpec,
-    DocumentWriteDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -47,8 +47,8 @@ def execution_context(pg_client: PostgresClient):
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            DocumentReadDepKey: configurable,
-            DocumentWriteDepKey: configurable,
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
         }
     )
     return ExecutionContext(deps=deps)
@@ -80,7 +80,7 @@ async def test_postgres_document_adapter(
         },
     )
 
-    adapter = execution_context.doc_write(spec)
+    adapter = execution_context.doc_command(spec)
 
     # CREATE
     create_dto = MyCreateDoc(name="test item")

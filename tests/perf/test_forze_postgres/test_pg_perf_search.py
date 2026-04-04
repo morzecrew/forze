@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
 
-from forze.application.contracts.search import SearchReadDepKey, SearchSpec
+from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
@@ -34,7 +34,7 @@ def execution_context(pg_client: PostgresClient):
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            SearchReadDepKey: ConfigurablePostgresSearch(
+            SearchQueryDepKey: ConfigurablePostgresSearch(
                 configs={
                     "perf_search_ns": {
                         "index": ("public", "idx_perf_search_pgroonga"),
@@ -88,7 +88,7 @@ async def search_adapter(pg_client: PostgresClient, execution_context):
         fields=["title", "content"],
     )
 
-    return execution_context.search_read(spec)
+    return execution_context.search_query(spec)
 
 
 @pytest.mark.perf

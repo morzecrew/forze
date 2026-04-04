@@ -3,9 +3,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
     DocumentSpec,
-    DocumentWriteDepKey,
 )
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
@@ -61,12 +61,12 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     deps = Deps.plain(
         {
             MongoClientDepKey: mongo_client,
-            DocumentReadDepKey: configurable,
-            DocumentWriteDepKey: configurable,
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
         }
     )
     ctx = ExecutionContext(deps=deps)
-    adapter = ctx.doc_write(spec)
+    adapter = ctx.doc_command(spec)
 
     created = await adapter.create(MyCreateDoc(name="alpha"))
     created_2 = await adapter.create(MyCreateDoc(name="beta"))

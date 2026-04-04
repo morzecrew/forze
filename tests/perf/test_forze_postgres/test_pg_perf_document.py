@@ -8,9 +8,9 @@ import pytest_asyncio
 pytest.importorskip("psycopg")
 
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
     DocumentSpec,
-    DocumentWriteDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -66,8 +66,8 @@ def execution_context(pg_client: PostgresClient):
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            DocumentReadDepKey: configurable,
-            DocumentWriteDepKey: configurable,
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
         }
     )
     return ExecutionContext(deps=deps)
@@ -98,7 +98,7 @@ async def document_adapter(pg_client: PostgresClient, execution_context):
         },
     )
 
-    return execution_context.doc_write(spec)
+    return execution_context.doc_command(spec)
 
 
 @pytest.mark.perf

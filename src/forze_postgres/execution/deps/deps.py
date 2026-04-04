@@ -171,7 +171,7 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
         config = self.config
         tenant_aware = config.get("tenant_aware", False)
 
-        qname = PostgresQualifiedName(
+        index_qname = PostgresQualifiedName(
             schema=config["index"][0],
             name=config["index"][1],
         )
@@ -184,7 +184,7 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
             case "pgroonga":
                 return PostgresPGroongaSearchAdapter(
                     spec=spec,
-                    qname=qname,
+                    qname=index_qname,
                     source_qname=source_qname,
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,
@@ -203,7 +203,8 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
 
                 return PostgresFTSSearchAdapter(
                     spec=spec,
-                    qname=qname,
+                    qname=source_qname,
+                    index_qname=index_qname,
                     source_qname=source_qname,
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,

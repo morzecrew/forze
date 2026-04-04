@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.document import DocumentReadPort
+from forze.application.contracts.document import DocumentQueryPort
 from forze.application.dto import DocumentIdDTO
 from forze.application.usecases.document import GetDocument
 from forze.base.errors import NotFoundError
@@ -20,7 +20,7 @@ class TestGetDocument:
     async def test_get_returns_document(
         self,
         stub_ctx,
-        stub_document_port: DocumentReadPort,
+        stub_document_port: DocumentQueryPort,
     ) -> None:
         doc_port = stub_document_port
         cmd = CreateDocumentCmd()
@@ -37,7 +37,7 @@ class TestGetDocument:
     async def test_get_missing_raises(
         self,
         stub_ctx,
-        stub_document_port: DocumentReadPort,
+        stub_document_port: DocumentQueryPort,
     ) -> None:
         usecase = GetDocument(ctx=stub_ctx, doc=stub_document_port)
         with pytest.raises(NotFoundError, match="not found"):

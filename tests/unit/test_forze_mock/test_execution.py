@@ -3,16 +3,16 @@
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.pubsub import PubSubPublishDepKey, PubSubSpec
+from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
 from forze.application.contracts.queue import (
-    QueueReadDepKey,
+    QueueCommandDepKey,
+    QueueQueryDepKey,
     QueueSpec,
-    QueueWriteDepKey,
 )
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.stream import (
-    StreamGroupDepKey,
-    StreamWriteDepKey,
+    StreamCommandDepKey,
+    StreamGroupQueryDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.execution import ExecutionContext
@@ -68,21 +68,21 @@ def _search_spec() -> SearchSpec[_Read]:
 async def test_mock_deps_module_registers_expected_contracts() -> None:
     deps = MockDepsModule()()
     assert deps.exists(MockStateDepKey)
-    assert deps.exists(PubSubPublishDepKey)
-    assert deps.exists(QueueReadDepKey)
-    assert deps.exists(StreamGroupDepKey)
+    assert deps.exists(PubSubCommandDepKey)
+    assert deps.exists(QueueQueryDepKey)
+    assert deps.exists(StreamGroupQueryDepKey)
 
 
 async def test_execution_context_can_use_mock_document_and_search() -> None:
     ctx = ExecutionContext(deps=MockDepsModule()())
     spec = _doc_spec()
-    doc = ctx.doc_write(spec)
+    doc = ctx.doc_command(spec)
     created = await doc.create(_Create(title="Hello"))
 
-    found = await ctx.doc_read(spec).get(created.id)
+    found = await ctx.doc_query(spec).get(created.id)
     assert found.id == created.id
 
-    search_hits, count = await ctx.search_read(_search_spec()).search("hello")
+    search_hits, count = await ctx.search_query(_search_spec()).search("hello")
     assert count == 1
     assert search_hits[0].id == created.id
 
@@ -90,11 +90,11 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
 async def test_execution_context_resolves_optional_contract_ports() -> None:
     ctx = ExecutionContext(deps=MockDepsModule()())
 
-    queue_read = ctx.dep(QueueReadDepKey)(ctx, QueueSpec(name="q", model=_Msg))
-    queue_write = ctx.dep(QueueWriteDepKey)(ctx, QueueSpec(name="q", model=_Msg))
-    pubsub = ctx.dep(PubSubPublishDepKey)(ctx, PubSubSpec(name="p", model=_Msg))
-    stream_write = ctx.dep(StreamWriteDepKey)(ctx, StreamSpec(name="s", model=_Msg))
-    stream_group = ctx.dep(StreamGroupDepKey)(ctx, StreamSpec(name="s", model=_Msg))
+    queue_read = ctx.dep(QueueQueryDepKey)(ctx, QueueSpec(name="q", model=_Msg))
+    queue_write = ctx.dep(QueueCommandDepKey)(ctx, QueueSpec(name="q", model=_Msg))
+    pubsub = ctx.dep(PubSubCommandDepKey)(ctx, PubSubSpec(name="p", model=_Msg))
+    stream_write = ctx.dep(StreamCommandDepKey)(ctx, StreamSpec(name="s", model=_Msg))
+    stream_group = ctx.dep(StreamGroupQueryDepKey)(ctx, StreamSpec(name="s", model=_Msg))
 
     msg_id = await queue_write.enqueue("tasks", _Msg(value="x"))
     received = await queue_read.receive("tasks")

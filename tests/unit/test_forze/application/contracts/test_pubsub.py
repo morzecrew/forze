@@ -5,11 +5,11 @@ from typing import AsyncIterator
 from pydantic import BaseModel
 
 from forze.application.contracts.pubsub import (
-    PubSubPublishDepKey,
-    PubSubPublishPort,
+    PubSubCommandDepKey,
+    PubSubCommandPort,
+    PubSubQueryDepKey,
+    PubSubQueryPort,
     PubSubSpec,
-    PubSubSubscribeDepKey,
-    PubSubSubscribePort,
 )
 
 # ----------------------- #
@@ -20,7 +20,7 @@ class _PubSubPayload(BaseModel):
 
 
 class _StubPubSub(
-    PubSubPublishPort[_PubSubPayload], PubSubSubscribePort[_PubSubPayload]
+    PubSubCommandPort[_PubSubPayload], PubSubQueryPort[_PubSubPayload]
 ):
     async def publish(
         self,
@@ -52,8 +52,8 @@ class TestPubSubSpec:
 
 
 class TestPubSubDepKeys:
-    def test_pubsub_publish_dep_key_name(self) -> None:
-        assert PubSubPublishDepKey.name == "pubsub_publish"
+    def test_pubsub_command_dep_key_name(self) -> None:
+        assert PubSubCommandDepKey.name == "pubsub_command"
 
-    def test_pubsub_subscribe_dep_key_name(self) -> None:
-        assert PubSubSubscribeDepKey.name == "pubsub_subscribe"
+    def test_pubsub_query_dep_key_name(self) -> None:
+        assert PubSubQueryDepKey.name == "pubsub_query"

@@ -54,10 +54,10 @@ class PostgresSearchConfig(_BasePostgresConfig):
     """Configuration for a Postgres search."""
 
     index: tuple[str, str]
-    """Index relation (schema, index)"""
+    """Schema-qualified **index** name (used to resolve the search definition; not the ``FROM`` table)."""
 
     source: tuple[str, str]
-    """Source relation (schema, table)"""
+    """Schema-qualified **heap** relation (table or view) that rows are selected from."""
 
     engine: Literal["pgroonga", "fts"]
     """Search engine to use for the index."""

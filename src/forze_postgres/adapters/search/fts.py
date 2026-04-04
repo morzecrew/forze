@@ -45,13 +45,22 @@ class PostgresFTSSearchAdapter[M: BaseModel](
     SearchQueryPort[M],
     TxScopedPort,
 ):
-    """Postgres-backend implementation of :class:`SearchQueryPort` for FTS search engine."""
+    """Postgres-backend implementation of :class:`SearchQueryPort` for FTS search engine.
+
+    The gateway :attr:`~PostgresGateway.qname` is the **source** table (or view) that
+    holds rows. :attr:`index_qname` names the GIN (or similar) index used only to load
+    the indexed ``tsvector`` expression from the catalog; it must not be used as the
+    ``FROM`` relation (indexes are not queryable like tables).
+    """
 
     spec: SearchSpec[M]
     """Search specification."""
 
+    index_qname: PostgresQualifiedName
+    """Qualified name of the FTS index (used only to resolve the ``tsvector`` expression)."""
+
     source_qname: PostgresQualifiedName
-    """Source table qualified name (where search index resides)."""
+    """Source table qualified name (same relation as :attr:`~PostgresGateway.qname` for FTS)."""
 
     fts_groups: dict[FtsGroupLetter, Sequence[str]]
     """Mapping of FTS weight letters to field names."""
@@ -63,8 +72,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
 
     async def _resolve_tsvector_expr(self) -> sql.Composable:
         index_info = await self.introspector.get_index_info(
-            index=self.qname.name,
-            schema=self.qname.schema,
+            index=self.index_qname.name,
+            schema=self.index_qname.schema,
         )
 
         if not index_info.expr:
@@ -149,9 +158,9 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         # Note: tenant ID is injected automatically
         fw, fp = await self.where_clause(filters)
 
-        # empty query: only filters, no rank
+        # empty query: only filters, no rank (valid SQL constant; not a column ordinal)
         if not query:
-            return (fw, fp), (sql.SQL("0.0"), [])
+            return (fw, fp), (sql.SQL("(0)::double precision"), [])
 
         tsw, tsp = self._tsquery_expr(query, options=options)
         search_cond = sql.SQL("({tsv}) @@ ({tsw})").format(tsv=tsv, tsw=tsw)

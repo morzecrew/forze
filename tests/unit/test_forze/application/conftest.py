@@ -84,14 +84,14 @@ def _minimal_search_spec() -> SearchSpec[ReadDocument]:
 def stub_document_port(stub_ctx: ExecutionContext) -> MockDocumentAdapter:
     """Document port for usecase tests (shares state with stub_ctx)."""
     spec = _minimal_document_spec()
-    return stub_ctx.doc_read(spec)
+    return stub_ctx.doc_query(spec)
 
 
 @pytest.fixture
 def stub_search_port(stub_ctx: ExecutionContext) -> MockSearchAdapter:
     """Search port for usecase tests (shares state with stub_ctx)."""
     spec = _minimal_search_spec()
-    return stub_ctx.search_read(spec)
+    return stub_ctx.search_query(spec)
 
 
 @pytest.fixture

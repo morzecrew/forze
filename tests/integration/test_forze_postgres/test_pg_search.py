@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchReadDepKey, SearchSpec
+from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
@@ -26,7 +26,7 @@ def execution_context(pg_client: PostgresClient):
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            SearchReadDepKey: ConfigurablePostgresSearch(
+            SearchQueryDepKey: ConfigurablePostgresSearch(
                 config={
                     "index": ("public", "idx_search_items_pgroonga"),
                     "source": ("public", "search_items"),
@@ -94,7 +94,7 @@ async def test_postgres_search_adapter(
         fields=["title", "content"],
     )
 
-    adapter = execution_context.search_read(spec)
+    adapter = execution_context.search_query(spec)
 
     res, cnt = await adapter.search("python")
     assert cnt == 3
@@ -104,3 +104,21 @@ async def test_postgres_search_adapter(
     assert cnt2 == 1
     assert len(res2) == 1
     assert res2[0].title == "Forze Framework"
+
+    # Weighted search, pagination, explicit sort, and partial field projection
+    page, total = await adapter.search(
+        "python",
+        limit=1,
+        offset=0,
+        sorts={"title": "asc"},
+        options={"weights": {"title": 0.5, "content": 0.5}},
+    )
+    assert total == 3
+    assert len(page) == 1
+
+    titles_only, total_t = await adapter.search(
+        "python",
+        return_fields=["title"],
+    )
+    assert total_t == 3
+    assert set(titles_only[0].keys()) == {"title"}

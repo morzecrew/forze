@@ -2,7 +2,7 @@
 
 Composition tests need Deps with factory callables (DocumentReadDepPort,
 DocumentWriteDepPort, etc.) because build_document_registry uses
-doc_read(ctx, spec) and doc_write(ctx, spec) which invoke these.
+doc_query(ctx, spec) and doc_command(ctx, spec) which invoke these.
 """
 
 import pytest
@@ -34,7 +34,7 @@ def composition_mock_state() -> MockState:
 
 @pytest.fixture
 def composition_deps(composition_mock_state: MockState) -> Deps:
-    """Deps with forze_mock factory callables for doc_read/doc_write, txmanager, counter, storage."""
+    """Deps with forze_mock factory callables for doc_query/doc_command, txmanager, counter, storage."""
     base = MockDepsModule(state=composition_mock_state)()
     plain = dict(base.plain_deps)
     plain[CounterDepKey] = _composition_counter

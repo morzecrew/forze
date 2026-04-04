@@ -8,9 +8,9 @@ import pytest_asyncio
 pytest.importorskip("pymongo")
 
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
     DocumentSpec,
-    DocumentWriteDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -59,8 +59,8 @@ def execution_context(mongo_client: MongoClient) -> ExecutionContext:
     deps = Deps.plain(
         {
             MongoClientDepKey: mongo_client,
-            DocumentReadDepKey: configurable,
-            DocumentWriteDepKey: configurable,
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
         }
     )
     return ExecutionContext(deps=deps)
@@ -82,7 +82,7 @@ async def document_adapter(
         history_enabled=True,
     )
 
-    return execution_context.doc_write(spec)
+    return execution_context.doc_command(spec)
 
 
 @pytest.mark.perf

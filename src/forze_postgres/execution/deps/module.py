@@ -31,6 +31,22 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 # ----------------------- #
 
 
+def _document_config_to_read_only(
+    config: PostgresDocumentConfig,
+) -> PostgresReadOnlyDocumentConfig:
+    """Derive a read-only config from a read-write document config (same ``read`` relation)."""
+
+    ro: PostgresReadOnlyDocumentConfig = {"read": config["read"]}
+
+    if "tenant_aware" in config:
+        ro["tenant_aware"] = config["tenant_aware"]
+
+    return ro
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresDepsModule(DepsModule):
@@ -84,8 +100,10 @@ class PostgresDepsModule(DepsModule):
                 Deps.routed(
                     {
                         DocumentQueryDepKey: {
-                            name: ConfigurablePostgresReadOnlyDocument(config=config)
-                            for name, config in self.ro_documents.items()
+                            name: ConfigurablePostgresReadOnlyDocument(
+                                config=_document_config_to_read_only(config)
+                            )
+                            for name, config in self.rw_documents.items()
                         },
                         DocumentCommandDepKey: {
                             name: ConfigurablePostgresDocument(config=config)

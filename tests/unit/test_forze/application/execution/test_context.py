@@ -114,29 +114,29 @@ class TestExecutionContextTransaction:
 
 
 class TestExecutionContextPorts:
-    def test_doc_read(self, ctx: ExecutionContext) -> None:
-        port = ctx.doc_read(_doc_spec())
+    def test_doc_query(self, ctx: ExecutionContext) -> None:
+        port = ctx.doc_query(_doc_spec())
         assert port is not None
 
-    def test_doc_write(self, ctx: ExecutionContext) -> None:
-        port = ctx.doc_write(_doc_spec())
+    def test_doc_command(self, ctx: ExecutionContext) -> None:
+        port = ctx.doc_command(_doc_spec())
         assert port is not None
 
-    def test_doc_read_with_cache(self, ctx: ExecutionContext) -> None:
+    def test_doc_query_with_cache(self, ctx: ExecutionContext) -> None:
         spec = _doc_spec(
             cache=CacheSpec(name="doc-cache", ttl=timedelta(seconds=60)),
         )
-        port = ctx.doc_read(spec)
+        port = ctx.doc_query(spec)
         assert port is not None
 
-    def test_doc_write_with_cache(self, ctx: ExecutionContext) -> None:
+    def test_doc_command_with_cache(self, ctx: ExecutionContext) -> None:
         spec = _doc_spec(cache=CacheSpec(name="doc-cache"))
-        port = ctx.doc_write(spec)
+        port = ctx.doc_command(spec)
         assert port is not None
 
-    def test_doc_read_cache_disabled(self, ctx: ExecutionContext) -> None:
+    def test_doc_query_cache_disabled(self, ctx: ExecutionContext) -> None:
         spec = _doc_spec(cache=None)
-        port = ctx.doc_read(spec)
+        port = ctx.doc_query(spec)
         assert port is not None
 
     def test_cache(self, ctx: ExecutionContext) -> None:
@@ -157,5 +157,5 @@ class TestExecutionContextPorts:
         assert port is not None
 
     def test_search(self, ctx: ExecutionContext) -> None:
-        port = ctx.search_read(_search_spec())
+        port = ctx.search_query(_search_spec())
         assert port is not None

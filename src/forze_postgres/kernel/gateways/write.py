@@ -606,13 +606,24 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
-        stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = {value}").format(
-            value=sql.Placeholder(),
-            table=self.qname.ident(),
+        where_sql = sql.SQL("{pk} = {value}").format(
             pk=self.ident_pk(),
+            value=sql.Placeholder(),
+        )
+        params: list[Any] = [pk]
+        where_sql, params = self._add_tenant_where(where_sql, params)  # type: ignore[assignment]
+
+        stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
+            table=self.qname.ident(),
+            where=where_sql,
         )
 
-        await self.client.execute(stmt, [pk])
+        if self.tenant_aware:
+            n = await self.client.execute(stmt, params, return_rowcount=True)
+            if n == 0:
+                raise NotFoundError(f"Record not found: {pk}")
+        else:
+            await self.client.execute(stmt, params)
 
     # ....................... #
 
@@ -630,9 +641,23 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         for start in range(0, len(pks), batch_size):
             batch = pks[start : start + batch_size]
-            stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = ANY({ids})").format(
-                table=self.qname.ident(),
+            where_sql = sql.SQL("{pk} = ANY({ids})").format(
                 pk=self.ident_pk(),
                 ids=sql.Placeholder(),
             )
-            await self.client.execute(stmt, [list(batch)])
+            params: list[Any] = [list(batch)]
+            where_sql, params = self._add_tenant_where(where_sql, params)  # type: ignore[assignment]
+
+            stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
+                table=self.qname.ident(),
+                where=where_sql,
+            )
+
+            if self.tenant_aware:
+                n = await self.client.execute(stmt, params, return_rowcount=True)
+                if n != len(batch):
+                    raise NotFoundError(
+                        "Some records not found or not accessible in this tenant scope"
+                    )
+            else:
+                await self.client.execute(stmt, params)

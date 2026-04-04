@@ -1,4 +1,4 @@
-"""Unit tests for document port contracts (DocumentReadPort, DocumentWritePort).
+"""Unit tests for document port contracts (DocumentQueryPort, DocumentCommandPort).
 
 Exercises the protocol through MockDocumentAdapter and through direct protocol
 method calls to improve coverage of ports.py.
@@ -8,8 +8,8 @@ import pytest
 from uuid import uuid4
 
 from forze.application.contracts.document import (
-    DocumentReadPort,
-    DocumentWritePort,
+    DocumentCommandPort,
+    DocumentQueryPort,
 )
 from forze.application.contracts.query import QueryFilterExpression
 from forze.base.errors import NotFoundError
@@ -63,17 +63,17 @@ def _document_adapter_with_title() -> MockDocumentAdapter:
 class TestDocumentPortProtocolConformance:
     """Verify MockDocumentAdapter conforms to document protocols."""
 
-    def test_mock_adapter_is_document_read_port(self) -> None:
+    def test_mock_adapter_is_document_query_port(self) -> None:
         port = _document_adapter()
-        assert isinstance(port, DocumentReadPort)
+        assert isinstance(port, DocumentQueryPort)
 
-    def test_mock_adapter_is_document_write_port(self) -> None:
+    def test_mock_adapter_is_document_command_port(self) -> None:
         port = _document_adapter()
-        assert isinstance(port, DocumentWritePort)
+        assert isinstance(port, DocumentCommandPort)
 
 
-class TestDocumentReadPortViaMock:
-    """Test DocumentReadPort contract through MockDocumentAdapter."""
+class TestDocumentQueryPortViaMock:
+    """Test DocumentQueryPort contract through MockDocumentAdapter."""
 
     @pytest.mark.asyncio
     async def test_get_returns_read_model(self) -> None:
@@ -159,8 +159,8 @@ class TestDocumentReadPortViaMock:
         assert n >= 0
 
 
-class TestDocumentWritePortViaMock:
-    """Test DocumentWritePort contract through MockDocumentAdapter."""
+class TestDocumentCommandPortViaMock:
+    """Test DocumentCommandPort contract through MockDocumentAdapter."""
 
     @pytest.mark.asyncio
     async def test_create_returns_read_model(self) -> None:

@@ -3,9 +3,9 @@ from unittest.mock import Mock
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
-    QueueReadDepKey,
+    QueueCommandDepKey,
+    QueueQueryDepKey,
     QueueSpec,
-    QueueWriteDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter
@@ -56,5 +56,5 @@ def test_rabbitmq_deps_module_registers_expected_keys() -> None:
 
     assert isinstance(deps, Deps)
     assert deps.exists(RabbitMQClientDepKey)
-    assert deps.exists(QueueReadDepKey, route="q")
-    assert deps.exists(QueueWriteDepKey, route="q")
+    assert deps.exists(QueueQueryDepKey, route="q")
+    assert deps.exists(QueueCommandDepKey, route="q")

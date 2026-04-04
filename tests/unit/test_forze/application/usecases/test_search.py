@@ -84,8 +84,8 @@ class TestTypedSearch:
         self,
         stub_ctx,
     ) -> None:
-        doc_port = stub_ctx.doc_write(_search_document_spec())
-        search_port = stub_ctx.search_read(_search_spec())
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
 
         # Seed documents with content matching "foo"
         await doc_port.create(_SearchCreate(title="a", content="foo"))
@@ -108,8 +108,8 @@ class TestTypedSearch:
         self,
         stub_ctx,
     ) -> None:
-        doc_port = stub_ctx.doc_write(_search_document_spec())
-        search_port = stub_ctx.search_read(_search_spec())
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
 
         # Empty query matches all docs; create one
         await doc_port.create(_SearchCreate(title="x", content=""))
@@ -130,8 +130,8 @@ class TestRawSearch:
         self,
         stub_ctx,
     ) -> None:
-        doc_port = stub_ctx.doc_write(_search_document_spec())
-        search_port = stub_ctx.search_read(_search_spec())
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
 
         await doc_port.create(_SearchCreate(title="x", content="bar"))
         await doc_port.create(_SearchCreate(title="y", content="bar"))
@@ -155,8 +155,8 @@ class TestRawSearch:
         self,
         stub_ctx,
     ) -> None:
-        doc_port = stub_ctx.doc_write(_search_document_spec())
-        search_port = stub_ctx.search_read(_search_spec())
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
 
         for i in range(5):
             await doc_port.create(_SearchCreate(title="", content="q"))

@@ -1,9 +1,9 @@
-"""Unit tests for search contract (SearchSpec, SearchReadDepKey)."""
+"""Unit tests for search contract (SearchSpec, SearchQueryDepKey)."""
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchReadDepKey, SearchSpec
+from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.base.errors import CoreError
 
 # ----------------------- #
@@ -49,22 +49,22 @@ class TestSearchSpec:
             )
 
 
-class TestSearchReadDepKey:
-    """Tests for SearchReadDepKey."""
+class TestSearchQueryDepKey:
+    """Tests for SearchQueryDepKey."""
 
-    def test_search_read_dep_key_name(self) -> None:
-        assert SearchReadDepKey.name == "search_read"
+    def test_search_query_dep_key_name(self) -> None:
+        assert SearchQueryDepKey.name == "search_query"
 
 
-class TestExecutionContextSearchRead:
-    """Tests for ExecutionContext.search_read() resolution."""
+class TestExecutionContextSearchQuery:
+    """Tests for ExecutionContext.search_query() resolution."""
 
-    def test_search_read_resolves_registered_port(
+    def test_search_query_resolves_registered_port(
         self,
         stub_ctx,
     ) -> None:
-        """ctx.search_read(spec) returns SearchReadPort from SearchReadDepKey."""
+        """ctx.search_query(spec) returns SearchQueryPort from SearchQueryDepKey."""
         spec = _minimal_search_spec()
-        port = stub_ctx.search_read(spec)
+        port = stub_ctx.search_query(spec)
         assert port is not None
         assert hasattr(port, "search")

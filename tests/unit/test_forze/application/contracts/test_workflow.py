@@ -2,12 +2,12 @@
 
 from typing import Any, Awaitable, Optional, Sequence
 
-from forze.application.contracts.workflow.ports import WorkflowPort
+from forze.application.contracts.workflow.ports import WorkflowCommandPort
 from forze.base.primitives import JsonDict
 
 
 class _StubWorkflow:
-    """Concrete implementation for testing WorkflowPort."""
+    """Concrete implementation for exercising command-style workflow helpers."""
 
     def __init__(self) -> None:
         self.started: list[tuple[str, str, Sequence[Any]]] = []
@@ -31,7 +31,7 @@ class _StubWorkflow:
         self.signalled.append((id, signal, data))
 
 
-class TestWorkflowPort:
+class TestWorkflowCommandPort:
     async def test_start(self) -> None:
         w = _StubWorkflow()
         await w.start("my_workflow", "wf-1", [{"key": "val"}])
@@ -50,5 +50,5 @@ class TestWorkflowPort:
         assert len(w.started) == 1
 
     def test_protocol_structure(self) -> None:
-        assert hasattr(WorkflowPort, "start")
-        assert hasattr(WorkflowPort, "signal")
+        assert hasattr(WorkflowCommandPort, "start")
+        assert hasattr(WorkflowCommandPort, "signal")

@@ -3,9 +3,9 @@ from unittest.mock import Mock
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
-    QueueReadDepKey,
+    QueueCommandDepKey,
+    QueueQueryDepKey,
     QueueSpec,
-    QueueWriteDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_sqs.adapters import SQSQueueAdapter
@@ -52,5 +52,5 @@ def test_sqs_deps_module_registers_expected_keys() -> None:
 
     assert isinstance(deps, Deps)
     assert deps.exists(SQSClientDepKey)
-    assert deps.exists(QueueReadDepKey, route="events")
-    assert deps.exists(QueueWriteDepKey, route="events")
+    assert deps.exists(QueueQueryDepKey, route="events")
+    assert deps.exists(QueueCommandDepKey, route="events")
