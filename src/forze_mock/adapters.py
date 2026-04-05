@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import (
     Any,
     AsyncIterator,
+    Literal,
     Sequence,
     TypeVar,
     cast,
@@ -608,7 +609,13 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def create(self, dto: C) -> R:
+    @overload
+    async def create(self, dto: C, *, return_new: Literal[True] = True) -> R: ...
+
+    @overload
+    async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
+
+    async def create(self, dto: C, *, return_new: bool = True) -> R | None:
         domain_model = self._require_domain_model()
         payload = pydantic_dump(dto, exclude={"none": True})
         domain = pydantic_validate(domain_model, payload)
@@ -618,16 +625,72 @@ class MockDocumentAdapter[
             store = self._store()
             store[domain.id] = serialized
 
+        if not return_new:
+            return None
         return self._to_read(serialized)
 
     # ....................... #
 
-    async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
-        return [await self.create(dto) for dto in dtos]
+    @overload
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        if not dtos:
+            return []
+        if return_new:
+            return [await self.create(dto, return_new=True) for dto in dtos]
+        for dto in dtos:
+            await self.create(dto, return_new=False)
+        return None
 
     # ....................... #
 
-    async def update(self, pk: UUID, rev: int, dto: U) -> R:
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: bool = True,
+    ) -> R | None:
         patch = pydantic_dump(dto, exclude={"unset": True})
 
         with self.state.lock:
@@ -642,19 +705,57 @@ class MockDocumentAdapter[
             serialized = pydantic_dump(updated)
             self._store()[pk] = serialized
 
+        if not return_new:
+            return None
         return self._to_read(serialized)
 
     # ....................... #
 
-    async def update_many(self, updates: Sequence[tuple[UUID, int, U]]) -> Sequence[R]:
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        if not updates:
+            return []
         pks = [u[0] for u in updates]
         if len(set(pks)) != len(pks):
             raise CoreError("Primary keys must be unique")
-        return [await self.update(pk, r, dto) for pk, r, dto in updates]
+        if return_new:
+            return [
+                await self.update(pk, r, dto, return_new=True)
+                for pk, r, dto in updates
+            ]
+        for pk, r, dto in updates:
+            await self.update(pk, r, dto, return_new=False)
+        return None
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> R:
+    @overload
+    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+
+    @overload
+    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+
+    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
@@ -663,14 +764,43 @@ class MockDocumentAdapter[
             serialized = pydantic_dump(updated)
             self._store()[pk] = serialized
 
+        if not return_new:
+            return None
         return self._to_read(serialized)
 
     # ....................... #
 
-    async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
+    @overload
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        if not pks:
+            return []
         if len(set(pks)) != len(pks):
             raise CoreError("Primary keys must be unique")
-        return [await self.touch(pk) for pk in pks]
+        if return_new:
+            return [await self.touch(pk, return_new=True) for pk in pks]
+        for pk in pks:
+            await self.touch(pk, return_new=False)
+        return None
 
     # ....................... #
 
@@ -696,7 +826,25 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def delete(self, pk: UUID, rev: int) -> R:
+    @overload
+    async def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -707,29 +855,79 @@ class MockDocumentAdapter[
             if cast(Any, current).is_deleted:
                 serialized = pydantic_dump(current)
                 self._store()[pk] = serialized
-                return self._to_read(serialized)
-            updated = current.model_copy(
-                update={
-                    "is_deleted": True,
-                    "last_update_at": utcnow(),
-                    "rev": current.rev + 1,
-                },
-                deep=True,
-            )
-            serialized = pydantic_dump(updated)
-            self._store()[pk] = serialized
+            else:
+                updated = current.model_copy(
+                    update={
+                        "is_deleted": True,
+                        "last_update_at": utcnow(),
+                        "rev": current.rev + 1,
+                    },
+                    deep=True,
+                )
+                serialized = pydantic_dump(updated)
+                self._store()[pk] = serialized
+
+        if not return_new:
+            return None
         return self._to_read(serialized)
 
     # ....................... #
 
-    async def delete_many(self, deletes: Sequence[tuple[UUID, int]]) -> Sequence[R]:
+    @overload
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
-        return [await self.delete(pk, r) for pk, r in deletes]
+        if not deletes:
+            return []
+        if return_new:
+            return [
+                await self.delete(pk, r, return_new=True) for pk, r in deletes
+            ]
+        for pk, r in deletes:
+            await self.delete(pk, r, return_new=False)
+        return None
 
     # ....................... #
 
-    async def restore(self, pk: UUID, rev: int) -> R:
+    @overload
+    async def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
         with self.state.lock:
@@ -739,25 +937,57 @@ class MockDocumentAdapter[
             if not cast(Any, current).is_deleted:
                 serialized = pydantic_dump(current)
                 self._store()[pk] = serialized
-                return self._to_read(serialized)
-            updated = current.model_copy(
-                update={
-                    "is_deleted": False,
-                    "last_update_at": utcnow(),
-                    "rev": current.rev + 1,
-                },
-                deep=True,
-            )
-            serialized = pydantic_dump(updated)
-            self._store()[pk] = serialized
+            else:
+                updated = current.model_copy(
+                    update={
+                        "is_deleted": False,
+                        "last_update_at": utcnow(),
+                        "rev": current.rev + 1,
+                    },
+                    deep=True,
+                )
+                serialized = pydantic_dump(updated)
+                self._store()[pk] = serialized
+
+        if not return_new:
+            return None
         return self._to_read(serialized)
 
     # ....................... #
 
-    async def restore_many(self, restores: Sequence[tuple[UUID, int]]) -> Sequence[R]:
+    @overload
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
-        return [await self.restore(pk, r) for pk, r in restores]
+        if not restores:
+            return []
+        if return_new:
+            return [
+                await self.restore(pk, r, return_new=True) for pk, r in restores
+            ]
+        for pk, r in restores:
+            await self.restore(pk, r, return_new=False)
+        return None
 
 
 # ----------------------- #

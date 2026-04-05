@@ -8,7 +8,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Sequence, TypeVar, final, overload
+from typing import Literal, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
@@ -422,12 +422,21 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def create(self, dto: C) -> R:
+    @overload
+    async def create(self, dto: C, *, return_new: Literal[True] = True) -> R: ...
+
+    @overload
+    async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
+
+    async def create(self, dto: C, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
         logger.debug("Creating 1 '%s' document", self.spec.name)
 
         domain = await w.create(dto)
+
+        if not return_new:
+            return None
 
         # Repeat read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(domain.id)
@@ -437,7 +446,28 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
+    @overload
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         w = self._require_write()
 
         if not dtos:
@@ -455,6 +485,9 @@ class PostgresDocumentAdapter(
 
         domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many([x.id for x in domains])
         await self._set_cache_many(res)
@@ -463,7 +496,19 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def update(self, pk: UUID, rev: int, dto: U) -> R:
+    @overload
+    async def update(
+        self, pk: UUID, rev: int, dto: U, *, return_new: Literal[True] = True
+    ) -> R: ...
+
+    @overload
+    async def update(
+        self, pk: UUID, rev: int, dto: U, *, return_new: Literal[False]
+    ) -> None: ...
+
+    async def update(
+        self, pk: UUID, rev: int, dto: U, *, return_new: bool = True
+    ) -> R | None:
         w = self._require_write()
 
         logger.debug(
@@ -475,6 +520,9 @@ class PostgresDocumentAdapter(
         await w.update(pk, dto, rev=rev)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
@@ -483,7 +531,28 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def update_many(self, updates: Sequence[tuple[UUID, int, U]]) -> Sequence[R]:
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         w = self._require_write()
 
         if not updates:
@@ -507,6 +576,9 @@ class PostgresDocumentAdapter(
         await w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
         await self._set_cache_many(res)
@@ -515,7 +587,13 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> R:
+    @overload
+    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+
+    @overload
+    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+
+    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
         logger.debug(
@@ -527,6 +605,9 @@ class PostgresDocumentAdapter(
         await w.touch(pk)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
@@ -535,7 +616,28 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
+    @overload
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         w = self._require_write()
 
         if not pks:
@@ -554,6 +656,9 @@ class PostgresDocumentAdapter(
 
         await w.touch_many(pks, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
+
+        if not return_new:
+            return None
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
@@ -599,7 +704,25 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def delete(self, pk: UUID, rev: int) -> R:
+    @overload
+    async def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
         logger.debug(
@@ -611,6 +734,9 @@ class PostgresDocumentAdapter(
         await w.delete(pk, rev=rev)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
@@ -619,10 +745,28 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
+    @overload
     async def delete_many(
         self,
         deletes: Sequence[tuple[UUID, int]],
-    ) -> Sequence[R]:
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         w = self._require_write()
 
         if not deletes:
@@ -645,6 +789,9 @@ class PostgresDocumentAdapter(
         await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
         await self._set_cache_many(res)
@@ -653,7 +800,25 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
-    async def restore(self, pk: UUID, rev: int) -> R:
+    @overload
+    async def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
         logger.debug(
@@ -665,6 +830,9 @@ class PostgresDocumentAdapter(
         await w.restore(pk, rev=rev)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
@@ -673,10 +841,28 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
+    @overload
     async def restore_many(
         self,
         restores: Sequence[tuple[UUID, int]],
-    ) -> Sequence[R]:
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         w = self._require_write()
 
         if not restores:
@@ -698,6 +884,9 @@ class PostgresDocumentAdapter(
 
         await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
+
+        if not return_new:
+            return None
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)

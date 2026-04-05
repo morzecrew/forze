@@ -7,7 +7,7 @@ require_mongo()
 # ....................... #
 
 from functools import cached_property
-from typing import Sequence, TypeVar, final, overload
+from typing import Literal, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
@@ -408,7 +408,13 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def create(self, dto: C) -> R:
+    @overload
+    async def create(self, dto: C, *, return_new: Literal[True] = True) -> R: ...
+
+    @overload
+    async def create(self, dto: C, *, return_new: Literal[False]) -> None: ...
+
+    async def create(self, dto: C, *, return_new: bool = True) -> R | None:
         """Create a new document and populate the cache.
 
         :param dto: Creation payload.
@@ -418,6 +424,9 @@ class MongoDocumentAdapter(
         w = self._require_write()
         domain = await w.create(dto)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(domain.id)
         await self._set_cache(res)
@@ -426,7 +435,28 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def create_many(self, dtos: Sequence[C]) -> Sequence[R]:
+    @overload
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         """Bulk-create documents and populate the cache.
 
         :param dtos: Creation payloads.
@@ -439,6 +469,9 @@ class MongoDocumentAdapter(
 
         domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many([x.id for x in domains])
         await self._set_cache_many(res)
@@ -447,7 +480,34 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def update(self, pk: UUID, rev: int, dto: U) -> R:
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: bool = True,
+    ) -> R | None:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -460,6 +520,9 @@ class MongoDocumentAdapter(
         await w.update(pk, dto, rev=rev)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
 
@@ -467,7 +530,28 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def update_many(self, updates: Sequence[tuple[UUID, int, U]]) -> Sequence[R]:
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         """Bulk-update documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -484,6 +568,9 @@ class MongoDocumentAdapter(
         await w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
+        if not return_new:
+            return None
+
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
         await self._set_cache_many(res)
@@ -492,7 +579,13 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> R:
+    @overload
+    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+
+    @overload
+    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+
+    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
         """Touch a document (bump revision) and refresh the cache.
 
         :param pk: Document primary key.
@@ -503,6 +596,9 @@ class MongoDocumentAdapter(
         await w.touch(pk)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
 
@@ -510,7 +606,28 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def touch_many(self, pks: Sequence[UUID]) -> Sequence[R]:
+    @overload
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         """Touch multiple documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -519,6 +636,9 @@ class MongoDocumentAdapter(
         w = self._require_write()
         await w.touch_many(pks, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
+
+        if not return_new:
+            return None
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
@@ -552,7 +672,25 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def delete(self, pk: UUID, rev: int) -> R:
+    @overload
+    async def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         """Soft-delete a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -564,6 +702,9 @@ class MongoDocumentAdapter(
         await w.delete(pk, rev=rev)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
 
@@ -571,7 +712,28 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def delete_many(self, deletes: Sequence[tuple[UUID, int]]) -> Sequence[R]:
+    @overload
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         """Soft-delete multiple documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -586,6 +748,9 @@ class MongoDocumentAdapter(
         await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
+        if not return_new:
+            return None
+
         res = await self.read_gw.get_many(pks)
         await self._set_cache_many(res)
 
@@ -593,7 +758,25 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    async def restore(self, pk: UUID, rev: int) -> R:
+    @overload
+    async def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         """Restore a soft-deleted document and refresh the cache.
 
         :param pk: Document primary key.
@@ -605,6 +788,9 @@ class MongoDocumentAdapter(
         await w.restore(pk, rev=rev)
         await self._clear_cache(pk)
 
+        if not return_new:
+            return None
+
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
 
@@ -612,10 +798,28 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
+    @overload
     async def restore_many(
         self,
         restores: Sequence[tuple[UUID, int]],
-    ) -> Sequence[R]:
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
         """Restore multiple soft-deleted documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -629,6 +833,9 @@ class MongoDocumentAdapter(
 
         await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
+
+        if not return_new:
+            return None
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
