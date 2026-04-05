@@ -1,59 +1,61 @@
-from pydantic import BaseModel
 from unittest.mock import Mock
+from uuid import uuid4
 
+from pydantic import BaseModel
+
+from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.pubsub import PubSubSpec
-from forze.application.contracts.tenant import TenantContextDepKey, TenantContextPort
-from forze.application.execution import ExecutionContext, Deps
-from forze.base.codecs import KeyCodec
+from forze.application.execution import Deps, ExecutionContext
+from forze_redis.adapters import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.adapters.counter import RedisCounterAdapter
-from forze_redis.adapters.pubsub import RedisPubSubAdapter
-from forze_redis.execution.deps.deps import redis_counter, redis_pubsub
+from forze_redis.adapters.codecs import RedisKeyCodec
+from forze_redis.execution.deps.deps import ConfigurableRedisCounter
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient
 
 
-def test_redis_counter_without_tenant_context():
+def test_redis_counter_factory_builds_adapter() -> None:
     redis_mock = Mock(spec=RedisClient)
-    deps = Deps(deps={RedisClientDepKey: redis_mock})
+    deps = Deps.plain({RedisClientDepKey: redis_mock})
     context = ExecutionContext(deps=deps)
 
-    counter = redis_counter(context, namespace="test-namespace")
+    factory = ConfigurableRedisCounter(config={"namespace": "test-namespace"})
+    counter = factory(context, CounterSpec(name="test-namespace"))
 
     assert isinstance(counter, RedisCounterAdapter)
     assert counter.client is redis_mock
-    assert counter.key_codec == KeyCodec(namespace="test-namespace")
-    assert counter.tenant_context is None
+    assert counter.key_codec == RedisKeyCodec(namespace="test-namespace")
+    assert counter.tenant_aware is False
 
 
-def test_redis_counter_with_tenant_context():
+def test_redis_counter_factory_tenant_aware_uses_context() -> None:
     redis_mock = Mock(spec=RedisClient)
-    tenant_mock = Mock(spec=TenantContextPort)
+    deps = Deps.plain({RedisClientDepKey: redis_mock})
+    context = ExecutionContext(deps=deps)
+    tid = uuid4()
 
-    deps = Deps(
-        deps={RedisClientDepKey: redis_mock, TenantContextDepKey: lambda: tenant_mock}
+    factory = ConfigurableRedisCounter(
+        config={"namespace": "ns", "tenant_aware": True},
     )
-    context = ExecutionContext(deps=deps)
+    counter = factory(context, CounterSpec(name="ns"))
 
-    counter = redis_counter(context, namespace="test-namespace")
+    from forze.application.execution import CallContext, PrincipalContext
 
-    assert isinstance(counter, RedisCounterAdapter)
-    assert counter.client is redis_mock
-    assert counter.key_codec == KeyCodec(namespace="test-namespace")
-    assert counter.tenant_context is tenant_mock
+    call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
+    principal = PrincipalContext(tenant_id=tid)
+
+    with context.bind_call(call=call, principal=principal):
+        assert counter.tenant_provider() == tid
 
 
 class _PubSubPayload(BaseModel):
     value: str
 
 
-def test_redis_pubsub_builds_adapter():
+def test_redis_pubsub_adapter_constructible() -> None:
     redis_mock = Mock(spec=RedisClient)
-    deps = Deps(deps={RedisClientDepKey: redis_mock})
-    context = ExecutionContext(deps=deps)
-    spec = PubSubSpec(namespace="events", model=_PubSubPayload)
+    codec = RedisPubSubCodec(model=_PubSubPayload)
+    adapter = RedisPubSubAdapter(client=redis_mock, codec=codec)
 
-    pubsub = redis_pubsub(context, spec)
-
-    assert isinstance(pubsub, RedisPubSubAdapter)
-    assert pubsub.client is redis_mock
-    assert pubsub.codec.model is _PubSubPayload
+    assert adapter.client is redis_mock
+    assert adapter.codec.model is _PubSubPayload

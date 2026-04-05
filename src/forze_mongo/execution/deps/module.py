@@ -4,16 +4,39 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.document import DocumentReadDepKey, DocumentWriteDepKey
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+)
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.gateways import MongoHistoryWriteStrategy, MongoRevBumpStrategy
 from ...kernel.platform import MongoClient
-from .deps import mongo_document_configurable, mongo_txmanager
+from .configs import MongoDocumentConfig, MongoReadOnlyDocumentConfig
+from .deps import (
+    ConfigurableMongoDocument,
+    ConfigurableMongoReadOnlyDocument,
+    mongo_txmanager,
+)
 from .keys import MongoClientDepKey
 
 # ----------------------- #
+
+
+def _document_config_to_read_only(
+    config: MongoDocumentConfig,
+) -> MongoReadOnlyDocumentConfig:
+    """Derive a read-only config from a read-write document config (same ``read`` mapping)."""
+
+    ro: MongoReadOnlyDocumentConfig = {"read": config["read"]}
+
+    if "tenant_aware" in config:
+        ro["tenant_aware"] = config["tenant_aware"]
+
+    return ro
+
+
+# ....................... #
 
 
 @final
@@ -24,27 +47,59 @@ class MongoDepsModule(DepsModule):
     client: MongoClient
     """Pre-constructed Mongo client (not yet initialized)."""
 
-    rev_bump_strategy: MongoRevBumpStrategy = "application"
-    """Strategy for revision bumps in Mongo document writes."""
+    ro_documents: dict[str, MongoReadOnlyDocumentConfig] = attrs.field(factory=dict)
+    """Mapping from read-only document names to their Mongo-specific configurations."""
 
-    history_write_strategy: MongoHistoryWriteStrategy = "application"
-    """Strategy for history writes in Mongo document writes."""
+    rw_documents: dict[str, MongoDocumentConfig] = attrs.field(factory=dict)
+    """Mapping from read-write document names to their Mongo-specific configurations."""
+
+    tx: set[str] = attrs.field(factory=set)
+    """Set of transaction routes to register."""
 
     # ....................... #
 
     def __call__(self) -> Deps:
         """Build a dependency container with Mongo-backed ports."""
-        return Deps(
-            {
-                MongoClientDepKey: self.client,
-                TxManagerDepKey: mongo_txmanager,
-                DocumentReadDepKey: mongo_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy,
-                    history_write_strategy=self.history_write_strategy,
-                ),
-                DocumentWriteDepKey: mongo_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy,
-                    history_write_strategy=self.history_write_strategy,
-                ),
-            }
-        )
+
+        plain_deps = Deps.plain({MongoClientDepKey: self.client})
+        doc_deps = Deps()
+        tx_deps = Deps()
+
+        if self.ro_documents:
+            doc_deps = doc_deps.merge(
+                Deps.routed(
+                    {
+                        DocumentQueryDepKey: {
+                            name: ConfigurableMongoReadOnlyDocument(config=config)
+                            for name, config in self.ro_documents.items()
+                        }
+                    }
+                )
+            )
+
+        if self.rw_documents:
+            doc_deps = doc_deps.merge(
+                Deps.routed(
+                    {
+                        DocumentQueryDepKey: {
+                            name: ConfigurableMongoReadOnlyDocument(
+                                config=_document_config_to_read_only(config)
+                            )
+                            for name, config in self.rw_documents.items()
+                        },
+                        DocumentCommandDepKey: {
+                            name: ConfigurableMongoDocument(config=config)
+                            for name, config in self.rw_documents.items()
+                        },
+                    }
+                )
+            )
+
+        if self.tx:
+            tx_deps = tx_deps.merge(
+                Deps.routed(
+                    {TxManagerDepKey: {name: mongo_txmanager for name in self.tx}}
+                )
+            )
+
+        return plain_deps.merge(doc_deps, tx_deps)

@@ -30,19 +30,23 @@ class PostgresTxManagerAdapter(TxManagerPort):
     """Postgres-backed :class:`TxManagerPort` that delegates to :meth:`PostgresClient.transaction`."""
 
     client: PostgresClient
+    """Client instance instance."""
+
     options: PostgresTransactionOptions = attrs.field(
         factory=PostgresTransactionOptions
     )
+    """Transaction options forwarded to the Postgres client."""
 
-    # ....................... #
-
-    def scope_key(self) -> TxScopeKey:
-        return PostgresTxScopeKey
+    # Non initable fields
+    scope_key: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
+    """The key used to scope the transaction."""
 
     # ....................... #
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
+        """Open Postgres transaction for the duration of the context."""
+
         #! TODO: log options
         logger.debug("Starting transaction")
 

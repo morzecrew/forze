@@ -1,54 +1,19 @@
-from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+from typing import Any
 
-from pydantic import BaseModel
-
-from ..deps import DepKey
-from .ports import PubSubPublishPort, PubSubSubscribePort
+from ..base import BaseDepPort, DepKey
+from .ports import PubSubCommandPort, PubSubQueryPort
 from .specs import PubSubSpec
-
-if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 
-M = TypeVar("M", bound=BaseModel)
+PubSubQueryDepPort = BaseDepPort[PubSubSpec[Any], PubSubQueryPort[Any]]
+"""Pubsub query dependency port."""
 
-# ....................... #
+PubSubCommandDepPort = BaseDepPort[PubSubSpec[Any], PubSubCommandPort[Any]]
+"""Pubsub command dependency port."""
 
+PubSubQueryDepKey = DepKey[PubSubQueryDepPort]("pubsub_query")
+"""Key used to register the :class:`PubSubQueryPort` builder implementation."""
 
-@runtime_checkable
-class PubSubPublishDepPort(Protocol):
-    """Factory protocol for building :class:`PubSubPublishPort` instances."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: PubSubSpec[M],
-    ) -> PubSubPublishPort[M]:
-        """Build a pubsub publish port bound to the given context and spec."""
-        ...
-
-
-# ....................... #
-
-
-@runtime_checkable
-class PubSubSubscribeDepPort(Protocol):
-    """Factory protocol for building :class:`PubSubSubscribePort` instances."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: PubSubSpec[M],
-    ) -> PubSubSubscribePort[M]:
-        """Build a pubsub subscribe port bound to the given context and spec."""
-        ...
-
-
-# ....................... #
-
-PubSubPublishDepKey = DepKey[PubSubPublishDepPort]("pubsub_publish")
-"""Key used to register the :class:`PubSubPublishDepPort` implementation."""
-
-PubSubSubscribeDepKey = DepKey[PubSubSubscribeDepPort]("pubsub_subscribe")
-"""Key used to register the :class:`PubSubSubscribeDepPort` implementation."""
+PubSubCommandDepKey = DepKey[PubSubCommandDepPort]("pubsub_command")
+"""Key used to register the :class:`PubSubCommandPort` builder implementation."""

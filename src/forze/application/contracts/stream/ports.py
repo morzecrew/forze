@@ -15,8 +15,8 @@ from .types import StreamMessage
 
 
 @runtime_checkable
-class StreamReadPort[M: BaseModel](Protocol):
-    """Contract for reading messages from one or more streams."""
+class StreamQueryPort[M: BaseModel](Protocol):
+    """Contract for querying messages from one or more streams."""
 
     def read(
         self,
@@ -44,7 +44,7 @@ class StreamReadPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class StreamGroupPort[M: BaseModel](Protocol):
+class StreamGroupQueryPort[M: BaseModel](Protocol):
     """Contract for consumer-group-based stream reads and acknowledgments."""
 
     def read(
@@ -83,7 +83,7 @@ class StreamGroupPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class StreamWritePort[M: BaseModel](Protocol):
+class StreamCommandPort[M: BaseModel](Protocol):
     """Contract for appending messages to a stream backend."""
 
     def append(

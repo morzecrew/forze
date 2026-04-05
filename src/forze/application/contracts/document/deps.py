@@ -1,12 +1,10 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Any, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import attrs
-
+from ..base import DepKey
 from ..cache import CachePort
-from ..deps import DepKey, DepRouter
-from .ports import DocumentReadPort, DocumentWritePort
+from .ports import DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec
 
 if TYPE_CHECKING:
@@ -17,26 +15,26 @@ if TYPE_CHECKING:
 DocSpec = DocumentSpec[Any, Any, Any, Any]
 """Type-erased document specification."""
 
-DocReadPort = DocumentReadPort[Any]
-"""Type-erased document read port."""
+DocQueryPort = DocumentQueryPort[Any]
+"""Type-erased document query port."""
 
-DocWritePort = DocumentWritePort[Any, Any, Any, Any]
-"""Type-erased document write port."""
+DocCommandPort = DocumentCommandPort[Any, Any, Any, Any]
+"""Type-erased document command port."""
 
 # ....................... #
 
 
 @runtime_checkable
-class DocumentReadDepPort(Protocol):
-    """Factory protocol for building :class:`DocumentReadPort` instances."""
+class DocumentQueryDepPort(Protocol):
+    """Factory protocol for building :class:`DocumentQueryPort` instances."""
 
     def __call__(
         self,
         context: "ExecutionContext",
         spec: DocSpec,
         cache: CachePort | None = None,
-    ) -> DocReadPort:
-        """Build a document read port, optionally backed by a cache."""
+    ) -> DocQueryPort:
+        """Build a document query port, optionally backed by a cache."""
         ...
 
 
@@ -44,68 +42,23 @@ class DocumentReadDepPort(Protocol):
 
 
 @runtime_checkable
-class DocumentWriteDepPort(Protocol):
-    """Factory protocol for building :class:`DocumentWritePort` instances."""
+class DocumentCommandDepPort(Protocol):
+    """Factory protocol for building :class:`DocumentCommandPort` instances."""
 
     def __call__(
         self,
         context: "ExecutionContext",
         spec: DocSpec,
         cache: CachePort | None = None,
-    ) -> DocWritePort:
-        """Build a document write port, optionally backed by a cache."""
+    ) -> DocCommandPort:
+        """Build a document command port, optionally backed by a cache."""
         ...
 
 
 # ....................... #
 
-DocumentReadDepKey = DepKey[DocumentReadDepPort]("document_read")
-"""Key used to register the :class:`DocumentReadDepPort` implementation."""
+DocumentQueryDepKey = DepKey[DocumentQueryDepPort]("document_query")
+"""Key used to register the :class:`DocumentQueryDepPort` implementation."""
 
-DocumentWriteDepKey = DepKey[DocumentWriteDepPort]("document_write")
-"""Key used to register the :class:`DocumentWriteDepPort` implementation."""
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentReadDepRouter(
-    DepRouter[DocSpec, DocumentReadDepPort],
-    DocumentReadDepPort,
-    dep_key=DocumentReadDepKey,
-):
-    """Router that dispatches :class:`DocumentReadDepPort` calls by spec."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: DocSpec,
-        cache: CachePort | None = None,
-    ) -> DocReadPort:
-        route = self._select(spec)
-
-        return route(context, spec, cache=cache)
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class DocumentWriteDepRouter(
-    DepRouter[DocSpec, DocumentWriteDepPort],
-    DocumentWriteDepPort,
-    dep_key=DocumentWriteDepKey,
-):
-    """Router that dispatches :class:`DocumentWriteDepPort` calls by spec."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: DocSpec,
-        cache: CachePort | None = None,
-    ) -> DocWritePort:
-        route = self._select(spec)
-
-        return route(context, spec, cache=cache)
+DocumentCommandDepKey = DepKey[DocumentCommandDepPort]("document_command")
+"""Key used to register the :class:`DocumentCommandDepPort` implementation."""

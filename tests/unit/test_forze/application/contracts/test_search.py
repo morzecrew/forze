@@ -1,15 +1,10 @@
-"""Unit tests for search contract (SearchSpec, SearchReadDepKey)."""
+"""Unit tests for search contract (SearchSpec, SearchQueryDepKey)."""
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchFieldSpec,
-    SearchIndexSpec,
-    SearchReadDepKey,
-    SearchSpec,
-    parse_search_spec,
-)
+from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
+from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -23,13 +18,9 @@ class _MinimalSearchModel(BaseModel):
 def _minimal_search_spec() -> SearchSpec[_MinimalSearchModel]:
     """Build a minimal SearchSpec for testing."""
     return SearchSpec(
-        namespace="test",
-        model=_MinimalSearchModel,
-        indexes={
-            "default": SearchIndexSpec(
-                fields=[SearchFieldSpec(path="title")],
-            ),
-        },
+        name="test",
+        model_type=_MinimalSearchModel,
+        fields=["title"],
     )
 
 
@@ -38,41 +29,42 @@ class TestSearchSpec:
 
     def test_minimal_spec(self) -> None:
         spec = _minimal_search_spec()
-        assert len(spec.indexes) == 1
-        assert "default" in spec.indexes
+        assert list(spec.fields) == ["title"]
 
-    def test_stable_default_index(self) -> None:
-        internal = parse_search_spec(_minimal_search_spec())
-        assert internal.stable_default_index == "default"
+    def test_duplicate_fields_raise(self) -> None:
+        with pytest.raises(CoreError, match="unique"):
+            SearchSpec(
+                name="test",
+                model_type=_MinimalSearchModel,
+                fields=["title", "title"],
+            )
 
-    def test_empty_indexes_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        spec = SearchSpec(
-            namespace="test",
-            model=_MinimalSearchModel,
-            indexes={},
-        )
-        with pytest.raises(CoreError, match="At least one index"):
-            parse_search_spec(spec)
-
-
-class TestSearchReadDepKey:
-    """Tests for SearchReadDepKey."""
-
-    def test_search_read_dep_key_name(self) -> None:
-        assert SearchReadDepKey.name == "search_read"
+    def test_default_weights_must_cover_all_fields(self) -> None:
+        with pytest.raises(CoreError, match="Default weights"):
+            SearchSpec(
+                name="test",
+                model_type=_MinimalSearchModel,
+                fields=["title", "body"],
+                default_weights={"title": 0.5},
+            )
 
 
-class TestExecutionContextSearch:
-    """Tests for ExecutionContext.search() resolution."""
+class TestSearchQueryDepKey:
+    """Tests for SearchQueryDepKey."""
 
-    def test_search_resolves_registered_port(
+    def test_search_query_dep_key_name(self) -> None:
+        assert SearchQueryDepKey.name == "search_query"
+
+
+class TestExecutionContextSearchQuery:
+    """Tests for ExecutionContext.search_query() resolution."""
+
+    def test_search_query_resolves_registered_port(
         self,
         stub_ctx,
     ) -> None:
-        """ctx.search(spec) returns SearchReadPort from SearchReadDepKey."""
+        """ctx.search_query(spec) returns SearchQueryPort from SearchQueryDepKey."""
         spec = _minimal_search_spec()
-        port = stub_ctx.search(spec)
+        port = stub_ctx.search_query(spec)
         assert port is not None
         assert hasattr(port, "search")

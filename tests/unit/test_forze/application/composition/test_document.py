@@ -15,7 +15,7 @@ from forze.application.composition.document.factories import (
 )
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import UsecasePlan, UsecaseRegistry
-from forze.application.mapping import DTOMapper
+from forze.application.composition.mapping import DTOMapper
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -42,15 +42,12 @@ def _minimal_spec(
     update_cmd = UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
     domain = _SoftDoc if supports_soft_delete else Document
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_read", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_write",
-            "models": {
-                "domain": domain,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": update_cmd,
-            },
+            "domain": domain,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": update_cmd,
         },
     )
 
@@ -85,8 +82,8 @@ class TestBuildDocumentCreateMapper:
         from forze.base.errors import CoreError
 
         spec = DocumentSpec(
-            namespace="test",
-            read={"source": "test_read", "model": ReadDocument},
+            name="test",
+            read=ReadDocument,
             write=None,
         )
         dtos = _minimal_dtos()
@@ -115,8 +112,8 @@ class TestBuildDocumentUpdateMapper:
         from forze.base.errors import CoreError
 
         spec = DocumentSpec(
-            namespace="test",
-            read={"source": "test_read", "model": ReadDocument},
+            name="test",
+            read=ReadDocument,
             write=None,
         )
         dtos = _minimal_dtos(supports_update=True)
@@ -209,7 +206,9 @@ class TestDocumentFacadeWithRegistry:
 
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
-        reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
+        reg = build_document_registry(spec, dtos).extend_plan(
+            UsecasePlan().tx("*", route="mock")
+        )
         reg.finalize("document", inplace=True)
         facade = DocumentUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.get

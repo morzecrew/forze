@@ -1,6 +1,6 @@
 import attrs
 
-from forze.application.contracts.document import DocumentReadPort
+from forze.application.contracts.document import DocumentQueryPort
 from forze.application.dto import DocumentIdDTO
 from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
@@ -16,8 +16,8 @@ class GetDocument[R: ReadDocument](Usecase[DocumentIdDTO, R]):
     :class:`DocumentReadPort`.
     """
 
-    doc: DocumentReadPort[R]
-    """Read-only document port for get operations."""
+    doc: DocumentQueryPort[R]
+    """Document port for get operations."""
 
     # ....................... #
 
@@ -28,4 +28,4 @@ class GetDocument[R: ReadDocument](Usecase[DocumentIdDTO, R]):
         :returns: Read model.
         """
 
-        return await self.doc.get(args.id)
+        return await self.doc.get(pk=args.id)

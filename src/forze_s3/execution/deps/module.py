@@ -8,7 +8,8 @@ from forze.application.contracts.storage import StorageDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import S3Client
-from .deps import s3_storage
+from .configs import S3StorageConfig
+from .deps import ConfigurableS3Storage
 from .keys import S3ClientDepKey
 
 # ----------------------- #
@@ -27,6 +28,9 @@ class S3DepsModule(DepsModule):
     client: S3Client
     """Pre-constructed S3 client (session not yet initialized)."""
 
+    storages: dict[str, S3StorageConfig] = attrs.field(factory=dict)
+    """Mapping from storage names to their S3-specific configurations."""
+
     # ....................... #
 
     def __call__(self) -> Deps:
@@ -34,9 +38,20 @@ class S3DepsModule(DepsModule):
 
         :returns: Deps with client and storage port factory.
         """
-        return Deps(
-            {
-                S3ClientDepKey: self.client,
-                StorageDepKey: s3_storage,
-            }
-        )
+
+        plain_deps = Deps.plain({S3ClientDepKey: self.client})
+        storage_deps = Deps()
+
+        if self.storages:
+            storage_deps = storage_deps.merge(
+                Deps.routed(
+                    {
+                        StorageDepKey: {
+                            name: ConfigurableS3Storage(config=config)
+                            for name, config in self.storages.items()
+                        }
+                    }
+                )
+            )
+
+        return plain_deps.merge(storage_deps)

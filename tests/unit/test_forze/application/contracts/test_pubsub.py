@@ -5,11 +5,11 @@ from typing import AsyncIterator
 from pydantic import BaseModel
 
 from forze.application.contracts.pubsub import (
-    PubSubPublishDepKey,
-    PubSubPublishPort,
+    PubSubCommandDepKey,
+    PubSubCommandPort,
+    PubSubQueryDepKey,
+    PubSubQueryPort,
     PubSubSpec,
-    PubSubSubscribeDepKey,
-    PubSubSubscribePort,
 )
 
 # ----------------------- #
@@ -20,7 +20,7 @@ class _PubSubPayload(BaseModel):
 
 
 class _StubPubSub(
-    PubSubPublishPort[_PubSubPayload], PubSubSubscribePort[_PubSubPayload]
+    PubSubCommandPort[_PubSubPayload], PubSubQueryPort[_PubSubPayload]
 ):
     async def publish(
         self,
@@ -44,16 +44,16 @@ class _StubPubSub(
 
 
 class TestPubSubSpec:
-    def test_spec_contains_namespace_and_model(self) -> None:
-        spec = PubSubSpec(namespace="events", model=_PubSubPayload)
+    def test_spec_contains_name_and_model(self) -> None:
+        spec = PubSubSpec(name="events", model=_PubSubPayload)
 
-        assert spec.namespace == "events"
+        assert spec.name == "events"
         assert spec.model is _PubSubPayload
 
 
 class TestPubSubDepKeys:
-    def test_pubsub_publish_dep_key_name(self) -> None:
-        assert PubSubPublishDepKey.name == "pubsub_publish"
+    def test_pubsub_command_dep_key_name(self) -> None:
+        assert PubSubCommandDepKey.name == "pubsub_command"
 
-    def test_pubsub_subscribe_dep_key_name(self) -> None:
-        assert PubSubSubscribeDepKey.name == "pubsub_subscribe"
+    def test_pubsub_query_dep_key_name(self) -> None:
+        assert PubSubQueryDepKey.name == "pubsub_query"

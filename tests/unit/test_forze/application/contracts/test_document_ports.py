@@ -1,4 +1,4 @@
-"""Unit tests for document port contracts (DocumentReadPort, DocumentWritePort).
+"""Unit tests for document port contracts (DocumentQueryPort, DocumentCommandPort).
 
 Exercises the protocol through MockDocumentAdapter and through direct protocol
 method calls to improve coverage of ports.py.
@@ -8,8 +8,8 @@ import pytest
 from uuid import uuid4
 
 from forze.application.contracts.document import (
-    DocumentReadPort,
-    DocumentWritePort,
+    DocumentCommandPort,
+    DocumentQueryPort,
 )
 from forze.application.contracts.query import QueryFilterExpression
 from forze.base.errors import NotFoundError
@@ -63,17 +63,17 @@ def _document_adapter_with_title() -> MockDocumentAdapter:
 class TestDocumentPortProtocolConformance:
     """Verify MockDocumentAdapter conforms to document protocols."""
 
-    def test_mock_adapter_is_document_read_port(self) -> None:
+    def test_mock_adapter_is_document_query_port(self) -> None:
         port = _document_adapter()
-        assert isinstance(port, DocumentReadPort)
+        assert isinstance(port, DocumentQueryPort)
 
-    def test_mock_adapter_is_document_write_port(self) -> None:
+    def test_mock_adapter_is_document_command_port(self) -> None:
         port = _document_adapter()
-        assert isinstance(port, DocumentWritePort)
+        assert isinstance(port, DocumentCommandPort)
 
 
-class TestDocumentReadPortViaMock:
-    """Test DocumentReadPort contract through MockDocumentAdapter."""
+class TestDocumentQueryPortViaMock:
+    """Test DocumentQueryPort contract through MockDocumentAdapter."""
 
     @pytest.mark.asyncio
     async def test_get_returns_read_model(self) -> None:
@@ -159,8 +159,8 @@ class TestDocumentReadPortViaMock:
         assert n >= 0
 
 
-class TestDocumentWritePortViaMock:
-    """Test DocumentWritePort contract through MockDocumentAdapter."""
+class TestDocumentCommandPortViaMock:
+    """Test DocumentCommandPort contract through MockDocumentAdapter."""
 
     @pytest.mark.asyncio
     async def test_create_returns_read_model(self) -> None:
@@ -182,7 +182,7 @@ class TestDocumentWritePortViaMock:
     async def test_update_bumps_rev(self) -> None:
         port = _document_adapter_with_title()
         created = await port.create(_CreateWithTitle())
-        updated = await port.update(created.id, _UpdateTitle(title="x"))
+        updated = await port.update(created.id, created.rev, _UpdateTitle(title="x"))
         assert updated.rev == 2
 
     @pytest.mark.asyncio
@@ -191,7 +191,10 @@ class TestDocumentWritePortViaMock:
         c1 = await port.create(_CreateWithTitle())
         c2 = await port.create(_CreateWithTitle())
         result = await port.update_many(
-            [c1.id, c2.id], [_UpdateTitle(title="a"), _UpdateTitle(title="b")]
+            [
+                (c1.id, c1.rev, _UpdateTitle(title="a")),
+                (c2.id, c2.rev, _UpdateTitle(title="b")),
+            ]
         )
         assert len(result) == 2
 
@@ -249,7 +252,7 @@ class TestDocumentWritePortViaMock:
         )
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        deleted = await port.delete(created.id)
+        deleted = await port.delete(created.id, created.rev)
         assert deleted is not None
         assert deleted.is_deleted is True
         # Soft-deleted doc is still retrievable via get()
@@ -274,7 +277,7 @@ class TestDocumentWritePortViaMock:
         cmd = CreateDocumentCmd()
         c1 = await port.create(cmd)
         c2 = await port.create(cmd)
-        result = await port.delete_many([c1.id, c2.id])
+        result = await port.delete_many([(c1.id, c1.rev), (c2.id, c2.rev)])
         assert len(result) == 2
 
     @pytest.mark.asyncio
@@ -294,8 +297,8 @@ class TestDocumentWritePortViaMock:
         )
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        await port.delete(created.id)
-        restored = await port.restore(created.id)
+        d = await port.delete(created.id, created.rev)
+        restored = await port.restore(created.id, d.rev)
         assert restored is not None
         got = await port.get(created.id)
         assert got is not None
@@ -318,6 +321,8 @@ class TestDocumentWritePortViaMock:
         cmd = CreateDocumentCmd()
         c1 = await port.create(cmd)
         c2 = await port.create(cmd)
-        await port.delete_many([c1.id, c2.id])
-        result = await port.restore_many([c1.id, c2.id])
+        dr = await port.delete_many([(c1.id, c1.rev), (c2.id, c2.rev)])
+        result = await port.restore_many(
+            [(c1.id, dr[0].rev), (c2.id, dr[1].rev)],
+        )
         assert len(result) == 2

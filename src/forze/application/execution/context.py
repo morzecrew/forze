@@ -2,7 +2,6 @@
 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from datetime import timedelta
 from typing import Any, AsyncIterator, Iterator, final
 from uuid import UUID
 
@@ -12,22 +11,21 @@ from structlog.contextvars import bound_contextvars
 from forze.application._logger import logger
 from forze.base.errors import CoreError
 
+from ..contracts.base import DepKey, DepsPort
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
-from ..contracts.counter import CounterDepKey, CounterPort
-from ..contracts.deps import DepKey, DepsPort
+from ..contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from ..contracts.document import (
-    DocumentReadDepKey,
-    DocumentReadPort,
+    DocumentCommandDepKey,
+    DocumentCommandPort,
+    DocumentQueryDepKey,
+    DocumentQueryPort,
     DocumentSpec,
-    DocumentWriteDepKey,
-    DocumentWritePort,
 )
-from ..contracts.search import SearchReadDepKey, SearchReadPort, SearchSpec
-from ..contracts.storage import StorageDepKey, StoragePort
-from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort, TxScopedPort
+from ..contracts.search import SearchQueryDepKey, SearchQueryPort, SearchSpec
+from ..contracts.storage import StorageDepKey, StoragePort, StorageSpec
+from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 
 # ----------------------- #
-#! TODO: review call and principal ctx
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -111,8 +109,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    @property
-    def call_ctx(self) -> CallContext | None:
+    def get_call_ctx(self) -> CallContext | None:
         """Return the current call context.
 
         :returns: Call context.
@@ -122,14 +119,28 @@ class ExecutionContext:
 
     # ....................... #
 
-    @property
-    def principal_ctx(self) -> PrincipalContext | None:
+    def get_principal_ctx(self) -> PrincipalContext | None:
         """Return the current principal context.
 
         :returns: Principal context.
         """
 
         return self.__principal_context.get()
+
+    # ....................... #
+
+    def get_tenant_id(self) -> UUID | None:
+        """Return the current tenant ID.
+
+        :returns: Tenant ID.
+        """
+
+        principal = self.get_principal_ctx()
+
+        if principal is None:
+            return None
+
+        return principal.tenant_id
 
     # ....................... #
 
@@ -177,28 +188,19 @@ class ExecutionContext:
 
     # ....................... #
 
-    def active_tx(self) -> TxHandle | None:
-        """Return the current active transaction handle.
-
-        Returns ``None`` when no transaction is active.
-        """
-
-        return self.__tx_handle.get()
-
-    # ....................... #
-
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]:
+    async def transaction(self, route: str) -> AsyncIterator[None]:
         """Enter a transaction scope.
 
         Nested calls reuse the same transaction (savepoints when supported).
-        Raises :exc:`CoreError` on scope mismatch (e.g. different tx manager).
+        Raises :exc:`CoreError` on scope mismatch (different tx manager).
         """
 
         logger.debug("Entering transaction scope")
 
-        tx = self.txmanager()
-        scope = tx.scope_key()
+        tx = self.txmanager(route)
+
+        scope = tx.scope_key
         depth = self.__tx_depth.get()
         cur = self.__tx_handle.get()
 
@@ -261,186 +263,175 @@ class ExecutionContext:
 
     # ....................... #
 
-    def __validate_tx_scope(self, instance: Any) -> None:
-        h = self.active_tx()
-
-        if (
-            h is not None
-            and isinstance(instance, TxScopedPort)
-            and h.scope != instance.tx_scope
-        ):
-            raise CoreError(
-                f"Port tx scope mismatch: active={h.scope.name}, requested={instance.tx_scope.name}"
-            )
-
-    # ....................... #
-
-    def dep[T](self, key: DepKey[T]) -> T:
+    def dep[T](self, key: DepKey[T], *, route: str | None = None) -> T:
         """Resolve a dependency by key using the underlying container.
 
         :param key: Dependency key.
+        :param route: Optional route for routed dependencies.
         :returns: Resolved instance.
         :raises CoreError: If the dependency is not registered or a cycle is detected.
         """
 
-        return self.deps.provide(key)
+        return self.deps.provide(key, route=route)
 
     # ....................... #
     # Convenient namespace methods for resolving ports
 
-    def doc_read(
+    #! transactional: bool ? how to forward it through ?
+    #! if we add this key then it forces extra complexity...
+
+    def doc_query(
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentReadPort[Any]:
-        """Resolve a document port for the given spec.
+    ) -> DocumentQueryPort[Any]:
+        """Resolve a document query port for the given spec.
 
-        :param spec: Document specification.
-        :returns: Document port instance.
+        :param spec: Document resource specification.
+        :returns: Document query port instance.
         """
 
         cache = None
 
-        if spec.cache is not None and spec.cache.get("enabled", False):
-            cache_spec = CacheSpec(
-                namespace=spec.namespace,
-                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
-            )
-            logger.trace(
-                "Resolving cache for document read namespace '%s' with ttl=%s",
-                spec.namespace,
-                cache_spec.ttl,
-            )
-            cache = self.cache(cache_spec)
+        if spec.cache is not None:
+            cache = self.cache(spec.cache)
 
-        dep = self.dep(DocumentReadDepKey)(self, spec, cache=cache)
-        self.__validate_tx_scope(dep)
+        dep = self.dep(DocumentQueryDepKey, route=spec.name)
+        doc = dep(self, spec, cache=cache)
 
         logger.trace(
-            "Resolved document read port for namespace '%s' -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
+            "Resolved document query port for name '%s' -> %s",
+            spec.name,
+            type(doc).__qualname__,
         )
 
-        return dep
+        return doc
 
     # ....................... #
 
-    def doc_write(
+    def doc_command(
         self,
         spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentWritePort[Any, Any, Any, Any]:
-        """Resolve a document port for the given spec.
+    ) -> DocumentCommandPort[Any, Any, Any, Any]:
+        """Resolve a document command port for the given spec.
 
-        :param spec: Document specification.
-        :returns: Document port instance.
+        :param spec: Document resource specification.
+        :returns: Document command port instance.
         """
 
         cache = None
 
-        if spec.cache is not None and spec.cache.get("enabled", False):
-            cache_spec = CacheSpec(
-                namespace=spec.namespace,
-                ttl=spec.cache.get("ttl", timedelta(seconds=300)),
-            )
-            logger.trace(
-                "Resolving cache for document write namespace '%s' with ttl=%s",
-                spec.namespace,
-                cache_spec.ttl,
-            )
-            cache = self.cache(cache_spec)
+        if spec.cache is not None:
+            cache = self.cache(spec.cache)
 
-        dep = self.dep(DocumentWriteDepKey)(self, spec, cache=cache)
-        self.__validate_tx_scope(dep)
+        dep = self.dep(DocumentCommandDepKey, route=spec.name)
+        doc = dep(self, spec, cache=cache)
 
         logger.trace(
-            "Resolved document write port for namespace '%s' -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
+            "Resolved document command port for name '%s' -> %s",
+            spec.name,
+            type(doc).__qualname__,
         )
 
-        return dep
+        return doc
 
     # ....................... #
+    #! read and write split for cache?
 
     def cache(self, spec: CacheSpec) -> CachePort:
         """Resolve a cache port for the given spec.
 
-        :param spec: Cache specification.
+        :param spec: Cache resource specification.
         :returns: Cache port instance.
         """
 
-        dep = self.dep(CacheDepKey)(self, spec)
+        dep = self.dep(CacheDepKey, route=spec.name)
+        ca = dep(self, spec)
 
         logger.trace(
             "Resolved cache port for namespace '%s' -> %s",
-            spec.namespace,
-            type(dep).__qualname__,
+            spec.name,
+            type(ca).__qualname__,
         )
 
-        return dep
+        return ca
 
     # ....................... #
 
-    def counter(self, namespace: str) -> CounterPort:
+    def counter(self, spec: CounterSpec) -> CounterPort:
         """Resolve a counter port for the given namespace.
 
-        :param namespace: Counter namespace.
+        :param spec: Counter resource specification.
         :returns: Counter port instance.
         """
 
-        dep = self.dep(CounterDepKey)(self, namespace)
+        dep = self.dep(CounterDepKey, route=spec.name)
+        cnt = dep(self, spec)
 
         logger.trace(
-            "Resolved counter port for namespace '%s' -> %s",
-            namespace,
-            type(dep).__qualname__,
+            "Resolved counter port for '%s' -> %s",
+            spec.name,
+            type(cnt).__qualname__,
         )
 
-        return dep
+        return cnt
 
     # ....................... #
 
-    def txmanager(self) -> TxManagerPort:
-        """Resolve the transaction manager port."""
+    def txmanager(self, route: str) -> TxManagerPort:
+        """Resolve the transaction manager port.
 
-        dep = self.dep(TxManagerDepKey)(self)
+        :param route: Transaction manager route.
+        :returns: Transaction manager port instance.
+        """
+
+        dep = self.dep(TxManagerDepKey, route=route)
+        tx = dep(self)
 
         logger.trace(
-            "Resolved transaction manager port -> %s",
-            type(dep).__qualname__,
+            "Resolved transaction manager for '%s' -> %s",
+            route,
+            type(tx).__qualname__,
         )
 
-        return dep
+        return tx
 
     # ....................... #
+    #! read and write split for storage ?
 
-    def storage(self, bucket: str) -> StoragePort:
-        """Resolve a storage port for the given bucket.
+    def storage(self, spec: StorageSpec) -> StoragePort:
+        """Resolve a storage port for the given spec.
 
-        :param bucket: Storage bucket name.
+        :param spec: Storage resource specification.
         :returns: Storage port instance.
         """
 
-        dep = self.dep(StorageDepKey)(self, bucket)
+        dep = self.dep(StorageDepKey, route=spec.name)
+        st = dep(self, spec)
 
         logger.trace(
-            "Resolved storage port for bucket '%s' -> %s",
-            bucket,
-            type(dep).__qualname__,
+            "Resolved storage port for '%s' -> %s",
+            spec.name,
+            type(st).__qualname__,
         )
 
-        return dep
+        return st
 
     # ....................... #
 
-    def search(self, spec: SearchSpec[Any]) -> SearchReadPort[Any]:
-        """Resolve a search port."""
+    def search_query(self, spec: SearchSpec[Any]) -> SearchQueryPort[Any]:
+        """Resolve a search query port.
 
-        dep = self.dep(SearchReadDepKey)(self, spec)
+        :param spec: Search resource specification.
+        :returns: Search query port instance.
+        """
+
+        dep = self.dep(SearchQueryDepKey, route=spec.name)
+        se = dep(self, spec)
 
         logger.trace(
-            "Resolved search read port -> %s",
-            type(dep).__qualname__,
+            "Resolved search query port '%s' -> %s",
+            spec.name,
+            type(se).__qualname__,
         )
 
-        return dep
+        return se

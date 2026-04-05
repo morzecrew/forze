@@ -11,12 +11,12 @@ from fastapi import APIRouter
 
 from forze.application.composition.document import DocumentDTOs
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
 from .._logger import logger
 from ..http import attach_http_endpoint
 from .endpoints import (
-    Idempotency,
     build_document_create_endpoint_spec,
     build_document_delete_endpoint_spec,
     build_document_get_endpoint_spec,
@@ -102,21 +102,22 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         if dtos.create is None:
             logger.warning(
                 "Create DTO is not provided for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
+            idempotency_ttl = config.get("idempotency_ttl", timedelta(seconds=30))
+            enable_idempotency = config.get("enable_idempotency", True)
+
             idempotency = (
-                Idempotency(
-                    ttl=config.get("idempotency_ttl", timedelta(seconds=30)),
-                )
-                if config.get("enable_idempotency", True)
+                IdempotencySpec(name=document.name, ttl=idempotency_ttl)
+                if enable_idempotency
                 else None
             )
 
@@ -138,19 +139,19 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not dtos.update:
             logger.warning(
                 "Update DTO is not provided for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not document.supports_update():
             logger.warning(
                 "Update is not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -171,7 +172,7 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -191,13 +192,13 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not document.supports_soft_delete():
             logger.warning(
                 "Soft delete is not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:
@@ -218,13 +219,13 @@ def attach_document_endpoints(
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         elif not document.supports_soft_delete():
             logger.warning(
                 "Soft delete is not supported for document '%s', skipping",
-                document.namespace,
+                document.name,
             )
 
         else:

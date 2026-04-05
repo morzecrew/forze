@@ -1,4 +1,5 @@
-from .queue import RabbitMQQueueAdapter, RabbitMQQueueCodec
+from .codecs import RabbitMQQueueCodec
+from .queue import RabbitMQQueueAdapter
 
 # ----------------------- #
 

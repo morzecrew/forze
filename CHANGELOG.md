@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `forze_postgres` / `forze_mongo`: ``PostgresDepsModule`` / ``MongoDepsModule`` now register the read (query) port for each ``rw_documents`` route using that route’s ``read`` config; previously the query map for the read-write merge incorrectly reused ``ro_documents``, which broke ``rw_documents``-only setups and duplicated routes when both were set.
+- `forze_postgres`: tenant-aware ``PostgresWriteGateway.kill`` / ``kill_many`` now include ``tenant_id`` in the ``DELETE`` predicate (and raise :class:`~forze.base.errors.NotFoundError` when no rows match), matching row-level isolation used by reads.
+- `forze_postgres`: `PostgresFTSSearchAdapter` now reads rows from the configured **source** relation and uses the **index** only to resolve the ``tsvector`` expression from the catalog (``COUNT`` / ``SELECT`` no longer use the index name as ``FROM``).
+- `forze_postgres`: FTS search with an empty query string uses a valid ``ORDER BY`` constant when no rank is computed (avoids Postgres ``ORDER BY 0.0`` errors).
+
 ### Added
 
 - `forze.base.logging`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).

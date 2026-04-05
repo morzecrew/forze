@@ -15,7 +15,7 @@ from .types import QueueMessage
 
 
 @runtime_checkable
-class QueueReadPort[M: BaseModel](Protocol):
+class QueueQueryPort[M: BaseModel](Protocol):
     """Contract for reading and acknowledging messages from a queue backend."""
 
     def receive(
@@ -62,7 +62,7 @@ class QueueReadPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class QueueWritePort[M: BaseModel](Protocol):
+class QueueCommandPort[M: BaseModel](Protocol):
     """Contract for publishing messages to a queue backend."""
 
     def enqueue(

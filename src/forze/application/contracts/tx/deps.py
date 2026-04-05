@@ -1,17 +1,14 @@
 """Transaction manager dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-import attrs
-
-from ..deps import DepKey, DepRouter
+from ..base import DepKey
 from .ports import TxManagerPort
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
-#! TODO: spec ...
 
 
 @runtime_checkable
@@ -27,16 +24,3 @@ class TxManagerDepPort(Protocol):
 
 TxManagerDepKey = DepKey[TxManagerDepPort]("tx_manager")
 """Key used to register the :class:`TxManagerDepPort` implementation."""
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class TxManagerDepRouter(DepRouter[None, TxManagerDepPort], TxManagerDepPort):
-    """Router that dispatches :class:`TxManagerDepPort` calls."""
-
-    dep_key = TxManagerDepKey
-
-    def __call__(self, context: "ExecutionContext") -> TxManagerPort:
-        route = self._select(None)
-
-        return route(context)

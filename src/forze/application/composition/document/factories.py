@@ -5,7 +5,6 @@ from typing import Any
 from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import ListRequestDTO, RawListRequestDTO
 from forze.application.execution import UsecaseRegistry
-from forze.application.mapping import DTOMapper, MappingStep
 from forze.application.usecases.document import (
     CreateDocument,
     DeleteDocument,
@@ -18,6 +17,7 @@ from forze.application.usecases.document import (
 )
 from forze.base.errors import CoreError
 
+from ..mapping import DTOMapper, DTOMapperStep
 from .facades import DocumentDTOs
 from .operations import DocumentOperation
 
@@ -28,7 +28,7 @@ def build_document_create_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for create commands.
 
@@ -46,7 +46,7 @@ def build_document_create_mapper(
     if create_dto is None:
         raise CoreError("Document specification does not support create operations")
 
-    mapper = DTOMapper(in_=create_dto, out=spec.write["models"]["create_cmd"])
+    mapper = DTOMapper(in_=create_dto, out=spec.write["create_cmd"])
 
     return mapper.with_steps(*steps)
 
@@ -58,7 +58,7 @@ def build_document_update_mapper(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for update commands.
 
@@ -76,7 +76,7 @@ def build_document_update_mapper(
     if update_dto is None:
         raise CoreError("Document specification does not support update operations")
 
-    mapper = DTOMapper(in_=update_dto, out=spec.write["models"]["update_cmd"])
+    mapper = DTOMapper(in_=update_dto, out=spec.write["update_cmd"])
 
     return mapper.with_steps(*steps)
 
@@ -86,7 +86,7 @@ def build_document_update_mapper(
 
 def build_document_list_mapper(
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for list requests with optional steps."""
 
@@ -103,7 +103,7 @@ def build_document_list_mapper(
 
 def build_document_raw_list_mapper(
     *,
-    steps: tuple[MappingStep[Any], ...] = (),
+    steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> DTOMapper[Any, Any]:
     """Build a DTO mapper for raw list requests.
 
@@ -128,10 +128,10 @@ def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
-    create_steps: tuple[MappingStep[Any], ...] = (),
-    update_steps: tuple[MappingStep[Any], ...] = (),
-    list_steps: tuple[MappingStep[Any], ...] = (),
-    raw_list_steps: tuple[MappingStep[Any], ...] = (),
+    create_steps: tuple[DTOMapperStep[Any], ...] = (),
+    update_steps: tuple[DTOMapperStep[Any], ...] = (),
+    list_steps: tuple[DTOMapperStep[Any], ...] = (),
+    raw_list_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec.
 
@@ -151,16 +151,16 @@ def build_document_registry(
         {
             DocumentOperation.GET: lambda ctx: GetDocument(
                 ctx=ctx,
-                doc=ctx.doc_read(spec),
+                doc=ctx.doc_query(spec),
             ),
             DocumentOperation.LIST: lambda ctx: TypedListDocuments(
                 ctx=ctx,
-                doc=ctx.doc_read(spec),
+                doc=ctx.doc_query(spec),
                 mapper=list_mapper,
             ),
             DocumentOperation.RAW_LIST: lambda ctx: RawListDocuments(
                 ctx=ctx,
-                doc=ctx.doc_read(spec),
+                doc=ctx.doc_query(spec),
                 mapper=raw_list_mapper,
             ),
         }
@@ -182,12 +182,12 @@ def build_document_registry(
             {
                 DocumentOperation.CREATE: lambda ctx: CreateDocument(
                     ctx=ctx,
-                    doc=ctx.doc_write(spec),
+                    doc=ctx.doc_command(spec),
                     mapper=create_mapper,
                 ),
                 DocumentOperation.KILL: lambda ctx: KillDocument(
                     ctx=ctx,
-                    doc=ctx.doc_write(spec),
+                    doc=ctx.doc_command(spec),
                 ),
             }
         )
@@ -197,7 +197,7 @@ def build_document_registry(
                 DocumentOperation.UPDATE,
                 lambda ctx: UpdateDocument[Any, Any, Any](
                     ctx=ctx,
-                    doc=ctx.doc_write(spec),
+                    doc=ctx.doc_command(spec),
                     mapper=update_mapper,
                 ),
                 inplace=True,
@@ -208,11 +208,11 @@ def build_document_registry(
                 {
                     DocumentOperation.DELETE: lambda ctx: DeleteDocument(
                         ctx=ctx,
-                        doc=ctx.doc_write(spec),
+                        doc=ctx.doc_command(spec),
                     ),
                     DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
                         ctx=ctx,
-                        doc=ctx.doc_write(spec),
+                        doc=ctx.doc_command(spec),
                     ),
                 },
                 inplace=True,

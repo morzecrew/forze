@@ -11,54 +11,35 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
+    QueueCommandPort,
     QueueMessage,
-    QueueReadPort,
-    QueueWritePort,
+    QueueQueryPort,
 )
-from forze.base.errors import CoreError
+from forze.infra.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import SQSClient, SQSQueueMessage
+from ..kernel.platform import SQSClient
+from .codecs import SQSQueueCodec
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SQSQueueCodec[M: BaseModel]:
-    model: type[M]
+class SQSQueueAdapter[M: BaseModel](
+    QueueQueryPort[M],
+    QueueCommandPort[M],
+    MultiTenancyMixin,
+):
+    """SQS queue adapter."""
 
-    # ....................... #
-
-    def encode(self, payload: M) -> bytes:
-        return payload.model_dump_json().encode("utf-8")
-
-    # ....................... #
-
-    def decode(self, queue: str, raw: SQSQueueMessage) -> QueueMessage[M]:
-        body = raw["body"]
-
-        if not isinstance(body, (bytes, bytearray)):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise CoreError(f"SQS queue message '{raw['id']}' has invalid payload")
-
-        return QueueMessage(
-            queue=queue,
-            id=raw["id"],
-            payload=self.model.model_validate_json(body),
-            type=raw.get("type"),
-            enqueued_at=raw.get("enqueued_at"),
-            key=raw.get("key"),
-        )
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
     client: SQSClient
+    """SQS client instance."""
+
     codec: SQSQueueCodec[M]
-    namespace: str = ""
+    """SQS queue codec instance."""
+
+    namespace: str | None = None
+    """SQS queue namespace."""
 
     # ....................... #
 
@@ -72,10 +53,21 @@ class SQSQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
         if self.__is_queue_url(queue):
             return queue
 
-        if not self.namespace:
-            return queue
+        tenant_id = self.require_tenant_if_aware()
 
-        return f"{self.namespace}-{queue}"
+        if tenant_id is not None:
+            tenant_prefix = f"tenant-{tenant_id}"
+
+        else:
+            tenant_prefix = ""
+
+        if self.namespace:
+            namespaced_queue = f"{self.namespace}-{queue}"
+
+        else:
+            namespaced_queue = queue
+
+        return f"{tenant_prefix}-{namespaced_queue}".lstrip("-")
 
     # ....................... #
 

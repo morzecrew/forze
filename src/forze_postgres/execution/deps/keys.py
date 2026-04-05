@@ -1,6 +1,6 @@
 """Dependency keys for Postgres-related services."""
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.base import DepKey
 
 from ...kernel.introspect import PostgresIntrospector
 from ...kernel.platform import PostgresClient

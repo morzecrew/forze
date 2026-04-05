@@ -13,6 +13,7 @@ from forze.application.contracts.query import (
     QueryValue,
     QueryValueCaster,
 )
+from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
@@ -86,7 +87,7 @@ class MongoQueryRenderer:
                 return {"$or": parts}
 
             case _:
-                raise ValueError(f"Unknown expression: {expr!r}")
+                raise CoreError(f"Unknown expression: {expr!r}")
 
     # ....................... #
 
@@ -108,7 +109,7 @@ class MongoQueryRenderer:
                 return self._render_set_rel(field, op, value)
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise ValueError(f"Unknown operator: {op!r}")
+                raise CoreError(f"Unknown operator: {op!r}")
 
     # ....................... #
 
@@ -172,7 +173,7 @@ class MongoQueryRenderer:
 
     def _render_memb(self, field: str, op: QueryOp.Memb, value: Any) -> JsonDict:  # type: ignore[valid-type]
         if isinstance(value, QueryValue.Scalar | None):
-            raise ValueError(f"{field}: {op} expects list")
+            raise CoreError(f"{field}: {op} expects list")
 
         vs = [self.caster.pass_through(v) for v in value]
 
@@ -187,7 +188,7 @@ class MongoQueryRenderer:
 
     def _render_set_rel(self, field: str, op: QueryOp.SetRel, value: Any) -> JsonDict:  # type: ignore[valid-type]
         if isinstance(value, QueryValue.Scalar | None):
-            raise ValueError(f"{field}: {op} expects list")
+            raise CoreError(f"{field}: {op} expects list")
 
         vs = [self.caster.pass_through(v) for v in value]
 

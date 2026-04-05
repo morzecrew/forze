@@ -6,27 +6,32 @@ require_mongo()
 
 # ....................... #
 
-import contextlib
+from functools import cached_property
 from typing import Sequence, TypeVar, final, overload
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.cache import CachePort
-from forze.application.contracts.document import DocumentReadPort, DocumentWritePort
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentQueryPort,
+    DocumentSpec,
+)
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
-    pydantic_dump,
-    pydantic_dump_many,
+    pydantic_cache_dump,
+    pydantic_cache_dump_many,
     pydantic_validate,
     pydantic_validate_many,
 )
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..kernel.gateways import MongoReadGateway, MongoWriteGateway
+from ._logger import logger
 from .txmanager import MongoTxScopeKey
 
 # ----------------------- #
@@ -37,21 +42,21 @@ C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #
+#! Consider adding a method to bound or bind contextvars with 'name' as namespace or so
+#! the above is related to logging
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoDocumentAdapter(
-    DocumentReadPort[R], DocumentWritePort[R, D, C, U], TxScopedPort
+    DocumentQueryPort[R],
+    DocumentCommandPort[R, D, C, U],
+    TxScopedPort,
 ):
-    """Mongo adapter bridging domain document ports to gateway operations.
+    """Mongo adapter bridging domain document ports to gateway operations."""
 
-    Implements :class:`~forze.application.contracts.document.DocumentReadPort`
-    and :class:`~forze.application.contracts.document.DocumentWritePort`.
-    Read operations support an optional :class:`CachePort` for transparent
-    caching with versioned invalidation. Write operations delegate to a
-    :class:`MongoWriteGateway` and refresh the cache after mutation.
-    """
+    spec: DocumentSpec[R, D, C, U]
+    """Document specification."""
 
     read_gw: MongoReadGateway[R]
     """Gateway used for all read queries."""
@@ -62,17 +67,39 @@ class MongoDocumentAdapter(
     cache: CachePort | None = None
     """Optional cache layer for read-through caching."""
 
+    batch_size: int = 200
+    """Batch size for writing."""
+
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=MongoTxScopeKey, init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if (
-            self.write_gw is not None
-            and self.write_gw.client is not self.read_gw.client
-        ):
-            raise CoreError("Write and read gateways must use the same client")
+        if self.write_gw is not None:
+            if self.write_gw.client is not self.read_gw.client:
+                raise CoreError("Write and read gateways must use the same client")
+
+            if self.write_gw.tenant_aware != self.read_gw.tenant_aware:
+                raise CoreError(
+                    "Write and read gateways must have the same tenant awareness."
+                )
+
+    # ....................... #
+
+    @cached_property
+    def eff_batch_size(self) -> int:
+        if self.batch_size < 10:
+            logger.warning("Batch size is too small, using default value of 200")
+
+            return 200
+
+        if self.batch_size > 1000:
+            logger.warning("Batch size is too large, using default value of 200")
+
+            return 200
+
+        return self.batch_size
 
     # ....................... #
 
@@ -84,29 +111,51 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    def _map_to_cache(self, doc: R) -> JsonDict:
-        return pydantic_dump(
-            doc,
-            exclude={
-                "none": True,
-                "defaults": True,
-                "computed_fields": True,
-            },
-            mode="json",
-        )
+    async def _set_cache(self, doc: R) -> None:
+        if self.cache is not None:
+
+            try:
+                dump = pydantic_cache_dump(doc)
+                await self.cache.set_versioned(str(doc.id), str(doc.rev), dump)
+
+                logger.trace("Cache set successfully")
+
+            except Exception:
+                logger.exception("Cache set failed, continuing")
 
     # ....................... #
 
-    def _map_to_cache_many(self, docs: Sequence[R]) -> list[JsonDict]:
-        return pydantic_dump_many(
-            docs,
-            exclude={
-                "none": True,
-                "defaults": True,
-                "computed_fields": True,
-            },
-            mode="json",
-        )
+    async def _set_cache_many(self, docs: Sequence[R]) -> None:
+        if self.cache is not None:
+            try:
+                dumps = pydantic_cache_dump_many(docs)
+                res_cache_map = {
+                    (str(x.id), str(x.rev)): y for x, y in zip(docs, dumps, strict=True)
+                }
+                await self.cache.set_many_versioned(res_cache_map)
+
+            except Exception:
+                logger.debug(
+                    "Cache set failed for %s '%s' document(s), continuing",
+                    len(docs),
+                    self.spec.name,
+                    exc_info=True,
+                )
+
+    # ....................... #
+
+    async def _clear_cache(self, *pks: UUID) -> None:
+        if self.cache is not None:
+            try:
+                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+
+            except Exception:
+                logger.debug(
+                    "Cache clear failed for %s '%s' document(s), continuing",
+                    len(pks),
+                    self.spec.name,
+                    exc_info=True,
+                )
 
     # ....................... #
 
@@ -159,6 +208,7 @@ class MongoDocumentAdapter(
 
         try:
             cached = await self.cache.get(str(pk))
+
         except Exception:
             return await self.read_gw.get(
                 pk,
@@ -167,16 +217,10 @@ class MongoDocumentAdapter(
             )
 
         if cached is not None:
-            return pydantic_validate(self.read_gw.model, cached)
+            return pydantic_validate(self.read_gw.model_type, cached)
 
         res = await self.read_gw.get(pk)
-
-        with contextlib.suppress(Exception):
-            await self.cache.set_versioned(
-                str(pk),
-                str(res.rev),
-                self._map_to_cache(res),
-            )
+        await self._set_cache(res)
 
         return res
 
@@ -233,15 +277,11 @@ class MongoDocumentAdapter(
 
         if misses:
             miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
-            miss_res_cache = self._map_to_cache_many(miss_res)
-            miss_res_cache_map = {
-                (str(x.id), str(x.rev)): y for x, y in zip(miss_res, miss_res_cache)
-            }
+            await self._set_cache_many(miss_res)
 
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(miss_res_cache_map)
-
-        hits_validated = pydantic_validate_many(self.read_gw.model, list(hits.values()))
+        hits_validated = pydantic_validate_many(
+            self.read_gw.model_type, list(hits.values())
+        )
         by_pk = {x.id: x for x in hits_validated}
         by_pk.update({x.id: x for x in miss_res})
 
@@ -380,14 +420,7 @@ class MongoDocumentAdapter(
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get(domain.id)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -400,30 +433,21 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
-        domains = await w.create_many(dtos)
+
+        if not dtos:
+            return []
+
+        domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many([x.id for x in domains])
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
     # ....................... #
 
-    async def _clear_cache(self, *pks: UUID) -> None:
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
-
-    # ....................... #
-
-    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> R:
+    async def update(self, pk: UUID, rev: int, dto: U) -> R:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -437,26 +461,13 @@ class MongoDocumentAdapter(
         await self._clear_cache(pk)
 
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
     # ....................... #
 
-    async def update_many(
-        self,
-        pks: Sequence[UUID],
-        dtos: Sequence[U],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
+    async def update_many(self, updates: Sequence[tuple[UUID, int, U]]) -> Sequence[R]:
         """Bulk-update documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -466,18 +477,16 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.update_many(pks, dtos, revs=revs)
+        pks = [x[0] for x in updates]
+        revs = [x[1] for x in updates]
+        dtos = [x[2] for x in updates]
+
+        await w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
@@ -495,14 +504,7 @@ class MongoDocumentAdapter(
         await self._clear_cache(pk)
 
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -515,18 +517,12 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
-        await w.touch_many(pks)
+        await w.touch_many(pks, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
@@ -551,12 +547,12 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
-        await w.kill_many(pks)
+        await w.kill_many(pks)  #! add support for batch size
         await self._clear_cache(*pks)
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> R:
+    async def delete(self, pk: UUID, rev: int) -> R:
         """Soft-delete a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -569,25 +565,13 @@ class MongoDocumentAdapter(
         await self._clear_cache(pk)
 
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
     # ....................... #
 
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
+    async def delete_many(self, deletes: Sequence[tuple[UUID, int]]) -> Sequence[R]:
         """Soft-delete multiple documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -596,23 +580,20 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.delete_many(pks, revs=revs)
+        pks = [x[0] for x in deletes]
+        revs = [x[1] for x in deletes]
+
+        await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> R:
+    async def restore(self, pk: UUID, rev: int) -> R:
         """Restore a soft-deleted document and refresh the cache.
 
         :param pk: Document primary key.
@@ -625,14 +606,7 @@ class MongoDocumentAdapter(
         await self._clear_cache(pk)
 
         res = await self.read_gw.get(pk)
-
-        if self.cache is not None:
-            with contextlib.suppress(Exception):
-                await self.cache.set_versioned(
-                    str(res.id),
-                    str(res.rev),
-                    self._map_to_cache(res),
-                )
+        await self._set_cache(res)
 
         return res
 
@@ -640,9 +614,7 @@ class MongoDocumentAdapter(
 
     async def restore_many(
         self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
+        restores: Sequence[tuple[UUID, int]],
     ) -> Sequence[R]:
         """Restore multiple soft-deleted documents and refresh the cache.
 
@@ -651,17 +623,15 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
-        await w.restore_many(pks, revs=revs)
+
+        pks = [x[0] for x in restores]
+        revs = [x[1] for x in restores]
+
+        await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
         await self._clear_cache(*pks)
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
-
-        if self.cache is not None:
-            res_cache = self._map_to_cache_many(res)
-            res_cache_map = {(str(x.id), str(x.rev)): y for x, y in zip(res, res_cache)}
-
-            with contextlib.suppress(Exception):
-                await self.cache.set_many_versioned(res_cache_map)
+        await self._set_cache_many(res)
 
         return res

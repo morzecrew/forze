@@ -7,6 +7,7 @@ from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.base import DepKey
 from forze.application.contracts.cache import (
     CacheDepKey,
     CachePort,
@@ -16,28 +17,27 @@ from forze.application.contracts.counter import (
     CounterDepKey,
     CounterPort,
 )
-from forze.application.contracts.deps import DepKey
 from forze.application.contracts.document import (
-    DocumentReadDepKey,
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
     DocumentSpec,
-    DocumentWriteDepKey,
 )
 from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
     IdempotencyPort,
 )
 from forze.application.contracts.pubsub import (
-    PubSubPublishDepKey,
+    PubSubCommandDepKey,
+    PubSubQueryDepKey,
     PubSubSpec,
-    PubSubSubscribeDepKey,
 )
 from forze.application.contracts.queue import (
-    QueueReadDepKey,
+    QueueCommandDepKey,
+    QueueQueryDepKey,
     QueueSpec,
-    QueueWriteDepKey,
 )
 from forze.application.contracts.search import (
-    SearchReadDepKey,
+    SearchQueryDepKey,
     SearchSpec,
 )
 from forze.application.contracts.storage import (
@@ -45,9 +45,9 @@ from forze.application.contracts.storage import (
     StoragePort,
 )
 from forze.application.contracts.stream import (
-    StreamGroupDepKey,
-    StreamReadDepKey,
-    StreamWriteDepKey,
+    StreamCommandDepKey,
+    StreamGroupQueryDepKey,
+    StreamQueryDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tx import (
@@ -91,12 +91,12 @@ def mock_document(
     state = context.dep(MockStateDepKey)
     domain_model = None
     if spec.write is not None:
-        domain_model = spec.write["models"]["domain"]
+        domain_model = spec.write["domain"]
 
     return MockDocumentAdapter[Any, Any, Any, Any](
         state=state,
-        namespace=spec.namespace,
-        read_model=spec.read["model"],
+        namespace=spec.name,
+        read_model=spec.read,
         domain_model=domain_model,
     )
 
@@ -116,7 +116,7 @@ def mock_counter(context: ExecutionContext, namespace: str) -> CounterPort:
 
 def mock_cache(context: ExecutionContext, spec: CacheSpec) -> CachePort:
     state = context.dep(MockStateDepKey)
-    return MockCacheAdapter(state=state, namespace=spec.namespace)
+    return MockCacheAdapter(state=state, namespace=spec.name)
 
 
 def mock_idempotency(
@@ -143,7 +143,7 @@ def mock_queue(
     spec: QueueSpec[Any],
 ) -> MockQueueAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    return MockQueueAdapter(state=state, namespace=spec.namespace, model=spec.model)
+    return MockQueueAdapter(state=state, namespace=spec.name, model=spec.model)
 
 
 def mock_pubsub(
@@ -151,7 +151,7 @@ def mock_pubsub(
     spec: PubSubSpec[Any],
 ) -> MockPubSubAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    return MockPubSubAdapter(state=state, namespace=spec.namespace, model=spec.model)
+    return MockPubSubAdapter(state=state, namespace=spec.name, model=spec.model)
 
 
 def mock_stream(
@@ -159,7 +159,7 @@ def mock_stream(
     spec: StreamSpec[Any],
 ) -> MockStreamAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    return MockStreamAdapter(state=state, namespace=spec.namespace, model=spec.model)
+    return MockStreamAdapter(state=state, namespace=spec.name, model=spec.model)
 
 
 def mock_stream_group(
@@ -167,8 +167,8 @@ def mock_stream_group(
     spec: StreamSpec[Any],
 ) -> MockStreamGroupAdapter[Any]:
     state = context.dep(MockStateDepKey)
-    stream = MockStreamAdapter(state=state, namespace=spec.namespace, model=spec.model)
-    return MockStreamGroupAdapter(stream=stream, state=state, namespace=spec.namespace)
+    stream = MockStreamAdapter(state=state, namespace=spec.name, model=spec.model)
+    return MockStreamGroupAdapter(stream=stream, state=state, namespace=spec.name)
 
 
 # ----------------------- #
@@ -184,23 +184,23 @@ class MockDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
-        return Deps(
+        return Deps.plain(
             {
                 MockStateDepKey: self.state,
-                DocumentReadDepKey: mock_document,
-                DocumentWriteDepKey: mock_document,
-                SearchReadDepKey: mock_search,
+                DocumentQueryDepKey: mock_document,
+                DocumentCommandDepKey: mock_document,
+                SearchQueryDepKey: mock_search,
                 CounterDepKey: mock_counter,
                 CacheDepKey: mock_cache,
                 IdempotencyDepKey: mock_idempotency,
                 StorageDepKey: mock_storage,
                 TxManagerDepKey: mock_txmanager,
-                QueueReadDepKey: mock_queue,
-                QueueWriteDepKey: mock_queue,
-                PubSubPublishDepKey: mock_pubsub,
-                PubSubSubscribeDepKey: mock_pubsub,
-                StreamReadDepKey: mock_stream,
-                StreamWriteDepKey: mock_stream,
-                StreamGroupDepKey: mock_stream_group,
+                QueueQueryDepKey: mock_queue,
+                QueueCommandDepKey: mock_queue,
+                PubSubCommandDepKey: mock_pubsub,
+                PubSubQueryDepKey: mock_pubsub,
+                StreamQueryDepKey: mock_stream,
+                StreamCommandDepKey: mock_stream,
+                StreamGroupQueryDepKey: mock_stream_group,
             }
         )

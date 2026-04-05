@@ -30,7 +30,6 @@ keywords = [
 
 dependencies = [
     "attrs>=25.4.0",
-    "more-itertools>=10.8.0",
     "opentelemetry-api>=1.39.0",
     "opentelemetry-sdk>=1.39.0",
     "orjson>=3.11.7",
@@ -234,7 +233,6 @@ layers = [
     "forze.application.usecases",
     "forze.application.execution",
     "forze.application.dto",
-    "forze.application.mapping",
     "forze.application.contracts",
 ]
 

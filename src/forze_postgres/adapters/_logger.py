@@ -2,5 +2,5 @@ from forze.base.logging import Logger
 
 # ----------------------- #
 
-logger = Logger("forze_postgres.adapter")
-"""Postgres adapter logger."""
+logger = Logger("forze_postgres.adapters")
+"""Postgres adapters logger."""

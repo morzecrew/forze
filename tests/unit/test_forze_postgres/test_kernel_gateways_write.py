@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from forze.base.errors import ConcurrencyError
+from forze.base.errors import ConcurrencyError, NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.kernel.gateways import (
     PostgresQualifiedName,
@@ -42,15 +42,17 @@ def _build_gateway() -> tuple[
     read = MagicMock(spec=PostgresReadGateway)
     read.qname = qname
     read.client = client
+    read.tenant_aware = False
 
     gw = PostgresWriteGateway(
         qname=qname,
         client=client,
-        model=MyDoc,
+        model_type=MyDoc,
         introspector=introspector,
-        read=read,
-        create_dto=MyCreateDoc,
-        update_dto=MyUpdateDoc,
+        read_gw=read,
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        strategy="application",
     )
     return gw, client
 
@@ -127,3 +129,64 @@ async def test_create_many_raises_when_batch_returns_fewer_rows() -> None:
 
     with pytest.raises(ConcurrencyError, match="mismatch in number of rows"):
         await gw.create_many(dtos, batch_size=100)
+
+
+def _build_tenant_aware_gateway() -> tuple[
+    PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock
+]:
+    tid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    client = MagicMock(spec=PostgresClient)
+    client.execute = AsyncMock(return_value=1)
+
+    introspector = MagicMock(spec=PostgresIntrospector)
+    introspector.get_column_types = AsyncMock(return_value={})
+
+    qname = PostgresQualifiedName(schema="public", name="docs")
+    read = MagicMock(spec=PostgresReadGateway)
+    read.qname = qname
+    read.client = client
+    read.tenant_aware = True
+
+    gw = PostgresWriteGateway(
+        qname=qname,
+        client=client,
+        model_type=MyDoc,
+        introspector=introspector,
+        read_gw=read,
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        strategy="application",
+        tenant_aware=True,
+        tenant_provider=lambda: tid,
+    )
+    return gw, client
+
+
+@pytest.mark.asyncio
+async def test_kill_tenant_aware_uses_rowcount_and_raises_when_missing() -> None:
+    gw, client = _build_tenant_aware_gateway()
+    pk = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+    await gw.kill(pk)
+
+    client.execute.assert_awaited_once()
+    assert client.execute.await_args.kwargs.get("return_rowcount") is True
+
+    client.execute = AsyncMock(return_value=0)
+    with pytest.raises(NotFoundError, match="Record not found"):
+        await gw.kill(pk)
+
+
+@pytest.mark.asyncio
+async def test_kill_many_tenant_aware_raises_when_rowcount_mismatch() -> None:
+    gw, client = _build_tenant_aware_gateway()
+    pks = [UUID("11111111-1111-1111-1111-111111111111")]
+
+    await gw.kill_many(pks, batch_size=10)
+
+    client.execute.assert_awaited_once()
+    assert client.execute.await_args.kwargs.get("return_rowcount") is True
+
+    client.execute = AsyncMock(return_value=0)
+    with pytest.raises(NotFoundError, match="not accessible"):
+        await gw.kill_many(pks)

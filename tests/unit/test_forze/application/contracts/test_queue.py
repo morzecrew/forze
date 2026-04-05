@@ -6,11 +6,11 @@ from typing import AsyncIterator
 from pydantic import BaseModel
 
 from forze.application.contracts.queue import (
-    QueueReadDepKey,
-    QueueReadPort,
+    QueueCommandDepKey,
+    QueueCommandPort,
+    QueueQueryDepKey,
+    QueueQueryPort,
     QueueSpec,
-    QueueWriteDepKey,
-    QueueWritePort,
 )
 
 # ----------------------- #
@@ -20,7 +20,7 @@ class _QueuePayload(BaseModel):
     value: str
 
 
-class _StubQueue(QueueReadPort[_QueuePayload], QueueWritePort[_QueuePayload]):
+class _StubQueue(QueueQueryPort[_QueuePayload], QueueCommandPort[_QueuePayload]):
     async def receive(
         self,
         queue: str,
@@ -57,16 +57,16 @@ class _StubQueue(QueueReadPort[_QueuePayload], QueueWritePort[_QueuePayload]):
 
 
 class TestQueueSpec:
-    def test_spec_contains_namespace_and_model(self) -> None:
-        spec = QueueSpec(namespace="jobs", model=_QueuePayload)
+    def test_spec_contains_name_and_model(self) -> None:
+        spec = QueueSpec(name="jobs", model=_QueuePayload)
 
-        assert spec.namespace == "jobs"
+        assert spec.name == "jobs"
         assert spec.model is _QueuePayload
 
 
 class TestQueueDepKeys:
-    def test_queue_read_dep_key_name(self) -> None:
-        assert QueueReadDepKey.name == "queue_read"
+    def test_queue_query_dep_key_name(self) -> None:
+        assert QueueQueryDepKey.name == "queue_query"
 
-    def test_queue_write_dep_key_name(self) -> None:
-        assert QueueWriteDepKey.name == "queue_write"
+    def test_queue_command_dep_key_name(self) -> None:
+        assert QueueCommandDepKey.name == "queue_command"

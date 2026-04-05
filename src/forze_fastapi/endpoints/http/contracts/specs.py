@@ -2,7 +2,7 @@ from typing import Generic, Literal, NotRequired, Sequence, TypedDict
 
 import attrs
 
-from forze.application.contracts.mapper import LocalMapperPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import FacadeOpRef
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO
@@ -109,7 +109,7 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
     response: type[R] | None = None
     """The response model type of the endpoint."""
 
-    mapper: LocalMapperPort[HttpRequestDTO[Q, P, H, C, B], In]
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In]
     """The mapper that maps the request to the input model."""
 
     facade_type: type[F]

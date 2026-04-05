@@ -1,10 +1,5 @@
-from .deps import (
-    PubSubPublishDepKey,
-    PubSubPublishDepPort,
-    PubSubSubscribeDepKey,
-    PubSubSubscribeDepPort,
-)
-from .ports import PubSubPublishPort, PubSubSubscribePort
+from .deps import PubSubCommandDepKey, PubSubQueryDepKey
+from .ports import PubSubCommandPort, PubSubQueryPort
 from .specs import PubSubSpec
 from .types import PubSubMessage
 
@@ -12,11 +7,9 @@ from .types import PubSubMessage
 
 __all__ = [
     "PubSubMessage",
-    "PubSubPublishPort",
-    "PubSubSubscribePort",
+    "PubSubCommandPort",
+    "PubSubQueryPort",
     "PubSubSpec",
-    "PubSubPublishDepKey",
-    "PubSubPublishDepPort",
-    "PubSubSubscribeDepKey",
-    "PubSubSubscribeDepPort",
+    "PubSubCommandDepKey",
+    "PubSubQueryDepKey",
 ]

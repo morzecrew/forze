@@ -6,12 +6,13 @@ require_mongo()
 
 # ....................... #
 
-from typing import Any, Literal, Sequence, final, get_args
+from functools import cached_property
+from typing import Any, Sequence, final
 from uuid import UUID
 
 import attrs
 
-from forze.base.errors import CoreError, NotFoundError, ValidationError
+from forze.base.errors import NotFoundError, ValidationError
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_dump_many,
@@ -30,9 +31,6 @@ from .base import MongoGateway
 
 # ----------------------- #
 
-MongoHistoryWriteStrategy = Literal["application"]
-"""Supported history write strategies for Mongo history persistence."""
-
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -44,17 +42,17 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     by :class:`MongoWriteGateway` to enable historical consistency checks.
     """
 
-    strategy: MongoHistoryWriteStrategy = "application"
-    """Strategy for writing history records."""
+    target_database: str
+    """Name of the database where the target collection resides."""
 
-    target_source: str
+    target_collection: str
     """Name of the primary collection this history tracks."""
 
     # ....................... #
 
-    def __attrs_post_init__(self) -> None:
-        if self.strategy not in get_args(MongoHistoryWriteStrategy):
-            raise CoreError(f"Invalid history write strategy: {self.strategy}")
+    @cached_property
+    def _full_target(self) -> str:
+        return f"{self.target_database}.{self.target_collection}"
 
     # ....................... #
 
@@ -69,7 +67,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         raw = await self.client.find_one(
             self.coll(),
             {
-                HISTORY_SOURCE_FIELD: self.target_source,
+                HISTORY_SOURCE_FIELD: self._full_target,
                 ID_FIELD: self._storage_pk(pk),
                 REV_FIELD: rev,
             },
@@ -82,7 +80,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         if payload is None:
             raise NotFoundError(f"History payload not found: {pk}, {rev}")
 
-        return pydantic_validate(self.model, payload)
+        return pydantic_validate(self.model_type, payload)
 
     # ....................... #
 
@@ -110,7 +108,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         rows = await self.client.find_many(
             self.coll(),
             {
-                HISTORY_SOURCE_FIELD: self.target_source,
+                HISTORY_SOURCE_FIELD: self._full_target,
                 "$or": lookup,
             },
         )
@@ -136,13 +134,13 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
             ordered_raw.append(payload)
 
-        return pydantic_validate_many(self.model, ordered_raw)
+        return pydantic_validate_many(self.model_type, ordered_raw)
 
     # ....................... #
 
     def _from_data(self, data: D) -> DocumentHistory[D]:
         return DocumentHistory(
-            source=self.target_source,
+            source=self._full_target,
             id=data.id,
             rev=data.rev,
             data=data,

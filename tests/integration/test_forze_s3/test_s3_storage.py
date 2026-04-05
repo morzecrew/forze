@@ -1,5 +1,6 @@
 import pytest
 
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.platform.client import S3Client
@@ -9,8 +10,13 @@ from forze_s3.kernel.platform.client import S3Client
 async def test_s3_storage_adapter_upload_list_download_delete(
     s3_client: S3Client, s3_bucket: str
 ) -> None:
-    ctx = ExecutionContext(deps=S3DepsModule(client=s3_client)())
-    storage = ctx.storage(s3_bucket)
+    ctx = ExecutionContext(
+        deps=S3DepsModule(
+            client=s3_client,
+            storages={s3_bucket: {"bucket": s3_bucket}},
+        )()
+    )
+    storage = ctx.storage(StorageSpec(name=s3_bucket))
 
     uploaded = await storage.upload(
         filename="contract.txt",

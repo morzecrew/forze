@@ -11,16 +11,16 @@ from forze.application.contracts.cache import CacheDepKey, CacheSpec
 class TestCacheSpec:
     """Tests for CacheSpec."""
 
-    def test_namespace_required(self) -> None:
-        spec = CacheSpec(namespace="test")
-        assert spec.namespace == "test"
+    def test_name_required(self) -> None:
+        spec = CacheSpec(name="test")
+        assert spec.name == "test"
 
     def test_default_ttl(self) -> None:
-        spec = CacheSpec(namespace="ns")
+        spec = CacheSpec(name="ns")
         assert spec.ttl == timedelta(seconds=300)
 
     def test_custom_ttl(self) -> None:
-        spec = CacheSpec(namespace="ns", ttl=timedelta(seconds=60))
+        spec = CacheSpec(name="ns", ttl=timedelta(seconds=60))
         assert spec.ttl == timedelta(seconds=60)
 
 
@@ -41,7 +41,7 @@ class TestExecutionContextCache:
         """ctx.cache(spec) returns CachePort from CacheDepKey."""
         from forze.application.contracts.cache import CacheSpec
 
-        spec = CacheSpec(namespace="test")
+        spec = CacheSpec(name="test")
         port = stub_ctx.cache(spec)
         assert port is not None
         assert hasattr(port, "get") and hasattr(port, "set")

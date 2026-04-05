@@ -52,3 +52,21 @@ async def test_nested_pipeline_reuses_parent(redis_client: RedisClient) -> None:
 
     assert await redis_client.get(key_1) == b"v1"
     assert await redis_client.get(key_2) == b"v2"
+
+
+@pytest.mark.asyncio
+async def test_health_reports_ok(redis_client: RedisClient) -> None:
+    """health returns success when the server responds to ping."""
+    status, ok = await redis_client.health()
+    assert status == "ok"
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_set_with_expiry(redis_client: RedisClient) -> None:
+    """set with ex stores a key that expires."""
+    prefix = f"it:redis-client:ttl:{uuid4()}"
+    key = f"{prefix}:k"
+
+    assert await redis_client.set(key, "v", ex=1)
+    assert await redis_client.get(key) == b"v"

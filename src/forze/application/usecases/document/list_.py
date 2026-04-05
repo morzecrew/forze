@@ -2,8 +2,8 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.document import DocumentReadPort
-from forze.application.contracts.mapper import MapperPort
+from forze.application.contracts.document import DocumentQueryPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.dto import (
     ListRequestDTO,
     Paginated,
@@ -20,8 +20,8 @@ from forze.domain.models import ReadDocument
 class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Out]]):
     """Usecase that fetches multiple documents by filters and sorts."""
 
-    doc: DocumentReadPort[Out]
-    """Read-only document port for list operations."""
+    doc: DocumentQueryPort[Out]
+    """Document port for list operations."""
 
     mapper: MapperPort[ListRequestDTO, ListRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
@@ -41,8 +41,7 @@ class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Ou
         body = args
 
         if self.mapper:
-            # typevar ensures that the incoming body is subclass of ListRequestDTO, so the assignment is safe
-            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+            body = await self.mapper(body, ctx=self.ctx)
 
         hits, count = await self.doc.find_many(
             filters=body.filters,
@@ -61,8 +60,8 @@ class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Ou
 class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
     """Usecase that fetches multiple documents by filters and sorts with raw results."""
 
-    doc: DocumentReadPort[Any]
-    """Read-only document port for list operations."""
+    doc: DocumentQueryPort[Any]
+    """Document port for list operations."""
 
     mapper: MapperPort[RawListRequestDTO, RawListRequestDTO] | None = None
     """Optional mapper to transform incoming request DTO"""
@@ -83,8 +82,7 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
         body = args
 
         if self.mapper:
-            # typevar ensures that the incoming body is subclass of RawListRequestDTO, so the assignment is safe
-            body = await self.mapper(self.ctx, body)  # type: ignore[assignment]
+            body = await self.mapper(body, ctx=self.ctx)
 
         hits, count = await self.doc.find_many(
             filters=body.filters,

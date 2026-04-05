@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import pytest
+from psycopg import errors
 
-from forze.base.errors import NotFoundError
+from forze.base.errors import (
+    ConcurrencyError,
+    ConflictError,
+    CoreError,
+    InfrastructureError,
+    NotFoundError,
+    ValidationError,
+)
 from forze_postgres.kernel.platform import errors as platform_errors
 
 
@@ -65,3 +73,71 @@ class TestPsycopgErrorHandler:
         assert isinstance(err, NotFoundError)
         assert err.message == "Reference document not found."
         assert err.details == {"raw": detail}
+
+
+class TestPsycopgErrorHandlerBranches:
+    """Broad coverage of :func:`_psycopg_eh` ``match`` arms."""
+
+    def test_core_error_returned_unchanged(self) -> None:
+        """``CoreError`` instances pass through unchanged."""
+        original = CoreError(message="boundary", code="x")
+        out = platform_errors._psycopg_eh(original, "op")
+        assert out is original
+
+    @pytest.mark.parametrize(
+        ("exc_factory", "expected_cls"),
+        [
+            (lambda: errors.UniqueViolation(), ConflictError),
+            (lambda: errors.ExclusionViolation(), ConflictError),
+            (lambda: errors.CheckViolation(), ValidationError),
+            (lambda: errors.NotNullViolation(), ValidationError),
+            (lambda: errors.StringDataRightTruncation(), ValidationError),
+            (lambda: errors.DataError(), ValidationError),
+            (lambda: errors.NumericValueOutOfRange(), ValidationError),
+            (lambda: errors.InvalidTextRepresentation(), ValidationError),
+            (lambda: errors.DatetimeFieldOverflow(), ValidationError),
+            (lambda: errors.InvalidDatetimeFormat(), ValidationError),
+            (lambda: errors.DeadlockDetected(), ConcurrencyError),
+            (lambda: errors.SerializationFailure(), ConcurrencyError),
+            (lambda: errors.LockNotAvailable(), ConcurrencyError),
+            (lambda: errors.AdminShutdown(), InfrastructureError),
+            (lambda: errors.CrashShutdown(), InfrastructureError),
+            (lambda: errors.CannotConnectNow(), InfrastructureError),
+            (lambda: errors.ConnectionException(), InfrastructureError),
+            (lambda: errors.ConnectionDoesNotExist(), InfrastructureError),
+            (lambda: errors.SqlclientUnableToEstablishSqlconnection(), InfrastructureError),
+            (
+                lambda: errors.SqlserverRejectedEstablishmentOfSqlconnection(),
+                InfrastructureError,
+            ),
+            (lambda: errors.UndefinedTable(), InfrastructureError),
+            (lambda: errors.UndefinedColumn(), InfrastructureError),
+            (lambda: errors.UndefinedFunction(), InfrastructureError),
+            (lambda: errors.SyntaxError(), InfrastructureError),
+            (lambda: errors.InvalidSqlStatementName(), InfrastructureError),
+            (lambda: errors.InsufficientPrivilege(), InfrastructureError),
+            (lambda: errors.QueryCanceled(), InfrastructureError),
+            (lambda: errors.TooManyConnections(), InfrastructureError),
+            (lambda: errors.OutOfMemory(), InfrastructureError),
+            (lambda: errors.DiskFull(), InfrastructureError),
+            (lambda: errors.IntegrityError(), ConflictError),
+            (lambda: errors.OperationalError(), InfrastructureError),
+            (lambda: errors.ProgrammingError(), InfrastructureError),
+            (lambda: errors.GroupingError(), InfrastructureError),
+        ],
+    )
+    def test_maps_exception_to_domain_type(
+        self,
+        exc_factory: object,
+        expected_cls: type[CoreError],
+    ) -> None:
+        exc = exc_factory()  # type: ignore[misc]
+        out = platform_errors._psycopg_eh(exc, "test_op")
+        assert isinstance(out, expected_cls)
+
+    def test_unknown_exception_becomes_infrastructure_error(self) -> None:
+        """Unhandled exceptions use the generic fallback (details in ``code``)."""
+        out = platform_errors._psycopg_eh(RuntimeError("weird"), "my_op")
+        assert isinstance(out, InfrastructureError)
+        assert "my_op" in out.code
+        assert "weird" in out.code

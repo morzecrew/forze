@@ -1,11 +1,6 @@
-"""Storage contracts for object storage (e.g. S3-compatible).
-
-Provides :class:`StoragePort`, TypedDicts for stored/downloaded objects, and
-dependency keys/routers for building storage ports by bucket.
-"""
-
-from .deps import StorageDepKey, StorageDepPort, StorageDepRouter
+from .deps import StorageDepKey, StorageDepPort
 from .ports import StoragePort
+from .specs import StorageSpec
 from .types import DownloadedObject, ObjectMetadata, StoredObject
 
 # ----------------------- #
@@ -17,5 +12,5 @@ __all__ = [
     "ObjectMetadata",
     "StorageDepKey",
     "StorageDepPort",
-    "StorageDepRouter",
+    "StorageSpec",
 ]

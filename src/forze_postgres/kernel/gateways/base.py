@@ -7,7 +7,7 @@ require_psycopg()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Final, Self, Sequence, final
+from typing import Any, Self, Sequence, final
 
 import attrs
 import orjson
@@ -20,22 +20,17 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
-from forze.application.contracts.tenant import TenantContextPort
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
+from forze.infra.tenancy import MultiTenancyMixin
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClient
 from ..query import PsycopgQueryRenderer
 
 # ----------------------- #
-
-DEFAULT_SCHEMA: Final[str] = "public"
-"""Default Postgres schema used when none is specified."""
-
-# ....................... #
 
 
 @final
@@ -48,11 +43,16 @@ class PostgresQualifiedName:
     """
 
     schema: str
+    """Postgres schema name."""
+
     name: str
+    """Postgres relation (e.g. table, view, materialized view, index, etc.) name."""
 
     # ....................... #
 
     def ident(self) -> sql.Composable:
+        """Construct an identifier SQL expression for the qualified name."""
+
         return sql.SQL(".").join(
             [sql.Identifier(self.schema), sql.Identifier(self.name)]
         )
@@ -60,48 +60,59 @@ class PostgresQualifiedName:
     # ....................... #
 
     def string(self) -> str:
+        """Construct a string representation of the qualified name."""
+
         return f"{self.schema}.{self.name}"
 
     # ....................... #
 
     def literal(self) -> sql.Composable:
+        """Construct a literal SQL expression for the qualified name."""
+
         return sql.Literal(f"{self.schema}.{self.name}")
 
     # ....................... #
 
     @classmethod
     def from_string(cls, x: str) -> Self:
-        if "." in x:
-            schema, name = x.split(".", 1)
-            return cls(schema=schema, name=name)
+        """Construct a qualified name from a string in the format "schema.relation".
 
-        return cls(schema=DEFAULT_SCHEMA, name=x)
+        :param x: Qualified name string.
+        :returns: Qualified name.
+        :raises: :class:`CoreError` if the string is not in the correct format.
+        """
+
+        if "." not in x:
+            raise CoreError(f"Invalid qualified name: {x}")
+
+        schema, name = x.split(".", 1)
+        return cls(schema=schema, name=name)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresGateway[M: BaseModel]:
-    """Base gateway providing shared query-building helpers for a single Postgres relation.
-
-    Subclasses implement read, write, search, or history operations.
-    Automatically appends a tenant filter when :attr:`tenant_context` is set.
-    """
+class PostgresGateway[M: BaseModel](MultiTenancyMixin):
+    """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
     qname: PostgresQualifiedName
-    client: PostgresClient
-    model: type[M]
-    introspector: PostgresIntrospector
+    """Postgres qualified name (schema, relation)."""
 
-    #! We should be able to disable tenant context (document spec or ... ???)
-    tenant_context: TenantContextPort | None = None
+    client: PostgresClient
+    """Shared :class:`PostgresClient` instance."""
+
+    model_type: type[M]
+    """Pydantic model used for deserialization."""
+
+    introspector: PostgresIntrospector
+    """Postgres introspector instance."""
 
     # ....................... #
 
-    @cached_property
+    @cached_property  #! hmmmm.....
     def read_fields(self) -> frozenset[str]:
-        return pydantic_field_names(self.model)
+        return pydantic_field_names(self.model_type)
 
     # ....................... #
 
@@ -114,26 +125,18 @@ class PostgresGateway[M: BaseModel]:
         return sql.Identifier(TENANT_ID_FIELD)
 
     # ....................... #
+    #! We need introspection to make sure of tenancy compatibility
 
-    async def where_clause(
+    def _add_tenant_where(  #! ..._if_aware ?
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        query: sql.Composable,
+        params: list[Any],
     ) -> tuple[sql.Composable, list[Any]]:
-        if not filters:
-            return sql.SQL("TRUE"), []
+        """Add tenant ID filter to the query if gateway is tenant aware."""
 
-        types = await self.column_types()
+        tenant_id = self.require_tenant_if_aware()
 
-        p = QueryFilterExpressionParser()
-        r = PsycopgQueryRenderer(types=types)
-
-        expr = p.parse(filters)
-        query, params = r.render(expr)
-
-        # Add mandatory tenant filter for multi-tenant applications
-        #! Maybe it's better to modify 'filters' instead of adding a new clause manually
-        if self.tenant_context is not None:
-            tenant_id = self.tenant_context.get()
+        if tenant_id is not None:
             cond_sql = sql.SQL("{ident} = {value}").format(
                 ident=self.ident_tenant_id(),
                 value=sql.Placeholder(),
@@ -144,14 +147,50 @@ class PostgresGateway[M: BaseModel]:
         return query, params
 
     # ....................... #
+    #! We need introspection to make sure of tenancy compatibility
 
-    def sort_clause(
+    def _add_tenant_id(self, data: JsonDict) -> JsonDict:  #! ..._if_aware ?
+        """Add tenant ID to the data if gateway is tenant aware."""
+
+        out = dict(data)
+
+        tenant_id = self.require_tenant_if_aware()
+
+        if tenant_id is not None:
+            out[TENANT_ID_FIELD] = tenant_id
+
+        return out
+
+    # ....................... #
+
+    async def where_clause(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+    ) -> tuple[sql.Composable, list[Any]]:
+        query = sql.SQL("TRUE")
+        params: list[Any] = []
+
+        if filters:
+            types = await self.column_types()
+
+            p = QueryFilterExpressionParser()
+            r = PsycopgQueryRenderer(types=types)
+
+            expr = p.parse(filters)
+            query, params = r.render(expr)  # type: ignore[assignment]
+
+        query, params = self._add_tenant_where(query, params)  # type: ignore[assignment]
+
+        return query, params
+
+    # ....................... #
+
+    def order_by_clause(
         self,
         sorts: QuerySortExpression | None = None,
-    ) -> sql.Composable:
+    ) -> sql.Composable | None:
         if not sorts:
-            #! That's quite bad because there no assumption about id column presented
-            sorts = {ID_FIELD: "desc"}
+            return None
 
         parts: list[sql.Composable] = []
 
@@ -166,12 +205,14 @@ class PostgresGateway[M: BaseModel]:
 
     def return_clause(
         self,
-        return_model: type[BaseModel] | None = None,
+        return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
         *,
         table_alias: str | None = None,
     ) -> sql.Composable:
-        if return_fields is not None and return_model is not None:
+        """Build a SQL expression for selecting fields from a table."""
+
+        if return_fields is not None and return_type is not None:
             raise CoreError(
                 "Fields and model for mapping cannot be specified simultaneously"
             )
@@ -179,8 +220,8 @@ class PostgresGateway[M: BaseModel]:
         elif return_fields is not None:
             use = list(return_fields)
 
-        elif return_model is not None:
-            use = list(pydantic_field_names(return_model))
+        elif return_type is not None:
+            use = list(pydantic_field_names(return_type))
 
         else:
             use = list(self.read_fields)
@@ -222,14 +263,21 @@ class PostgresGateway[M: BaseModel]:
         return v
 
     # ....................... #
-    #! Automatic tenant ID injection for writes ...
 
-    async def adapt_payload_for_write(self, payload: JsonDict) -> JsonDict:
+    async def adapt_payload_for_write(
+        self,
+        payload: JsonDict,
+        *,
+        create: bool = False,
+    ) -> JsonDict:
         types = await self.column_types()
         out: JsonDict = dict(payload)
 
         for k, v in out.items():
             out[k] = self.adapt_value_for_write(v, t=types.get(k))
+
+        if create:
+            out = self._add_tenant_id(out)
 
         return out
 
@@ -238,6 +286,8 @@ class PostgresGateway[M: BaseModel]:
     async def adapt_many_payload_for_write(
         self,
         payloads: Sequence[JsonDict],
+        *,
+        create: bool = False,
     ) -> Sequence[JsonDict]:
         types = await self.column_types()
         out = list(map(dict, payloads))
@@ -245,5 +295,8 @@ class PostgresGateway[M: BaseModel]:
         for payload in out:
             for k, v in payload.items():
                 payload[k] = self.adapt_value_for_write(v, t=types.get(k))
+
+            if create:
+                payload = self._add_tenant_id(payload)
 
         return out

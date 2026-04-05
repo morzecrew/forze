@@ -1,10 +1,9 @@
-from datetime import timedelta
 from typing import final
 
 import attrs
 from fastapi import HTTPException, Response
 
-from forze.application.contracts.idempotency import IdempotencyDepKey
+from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.base.serialization import pydantic_model_hash
 from forze_fastapi.endpoints._logger import logger
 
@@ -30,8 +29,8 @@ class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
     response as a snapshot for future replay.
     """
 
-    ttl: timedelta = timedelta(seconds=30)
-    """Time-to-live for the idempotency snapshot."""
+    spec: IdempotencySpec
+    """Specification for the idempotency feature."""
 
     # ....................... #
 
@@ -52,7 +51,7 @@ class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
                 )
 
             idem_f = ctx.exec_ctx.dep(IdempotencyDepKey)
-            idem = idem_f(context=ctx.exec_ctx, ttl=self.ttl)
+            idem = idem_f(ctx.exec_ctx, self.spec)
             payload_hash = pydantic_model_hash(ctx.input)
 
             snap = await idem.begin(ctx.operation_id, idem_key, payload_hash)

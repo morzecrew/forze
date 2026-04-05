@@ -24,9 +24,9 @@ class ReadDTO(BaseModel):
 def _minimal_search_spec() -> SearchSpec[ReadDTO]:
     """Build a minimal SearchSpec for testing."""
     return SearchSpec(
-        namespace="test_search",
-        model=ReadDTO,
-        indexes={"default": {"fields": [{"path": "title"}]}},
+        name="test_search",
+        model_type=ReadDTO,
+        fields=["title"],
     )
 
 
@@ -45,8 +45,8 @@ class TestAttachSearchRoutes:
         """attach_search_endpoints adds /search and /raw-search routes."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace, inplace=True)
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -71,8 +71,8 @@ class TestAttachSearchRoutes:
         """POST /search returns paginated results."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace, inplace=True)
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -105,8 +105,8 @@ class TestAttachSearchRoutes:
         """Typed search can be disabled while raw search remains."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace, inplace=True)
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -138,8 +138,8 @@ class TestBuildSearchRouter:
         """Router under /search exposes nested /search and /raw-search paths."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace, inplace=True)
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
             return composition_ctx
@@ -164,8 +164,8 @@ class TestBuildSearchRouter:
         """SearchEndpointsSpec path_override and disable flags apply."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec, dtos)
-        reg.finalize(spec.namespace, inplace=True)
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
 
         def ctx_dep():
             return composition_ctx

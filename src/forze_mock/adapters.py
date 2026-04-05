@@ -28,12 +28,12 @@ from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.counter import CounterPort
-from forze.application.contracts.document import DocumentReadPort, DocumentWritePort
+from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.pubsub import (
+    PubSubCommandPort,
     PubSubMessage,
-    PubSubPublishPort,
-    PubSubSubscribePort,
+    PubSubQueryPort,
 )
 from forze.application.contracts.query import (
     QueryExpr,
@@ -44,21 +44,25 @@ from forze.application.contracts.query import (
     QuerySortExpression,
 )
 from forze.application.contracts.queue import (
+    QueueCommandPort,
     QueueMessage,
-    QueueReadPort,
-    QueueWritePort,
+    QueueQueryPort,
 )
-from forze.application.contracts.search import SearchOptions, SearchReadPort, SearchSpec
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchQueryPort,
+    SearchSpec,
+)
 from forze.application.contracts.storage import (
     DownloadedObject,
     StoragePort,
     StoredObject,
 )
 from forze.application.contracts.stream import (
-    StreamGroupPort,
+    StreamCommandPort,
+    StreamGroupQueryPort,
     StreamMessage,
-    StreamReadPort,
-    StreamWritePort,
+    StreamQueryPort,
 )
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
@@ -385,8 +389,8 @@ class MockDocumentAdapter[
     C: CreateDocumentCmd,
     U: BaseDTO,
 ](
-    DocumentReadPort[R],
-    DocumentWritePort[R, D, C, U],
+    DocumentQueryPort[R],
+    DocumentCommandPort[R, D, C, U],
 ):
     """In-memory document adapter with filter/sort/projection support."""
 
@@ -623,7 +627,7 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> R:
+    async def update(self, pk: UUID, rev: int, dto: U) -> R:
         patch = pydantic_dump(dto, exclude={"unset": True})
 
         with self.state.lock:
@@ -642,25 +646,11 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def update_many(
-        self,
-        pks: Sequence[UUID],
-        dtos: Sequence[U],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
-        if len(pks) != len(dtos):
-            raise CoreError("Length mismatch between primary keys and updates")
+    async def update_many(self, updates: Sequence[tuple[UUID, int, U]]) -> Sequence[R]:
+        pks = [u[0] for u in updates]
         if len(set(pks)) != len(pks):
             raise CoreError("Primary keys must be unique")
-        if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
-
-        out: list[R] = []
-        for idx, (pk, dto) in enumerate(zip(pks, dtos, strict=True)):
-            expected_rev = revs[idx] if revs is not None else None
-            out.append(await self.update(pk, dto, rev=expected_rev))
-        return out
+        return [await self.update(pk, r, dto) for pk, r, dto in updates]
 
     # ....................... #
 
@@ -706,7 +696,7 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> R:
+    async def delete(self, pk: UUID, rev: int) -> R:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
@@ -732,25 +722,14 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
+    async def delete_many(self, deletes: Sequence[tuple[UUID, int]]) -> Sequence[R]:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
-        if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
-        out: list[R] = []
-        for idx, pk in enumerate(pks):
-            expected_rev = revs[idx] if revs is not None else None
-            out.append(await self.delete(pk, rev=expected_rev))
-        return out
+        return [await self.delete(pk, r) for pk, r in deletes]
 
     # ....................... #
 
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> R:
+    async def restore(self, pk: UUID, rev: int) -> R:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
         with self.state.lock:
@@ -775,21 +754,10 @@ class MockDocumentAdapter[
 
     # ....................... #
 
-    async def restore_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-    ) -> Sequence[R]:
+    async def restore_many(self, restores: Sequence[tuple[UUID, int]]) -> Sequence[R]:
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
-        if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
-        out: list[R] = []
-        for idx, pk in enumerate(pks):
-            expected_rev = revs[idx] if revs is not None else None
-            out.append(await self.restore(pk, rev=expected_rev))
-        return out
+        return [await self.restore(pk, r) for pk, r in restores]
 
 
 # ----------------------- #
@@ -797,7 +765,7 @@ class MockDocumentAdapter[
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
+class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     """In-memory search adapter over documents in :class:`MockState`."""
 
     state: MockState
@@ -807,7 +775,33 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
 
     def _store(self) -> dict[UUID, JsonDict]:
         with self.state.lock:
-            return self.state.documents.setdefault(self.spec.namespace, {})
+            return self.state.documents.setdefault(self.spec.name, {})
+
+    # ....................... #
+
+    def _resolve_fields(
+        self,
+        options: SearchOptions | None,
+    ) -> tuple[list[str], dict[str, float] | None]:
+        """Return field paths to search and optional per-field weights."""
+
+        opts = options or {}
+        allowed = list(self.spec.fields)
+
+        weights_opt = opts.get("weights")
+        if weights_opt:
+            fields = [f for f in allowed if weights_opt.get(f, 0.0) > 0.0]
+            if not fields:
+                fields = allowed
+            w = {f: float(weights_opt.get(f, 0.0)) for f in fields}
+            return fields, w
+
+        fields_opt = opts.get("fields")
+        if fields_opt:
+            sub = [f for f in fields_opt if f in allowed]
+            return (sub if sub else allowed), self.spec.default_weights
+
+        return allowed, self.spec.default_weights
 
     # ....................... #
 
@@ -846,6 +840,31 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
 
     # ....................... #
 
+    def _document_score(
+        self,
+        query: str,
+        doc: JsonDict,
+        fields: Sequence[str],
+        weights: dict[str, float] | None,
+    ) -> float:
+        mode = "fulltext"
+        if not fields:
+            return 0.0
+        if weights:
+            total_w = sum(weights.values())
+            if total_w <= 0.0:
+                return 0.0
+            acc = 0.0
+            for f in fields:
+                w = weights.get(f, 0.0)
+                if w <= 0.0:
+                    continue
+                acc += w * self._text_score(query, doc, [f], mode)
+            return acc / total_w
+        return self._text_score(query, doc, fields, mode)
+
+    # ....................... #
+
     @overload
     async def search(
         self,
@@ -856,7 +875,7 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
     ) -> tuple[list[M], int]: ...
 
@@ -870,7 +889,7 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: type[T],
+        return_type: type[T],
         return_fields: None = ...,
     ) -> tuple[list[T], int]: ...
 
@@ -884,7 +903,7 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
     ) -> tuple[list[JsonDict], int]: ...
 
@@ -897,17 +916,10 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_model: type[T] | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
-        options = options or {}
-        index_name = options.get("use_index", self.spec.default_index)
-        if index_name is None:
-            index_name = next(iter(self.spec.indexes))
-
-        index = self.spec.indexes[index_name]
-        mode = options.get("mode", index.get("mode", "fulltext"))
-        fields = [f["path"] for f in index["fields"]]
+        fields, weights = self._resolve_fields(options)
 
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
@@ -917,7 +929,7 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
             if not _match_filters(doc, filters):
                 continue
 
-            score = self._text_score(query, doc, fields, mode)
+            score = self._document_score(query, doc, fields, weights)
             if score <= 0.0:
                 continue
             ranked.append((score, doc))
@@ -937,13 +949,13 @@ class MockSearchAdapter[M: BaseModel](SearchReadPort[M]):
         if return_fields is not None:
             return [_project(doc, return_fields) for doc in ordered], total
 
-        if return_model is not None:
-            return pydantic_validate_many(return_model, ordered), total
+        if return_type is not None:
+            return pydantic_validate_many(return_type, ordered), total
 
-        allowed = set(self.spec.model.model_fields.keys())
+        allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
 
-        return pydantic_validate_many(self.spec.model, typed_docs), total
+        return pydantic_validate_many(self.spec.model_type, typed_docs), total
 
 
 # ----------------------- #
@@ -1263,12 +1275,7 @@ class MockStorageAdapter(StoragePort):
 class MockTxManagerAdapter(TxManagerPort):
     """No-op transaction manager for mock environments."""
 
-    scope: TxScopeKey = attrs.field(factory=lambda: TxScopeKey(name="mock"))
-
-    # ....................... #
-
-    def scope_key(self) -> TxScopeKey:
-        return self.scope
+    scope_key: TxScopeKey = attrs.field(factory=lambda: TxScopeKey(name="mock"))
 
     # ....................... #
 
@@ -1292,7 +1299,7 @@ def _sleep_interval(timeout: timedelta | None) -> float:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
+class MockQueueAdapter[M: BaseModel](QueueQueryPort[M], QueueCommandPort[M]):
     """In-memory queue adapter with ack/nack support."""
 
     state: MockState
@@ -1435,7 +1442,7 @@ class MockQueueAdapter[M: BaseModel](QueueReadPort[M], QueueWritePort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[M]):
+class MockPubSubAdapter[M: BaseModel](PubSubCommandPort[M], PubSubQueryPort[M]):
     """In-memory pub/sub adapter backed by append-only topic logs."""
 
     state: MockState
@@ -1507,7 +1514,7 @@ class MockPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
+class MockStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
     """In-memory stream adapter with monotonic message identifiers."""
 
     state: MockState
@@ -1597,7 +1604,7 @@ class MockStreamAdapter[M: BaseModel](StreamReadPort[M], StreamWritePort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamGroupAdapter[M: BaseModel](StreamGroupPort[M]):
+class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
     """In-memory stream group adapter."""
 
     stream: MockStreamAdapter[M]

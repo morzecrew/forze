@@ -4,7 +4,7 @@ Provides :class:`TxManagerPort`, :class:`TxScopedPort`, :class:`TxHandle`,
 :class:`TxScopeKey`, and dependency keys/routers.
 """
 
-from .deps import TxManagerDepKey, TxManagerDepPort, TxManagerDepRouter
+from .deps import TxManagerDepKey, TxManagerDepPort
 from .ports import TxHandle, TxManagerPort, TxScopedPort, TxScopeKey
 
 # ----------------------- #
@@ -14,7 +14,6 @@ __all__ = [
     "TxScopeKey",
     "TxManagerDepKey",
     "TxManagerDepPort",
-    "TxManagerDepRouter",
     "TxHandle",
     "TxScopedPort",
 ]

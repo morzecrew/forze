@@ -1,65 +1,54 @@
-from forze_redis.adapters.cache import RedisCacheAdapter
-from forze.base.codecs import KeyCodec
+import uuid
 
 import attrs
-import uuid
+
+from forze_redis.adapters.cache import RedisCacheAdapter
+from forze_redis.adapters.codecs import RedisKeyCodec
 
 
 @attrs.define
-class MockTenantContext:
-    _id: uuid.UUID
-
-    def get(self) -> uuid.UUID:
-        return self._id
-
-
 class MockRedisClient:
     pass
 
 
-def test_redis_cache_adapter_keys_no_tenant():
+def test_redis_cache_adapter_keys_no_tenant() -> None:
     client = MockRedisClient()
-    key_codec = KeyCodec(namespace="test")
+    key_codec = RedisKeyCodec(namespace="test")
 
     adapter = RedisCacheAdapter(
-        client=client,  # type: ignore
+        client=client,  # type: ignore[arg-type]
         key_codec=key_codec,
     )
 
-    # Test internal key generation methods
-    assert adapter._RedisCacheAdapter__kv_key("mykey") == "test:cache:kv:mykey"
+    assert adapter._RedisCacheAdapter__kv_key("mykey") == "cache:kv:test:mykey"
+    assert adapter._RedisCacheAdapter__pointer_key("mykey") == "cache:pointer:test:mykey"
     assert (
-        adapter._RedisCacheAdapter__pointer_key("mykey") == "test:cache:pointer:mykey"
-    )
-    assert (
-        adapter._RedisCacheAdapter__body_key("mykey", "v1")
-        == "test:cache:body:mykey:v1"
+        adapter._RedisCacheAdapter__body_key("mykey", "v1") == "cache:body:test:mykey:v1"
     )
 
 
-def test_redis_cache_adapter_keys_with_tenant():
+def test_redis_cache_adapter_keys_with_tenant() -> None:
     tenant_id = uuid.uuid4()
-    tenant_context = MockTenantContext(tenant_id)
-
     client = MockRedisClient()
-    key_codec = KeyCodec(namespace="test")
+    key_codec = RedisKeyCodec(namespace="test")
 
     adapter = RedisCacheAdapter(
-        client=client,  # type: ignore
+        client=client,  # type: ignore[arg-type]
         key_codec=key_codec,
-        tenant_context=tenant_context,
+        tenant_aware=True,
+        tenant_provider=lambda: tenant_id,
     )
 
-    # Test internal key generation methods
+    tid = str(tenant_id)
     assert (
         adapter._RedisCacheAdapter__kv_key("mykey")
-        == f"test:{tenant_id}:cache:kv:mykey"
+        == f"tenant:{tid}:cache:kv:test:mykey"
     )
     assert (
         adapter._RedisCacheAdapter__pointer_key("mykey")
-        == f"test:{tenant_id}:cache:pointer:mykey"
+        == f"tenant:{tid}:cache:pointer:test:mykey"
     )
     assert (
         adapter._RedisCacheAdapter__body_key("mykey", "v1")
-        == f"test:{tenant_id}:cache:body:mykey:v1"
+        == f"tenant:{tid}:cache:body:test:mykey:v1"
     )

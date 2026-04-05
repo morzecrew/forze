@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Sequence, final, get_args
+from typing import Any, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
@@ -28,32 +28,27 @@ from forze.domain.constants import (
 from forze.domain.models import Document, DocumentHistory
 
 from .base import PostgresGateway, PostgresQualifiedName
+from .types import PostgresBookkeepingStrategy
 
 # ----------------------- #
-
-PostgresHistoryWriteStrategy = Literal["database", "application"]
-"""Strategy for persisting history: ``"database"`` (trigger) or ``"application"`` (explicit insert)."""
-
-# ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
-    """Gateway for document revision history backed by a dedicated Postgres table.
+    """Gateway for document revision history backed by a dedicated Postgres table."""
 
-    When *strategy* is ``"database"``, writes are expected to be handled by a
-    database trigger and :meth:`write` / :meth:`write_many` become no-ops.
-    """
+    strategy: PostgresBookkeepingStrategy
+    """Bookkeeping strategy."""
 
-    strategy: PostgresHistoryWriteStrategy = "database"
     target_qname: PostgresQualifiedName
+    """Target table qualified name."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.strategy not in get_args(PostgresHistoryWriteStrategy):
-            raise CoreError(f"Invalid history write strategy: {self.strategy}")
+        if self.strategy not in get_args(PostgresBookkeepingStrategy):
+            raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
 
     # ....................... #
 
@@ -66,6 +61,10 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             rev=sql.Identifier(REV_FIELD),
             rev_v=sql.Placeholder(),
         )
+        where_params = [pk, rev]
+
+        # if gateway is tenant aware, add tenant ID filter to the query
+        where, where_params = self._add_tenant_where(where, where_params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
@@ -73,12 +72,12 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             where=where,
         )
 
-        row = await self.client.fetch_one(stmt, (pk, rev), row_factory="dict")
+        row = await self.client.fetch_one(stmt, where_params, row_factory="dict")
 
         if row is None:
             raise NotFoundError(f"History not found: {pk}, {rev}")
 
-        return pydantic_validate(self.model, row[HISTORY_DATA_FIELD])
+        return pydantic_validate(self.model_type, row[HISTORY_DATA_FIELD])
 
     # ....................... #
 
@@ -89,7 +88,6 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
         row_template = sql.SQL("({}, {})").format(sql.Placeholder(), sql.Placeholder())
-
         values_sql = sql.SQL(", ").join(row_template for _ in revs)
 
         where = sql.SQL("{h} = {h_v} AND ({pk}, {rev}) IN ({vals})").format(
@@ -99,6 +97,12 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             rev=sql.Identifier(REV_FIELD),
             vals=values_sql,
         )
+        params: list[Any] = []
+
+        for p, r in zip(pks, revs, strict=True):
+            params.extend([p, r])
+
+        where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
@@ -106,14 +110,11 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             where=where,
         )
 
-        params: list[Any] = []
-
-        for p, r in zip(pks, revs, strict=True):
-            params.extend([p, r])
-
         rows = await self.client.fetch_all(stmt, params, row_factory="dict")
+
         return pydantic_validate_many(
-            self.model, [row[HISTORY_DATA_FIELD] for row in rows]
+            self.model_type,
+            [row[HISTORY_DATA_FIELD] for row in rows],
         )
 
     # ....................... #

@@ -7,114 +7,32 @@ require_redis()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Final, Sequence, final
+from typing import AsyncIterator, Sequence, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.pubsub import (
+    PubSubCommandPort,
     PubSubMessage,
-    PubSubPublishPort,
-    PubSubSubscribePort,
+    PubSubQueryPort,
 )
-from forze.base.codecs import JsonCodec
-from forze.base.errors import CoreError
+from forze.infra.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import RedisClient
+from .codecs import RedisPubSubCodec
 
 # ----------------------- #
 
-_F_PAYLOAD: Final[str] = "payload"
-_F_TYPE: Final[str] = "type"
-_F_PUBLISHED_AT: Final[str] = "published_at"
-_F_KEY: Final[str] = "key"
-
-
-# ....................... #
-
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisPubSubCodec[M: BaseModel]:
-    """JSON codec that serialises and deserialises :class:`~forze.application.contracts.pubsub.PubSubMessage` payloads.
-
-    :meth:`encode` wraps a Pydantic model into a JSON envelope with optional
-    metadata fields (``type``, ``key``, ``published_at``).  :meth:`decode`
-    reconstructs the :class:`~forze.application.contracts.pubsub.PubSubMessage`
-    from the raw channel bytes.
-    """
-
-    model: type[M]
-    json_codec: JsonCodec = attrs.field(factory=JsonCodec)
-
-    # ....................... #
-
-    def encode(
-        self,
-        payload: M,
-        *,
-        type: str | None = None,
-        key: str | None = None,
-        published_at: datetime | None = None,
-    ) -> bytes:
-        data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
-
-        if type is not None:
-            data[_F_TYPE] = type
-
-        if key is not None:
-            data[_F_KEY] = key
-
-        if published_at is not None:
-            data[_F_PUBLISHED_AT] = published_at.isoformat()
-
-        return self.json_codec.dumps(data)
-
-    # ....................... #
-
-    def decode(self, topic: str, raw_data: bytes | str) -> PubSubMessage[M]:
-        decoded = self.json_codec.loads(raw_data)
-
-        if not isinstance(decoded, dict):
-            raise CoreError(f"Redis pubsub message in '{topic}' has invalid payload")
-
-        payload_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            _F_PAYLOAD
-        )
-
-        if not isinstance(payload_raw, str):
-            raise CoreError(f"Redis pubsub message in '{topic}' has no payload")
-
-        type_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            _F_TYPE
-        )
-        key_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            _F_KEY
-        )
-        published_at_raw = decoded.get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            _F_PUBLISHED_AT
-        )
-
-        return PubSubMessage(
-            topic=topic,
-            payload=self.model.model_validate_json(payload_raw),
-            type=type_raw if isinstance(type_raw, str) else None,
-            key=key_raw if isinstance(key_raw, str) else None,
-            published_at=(
-                datetime.fromisoformat(published_at_raw)
-                if isinstance(published_at_raw, str)
-                else None
-            ),
-        )
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort[M]):
-    """Redis implementation of :class:`~forze.application.contracts.pubsub.PubSubPublishPort` and :class:`~forze.application.contracts.pubsub.PubSubSubscribePort`.
+class RedisPubSubAdapter[M: BaseModel](
+    PubSubCommandPort[M],
+    PubSubQueryPort[M],
+    MultiTenancyMixin,
+):
+    """Redis implementation of :class:`~forze.application.contracts.pubsub.PubSubCommandPort` and :class:`~forze.application.contracts.pubsub.PubSubQueryPort`.
 
     Publishes JSON-encoded messages via ``PUBLISH`` and yields decoded
     :class:`~forze.application.contracts.pubsub.PubSubMessage` instances by
@@ -122,7 +40,21 @@ class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort
     """
 
     client: RedisClient
+    """Redis client instance."""
+
     codec: RedisPubSubCodec[M]
+    """PubSub codec instance - used for encoding and decoding messages."""
+
+    # ....................... #
+
+    def __topic(self, topic: str) -> str:
+        tenant_id = self.require_tenant_if_aware()
+
+        #! maybe use redis key codec instead ...
+        if tenant_id is not None:
+            return f"tenant:{tenant_id}:pubsub:{topic}"
+
+        return topic
 
     # ....................... #
 
@@ -141,6 +73,8 @@ class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort
             key=key,
             published_at=published_at,
         )
+        topic = self.__topic(topic)
+
         await self.client.publish(topic, data)
 
     # ....................... #
@@ -151,5 +85,7 @@ class RedisPubSubAdapter[M: BaseModel](PubSubPublishPort[M], PubSubSubscribePort
         *,
         timeout: timedelta | None = None,
     ) -> AsyncIterator[PubSubMessage[M]]:
+        topics = list(map(self.__topic, topics))
+
         async for topic, raw_data in self.client.subscribe(topics, timeout=timeout):
             yield self.codec.decode(topic, raw_data)

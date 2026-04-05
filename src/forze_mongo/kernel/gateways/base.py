@@ -7,7 +7,7 @@ require_mongo()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 from uuid import UUID
 
 import attrs
@@ -19,9 +19,10 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
+from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
-from forze.domain.constants import ID_FIELD
+from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
 
 from ..platform import MongoClient
 from ..query import MongoQueryRenderer
@@ -39,20 +40,26 @@ class MongoGateway[M: BaseModel]:
     domain :data:`~forze.domain.constants.ID_FIELD` as a string.
     """
 
-    source: str
+    model_type: type[M]
+    """Pydantic model used for deserialization."""
+
+    database: str | None = None
+    """Mongo database name. ``None`` uses the client default."""
+
+    collection: str
     """Mongo collection name."""
 
     client: MongoClient
     """Shared :class:`MongoClient` instance."""
 
-    model: type[M]
-    """Pydantic model used for deserialization."""
-
-    db_name: str | None = None
-    """Override database name; ``None`` uses the client default."""
-
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
     """Query expression renderer."""
+
+    tenant_aware: bool = False
+    """Whether tenant ID is required for the gateway."""
+
+    tenant_provider: Callable[[], UUID | None] | None = None
+    """Callable to provide the tenant ID."""
 
     # ....................... #
 
@@ -60,14 +67,14 @@ class MongoGateway[M: BaseModel]:
     def read_fields(self) -> frozenset[str]:
         """Field names exposed by the model, cached for repeated access."""
 
-        return pydantic_field_names(self.model)
+        return pydantic_field_names(self.model_type)
 
     # ....................... #
 
     def coll(self) -> AsyncCollection[JsonDict]:
         """Return the async Mongo collection handle for this gateway's source."""
 
-        return self.client.collection(self.source, db_name=self.db_name)
+        return self.client.collection(self.collection, db_name=self.database)
 
     # ....................... #
 
@@ -126,27 +133,65 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _render_filters(self, filters: QueryFilterExpression | None) -> JsonDict:  # type: ignore[valid-type]
-        """Parse and render a filter expression into a Mongo query dict."""
+    def _add_tenant_filter(self, filters: JsonDict) -> JsonDict:
+        cp = dict(filters)
 
-        if not filters:
-            return {}
+        if self.tenant_aware:
+            if self.tenant_provider is None:
+                raise CoreError("Tenant provider is required for the gateway")
 
-        parsed = QueryFilterExpressionParser.parse(filters)
-        rendered = self.renderer.render(parsed)
+            tenant_id = self.tenant_provider()
 
-        return self._coerce_query_value(rendered)
+            if tenant_id is None:
+                raise CoreError("Tenant ID is required for the gateway")
+
+            cp[TENANT_ID_FIELD] = tenant_id
+
+        return cp
 
     # ....................... #
 
-    def _sorts(self, sorts: QuerySortExpression | None) -> list[tuple[str, int]]:
-        """Convert a sort expression to Mongo ``(field, direction)`` pairs.
+    def _add_tenant_id(self, data: JsonDict) -> JsonDict:
+        out = dict(data)
 
-        Defaults to descending by ID when no sorts are provided.
-        """
+        if self.tenant_aware:
+            if self.tenant_provider is None:
+                raise CoreError("Tenant provider is required for the gateway")
+
+            tenant_id = self.tenant_provider()
+
+            if tenant_id is None:
+                raise CoreError("Tenant ID is required for the gateway")
+
+            out[TENANT_ID_FIELD] = tenant_id
+
+        return out
+
+    # ....................... #
+
+    def render_filters(self, filters: QueryFilterExpression | None) -> JsonDict:  # type: ignore[valid-type]
+        """Parse and render a filter expression into a Mongo query dict."""
+
+        rendered_filters = {}
+
+        if filters:
+            parsed = QueryFilterExpressionParser.parse(filters)
+            rendered_filters = self.renderer.render(parsed)
+
+        rendered_filters = self._add_tenant_filter(rendered_filters)
+
+        return self._coerce_query_value(rendered_filters)
+
+    # ....................... #
+
+    def render_sorts(
+        self,
+        sorts: QuerySortExpression | None,
+    ) -> list[tuple[str, int]] | None:
+        """Convert a sort expression to Mongo ``(field, direction)`` pairs."""
 
         if not sorts:
-            sorts = {ID_FIELD: "desc"}
+            return None
 
         out: list[tuple[str, int]] = []
 
@@ -158,7 +203,7 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _projection(self, return_fields: Sequence[str] | None) -> JsonDict | None:
+    def render_projection(self, return_fields: Sequence[str] | None) -> JsonDict | None:
         """Build a Mongo projection dict, excluding ``_id``."""
 
         if return_fields is None:
@@ -168,7 +213,38 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def _return_subset(self, raw: JsonDict, return_fields: Sequence[str]) -> JsonDict:
+    def return_subset(self, raw: JsonDict, return_fields: Sequence[str]) -> JsonDict:
         """Extract only the requested fields from a document dict."""
 
         return {k: raw.get(k, None) for k in return_fields}
+
+    # ....................... #
+
+    def adapt_payload_for_write(
+        self,
+        payload: JsonDict,
+        *,
+        create: bool = False,
+    ) -> JsonDict:
+        out = dict(payload)
+
+        if create:
+            out = self._add_tenant_id(out)
+
+        return out
+
+    # ....................... #
+
+    def adapt_many_payload_for_write(
+        self,
+        payloads: Sequence[JsonDict],
+        *,
+        create: bool = False,
+    ) -> Sequence[JsonDict]:
+        out = list(map(dict, payloads))
+
+        for payload in out:
+            if create:
+                payload = self._add_tenant_id(payload)
+
+        return out

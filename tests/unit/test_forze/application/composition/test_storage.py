@@ -5,20 +5,23 @@ from forze.application.composition.storage import (
     StorageUsecasesFacade,
     build_storage_registry,
 )
+from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import UsecaseRegistry
 
 # ----------------------- #
+
+_FILES = StorageSpec(name="files")
 
 
 class TestBuildStorageRegistry:
     """Tests for build_storage_registry."""
 
     def test_returns_registry(self) -> None:
-        reg = build_storage_registry("files")
+        reg = build_storage_registry(_FILES)
         assert isinstance(reg, UsecaseRegistry)
 
     def test_has_core_operations(self) -> None:
-        reg = build_storage_registry("files")
+        reg = build_storage_registry(_FILES)
         assert reg.exists(StorageOperation.UPLOAD)
         assert reg.exists(StorageOperation.LIST)
         assert reg.exists(StorageOperation.DOWNLOAD)
@@ -28,7 +31,7 @@ class TestBuildStorageRegistry:
         self,
         composition_ctx,
     ) -> None:
-        reg = build_storage_registry("files")
+        reg = build_storage_registry(_FILES)
         reg.finalize("storage", inplace=True)
         uc = reg.resolve(StorageOperation.UPLOAD, composition_ctx)
         assert uc is not None
@@ -41,7 +44,7 @@ class TestStorageFacadeWithRegistry:
         self,
         composition_ctx,
     ) -> None:
-        reg = build_storage_registry("files")
+        reg = build_storage_registry(_FILES)
         reg.finalize("storage", inplace=True)
         facade = StorageUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.upload

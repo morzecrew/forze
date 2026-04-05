@@ -1,4 +1,4 @@
-from .read import RawSearch, TypedSearch
+from .query import RawSearch, TypedSearch
 
 # ----------------------- #
 

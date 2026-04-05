@@ -33,3 +33,13 @@ def test_soft_deletion_validator_allows_soft_delete_only_update() -> None:
 
     # Should not raise
     SoftDoc._validate_soft_deletion(before, after, diff)  # type: ignore[misc]
+
+
+def test_soft_deletion_validator_allows_is_deleted_with_last_update_at() -> None:
+    """Matches :meth:`~forze.domain.models.Document.update` diff shape."""
+
+    before = SoftDoc(is_deleted=True)
+    after = SoftDoc(is_deleted=False)
+    diff: JsonDict = {SOFT_DELETE_FIELD: False, "last_update_at": "2025-01-01T00:00:00Z"}
+
+    SoftDoc._validate_soft_deletion(before, after, diff)  # type: ignore[misc]

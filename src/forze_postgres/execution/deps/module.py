@@ -4,60 +4,136 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.document import DocumentReadDepKey, DocumentWriteDepKey
-from forze.application.contracts.search import SearchReadDepKey
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+)
+from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.gateways import PostgresHistoryWriteStrategy, PostgresRevBumpStrategy
 from ...kernel.introspect import PostgresIntrospector
 from ...kernel.platform import PostgresClient
-from .deps import postgres_document_configurable, postgres_search, postgres_txmanager
+from .configs import (
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
+    PostgresSearchConfig,
+    validate_pg_search_conf,
+)
+from .deps import (
+    ConfigurablePostgresDocument,
+    ConfigurablePostgresReadOnlyDocument,
+    ConfigurablePostgresSearch,
+    postgres_txmanager,
+)
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #
 
 
+def _document_config_to_read_only(
+    config: PostgresDocumentConfig,
+) -> PostgresReadOnlyDocumentConfig:
+    """Derive a read-only config from a read-write document config (same ``read`` relation)."""
+
+    ro: PostgresReadOnlyDocumentConfig = {"read": config["read"]}
+
+    if "tenant_aware" in config:
+        ro["tenant_aware"] = config["tenant_aware"]
+
+    return ro
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresDepsModule(DepsModule):
-    """Dependency module that registers Postgres client, tx manager, and document port.
-
-    Invoke to produce a :class:`Deps` container with all Postgres-backed
-    dependencies. The client must be initialized separately (e.g. via
-    :func:`postgres_lifecycle_step`) before usecases run.
-    """
+    """Dependency module that registers Postgres clients and adapters."""
 
     client: PostgresClient
     """Pre-constructed Postgres client (pool not yet initialized)."""
 
-    rev_bump_strategy: PostgresRevBumpStrategy
-    """Strategy for revision bumps: ``"database"`` or ``"application"``."""
+    ro_documents: dict[str, PostgresReadOnlyDocumentConfig] = attrs.field(factory=dict)
+    """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    history_write_strategy: PostgresHistoryWriteStrategy
-    """Strategy for history writes: ``"database"`` or ``"application"``."""
+    rw_documents: dict[str, PostgresDocumentConfig] = attrs.field(factory=dict)
+    """Mapping from read-write document names to their Postgres-specific configurations."""
+
+    searches: dict[str, PostgresSearchConfig] = attrs.field(factory=dict)
+    """Mapping from search names to their Postgres-specific configurations."""
+
+    tx: set[str] = attrs.field(factory=set)
+    """Set of transaction routes to register."""
 
     # ....................... #
 
     def __call__(self) -> Deps:
-        """Build a dependency container with Postgres-backed ports.
+        """Build a dependency container with Postgres-backed ports."""
 
-        :returns: Deps with client, types provider, tx manager, and document port.
-        """
-
-        return Deps(
+        plain_deps = Deps.plain(
             {
                 PostgresClientDepKey: self.client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=self.client),
-                TxManagerDepKey: postgres_txmanager,
-                SearchReadDepKey: postgres_search,
-                DocumentReadDepKey: postgres_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy,
-                    history_write_strategy=self.history_write_strategy,
-                ),
-                DocumentWriteDepKey: postgres_document_configurable(
-                    rev_bump_strategy=self.rev_bump_strategy,
-                    history_write_strategy=self.history_write_strategy,
-                ),
             }
         )
+
+        doc_deps = Deps()
+        search_deps = Deps()
+        tx_deps = Deps()
+
+        if self.ro_documents:
+            doc_deps = doc_deps.merge(
+                Deps.routed(
+                    {
+                        DocumentQueryDepKey: {
+                            name: ConfigurablePostgresReadOnlyDocument(config=config)
+                            for name, config in self.ro_documents.items()
+                        }
+                    }
+                )
+            )
+
+        if self.rw_documents:
+            doc_deps = doc_deps.merge(
+                Deps.routed(
+                    {
+                        DocumentQueryDepKey: {
+                            name: ConfigurablePostgresReadOnlyDocument(
+                                config=_document_config_to_read_only(config)
+                            )
+                            for name, config in self.rw_documents.items()
+                        },
+                        DocumentCommandDepKey: {
+                            name: ConfigurablePostgresDocument(config=config)
+                            for name, config in self.rw_documents.items()
+                        },
+                    }
+                ),
+            )
+
+        if self.searches:
+            # fail fast on invalid configurations
+            for cfg in self.searches.values():
+                validate_pg_search_conf(cfg)
+
+            search_deps = search_deps.merge(
+                Deps.routed(
+                    {
+                        SearchQueryDepKey: {
+                            name: ConfigurablePostgresSearch(config=config)
+                            for name, config in self.searches.items()
+                        }
+                    }
+                )
+            )
+
+        if self.tx:
+            tx_deps = tx_deps.merge(
+                Deps.routed(
+                    {TxManagerDepKey: {name: postgres_txmanager for name in self.tx}}
+                )
+            )
+
+        return plain_deps.merge(doc_deps, search_deps, tx_deps)

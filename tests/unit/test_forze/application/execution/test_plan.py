@@ -7,6 +7,7 @@ from forze.application.execution.plan import (
     WILDCARD,
     MiddlewareSpec,
     OperationPlan,
+    TransactionSpec,
     UsecasePlan,
 )
 
@@ -50,7 +51,7 @@ class TestOperationPlan:
         op = OperationPlan()
         assert op.outer_before == ()
         assert op.outer_after == ()
-        assert op.tx is False
+        assert op.tx is None
 
     def test_add_appends_to_bucket(self) -> None:
         def factory(ctx):
@@ -144,10 +145,11 @@ class TestOperationPlan:
         assert len(built) == 1
 
     def test_merge_preserves_tx(self) -> None:
-        p1 = OperationPlan(tx=True)
+        p1 = OperationPlan(tx=TransactionSpec(route="mock"))
         p2 = OperationPlan()
         merged = OperationPlan.merge(p1, p2)
-        assert merged.tx is True
+        assert merged.tx is not None
+        assert merged.tx.route == "mock"
 
     def test_merge_from_instance_includes_self(self) -> None:
         """Instance merge (p1.merge(p2)) includes p1 in the result."""
@@ -160,13 +162,13 @@ class TestOperationPlan:
 
         p1 = OperationPlan(
             outer_before=(MiddlewareSpec(priority=1, factory=f1),),
-            tx=True,
+            tx=TransactionSpec(route="mock"),
         )
         p2 = OperationPlan(outer_after=(MiddlewareSpec(priority=2, factory=f2),))
         merged = p1.merge(p2)
         assert len(merged.outer_before) == 1
         assert len(merged.outer_after) == 1
-        assert merged.tx is True
+        assert merged.tx is not None
 
     def test_merge_from_instance_single_arg(self) -> None:
         """Instance merge with one other plan: p1.merge(p2) equals OperationPlan.merge(p1, p2)."""
@@ -296,8 +298,9 @@ class TestUsecasePlan:
         assert len(via_instance.ops["create"].outer_before) == 1
 
     def test_tx_enables_transaction(self) -> None:
-        plan = UsecasePlan().tx("create")
-        assert plan.ops["create"].tx is True
+        plan = UsecasePlan().tx("create", route="mock")
+        assert plan.ops["create"].tx is not None
+        assert plan.ops["create"].tx.route == "mock"
 
     def test_resolve_builds_composed_usecase(self) -> None:
         ctx = ExecutionContext(deps=Deps())
@@ -368,9 +371,9 @@ class TestUsecasePlan:
             return guard
 
         plan = (
-            UsecasePlan().tx("create").in_tx_before("create", guard_factory, priority=1)
+            UsecasePlan().tx("create", route="mock").in_tx_before("create", guard_factory, priority=1)
         )
-        assert plan.ops["create"].tx is True
+        assert plan.ops["create"].tx is not None
         assert len(plan.ops["create"].in_tx_before) == 1
 
     def test_in_tx_after_adds_effect(self) -> None:
@@ -381,7 +384,7 @@ class TestUsecasePlan:
             return effect
 
         plan = (
-            UsecasePlan().tx("create").in_tx_after("create", effect_factory, priority=1)
+            UsecasePlan().tx("create", route="mock").in_tx_after("create", effect_factory, priority=1)
         )
         assert len(plan.ops["create"].in_tx_after) == 1
 
@@ -394,7 +397,7 @@ class TestUsecasePlan:
 
             return GuardMiddleware(guard=guard)
 
-        plan = UsecasePlan().tx("create").in_tx_wrap("create", mw_factory, priority=1)
+        plan = UsecasePlan().tx("create", route="mock").in_tx_wrap("create", mw_factory, priority=1)
         assert len(plan.ops["create"].in_tx_wrap) == 1
 
     def test_after_commit_adds_effect(self) -> None:
@@ -406,7 +409,7 @@ class TestUsecasePlan:
 
         plan = (
             UsecasePlan()
-            .tx("create")
+            .tx("create", route="mock")
             .after_commit("create", effect_factory, priority=1)
         )
         assert len(plan.ops["create"].after_commit) == 1
@@ -424,7 +427,7 @@ class TestUsecasePlan:
 
         plan = (
             UsecasePlan()
-            .tx("create")
+            .tx("create", route="mock")
             .after_commit("create", effect_factory, priority=1)
         )
         uc = plan.resolve("create", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
@@ -451,7 +454,7 @@ class TestUsecasePlan:
 
         plan = (
             UsecasePlan()
-            .tx("create")
+            .tx("create", route="mock")
             .in_tx_before("create", in_tx_guard, priority=1)
             .in_tx_after("create", in_tx_effect, priority=1)
         )
@@ -471,7 +474,7 @@ class TestUsecasePlan:
         def bad_factory(ctx):
             return GuardMiddleware(guard=guard)
 
-        op_plan = OperationPlan(tx=True).add(
+        op_plan = OperationPlan(tx=TransactionSpec(route="mock")).add(
             "after_commit",
             MiddlewareSpec(priority=1, factory=bad_factory),
         )

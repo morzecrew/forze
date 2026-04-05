@@ -35,15 +35,12 @@ def _minimal_spec(
     update_cmd = UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
     domain = _SoftDoc if supports_soft_delete else Document
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_read", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_write",
-            "models": {
-                "domain": domain,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": update_cmd,
-            },
+            "domain": domain,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": update_cmd,
         },
     )
 
@@ -64,8 +61,10 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
     """Build registry with plan merged and id set (required for attach_http_endpoint)."""
-    reg = build_document_registry(spec, dtos).extend_plan(UsecasePlan().tx("*"))
-    reg.finalize(spec.namespace, inplace=True)
+    reg = build_document_registry(spec, dtos).extend_plan(
+        UsecasePlan().tx("*", route="mock")
+    )
+    reg.finalize(spec.name, inplace=True)
     return reg
 
 

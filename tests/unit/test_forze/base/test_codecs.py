@@ -1,6 +1,6 @@
 """Unit tests for forze.base.codecs."""
 
-from forze.base.codecs import AsciiB64Codec, JsonCodec, KeyCodec, PathCodec, TextCodec
+from forze.base.codecs import AsciiB64Codec, JsonCodec, TextCodec
 
 # ----------------------- #
 
@@ -45,27 +45,3 @@ class TestAsciiB64Codec:
         encoded = codec.dumps("café")
         assert encoded.startswith("b64://")
         assert codec.loads(encoded) == "café"
-
-
-class TestKeyCodec:
-    """Tests for KeyCodec."""
-
-    def test_join(self) -> None:
-        codec = KeyCodec(namespace="ns")
-        assert codec.join("a", "b") == "ns:a:b"
-
-    def test_split(self) -> None:
-        codec = KeyCodec(namespace="ns")
-        assert codec.split("ns:a:b") == ["ns", "a", "b"]
-
-
-class TestPathCodec:
-    """Tests for PathCodec."""
-
-    def test_join(self) -> None:
-        codec = PathCodec()
-        assert codec.join("a", "b", "c") == "a/b/c"
-
-    def test_split(self) -> None:
-        codec = PathCodec()
-        assert codec.split("a/b/c") == ["a", "b", "c"]

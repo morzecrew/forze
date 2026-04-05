@@ -1,4 +1,4 @@
 """Unit tests for forze_temporal package.
 
-WorkflowPort is excluded per project directive.
+WorkflowCommandPort is excluded per project directive.
 """

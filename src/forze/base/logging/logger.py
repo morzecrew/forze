@@ -61,10 +61,16 @@ class Logger:
 
     # ....................... #
 
-    def debug(self, event: str, *sub: Any, **extras: Any) -> None:
+    def debug(
+        self,
+        event: str,
+        *sub: Any,
+        exc_info: bool = False,
+        **extras: Any,
+    ) -> None:
         """Log at DEBUG level."""
 
-        self.backend.debug(event, *sub, **extras)
+        self.backend.debug(event, *sub, exc_info=exc_info, **extras)
 
     # ....................... #
 

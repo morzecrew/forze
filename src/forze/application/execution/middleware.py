@@ -11,12 +11,15 @@ from typing import Awaitable, Callable, Protocol, Self, final
 import attrs
 
 from forze.application._logger import logger
+
 from .context import ExecutionContext
 
 # ----------------------- #
 
 type NextCall[Args, R] = Callable[[Args], Awaitable[R]]
 """Next middleware or usecase in the chain."""
+
+# ....................... #
 
 
 class Middleware[Args, R](Protocol):  # pragma: no cover
@@ -31,6 +34,9 @@ class Middleware[Args, R](Protocol):  # pragma: no cover
         ...
 
 
+# ....................... #
+
+
 class Effect[Args, R](Protocol):  # pragma: no cover
     """Protocol for an effect that runs after the usecase returns.
 
@@ -40,6 +46,9 @@ class Effect[Args, R](Protocol):  # pragma: no cover
     async def __call__(self, args: Args, res: R) -> R:
         """Run the effect with args and result; may return modified result."""
         ...
+
+
+# ....................... #
 
 
 class Guard[Args](Protocol):  # pragma: no cover
@@ -68,6 +77,7 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         logger.debug("Running guard: '%s'", type(self.guard).__qualname__)
         await self.guard(args)
+
         result = await next(args)
 
         return result
@@ -90,6 +100,7 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
 
         logger.debug("Running effect: '%s'", type(self.effect).__qualname__)
         res = await self.effect(args, res)
+
         return res
 
 
@@ -108,6 +119,9 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
 
     ctx: ExecutionContext
     """Execution context for the transaction."""
+
+    route: str
+    """Routing key for the transaction."""
 
     after_commit: tuple[Effect[Args, R], ...] = attrs.field(factory=tuple)
     """Effects to run after commit (e.g. outbox dispatch)."""
@@ -134,7 +148,7 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         logger.debug("Running transaction middleware: '%s'", type(self).__qualname__)
 
-        async with self.ctx.transaction():
+        async with self.ctx.transaction(self.route):
             res = await next(args)
 
         if self.after_commit:

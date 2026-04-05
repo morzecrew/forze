@@ -1,17 +1,20 @@
 import pytest
 from uuid import UUID
 
-from forze.application.contracts.document.specs import DocumentSpec
-from forze.application.execution import ExecutionContext, Deps
-from forze.domain.models import Document, CreateDocumentCmd, ReadDocument, BaseDTO
-
-from forze_postgres.kernel.platform.client import PostgresClient
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+    DocumentSpec,
+)
+from forze.application.execution import Deps, ExecutionContext
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
-from forze_postgres.execution.deps.deps import postgres_document_configurable
+from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.platform.client import PostgresClient
 
 
 # Domain Definitions
@@ -33,10 +36,19 @@ class MyReadDoc(ReadDocument):
 
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
-    deps = Deps(
+    configurable = ConfigurablePostgresDocument(
+        config={
+            "read": ("public", "my_docs"),
+            "write": ("public", "my_docs"),
+            "bookkeeping_strategy": "application",
+        }
+    )
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
         }
     )
     return ExecutionContext(deps=deps)
@@ -59,20 +71,16 @@ async def test_postgres_document_adapter(
     )
 
     spec = DocumentSpec(
-        namespace="my_docs_ns",
-        read={"source": "my_docs", "model": MyReadDoc},
+        name="my_docs_ns",
+        read=MyReadDoc,
         write={
-            "source": "my_docs",
-            "models": {
-                "domain": MyDoc,
-                "create_cmd": MyCreateDoc,
-                "update_cmd": MyUpdateDoc,
-            },
+            "domain": MyDoc,
+            "create_cmd": MyCreateDoc,
+            "update_cmd": MyUpdateDoc,
         },
     )
 
-    factory = postgres_document_configurable(rev_bump_strategy="application")
-    adapter = factory(execution_context, spec)
+    adapter = execution_context.doc_command(spec)
 
     # CREATE
     create_dto = MyCreateDoc(name="test item")
@@ -90,7 +98,7 @@ async def test_postgres_document_adapter(
 
     # UPDATE
     update_dto = MyUpdateDoc(name="updated item")
-    updated_doc = await adapter.update(doc.id, update_dto, rev=doc.rev)
+    updated_doc = await adapter.update(doc.id, doc.rev, update_dto)
     assert updated_doc.name == "updated item"
     assert updated_doc.rev == 2
 

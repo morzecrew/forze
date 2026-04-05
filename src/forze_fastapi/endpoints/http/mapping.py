@@ -3,7 +3,8 @@ from typing import Any
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.mapper import LocalMapperPort
+from forze.application.contracts.mapping import MapperPort
+from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_validate
 
@@ -17,7 +18,7 @@ ReqDTO = HttpRequestDTO[Any, Any, Any, Any, Any]
 
 
 @attrs.define(slots=True, frozen=True)
-class QueryAsIsMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
+class QueryAsIsMapper[Out: BaseModel](MapperPort[ReqDTO, Out]):
     """Mapper that maps the query parameters to the output model."""
 
     out: type[Out]
@@ -25,7 +26,13 @@ class QueryAsIsMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
 
     # ....................... #
 
-    async def __call__(self, dto: ReqDTO) -> Out:
+    async def __call__(
+        self,
+        dto: ReqDTO,
+        /,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> Out:
         if dto.query is None:
             raise CoreError("Query is required")
 
@@ -39,7 +46,7 @@ class QueryAsIsMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
 
 
 @attrs.define(slots=True, frozen=True)
-class BodyAsIsMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
+class BodyAsIsMapper[Out: BaseModel](MapperPort[ReqDTO, Out]):
     """Mapper that maps the body to the output model."""
 
     out: type[Out]
@@ -47,7 +54,13 @@ class BodyAsIsMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
 
     # ....................... #
 
-    async def __call__(self, dto: ReqDTO) -> Out:
+    async def __call__(
+        self,
+        dto: ReqDTO,
+        /,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> Out:
         if dto.body is None:
             raise CoreError("Body is required")
 
@@ -61,7 +74,7 @@ class BodyAsIsMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
 
 
 @attrs.define(slots=True, frozen=True)
-class QueryAsIsBodyAssignMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
+class QueryAsIsBodyAssignMapper[Out: BaseModel](MapperPort[ReqDTO, Out]):
     """Mapper that maps the query parameters and body to the output model."""
 
     out: type[Out]
@@ -78,7 +91,13 @@ class QueryAsIsBodyAssignMapper[Out: BaseModel](LocalMapperPort[ReqDTO, Out]):
 
     # ....................... #
 
-    async def __call__(self, dto: ReqDTO) -> Out:
+    async def __call__(
+        self,
+        dto: ReqDTO,
+        /,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> Out:
         if dto.query is None or dto.body is None:
             raise CoreError("Query and body are required")
 

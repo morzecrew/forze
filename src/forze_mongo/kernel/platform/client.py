@@ -88,9 +88,7 @@ class MongoClient:
     nested transactions).
     """
 
-    __client: AsyncMongoClient[JsonDict] | None = attrs.field(
-        default=None, init=False
-    )
+    __client: AsyncMongoClient[JsonDict] | None = attrs.field(default=None, init=False)
 
     __ctx_session: ContextVar[AsyncClientSession | None] = attrs.field(
         factory=lambda: ContextVar("mongo_session", default=None),
@@ -376,12 +374,27 @@ class MongoClient:
         documents: Sequence[Mapping[str, Any]],
         *,
         ordered: bool = True,
+        batch_size: int = 200,
     ) -> list[ObjectId]:
-        """Insert multiple documents and return inserted ``_id`` values."""
+        """Insert multiple documents and return inserted ``_id`` values.
+
+        :param coll: The collection to insert into.
+        :param documents: A sequence of documents to insert.
+        :param ordered: Whether to execute operations in order.
+        :param batch_size: Batch size for the bulk operation.
+        :returns: A list of inserted ``_id`` values.
+        """
 
         session = self.__current_session()
-        res = await coll.insert_many(list(documents), ordered=ordered, session=session)
-        return list(res.inserted_ids)
+        docs = list(documents)
+        inserted_ids: list[ObjectId] = []
+
+        for offset in range(0, len(docs), batch_size):
+            batch = docs[offset : offset + batch_size]
+            res = await coll.insert_many(batch, ordered=ordered, session=session)
+            inserted_ids.extend(res.inserted_ids)
+
+        return inserted_ids
 
     # ....................... #
 
@@ -409,12 +422,14 @@ class MongoClient:
         operations: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]],
         *,
         ordered: bool = True,
+        batch_size: int = 200,
     ) -> int:
         """Execute multiple updates in a single bulk operation.
 
         :param coll: The collection to update.
         :param operations: A sequence of ``(filter, update)`` pairs.
         :param ordered: Whether to execute operations in order.
+        :param batch_size: Batch size for the bulk operation.
         :returns: Total matched count.
         """
 
@@ -423,9 +438,14 @@ class MongoClient:
 
         requests = [UpdateOne(f, u) for f, u in operations]
         session = self.__current_session()
+        matched_count = 0
 
-        res = await coll.bulk_write(requests, ordered=ordered, session=session)
-        return int(res.matched_count)
+        for offset in range(0, len(requests), batch_size):
+            batch = requests[offset : offset + batch_size]
+            res = await coll.bulk_write(batch, ordered=ordered, session=session)
+            matched_count += int(res.matched_count)
+
+        return matched_count
 
     # ....................... #
 

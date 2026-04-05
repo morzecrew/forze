@@ -3,9 +3,9 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search.specs import SearchSpec
+from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps.deps import postgres_search
+from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -22,10 +22,17 @@ class SearchableModel(BaseModel):
 
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
-    deps = Deps(
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            SearchQueryDepKey: ConfigurablePostgresSearch(
+                config={
+                    "index": ("public", "idx_search_items_pgroonga"),
+                    "source": ("public", "search_items"),
+                    "engine": "pgroonga",
+                }
+            ),
         }
     )
     return ExecutionContext(deps=deps)
@@ -82,19 +89,12 @@ async def test_postgres_search_adapter(
         )
 
     spec = SearchSpec(
-        namespace="search_ns",
-        model=SearchableModel,
-        indexes={
-            "idx_search_items_pgroonga": {
-                "source": "search_items",
-                "mode": "pgroonga",
-                "fields": [{"path": "title"}, {"path": "content"}],
-            }
-        },
-        default_index="idx_search_items_pgroonga",
+        name="search_ns",
+        model_type=SearchableModel,
+        fields=["title", "content"],
     )
 
-    adapter = postgres_search(execution_context, spec)
+    adapter = execution_context.search_query(spec)
 
     res, cnt = await adapter.search("python")
     assert cnt == 3
@@ -104,3 +104,21 @@ async def test_postgres_search_adapter(
     assert cnt2 == 1
     assert len(res2) == 1
     assert res2[0].title == "Forze Framework"
+
+    # Weighted search, pagination, explicit sort, and partial field projection
+    page, total = await adapter.search(
+        "python",
+        limit=1,
+        offset=0,
+        sorts={"title": "asc"},
+        options={"weights": {"title": 0.5, "content": 0.5}},
+    )
+    assert total == 3
+    assert len(page) == 1
+
+    titles_only, total_t = await adapter.search(
+        "python",
+        return_fields=["title"],
+    )
+    assert total_t == 3
+    assert set(titles_only[0].keys()) == {"title"}

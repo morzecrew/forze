@@ -127,7 +127,7 @@ class TestETagFeature:
 
     @pytest.mark.asyncio
     async def test_adds_etag_header(self) -> None:
-        from forze.application.contracts.mapper import LocalMapperPort
+        from forze.application.contracts.mapping import MapperPort
         from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
@@ -135,7 +135,7 @@ class TestETagFeature:
             id: int
             name: str
 
-        class _PassMapper(LocalMapperPort[HttpRequestDTO, Item]):
+        class _PassMapper(MapperPort[HttpRequestDTO, Item]):
             async def __call__(self, dto: HttpRequestDTO) -> Item:  # type: ignore[override]
                 raise NotImplementedError
 
@@ -173,11 +173,11 @@ class TestETagFeature:
         class Item(BaseModel):
             id: int
 
-        from forze.application.contracts.mapper import LocalMapperPort
+        from forze.application.contracts.mapping import MapperPort
         from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
-        class _PassMapper(LocalMapperPort[HttpRequestDTO, Item]):
+        class _PassMapper(MapperPort[HttpRequestDTO, Item]):
             async def __call__(self, dto: HttpRequestDTO) -> Item:  # type: ignore[override]
                 raise NotImplementedError
 
@@ -215,11 +215,11 @@ class TestETagFeature:
         class Item(BaseModel):
             id: int
 
-        from forze.application.contracts.mapper import LocalMapperPort
+        from forze.application.contracts.mapping import MapperPort
         from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
-        class _PassMapper(LocalMapperPort[HttpRequestDTO, Item]):
+        class _PassMapper(MapperPort[HttpRequestDTO, Item]):
             async def __call__(self, dto: HttpRequestDTO) -> Item:  # type: ignore[override]
                 raise NotImplementedError
 

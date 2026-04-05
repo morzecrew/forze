@@ -2,8 +2,8 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.document import DocumentWritePort
-from forze.application.contracts.mapper import MapperPort
+from forze.application.contracts.document import DocumentCommandPort
+from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import Usecase
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 
@@ -14,14 +14,9 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
     Usecase[In, Out]
 ):
-    """Usecase that creates a new document from a mapped command.
+    """Usecase that creates a new document from a mapped command."""
 
-    Maps the input DTO to a :class:`CreateDocumentCmd` via :attr:`mapper`, then
-    delegates to :meth:`DocumentWritePort.create`. The mapper may inject fields such
-    as ``number_id`` or ``creator_id`` using execution context.
-    """
-
-    doc: DocumentWritePort[Out, Any, Cmd, Any]
+    doc: DocumentCommandPort[Out, Any, Cmd, Any]
     """Document port for create operations."""
 
     mapper: MapperPort[In, Cmd]
@@ -36,6 +31,6 @@ class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
         :returns: Created read model.
         """
 
-        cmd = await self.mapper(self.ctx, args)
+        cmd = await self.mapper(args, ctx=self.ctx)
 
-        return await self.doc.create(cmd)
+        return await self.doc.create(dto=cmd)

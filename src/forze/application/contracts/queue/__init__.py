@@ -1,10 +1,10 @@
 from .deps import (
-    QueueReadDepKey,
-    QueueReadDepPort,
-    QueueWriteDepKey,
-    QueueWriteDepPort,
+    QueueCommandDepKey,
+    QueueCommandDepPort,
+    QueueQueryDepKey,
+    QueueQueryDepPort,
 )
-from .ports import QueueReadPort, QueueWritePort
+from .ports import QueueCommandPort, QueueQueryPort
 from .specs import QueueSpec
 from .types import QueueMessage
 
@@ -12,11 +12,11 @@ from .types import QueueMessage
 
 __all__ = [
     "QueueMessage",
-    "QueueReadPort",
-    "QueueWritePort",
+    "QueueQueryPort",
+    "QueueCommandPort",
     "QueueSpec",
-    "QueueReadDepPort",
-    "QueueReadDepKey",
-    "QueueWriteDepPort",
-    "QueueWriteDepKey",
+    "QueueQueryDepKey",
+    "QueueCommandDepKey",
+    "QueueQueryDepPort",
+    "QueueCommandDepPort",
 ]

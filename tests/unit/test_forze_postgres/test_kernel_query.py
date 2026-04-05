@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from forze.base.errors import CoreError
 from forze_postgres.kernel.introspect import PostgresType
 from forze_postgres.kernel.query.render import PsycopgValueCoercer
 
@@ -40,7 +41,7 @@ class TestPsycopgValueCoercer:
     def test_scalar_array_type_raises(self) -> None:
         coercer = PsycopgValueCoercer()
         t = PostgresType(base="text", is_array=True, not_null=False)
-        with pytest.raises(ValueError, match="Array type not supported"):
+        with pytest.raises(CoreError, match="Array type not supported"):
             coercer.scalar("val", t=t)
 
     def test_scalar_text_types(self) -> None:
@@ -101,11 +102,11 @@ class TestPsycopgValueCoercer:
     def test_array_scalar_value_raises(self) -> None:
         coercer = PsycopgValueCoercer()
         t = PostgresType(base="text", is_array=True, not_null=False)
-        with pytest.raises(ValueError, match="Scalar value not supported"):
+        with pytest.raises(CoreError, match="Scalar value not supported"):
             coercer.array("not an array", t=t)
-        with pytest.raises(ValueError, match="Scalar value not supported"):
+        with pytest.raises(CoreError, match="Scalar value not supported"):
             coercer.array(123, t=t)
-        with pytest.raises(ValueError, match="Scalar value not supported"):
+        with pytest.raises(CoreError, match="Scalar value not supported"):
             coercer.array(True, t=t)
 
     def test_array_t_none_maps_scalar_t_none(self) -> None:
@@ -116,7 +117,7 @@ class TestPsycopgValueCoercer:
         coercer = PsycopgValueCoercer()
         t = PostgresType(base="text", is_array=False, not_null=False)
 
-        with pytest.raises(ValueError, match="Expected array column, got scalar"):
+        with pytest.raises(CoreError, match="Expected array column, got scalar"):
             coercer.array(["val"], t=t, raise_on_scalar_t=True)
 
     def test_array_t_not_array_raise_on_scalar_t_false_passes(self) -> None:

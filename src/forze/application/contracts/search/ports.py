@@ -12,9 +12,10 @@ from .types import SearchOptions
 T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
+#! Consider wrapping many arguments into a single model / value object
 
 
-class SearchReadPort[R: BaseModel](Protocol):
+class SearchQueryPort[R: BaseModel](Protocol):
     @overload
     def search(
         self,
@@ -25,7 +26,7 @@ class SearchReadPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
     ) -> Awaitable[tuple[list[R], int]]:
         """Search documents and return typed read models."""
@@ -42,7 +43,7 @@ class SearchReadPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: type[T],
+        return_type: type[T],
         return_fields: None = ...,
     ) -> Awaitable[tuple[list[T], int]]: ...
 
@@ -56,7 +57,7 @@ class SearchReadPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
-        return_model: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
     ) -> Awaitable[tuple[list[JsonDict], int]]:
         """Search documents and project selected fields as JSON."""
@@ -72,7 +73,7 @@ class SearchReadPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_model: type[T] | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Awaitable[tuple[list[R] | list[T] | list[JsonDict], int]]:
         """Search documents using a query string and optional filters.
@@ -83,7 +84,7 @@ class SearchReadPort[R: BaseModel](Protocol):
         :param offset: Offset into the result set.
         :param sorts: Field-level sort specification.
         :param options: Backend-specific tuning options.
-        :param return_model: Optional model-based projection to return.
+        :param return_type: Optional model-based projection to return.
         :param return_fields: Optional projection of fields.
         :returns: A tuple of hits and total hit count.
         """
@@ -93,4 +94,5 @@ class SearchReadPort[R: BaseModel](Protocol):
 # ....................... #
 
 
-class SearchWritePort[M: BaseModel](Protocol): ...
+#! Not implemented yet
+class SearchCommandPort[M: BaseModel](Protocol): ...

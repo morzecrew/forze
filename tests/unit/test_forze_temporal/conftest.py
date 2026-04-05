@@ -3,5 +3,5 @@
 import pytest
 
 # Skip entire module if temporalio optional dep is not installed
-# WorkflowPort is excluded per project directive
+# WorkflowCommandPort is excluded per project directive
 pytest.importorskip("temporalio")

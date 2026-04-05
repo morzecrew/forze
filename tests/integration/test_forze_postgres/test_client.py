@@ -4,6 +4,14 @@ from forze_postgres.kernel.platform.client import PostgresClient
 
 
 @pytest.mark.asyncio
+async def test_health_reports_ok(pg_client: PostgresClient) -> None:
+    """health returns success against the live pool."""
+    status, ok = await pg_client.health()
+    assert status == "ok"
+    assert ok is True
+
+
+@pytest.mark.asyncio
 async def test_execute_and_fetch(pg_client: PostgresClient) -> None:
     await pg_client.execute(
         """

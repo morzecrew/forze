@@ -1,12 +1,18 @@
 from .document import PostgresDocumentAdapter
-from .search import PostgresSearchAdapter
+from .search import (
+    FtsGroupLetter,
+    PostgresFTSSearchAdapter,
+    PostgresPGroongaSearchAdapter,
+)
 from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
 # ----------------------- #
 
 __all__ = [
     "PostgresDocumentAdapter",
-    "PostgresSearchAdapter",
+    "PostgresPGroongaSearchAdapter",
+    "PostgresFTSSearchAdapter",
     "PostgresTxManagerAdapter",
     "PostgresTxScopeKey",
+    "FtsGroupLetter",
 ]

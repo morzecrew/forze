@@ -75,7 +75,10 @@ def build_registry() -> UsecaseRegistry:
 
 
 async def map_hello(
-    dto: HttpRequestDTO[HelloPath, Any, HelloHeader, Any, HelloBody], /
+    dto: HttpRequestDTO[HelloPath, Any, HelloHeader, Any, HelloBody],
+    /,
+    *,
+    ctx: ExecutionContext | None = None,
 ) -> HelloInput:
     assert dto.body is not None
     assert dto.query is not None

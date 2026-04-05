@@ -9,7 +9,8 @@ from forze.application.composition.document.factories import (
 )
 from forze.application.composition.document.operations import DocumentOperation
 from forze.application.contracts.document import DocumentSpec
-from forze.application.mapping import DTOMapper, NumberIdStep
+from forze.application.composition.mapping import DTOMapper, NumberIdStep
+from forze.application.contracts.counter import CounterSpec
 from forze.base.errors import CoreError
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -34,23 +35,20 @@ def _write_spec(
     update_cmd: type = _UpdateCmd,
 ) -> DocumentSpec:
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_r", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
         write={
-            "source": "test_w",
-            "models": {
-                "domain": domain,
-                "create_cmd": CreateDocumentCmd,
-                "update_cmd": update_cmd,
-            },
+            "domain": domain,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": update_cmd,
         },
     )
 
 
 def _read_only_spec() -> DocumentSpec:
     return DocumentSpec(
-        namespace="test",
-        read={"source": "test_r", "model": ReadDocument},
+        name="test",
+        read=ReadDocument,
     )
 
 
@@ -80,7 +78,7 @@ class TestBuildDocumentCreateMapper:
         spec = _write_spec()
         dtos = _write_dtos()
         mapper = build_document_create_mapper(
-            spec, dtos, steps=(NumberIdStep(namespace="test"),)
+            spec, dtos, steps=(NumberIdStep(spec=CounterSpec(name="test")),)
         )
         assert isinstance(mapper, DTOMapper)
 
@@ -142,6 +140,6 @@ class TestBuildDocumentRegistry:
         spec = _write_spec()
         dtos = _write_dtos()
         reg = build_document_registry(
-            spec, dtos, create_steps=(NumberIdStep(namespace="test"),)
+            spec, dtos, create_steps=(NumberIdStep(spec=CounterSpec(name="test")),)
         )
         assert reg.exists(DocumentOperation.CREATE)

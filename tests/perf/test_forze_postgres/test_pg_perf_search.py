@@ -8,9 +8,9 @@ from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
 
-from forze.application.contracts.search.specs import SearchSpec
+from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps.deps import postgres_search
+from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -30,10 +30,19 @@ class SearchableModel(BaseModel):
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
     """Build execution context with Postgres deps."""
-    deps = Deps(
+    deps = Deps.plain(
         {
             PostgresClientDepKey: pg_client,
             PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            SearchQueryDepKey: ConfigurablePostgresSearch(
+                configs={
+                    "perf_search_ns": {
+                        "index": ("public", "idx_perf_search_pgroonga"),
+                        "source": ("public", "perf_search_items"),
+                        "engine": "pgroonga",
+                    }
+                }
+            ),
         }
     )
     return ExecutionContext(deps=deps)
@@ -74,19 +83,12 @@ async def search_adapter(pg_client: PostgresClient, execution_context):
         )
 
     spec = SearchSpec(
-        namespace="perf_search_ns",
-        model=SearchableModel,
-        indexes={
-            "idx_perf_search_pgroonga": {
-                "source": "perf_search_items",
-                "mode": "pgroonga",
-                "fields": [{"path": "title"}, {"path": "content"}],
-            }
-        },
-        default_index="idx_perf_search_pgroonga",
+        name="perf_search_ns",
+        model_type=SearchableModel,
+        fields=["title", "content"],
     )
 
-    return postgres_search(execution_context, spec)
+    return execution_context.search_query(spec)
 
 
 @pytest.mark.perf

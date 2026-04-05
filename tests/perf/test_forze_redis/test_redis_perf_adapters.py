@@ -7,8 +7,8 @@ import pytest_asyncio
 
 pytest.importorskip("redis")
 
-from forze.base.codecs import KeyCodec
 from forze_redis.adapters import RedisCacheAdapter, RedisCounterAdapter
+from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient
 
 
@@ -21,7 +21,7 @@ async def redis_cache(redis_client: RedisClient) -> RedisCacheAdapter:
     """Provide a RedisCacheAdapter with a unique namespace per test."""
     return RedisCacheAdapter(
         client=redis_client,
-        key_codec=KeyCodec(namespace=_perf_namespace("cache")),
+        key_codec=RedisKeyCodec(namespace=_perf_namespace("cache")),
     )
 
 
@@ -30,8 +30,7 @@ async def redis_counter(redis_client: RedisClient) -> RedisCounterAdapter:
     """Provide a RedisCounterAdapter with a unique namespace per test."""
     return RedisCounterAdapter(
         client=redis_client,
-        key_codec=KeyCodec(namespace=_perf_namespace("counter")),
-        tenant_context=None,
+        key_codec=RedisKeyCodec(namespace=_perf_namespace("counter")),
     )
 
 
