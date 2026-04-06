@@ -67,7 +67,8 @@ def _build_write_gateway(client: object) -> MagicMock:
     gateway = MagicMock(spec=MongoWriteGateway)
     gateway.client = client
     gateway.tenant_aware = False
-    gateway.update = AsyncMock()
+    gateway.update = AsyncMock(return_value=(None, {}))
+    gateway.update_many = AsyncMock(return_value=([], []))
     return gateway
 
 
@@ -193,7 +194,7 @@ class TestMongoDocumentAdapterReturnNew:
         pk = uuid4()
         read_gw = _build_read_gateway()
         write_gw = _build_write_gateway(read_gw.client)
-        write_gw.update = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         cache = MagicMock()
         cache.delete_many = AsyncMock()
 

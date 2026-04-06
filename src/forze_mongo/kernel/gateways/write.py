@@ -262,7 +262,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         update: JsonDict | None = None,
         *,
         rev: int | None = None,
-    ) -> D:
+    ) -> tuple[D, JsonDict]:
         current = await self.read_gw.get(pk)
 
         if update is not None:
@@ -275,7 +275,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             _, diff = current.touch()
 
         if not diff:
-            return current
+            return current, diff
 
         diff = self._bump_rev(current, diff)
         diff = self.adapt_payload_for_write(diff, create=False)
@@ -295,7 +295,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         updated = await self.read_gw.get(pk)
         await self._write_history(updated)
 
-        return updated
+        return updated, diff
 
     # ....................... #
 
@@ -307,9 +307,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         *,
         revs: Sequence[int] | None = None,
         batch_size: int = 200,
-    ) -> Sequence[D]:
-        if not pks:
-            return []
+    ) -> tuple[Sequence[D], Sequence[JsonDict]]:
+        if not pks or (not updates and updates is not None):
+            return [], []
 
         currents = await self.read_gw.get_many(pks)
 
@@ -336,13 +336,15 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                     to_patch.append((i, current, diff))
 
         if not to_patch:
-            return currents
+            return currents, [{} for _ in currents]
 
         # 2. Execution (Bulk)
+        id_to_written: dict[UUID, JsonDict] = {}
         operations: list[tuple[JsonDict, JsonDict]] = []
         for _, current, diff in to_patch:
             bumped = self._bump_rev(current, diff)
             bumped = self.adapt_payload_for_write(bumped, create=False)
+            id_to_written[current.id] = bumped
             flt = self._add_tenant_filter(
                 {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
             )
@@ -362,17 +364,21 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         updated = await self.read_gw.get_many(pks)
         await self._write_history(*updated)
 
-        return updated
+        res_diffs = [id_to_written.get(c.id, {}) for c in currents]
+
+        return updated, res_diffs
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> D:
+    async def update(
+        self, pk: UUID, dto: U, *, rev: int | None = None
+    ) -> tuple[D, JsonDict]:
         """Apply an update DTO to an existing document.
 
         :param pk: Document primary key.
         :param dto: Update payload.
         :param rev: Expected revision for historical consistency validation.
-        :returns: The updated domain document.
+        :returns: The updated domain document and the adapted write payload (diff).
         """
 
         update_data = pydantic_dump(dto, exclude={"unset": True})
@@ -387,12 +393,13 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         *,
         revs: Sequence[int] | None = None,
         batch_size: int = 200,
-    ) -> Sequence[D]:
+    ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         """Bulk-update documents with corresponding DTOs.
 
         :param pks: Document primary keys (must be unique).
         :param dtos: Update payloads matching *pks* by position.
         :param revs: Optional expected revisions for history validation.
+        :returns: Updated documents and per-document adapted write payloads (diffs).
         :raises CoreError: If lengths of *pks* and *dtos* (or *revs*) differ.
         :raises ValidationError: If *pks* contains duplicates.
         """
@@ -417,7 +424,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         :param pk: Document primary key.
         """
 
-        return await self._patch(pk)
+        res, _ = await self._patch(pk)
+
+        return res
 
     # ....................... #
 
@@ -437,7 +446,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        return await self._patch_many(pks, batch_size=batch_size)
+        res, _ = await self._patch_many(pks, batch_size=batch_size)
+
+        return res
 
     # ....................... #
 
@@ -487,7 +498,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        return await self._patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
+        res, _ = await self._patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
+
+        return res
 
     # ....................... #
 
@@ -517,7 +530,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise CoreError("Length mismatch between primary keys and revisions")
 
         updates = [{SOFT_DELETE_FIELD: True} for _ in pks]
-        return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
+        res, _ = await self._patch_many(
+            pks, updates, revs=revs, batch_size=batch_size
+        )
+
+        return res
 
     # ....................... #
 
@@ -532,7 +549,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        return await self._patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
+        res, _ = await self._patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
+
+        return res
 
     # ....................... #
 
@@ -563,4 +582,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         updates = [{SOFT_DELETE_FIELD: False} for _ in pks]
 
-        return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
+        res, _ = await self._patch_many(
+            pks, updates, revs=revs, batch_size=batch_size
+        )
+
+        return res

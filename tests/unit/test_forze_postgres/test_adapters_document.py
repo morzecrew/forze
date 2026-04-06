@@ -199,6 +199,8 @@ def _read_gw_full() -> MagicMock:
 def _write_gw() -> MagicMock:
     gw = MagicMock(spec=PostgresWriteGateway)
     gw.tenant_aware = False
+    gw.update = AsyncMock(return_value=(None, {}))
+    gw.update_many = AsyncMock(return_value=([], []))
     return gw
 
 
@@ -454,7 +456,7 @@ class TestPostgresDocumentAdapterCommands:
         write_gw.client = read_gw.client
         pk = uuid4()
         read_doc = _tread(pk, rev=2)
-        write_gw.update = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         read_gw.get = AsyncMock(return_value=read_doc)
 
         cache = MagicMock()
@@ -478,7 +480,7 @@ class TestPostgresDocumentAdapterCommands:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
-        write_gw.update = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         read_gw.get = AsyncMock(return_value=_tread())
 
         cache = MagicMock()
@@ -601,7 +603,7 @@ class TestPostgresDocumentAdapterCommands:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
-        write_gw.update_many = AsyncMock()
+        write_gw.update_many = AsyncMock(return_value=([], []))
         write_gw.delete_many = AsyncMock()
         write_gw.restore_many = AsyncMock()
 
@@ -716,7 +718,7 @@ class TestPostgresDocumentAdapterBatchMutations:
         write_gw.client = read_gw.client
         pk1, pk2 = uuid4(), uuid4()
         r1, r2 = _tread(pk1), _tread(pk2)
-        write_gw.update_many = AsyncMock()
+        write_gw.update_many = AsyncMock(return_value=([], []))
         read_gw.get_many = AsyncMock(return_value=[r1, r2])
         cache = MagicMock()
         cache.delete_many = AsyncMock()
@@ -838,7 +840,7 @@ class TestPostgresDocumentAdapterReturnNew:
         write_gw = _write_gw()
         write_gw.client = read_gw.client
         pk = uuid4()
-        write_gw.update = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         cache = MagicMock()
         cache.delete_many = AsyncMock()
 
@@ -860,7 +862,7 @@ class TestPostgresDocumentAdapterReturnNew:
         write_gw = _write_gw()
         write_gw.client = read_gw.client
         pk1, pk2 = uuid4(), uuid4()
-        write_gw.update_many = AsyncMock()
+        write_gw.update_many = AsyncMock(return_value=([], []))
         cache = MagicMock()
         cache.delete_many = AsyncMock()
 

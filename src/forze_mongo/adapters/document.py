@@ -488,6 +488,7 @@ class MongoDocumentAdapter(
         dto: U,
         *,
         return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
     ) -> R: ...
 
     @overload
@@ -497,8 +498,31 @@ class MongoDocumentAdapter(
         rev: int,
         dto: U,
         *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> tuple[R, JsonDict]: ...
+
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
         return_new: Literal[False],
+        return_diff: Literal[False] = False,
     ) -> None: ...
+
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> JsonDict: ...
 
     async def update(
         self,
@@ -507,7 +531,8 @@ class MongoDocumentAdapter(
         dto: U,
         *,
         return_new: bool = True,
-    ) -> R | None:
+        return_diff: bool = False,
+    ) -> R | JsonDict | None | tuple[R, JsonDict]:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
@@ -517,14 +542,20 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.update(pk, dto, rev=rev)
+        _, diff = await w.update(pk, dto, rev=rev)
         await self._clear_cache(pk)
 
         if not return_new:
+            if return_diff:
+                return diff
+
             return None
 
         res = await self.read_gw.get(pk)
         await self._set_cache(res)
+
+        if return_diff:
+            return res, diff
 
         return res
 
@@ -536,6 +567,7 @@ class MongoDocumentAdapter(
         updates: Sequence[tuple[UUID, int, U]],
         *,
         return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
     ) -> Sequence[R]: ...
 
     @overload
@@ -543,15 +575,35 @@ class MongoDocumentAdapter(
         self,
         updates: Sequence[tuple[UUID, int, U]],
         *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> Sequence[tuple[R, JsonDict]]: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
         return_new: Literal[False],
+        return_diff: Literal[False] = False,
     ) -> None: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> Sequence[JsonDict]: ...
 
     async def update_many(
         self,
         updates: Sequence[tuple[UUID, int, U]],
         *,
         return_new: bool = True,
-    ) -> Sequence[R] | None:
+        return_diff: bool = False,
+    ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         """Bulk-update documents and refresh the cache.
 
         :param pks: Document primary keys.
@@ -561,19 +613,41 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
+        if not updates:
+            logger.debug(
+                "Empty list of updates, skipping update for '%s'",
+                self.spec.name,
+            )
+
+            if not return_new:
+                return None
+
+            return []
+
         pks = [x[0] for x in updates]
         revs = [x[1] for x in updates]
         dtos = [x[2] for x in updates]
 
-        await w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
+        _, diffs = await w.update_many(
+            pks,
+            dtos,
+            revs=revs,
+            batch_size=self.eff_batch_size,
+        )
         await self._clear_cache(*pks)
 
         if not return_new:
+            if return_diff:
+                return diffs
+
             return None
 
         # Repeate read is required to meet criteria for diverse read and write sources
         res = await self.read_gw.get_many(pks)
         await self._set_cache_many(res)
+
+        if return_diff:
+            return list(zip(res, diffs, strict=True))
 
         return res
 

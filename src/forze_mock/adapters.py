@@ -73,6 +73,7 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
+from forze.domain.constants import REV_FIELD
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
@@ -671,6 +672,7 @@ class MockDocumentAdapter[
         dto: U,
         *,
         return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
     ) -> R: ...
 
     @overload
@@ -680,8 +682,31 @@ class MockDocumentAdapter[
         rev: int,
         dto: U,
         *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> tuple[R, JsonDict]: ...
+
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
         return_new: Literal[False],
+        return_diff: Literal[False] = False,
     ) -> None: ...
+
+    @overload
+    async def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> JsonDict: ...
 
     async def update(
         self,
@@ -690,7 +715,8 @@ class MockDocumentAdapter[
         dto: U,
         *,
         return_new: bool = True,
-    ) -> R | None:
+        return_diff: bool = False,
+    ) -> R | JsonDict | None | tuple[R, JsonDict]:
         patch = pydantic_dump(dto, exclude={"unset": True})
 
         with self.state.lock:
@@ -705,9 +731,23 @@ class MockDocumentAdapter[
             serialized = pydantic_dump(updated)
             self._store()[pk] = serialized
 
+            if diff:
+                write_diff: JsonDict = {**dict(diff), REV_FIELD: updated.rev}
+            else:
+                write_diff = {}
+
         if not return_new:
+            if return_diff:
+                return write_diff
+
             return None
-        return self._to_read(serialized)
+
+        read_result = self._to_read(serialized)
+
+        if return_diff:
+            return read_result, write_diff
+
+        return read_result
 
     # ....................... #
 
@@ -717,6 +757,7 @@ class MockDocumentAdapter[
         updates: Sequence[tuple[UUID, int, U]],
         *,
         return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
     ) -> Sequence[R]: ...
 
     @overload
@@ -724,27 +765,66 @@ class MockDocumentAdapter[
         self,
         updates: Sequence[tuple[UUID, int, U]],
         *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> Sequence[tuple[R, JsonDict]]: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
         return_new: Literal[False],
+        return_diff: Literal[False] = False,
     ) -> None: ...
+
+    @overload
+    async def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> Sequence[JsonDict]: ...
 
     async def update_many(
         self,
         updates: Sequence[tuple[UUID, int, U]],
         *,
         return_new: bool = True,
-    ) -> Sequence[R] | None:
+        return_diff: bool = False,
+    ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         if not updates:
+            if not return_new:
+                return None
+
             return []
+
         pks = [u[0] for u in updates]
         if len(set(pks)) != len(pks):
             raise CoreError("Primary keys must be unique")
+
         if return_new:
+            if return_diff:
+                return [
+                    await self.update(pk, r, dto, return_new=True, return_diff=True)
+                    for pk, r, dto in updates
+                ]
+
             return [
-                await self.update(pk, r, dto, return_new=True)
+                await self.update(pk, r, dto, return_new=True, return_diff=False)
                 for pk, r, dto in updates
             ]
+
+        if return_diff:
+            return [
+                await self.update(pk, r, dto, return_new=False, return_diff=True)
+                for pk, r, dto in updates
+            ]
+
         for pk, r, dto in updates:
             await self.update(pk, r, dto, return_new=False)
+
         return None
 
     # ....................... #

@@ -73,7 +73,7 @@ class TestMongoWriteGateway:
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
         )
-        updated = await gw.update(pk, MyUpdateDoc(name="after"))
+        updated, diff = await gw.update(pk, MyUpdateDoc(name="after"))
 
         assert updated.rev == 2
         assert updated.name == "after"
@@ -81,6 +81,8 @@ class TestMongoWriteGateway:
         update_payload = client.update_one.await_args.args[2]
         assert update_filter == {"_id": str(pk), "rev": 1}
         assert update_payload["$set"]["rev"] == 2
+        assert diff["rev"] == 2
+        assert diff["name"] == "after"
 
     @pytest.mark.asyncio
     async def test_update_tenant_aware_includes_tenant_in_filter(self) -> None:
@@ -138,7 +140,7 @@ class TestMongoWriteGateway:
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
         )
-        updated = await gw.update(pk, MyUpdateDoc(name="after"))
+        updated, _ = await gw.update(pk, MyUpdateDoc(name="after"))
 
         assert updated.name == "after"
         assert client.update_one.await_count == 2

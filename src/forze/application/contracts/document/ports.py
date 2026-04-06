@@ -246,6 +246,7 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         dto: U,
         *,
         return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
     ) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -257,8 +258,35 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         rev: int,
         dto: U,
         *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> Awaitable[tuple[R, JsonDict]]:
+        """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    @overload
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
         return_new: Literal[False],
+        return_diff: Literal[False] = False,
     ) -> Awaitable[None]:
+        """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    @overload
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> Awaitable[JsonDict]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
 
@@ -269,7 +297,8 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         dto: U,
         *,
         return_new: bool = True,
-    ) -> Awaitable[R | None]:
+        return_diff: bool = False,
+    ) -> Awaitable[R | JsonDict | None | tuple[R, JsonDict]]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
 
@@ -281,6 +310,7 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         updates: Sequence[tuple[UUID, int, U]],
         *,
         return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
     ) -> Awaitable[Sequence[R]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -290,8 +320,31 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         self,
         updates: Sequence[tuple[UUID, int, U]],
         *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> Awaitable[Sequence[tuple[R, JsonDict]]]:
+        """Apply partial updates to multiple documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
         return_new: Literal[False],
+        return_diff: Literal[False] = False,
     ) -> Awaitable[None]:
+        """Apply partial updates to multiple documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> Awaitable[Sequence[JsonDict]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
 
@@ -300,7 +353,10 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         updates: Sequence[tuple[UUID, int, U]],
         *,
         return_new: bool = True,
-    ) -> Awaitable[Sequence[R] | None]:
+        return_diff: bool = False,
+    ) -> Awaitable[
+        Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None
+    ]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
 
