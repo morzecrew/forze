@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.base.errors import ConcurrencyError
+from forze.domain.constants import TENANT_ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from forze_mongo.kernel.gateways.write import optimistic_retry
@@ -80,6 +81,36 @@ class TestMongoWriteGateway:
         update_payload = client.update_one.await_args.args[2]
         assert update_filter == {"_id": str(pk), "rev": 1}
         assert update_payload["$set"]["rev"] == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tenant_aware_includes_tenant_in_filter(self) -> None:
+        tid = uuid4()
+        pk = uuid4()
+        current = _domain_doc(pk, rev=1, name="before")
+        after_write = _domain_doc(pk, rev=2, name="after")
+        client = _build_client()
+        client.update_one.return_value = 1
+        read = _build_read(client)
+        read.tenant_aware = True
+        read.get.side_effect = [current, after_write]
+
+        gw = MongoWriteGateway(
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            tenant_aware=True,
+            tenant_provider=lambda: tid,
+        )
+        await gw.update(pk, MyUpdateDoc(name="after"))
+
+        update_filter = client.update_one.await_args.args[1]
+        assert update_filter[TENANT_ID_FIELD] == tid
+        assert update_filter["_id"] == str(pk)
+        assert update_filter["rev"] == 1
 
     @pytest.mark.asyncio
     async def test_update_retries_on_concurrency_error(self) -> None:

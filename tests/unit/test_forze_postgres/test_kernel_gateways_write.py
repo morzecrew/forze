@@ -190,3 +190,30 @@ async def test_kill_many_tenant_aware_raises_when_rowcount_mismatch() -> None:
     client.execute = AsyncMock(return_value=0)
     with pytest.raises(NotFoundError, match="not accessible"):
         await gw.kill_many(pks)
+
+
+@pytest.mark.asyncio
+async def test_update_tenant_aware_includes_tenant_in_where_params() -> None:
+    tid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    pk = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    current = MyDoc(id=pk, rev=1, created_at=ts, last_update_at=ts, name="before")
+
+    gw, client = _build_tenant_aware_gateway()
+    read = gw.read_gw
+    read.get = AsyncMock(return_value=current)
+
+    client.fetch_one = AsyncMock(
+        return_value={
+            "id": pk,
+            "rev": 2,
+            "created_at": ts,
+            "last_update_at": ts,
+            "name": "after",
+        }
+    )
+
+    await gw.update(pk, MyUpdateDoc(name="after"))
+
+    params = client.fetch_one.await_args.args[1]
+    assert tid in params

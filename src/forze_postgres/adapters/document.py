@@ -498,16 +498,31 @@ class PostgresDocumentAdapter(
 
     @overload
     async def update(
-        self, pk: UUID, rev: int, dto: U, *, return_new: Literal[True] = True
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
     ) -> R: ...
 
     @overload
     async def update(
-        self, pk: UUID, rev: int, dto: U, *, return_new: Literal[False]
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
     ) -> None: ...
 
     async def update(
-        self, pk: UUID, rev: int, dto: U, *, return_new: bool = True
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: bool = True,
     ) -> R | None:
         w = self._require_write()
 

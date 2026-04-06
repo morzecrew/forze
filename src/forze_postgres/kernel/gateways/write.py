@@ -337,14 +337,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
             params.append(v)
 
-        params.extend([current.id, current.rev])
+        where_sql = self._where_pk_rev()
+        where_params: list[Any] = [current.id, current.rev]
+        where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
+        params.extend(where_params)
 
         stmt = sql.SQL(
             "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
         ).format(
             table=self.qname.ident(),
             sets=sql.SQL(", ").join(set_parts),
-            where=self._where_pk_rev(),
+            where=where_sql,
             ret=self.return_clause(),
         )
 
@@ -395,6 +398,18 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             params.extend(row_params)
             values_rows.append(row_template)
 
+        where_sql = sql.SQL("t.{pk} = v.{pk} AND t.{rev} = v.{rev}").format(
+            pk=self.ident_pk(),
+            rev=self._ident_rev(),
+        )
+        where_params: list[Any] = []
+        where_sql, where_params = self._add_tenant_where(  # type: ignore[assignment]
+            where_sql,
+            where_params,
+            table_alias="t",
+        )
+        params.extend(where_params)
+
         set_parts = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
 
         stmt = sql.SQL(
@@ -402,7 +417,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             UPDATE {table} AS t
             SET {sets}
             FROM (VALUES {vals}) AS v({cols})
-            WHERE t.{pk} = v.{pk} AND t.{rev} = v.{rev}
+            WHERE {where}
             RETURNING {ret}
             """
         ).format(
@@ -410,8 +425,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             sets=sql.SQL(", ").join(set_parts),
             vals=sql.SQL(", ").join(values_rows),
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
-            pk=self.ident_pk(),
-            rev=self._ident_rev(),
+            where=where_sql,
             ret=self.return_clause(table_alias="t"),
         )
 
@@ -493,6 +507,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     return None
 
                 diff = self.__bump_rev(c, diff)
+
                 return (
                     c.id,
                     c.rev,

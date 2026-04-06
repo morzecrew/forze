@@ -280,9 +280,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         diff = self._bump_rev(current, diff)
         diff = self.adapt_payload_for_write(diff, create=False)
 
+        flt = self._add_tenant_filter(
+            {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
+        )
         matched = await self.client.update_one(
             self.coll(),
-            {"_id": self._storage_pk(current.id), REV_FIELD: current.rev},
+            flt,
             {"$set": self._coerce_query_value(diff)},
         )
 
@@ -340,9 +343,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         for _, current, diff in to_patch:
             bumped = self._bump_rev(current, diff)
             bumped = self.adapt_payload_for_write(bumped, create=False)
+            flt = self._add_tenant_filter(
+                {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
+            )
             operations.append(
                 (
-                    {"_id": self._storage_pk(current.id), REV_FIELD: current.rev},
+                    flt,
                     {"$set": self._coerce_query_value(bumped)},
                 )
             )
@@ -441,7 +447,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         :param pk: Document primary key.
         """
 
-        await self.client.delete_one(self.coll(), {"_id": self._storage_pk(pk)})
+        await self.client.delete_one(
+            self.coll(),
+            self._add_tenant_filter({"_id": self._storage_pk(pk)}),
+        )
 
     # ....................... #
 
@@ -460,7 +469,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         await self.client.delete_many(
             self.coll(),
-            {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}},
+            self._add_tenant_filter(
+                {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}}
+            ),
         )
 
     # ....................... #
