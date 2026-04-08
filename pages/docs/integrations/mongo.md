@@ -160,10 +160,10 @@ See [Query Syntax](../core-package/query-syntax.md).
 
 ## Transactions
 
-MongoDB transactions require a replica set or sharded cluster. Within `ctx.transaction()`, operations share a session when using the registered tx route.
+MongoDB transactions require a replica set or sharded cluster. Within `ctx.transaction("default")`, operations share a session when using the registered tx route.
 
     :::python
-    async with ctx.transaction():
+    async with ctx.transaction("default"):
         await doc_c.create(CreateProjectCmd(title="In transaction"))
         await doc_c.update(existing_id, UpdateProjectCmd(title="Also in tx"))
 

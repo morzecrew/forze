@@ -86,7 +86,7 @@ Create your own adapter that wraps the Temporal Python SDK client:
 Create a dependency module that registers your adapter under a custom key, then resolve it from `ExecutionContext`:
 
     :::python
-    from forze.application.contracts.deps import DepKey
+    from forze.application.contracts.base import DepKey
     from forze.application.execution import Deps
 
     WorkflowDepKey = DepKey[WorkflowPort]("workflow")

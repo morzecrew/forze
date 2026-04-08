@@ -168,21 +168,14 @@ Both ports also have `*_many` batch variants for all applicable operations.
 | `start(name, id, args, queue?)` | Start a workflow instance |
 | `signal(id, signal, data)` | Send a signal to a running workflow |
 
-### Context ports
+### Context handling
 
-**`TenantContextPort`**: ambient tenant identity for multi-tenant routing:
+Forze tracks request identity through `ExecutionContext`:
 
-| Method | Purpose |
-|--------|---------|
-| `get()` | Return current tenant ID |
-| `set(tenant_id)` | Bind tenant for the current context |
+- `CallContext` (`execution_id`, `correlation_id`, optional `causation_id`)
+- `PrincipalContext` (optional `tenant_id`, `actor_id`)
 
-**`ActorContextPort`**: ambient actor identity for audit trails:
-
-| Method | Purpose |
-|--------|---------|
-| `get()` | Return current actor ID |
-| `set(actor_id)` | Bind actor for the current context |
+These are bound at the application boundary (for example, in HTTP middleware) via `ctx.bind_call(...)`.
 
 ## Dependency keys
 

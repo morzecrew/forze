@@ -23,7 +23,7 @@ Ports are resolved at runtime via `ExecutionContext`, never imported directly fr
 A typed key that identifies a dependency in the container:
 
     :::python
-    from forze.application.contracts.deps import DepKey
+    from forze.application.contracts.base import DepKey
 
     MyServiceKey = DepKey[MyService]("my_service")
 
@@ -41,9 +41,7 @@ Protocol for a dependency container:
 | `without(key)` | Return a new container without the given key |
 | `empty()` | Check if the container has no dependencies |
 
-### DepRouter
-
-Generic router that selects a dependency provider based on a spec. Used by integration modules to map multiple adapters (e.g. Postgres for some specs, Mongo for others) under a single dep key.
+Routed dependency selection is built into `Deps` itself and resolved via `provide(key, route=...)`.
 
 ## Document storage
 
@@ -428,31 +426,10 @@ Orchestrate long-running processes:
 | `start` | `(name, id, args, queue?)` | Start a workflow instance |
 | `signal` | `(id, signal, data)` | Send a signal to a running workflow |
 
-## Context ports
+## Context handling
 
-### ActorContextPort
-
-Ambient actor identity for audit trails:
-
-| Method | Purpose |
-|--------|---------|
-| `get()` | Return current actor UUID |
-| `set(actor_id)` | Bind actor for the current context |
-
-### TenantContextPort
-
-Ambient tenant identity for multi-tenant routing:
-
-| Method | Purpose |
-|--------|---------|
-| `get()` | Return current tenant UUID |
-| `set(tenant_id)` | Bind tenant for the current context |
-
-### Dependency keys
-
-| Key | Purpose |
-|-----|---------|
-| `TenantContextDepKey` | Tenant context port |
+Execution identity is represented by `CallContext` and `PrincipalContext` on `ExecutionContext`.
+`PrincipalContext` contains optional `tenant_id` and `actor_id`, bound at the boundary via `ctx.bind_call(...)`.
 
 ## Resolving ports
 

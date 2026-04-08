@@ -32,7 +32,7 @@ When `DocumentSpec.cache` is set, `doc_query()` and `doc_command()` resolve `ctx
 `transaction()` returns an async context manager that scopes a transaction:
 
     :::python
-    async with ctx.transaction():
+    async with ctx.transaction("default"):
         doc = ctx.doc_command(project_spec)
         await doc.create(CreateProjectCmd(title="New"))
         await doc.create(CreateProjectCmd(title="Another"))
@@ -41,12 +41,12 @@ When `DocumentSpec.cache` is set, `doc_query()` and `doc_command()` resolve `ctx
 Nested calls reuse the same transaction. Savepoints are used when the backend supports them:
 
     :::python
-    async with ctx.transaction():
+    async with ctx.transaction("default"):
         # outer transaction
-        async with ctx.transaction():
+        async with ctx.transaction("default"):
             # nested: same transaction, savepoint
 
-`active_tx()` returns the current `TxHandle` or `None` when no transaction is active. The context also validates that ports resolved inside a transaction match the active transaction scope — mixing different transaction managers (e.g. Postgres and Mongo) raises `CoreError`.
+The context validates that ports resolved inside a transaction match the active transaction scope — mixing different transaction managers (e.g. Postgres and Mongo) raises `CoreError`.
 
 ### Cycle detection
 
@@ -59,7 +59,7 @@ Nested calls reuse the same transaction. Savepoints are used when the backend su
 A typed key identifying a dependency. Used for both registration (in dep modules) and resolution (via `ctx.dep(key)`):
 
     :::python
-    from forze.application.contracts.deps import DepKey
+    from forze.application.contracts.base import DepKey
 
     MyClientKey = DepKey[MyClient]("my_client")
 

@@ -65,8 +65,8 @@ The `in_tx_*` and `after_commit` buckets only activate when `tx=True` for the op
 
     plan = (
         UsecasePlan()
-        .tx("create")
-        .tx("update")
+        .tx("create", route="default")
+        .tx("update", route="default")
         .before("create", auth_guard, priority=100)
         .after("create", log_effect, priority=0)
         .after_commit("create", notify_effect)
@@ -84,7 +84,6 @@ Middlewares within a bucket are sorted by priority (descending). Higher priority
 Multiple plans can be merged for modular composition:
 
     :::python
-    base_plan = tx_document_plan
     auth_plan = build_auth_plan()
     audit_plan = build_audit_plan()
 
@@ -109,7 +108,6 @@ For document aggregates, Forze provides a pre-built composition layer:
         DocumentDTOs,
         DocumentUsecasesFacade,
         build_document_registry,
-        tx_document_plan,
     )
 
     project_dtos = DocumentDTOs(
@@ -119,11 +117,11 @@ For document aggregates, Forze provides a pre-built composition layer:
     )
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry.extend_plan(tx_document_plan, inplace=True)
 
 `build_document_registry(spec, dtos)` registers standard usecase factories for all `DocumentOperation` variants.
 
-`tx_document_plan` is a pre-built `UsecasePlan` with transaction wrapping for all operations.
+Transaction middleware is composed explicitly with `UsecasePlan` and merged into the registry when needed.
+
 
 Create a facade from an execution context and the registry:
 
@@ -154,8 +152,8 @@ Add custom middleware to the default plan:
     :::python
     from forze.application.composition.document import (
         DocumentOperation,
-        tx_document_plan,
     )
+    from forze.application.execution import UsecasePlan
 
 
     def my_auth_guard(ctx):
@@ -166,7 +164,7 @@ Add custom middleware to the default plan:
 
 
     plan = (
-        tx_document_plan
+        UsecasePlan()
         .before(DocumentOperation.CREATE, my_auth_guard, priority=100)
         .before(DocumentOperation.UPDATE, my_auth_guard, priority=100)
         .after_commit(DocumentOperation.CREATE, my_notification_effect)
@@ -210,7 +208,7 @@ Each `MappingStep` can inject computed fields (like `number_id` from a counter o
 You can register entirely custom usecases alongside the standard ones:
 
     :::python
-    from forze.application.execution import Usecase, UsecaseRegistry
+    from forze.application.execution import Usecase, UsecasePlan, UsecaseRegistry
 
 
     class ArchiveProject(Usecase[UUID, ProjectReadModel]):
@@ -223,8 +221,8 @@ You can register entirely custom usecases alongside the standard ones:
     registry = registry.register("archive", lambda ctx: ArchiveProject(ctx=ctx))
 
     plan = (
-        tx_document_plan
-        .tx("archive")
+        UsecasePlan()
+        .tx("archive", route="default")
         .before("archive", auth_guard, priority=100)
     )
 

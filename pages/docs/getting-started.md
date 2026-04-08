@@ -161,7 +161,6 @@ Build a registry that wires usecase factories for the spec, attach document rout
     from forze.application.composition.document import (
         DocumentDTOs,
         build_document_registry,
-        tx_document_plan,
     )
     from forze_fastapi.endpoints.document import attach_document_endpoints
 
@@ -176,7 +175,6 @@ Build a registry that wires usecase factories for the spec, attach document rout
     )
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry.extend_plan(tx_document_plan, inplace=True)
 
 
     def context_dependency():
@@ -264,7 +262,6 @@ Optionally add a history table for audit trails:
     from forze.application.composition.document import (
         DocumentDTOs,
         build_document_registry,
-        tx_document_plan,
     )
     from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
@@ -376,7 +373,6 @@ Optionally add a history table for audit trails:
     )
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry.extend_plan(tx_document_plan, inplace=True)
 
     attach_document_endpoints(
         projects_router,
