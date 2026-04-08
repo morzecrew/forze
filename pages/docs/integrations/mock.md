@@ -107,7 +107,6 @@ Replace real infrastructure modules with mock for local development or testing:
     from forze.application.composition.document import (
         DocumentDTOs,
         build_document_registry,
-        tx_document_plan,
     )
     from fastapi import APIRouter
 
@@ -125,7 +124,6 @@ Replace real infrastructure modules with mock for local development or testing:
     )
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry.extend_plan(tx_document_plan, inplace=True)
 
     projects_router = APIRouter(prefix="/projects", tags=["projects"])
     attach_document_endpoints(

@@ -79,7 +79,7 @@ Full control over the chain — receives `next` and `args`:
 |-------|---------|
 | `GuardMiddleware[Args, R]` | Wraps a `Guard`: runs it before `next(args)` |
 | `EffectMiddleware[Args, R]` | Wraps an `Effect`: runs it after `next(args)` |
-| `TxMiddleware[Args, R]` | Wraps `next` inside `ctx.transaction()`; supports after-commit effects |
+| `TxMiddleware[Args, R]` | Wraps `next` inside `ctx.transaction("default")`; supports after-commit effects |
 
 ### TxMiddleware
 
@@ -115,8 +115,8 @@ Declares how each operation is composed with middleware. Maps operation keys to 
 
     plan = (
         UsecasePlan()
-        .tx("create")
-        .tx("update")
+        .tx("create", route="default")
+        .tx("update", route="default")
         .before("create", auth_guard_factory, priority=100)
         .after("create", log_effect_factory, priority=0)
         .after_commit("create", notify_factory)
@@ -168,7 +168,7 @@ Within a bucket, middlewares are sorted by priority (descending). Higher priorit
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `tx(op)` | `(OpKey) -> Self` | Enable transaction wrapping |
+| `tx(op, *, route)` | `(OpKey, route) -> Self` | Enable transaction wrapping |
 | `before(op, guard, *, priority=0)` | `(OpKey, GuardFactory, priority) -> Self` | Add to `outer_before` |
 | `after(op, effect, *, priority=0)` | `(OpKey, EffectFactory, priority) -> Self` | Add to `outer_after` |
 | `wrap(op, mw, *, priority=0)` | `(OpKey, MiddlewareFactory, priority) -> Self` | Add to `outer_wrap` |
@@ -190,7 +190,6 @@ Factory types:
 Multiple plans can be merged for modular composition:
 
     :::python
-    base_plan = tx_document_plan
     auth_plan = build_auth_plan()
     audit_plan = build_audit_plan()
 

@@ -64,7 +64,6 @@ Default paths (each can be overridden or disabled via the `endpoints` argument; 
     from forze.application.composition.document import (
         DocumentDTOs,
         build_document_registry,
-        tx_document_plan,
     )
     from forze_fastapi.endpoints.document import attach_document_endpoints
 
@@ -78,7 +77,6 @@ Default paths (each can be overridden or disabled via the `endpoints` argument; 
     )
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry.extend_plan(tx_document_plan, inplace=True)
 
     attach_document_endpoints(
         projects_router,
@@ -221,7 +219,6 @@ This ensures infrastructure clients are connected during the application lifetim
     from forze.application.composition.document import (
         DocumentDTOs,
         build_document_registry,
-        tx_document_plan,
     )
     from forze.application.composition.search import (
         SearchDTOs,
@@ -291,7 +288,6 @@ This ensures infrastructure clients are connected during the application lifetim
         update=UpdateProjectCmd,
     )
     doc_registry = build_document_registry(project_spec, project_dtos)
-    doc_registry.extend_plan(tx_document_plan, inplace=True)
 
     doc_router = APIRouter(prefix="/projects", tags=["projects"])
     attach_document_endpoints(

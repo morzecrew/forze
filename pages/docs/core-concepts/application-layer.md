@@ -114,7 +114,7 @@ Built-in middleware implementations:
 |-------|---------|
 | `GuardMiddleware` | Wraps a `Guard`: runs it before `next` |
 | `EffectMiddleware` | Wraps an `Effect`: runs it after `next` |
-| `TxMiddleware` | Wraps `next` inside `ctx.transaction()`, supports after-commit effects |
+| `TxMiddleware` | Wraps `next` inside `ctx.transaction("default")`, supports after-commit effects |
 
 ## Execution runtime
 
@@ -198,7 +198,6 @@ Forze ships built-in usecases for standard document CRUD:
 | `LIST` | `TypedListDocuments` | `tL` (list request) | `Paginated[R]` |
 | `RAW_LIST` | `RawListDocuments` | `rL` (raw list request) | `RawPaginated` |
 
-These are wired automatically by `build_document_registry()` and composed with middleware via `tx_document_plan`.
 
 ## Facades
 
@@ -209,7 +208,6 @@ A `DocumentUsecasesFacade` ties together an execution context and a registry. It
         DocumentDTOs,
         DocumentUsecasesFacade,
         build_document_registry,
-        tx_document_plan,
     )
 
     project_dtos = DocumentDTOs(
@@ -219,7 +217,6 @@ A `DocumentUsecasesFacade` ties together an execution context and a registry. It
     )
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry.extend_plan(tx_document_plan, inplace=True)
 
     facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
     project = await facade.create(CreateProjectCmd(title="New"))

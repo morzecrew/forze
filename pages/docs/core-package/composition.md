@@ -37,14 +37,23 @@ The registry includes factories for all `DocumentOperation` variants:
 
 `DELETE` and `RESTORE` are only registered when the domain model supports soft deletion. `UPDATE` is only registered when the spec supports update.
 
-### tx_document_plan
-
-A pre-built `UsecasePlan` with transaction wrapping for all operations:
+If you need transaction middleware, compose a `UsecasePlan` explicitly and extend the registry:
 
     :::python
-    from forze.application.composition.document import tx_document_plan
+    from forze.application.composition.document import DocumentOperation
+    from forze.application.execution import UsecasePlan
 
-    registry.extend_plan(tx_document_plan, inplace=True)
+    document_plan = (
+        UsecasePlan()
+        .tx(DocumentOperation.CREATE, route="default")
+        .tx(DocumentOperation.UPDATE, route="default")
+        .tx(DocumentOperation.KILL, route="default")
+        .tx(DocumentOperation.DELETE, route="default")
+        .tx(DocumentOperation.RESTORE, route="default")
+    )
+
+    registry = registry.extend_plan(document_plan)
+
 
 ### DocumentUsecasesFacade
 
@@ -91,8 +100,6 @@ An attrs class mapping DTO types for a document aggregate:
 | `read` | `type[ReadDocument]` | Yes |
 | `create` | `type[BaseDTO]` | No |
 | `update` | `type[BaseDTO]` | No |
-| `list` | `type[ListRequestDTO]` | No |
-| `raw_list` | `type[RawListRequestDTO]` | No |
 
 ### Extending document composition
 
@@ -102,12 +109,13 @@ Add custom middleware to the default plan or register custom operations:
     from forze.application.composition.document import (
         DocumentOperation,
         build_document_registry,
-        tx_document_plan,
     )
+    from forze.application.execution import UsecasePlan
 
     # Custom middleware
     plan = (
-        tx_document_plan
+        UsecasePlan()
+        .tx(DocumentOperation.CREATE, route="default")
         .before(DocumentOperation.CREATE, auth_guard, priority=100)
         .after_commit(DocumentOperation.CREATE, notify_effect)
     )
@@ -119,7 +127,7 @@ Add custom middleware to the default plan or register custom operations:
         lambda ctx: ArchiveProject(ctx=ctx),
     )
 
-    plan = plan.tx("archive").before("archive", auth_guard, priority=100)
+    plan = plan.tx("archive", route="default").before("archive", auth_guard, priority=100)
 
 ### UpdateArgs and SoftDeleteArgs
 
@@ -313,7 +321,6 @@ A complete example wiring document and search composition:
         DocumentDTOs,
         DocumentUsecasesFacade,
         build_document_registry,
-        tx_document_plan,
     )
     from forze.application.composition.search import (
         SearchDTOs,
@@ -328,7 +335,6 @@ A complete example wiring document and search composition:
         update=UpdateProjectCmd,
     )
     doc_registry = build_document_registry(project_spec, project_dtos)
-    doc_registry.extend_plan(tx_document_plan, inplace=True)
 
     # Search registry
     search_dtos = SearchDTOs(read=ProjectRead)

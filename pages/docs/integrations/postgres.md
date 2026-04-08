@@ -212,10 +212,10 @@ The Postgres adapter uses `psycopg` async connections with context-variable scop
 Nested `transaction()` calls create savepoints:
 
     :::python
-    async with ctx.transaction():
+    async with ctx.transaction("default"):
         await doc_c.create(cmd_1)
 
-        async with ctx.transaction():
+        async with ctx.transaction("default"):
             await doc_c.create(cmd_2)
 
 If the inner block raises, only the savepoint is rolled back.
