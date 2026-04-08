@@ -9,10 +9,10 @@ from ...kernel.gateways import PostgresBookkeepingStrategy
 # ----------------------- #
 
 
-class _BasePostgresConfig(TypedDict):
+class _BasePostgresConfig(TypedDict, total=False):
     """Base configuration for a Postgres resource."""
 
-    tenant_aware: NotRequired[bool]
+    tenant_aware: bool
     """Whether the resource is tenant-aware."""
 
 

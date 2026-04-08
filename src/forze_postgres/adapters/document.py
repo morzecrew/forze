@@ -1,13 +1,12 @@
 """Postgres adapter implementing the document read/write port contracts."""
 
-from functools import cached_property
-
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
 
 # ....................... #
 
+from functools import cached_property
 from typing import Literal, Sequence, TypeVar, final, overload
 from uuid import UUID
 

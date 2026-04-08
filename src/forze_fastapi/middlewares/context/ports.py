@@ -13,27 +13,22 @@ from forze.application.execution import CallContext, PrincipalContext
 # ----------------------- #
 
 
-class CallContextResolverPort(Protocol):
-    """Resolve the call context from the FastAPI request."""
+class CallContextCodecPort(Protocol):
+    """Codec for encoding and decoding the call context."""
 
-    def resolve(self, request: Request) -> CallContext: ...
+    def decode(self, request: Request) -> CallContext: ...
 
-
-# ....................... #
-
-
-class CallContextInjectorPort(Protocol):
-    """Inject the call context headers into the FastAPI response."""
-
-    def inject(
-        self, headers: list[tuple[bytes, bytes]], ctx: CallContext
+    def encode(
+        self,
+        headers: list[tuple[bytes, bytes]],
+        ctx: CallContext,
     ) -> list[tuple[bytes, bytes]]: ...
 
 
 # ....................... #
 
 
-class PrincipalContextResolverPort(Protocol):
-    """Resolve the principal context from the FastAPI request."""
+class PrincipalContextCodecPort(Protocol):
+    """Codec for decoding the principal context."""
 
-    def resolve(self, request: Request) -> PrincipalContext | None: ...
+    def decode(self, request: Request) -> PrincipalContext | None: ...

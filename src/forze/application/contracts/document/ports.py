@@ -1,6 +1,7 @@
 """Ports for document storage and retrieval"""
 
 from typing import (
+    Any,
     Awaitable,
     Literal,
     Protocol,
@@ -15,6 +16,7 @@ from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..query import QueryFilterExpression, QuerySortExpression
+from .specs import DocumentSpec
 
 # ----------------------- #
 
@@ -26,8 +28,23 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+class BaseDocumentPort[
+    R: ReadDocument,
+    D: Document,
+    C: CreateDocumentCmd,
+    U: BaseDTO,
+](Protocol):
+    """Base port for document storage and retrieval."""
+
+    spec: DocumentSpec[R, D, C, U]
+    """Document specification."""
+
+
+# ....................... #
+
+
 @runtime_checkable
-class DocumentQueryPort[R](Protocol):
+class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Protocol):
     """Query operations for document aggregates."""
 
     @overload
@@ -188,7 +205,12 @@ class DocumentQueryPort[R](Protocol):
 
 
 @runtime_checkable
-class DocumentCommandPort[R, D, C, U](Protocol):
+class DocumentCommandPort[
+    R: ReadDocument,
+    D: Document,
+    C: CreateDocumentCmd,
+    U: BaseDTO,
+](BaseDocumentPort[R, D, C, U], Protocol):
     """Command operations for document aggregates."""
 
     @overload

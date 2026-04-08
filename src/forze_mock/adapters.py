@@ -29,7 +29,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.counter import CounterPort
-from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentQueryPort,
+    DocumentSpec,
+)
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.pubsub import (
     PubSubCommandPort,
@@ -396,6 +400,7 @@ class MockDocumentAdapter[
 ):
     """In-memory document adapter with filter/sort/projection support."""
 
+    spec: DocumentSpec[R, D, C, U]
     state: MockState
     namespace: str
     read_model: type[R]
@@ -980,9 +985,7 @@ class MockDocumentAdapter[
         if not deletes:
             return []
         if return_new:
-            return [
-                await self.delete(pk, r, return_new=True) for pk, r in deletes
-            ]
+            return [await self.delete(pk, r, return_new=True) for pk, r in deletes]
         for pk, r in deletes:
             await self.delete(pk, r, return_new=False)
         return None
@@ -1062,9 +1065,7 @@ class MockDocumentAdapter[
         if not restores:
             return []
         if return_new:
-            return [
-                await self.restore(pk, r, return_new=True) for pk, r in restores
-            ]
+            return [await self.restore(pk, r, return_new=True) for pk, r in restores]
         for pk, r in restores:
             await self.restore(pk, r, return_new=False)
         return None

@@ -10,6 +10,8 @@ from uuid import uuid4
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
+    DocumentSpec,
+    DocumentWriteTypes,
 )
 from forze.application.contracts.query import QueryFilterExpression
 from forze.base.errors import NotFoundError
@@ -23,7 +25,17 @@ from forze_mock.adapters import MockDocumentAdapter
 
 def _document_adapter() -> MockDocumentAdapter:
     """Create a MockDocumentAdapter for tests."""
+    spec = DocumentSpec(
+        name="test",
+        read=ReadDocument,
+        write=DocumentWriteTypes(
+            domain=Document,
+            create_cmd=CreateDocumentCmd,
+            update_cmd=BaseDTO,
+        ),
+    )
     return MockDocumentAdapter(
+        spec=spec,
         state=MockState(),
         namespace="test",
         read_model=ReadDocument,
@@ -52,7 +64,17 @@ def _document_adapter_with_title() -> MockDocumentAdapter:
     class ReadWithTitle(ReadDocument):
         title: str = ""
 
+    spec = DocumentSpec(
+        name="test_title",
+        read=ReadWithTitle,
+        write=DocumentWriteTypes(
+            domain=DocWithTitle,
+            create_cmd=_CreateWithTitle,
+            update_cmd=_UpdateTitle,
+        ),
+    )
     return MockDocumentAdapter(
+        spec=spec,
         state=MockState(),
         namespace="test_title",
         read_model=ReadWithTitle,
@@ -244,7 +266,17 @@ class TestDocumentCommandPortViaMock:
             pass
 
         state = MockState()
+        spec = DocumentSpec(
+            name="test_soft",
+            read=DocWithSoftDelete,
+            write=DocumentWriteTypes(
+                domain=DocWithSoftDelete,
+                create_cmd=CreateDocumentCmd,
+                update_cmd=BaseDTO,
+            ),
+        )
         port = MockDocumentAdapter(
+            spec=spec,
             state=state,
             namespace="test_soft",
             read_model=DocWithSoftDelete,
@@ -268,7 +300,17 @@ class TestDocumentCommandPortViaMock:
             pass
 
         state = MockState()
+        spec = DocumentSpec(
+            name="test_soft2",
+            read=DocWithSoftDelete,
+            write=DocumentWriteTypes(
+                domain=DocWithSoftDelete,
+                create_cmd=CreateDocumentCmd,
+                update_cmd=BaseDTO,
+            ),
+        )
         port = MockDocumentAdapter(
+            spec=spec,
             state=state,
             namespace="test_soft2",
             read_model=DocWithSoftDelete,
@@ -289,7 +331,17 @@ class TestDocumentCommandPortViaMock:
             pass
 
         state = MockState()
+        spec = DocumentSpec(
+            name="test_soft3",
+            read=DocWithSoftDelete,
+            write=DocumentWriteTypes(
+                domain=DocWithSoftDelete,
+                create_cmd=CreateDocumentCmd,
+                update_cmd=BaseDTO,
+            ),
+        )
         port = MockDocumentAdapter(
+            spec=spec,
             state=state,
             namespace="test_soft3",
             read_model=DocWithSoftDelete,
@@ -312,7 +364,17 @@ class TestDocumentCommandPortViaMock:
             pass
 
         state = MockState()
+        spec = DocumentSpec(
+            name="test_soft4",
+            read=DocWithSoftDelete,
+            write=DocumentWriteTypes(
+                domain=DocWithSoftDelete,
+                create_cmd=CreateDocumentCmd,
+                update_cmd=BaseDTO,
+            ),
+        )
         port = MockDocumentAdapter(
+            spec=spec,
             state=state,
             namespace="test_soft4",
             read_model=DocWithSoftDelete,
@@ -412,7 +474,17 @@ class TestDocumentCommandReturnNewViaMock:
         class DocWithSoftDelete(Document, SoftDeletionMixin):
             pass
 
+        spec = DocumentSpec(
+            name="test_rn",
+            read=DocWithSoftDelete,
+            write=DocumentWriteTypes(
+                domain=DocWithSoftDelete,
+                create_cmd=CreateDocumentCmd,
+                update_cmd=BaseDTO,
+            ),
+        )
         port = MockDocumentAdapter(
+            spec=spec,
             state=MockState(),
             namespace="test_rn",
             read_model=DocWithSoftDelete,
@@ -433,7 +505,17 @@ class TestDocumentCommandReturnNewViaMock:
         class DocWithSoftDelete(Document, SoftDeletionMixin):
             pass
 
+        spec = DocumentSpec(
+            name="test_rn2",
+            read=DocWithSoftDelete,
+            write=DocumentWriteTypes(
+                domain=DocWithSoftDelete,
+                create_cmd=CreateDocumentCmd,
+                update_cmd=BaseDTO,
+            ),
+        )
         port = MockDocumentAdapter(
+            spec=spec,
             state=MockState(),
             namespace="test_rn2",
             read_model=DocWithSoftDelete,

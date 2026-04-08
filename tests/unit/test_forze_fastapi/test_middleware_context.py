@@ -1,4 +1,4 @@
-"""Unit tests for context middleware and default call-context helpers."""
+"""Unit tests for context middleware and default call-context codec."""
 
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 from forze.application.execution import CallContext, ExecutionContext, PrincipalContext
 from forze_mock import MockDepsModule, MockState
 
-from forze_fastapi.middlewares.context.defaults import DefaultCallContextResolverInjector
+from forze_fastapi.middlewares.context.defaults import DefaultCallContextCodec
 from forze_fastapi.middlewares.context.middleware import ContextBindingMiddleware
 
 # ----------------------- #
@@ -20,12 +20,12 @@ def _execution_ctx() -> ExecutionContext:
     return ExecutionContext(deps=MockDepsModule(state=MockState())())
 
 
-class TestDefaultCallContextResolverInjector:
-    """Tests for :class:`DefaultCallContextResolverInjector`."""
+class TestDefaultCallContextCodec:
+    """Tests for :class:`DefaultCallContextCodec`."""
 
-    def test_resolve_generates_ids_when_headers_missing(self) -> None:
+    def test_decode_generates_ids_when_headers_missing(self) -> None:
         """Without correlation headers, new UUIDs are used."""
-        inj = DefaultCallContextResolverInjector()
+        codec = DefaultCallContextCodec()
         req = Request(
             {
                 "type": "http",
@@ -34,16 +34,16 @@ class TestDefaultCallContextResolverInjector:
                 "headers": [],
             }
         )
-        ctx = inj.resolve(req)
+        ctx = codec.decode(req)
         assert isinstance(ctx.execution_id, UUID)
         assert isinstance(ctx.correlation_id, UUID)
         assert ctx.causation_id is None
 
-    def test_resolve_reads_correlation_and_causation_headers(self) -> None:
+    def test_decode_reads_correlation_and_causation_headers(self) -> None:
         """Valid UUID headers are parsed."""
         corr = uuid4()
         caus = uuid4()
-        inj = DefaultCallContextResolverInjector()
+        codec = DefaultCallContextCodec()
         req = Request(
             {
                 "type": "http",
@@ -55,28 +55,28 @@ class TestDefaultCallContextResolverInjector:
                 ],
             }
         )
-        ctx = inj.resolve(req)
+        ctx = codec.decode(req)
         assert ctx.correlation_id == corr
         assert ctx.causation_id == caus
 
-    def test_inject_adds_execution_and_correlation_headers(self) -> None:
+    def test_encode_adds_execution_and_correlation_headers(self) -> None:
         """Response headers include execution and correlation ids."""
-        inj = DefaultCallContextResolverInjector()
+        codec = DefaultCallContextCodec()
         ctx = CallContext(
             execution_id=uuid4(),
             correlation_id=uuid4(),
             causation_id=None,
         )
         headers: list[tuple[bytes, bytes]] = []
-        out = inj.inject(headers, ctx)
+        out = codec.encode(headers, ctx)
 
         keys = {k.decode().lower() for k, _ in out}
         assert "x-request-id" in keys
         assert "x-correlation-id" in keys
 
-    def test_inject_includes_causation_when_set(self) -> None:
+    def test_encode_includes_causation_when_set(self) -> None:
         """Causation header is added when causation_id is not None."""
-        inj = DefaultCallContextResolverInjector()
+        codec = DefaultCallContextCodec()
         caus = uuid4()
         ctx = CallContext(
             execution_id=uuid4(),
@@ -84,7 +84,7 @@ class TestDefaultCallContextResolverInjector:
             causation_id=caus,
         )
         headers: list[tuple[bytes, bytes]] = []
-        out = inj.inject(headers, ctx)
+        out = codec.encode(headers, ctx)
 
         keys = {k.decode().lower(): v.decode() for k, v in out}
         assert "x-causation-id" in keys
@@ -106,7 +106,7 @@ class TestContextBindingMiddleware:
         await send({"type": "http.response.body", "body": b"ok"})  # type: ignore[misc]
 
     def test_injects_call_context_headers_on_http_response(self) -> None:
-        """HTTP responses get call-context headers from the injector."""
+        """HTTP responses get call-context headers from the codec."""
         ctx = _execution_ctx()
         mw = ContextBindingMiddleware(self._ok_app, ctx_dep=lambda: ctx)
         client = TestClient(mw)
@@ -116,27 +116,27 @@ class TestContextBindingMiddleware:
         assert "x-request-id" in response.headers
         assert "x-correlation-id" in response.headers
 
-    def test_principal_resolver_invoked_when_configured(self) -> None:
-        """Optional principal resolver is called for HTTP requests."""
+    def test_principal_codec_invoked_when_configured(self) -> None:
+        """Optional principal codec is called for HTTP requests."""
 
-        class _Principal:
+        class _PrincipalCodec:
             called = False
 
-            def resolve(self, request: Request) -> PrincipalContext | None:
+            def decode(self, request: Request) -> PrincipalContext | None:
                 self.called = True
                 return None
 
-        principal = _Principal()
+        principal_codec = _PrincipalCodec()
         ctx = _execution_ctx()
         mw = ContextBindingMiddleware(
             self._ok_app,
             ctx_dep=lambda: ctx,
-            principal_ctx_resolver=principal,
+            principal_ctx_codec=principal_codec,
         )
         client = TestClient(mw)
         client.get("/")
 
-        assert principal.called is True
+        assert principal_codec.called is True
 
     @pytest.mark.asyncio
     async def test_non_http_scope_passthrough(self) -> None:

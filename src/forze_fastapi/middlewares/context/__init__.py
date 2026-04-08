@@ -1,17 +1,12 @@
-from .defaults import DefaultCallContextResolverInjector
+from .defaults import DefaultCallContextCodec
 from .middleware import ContextBindingMiddleware
-from .ports import (
-    CallContextInjectorPort,
-    CallContextResolverPort,
-    PrincipalContextResolverPort,
-)
+from .ports import CallContextCodecPort, PrincipalContextCodecPort
 
 # ----------------------- #
 
 __all__ = [
     "ContextBindingMiddleware",
-    "CallContextResolverPort",
-    "CallContextInjectorPort",
-    "PrincipalContextResolverPort",
-    "DefaultCallContextResolverInjector",
+    "CallContextCodecPort",
+    "PrincipalContextCodecPort",
+    "DefaultCallContextCodec",
 ]
