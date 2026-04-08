@@ -57,36 +57,34 @@ Every aggregate starts with four model types: a **domain model**, a **read model
 
 ## Step 2: Declare a document specification
 
-The specification is the single source of truth that binds your models to storage relations. Adapters read it to configure themselves.
+The kernel spec names your aggregate and wires model types. **Table names and Redis key prefixes** are configured separately on `PostgresDepsModule` / `RedisDepsModule` under the same logical `name` — see [Specs and infrastructure wiring](core-concepts/specs-and-wiring.md).
 
     :::python
     from datetime import timedelta
 
+    from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 
 
     project_spec = DocumentSpec(
-        namespace="projects",
-        read={"source": "public.projects", "model": ProjectReadModel},
+        name="projects",
+        read=ProjectReadModel,
         write={
-            "source": "public.projects",
-            "models": {
-                "domain": Project,
-                "create_cmd": CreateProjectCmd,
-                "update_cmd": UpdateProjectCmd,
-            },
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
         },
-        history={"source": "public.projects_history"},
-        cache={"enabled": True, "ttl": timedelta(minutes=5)},
+        history_enabled=True,
+        cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
     )
 
 | Field | Purpose |
 |-------|---------|
-| `namespace` | Cache key prefix and logical name for the aggregate |
-| `read` | Source relation and model type used for queries |
-| `write` | Source relation and model types used for mutations |
-| `history` | Optional source relation for revision audit trail |
-| `cache` | Optional cache settings (enable flag, TTL) |
+| `name` | Logical id — must match keys in `PostgresDepsModule` / `RedisDepsModule` maps |
+| `read` | Read model type (`ReadDocument` subclass) |
+| `write` | Domain + command types, or omit for read-only |
+| `history_enabled` | Whether revision history is stored when infra provides a history relation |
+| `cache` | Optional `CacheSpec` — same `name` as a Redis cache route |
 
 ## Step 3: Wire the runtime
 
@@ -118,10 +116,21 @@ The runtime has two parts: a **dependency plan** that assembles the container an
 
     postgres_module = PostgresDepsModule(
         client=postgres_client,
-        rev_bump_strategy="database",
-        history_write_strategy="database",
+        rw_documents={
+            "projects": {
+                "read": ("public", "projects"),
+                "write": ("public", "projects"),
+                "bookkeeping_strategy": "database",
+                "history": ("public", "projects_history"),
+            },
+        },
+        tx={"default"},
     )
-    redis_module = RedisDepsModule(client=redis_client)
+    redis_module = RedisDepsModule(
+        client=redis_client,
+        caches={"projects": {"namespace": "app:projects"}},
+        idempotency={"default": {"namespace": "app:idempotency"}},
+    )
 
     deps_plan = DepsPlan.from_modules(
         lambda: Deps.merge(postgres_module(), redis_module()),
@@ -215,7 +224,7 @@ The document table must include core fields expected by the domain model. Column
         description text        NOT NULL
     );
 
-When using `rev_bump_strategy="database"`, add a trigger that increments `rev` on every update:
+When `PostgresDocumentConfig` uses `bookkeeping_strategy="database"`, add a trigger that increments `rev` on every update:
 
     :::sql
     CREATE OR REPLACE FUNCTION bump_rev()
@@ -257,6 +266,7 @@ Optionally add a history table for audit trails:
         build_document_registry,
         tx_document_plan,
     )
+    from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
     from forze.application.execution import (
         Deps,
@@ -308,21 +318,15 @@ Optionally add a history table for audit trails:
 
 
     project_spec = DocumentSpec(
-        namespace="projects",
-        read={
-            "source": "public.projects",
-            "model": ProjectReadModel,
-        },
+        name="projects",
+        read=ProjectReadModel,
         write={
-            "source": "public.projects",
-            "models": {
-                "domain": Project,
-                "create_cmd": CreateProjectCmd,
-                "update_cmd": UpdateProjectCmd,
-            },
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
         },
-        history={"source": "public.projects_history"},
-        cache={"enabled": True, "ttl": timedelta(minutes=5)},
+        history_enabled=True,
+        cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
     )
 
     pg = PostgresClient()
@@ -333,10 +337,21 @@ Optionally add a history table for audit trails:
             lambda: Deps.merge(
                 PostgresDepsModule(
                     client=pg,
-                    rev_bump_strategy="database",
-                    history_write_strategy="database",
+                    rw_documents={
+                        "projects": {
+                            "read": ("public", "projects"),
+                            "write": ("public", "projects"),
+                            "bookkeeping_strategy": "database",
+                            "history": ("public", "projects_history"),
+                        },
+                    },
+                    tx={"default"},
                 )(),
-                RedisDepsModule(client=redis)(),
+                RedisDepsModule(
+                    client=redis,
+                    caches={"projects": {"namespace": "app:projects"}},
+                    idempotency={"default": {"namespace": "app:idempotency"}},
+                )(),
             ),
         ),
         lifecycle=LifecyclePlan.from_steps(

@@ -215,7 +215,7 @@ You can register entirely custom usecases alongside the standard ones:
 
     class ArchiveProject(Usecase[UUID, ProjectReadModel]):
         async def main(self, args: UUID) -> ProjectReadModel:
-            doc = self.ctx.doc_write(project_spec)
+            doc = self.ctx.doc_command(project_spec)
             return await doc.update(args, UpdateProjectCmd(status="archived"))
 
 

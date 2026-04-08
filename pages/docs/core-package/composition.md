@@ -177,10 +177,12 @@ Pipeline that maps a Pydantic source model to an output DTO:
     :::python
     from forze.application.mapping import DTOMapper
 
+    from forze.application.contracts.counter import CounterSpec
+
     mapper = DTOMapper(
         in_=CreateProjectDTO,
         out=CreateProjectCmd,
-        steps=(NumberIdStep(namespace="projects"),),
+        steps=(NumberIdStep(spec=CounterSpec(name="projects")),),
     )
 
     result = await mapper(ctx, incoming_dto)
@@ -228,7 +230,7 @@ By default, no overwrites are allowed.
 
 | Step | Produces | Purpose |
 |------|----------|---------|
-| `NumberIdStep(namespace)` | `number_id` | Resolves a counter port and increments to get the next ID |
+| `NumberIdStep(spec=CounterSpec(...))` | `number_id` | Resolves `ctx.counter(spec)` and increments |
 | `CreatorIdStep` | `creator_id` | Placeholder for actor-based injection (not yet implemented) |
 
 ### build_document_create_mapper
@@ -239,7 +241,9 @@ Factory that creates a mapper pre-configured for document creation:
     from forze.application.composition.document import build_document_create_mapper
 
     mapper = build_document_create_mapper(project_spec, project_dtos)
-    mapper = mapper.with_steps(NumberIdStep(namespace="projects"))
+    mapper = mapper.with_steps(
+        NumberIdStep(spec=CounterSpec(name="projects")),
+    )
 
 ## DTOs
 

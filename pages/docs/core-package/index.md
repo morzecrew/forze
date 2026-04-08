@@ -49,6 +49,7 @@ A minimal aggregate definition using the core package:
         BaseDTO,
     )
     from forze.domain.mixins import SoftDeletionMixin
+    from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 
 
@@ -74,19 +75,16 @@ A minimal aggregate definition using the core package:
         is_deleted: bool = False
 
 
-    # Specification
+    # Specification (infra maps "tasks" to tables via PostgresDepsModule)
     task_spec = DocumentSpec(
-        namespace="tasks",
-        read={"source": "public.tasks", "model": TaskRead},
+        name="tasks",
+        read=TaskRead,
         write={
-            "source": "public.tasks",
-            "models": {
-                "domain": Task,
-                "create_cmd": CreateTaskCmd,
-                "update_cmd": UpdateTaskCmd,
-            },
+            "domain": Task,
+            "create_cmd": CreateTaskCmd,
+            "update_cmd": UpdateTaskCmd,
         },
-        cache={"enabled": True},
+        cache=CacheSpec(name="tasks"),
     )
 
 With this in place, adapters (Postgres, Mongo, etc.) know how to store and retrieve tasks, usecases can be composed with middleware, and the entire aggregate is testable without any infrastructure.

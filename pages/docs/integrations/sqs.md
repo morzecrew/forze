@@ -77,7 +77,7 @@ A `QueueSpec` binds a queue namespace to a Pydantic message model:
         total: float
 
 
-    order_queue = QueueSpec(namespace="orders", model=OrderPayload)
+    order_queue = QueueSpec(name="orders", model=OrderPayload)
 
 ## Producing messages
 
@@ -204,8 +204,8 @@ DLQ configuration is managed outside Forze via AWS console, CloudFormation, or T
     :::python
     deps_plan = DepsPlan.from_modules(
         lambda: Deps.merge(
-            PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
-            RedisDepsModule(client=redis)(),
+            PostgresDepsModule(client=pg, rw_documents={...})(),
+            RedisDepsModule(client=redis, caches={...})(),
             SQSDepsModule(client=sqs)(),
         ),
     )

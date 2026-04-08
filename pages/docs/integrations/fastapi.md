@@ -247,8 +247,22 @@ This ensures infrastructure clients are connected during the application lifetim
     runtime = ExecutionRuntime(
         deps=DepsPlan.from_modules(
             lambda: Deps.merge(
-                PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
-                RedisDepsModule(client=redis)(),
+                PostgresDepsModule(
+                    client=pg,
+                    rw_documents={
+                        "projects": {
+                            "read": ("public", "projects"),
+                            "write": ("public", "projects"),
+                            "bookkeeping_strategy": "database",
+                        },
+                    },
+                    tx={"default"},
+                )(),
+                RedisDepsModule(
+                    client=redis,
+                    caches={"projects": {"namespace": "app:projects"}},
+                    idempotency={"default": {"namespace": "app:idempotency"}},
+                )(),
             ),
         ),
         lifecycle=LifecyclePlan.from_steps(

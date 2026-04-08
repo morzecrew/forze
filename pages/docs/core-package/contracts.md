@@ -8,11 +8,11 @@ Every infrastructure concern follows the same pattern:
 
 | Component | Role | Example |
 |-----------|------|---------|
-| **Port** | Protocol interface defining operations | `DocumentReadPort[R]` |
+| **Port** | Protocol interface defining operations | `DocumentQueryPort[R]` |
 | **Spec** | Declarative configuration for the concern | `DocumentSpec[R, D, C, U]` |
-| **DepKey** | Typed key for dependency registration | `DocumentReadDepKey` |
-| **DepPort** | Factory protocol that builds a port from context | `DocumentReadDepPort` |
-| **DepRouter** | Router that selects a provider by spec | `DocumentReadDepRouter` |
+| **DepKey** | Typed key for dependency registration | `DocumentQueryDepKey` |
+| **DepPort** | Factory protocol that builds a port from context | `DocumentQueryDepPort` |
+| **Routed deps** | Same dep key, multiple providers keyed by `spec.name` | `Deps.routed({...})` |
 
 Ports are resolved at runtime via `ExecutionContext`, never imported directly from adapter packages.
 
@@ -49,7 +49,7 @@ Generic router that selects a dependency provider based on a spec. Used by integ
 
 Documents are the primary data abstraction. Ports are split into read and write for CQRS flexibility.
 
-### DocumentReadPort[R]
+### DocumentQueryPort[R]
 
 Read-only operations for document aggregates:
 
@@ -63,7 +63,7 @@ Read-only operations for document aggregates:
 
 When `return_fields` is provided, methods return `JsonDict` projections instead of typed models. `for_update` locks the row when the backend supports it.
 
-### DocumentWritePort[R, D, C, U]
+### DocumentCommandPort[R, D, C, U]
 
 Mutation operations for document aggregates:
 
@@ -82,33 +82,33 @@ The optional `rev` parameter enables optimistic concurrency control. When provid
 
 ### DocumentSpec
 
-Declarative specification that binds a document aggregate to its storage, cache, and history:
+Kernel specification: model types, logical `name`, optional `history_enabled`, optional `CacheSpec`. **Physical tables and collections** are configured in `PostgresDepsModule` / `MongoDepsModule` (see [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md)).
 
     :::python
+    from datetime import timedelta
+
+    from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 
     spec = DocumentSpec(
-        namespace="projects",
-        read={"source": "public.projects", "model": ProjectRead},
+        name="projects",
+        read=ProjectRead,
         write={
-            "source": "public.projects",
-            "models": {
-                "domain": Project,
-                "create_cmd": CreateProjectCmd,
-                "update_cmd": UpdateProjectCmd,
-            },
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
         },
-        history={"source": "public.projects_history"},
-        cache={"enabled": True},
+        history_enabled=True,
+        cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
     )
 
-| Field | Type | Required | Purpose |
-|-------|------|----------|---------|
-| `namespace` | `str` | Yes | Logical name and cache key prefix |
-| `read` | `DocumentReadSpec[R]` | Yes | Source relation and read model type |
-| `write` | `DocumentWriteSpec[D, C, U]` | No | Source relation and write model types |
-| `history` | `DocumentHistorySpec` | No | Source relation for revision audit trail |
-| `cache` | `DocumentCacheSpec` | No | Cache configuration (enable flag, TTL) |
+| Field | Type | Purpose |
+|-------|------|---------|
+| `name` | `str` | Logical route — matches infra config keys |
+| `read` | `type[R]` | Read model (`ReadDocument`) |
+| `write` | `DocumentWriteTypes \| None` | Domain + commands, or `None` for read-only |
+| `history_enabled` | `bool` | Whether history is active when infra provides it |
+| `cache` | `CacheSpec \| None` | Enables read-through cache on query/command ports |
 
 Helper methods:
 
@@ -117,10 +117,10 @@ Helper methods:
 
 ### Dependency keys
 
-| Key | Type | Resolved via |
-|-----|------|-------------|
-| `DocumentReadDepKey` | `DepKey[DocumentReadDepPort]` | `ctx.doc_read(spec)` |
-| `DocumentWriteDepKey` | `DepKey[DocumentWriteDepPort]` | `ctx.doc_write(spec)` |
+| Key | Resolved via |
+|-----|--------------|
+| `DocumentQueryDepKey` | `ctx.doc_query(spec)` |
+| `DocumentCommandDepKey` | `ctx.doc_command(spec)` |
 
 ## Transaction management
 
@@ -154,12 +154,13 @@ Value object holding the active transaction's scope key. Used internally to dete
     :::python
     from forze.application.contracts.cache import CacheSpec
 
-    cache_spec = CacheSpec(namespace="projects", ttl=timedelta(minutes=10))
+    cache_spec = CacheSpec(name="projects", ttl=timedelta(minutes=10))
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `namespace` | `str` | Cache key namespace |
+| `name` | `str` | Route to `RedisDepsModule.caches[name]` (or other cache backend) |
 | `ttl` | `timedelta` | Default time-to-live for entries |
+| `ttl_pointer` | `timedelta` | TTL for version pointer keys when using versioned cache |
 
 ### CachePort
 
@@ -196,7 +197,7 @@ Namespace-scoped atomic counters:
 
 | Key | Resolved via |
 |-----|-------------|
-| `CounterDepKey` | `ctx.counter(namespace)` |
+| `CounterDepKey` | `ctx.counter(CounterSpec(...))` |
 
 ## Search
 
@@ -206,35 +207,23 @@ Namespace-scoped atomic counters:
     from forze.application.contracts.search import SearchSpec
 
     search_spec = SearchSpec(
-        namespace="projects",
-        model=ProjectRead,
-        indexes={
-            "idx_title": {
-                "source": "public.projects",
-                "fields": [{"path": "title"}],
-            },
-        },
-        default_index="idx_title",
+        name="projects",
+        model_type=ProjectReadModel,
+        fields=("title", "description"),
+        default_weights={"title": 0.6, "description": 0.4},
     )
 
-| Field | Type | Required | Purpose |
-|-------|------|----------|---------|
-| `namespace` | `str` | Yes | Logical search domain name |
-| `model` | `type[BaseModel]` | Yes | Result model for typed search |
-| `indexes` | `dict[str, SearchIndexSpec]` | Yes | Index name to configuration |
-| `default_index` | `str` | No | Default index when not specified |
+Postgres index and heap names belong in `PostgresDepsModule.searches[name]` (`PostgresSearchConfig`), not on the kernel spec.
 
-### SearchIndexSpec
+| Field | Purpose |
+|-------|---------|
+| `name` | Logical route — matches `PostgresSearchConfig` registration |
+| `model_type` | Pydantic model for typed hits |
+| `fields` | Indexed field names (unique) |
+| `default_weights` | Optional per-field weights (must cover all `fields` if set) |
+| `fuzzy` | Optional `SearchFuzzySpec` |
 
-| Field | Type | Required | Purpose |
-|-------|------|----------|---------|
-| `fields` | `list[SearchFieldSpec]` | Yes | Fields included in the index |
-| `source` | `str` | No | Source relation |
-| `groups` | `list[SearchGroupSpec]` | No | Weight groups for ranking |
-| `default_group` | `str` | No | Default weight group |
-| `fuzzy` | `SearchFuzzySpec` | No | Fuzzy search parameters |
-
-### SearchReadPort[R]
+### SearchQueryPort[R]
 
 | Method | Purpose |
 |--------|---------|
@@ -244,7 +233,7 @@ Namespace-scoped atomic counters:
 
 | Key | Resolved via |
 |-----|-------------|
-| `SearchReadDepKey` | `ctx.search(spec)` |
+| `SearchQueryDepKey` | `ctx.search_query(spec)` |
 
 ## Object storage
 
@@ -271,7 +260,7 @@ S3-style blob storage:
 
 | Key | Resolved via |
 |-----|-------------|
-| `StorageDepKey` | `ctx.storage(bucket)` |
+| `StorageDepKey` | `ctx.storage(StorageSpec(name=...))` |
 
 ## Queue
 
@@ -280,7 +269,7 @@ S3-style blob storage:
     :::python
     from forze.application.contracts.queue import QueueSpec
 
-    order_queue = QueueSpec(namespace="orders", model=OrderPayload)
+    order_queue = QueueSpec(name="orders", model=OrderPayload)
 
 ### QueueReadPort[M]
 
@@ -322,7 +311,7 @@ S3-style blob storage:
     :::python
     from forze.application.contracts.pubsub import PubSubSpec
 
-    events_spec = PubSubSpec(namespace="events", model=EventPayload)
+    events_spec = PubSubSpec(name="events", model=EventPayload)
 
 ### PubSubPublishPort[M]
 
@@ -361,7 +350,7 @@ S3-style blob storage:
     :::python
     from forze.application.contracts.stream import StreamSpec
 
-    audit_stream = StreamSpec(namespace="audit", model=AuditEntry)
+    audit_stream = StreamSpec(name="audit", model=AuditEntry)
 
 ### StreamReadPort[M]
 
@@ -470,13 +459,16 @@ Ambient tenant identity for multi-tenant routing:
 All ports are resolved through `ExecutionContext`. Contracts with convenience methods:
 
     :::python
-    doc_read  = ctx.doc_read(project_spec)
-    doc_write = ctx.doc_write(project_spec)
-    cache     = ctx.cache(cache_spec)
-    counter   = ctx.counter("tickets")
-    storage   = ctx.storage("attachments")
-    search    = ctx.search(search_spec)
-    tx        = ctx.txmanager()
+    from forze.application.contracts.counter import CounterSpec
+    from forze.application.contracts.storage import StorageSpec
+
+    doc_q = ctx.doc_query(project_spec)
+    doc_c = ctx.doc_command(project_spec)
+    cache = ctx.cache(cache_spec)
+    counter = ctx.counter(CounterSpec(name="tickets"))
+    storage = ctx.storage(StorageSpec(name="attachments"))
+    search = ctx.search_query(search_spec)
+    tx = ctx.txmanager("default")
 
 For contracts without a convenience method, use `dep()` with the dep key:
 

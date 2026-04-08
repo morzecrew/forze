@@ -11,7 +11,7 @@ The middleware system wraps usecases with cross-cutting behavior: authorization,
 
     class GetProject(Usecase[UUID, ProjectRead]):
         async def main(self, args: UUID) -> ProjectRead:
-            doc = self.ctx.doc_read(project_spec)
+            doc = self.ctx.doc_query(project_spec)
             return await doc.get(args)
 
 Invoke a usecase via `__call__()`, which runs the full middleware chain:

@@ -9,7 +9,7 @@ The central dependency resolution point. Every usecase and factory receives an `
     :::python
     from forze.application.execution import ExecutionContext
 
-    doc = ctx.doc_read(project_spec)
+    doc = ctx.doc_query(project_spec)
     result = await doc.get(some_id)
 
 ### Resolution methods
@@ -17,15 +17,15 @@ The central dependency resolution point. Every usecase and factory receives an `
 | Method | Returns | Purpose |
 |--------|---------|---------|
 | `dep(key)` | `T` | Resolve any dependency by typed key |
-| `doc_read(spec)` | `DocumentReadPort` | Read-only document port |
-| `doc_write(spec)` | `DocumentWritePort` | Read-write document port |
+| `doc_query(spec)` | `DocumentQueryPort` | Read-only document port |
+| `doc_command(spec)` | `DocumentCommandPort` | Read-write document port |
 | `cache(spec)` | `CachePort` | Cache port for a namespace |
-| `counter(namespace)` | `CounterPort` | Namespace-scoped counter |
-| `txmanager()` | `TxManagerPort` | Transaction manager |
-| `storage(bucket)` | `StoragePort` | Object storage for a bucket |
-| `search(spec)` | `SearchReadPort` | Full-text search port |
+| `counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
+| `txmanager(route)` | `TxManagerPort` | Transaction manager for a registered route |
+| `storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
+| `search_query(spec)` | `SearchQueryPort` | Full-text search port |
 
-When a `DocumentSpec` has `cache.enabled = True`, `doc_read()` and `doc_write()` automatically resolve and inject a cache adapter. The TTL defaults to 300 seconds unless overridden in `cache.ttl`.
+When `DocumentSpec.cache` is set, `doc_query()` and `doc_command()` resolve `ctx.cache(spec.cache)` and pass the port into the document adapter. TTL defaults come from `CacheSpec`.
 
 ### Transactions
 
@@ -33,7 +33,7 @@ When a `DocumentSpec` has `cache.enabled = True`, `doc_read()` and `doc_write()`
 
     :::python
     async with ctx.transaction():
-        doc = ctx.doc_write(project_spec)
+        doc = ctx.doc_command(project_spec)
         await doc.create(CreateProjectCmd(title="New"))
         await doc.create(CreateProjectCmd(title="Another"))
         # Both creates commit or roll back together
@@ -71,7 +71,7 @@ In-memory dependency container implementing `DepsPort`:
     from forze.application.execution import Deps
 
     deps = Deps(deps={
-        DocumentReadDepKey: my_doc_read_factory,
+        DocumentQueryDepKey: my_doc_query_factory,
         CacheDepKey: my_cache_factory,
     })
 
@@ -94,8 +94,8 @@ Protocol for a callable that produces a `Deps` container. Integration packages e
 
     def postgres_module() -> Deps:
         return Deps(deps={
-            DocumentReadDepKey: pg_doc_read_factory,
-            DocumentWriteDepKey: pg_doc_write_factory,
+            DocumentQueryDepKey: pg_doc_query_factory,
+            DocumentCommandDepKey: pg_doc_command_factory,
             TxManagerDepKey: pg_tx_factory,
         })
 
@@ -273,5 +273,5 @@ A complete wiring example showing deps, lifecycle, and runtime:
     # 4. Use in application
     async with runtime.scope():
         ctx = runtime.get_context()
-        doc = ctx.doc_read(project_spec)
+        doc = ctx.doc_query(project_spec)
         projects = await doc.find_many(limit=10)
