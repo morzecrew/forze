@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Temporal integration docs (`pages/docs/integrations/temporal.md`) and workflow sections in `pages/docs/core-package/contracts.md` and `pages/docs/core-concepts/contracts-adapters.md` now describe `WorkflowCommandPort` / `WorkflowQueryPort`, `TemporalDepsModule`, and related keys instead of the removed `WorkflowPort` API.
+
 - Documentation in `pages/` was realigned with the current API: removed stale `tx_document_plan`, migrated examples to `UsecasePlan.tx(..., route="default")`, replaced deprecated `forze.application.contracts.deps` imports with `forze.application.contracts.base`, updated context docs from legacy tenant/actor ports to `PrincipalContext`/`CallContext`, and fixed examples for `ctx.transaction("default")` and `ctx.storage(StorageSpec(...))`.
 
 ## [0.1.14] - 2026-04-08
