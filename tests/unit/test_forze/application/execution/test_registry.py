@@ -167,6 +167,51 @@ class TestUsecaseRegistry:
         assert result is None
         assert reg.exists("get")
 
+    def test_finalize_returns_new_instance_when_not_inplace(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        finalized = reg.finalize("app")
+        assert finalized is not reg
+        with pytest.raises(CoreError, match="Registry id is not set"):
+            reg.qualify_operation("get")
+        assert finalized.qualify_operation("get") == "app.get"
+
+    def test_finalize_inplace_raises_when_empty_id(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry()
+        with pytest.raises(CoreError, match="Registry id cannot be empty"):
+            reg.finalize("", inplace=True)
+
+    def test_finalize_raises_when_already_finalized(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry()
+        reg.finalize("one", inplace=True)
+        with pytest.raises(CoreError, match="Registry is finalized"):
+            reg.finalize("two", inplace=True)
+
+    def test_mutations_fail_after_finalize(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        reg.finalize("app", inplace=True)
+        with pytest.raises(CoreError, match="Registry is finalized"):
+            reg.register("x", _stub_factory, inplace=True)
+
+    def test_qualify_operation_requires_registry_id(self) -> None:
+        from forze.base.errors import CoreError
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        with pytest.raises(CoreError, match="Registry id is not set"):
+            reg.qualify_operation("get")
+
+    def test_qualify_operation_returns_prefixed_key(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        reg.finalize("api", inplace=True)
+        assert reg.qualify_operation("get") == "api.get"
+
 
 class TestUsecaseRegistryMerge:
     """Tests for UsecaseRegistry.merge."""
@@ -276,3 +321,12 @@ class TestUsecaseRegistryMerge:
         merged = reg.merge()
         assert merged is not reg
         assert merged.exists("get")
+
+    def test_merge_finalized_registry_raises(self) -> None:
+        from forze.base.errors import CoreError
+
+        finalized = UsecaseRegistry().register("get", _stub_factory)
+        finalized.finalize("x", inplace=True)
+        other = UsecaseRegistry().register("create", _stub_factory)
+        with pytest.raises(CoreError, match="Cannot merge finalized registry"):
+            UsecaseRegistry.merge(finalized, other)

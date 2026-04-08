@@ -30,17 +30,19 @@ def _redis_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             return e
 
         # --- infra / availability ---
-        case redis_errors.ConnectionError():
-            return InfrastructureError("Redis connection error.")
-
-        case redis_errors.TimeoutError():
-            return InfrastructureError("Redis timeout.")
-
+        # ``AuthenticationError`` and ``BusyLoadingError`` subclass ``ConnectionError``;
+        # match them before the generic connection branch.
         case redis_errors.AuthenticationError():
             return InfrastructureError("Redis authentication failed.")
 
         case redis_errors.BusyLoadingError():
             return InfrastructureError("Redis is loading data, try again later.")
+
+        case redis_errors.ConnectionError():
+            return InfrastructureError("Redis connection error.")
+
+        case redis_errors.TimeoutError():
+            return InfrastructureError("Redis timeout.")
 
         case redis_errors.ReadOnlyError():
             return InfrastructureError("Redis instance is read-only.")

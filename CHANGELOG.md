@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `forze_redis`: Redis error mapping now classifies ``AuthenticationError`` and ``BusyLoadingError`` before the generic ``ConnectionError`` branch (both subclasses of ``ConnectionError`` in redis-py), so authentication and loading errors surface with the intended messages instead of "Redis connection error."
 - `forze_postgres` / `forze_mongo`: ``PostgresDepsModule`` / ``MongoDepsModule`` now register the read (query) port for each ``rw_documents`` route using that route’s ``read`` config; previously the query map for the read-write merge incorrectly reused ``ro_documents``, which broke ``rw_documents``-only setups and duplicated routes when both were set.
 - `forze_postgres` / `forze_mongo`: tenant-aware write gateways now include ``tenant_id`` in **UPDATE** predicates (``PostgresWriteGateway`` ``__patch`` / ``__patch_group``, ``MongoWriteGateway`` single and bulk patch) and in **hard-delete** filters (``kill`` / ``kill_many``), matching row-level isolation used by reads; Postgres ``DELETE`` still raises :class:`~forze.base.errors.NotFoundError` when no rows match the scoped predicate.
 - `forze_postgres`: `PostgresFTSSearchAdapter` now reads rows from the configured **source** relation and uses the **index** only to resolve the ``tsvector`` expression from the catalog (``COUNT`` / ``SELECT`` no longer use the index name as ``FROM``).

@@ -25,18 +25,24 @@ class _ProductDoc(Document, SoftDeletionMixin):
     title: str
     category: str
     tags: list[str] = []
+    meta: str | None = None
+    score: int = 0
 
 
 class _ProductCreate(CreateDocumentCmd):
     title: str
     category: str
     tags: list[str] = []
+    meta: str | None = None
+    score: int = 0
 
 
 class _ProductUpdate(BaseDTO):
     title: str | None = None
     category: str | None = None
     tags: list[str] | None = None
+    meta: str | None = None
+    score: int | None = None
 
 
 class _ProductRead(ReadDocument):
@@ -44,6 +50,8 @@ class _ProductRead(ReadDocument):
     category: str
     tags: list[str] = []
     is_deleted: bool = False
+    meta: str | None = None
+    score: int = 0
 
 
 class _ProductSearch(BaseModel):
@@ -149,3 +157,108 @@ async def test_counter_is_async_safe_under_concurrent_increments() -> None:
     results = await asyncio.gather(*[counter.incr() for _ in range(100)])
     assert sorted(results) == list(range(1, 101))
     assert await counter.incr_batch(3) == [101, 102, 103]
+
+
+@pytest.mark.asyncio
+async def test_document_query_operators_and_logic() -> None:
+    """Exercise mock query matching beyond scalar / $in shortcuts."""
+    state = MockState()
+    doc = _document_adapter(state)
+
+    a = await doc.create(
+        _ProductCreate(
+            title="Alpha",
+            category="cat-a",
+            tags=["x", "y"],
+            meta=None,
+            score=10,
+        )
+    )
+    await doc.create(
+        _ProductCreate(
+            title="Beta",
+            category="cat-b",
+            tags=[],
+            meta="present",
+            score=20,
+        )
+    )
+    await doc.create(
+        _ProductCreate(
+            title="Gamma",
+            category="cat-a",
+            tags=["z"],
+            meta=None,
+            score=15,
+        )
+    )
+
+    rows, n = await doc.find_many(
+        filters={"$fields": {"title": {"$neq": "Beta"}}},
+        sorts={"score": "asc"},
+    )
+    assert n == 2
+    assert [r.title for r in rows] == ["Alpha", "Gamma"]
+
+    rows, n = await doc.find_many(
+        filters={"$fields": {"score": {"$gte": 15, "$lte": 20}}},
+    )
+    assert n == 2
+
+    rows, n = await doc.find_many(filters={"$fields": {"score": {"$gt": 18}}})
+    assert n == 1 and rows[0].title == "Beta"
+
+    row = await doc.find(filters={"$fields": {"meta": {"$null": True}}})
+    assert row is not None and row.id == a.id
+
+    rows, n = await doc.find_many(
+        filters={"$fields": {"tags": {"$empty": True}}},
+    )
+    assert n == 1 and rows[0].title == "Beta"
+
+    rows, n = await doc.find_many(
+        filters={"$fields": {"tags": {"$superset": ["x", "y"]}}},
+    )
+    assert n == 1 and rows[0].title == "Alpha"
+
+    rows, n = await doc.find_many(
+        filters={
+            "$fields": {
+                "tags": {"$subset": ["x", "y", "z"]},
+                "title": {"$neq": "Beta"},
+            }
+        },
+    )
+    assert n == 2
+    assert {r.title for r in rows} == {"Alpha", "Gamma"}
+
+    rows, n = await doc.find_many(
+        filters={"$fields": {"tags": {"$disjoint": ["z"]}}},
+    )
+    assert n == 2
+
+    rows, n = await doc.find_many(
+        filters={"$fields": {"tags": {"$overlaps": ["z"]}}},
+    )
+    assert n == 1
+
+    rows, n = await doc.find_many(
+        filters={
+            "$or": [
+                {"$fields": {"title": "Alpha"}},
+                {"$fields": {"title": "Gamma"}},
+            ]
+        },
+    )
+    assert n == 2
+    assert {r.title for r in rows} == {"Alpha", "Gamma"}
+
+    assert (
+        await doc.count(
+            filters={"$fields": {"category": {"$in": ["cat-a", "cat-b"]}}},
+        )
+        == 3
+    )
+
+    many = await doc.get_many([a.id])
+    assert len(many) == 1 and many[0].title == "Alpha"
