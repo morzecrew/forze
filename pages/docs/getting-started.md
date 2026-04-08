@@ -144,20 +144,21 @@ The runtime has two parts: a **dependency plan** that assembles the container an
 
 ## Step 4: Create the FastAPI application
 
-Build a registry that wires usecase factories for the spec, then mount it as a router.
+Build a registry that wires usecase factories for the spec, attach document routes to an `APIRouter`, then include that router on the app.
 
     :::python
-    from fastapi import FastAPI
+    from fastapi import APIRouter, FastAPI
 
     from forze.application.composition.document import (
         DocumentDTOs,
         build_document_registry,
         tx_document_plan,
     )
-    from forze_fastapi.routers import build_document_router
+    from forze_fastapi.endpoints.document import attach_document_endpoints
 
 
     app = FastAPI(title="Projects API")
+    projects_router = APIRouter(prefix="/projects", tags=["projects"])
 
     project_dtos = DocumentDTOs(
         read=ProjectReadModel,
@@ -173,18 +174,17 @@ Build a registry that wires usecase factories for the spec, then mount it as a r
         return runtime.get_context()
 
 
-    app.include_router(
-        build_document_router(
-            prefix="/projects",
-            tags=["projects"],
-            registry=registry,
-            spec=project_spec,
-            dtos=project_dtos,
-            ctx_dep=context_dependency,
-        )
+    attach_document_endpoints(
+        projects_router,
+        document=project_spec,
+        dtos=project_dtos,
+        registry=registry,
+        ctx_dep=context_dependency,
     )
 
-The prebuilt document router registers endpoints for create, update, delete, restore, kill, and metadata retrieval. All routes resolve ports through `ExecutionContext` so business logic never imports adapter classes directly.
+    app.include_router(projects_router)
+
+`attach_document_endpoints` registers standard document operations (get, list, create, update, and others depending on the spec). All routes resolve ports through `ExecutionContext` so business logic never imports adapter classes directly.
 
 ## Step 5: Run with the runtime scope
 
@@ -250,7 +250,7 @@ Optionally add a history table for audit trails:
     from datetime import timedelta
 
     import uvicorn
-    from fastapi import FastAPI
+    from fastapi import APIRouter, FastAPI
 
     from forze.application.composition.document import (
         DocumentDTOs,
@@ -271,7 +271,7 @@ Optionally add a history table for audit trails:
         Document,
         ReadDocument,
     )
-    from forze_fastapi.routers import build_document_router
+    from forze_fastapi.endpoints.document import attach_document_endpoints
     from forze_postgres import (
         PostgresClient,
         PostgresConfig,
@@ -352,6 +352,7 @@ Optionally add a history table for audit trails:
     )
 
     app = FastAPI(title="Projects API")
+    projects_router = APIRouter(prefix="/projects", tags=["projects"])
 
     project_dtos = DocumentDTOs(
         read=ProjectReadModel,
@@ -362,16 +363,15 @@ Optionally add a history table for audit trails:
     registry = build_document_registry(project_spec, project_dtos)
     registry.extend_plan(tx_document_plan, inplace=True)
 
-    app.include_router(
-        build_document_router(
-            prefix="/projects",
-            tags=["projects"],
-            registry=registry,
-            spec=project_spec,
-            dtos=project_dtos,
-            ctx_dep=lambda: runtime.get_context(),
-        )
+    attach_document_endpoints(
+        projects_router,
+        document=project_spec,
+        dtos=project_dtos,
+        registry=registry,
+        ctx_dep=lambda: runtime.get_context(),
     )
+
+    app.include_router(projects_router)
 
 
     async def main() -> None:

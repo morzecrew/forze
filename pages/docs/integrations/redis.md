@@ -233,7 +233,7 @@ Each stream message is a `StreamMessage[M]` TypedDict with `stream`, `id`, `payl
 
 ## Idempotency
 
-The Redis idempotency adapter stores request fingerprints and response snapshots. It is used automatically by `ForzeAPIRouter` routes marked with `idempotent=True`.
+The Redis idempotency adapter stores request fingerprints and response snapshots. FastAPI routes that use `IdempotencyFeature` (for example the document **create** route from `attach_document_endpoints` when idempotency is enabled) call into this adapter.
 
 The adapter is registered by `RedisDepsModule` under `IdempotencyDepKey`. No additional configuration is needed.
 
@@ -244,7 +244,7 @@ Key pattern: `idempotency/{operation}/{idempotency_key}`
 1. On the first request, `begin()` returns `None` (no cached response)
 2. After the handler succeeds, `commit()` stores the response as an `IdempotencySnapshot`
 3. On duplicate requests (same operation + key + payload hash), `begin()` returns the stored snapshot
-4. The router returns the cached response without re-executing the handler
+4. The endpoint returns the cached response without re-executing the handler
 
 ## Combining with Postgres
 

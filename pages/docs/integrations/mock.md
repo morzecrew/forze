@@ -109,8 +109,10 @@ Replace real infrastructure modules with mock for local development or testing:
         build_document_registry,
         tx_document_plan,
     )
+    from fastapi import APIRouter
+
     from forze.application.execution import DepsPlan, ExecutionRuntime
-    from forze_fastapi.routers import build_document_router
+    from forze_fastapi.endpoints.document import attach_document_endpoints
     from forze_mock import MockDepsModule
 
     module = MockDepsModule()
@@ -125,16 +127,16 @@ Replace real infrastructure modules with mock for local development or testing:
     registry = build_document_registry(project_spec, project_dtos)
     registry.extend_plan(tx_document_plan, inplace=True)
 
-    app.include_router(
-        build_document_router(
-            prefix="/projects",
-            tags=["projects"],
-            registry=registry,
-            spec=project_spec,
-            dtos=project_dtos,
-            ctx_dep=lambda: runtime.get_context(),
-        )
+    projects_router = APIRouter(prefix="/projects", tags=["projects"])
+    attach_document_endpoints(
+        projects_router,
+        document=project_spec,
+        dtos=project_dtos,
+        registry=registry,
+        ctx_dep=lambda: runtime.get_context(),
     )
+
+    app.include_router(projects_router)
 
 ## Custom state
 
