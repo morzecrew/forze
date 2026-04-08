@@ -8,7 +8,7 @@ from typing import Any, Final, final
 
 import attrs
 from pydantic import BaseModel
-from temporalio.client import Client, WorkflowHandle
+from temporalio.client import Client, Interceptor, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -30,6 +30,9 @@ class TemporalConfig:
 
     lazy: bool = False
     """Whether to lazy initialize the client."""
+
+    interceptors: list[Interceptor] | None = None
+    """Interceptors to apply to the client."""
 
 
 # ....................... #
@@ -61,6 +64,7 @@ class TemporalClient:
             lazy=config.lazy,
             # Default values (not configurable)
             data_converter=pydantic_data_converter,
+            interceptors=config.interceptors or [],
         )
 
     # ....................... #

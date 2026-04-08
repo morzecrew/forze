@@ -67,7 +67,8 @@ def _build_write_gateway(client: object) -> MagicMock:
     gateway = MagicMock(spec=MongoWriteGateway)
     gateway.client = client
     gateway.tenant_aware = False
-    gateway.update = AsyncMock()
+    gateway.update = AsyncMock(return_value=(None, {}))
+    gateway.update_many = AsyncMock(return_value=([], []))
     return gateway
 
 
@@ -135,3 +136,142 @@ class TestMongoDocumentAdapter:
 
         with pytest.raises(CoreError, match="Write gateway is not configured"):
             await adapter.update(uuid4(), 1, MyUpdateDoc(name="x"))
+
+
+class TestMongoDocumentAdapterReturnNew:
+    """``return_new=False`` mutates via write gateway but skips read-back and cache sets."""
+
+    @pytest.mark.asyncio
+    async def test_create_skips_read_and_cache_when_return_new_false(self) -> None:
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        dom = _domain_doc(uuid4())
+        write_gw.create = AsyncMock(return_value=dom)
+        cache = MagicMock()
+        cache.set_versioned = AsyncMock()
+
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.create(MyCreateDoc(name="n"), return_new=False) is None
+        write_gw.create.assert_awaited_once()
+        read_gw.get.assert_not_awaited()
+        cache.set_versioned.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_many_skips_read_when_return_new_false(self) -> None:
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        d1, d2 = _domain_doc(uuid4()), _domain_doc(uuid4())
+        write_gw.create_many = AsyncMock(return_value=[d1, d2])
+        cache = MagicMock()
+        cache.set_many_versioned = AsyncMock()
+
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            batch_size=50,
+        )
+
+        assert (
+            await adapter.create_many(
+                [MyCreateDoc(name="a"), MyCreateDoc(name="b")],
+                return_new=False,
+            )
+            is None
+        )
+        write_gw.create_many.assert_awaited_once()
+        read_gw.get_many.assert_not_awaited()
+        cache.set_many_versioned.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_skips_read_when_return_new_false(self) -> None:
+        pk = uuid4()
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.update = AsyncMock(return_value=(None, {}))
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert (
+            await adapter.update(pk, 1, MyUpdateDoc(name="z"), return_new=False) is None
+        )
+        write_gw.update.assert_awaited_once()
+        read_gw.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_touch_skips_read_when_return_new_false(self) -> None:
+        pk = uuid4()
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.touch = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.touch(pk, return_new=False) is None
+        write_gw.touch.assert_awaited_once_with(pk)
+        read_gw.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_touch_many_skips_read_when_return_new_false(self) -> None:
+        pks = [uuid4(), uuid4()]
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.touch_many = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            batch_size=40,
+        )
+
+        assert await adapter.touch_many(pks, return_new=False) is None
+        write_gw.touch_many.assert_awaited_once_with(pks, batch_size=40)
+        read_gw.get_many.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_restore_skips_read_when_return_new_false(self) -> None:
+        pk = uuid4()
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.delete = AsyncMock()
+        write_gw.restore = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.delete(pk, 1, return_new=False) is None
+        write_gw.delete.assert_awaited_once_with(pk, rev=1)
+        read_gw.get.assert_not_awaited()
+
+        assert await adapter.restore(pk, 2, return_new=False) is None
+        write_gw.restore.assert_awaited_once_with(pk, rev=2)
+        read_gw.get.assert_not_awaited()

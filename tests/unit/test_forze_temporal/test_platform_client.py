@@ -36,6 +36,13 @@ class TestTemporalConfig:
         assert cfg.namespace == "other"
         assert cfg.lazy is True
 
+    def test_interceptors_optional(self) -> None:
+        """Interceptors list is optional and forwarded on connect."""
+        sentinel = object()
+        cfg = TemporalConfig(interceptors=[sentinel])  # type: ignore[list-item]
+        assert cfg.interceptors is not None
+        assert cfg.interceptors[0] is sentinel
+
 
 class TestTemporalClientLifecycle:
     """Initialize, close, and health checks."""
@@ -56,6 +63,26 @@ class TestTemporalClientLifecycle:
             await client.initialize("localhost:7233")
 
         assert connect.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_initialize_passes_interceptors_to_connect(self) -> None:
+        """TemporalConfig.interceptors is passed through to Client.connect."""
+        backend = MagicMock()
+        backend.count_workflows = AsyncMock()
+        marker = object()
+
+        with patch(
+            "forze_temporal.kernel.platform.client.Client.connect",
+            new_callable=AsyncMock,
+            return_value=backend,
+        ) as connect:
+            client = TemporalClient()
+            await client.initialize(
+                "localhost:7233",
+                config=TemporalConfig(interceptors=[marker]),  # type: ignore[list-item]
+            )
+
+        assert connect.await_args.kwargs["interceptors"] == [marker]
 
     @pytest.mark.asyncio
     async def test_close_clears_client(self) -> None:

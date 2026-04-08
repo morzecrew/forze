@@ -94,6 +94,7 @@ def mock_document(
         domain_model = spec.write["domain"]
 
     return MockDocumentAdapter[Any, Any, Any, Any](
+        spec=spec,
         state=state,
         namespace=spec.name,
         read_model=spec.read,

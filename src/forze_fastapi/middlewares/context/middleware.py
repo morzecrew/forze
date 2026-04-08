@@ -13,12 +13,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.application.execution import ExecutionContext
 
-from .defaults import DefaultCallContextResolverInjector
-from .ports import (
-    CallContextInjectorPort,
-    CallContextResolverPort,
-    PrincipalContextResolverPort,
-)
+from .defaults import DefaultCallContextCodec
+from .ports import CallContextCodecPort, PrincipalContextCodecPort
 
 # ----------------------- #
 
@@ -36,23 +32,17 @@ class ContextBindingMiddleware:
     ctx_dep: Callable[[], ExecutionContext] = attrs.field(kw_only=True)
     """The dependency to resolve the execution context."""
 
-    call_ctx_resolver: CallContextResolverPort = attrs.field(
+    call_ctx_codec: CallContextCodecPort = attrs.field(
         kw_only=True,
-        factory=DefaultCallContextResolverInjector,
+        factory=DefaultCallContextCodec,
     )
-    """The resolver to resolve the call context."""
+    """The codec to encode and decode the call context."""
 
-    call_ctx_injector: CallContextInjectorPort = attrs.field(
-        kw_only=True,
-        factory=DefaultCallContextResolverInjector,
-    )
-    """The injector to inject the call context headers into the response."""
-
-    principal_ctx_resolver: PrincipalContextResolverPort | None = attrs.field(
+    principal_ctx_codec: PrincipalContextCodecPort | None = attrs.field(
         kw_only=True,
         default=None,
     )
-    """The resolver to resolve the principal context."""
+    """The codec to encode and decode the principal context."""
 
     # ....................... #
 
@@ -63,16 +53,16 @@ class ContextBindingMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
-        call_ctx = self.call_ctx_resolver.resolve(request)
+        call_ctx = self.call_ctx_codec.decode(request)
         principal_ctx = None
 
-        if self.principal_ctx_resolver is not None:
-            principal_ctx = self.principal_ctx_resolver.resolve(request)
+        if self.principal_ctx_codec is not None:
+            principal_ctx = self.principal_ctx_codec.decode(request)
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
-                headers = self.call_ctx_injector.inject(headers, call_ctx)
+                headers = self.call_ctx_codec.encode(headers, call_ctx)
                 message["headers"] = headers
 
             await send(message)

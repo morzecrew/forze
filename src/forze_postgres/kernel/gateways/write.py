@@ -309,7 +309,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         update: JsonDict | None = None,
         *,
         rev: int | None = None,
-    ) -> D:
+    ) -> tuple[D, JsonDict]:
         current = await self.read_gw.get(pk)
 
         if update is not None:
@@ -323,7 +323,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             _, diff = current.touch()
 
         if not diff:
-            return current
+            return current, diff
 
         diff = self.__bump_rev(current, diff)
 
@@ -337,14 +337,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             )
             params.append(v)
 
-        params.extend([current.id, current.rev])
+        where_sql = self._where_pk_rev()
+        where_params: list[Any] = [current.id, current.rev]
+        where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
+        params.extend(where_params)
 
         stmt = sql.SQL(
             "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
         ).format(
             table=self.qname.ident(),
             sets=sql.SQL(", ").join(set_parts),
-            where=self._where_pk_rev(),
+            where=where_sql,
             ret=self.return_clause(),
         )
 
@@ -356,11 +359,13 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         res = pydantic_validate(self.model_type, row)
         await self._write_history(res)
 
-        return res
+        return res, diff
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> D:
+    async def update(
+        self, pk: UUID, dto: U, *, rev: int | None = None
+    ) -> tuple[D, JsonDict]:
         update_data = pydantic_dump(dto, exclude={"unset": True})
 
         return await self.__patch(pk, update_data, rev=rev)
@@ -368,7 +373,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     async def touch(self, pk: UUID) -> D:
-        return await self.__patch(pk)
+        res, _ = await self.__patch(pk)
+
+        return res
 
     # ....................... #
 
@@ -395,6 +402,18 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             params.extend(row_params)
             values_rows.append(row_template)
 
+        where_sql = sql.SQL("t.{pk} = v.{pk} AND t.{rev} = v.{rev}").format(
+            pk=self.ident_pk(),
+            rev=self._ident_rev(),
+        )
+        where_params: list[Any] = []
+        where_sql, where_params = self._add_tenant_where(  # type: ignore[assignment]
+            where_sql,
+            where_params,
+            table_alias="t",
+        )
+        params.extend(where_params)
+
         set_parts = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
 
         stmt = sql.SQL(
@@ -402,7 +421,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             UPDATE {table} AS t
             SET {sets}
             FROM (VALUES {vals}) AS v({cols})
-            WHERE t.{pk} = v.{pk} AND t.{rev} = v.{rev}
+            WHERE {where}
             RETURNING {ret}
             """
         ).format(
@@ -410,8 +429,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             sets=sql.SQL(", ").join(set_parts),
             vals=sql.SQL(", ").join(values_rows),
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
-            pk=self.ident_pk(),
-            rev=self._ident_rev(),
+            where=where_sql,
             ret=self.return_clause(table_alias="t"),
         )
 
@@ -440,9 +458,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         *,
         revs: Sequence[int] | None = None,
         batch_size: int = 200,
-    ) -> Sequence[D]:
+    ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         if not pks or (not updates and updates is not None):
-            return []
+            return [], []
 
         if updates is not None and len(pks) != len(updates):
             raise CoreError("Length mismatch between primary keys and updates")
@@ -486,13 +504,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 await self._validate_history(*data)
 
             async def _prepare_update(
-                c: D, u: JsonDict
+                c: D,
+                u: JsonDict,
             ) -> tuple[UUID, int, JsonDict] | None:
                 _, diff = c.update(u)
                 if not diff:
                     return None
 
                 diff = self.__bump_rev(c, diff)
+
                 return (
                     c.id,
                     c.rev,
@@ -510,9 +530,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     groups[key].append((cid, crev, diff))
 
         if not groups:
-            return currents
+            return currents, [{} for _ in currents]
 
         updated_models: dict[UUID, D] = {}
+        update_diffs: dict[UUID, JsonDict] = {}
 
         for fields_key, rows in groups.items():
             for start in range(0, len(rows), batch_size):
@@ -520,10 +541,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 updated = await self.__patch_group(fields_key, batch)
                 updated_models.update({m.id: m for m in updated})
 
+                for m, d in zip(updated, batch, strict=True):
+                    update_diffs[m.id] = d[-1]
+
         res = [updated_models.get(c.id, c) for c in currents]
+        res_diffs = [update_diffs.get(c.id, {}) for c in res]
+
         await self._write_history(*res)
 
-        return res
+        return res, res_diffs
 
     # ....................... #
 
@@ -534,10 +560,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         *,
         revs: Sequence[int] | None = None,
         batch_size: int = 200,
-    ) -> Sequence[D]:
+    ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         updates = pydantic_dump_many(dtos, exclude={"unset": True})
 
-        return await self.__patch_many(pks, updates, revs=revs, batch_size=batch_size)
+        res, res_diffs = await self.__patch_many(
+            pks,
+            updates,
+            revs=revs,
+            batch_size=batch_size,
+        )
+
+        return res, res_diffs
 
     # ....................... #
 
@@ -547,7 +580,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         *,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        return await self.__patch_many(pks, None, batch_size=batch_size)
+        res, _ = await self.__patch_many(pks, None, batch_size=batch_size)
+
+        return res
 
     # ....................... #
 
@@ -555,7 +590,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        return await self.__patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
+        res, _ = await self.__patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
+
+        return res
 
     # ....................... #
 
@@ -569,12 +606,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        return await self.__patch_many(
+        res, _ = await self.__patch_many(
             pks,
             [{SOFT_DELETE_FIELD: True} for _ in pks],
             batch_size=batch_size,
             revs=revs,
         )
+
+        return res
 
     # ....................... #
 
@@ -582,7 +621,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        return await self.__patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
+        res, _ = await self.__patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
+
+        return res
 
     # ....................... #
 
@@ -596,12 +637,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not self.supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
 
-        return await self.__patch_many(
+        res, _ = await self.__patch_many(
             pks,
             [{SOFT_DELETE_FIELD: False} for _ in pks],
             batch_size=batch_size,
             revs=revs,
         )
+
+        return res
 
     # ....................... #
 

@@ -131,14 +131,26 @@ class PostgresGateway[M: BaseModel](MultiTenancyMixin):
         self,
         query: sql.Composable,
         params: list[Any],
+        *,
+        table_alias: str | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
-        """Add tenant ID filter to the query if gateway is tenant aware."""
+        """Add tenant ID filter to the query if gateway is tenant aware.
+
+        :param table_alias: When set (e.g. ``"t"`` for ``UPDATE ... AS t``), qualify
+            the tenant column so the predicate is unambiguous alongside other relations
+            (e.g. ``FROM (VALUES ...) AS v``).
+        """
 
         tenant_id = self.require_tenant_if_aware()
 
         if tenant_id is not None:
+            ident = (
+                sql.Identifier(table_alias, TENANT_ID_FIELD)
+                if table_alias is not None
+                else self.ident_tenant_id()
+            )
             cond_sql = sql.SQL("{ident} = {value}").format(
-                ident=self.ident_tenant_id(),
+                ident=ident,
                 value=sql.Placeholder(),
             )
             query = sql.SQL(" AND ").join([query, cond_sql])

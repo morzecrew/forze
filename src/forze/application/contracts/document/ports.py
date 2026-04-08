@@ -1,7 +1,9 @@
 """Ports for document storage and retrieval"""
 
 from typing import (
+    Any,
     Awaitable,
+    Literal,
     Protocol,
     Sequence,
     TypeVar,
@@ -14,6 +16,7 @@ from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..query import QueryFilterExpression, QuerySortExpression
+from .specs import DocumentSpec
 
 # ----------------------- #
 
@@ -25,8 +28,23 @@ U = TypeVar("U", bound=BaseDTO)
 # ....................... #
 
 
+class BaseDocumentPort[
+    R: ReadDocument,
+    D: Document,
+    C: CreateDocumentCmd,
+    U: BaseDTO,
+](Protocol):
+    """Base port for document storage and retrieval."""
+
+    spec: DocumentSpec[R, D, C, U]
+    """Document specification."""
+
+
+# ....................... #
+
+
 @runtime_checkable
-class DocumentQueryPort[R](Protocol):
+class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Protocol):
     """Query operations for document aggregates."""
 
     @overload
@@ -187,35 +205,231 @@ class DocumentQueryPort[R](Protocol):
 
 
 @runtime_checkable
-class DocumentCommandPort[R, D, C, U](Protocol):
+class DocumentCommandPort[
+    R: ReadDocument,
+    D: Document,
+    C: CreateDocumentCmd,
+    U: BaseDTO,
+](BaseDocumentPort[R, D, C, U], Protocol):
     """Command operations for document aggregates."""
 
-    def create(self, dto: C) -> Awaitable[R]:
+    @overload
+    def create(self, dto: C, *, return_new: Literal[True] = True) -> Awaitable[R]:
         """Create a new document from the given command DTO."""
         ...  # pragma: no cover
 
-    def create_many(self, dtos: Sequence[C]) -> Awaitable[Sequence[R]]:
+    @overload
+    def create(self, dto: C, *, return_new: Literal[False]) -> Awaitable[None]:
+        """Create a new document from the given command DTO."""
+        ...  # pragma: no cover
+
+    def create(self, dto: C, *, return_new: bool = True) -> Awaitable[R | None]:
+        """Create a new document from the given command DTO."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
         """Create multiple documents in a batch."""
         ...  # pragma: no cover
 
-    def update(self, pk: UUID, rev: int, dto: U) -> Awaitable[R]:
+    @overload
+    def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Create multiple documents in a batch."""
+        ...  # pragma: no cover
+
+    def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | None]:
+        """Create multiple documents in a batch."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
+    ) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    @overload
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> Awaitable[tuple[R, JsonDict]]:
+        """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    @overload
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[False] = False,
+    ) -> Awaitable[None]:
+        """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    @overload
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> Awaitable[JsonDict]:
+        """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    def update(
+        self,
+        pk: UUID,
+        rev: int,
+        dto: U,
+        *,
+        return_new: bool = True,
+        return_diff: bool = False,
+    ) -> Awaitable[R | JsonDict | None | tuple[R, JsonDict]]:
+        """Apply a partial update to a document identified by ``pk``."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[False] = False,
+    ) -> Awaitable[Sequence[R]]:
+        """Apply partial updates to multiple documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[True] = True,
+        return_diff: Literal[True],
+    ) -> Awaitable[Sequence[tuple[R, JsonDict]]]:
+        """Apply partial updates to multiple documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[False] = False,
+    ) -> Awaitable[None]:
+        """Apply partial updates to multiple documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_many(
+        self,
+        updates: Sequence[tuple[UUID, int, U]],
+        *,
+        return_new: Literal[False],
+        return_diff: Literal[True],
+    ) -> Awaitable[Sequence[JsonDict]]:
+        """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
 
     def update_many(
         self,
         updates: Sequence[tuple[UUID, int, U]],
-    ) -> Awaitable[Sequence[R]]:
+        *,
+        return_new: bool = True,
+        return_diff: bool = False,
+    ) -> Awaitable[
+        Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None
+    ]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
 
-    def touch(self, pk: UUID) -> Awaitable[R]:
+    # ....................... #
+
+    @overload
+    def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> Awaitable[R]:
         """Bump metadata (e.g. ``last_update_at``) for a single document."""
         ...  # pragma: no cover
 
-    def touch_many(self, pks: Sequence[UUID]) -> Awaitable[Sequence[R]]:
+    @overload
+    def touch(self, pk: UUID, *, return_new: Literal[False]) -> Awaitable[None]:
+        """Bump metadata (e.g. ``last_update_at``) for a single document."""
+        ...  # pragma: no cover
+
+    def touch(self, pk: UUID, *, return_new: bool = True) -> Awaitable[R | None]:
+        """Bump metadata (e.g. ``last_update_at``) for a single document."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
         """Bump metadata for multiple documents."""
         ...  # pragma: no cover
+
+    @overload
+    def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Bump metadata for multiple documents."""
+        ...  # pragma: no cover
+
+    def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | None]:
+        """Bump metadata for multiple documents."""
+        ...  # pragma: no cover
+
+    # ....................... #
 
     def kill(self, pk: UUID) -> Awaitable[None]:
         """Hard-delete a single document without soft-delete semantics."""
@@ -225,24 +439,132 @@ class DocumentCommandPort[R, D, C, U](Protocol):
         """Hard-delete multiple documents."""
         ...  # pragma: no cover
 
-    def delete(self, pk: UUID, rev: int) -> Awaitable[R]:
+    # ....................... #
+
+    @overload
+    def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[R]:
         """Soft-delete a document if the model supports it."""
+        ...  # pragma: no cover
+
+    @overload
+    def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Soft-delete a document if the model supports it."""
+        ...  # pragma: no cover
+
+    def delete(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[R | None]:
+        """Soft-delete a document if the model supports it."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
+        """Soft-delete multiple documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def delete_many(
+        self,
+        deletes: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Soft-delete multiple documents."""
         ...  # pragma: no cover
 
     def delete_many(
         self,
         deletes: Sequence[tuple[UUID, int]],
-    ) -> Awaitable[Sequence[R]]:
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | None]:
         """Soft-delete multiple documents."""
         ...  # pragma: no cover
 
-    def restore(self, pk: UUID, rev: int) -> Awaitable[R]:
+    # ....................... #
+
+    @overload
+    def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[R]:
         """Restore a previously soft-deleted document."""
+        ...  # pragma: no cover
+
+    @overload
+    def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Restore a previously soft-deleted document."""
+        ...  # pragma: no cover
+
+    def restore(
+        self,
+        pk: UUID,
+        rev: int,
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[R | None]:
+        """Restore a previously soft-deleted document."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
+        """Restore multiple previously soft-deleted documents."""
+        ...  # pragma: no cover
+
+    @overload
+    def restore_many(
+        self,
+        restores: Sequence[tuple[UUID, int]],
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Restore multiple previously soft-deleted documents."""
         ...  # pragma: no cover
 
     def restore_many(
         self,
         restores: Sequence[tuple[UUID, int]],
-    ) -> Awaitable[Sequence[R]]:
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | None]:
         """Restore multiple previously soft-deleted documents."""
         ...  # pragma: no cover

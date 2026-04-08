@@ -15,11 +15,7 @@ from .deps import PostgresClientDepKey
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresStartupHook(LifecycleHook):
-    """Startup hook that initializes the Postgres client from the deps container.
-
-    Resolves :data:`PostgresClientDepKey` and calls :meth:`PostgresClient.initialize`
-    with the DSN and config. The client must be registered before startup runs.
-    """
+    """Startup hook that initializes the Postgres client from the deps container."""
 
     dsn: str
     """Connection DSN for the Postgres database."""

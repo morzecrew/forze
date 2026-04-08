@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `forze_postgres` / `forze_mongo`: ``PostgresDepsModule`` / ``MongoDepsModule`` now register the read (query) port for each ``rw_documents`` route using that route’s ``read`` config; previously the query map for the read-write merge incorrectly reused ``ro_documents``, which broke ``rw_documents``-only setups and duplicated routes when both were set.
-- `forze_postgres`: tenant-aware ``PostgresWriteGateway.kill`` / ``kill_many`` now include ``tenant_id`` in the ``DELETE`` predicate (and raise :class:`~forze.base.errors.NotFoundError` when no rows match), matching row-level isolation used by reads.
+- `forze_postgres` / `forze_mongo`: tenant-aware write gateways now include ``tenant_id`` in **UPDATE** predicates (``PostgresWriteGateway`` ``__patch`` / ``__patch_group``, ``MongoWriteGateway`` single and bulk patch) and in **hard-delete** filters (``kill`` / ``kill_many``), matching row-level isolation used by reads; Postgres ``DELETE`` still raises :class:`~forze.base.errors.NotFoundError` when no rows match the scoped predicate.
 - `forze_postgres`: `PostgresFTSSearchAdapter` now reads rows from the configured **source** relation and uses the **index** only to resolve the ``tsvector`` expression from the catalog (``COUNT`` / ``SELECT`` no longer use the index name as ``FROM``).
 - `forze_postgres`: FTS search with an empty query string uses a valid ``ORDER BY`` constant when no rank is computed (avoids Postgres ``ORDER BY 0.0`` errors).
 

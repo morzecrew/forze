@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import ConcurrencyError
 from forze.domain.mixins import SoftDeletionMixin
@@ -55,7 +56,17 @@ class _ProductSearch(BaseModel):
 def _document_adapter(
     state: MockState,
 ) -> MockDocumentAdapter[_ProductRead, _ProductDoc, _ProductCreate, _ProductUpdate]:
+    spec = DocumentSpec(
+        name="products",
+        read=_ProductRead,
+        write=DocumentWriteTypes(
+            domain=_ProductDoc,
+            create_cmd=_ProductCreate,
+            update_cmd=_ProductUpdate,
+        ),
+    )
     return MockDocumentAdapter(
+        spec=spec,
         state=state,
         namespace="products",
         read_model=_ProductRead,

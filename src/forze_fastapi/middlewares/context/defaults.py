@@ -13,18 +13,15 @@ from fastapi import Request
 from forze.application.execution import CallContext
 from forze.base.primitives import uuid7
 
-from .ports import CallContextInjectorPort, CallContextResolverPort
+from .ports import CallContextCodecPort
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class DefaultCallContextResolverInjector(
-    CallContextResolverPort,
-    CallContextInjectorPort,
-):
-    """Header based call context resolver and injector for FastAPI."""
+class DefaultCallContextCodec(CallContextCodecPort):
+    """Header based call context codec for FastAPI."""
 
     exec_header: str = "X-Request-ID"
     """Header name for the execution id. Only for injection purposes."""
@@ -37,7 +34,7 @@ class DefaultCallContextResolverInjector(
 
     # ....................... #
 
-    def resolve(self, request: Request) -> CallContext:
+    def decode(self, request: Request) -> CallContext:
         execution_id = uuid7()
         corr_raw = request.headers.get(self.corr_header)
         caus_raw = request.headers.get(self.caus_header)
@@ -53,7 +50,7 @@ class DefaultCallContextResolverInjector(
 
     # ....................... #
 
-    def inject(
+    def encode(
         self,
         headers: list[tuple[bytes, bytes]],
         ctx: CallContext,

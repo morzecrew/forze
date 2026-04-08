@@ -199,6 +199,8 @@ def _read_gw_full() -> MagicMock:
 def _write_gw() -> MagicMock:
     gw = MagicMock(spec=PostgresWriteGateway)
     gw.tenant_aware = False
+    gw.update = AsyncMock(return_value=(None, {}))
+    gw.update_many = AsyncMock(return_value=([], []))
     return gw
 
 
@@ -454,7 +456,7 @@ class TestPostgresDocumentAdapterCommands:
         write_gw.client = read_gw.client
         pk = uuid4()
         read_doc = _tread(pk, rev=2)
-        write_gw.update = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         read_gw.get = AsyncMock(return_value=read_doc)
 
         cache = MagicMock()
@@ -478,7 +480,7 @@ class TestPostgresDocumentAdapterCommands:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
-        write_gw.update = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         read_gw.get = AsyncMock(return_value=_tread())
 
         cache = MagicMock()
@@ -601,7 +603,7 @@ class TestPostgresDocumentAdapterCommands:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
-        write_gw.update_many = AsyncMock()
+        write_gw.update_many = AsyncMock(return_value=([], []))
         write_gw.delete_many = AsyncMock()
         write_gw.restore_many = AsyncMock()
 
@@ -716,7 +718,7 @@ class TestPostgresDocumentAdapterBatchMutations:
         write_gw.client = read_gw.client
         pk1, pk2 = uuid4(), uuid4()
         r1, r2 = _tread(pk1), _tread(pk2)
-        write_gw.update_many = AsyncMock()
+        write_gw.update_many = AsyncMock(return_value=([], []))
         read_gw.get_many = AsyncMock(return_value=[r1, r2])
         cache = MagicMock()
         cache.delete_many = AsyncMock()
@@ -776,3 +778,204 @@ class TestPostgresDocumentAdapterBatchMutations:
         assert ra[0][0] == [pk1, pk2]
         assert ra[1]["revs"] == [1, 2]
         assert ra[1]["batch_size"] == 90
+
+
+class TestPostgresDocumentAdapterReturnNew:
+    """``return_new=False`` performs writes but skips read-back and cache population."""
+
+    @pytest.mark.asyncio
+    async def test_create_skips_read_and_cache_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        dom = _tdoc()
+        write_gw.create = AsyncMock(return_value=dom)
+        cache = MagicMock()
+        cache.set_versioned = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.create(TCreate(title="n"), return_new=False) is None
+        write_gw.create.assert_awaited_once()
+        read_gw.get.assert_not_awaited()
+        cache.set_versioned.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_many_skips_read_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        d1, d2 = _tdoc(), _tdoc()
+        write_gw.create_many = AsyncMock(return_value=[d1, d2])
+        cache = MagicMock()
+        cache.set_many_versioned = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+            batch_size=50,
+        )
+
+        assert (
+            await adapter.create_many(
+                [TCreate(title="a"), TCreate(title="b")],
+                return_new=False,
+            )
+            is None
+        )
+        write_gw.create_many.assert_awaited_once()
+        read_gw.get_many.assert_not_awaited()
+        cache.set_many_versioned.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_skips_read_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pk = uuid4()
+        write_gw.update = AsyncMock(return_value=(None, {}))
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.update(pk, 1, TUpdate(title="z"), return_new=False) is None
+        write_gw.update.assert_awaited_once_with(pk, TUpdate(title="z"), rev=1)
+        read_gw.get.assert_not_awaited()
+        cache.delete_many.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_many_skips_read_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pk1, pk2 = uuid4(), uuid4()
+        write_gw.update_many = AsyncMock(return_value=([], []))
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+            batch_size=80,
+        )
+
+        updates = [
+            (pk1, 1, TUpdate(title="a")),
+            (pk2, 2, TUpdate(title="b")),
+        ]
+        assert await adapter.update_many(updates, return_new=False) is None
+        write_gw.update_many.assert_awaited_once()
+        read_gw.get_many.assert_not_awaited()
+        cache.delete_many.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_touch_skips_read_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pk = uuid4()
+        write_gw.touch = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.touch(pk, return_new=False) is None
+        write_gw.touch.assert_awaited_once_with(pk)
+        read_gw.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_touch_many_skips_read_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pks = [uuid4(), uuid4()]
+        write_gw.touch_many = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            batch_size=50,
+        )
+
+        assert await adapter.touch_many(pks, return_new=False) is None
+        write_gw.touch_many.assert_awaited_once_with(pks, batch_size=50)
+        read_gw.get_many.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_restore_skips_read_when_return_new_false(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pk = uuid4()
+        write_gw.delete = AsyncMock()
+        write_gw.restore = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            cache=cache,
+        )
+
+        assert await adapter.delete(pk, 1, return_new=False) is None
+        write_gw.delete.assert_awaited_once_with(pk, rev=1)
+        read_gw.get.assert_not_awaited()
+
+        assert await adapter.restore(pk, 2, return_new=False) is None
+        write_gw.restore.assert_awaited_once_with(pk, rev=2)
+        read_gw.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_many_restore_many_skips_read_when_return_new_false(
+        self,
+    ) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pk1, pk2 = uuid4(), uuid4()
+        write_gw.delete_many = AsyncMock()
+        write_gw.restore_many = AsyncMock()
+        cache = MagicMock()
+        cache.delete_many = AsyncMock()
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+            batch_size=90,
+        )
+
+        dels = [(pk1, 1), (pk2, 2)]
+        assert await adapter.delete_many(dels, return_new=False) is None
+        write_gw.delete_many.assert_awaited_once()
+        read_gw.get_many.assert_not_awaited()
+
+        assert await adapter.restore_many(dels, return_new=False) is None
+        write_gw.restore_many.assert_awaited_once()
+        read_gw.get_many.assert_not_awaited()

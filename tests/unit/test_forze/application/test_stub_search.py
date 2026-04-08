@@ -5,8 +5,9 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
-from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from forze_mock import MockState
 from forze_mock.adapters import MockDocumentAdapter, MockSearchAdapter
@@ -41,7 +42,17 @@ class _SearchHit(BaseModel):
 
 
 def _doc_adapter(state: MockState) -> MockDocumentAdapter:
+    spec = DocumentSpec(
+        name="search_stub",
+        read=_ReadWithTitle,
+        write=DocumentWriteTypes(
+            domain=_DocWithTitle,
+            create_cmd=_CreateWithTitle,
+            update_cmd=BaseDTO,
+        ),
+    )
     return MockDocumentAdapter(
+        spec=spec,
         state=state,
         namespace="search_stub",
         read_model=_ReadWithTitle,
