@@ -6,7 +6,13 @@ require_mongo()
 
 # ....................... #
 
-from .execution import MongoClientDepKey, MongoDepsModule, mongo_lifecycle_step
+from .execution import (
+    MongoClientDepKey,
+    MongoDepsModule,
+    MongoDocumentConfig,
+    MongoReadOnlyDocumentConfig,
+    mongo_lifecycle_step,
+)
 from .kernel.platform import MongoClient, MongoConfig, mongo_handled
 
 # ----------------------- #
@@ -18,4 +24,6 @@ __all__ = [
     "MongoClientDepKey",
     "mongo_lifecycle_step",
     "mongo_handled",
+    "MongoDocumentConfig",
+    "MongoReadOnlyDocumentConfig",
 ]

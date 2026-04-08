@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import final
 
 import attrs
@@ -24,7 +25,7 @@ class TemporalDepsModule(DepsModule):
     client: TemporalClient
     """Pre-constructed Temporal client (connection not yet initialized)."""
 
-    workflows: dict[str, TemporalWorkflowConfig] = attrs.field(factory=dict)
+    workflows: dict[str | StrEnum, TemporalWorkflowConfig] = attrs.field(factory=dict)
     """Mapping from workflow names to their Temporal-specific configurations."""
 
     # ....................... #

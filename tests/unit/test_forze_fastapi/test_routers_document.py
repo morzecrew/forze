@@ -1,5 +1,7 @@
 """Unit tests for forze_fastapi.endpoints.document."""
 
+from enum import StrEnum
+
 import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
@@ -36,6 +38,31 @@ def _minimal_spec(
     domain = _SoftDoc if supports_soft_delete else Document
     return DocumentSpec(
         name="test",
+        read=ReadDocument,
+        write={
+            "domain": domain,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": update_cmd,
+        },
+    )
+
+
+def _minimal_spec_str_enum_name(
+    supports_update: bool = False,
+    supports_soft_delete: bool = False,
+) -> DocumentSpec:
+    """DocumentSpec with :class:`StrEnum` :attr:`name` (value ``\"test\"``)."""
+
+    class DocName(StrEnum):
+        TEST = "test"
+
+    class UpdateCmd(BaseDTO):
+        title: str | None = None
+
+    update_cmd = UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
+    domain = _SoftDoc if supports_soft_delete else Document
+    return DocumentSpec(
+        name=DocName.TEST,
         read=ReadDocument,
         write={
             "domain": domain,
@@ -99,6 +126,31 @@ class TestBuildDocumentRouter:
         )
 
         assert isinstance(router, APIRouter)
+        paths = {r.path for r in router.routes}
+        assert "/docs/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
+
+    def test_str_enum_document_name_attaches_same_routes(
+        self,
+        composition_ctx,
+    ) -> None:
+        """``DocumentSpec.name`` may be a :class:`StrEnum`; routing matches string ``\"test\"``."""
+        spec = _minimal_spec_str_enum_name()
+        dtos = _minimal_dtos()
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints=_metadata_endpoints(),
+        )
+
         paths = {r.path for r in router.routes}
         assert "/docs/metadata" in paths or any("/metadata" in str(r) for r in router.routes)
 

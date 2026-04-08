@@ -1,5 +1,7 @@
 """Unit tests for forze.application.execution.plan."""
 
+from enum import StrEnum
+
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext, Usecase
@@ -151,6 +153,15 @@ class TestOperationPlan:
         assert merged.tx is not None
         assert merged.tx.route == "mock"
 
+    def test_transaction_spec_accepts_str_enum_route(self) -> None:
+        class TxRoute(StrEnum):
+            MOCK = "mock"
+
+        plan = OperationPlan(tx=TransactionSpec(route=TxRoute.MOCK))
+        assert plan.tx is not None
+        assert plan.tx.route == TxRoute.MOCK
+        assert str(plan.tx.route) == "mock"
+
     def test_merge_from_instance_includes_self(self) -> None:
         """Instance merge (p1.merge(p2)) includes p1 in the result."""
 
@@ -301,6 +312,14 @@ class TestUsecasePlan:
         plan = UsecasePlan().tx("create", route="mock")
         assert plan.ops["create"].tx is not None
         assert plan.ops["create"].tx.route == "mock"
+
+    def test_tx_accepts_str_enum_route(self) -> None:
+        class TxRoute(StrEnum):
+            MOCK = "mock"
+
+        plan = UsecasePlan().tx("create", route=TxRoute.MOCK)
+        assert plan.ops["create"].tx is not None
+        assert plan.ops["create"].tx.route == TxRoute.MOCK
 
     def test_resolve_builds_composed_usecase(self) -> None:
         ctx = ExecutionContext(deps=Deps())

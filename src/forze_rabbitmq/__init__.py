@@ -6,7 +6,12 @@ require_rabbitmq()
 
 # ....................... #
 
-from .execution import RabbitMQClientDepKey, RabbitMQDepsModule, rabbitmq_lifecycle_step
+from .execution import (
+    RabbitMQClientDepKey,
+    RabbitMQDepsModule,
+    RabbitMQQueueConfig,
+    rabbitmq_lifecycle_step,
+)
 from .kernel.platform import RabbitMQClient, RabbitMQConfig
 
 # ----------------------- #
@@ -17,4 +22,5 @@ __all__ = [
     "RabbitMQClientDepKey",
     "RabbitMQDepsModule",
     "rabbitmq_lifecycle_step",
+    "RabbitMQQueueConfig",
 ]

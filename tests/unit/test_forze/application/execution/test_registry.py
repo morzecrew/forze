@@ -1,5 +1,7 @@
 """Unit tests for forze.application.execution.registry."""
 
+from enum import StrEnum
+
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext, Usecase, UsecaseRegistry
@@ -134,6 +136,14 @@ class TestUsecaseRegistry:
         ctx = ExecutionContext(deps=Deps())
         with pytest.raises(CoreError, match="not registered for operation"):
             reg.resolve("get", ctx)
+
+    def test_finalize_and_qualify_operation_accept_str_enum_registry_id(self) -> None:
+        class RegistryId(StrEnum):
+            NS = "my-doc"
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        reg.finalize(RegistryId.NS, inplace=True)
+        assert reg.qualify_operation("get") == "my-doc.get"
 
     def test_extend_plan_returns_new_instance(self) -> None:
         from forze.application.execution.plan import UsecasePlan

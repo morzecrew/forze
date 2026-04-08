@@ -1,5 +1,6 @@
 """S3 dependency module for the application kernel."""
 
+from enum import StrEnum
 from typing import final
 
 import attrs
@@ -28,7 +29,7 @@ class S3DepsModule(DepsModule):
     client: S3Client
     """Pre-constructed S3 client (session not yet initialized)."""
 
-    storages: dict[str, S3StorageConfig] = attrs.field(factory=dict)
+    storages: dict[str | StrEnum, S3StorageConfig] = attrs.field(factory=dict)
     """Mapping from storage names to their S3-specific configurations."""
 
     # ....................... #

@@ -1,5 +1,6 @@
 """Postgres dependency module for the application kernel."""
 
+from enum import StrEnum
 from typing import final
 
 import attrs
@@ -55,16 +56,20 @@ class PostgresDepsModule(DepsModule):
     client: PostgresClient
     """Pre-constructed Postgres client (pool not yet initialized)."""
 
-    ro_documents: dict[str, PostgresReadOnlyDocumentConfig] = attrs.field(factory=dict)
+    ro_documents: dict[str | StrEnum, PostgresReadOnlyDocumentConfig] = attrs.field(
+        factory=dict
+    )
     """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    rw_documents: dict[str, PostgresDocumentConfig] = attrs.field(factory=dict)
+    rw_documents: dict[str | StrEnum, PostgresDocumentConfig] = attrs.field(
+        factory=dict
+    )
     """Mapping from read-write document names to their Postgres-specific configurations."""
 
-    searches: dict[str, PostgresSearchConfig] = attrs.field(factory=dict)
+    searches: dict[str | StrEnum, PostgresSearchConfig] = attrs.field(factory=dict)
     """Mapping from search names to their Postgres-specific configurations."""
 
-    tx: set[str] = attrs.field(factory=set)
+    tx: set[str | StrEnum] = attrs.field(factory=set)
     """Set of transaction routes to register."""
 
     # ....................... #

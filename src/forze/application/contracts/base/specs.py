@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 import attrs
 
 # ----------------------- #
@@ -7,5 +9,5 @@ import attrs
 class BaseSpec:
     """Base resource specification."""
 
-    name: str
+    name: str | StrEnum
     """Logical name for the resource."""

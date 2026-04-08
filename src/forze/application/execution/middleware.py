@@ -6,6 +6,7 @@ concrete implementations: :class:`GuardMiddleware`, :class:`EffectMiddleware`,
 effects after.
 """
 
+from enum import StrEnum
 from typing import Awaitable, Callable, Protocol, Self, final
 
 import attrs
@@ -120,7 +121,7 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
     ctx: ExecutionContext
     """Execution context for the transaction."""
 
-    route: str
+    route: str | StrEnum
     """Routing key for the transaction."""
 
     after_commit: tuple[Effect[Args, R], ...] = attrs.field(factory=tuple)

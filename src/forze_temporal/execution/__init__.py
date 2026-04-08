@@ -1,6 +1,11 @@
-from .deps import TemporalClientDepKey, TemporalDepsModule
+from .deps import TemporalClientDepKey, TemporalDepsModule, TemporalWorkflowConfig
 from .lifecycle import temporal_lifecycle_step
 
 # ----------------------- #
 
-__all__ = ["temporal_lifecycle_step", "TemporalClientDepKey", "TemporalDepsModule"]
+__all__ = [
+    "temporal_lifecycle_step",
+    "TemporalClientDepKey",
+    "TemporalDepsModule",
+    "TemporalWorkflowConfig",
+]

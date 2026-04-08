@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from enum import StrEnum
 from typing import Any, AsyncIterator, Iterator, final
 from uuid import UUID
 
@@ -189,7 +190,7 @@ class ExecutionContext:
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self, route: str) -> AsyncIterator[None]:
+    async def transaction(self, route: str | StrEnum) -> AsyncIterator[None]:
         """Enter a transaction scope.
 
         Nested calls reuse the same transaction (savepoints when supported).
@@ -263,7 +264,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def dep[T](self, key: DepKey[T], *, route: str | None = None) -> T:
+    def dep[T](self, key: DepKey[T], *, route: str | StrEnum | None = None) -> T:
         """Resolve a dependency by key using the underlying container.
 
         :param key: Dependency key.
@@ -300,7 +301,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved document query port for name '%s' -> %s",
-            spec.name,
+            str(spec.name),
             type(doc).__qualname__,
         )
 
@@ -328,7 +329,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved document command port for name '%s' -> %s",
-            spec.name,
+            str(spec.name),
             type(doc).__qualname__,
         )
 
@@ -349,7 +350,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved cache port for namespace '%s' -> %s",
-            spec.name,
+            str(spec.name),
             type(ca).__qualname__,
         )
 
@@ -369,7 +370,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved counter port for '%s' -> %s",
-            spec.name,
+            str(spec.name),
             type(cnt).__qualname__,
         )
 
@@ -377,7 +378,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def txmanager(self, route: str) -> TxManagerPort:
+    def txmanager(self, route: str | StrEnum) -> TxManagerPort:
         """Resolve the transaction manager port.
 
         :param route: Transaction manager route.
@@ -389,7 +390,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved transaction manager for '%s' -> %s",
-            route,
+            str(route),
             type(tx).__qualname__,
         )
 
@@ -410,7 +411,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved storage port for '%s' -> %s",
-            spec.name,
+            str(spec.name),
             type(st).__qualname__,
         )
 
@@ -430,7 +431,7 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved search query port '%s' -> %s",
-            spec.name,
+            str(spec.name),
             type(se).__qualname__,
         )
 

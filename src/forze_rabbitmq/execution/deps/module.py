@@ -1,5 +1,6 @@
 """RabbitMQ dependency module for the application kernel."""
 
+from enum import StrEnum
 from typing import final
 
 import attrs
@@ -23,10 +24,10 @@ class RabbitMQDepsModule(DepsModule):
     client: RabbitMQClient
     """Pre-constructed RabbitMQ client (connection not yet initialized)."""
 
-    queue_readers: dict[str, RabbitMQQueueConfig] = attrs.field(factory=dict)
+    queue_readers: dict[str | StrEnum, RabbitMQQueueConfig] = attrs.field(factory=dict)
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
-    queue_writers: dict[str, RabbitMQQueueConfig] = attrs.field(factory=dict)
+    queue_writers: dict[str | StrEnum, RabbitMQQueueConfig] = attrs.field(factory=dict)
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
     # ....................... #

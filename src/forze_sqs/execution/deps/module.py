@@ -1,5 +1,6 @@
 """SQS dependency module for the application kernel."""
 
+from enum import StrEnum
 from typing import final
 
 import attrs
@@ -23,10 +24,10 @@ class SQSDepsModule(DepsModule):
     client: SQSClient
     """Pre-constructed SQS client (session not yet initialized)."""
 
-    queue_readers: dict[str, SQSQueueConfig] = attrs.field(factory=dict)
+    queue_readers: dict[str | StrEnum, SQSQueueConfig] = attrs.field(factory=dict)
     """Mapping from queue names to their SQS-specific configurations."""
 
-    queue_writers: dict[str, SQSQueueConfig] = attrs.field(factory=dict)
+    queue_writers: dict[str | StrEnum, SQSQueueConfig] = attrs.field(factory=dict)
     """Mapping from queue names to their SQS-specific configurations."""
 
     # ....................... #

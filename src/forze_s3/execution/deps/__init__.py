@@ -1,12 +1,9 @@
-"""S3 dependency keys, module, and factory functions.
+"""S3 dependency keys, module, and configurations."""
 
-Provides :data:`S3ClientDepKey`, :class:`S3DepsModule`, and the
-:func:`s3_storage` factory for storage port adapters.
-"""
-
+from .configs import S3StorageConfig
 from .keys import S3ClientDepKey
 from .module import S3DepsModule
 
 # ----------------------- #
 
-__all__ = ["S3DepsModule", "S3ClientDepKey"]
+__all__ = ["S3DepsModule", "S3ClientDepKey", "S3StorageConfig"]

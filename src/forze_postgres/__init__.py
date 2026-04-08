@@ -6,7 +6,14 @@ require_psycopg()
 
 # ....................... #
 
-from .execution import PostgresClientDepKey, PostgresDepsModule, postgres_lifecycle_step
+from .execution import (
+    PostgresClientDepKey,
+    PostgresDepsModule,
+    PostgresDocumentConfig,
+    PostgresReadOnlyDocumentConfig,
+    PostgresSearchConfig,
+    postgres_lifecycle_step,
+)
 from .kernel.platform import PostgresClient, PostgresConfig
 
 # ----------------------- #
@@ -17,4 +24,7 @@ __all__ = [
     "PostgresConfig",
     "PostgresClientDepKey",
     "postgres_lifecycle_step",
+    "PostgresDocumentConfig",
+    "PostgresReadOnlyDocumentConfig",
+    "PostgresSearchConfig",
 ]

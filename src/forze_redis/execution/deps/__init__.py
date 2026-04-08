@@ -1,12 +1,15 @@
-"""Redis dependency keys, module, and factory functions.
+"""Redis dependency keys, module, and configurations."""
 
-Provides :data:`RedisClientDepKey`, :class:`RedisDepsModule`, and factory
-functions for counter, document cache, idempotency, pubsub, and stream adapters.
-"""
-
+from .configs import RedisCacheConfig, RedisCounterConfig, RedisIdempotencyConfig
 from .keys import RedisClientDepKey
 from .module import RedisDepsModule
 
 # ----------------------- #
 
-__all__ = ["RedisDepsModule", "RedisClientDepKey"]
+__all__ = [
+    "RedisDepsModule",
+    "RedisClientDepKey",
+    "RedisCacheConfig",
+    "RedisCounterConfig",
+    "RedisIdempotencyConfig",
+]

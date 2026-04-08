@@ -1,6 +1,7 @@
 """Tests for forze.application.execution.context."""
 
 from datetime import timedelta
+from enum import StrEnum
 
 import pytest
 
@@ -152,6 +153,13 @@ class TestExecutionContextPorts:
         port = ctx.txmanager("mock")
         assert port is not None
 
+    def test_txmanager_accepts_str_enum_route(self, ctx: ExecutionContext) -> None:
+        class TxRoute(StrEnum):
+            MOCK = "mock"
+
+        port = ctx.txmanager(TxRoute.MOCK)
+        assert port is not None
+
     def test_storage(self, ctx: ExecutionContext) -> None:
         port = ctx.storage(StorageSpec(name="my-bucket"))
         assert port is not None
@@ -159,3 +167,50 @@ class TestExecutionContextPorts:
     def test_search(self, ctx: ExecutionContext) -> None:
         port = ctx.search_query(_search_spec())
         assert port is not None
+
+
+class TestExecutionContextStrEnumNames:
+    """Spec :attr:`~forze.application.contracts.base.BaseSpec.name` may be a :class:`StrEnum`."""
+
+    def test_doc_query_command_cache_counter_storage_search_use_str_enum_name(
+        self,
+        ctx: ExecutionContext,
+    ) -> None:
+        class DocName(StrEnum):
+            TEST = "test"
+
+        spec = DocumentSpec(
+            name=DocName.TEST,
+            read=ReadDocument,
+            write={
+                "domain": Document,
+                "create_cmd": CreateDocumentCmd,
+                "update_cmd": CreateDocumentCmd,
+            },
+        )
+        assert ctx.doc_query(spec) is not None
+        assert ctx.doc_command(spec) is not None
+
+        cache_spec = CacheSpec(name=DocName.TEST, ttl=timedelta(seconds=1))
+        assert ctx.cache(cache_spec) is not None
+
+        assert ctx.counter(CounterSpec(name=DocName.TEST)) is not None
+
+        assert ctx.storage(StorageSpec(name=DocName.TEST)) is not None
+
+        search_spec = SearchSpec(
+            name=DocName.TEST,
+            model_type=ReadDocument,
+            fields=["id"],
+        )
+        assert ctx.search_query(search_spec) is not None
+
+
+class TestExecutionContextStrEnumTransactionRoute:
+    @pytest.mark.asyncio
+    async def test_transaction_accepts_str_enum_route(self, ctx: ExecutionContext) -> None:
+        class TxRoute(StrEnum):
+            MOCK = "mock"
+
+        async with ctx.transaction(TxRoute.MOCK):
+            pass

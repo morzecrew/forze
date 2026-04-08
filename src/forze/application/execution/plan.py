@@ -82,7 +82,7 @@ class MiddlewareSpec:
 class TransactionSpec:
     """Specification for a transaction attached to an operation plan."""
 
-    route: str
+    route: str | StrEnum
     """Routing key for the transaction."""
 
 

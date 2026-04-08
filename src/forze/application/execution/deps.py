@@ -4,6 +4,7 @@ Provides :class:`Deps` (in-memory container implementing :class:`DepsPort`),
 :class:`DepsModule` protocol, and :class:`DepsPlan` for declarative assembly.
 """
 
+from enum import StrEnum
 from typing import Any, Protocol, Self, TypeVar, cast, final
 
 import attrs
@@ -19,7 +20,7 @@ from ..contracts.base import DepKey, DepsPort
 T = TypeVar("T")
 
 PlainDepsMap = dict[DepKey[Any], Any]
-RoutedDepsMap = dict[DepKey[Any], dict[str, Any]]
+RoutedDepsMap = dict[DepKey[Any], dict[str | StrEnum, Any]]
 
 # ....................... #
 
@@ -72,7 +73,7 @@ class Deps(DepsPort):
         cls,
         deps: PlainDepsMap,
         *,
-        routes: set[str] | frozenset[str],
+        routes: set[str | StrEnum] | frozenset[str | StrEnum],
     ) -> Self:
         """Create routed dependencies by expanding one provider per many routing keys.
 
@@ -95,7 +96,7 @@ class Deps(DepsPort):
         self,
         key: DepKey[T],
         *,
-        route: str | None = None,
+        route: str | StrEnum | None = None,
         fallback_to_plain: bool = True,
     ) -> T:
         """Return a dependency value for the given key.
@@ -138,7 +139,7 @@ class Deps(DepsPort):
 
     # ....................... #
 
-    def exists(self, key: DepKey[T], *, route: str | None = None) -> bool:
+    def exists(self, key: DepKey[T], *, route: str | StrEnum | None = None) -> bool:
         """Return ``True`` if the dependency is registered."""
 
         if route is None:

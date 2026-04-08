@@ -6,7 +6,14 @@ require_redis()
 
 # ....................... #
 
-from .execution import RedisClientDepKey, RedisDepsModule, redis_lifecycle_step
+from .execution import (
+    RedisCacheConfig,
+    RedisClientDepKey,
+    RedisCounterConfig,
+    RedisDepsModule,
+    RedisIdempotencyConfig,
+    redis_lifecycle_step,
+)
 from .kernel.platform import RedisClient, RedisConfig
 
 # ----------------------- #
@@ -17,4 +24,7 @@ __all__ = [
     "RedisClientDepKey",
     "RedisDepsModule",
     "redis_lifecycle_step",
+    "RedisCacheConfig",
+    "RedisCounterConfig",
+    "RedisIdempotencyConfig",
 ]

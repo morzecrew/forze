@@ -1,5 +1,7 @@
 """Unit tests for Deps container."""
 
+from enum import StrEnum
+
 import pytest
 
 from forze.application.contracts.base import DepKey
@@ -74,3 +76,44 @@ class TestDepsRouted:
         deps = Deps.routed({key: {"only": "x"}})
         assert deps.exists(key, route="only") is True
         assert deps.exists(key, route="missing") is False
+
+
+class TestDepsRoutedStrEnum:
+    """Routed deps accept :class:`enum.StrEnum` routes and match plain strings."""
+
+    def test_provide_enum_route_when_registered_with_string_keys(self) -> None:
+        class Region(StrEnum):
+            EAST = "east"
+
+        key = DepKey[str]("routed")
+        deps = Deps.routed({key: {"east": "E", "west": "W"}})
+        assert deps.provide(key, route=Region.EAST) == "E"
+        assert deps.provide(key, route="east") == "E"
+
+    def test_provide_string_route_when_registered_with_enum_keys(self) -> None:
+        class Region(StrEnum):
+            EAST = "east"
+            WEST = "west"
+
+        key = DepKey[str]("routed")
+        deps = Deps.routed({key: {Region.EAST: "E", Region.WEST: "W"}})
+        assert deps.provide(key, route="east") == "E"
+        assert deps.provide(key, route=Region.WEST) == "W"
+
+    def test_routed_group_accepts_str_enum_routes(self) -> None:
+        class Region(StrEnum):
+            EAST = "east"
+            WEST = "west"
+
+        key = DepKey[str]("k")
+        deps = Deps.routed_group({key: "one"}, routes={Region.EAST, Region.WEST})
+        assert deps.provide(key, route=Region.EAST) == "one"
+        assert deps.provide(key, route="west") == "one"
+
+    def test_exists_accepts_str_enum_route(self) -> None:
+        class Region(StrEnum):
+            ONLY = "only"
+
+        key = DepKey[str]("k")
+        deps = Deps.routed({key: {"only": "x"}})
+        assert deps.exists(key, route=Region.ONLY) is True
