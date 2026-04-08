@@ -1,6 +1,8 @@
 # Redis / Valkey Integration
 
-`forze_redis` provides cache, counters, idempotency, pub/sub, and stream adapters backed by Redis or Valkey. It implements `CachePort`, `CounterPort`, `IdempotencyPort`, `PubSubPublishPort`, `PubSubSubscribePort`, `StreamReadPort`, `StreamWritePort`, and `StreamGroupPort`.
+`forze_redis` provides cache, counters, and idempotency adapters backed by Redis or Valkey. It implements `CachePort`, `CounterPort`, and `IdempotencyPort`.
+
+Kernel specs use logical names (`CacheSpec.name`, document cache on `DocumentSpec`). **`RedisDepsModule` maps each name to a `RedisCacheConfig`** (namespace prefix, optional `tenant_aware`). See [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md).
 
 ## Installation
 
@@ -16,7 +18,18 @@ Works with both Redis and Valkey (API-compatible).
     from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
 
     client = RedisClient()
-    module = RedisDepsModule(client=client)
+    module = RedisDepsModule(
+        client=client,
+        caches={
+            "projects": {"namespace": "app:projects"},
+        },
+        counters={
+            "projects": {"namespace": "app:seq:projects"},
+        },
+        idempotency={
+            "default": {"namespace": "app:idempotency"},
+        },
+    )
 
     runtime = ExecutionRuntime(
         deps=DepsPlan.from_modules(module),
@@ -42,43 +55,44 @@ Works with both Redis and Valkey (API-compatible).
 
 ### What gets registered
 
-`RedisDepsModule` registers these dependency keys:
+`RedisDepsModule` registers **routed** factories under:
 
-| Key | Capability |
-|-----|-----------|
-| `RedisClientDepKey` | Raw Redis client for direct commands |
-| `CacheDepKey` | Document cache adapter factory |
-| `CounterDepKey` | Namespace-scoped counter adapter factory |
-| `IdempotencyDepKey` | HTTP idempotency adapter |
-| `PubSubPublishDepKey` | Pub/Sub publish adapter factory |
-| `PubSubSubscribeDepKey` | Pub/Sub subscribe adapter factory |
-| `StreamReadDepKey` | Stream read adapter factory |
-| `StreamWriteDepKey` | Stream write adapter factory |
-| `StreamGroupDepKey` | Stream consumer group adapter factory |
+| Key | Maps |
+|-----|------|
+| `RedisClientDepKey` | Shared async Redis client |
+| `CacheDepKey` | `caches: dict[str, RedisCacheConfig]` → `CacheSpec.name` |
+| `CounterDepKey` | `counters: dict[str, RedisCounterConfig]` → `CounterSpec.name` |
+| `IdempotencyDepKey` | `idempotency: dict[str, RedisIdempotencyConfig]` → idempotency route on `IdempotencySpec` |
+
+Each config requires a `namespace` string used as a Redis key prefix.
 
 ## Document cache
 
-When a `DocumentSpec` has `cache.enabled = True`, the execution context automatically resolves and injects a Redis-backed cache adapter into the document port. No explicit wiring is needed beyond having `RedisDepsModule` in the deps plan.
+When `DocumentSpec.cache` is set, `doc_query` / `doc_command` resolve `ctx.cache(spec.cache)` and pass the port into the document adapter. Register a cache route whose **key matches `CacheSpec.name`**:
 
     :::python
     from datetime import timedelta
+    from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 
-    spec = DocumentSpec(
-        namespace="projects",
-        read={"source": "public.projects", "model": ProjectReadModel},
+    project_spec = DocumentSpec(
+        name="projects",
+        read=ProjectReadModel,
         write={
-            "source": "public.projects",
-            "models": {
-                "domain": Project,
-                "create_cmd": CreateProjectCmd,
-                "update_cmd": UpdateProjectCmd,
-            },
+            "domain": Project,
+            "create_cmd": CreateProjectCmd,
+            "update_cmd": UpdateProjectCmd,
         },
-        cache={"enabled": True, "ttl": timedelta(minutes=5)},
+        cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
     )
 
-The cache adapter stores and retrieves serialized documents keyed by namespace and document ID. It handles cache invalidation on writes automatically.
+    # RedisDepsModule.caches must include the same key "projects"
+    RedisDepsModule(
+        client=redis_client,
+        caches={"projects": {"namespace": "app:projects"}},
+    )
+
+The adapter stores versioned bodies under the configured namespace.
 
 ### Cache key patterns
 
@@ -98,7 +112,7 @@ When you need cache outside of the document adapter, resolve a cache port direct
     from forze.application.contracts.cache import CacheSpec
 
     cache = ctx.cache(
-        CacheSpec(namespace="sessions", ttl=timedelta(minutes=30))
+        CacheSpec(name="sessions", ttl=timedelta(minutes=30))
     )
 
     await cache.set(session_id, session_data)
@@ -107,10 +121,12 @@ When you need cache outside of the document adapter, resolve a cache port direct
 
 ## Counters
 
-Counters are namespace-scoped atomic incrementers. They are typically used for generating human-readable sequence numbers (`number_id`).
+Counters are namespace-scoped atomic incrementers. Pass a `CounterSpec` whose `name` matches `RedisDepsModule.counters`:
 
     :::python
-    counter = ctx.counter("projects")
+    from forze.application.contracts.counter import CounterSpec
+
+    counter = ctx.counter(CounterSpec(name="projects"))
 
     next_id = await counter.incr()
     batch_end = await counter.incr_batch(10)
@@ -126,136 +142,39 @@ Counters are namespace-scoped atomic incrementers. They are typically used for g
 
 Counter keys follow the pattern `{namespace}[/{suffix}]`.
 
-## Pub/Sub
-
-Redis Pub/Sub provides fire-and-forget message broadcasting. Messages are delivered to all connected subscribers but are not persisted. If no subscriber is listening, the message is lost.
-
-### Publishing
-
-    :::python
-    from pydantic import BaseModel
-    from forze.application.contracts.pubsub import PubSubPublishDepKey, PubSubSpec
-
-
-    class OrderEvent(BaseModel):
-        order_id: str
-        status: str
-
-
-    spec = PubSubSpec(namespace="orders", model=OrderEvent)
-
-    publish = ctx.dep(PubSubPublishDepKey)(ctx, spec)
-    await publish.publish(
-        "orders.status_changed",
-        OrderEvent(order_id="abc", status="shipped"),
-    )
-
-### Subscribing
-
-    :::python
-    from forze.application.contracts.pubsub import PubSubSubscribeDepKey
-
-    subscribe = ctx.dep(PubSubSubscribeDepKey)(ctx, spec)
-
-    async for message in subscribe.subscribe(["orders.status_changed"]):
-        print(f"Order {message['payload'].order_id} -> {message['payload'].status}")
-
-Each message is a `PubSubMessage[M]` TypedDict with `topic`, `payload`, and optional `type`, `published_at`, `key` fields.
-
-## Streams
-
-Redis Streams provide persistent, append-only log semantics with consumer group support. Unlike Pub/Sub, messages are stored and can be replayed.
-
-### Writing to a stream
-
-    :::python
-    from forze.application.contracts.stream import StreamWriteDepKey, StreamSpec
-
-
-    class AuditEntry(BaseModel):
-        action: str
-        resource_id: str
-
-
-    spec = StreamSpec(namespace="audit", model=AuditEntry)
-
-    writer = ctx.dep(StreamWriteDepKey)(ctx, spec)
-    entry_id = await writer.append(
-        "audit.actions",
-        AuditEntry(action="create", resource_id="proj-42"),
-    )
-
-### Reading from a stream
-
-    :::python
-    from forze.application.contracts.stream import StreamReadDepKey
-
-    reader = ctx.dep(StreamReadDepKey)(ctx, spec)
-
-    # Read entries starting from a position
-    entries = await reader.read(
-        {"audit.actions": "0"},
-        limit=100,
-    )
-
-    # Tail new entries as they arrive
-    async for entry in reader.tail({"audit.actions": "$"}):
-        print(entry["payload"].action)
-
-### Consumer groups
-
-Consumer groups allow multiple workers to process stream entries cooperatively. Each entry is delivered to exactly one consumer in the group.
-
-    :::python
-    from forze.application.contracts.stream import StreamGroupDepKey
-
-    group = ctx.dep(StreamGroupDepKey)(ctx, spec)
-
-    # Read pending entries for this consumer
-    entries = await group.read(
-        group="workers",
-        consumer="worker-1",
-        stream_mapping={"audit.actions": ">"},
-        limit=10,
-    )
-
-    # Process and acknowledge
-    for entry in entries:
-        await process(entry["payload"])
-
-    await group.ack(
-        "workers",
-        "audit.actions",
-        [e["id"] for e in entries],
-    )
-
-Each stream message is a `StreamMessage[M]` TypedDict with `stream`, `id`, `payload`, and optional `type`, `timestamp`, `key` fields.
-
 ## Idempotency
 
-The Redis idempotency adapter stores request fingerprints and response snapshots. It is used automatically by `ForzeAPIRouter` routes marked with `idempotent=True`.
+The Redis idempotency adapter stores request fingerprints and response snapshots. FastAPI routes that use `IdempotencyFeature` (for example the document **create** route from `attach_document_endpoints` when idempotency is enabled) resolve `IdempotencyPort` via `IdempotencyDepKey`.
 
-The adapter is registered by `RedisDepsModule` under `IdempotencyDepKey`. No additional configuration is needed.
+Register at least one route in `RedisDepsModule.idempotency` (for example `"default"`). The `IdempotencySpec.name` on each HTTP feature must match a configured route.
 
-Key pattern: `idempotency/{operation}/{idempotency_key}`
+Key pattern: `{namespace}/{operation}/{idempotency_key}` (namespace comes from `RedisIdempotencyConfig`)
 
 ### How it works
 
 1. On the first request, `begin()` returns `None` (no cached response)
 2. After the handler succeeds, `commit()` stores the response as an `IdempotencySnapshot`
 3. On duplicate requests (same operation + key + payload hash), `begin()` returns the stored snapshot
-4. The router returns the cached response without re-executing the handler
+4. The endpoint returns the cached response without re-executing the handler
 
 ## Combining with Postgres
 
-Redis is commonly combined with Postgres for a full stack:
+Redis is commonly combined with Postgres for cache, counters, and idempotency:
 
     :::python
+    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
+    from forze_postgres import PostgresDepsModule, postgres_lifecycle_step, PostgresConfig
+    from forze_redis import RedisDepsModule, redis_lifecycle_step, RedisConfig
+
     runtime = ExecutionRuntime(
         deps=DepsPlan.from_modules(
             lambda: Deps.merge(
-                PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
-                RedisDepsModule(client=redis)(),
+                PostgresDepsModule(client=pg, rw_documents={...})(),
+                RedisDepsModule(
+                    client=redis,
+                    caches={"projects": {"namespace": "app:projects"}},
+                    idempotency={"default": {"namespace": "app:idempotency"}},
+                )(),
             ),
         ),
         lifecycle=LifecyclePlan.from_steps(
@@ -266,7 +185,6 @@ Redis is commonly combined with Postgres for a full stack:
 
 With both modules registered:
 
-- Document reads are cached in Redis when `cache.enabled = True`
-- Counters for `number_id` use Redis atomic increments
-- Idempotency uses Redis for deduplication
-- Pub/Sub and Streams are available for event-driven patterns
+- `DocumentSpec.cache` pulls in Redis when `CacheSpec.name` exists in `caches`
+- `CounterSpec` routes to `counters`
+- HTTP idempotency uses `idempotency` routes

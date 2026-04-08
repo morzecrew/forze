@@ -41,10 +41,12 @@ Read more in [Layered Architecture](core-concepts/layered-architecture.md).
 
 ## Package layout
 
+Integration code lives in separate **distribution packages** (separate import roots) published from this repository. Install the core with `uv add forze` and add integrations via optional extras (for example `forze[fastapi,postgres]`) — see [Installation](installation.md). How kernel specs map to infra configs is described in [Specs and infrastructure wiring](core-concepts/specs-and-wiring.md).
+
 | Package | Purpose |
 |---------|---------|
 | `forze` | Core contracts, execution runtime, composition helpers, domain primitives |
-| `forze_fastapi` | HTTP router helpers and idempotent route integration |
+| `forze_fastapi` | FastAPI HTTP endpoints (`endpoints.document`, `endpoints.search`, `endpoints.http`), middleware, OpenAPI helpers |
 | `forze_postgres` | Postgres-backed document, search, and transaction adapters |
 | `forze_redis` | Cache, counters, idempotency, pub/sub, and stream adapters |
 | `forze_s3` | S3-compatible storage adapter |

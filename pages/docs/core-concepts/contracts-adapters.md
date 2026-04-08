@@ -17,7 +17,7 @@ Switching from Postgres to Mongo means changing the dependency plan, not the use
 
 Split into read and write ports for CQRS flexibility:
 
-**`DocumentReadPort[R]`**: read-only operations:
+**`DocumentQueryPort[R]`**: read-only operations:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
@@ -27,7 +27,7 @@ Split into read and write ports for CQRS flexibility:
 | `find_many` | `(filters?, limit?, offset?, sorts?, *, return_fields?) -> (list[R], int)` | Paginated query |
 | `count` | `(filters?) -> int` | Count matching documents |
 
-**`DocumentWritePort[R, D, C, U]`**: mutation operations:
+**`DocumentCommandPort[R, D, C, U]`**: mutation operations:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
@@ -78,7 +78,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Search
 
-**`SearchReadPort[R]`**: full-text search:
+**`SearchQueryPort[R]`**: full-text search:
 
 | Method | Purpose |
 |--------|---------|
@@ -189,10 +189,13 @@ Both ports also have `*_many` batch variants for all applicable operations.
 Each contract has a corresponding `DepKey` for registration and resolution. Integration modules register adapters under these keys; the execution context resolves them.
 
     :::python
-    doc = self.ctx.doc_read(project_spec)     # resolves DocumentReadDepKey
+    from forze.application.contracts.counter import CounterSpec
+    from forze.application.contracts.storage import StorageSpec
+
+    doc = self.ctx.doc_query(project_spec)     # resolves DocumentQueryDepKey
     cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
-    counter = self.ctx.counter("tickets")      # resolves CounterDepKey
-    storage = self.ctx.storage("attachments")  # resolves StorageDepKey
+    counter = self.ctx.counter(CounterSpec(name="tickets"))  # resolves CounterDepKey
+    storage = self.ctx.storage(StorageSpec(name="attachments"))  # resolves StorageDepKey
 
 For contracts without convenience methods on `ExecutionContext`, use `dep()` directly:
 
@@ -210,8 +213,8 @@ Integration modules register their adapters at dependency plan build time:
 
     deps_plan = DepsPlan.from_modules(
         lambda: Deps.merge(
-            PostgresDepsModule(client=pg_client, ...)(),
-            RedisDepsModule(client=redis_client)(),
+            PostgresDepsModule(client=pg_client, rw_documents={...})(),
+            RedisDepsModule(client=redis_client, caches={...})(),
             S3DepsModule(client=s3_client)(),
         ),
     )
@@ -230,14 +233,14 @@ Tests stub contracts with in-memory or fake implementations. The `forze_mock` pa
     deps_plan = DepsPlan.from_modules(module)
     ctx = ExecutionContext(deps=deps_plan.build())
 
-    doc = ctx.doc_read(project_spec)
+    doc = ctx.doc_query(project_spec)
     result = await doc.get(some_uuid)
 
 You can also build a `Deps` container manually with only the ports your test needs:
 
     :::python
     deps = Deps({
-        DocumentReadDepKey: lambda ctx, spec, cache=None: FakeDocReadAdapter(),
+        DocumentQueryDepKey: lambda ctx, spec, cache=None: FakeDocQueryAdapter(),
     })
     ctx = ExecutionContext(deps=deps)
 

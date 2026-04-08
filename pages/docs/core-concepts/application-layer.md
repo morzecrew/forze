@@ -25,16 +25,16 @@ Together these ensure that business logic remains independent of infrastructure 
 | Method | Returns | Purpose |
 |--------|---------|---------|
 | `dep(key)` | `T` | Resolve any dependency by typed key |
-| `doc_read(spec)` | `DocumentReadPort` | Read-only document port |
-| `doc_write(spec)` | `DocumentWritePort` | Read-write document port |
-| `cache(spec)` | `CachePort` | Cache port for a namespace |
-| `counter(namespace)` | `CounterPort` | Namespace-scoped counter |
-| `txmanager()` | `TxManagerPort` | Transaction manager |
-| `storage(bucket)` | `StoragePort` | Object storage for a bucket |
-| `search(spec)` | `SearchReadPort` | Full-text search port |
+| `doc_query(spec)` | `DocumentQueryPort` | Read-only document port |
+| `doc_command(spec)` | `DocumentCommandPort` | Read-write document port |
+| `cache(spec)` | `CachePort` | Cache port (`CacheSpec`) |
+| `counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
+| `txmanager(route)` | `TxManagerPort` | Transaction manager |
+| `storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
+| `search_query(spec)` | `SearchQueryPort` | Full-text search port |
 | `transaction()` | async context manager | Enter a transaction scope |
 
-When a `DocumentSpec` has `cache.enabled = True`, `doc_read()` and `doc_write()` automatically resolve and inject a cache adapter.
+When `DocumentSpec.cache` is set, `doc_query()` and `doc_command()` resolve a cache port and pass it to the document adapter.
 
 Nested `transaction()` calls reuse the same transaction with savepoints when the backend supports them.
 
@@ -48,13 +48,13 @@ A **usecase** is a single, well-defined business action. It subclasses `Usecase[
 
     class GetProject(Usecase[UUID, ProjectReadModel]):
         async def main(self, args: UUID) -> ProjectReadModel:
-            doc = self.ctx.doc_read(project_spec)
+            doc = self.ctx.doc_query(project_spec)
             return await doc.get(args)
 
 
     class CreateProject(Usecase[CreateProjectCmd, ProjectReadModel]):
         async def main(self, args: CreateProjectCmd) -> ProjectReadModel:
-            doc = self.ctx.doc_write(project_spec)
+            doc = self.ctx.doc_command(project_spec)
             return await doc.create(args)
 
 Every usecase has:
@@ -74,7 +74,7 @@ Middlewares wrap the usecase call chain. Three protocol types exist:
 
     class RequireActiveProject(Guard[UUID]):
         async def __call__(self, args: UUID) -> None:
-            doc = self.ctx.doc_read(project_spec)
+            doc = self.ctx.doc_query(project_spec)
             project = await doc.get(args)
 
             if project.is_deleted:

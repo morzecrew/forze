@@ -43,6 +43,7 @@ nav:
 
   - Concepts:
     - Overview: core-concepts/index.md
+    - Specs and wiring: core-concepts/specs-and-wiring.md
     - Layered Architecture: core-concepts/layered-architecture.md
     - Domain Layer: core-concepts/domain-layer.md
     - Application Layer: core-concepts/application-layer.md

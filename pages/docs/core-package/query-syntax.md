@@ -123,7 +123,7 @@ If `sorts` is omitted, adapters default to sorting by `id` descending.
 ### Document port usage
 
     :::python
-    doc = ctx.doc_read(project_spec)
+    doc = ctx.doc_query(project_spec)
 
     rows, total = await doc.find_many(
         filters=filters,
@@ -135,7 +135,7 @@ If `sorts` is omitted, adapters default to sorting by `id` descending.
 ### Search request usage
 
     :::python
-    search = ctx.search(project_search_spec)
+    search = ctx.search_query(project_search_spec)
 
     hits, total = await search.search(
         query="roadmap",

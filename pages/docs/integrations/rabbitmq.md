@@ -72,7 +72,7 @@ A `QueueSpec` binds a queue namespace to a Pydantic message model:
         params: dict
 
 
-    task_queue = QueueSpec(namespace="tasks", model=TaskPayload)
+    task_queue = QueueSpec(name="tasks", model=TaskPayload)
 
 ## Producing messages
 
@@ -235,8 +235,8 @@ RabbitMQ is typically combined with Postgres and Redis:
     :::python
     deps_plan = DepsPlan.from_modules(
         lambda: Deps.merge(
-            PostgresDepsModule(client=pg, rev_bump_strategy="database", history_write_strategy="database")(),
-            RedisDepsModule(client=redis)(),
+            PostgresDepsModule(client=pg, rw_documents={...})(),
+            RedisDepsModule(client=redis, caches={...})(),
             RabbitMQDepsModule(client=rabbitmq)(),
         ),
     )
