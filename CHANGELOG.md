@@ -7,57 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- `forze_postgres` / `forze_mongo`: ``PostgresDepsModule`` / ``MongoDepsModule`` now register the read (query) port for each ``rw_documents`` route using that route’s ``read`` config; previously the query map for the read-write merge incorrectly reused ``ro_documents``, which broke ``rw_documents``-only setups and duplicated routes when both were set.
-- `forze_postgres` / `forze_mongo`: tenant-aware write gateways now include ``tenant_id`` in **UPDATE** predicates (``PostgresWriteGateway`` ``__patch`` / ``__patch_group``, ``MongoWriteGateway`` single and bulk patch) and in **hard-delete** filters (``kill`` / ``kill_many``), matching row-level isolation used by reads; Postgres ``DELETE`` still raises :class:`~forze.base.errors.NotFoundError` when no rows match the scoped predicate.
-- `forze_postgres`: `PostgresFTSSearchAdapter` now reads rows from the configured **source** relation and uses the **index** only to resolve the ``tsvector`` expression from the catalog (``COUNT`` / ``SELECT`` no longer use the index name as ``FROM``).
-- `forze_postgres`: FTS search with an empty query string uses a valid ``ORDER BY`` constant when no rank is computed (avoids Postgres ``ORDER BY 0.0`` errors).
-
 ### Added
-
-- `forze.base.logging`: structlog-based logging with consistent structure (``scope``, ``source``, ``logger``, ``event``); fancy console format and JSON renderer; ``getLogger``, ``configure``, ``reset``; ``Logger.bind``, ``Logger.section``, per-namespace levels; ``bound_context``, ``bind_context``, ``clear_context`` for request-scoped context (e.g. correlation_id in FastAPI).
-- `forze.base.logging`: proper TRACE level support (below DEBUG) for noisy per-operation details; ``Logger.trace()``, ``configure(level="TRACE")``, and per-namespace ``levels={"module": "TRACE"}``.
-- `forze.base.logging`: Rich traceback formatting when ``colorize=True``.
-- `forze.base.logging`: Block format (blank line + pprint + ReprHighlighter) for nested ``extra``; simple extras inline; ``event_width`` wraps event so first line + extra fits.
-- `forze.base.logging`: Dual output (``dual_output=True``) – pretty to stderr, JSON to stdout for monitoring.
-- `forze.base.logging`: Level patterns use fnmatch (``*``, ``?``); patterns without wildcards match as prefix.
-- `forze_fastapi.middlewares.logging`: ``format_status_for_log(status_code)`` for ANSI-colored HTTP status in access logs.
-- `forze.base.logging`: ``Logger.critical_exception()`` for unhandled exceptions at CRITICAL with Rich traceback.
-- `forze.base.logging`: ``register_unhandled_exception_handler(loop=None)`` installs ``sys.excepthook``; when ``loop`` is provided (e.g. from ``asyncio.get_running_loop()`` in lifespan), also sets asyncio exception handler for unhandled task exceptions.
-- `forze_fastapi.handlers`: ``forze_unhandled_exception_handler`` catches non-:class:`CoreError` exceptions, logs at CRITICAL with Rich traceback, returns 500; registered via ``register_exception_handlers``.
 
 ### Changed
 
-- `forze.base.logging`: Default console output uses a compact line layout (`timestamp`, `level`, `[logger]`, `event`, `|`, extras) with shortened labels and trailing ID fragments for `correlation_id`, `execution_id`, and `causation_id` (`corr`, `exec`, `caus`); colors are rendered with Rich (`Text` / `Console`) so the package does not import `colorama` directly (`colors=False` to disable; pass `custom_console_renderer` to override).
-- `forze.base.logging`: Simple extras inline; ``prefix_width`` (reserved for timestamp+level+scope+indent) + ``event_width`` (event) + ``extra_indent`` = extra column; all configurable; block extras below wrapped event; ReprHighlighter for extras.
-- `forze.base.logging`: Block format (extra data below log line) and Rich tracebacks now align with event text for clearer visual hierarchy.
-- `forze.base.logging`: ``max_width`` renamed to ``event_width`` for clarity.
-- `forze.base.logging`: ``extra_dim`` config option to set dim color for extras (inline and block); defaults to ANSI dim when ``colorize=True``.
-- `forze.base.logging`: ``extra_key_sort`` config option: callable ``(str) -> int`` where lower value = earlier in output; controls order of extra keys in inline and block format.
-- `forze.base.logging`: Removed redundant ``width``; kept only ``prefix_width`` for alignment.
-- `forze.base.logging`: Inline extra dimmed as trace-level color (no syntax highlights); block extra keeps ReprHighlighter.
-- `forze.base.logging`: ``prefix_width`` and ``event_width`` default to 100 for consistent extra column alignment across depths.
-- `forze.base.logging`: ``scope_width`` (default 22) pads ``[scope]`` so scopes like ``[middleware]`` and ``[context]`` align at the same depth.
-- `forze.base.logging`: Use ``event_dict["depth"]`` instead of ``get_depth()`` in renderer so depth works when ProcessorFormatter runs in a different context (e.g. API/LoggingMiddleware logs).
-- `forze_fastapi` idempotent routes: invalid JSON request bodies no longer participate in idempotency; the handler runs and returns 422 without committing a snapshot, so clients can fix the body and retry with the same idempotency key.
-- All internal logging uses :mod:`forze.base.logging` (structlog-based).
-- `forze.base.logging.Logger`: strict API with ``sub`` and ``**kwargs``; ``sub`` for message substitution (``{key}`` placeholders), ``kwargs`` for extras; substitute only when message has placeholder and ``sub`` provides key.
-- Console renderer: blank lines around exception tracebacks for clearer separation; TRACE level dims entire record when colorized.
-- ``LoggingMiddleware`` uses ``format_status_for_log`` (in forze_fastapi) for proper ANSI colors instead of Rich markup tags.
-- `forze.base.logging`: Restructured into configurable modules (config, context, processors, renderers, handlers, facade).
-- `forze.base.logging`: Removed ``prefixes`` from ``configure()``; indentation applies to all loggers.
-
 ### Removed
-
-- `forze.base.logging`: ``prefixes`` parameter from ``configure()``; use ``levels`` for per-namespace control.
-- `forze.base.logging`: ``render_message`` and ``safe_preview``; use key-based message format with ``**kwargs`` instead.
-- Legacy loguru-based logging implementation; ``forze.base.logging`` is now structlog-only.
-- Loguru dependency.
 
 ### Fixed
 
-- ...
+## [0.1.14] - 2026-04-08
+
+### Added
+
+- `forze.base.logging`: structlog-based logging—structured records, TRACE level, Rich console and JSON renderers, request/context binding, per-namespace levels, optional dual pretty (stderr) + JSON (stdout) output, and global unhandled-exception hooks (`register_unhandled_exception_handler`). Replaces the previous Loguru stack.
+- `forze_fastapi`: ANSI-colored HTTP status in access logs (`format_status_for_log`); optional `forze_unhandled_exception_handler` / `register_exception_handlers` for non-`CoreError` exceptions (CRITICAL log + 500).
+- `forze.application.contracts.workflow`: port protocols and specs for workflow engines (start, signal, update, query, cancel, terminate, handle types).
+- `forze_temporal`: Temporal integration package—`TemporalDepsModule` and lifecycle; **workflow adapter** implementing `WorkflowCommandPort`; **client- and worker-side interceptors** to propagate `ExecutionContext`, map headers/metadata, and run **payload codecs** (workflow/activity inputs and results); platform client wiring for workers.
+- `forze_fastapi.middlewares.context`: ASGI `ContextBindingMiddleware` to bind call and principal context and emit call-context headers on responses.
+
+### Changed
+
+- **`Deps` replaces `DepRouter`**: spec-based **`DepRouter`** and **`contracts/deps/router.py`** are removed. **Route selection lives on `Deps`**: `plain_deps` vs `routed_deps`, `provide(key, route=..., fallback_to_plain=...)`, `Deps.plain` / `Deps.routed` / `Deps.routed_group`, and updated merge / `without` / `without_route` semantics—no separate router objects in the container.
+- **`DepKey` / `DepsPort` imports**: moved to **`forze.application.contracts.base`**; the old **`forze.application.contracts.deps`** package (keys, ports, **router**) is **gone**—replace `from forze.application.contracts.deps import …` with **`from forze.application.contracts.base import DepKey, DepsPort`** (and drop router types).
+- **`DepsModule` wiring**: integration packages (**`forze_postgres`**, **`forze_mongo`**, **`forze_redis`**, **`forze_s3`**, **`forze_rabbitmq`**, **`forze_sqs`**, **`forze_temporal`**, …) now build **`Deps` through module callables**, shared **config** types, and **routed** registration aligned with the new container—review each package’s `execution/deps/` for factory signatures and keys.
+- **Contracts**: **ports, specs, and dependency keys** updated across domains (document, search, workflow, cache, queue, pubsub, stream, tx, …)—including **renames**, **new overloads** (e.g. document command/query), **search** types/specs reshaped (**`internal/`** parse helpers removed), **`MapperPort`** under **`forze.application.contracts.mapping`**, and **workflow** **deps** + **specs** (signals, queries, updates) expanded.
+- **`forze_fastapi`**: HTTP integration **reorganized** under **`endpoints/`** (`attach_document`, `attach_search`, `attach_http`, route **features** for idempotency and ETag); **`ForzeAPIRouter` and the `forze_fastapi.routing` package are removed**—compose a standard **`APIRouter`** and use the **`attach_*`** helpers.
+- `forze.base.logging`: new configuration and `Logger` API (`configure`, `getLogger`, message `sub` vs extras); layout and rendering options are documented on the module—migrate any code that relied on Loguru-specific helpers.
+- `forze.base.logging`: OpenTelemetry-aware processors, `ExceptionInfoFormatter`, optional custom console renderer when bridging foreign loggers, configurable dim keys, and level-aware Rich console styling.
+- `forze_fastapi`: idempotent routes do not record idempotency when the request body is invalid JSON (422), so the same idempotency key can be reused after fixing the body.
+- `forze_fastapi`: `attach_http_endpoints` for batch HTTP route registration; `exclude_none` on `attach_document`, `attach_http`, and `attach_search` to control `response_model_exclude_none`.
+- `forze.application.execution`: `UsecaseRegistry.finalize` supports `inplace=True` to finalize a registry in place without copying.
+- `forze.application.contracts.document` and document adapters (`forze_postgres`, `forze_mongo`, `forze_mock`): optional `return_new` and `return_diff` on create, update, touch, and batch variants—skip repeat reads when the hydrated document is not needed, or return JSON update diffs (and paired results where applicable).
+
+### Removed
+
+- **`DepRouter`** and the **`forze.application.contracts.deps`** package (keys/ports/router split); use **`Deps`** routing and **`forze.application.contracts.base`** for **`DepKey` / `DepsPort`**.
+- **`TenantContextPort`** and **`forze.application.contracts.tenant`**.
+- **`ActorContextPort`** and **`forze.application.contracts.actor`** (caller identity is modeled via **`ExecutionContext`** / **`PrincipalContext`** and related codecs—see FastAPI **`ContextBindingMiddleware`**).
+- Loguru-based implementation and the `loguru` dependency; removed helpers such as `configure(prefixes=...)`, `render_message`, and `safe_preview` in favor of the structlog pipeline and `Logger`.
+
+### Fixed
+
+- `forze_postgres` / `forze_mongo`: document deps modules register each `rw_documents` route’s read/query port from that route’s `read` config (fixes incorrect reuse of `ro_documents` and broken or duplicated routing).
+- `forze_postgres` / `forze_mongo`: tenant-aware write gateways include `tenant_id` in UPDATE and hard-delete predicates so writes match read isolation; Postgres still raises `NotFoundError` when no row matches the scoped delete.
+- `forze_postgres`: `PostgresFTSSearchAdapter` reads rows from the configured source relation and uses the index only for catalog `tsvector` metadata; empty-query FTS uses a valid `ORDER BY` when no rank is computed.
 
 ## [0.1.13] - 2026-03-15
 
@@ -342,7 +335,8 @@ Execution and mapping refactor, middleware-first approach for usecases, split se
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.13...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/morzecrew/forze/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/morzecrew/forze/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/morzecrew/forze/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/morzecrew/forze/compare/v0.1.10...v0.1.11
