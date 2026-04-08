@@ -52,7 +52,7 @@ Integration code lives in separate **distribution packages** (separate import ro
 | `forze_s3` | S3-compatible storage adapter |
 | `forze_mongo` | Mongo-backed document and transaction adapters |
 | `forze_socketio` | Socket.IO transport adapter for typed realtime events |
-| `forze_temporal` | Temporal workflow integration (scaffolding) |
+| `forze_temporal` | Temporal workflow adapters and client wiring |
 | `forze_sqs` | SQS message queue adapter |
 | `forze_rabbitmq` | RabbitMQ message queue adapter |
 | `forze_mock` | In-memory mock adapters for development and testing |

@@ -161,12 +161,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Workflow
 
-**`WorkflowPort`**: orchestrate long-running processes:
-
-| Method | Purpose |
-|--------|---------|
-| `start(name, id, args, queue?)` | Start a workflow instance |
-| `signal(id, signal, data)` | Send a signal to a running workflow |
+**`WorkflowCommandPort`** / **`WorkflowQueryPort`**: orchestrate long-running processes with **`WorkflowSpec`** (Pydantic-typed **`run`**, **`signals`**, **`queries`**, **`updates`**). Commands cover **`start`**, **`signal`**, **`update`**, **`cancel`**, **`terminate`**; queries cover **`query`** and **`result`**. Resolve routed factories with **`WorkflowCommandDepKey`** / **`WorkflowQueryDepKey`** and **`route=spec.name`** (see [Temporal integration](../integrations/temporal.md)).
 
 ### Context handling
 

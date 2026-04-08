@@ -417,14 +417,31 @@ Deduplicate operations by caching responses keyed by operation name, idempotency
 
 ## Workflow
 
-### WorkflowPort
+Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invocation, optional **`signals`**, **`queries`**, **`updates`**). Ports are split between commands and queries.
 
-Orchestrate long-running processes:
+### WorkflowCommandPort
 
-| Method | Signature | Purpose |
-|--------|-----------|---------|
-| `start` | `(name, id, args, queue?)` | Start a workflow instance |
-| `signal` | `(id, signal, data)` | Send a signal to a running workflow |
+| Method | Purpose |
+|--------|---------|
+| `start(args, *, workflow_id?, raise_on_already_started?)` | Start a run; returns **`WorkflowHandle`** |
+| `signal(handle, *, signal, args)` | Send a signal |
+| `update(handle, *, update, args)` | Run a workflow update |
+| `cancel(handle)` | Request cancellation |
+| `terminate(handle, *, reason?)` | Terminate the run |
+
+### WorkflowQueryPort
+
+| Method | Purpose |
+|--------|---------|
+| `query(handle, *, query, args)` | Run a query |
+| `result(handle)` | Await the workflow result |
+
+### Dependency keys
+
+| Key | Purpose |
+|-----|---------|
+| `WorkflowCommandDepKey` | Routed factory → **`WorkflowCommandPort`** (route = **`WorkflowSpec.name`**) |
+| `WorkflowQueryDepKey` | Routed factory → **`WorkflowQueryPort`** (route = **`WorkflowSpec.name`**) |
 
 ## Context handling
 
