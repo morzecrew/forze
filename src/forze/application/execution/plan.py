@@ -334,7 +334,7 @@ class UsecasePlan:
 
     # ....................... #
 
-    def tx(self, op: OpKey, *, route: str) -> Self:
+    def tx(self, op: OpKey, *, route: str | StrEnum) -> Self:
         """Enable transaction wrapping for the operation.
 
         :param op: Operation key.

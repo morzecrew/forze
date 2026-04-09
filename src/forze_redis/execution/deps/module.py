@@ -36,8 +36,8 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     counters: Mapping[K, RedisCounterConfig] | None = None
     """Mapping from counter names to their Redis-specific configurations."""
 
-    idempotency: Mapping[K, RedisIdempotencyConfig] | None = None
-    """Mapping from idempotency names to their Redis-specific configurations."""
+    idempotency: RedisIdempotencyConfig | None = None
+    """Redis-specific configurations for idempotency."""
 
     #! read and write separately?
 
@@ -86,13 +86,12 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
             )
 
         if self.idempotency:
-            idempotency_deps = idempotency_deps.merge(
-                Deps[K].routed(
+            plain_deps = plain_deps.merge(
+                Deps[K].plain(
                     {
-                        IdempotencyDepKey: {
-                            name: ConfigurableRedisIdempotency(config=config)
-                            for name, config in self.idempotency.items()
-                        }
+                        IdempotencyDepKey: ConfigurableRedisIdempotency(
+                            config=self.idempotency
+                        )
                     }
                 )
             )

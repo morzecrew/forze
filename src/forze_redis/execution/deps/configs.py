@@ -1,4 +1,4 @@
-from typing import NotRequired, TypedDict, final
+from typing import Any, NotRequired, TypedDict, TypeGuard, final
 
 # ----------------------- #
 
@@ -35,6 +35,15 @@ class RedisCounterConfig(_BaseRedisConfig):
 @final
 class RedisIdempotencyConfig(_BaseRedisConfig):
     """Configuration for a Redis idempotency."""
+
+
+# ....................... #
+
+
+def is_redis_idempotency_config(
+    config: dict[str, Any],
+) -> TypeGuard[RedisIdempotencyConfig]:
+    return "namespace" in config
 
 
 # ....................... #
