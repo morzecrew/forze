@@ -18,7 +18,7 @@ from .keys import S3ClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class S3DepsModule[K: str | StrEnum](DepsModule):
+class S3DepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers S3 client and storage port.
 
     Invoke to produce a :class:`Deps` container with S3-backed storage

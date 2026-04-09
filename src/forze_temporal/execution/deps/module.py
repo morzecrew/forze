@@ -19,7 +19,7 @@ from .keys import TemporalClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TemporalDepsModule[K: str | StrEnum](DepsModule):
+class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Temporal clients and adapters."""
 
     client: TemporalClient

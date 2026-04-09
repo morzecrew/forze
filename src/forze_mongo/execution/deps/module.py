@@ -42,7 +42,7 @@ def _document_config_to_read_only(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MongoDepsModule[K: str | StrEnum](DepsModule):
+class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Mongo client, tx manager, and document port."""
 
     client: MongoClient

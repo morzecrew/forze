@@ -177,14 +177,14 @@ def mock_stream_group(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MockDepsModule(DepsModule):
+class MockDepsModule(DepsModule[Any]):
     """Dependency module that registers all in-memory mock adapters."""
 
     state: MockState = attrs.field(factory=MockState)
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[Any]:
         return Deps.plain(
             {
                 MockStateDepKey: self.state,

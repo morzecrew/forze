@@ -18,7 +18,7 @@ from .keys import SQSClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SQSDepsModule[K: str | StrEnum](DepsModule):
+class SQSDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers SQS client and queue ports."""
 
     client: SQSClient

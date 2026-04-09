@@ -24,7 +24,7 @@ from .keys import RedisClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RedisDepsModule[K: str | StrEnum](DepsModule):
+class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Redis clients and adapters."""
 
     client: RedisClient

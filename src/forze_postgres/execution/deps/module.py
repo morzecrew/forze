@@ -50,7 +50,7 @@ def _document_config_to_read_only(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class PostgresDepsModule[K: str | StrEnum](DepsModule):
+class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Postgres clients and adapters."""
 
     client: PostgresClient

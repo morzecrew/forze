@@ -302,14 +302,14 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
 # ....................... #
 
 
-class DepsModule(Protocol):
+class DepsModule[K: str | StrEnum](Protocol):
     """Protocol for a module that returns a dependency container.
 
     Callables are invoked to produce a :class:`Deps` instance; multiple
     modules are merged via :meth:`Deps.merge` when building a plan.
     """
 
-    def __call__(self) -> Deps[Any]:
+    def __call__(self) -> Deps[K]:
         """Return a dependency container."""
         ...
 
@@ -328,13 +328,13 @@ class DepsPlan:
     registers a conflicting dependency key.
     """
 
-    modules: tuple[DepsModule, ...] = attrs.field(factory=tuple)
+    modules: tuple[DepsModule[Any], ...] = attrs.field(factory=tuple)
     """Modules to invoke and merge when building."""
 
     # ....................... #
 
     @classmethod
-    def from_modules(cls, *modules: DepsModule) -> Self:
+    def from_modules(cls, *modules: DepsModule[Any]) -> Self:
         """Create a plan from modules.
 
         :param modules: Modules to include.
@@ -345,7 +345,7 @@ class DepsPlan:
 
     # ....................... #
 
-    def with_modules(self, *modules: DepsModule) -> Self:
+    def with_modules(self, *modules: DepsModule[Any]) -> Self:
         """Return a new plan with additional modules appended.
 
         :param modules: Modules to append.
@@ -376,9 +376,9 @@ class DepsPlan:
 
         if not self.modules:
             logger.trace("Deps plan is empty; returning empty container")
-            return Deps()
+            return Deps[Any]()
 
-        built: list[Deps] = []
+        built: list[Deps[Any]] = []
 
         for i, module in enumerate(self.modules, 1):
             deps = module()

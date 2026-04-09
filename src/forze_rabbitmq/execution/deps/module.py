@@ -18,7 +18,7 @@ from .keys import RabbitMQClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RabbitMQDepsModule[K: str | StrEnum](DepsModule):
+class RabbitMQDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers RabbitMQ client and queue ports."""
 
     client: RabbitMQClient
