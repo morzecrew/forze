@@ -42,33 +42,33 @@ def _document_config_to_read_only(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class MongoDepsModule(DepsModule):
+class MongoDepsModule[K: str | StrEnum](DepsModule):
     """Dependency module that registers Mongo client, tx manager, and document port."""
 
     client: MongoClient
     """Pre-constructed Mongo client (not yet initialized)."""
 
-    ro_documents: Mapping[str | StrEnum, MongoReadOnlyDocumentConfig] | None = None
+    ro_documents: Mapping[K, MongoReadOnlyDocumentConfig] | None = None
     """Mapping from read-only document names to their Mongo-specific configurations."""
 
-    rw_documents: Mapping[str | StrEnum, MongoDocumentConfig] | None = None
+    rw_documents: Mapping[K, MongoDocumentConfig] | None = None
     """Mapping from read-write document names to their Mongo-specific configurations."""
 
-    tx: set[str | StrEnum] | None = None
+    tx: set[K] | None = None
     """Set of transaction routes to register."""
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[K]:
         """Build a dependency container with Mongo-backed ports."""
 
-        plain_deps = Deps.plain({MongoClientDepKey: self.client})
-        doc_deps = Deps()
-        tx_deps = Deps()
+        plain_deps = Deps[K].plain({MongoClientDepKey: self.client})
+        doc_deps = Deps[K]()
+        tx_deps = Deps[K]()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurableMongoReadOnlyDocument(config=config)
@@ -80,7 +80,7 @@ class MongoDepsModule(DepsModule):
 
         if self.rw_documents:
             doc_deps = doc_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurableMongoReadOnlyDocument(
@@ -98,7 +98,7 @@ class MongoDepsModule(DepsModule):
 
         if self.tx:
             tx_deps = tx_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {TxManagerDepKey: {name: mongo_txmanager for name in self.tx}}
                 )
             )

@@ -18,30 +18,30 @@ from .keys import SQSClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class SQSDepsModule(DepsModule):
+class SQSDepsModule[K: str | StrEnum](DepsModule):
     """Dependency module that registers SQS client and queue ports."""
 
     client: SQSClient
     """Pre-constructed SQS client (session not yet initialized)."""
 
-    queue_readers: Mapping[str | StrEnum, SQSQueueConfig] | None = None
+    queue_readers: Mapping[K, SQSQueueConfig] | None = None
     """Mapping from queue names to their SQS-specific configurations."""
 
-    queue_writers: Mapping[str | StrEnum, SQSQueueConfig] | None = None
+    queue_writers: Mapping[K, SQSQueueConfig] | None = None
     """Mapping from queue names to their SQS-specific configurations."""
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[K]:
         """Build a dependency container with SQS-backed ports."""
 
-        plain_deps = Deps.plain({SQSClientDepKey: self.client})
-        queue_reader_deps = Deps()
-        queue_writer_deps = Deps()
+        plain_deps = Deps[K].plain({SQSClientDepKey: self.client})
+        queue_reader_deps = Deps[K]()
+        queue_writer_deps = Deps[K]()
 
         if self.queue_readers:
             queue_reader_deps = queue_reader_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         QueueQueryDepKey: {
                             name: ConfigurableSQSQueueRead(config=config)
@@ -53,7 +53,7 @@ class SQSDepsModule(DepsModule):
 
         if self.queue_writers:
             queue_writer_deps = queue_writer_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         QueueCommandDepKey: {
                             name: ConfigurableSQSQueueWrite(config=config)

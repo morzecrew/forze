@@ -50,43 +50,43 @@ def _document_config_to_read_only(
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class PostgresDepsModule(DepsModule):
+class PostgresDepsModule[K: str | StrEnum](DepsModule):
     """Dependency module that registers Postgres clients and adapters."""
 
     client: PostgresClient
     """Pre-constructed Postgres client (pool not yet initialized)."""
 
-    ro_documents: Mapping[str | StrEnum, PostgresReadOnlyDocumentConfig] | None = None
+    ro_documents: Mapping[K, PostgresReadOnlyDocumentConfig] | None = None
     """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    rw_documents: Mapping[str | StrEnum, PostgresDocumentConfig] | None = None
+    rw_documents: Mapping[K, PostgresDocumentConfig] | None = None
     """Mapping from read-write document names to their Postgres-specific configurations."""
 
-    searches: Mapping[str | StrEnum, PostgresSearchConfig] | None = None
+    searches: Mapping[K, PostgresSearchConfig] | None = None
     """Mapping from search names to their Postgres-specific configurations."""
 
-    tx: set[str | StrEnum] | None = None
+    tx: set[K] | None = None
     """Set of transaction routes to register."""
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[K]:
         """Build a dependency container with Postgres-backed ports."""
 
-        plain_deps = Deps.plain(
+        plain_deps = Deps[K].plain(
             {
                 PostgresClientDepKey: self.client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=self.client),
             }
         )
 
-        doc_deps = Deps()
-        search_deps = Deps()
-        tx_deps = Deps()
+        doc_deps = Deps[K]()
+        search_deps = Deps[K]()
+        tx_deps = Deps[K]()
 
         if self.ro_documents:
             doc_deps = doc_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurablePostgresReadOnlyDocument(config=config)
@@ -98,7 +98,7 @@ class PostgresDepsModule(DepsModule):
 
         if self.rw_documents:
             doc_deps = doc_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         DocumentQueryDepKey: {
                             name: ConfigurablePostgresReadOnlyDocument(
@@ -120,7 +120,7 @@ class PostgresDepsModule(DepsModule):
                 validate_pg_search_conf(cfg)
 
             search_deps = search_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         SearchQueryDepKey: {
                             name: ConfigurablePostgresSearch(config=config)
@@ -132,7 +132,7 @@ class PostgresDepsModule(DepsModule):
 
         if self.tx:
             tx_deps = tx_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {TxManagerDepKey: {name: postgres_txmanager for name in self.tx}}
                 )
             )

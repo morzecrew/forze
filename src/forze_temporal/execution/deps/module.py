@@ -19,26 +19,26 @@ from .keys import TemporalClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class TemporalDepsModule(DepsModule):
+class TemporalDepsModule[K: str | StrEnum](DepsModule):
     """Dependency module that registers Temporal clients and adapters."""
 
     client: TemporalClient
     """Pre-constructed Temporal client (connection not yet initialized)."""
 
-    workflows: Mapping[str | StrEnum, TemporalWorkflowConfig] | None = None
+    workflows: Mapping[K, TemporalWorkflowConfig] | None = None
     """Mapping from workflow names to their Temporal-specific configurations."""
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[K]:
         """Build a dependency container with Temporal-backed ports."""
 
-        plain_deps = Deps.plain({TemporalClientDepKey: self.client})
-        workflow_deps = Deps()
+        plain_deps = Deps[K].plain({TemporalClientDepKey: self.client})
+        workflow_deps = Deps[K]()
 
         if self.workflows:
             workflow_deps = workflow_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         WorkflowQueryDepKey: {
                             name: ConfigurableTemporalWorkflowQuery(config=config)

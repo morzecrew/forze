@@ -69,7 +69,7 @@ class ExecutionContext:
     :class:`DepsPort` used to resolve infrastructure-specific ports.
     """
 
-    deps: DepsPort
+    deps: DepsPort[Any]
     """Dependencies container."""
 
     # Non initable fields

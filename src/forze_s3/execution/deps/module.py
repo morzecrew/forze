@@ -18,7 +18,7 @@ from .keys import S3ClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class S3DepsModule(DepsModule):
+class S3DepsModule[K: str | StrEnum](DepsModule):
     """Dependency module that registers S3 client and storage port.
 
     Invoke to produce a :class:`Deps` container with S3-backed storage
@@ -29,23 +29,23 @@ class S3DepsModule(DepsModule):
     client: S3Client
     """Pre-constructed S3 client (session not yet initialized)."""
 
-    storages: Mapping[str | StrEnum, S3StorageConfig] | None = None
+    storages: Mapping[K, S3StorageConfig] | None = None
     """Mapping from storage names to their S3-specific configurations."""
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[K]:
         """Build a dependency container with S3-backed storage port.
 
         :returns: Deps with client and storage port factory.
         """
 
-        plain_deps = Deps.plain({S3ClientDepKey: self.client})
-        storage_deps = Deps()
+        plain_deps = Deps[K].plain({S3ClientDepKey: self.client})
+        storage_deps = Deps[K]()
 
         if self.storages:
             storage_deps = storage_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         StorageDepKey: {
                             name: ConfigurableS3Storage(config=config)

@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, Self, TypeVar, final
 
 import attrs
@@ -32,7 +33,7 @@ class DepKey[T]:
 # ....................... #
 
 
-class DepsPort(Protocol):
+class DepsPort[K: str | StrEnum](Protocol):
     """Abstract access to dependency resolution.
 
     Implementations provide a registry of dependencies keyed by :class:`DepKey`.
@@ -44,7 +45,7 @@ class DepsPort(Protocol):
         self,
         key: DepKey[T],
         *,
-        route: str | None = None,
+        route: K | None = None,
         fallback_to_plain: bool = True,
     ) -> T:
         """Return the dependency instance registered under ``key``."""
@@ -52,7 +53,7 @@ class DepsPort(Protocol):
 
     # ....................... #
 
-    def exists(self, key: DepKey[T], *, route: str | None = None) -> bool:
+    def exists(self, key: DepKey[T], *, route: K | None = None) -> bool:
         """Return ``True`` if the dependency is registered."""
         ...  # pragma: no cover
 
@@ -78,7 +79,7 @@ class DepsPort(Protocol):
 
     # ....................... #
 
-    def without_route(self, key: DepKey[T], route: str) -> Self:
+    def without_route(self, key: DepKey[T], route: K) -> Self:
         """Create a new dependency container without the given route."""
         ...  # pragma: no cover
 

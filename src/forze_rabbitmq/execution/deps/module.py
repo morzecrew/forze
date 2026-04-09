@@ -18,30 +18,30 @@ from .keys import RabbitMQClientDepKey
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RabbitMQDepsModule(DepsModule):
+class RabbitMQDepsModule[K: str | StrEnum](DepsModule):
     """Dependency module that registers RabbitMQ client and queue ports."""
 
     client: RabbitMQClient
     """Pre-constructed RabbitMQ client (connection not yet initialized)."""
 
-    queue_readers: Mapping[str | StrEnum, RabbitMQQueueConfig] | None = None
+    queue_readers: Mapping[K, RabbitMQQueueConfig] | None = None
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
-    queue_writers: Mapping[str | StrEnum, RabbitMQQueueConfig] | None = None
+    queue_writers: Mapping[K, RabbitMQQueueConfig] | None = None
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
     # ....................... #
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[K]:
         """Build a dependency container with RabbitMQ-backed ports."""
 
-        plain_deps = Deps.plain({RabbitMQClientDepKey: self.client})
-        queue_reader_deps = Deps()
-        queue_writer_deps = Deps()
+        plain_deps = Deps[K].plain({RabbitMQClientDepKey: self.client})
+        queue_reader_deps = Deps[K]()
+        queue_writer_deps = Deps[K]()
 
         if self.queue_readers:
             queue_reader_deps = queue_reader_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         QueueQueryDepKey: {
                             name: ConfigurableRabbitMQQueueRead(config=config)
@@ -53,7 +53,7 @@ class RabbitMQDepsModule(DepsModule):
 
         if self.queue_writers:
             queue_writer_deps = queue_writer_deps.merge(
-                Deps.routed(
+                Deps[K].routed(
                     {
                         QueueCommandDepKey: {
                             name: ConfigurableRabbitMQQueueWrite(config=config)

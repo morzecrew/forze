@@ -20,14 +20,14 @@ from ..contracts.base import DepKey, DepsPort
 T = TypeVar("T")
 
 PlainDepsMap = Mapping[DepKey[Any], Any]
-RoutedDepsMap = Mapping[DepKey[Any], Mapping[str | StrEnum, Any]]
+type RoutedDeps[K] = Mapping[DepKey[Any], Mapping[K, Any]]
 
 # ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class Deps(DepsPort):
+class Deps[K: str | StrEnum = str](DepsPort[K]):
     """In-memory dependency container used by the kernel.
 
     Supports two registration modes:
@@ -39,7 +39,7 @@ class Deps(DepsPort):
     plain_deps: PlainDepsMap | None = None
     """Dependencies registered without affinity."""
 
-    routed_deps: RoutedDepsMap | None = None
+    routed_deps: RoutedDeps[K] | None = None
     """Dependencies registered for specific affinity groups."""
 
     # ....................... #
@@ -56,15 +56,15 @@ class Deps(DepsPort):
     def plain(cls, deps: PlainDepsMap) -> Self:
         """Create a new dependency container from plain dependencies."""
 
-        return cls(plain_deps=deps)
+        return cls(plain_deps=deps or None)
 
     # ....................... #
 
     @classmethod
-    def routed(cls, deps: RoutedDepsMap) -> Self:
+    def routed(cls, deps: RoutedDeps[K]) -> Self:
         """Create a new dependency container from routed dependencies."""
 
-        return cls(routed_deps=deps)
+        return cls(routed_deps=deps or None)
 
     # ....................... #
 
@@ -73,7 +73,7 @@ class Deps(DepsPort):
         cls,
         deps: PlainDepsMap,
         *,
-        routes: set[str | StrEnum] | frozenset[str | StrEnum],
+        routes: set[K] | frozenset[K],
     ) -> Self:
         """Create routed dependencies by expanding one provider per many routing keys.
 
@@ -84,11 +84,11 @@ class Deps(DepsPort):
         if not routes:
             raise CoreError("Routes must not be empty")
 
-        expanded: RoutedDepsMap = {
+        expanded: RoutedDeps[K] = {
             key: {name: dep for name in routes} for key, dep in deps.items()
         }
 
-        return cls(routed_deps=expanded)
+        return cls(routed_deps=expanded or None)
 
     # ....................... #
 
@@ -96,7 +96,7 @@ class Deps(DepsPort):
         self,
         key: DepKey[T],
         *,
-        route: str | StrEnum | None = None,
+        route: K | None = None,
         fallback_to_plain: bool = True,
     ) -> T:
         """Return a dependency value for the given key.
@@ -139,7 +139,7 @@ class Deps(DepsPort):
 
     # ....................... #
 
-    def exists(self, key: DepKey[T], *, route: str | StrEnum | None = None) -> bool:
+    def exists(self, key: DepKey[T], *, route: K | None = None) -> bool:
         """Return ``True`` if the dependency is registered."""
 
         if route is None:
@@ -166,7 +166,7 @@ class Deps(DepsPort):
         logger.trace("Merging %s dependency container(s)", len(deps))
 
         plain_acc: dict[DepKey[Any], Any] = {}
-        routed_acc: dict[DepKey[Any], dict[str | StrEnum, Any]] = {}
+        routed_acc: dict[DepKey[Any], dict[K, Any]] = {}
 
         for d in deps:
             # 1. merge plain
@@ -251,7 +251,7 @@ class Deps(DepsPort):
 
     # ....................... #
 
-    def without_route(self, key: DepKey[T], route: str) -> Self:
+    def without_route(self, key: DepKey[T], route: K) -> Self:
         """Create a new dependency container without one routed route."""
 
         logger.trace(
@@ -309,7 +309,7 @@ class DepsModule(Protocol):
     modules are merged via :meth:`Deps.merge` when building a plan.
     """
 
-    def __call__(self) -> Deps:
+    def __call__(self) -> Deps[Any]:
         """Return a dependency container."""
         ...
 
@@ -362,7 +362,7 @@ class DepsPlan:
 
     # ....................... #
 
-    def build(self) -> Deps:
+    def build(self) -> Deps[Any]:
         """Build a merged dependency container from all modules.
 
         :returns: Merged :class:`Deps` instance.
@@ -389,6 +389,6 @@ class DepsPlan:
             )
             built.append(deps)
 
-        merged = Deps.merge(*built)
+        merged = Deps[Any].merge(*built)
 
         return merged
