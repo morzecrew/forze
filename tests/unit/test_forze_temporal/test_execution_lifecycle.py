@@ -6,11 +6,16 @@ import pytest
 
 pytest.importorskip("temporalio")
 
-from forze.application.contracts.workflow import WorkflowCommandDepKey, WorkflowQueryDepKey
+from forze.application.contracts.workflow import (
+    WorkflowCommandDepKey,
+    WorkflowQueryDepKey,
+)
 from forze.application.execution import ExecutionContext
-
 from forze_temporal.execution.deps import TemporalClientDepKey, TemporalDepsModule
-from forze_temporal.execution.lifecycle import TemporalStartupHook, temporal_lifecycle_step
+from forze_temporal.execution.lifecycle import (
+    TemporalStartupHook,
+    temporal_lifecycle_step,
+)
 from forze_temporal.kernel.platform import TemporalClient, TemporalConfig
 
 
@@ -19,7 +24,9 @@ async def test_temporal_startup_hook_initializes_client() -> None:
     client = MagicMock(spec=TemporalClient)
     client.initialize = AsyncMock()
 
-    hook = TemporalStartupHook(host="localhost:7233", config=TemporalConfig(namespace="default"))
+    hook = TemporalStartupHook(
+        host="localhost:7233", config=TemporalConfig(namespace="default")
+    )
     ctx = MagicMock(spec=ExecutionContext)
     ctx.dep = MagicMock(return_value=client)
 
@@ -44,8 +51,8 @@ def test_temporal_deps_module_registers_client_and_empty_workflow_routes() -> No
     deps = module()
 
     assert deps.plain_deps[TemporalClientDepKey] is client
-    assert WorkflowCommandDepKey not in deps.routed_deps
-    assert WorkflowQueryDepKey not in deps.routed_deps
+    assert WorkflowCommandDepKey not in (deps.routed_deps or {})
+    assert WorkflowQueryDepKey not in (deps.routed_deps or {})
 
 
 def test_temporal_deps_module_merges_workflow_configs() -> None:
@@ -59,8 +66,9 @@ def test_temporal_deps_module_merges_workflow_configs() -> None:
     )
 
     deps = module()
+    routed_deps = deps.routed_deps or {}
 
-    assert WorkflowCommandDepKey in deps.routed_deps
-    assert WorkflowQueryDepKey in deps.routed_deps
-    assert "MyWorkflow" in deps.routed_deps[WorkflowCommandDepKey]
-    assert "MyWorkflow" in deps.routed_deps[WorkflowQueryDepKey]
+    assert WorkflowCommandDepKey in routed_deps
+    assert WorkflowQueryDepKey in routed_deps
+    assert "MyWorkflow" in routed_deps[WorkflowCommandDepKey]
+    assert "MyWorkflow" in routed_deps[WorkflowQueryDepKey]

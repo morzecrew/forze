@@ -23,7 +23,7 @@ def calculate_effective_field_weights(
 
     # First fallback - default weights
     elif spec.default_weights:
-        weights = spec.default_weights
+        weights = dict(spec.default_weights)
 
     # Last fallback - all fields with weight 1.0
     else:

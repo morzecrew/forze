@@ -16,6 +16,7 @@ from typing import (
     Any,
     AsyncIterator,
     Literal,
+    Mapping,
     Sequence,
     TypeVar,
     cast,
@@ -1108,11 +1109,16 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
             return fields, w
 
         fields_opt = opts.get("fields")
+
         if fields_opt:
             sub = [f for f in fields_opt if f in allowed]
-            return (sub if sub else allowed), self.spec.default_weights
+            allowed = sub if sub else allowed
 
-        return allowed, self.spec.default_weights
+        def_weights = (
+            dict(self.spec.default_weights) if self.spec.default_weights else None
+        )
+
+        return allowed, def_weights
 
     # ....................... #
 
@@ -1406,7 +1412,7 @@ class MockCacheAdapter(CachePort):
 
     async def set_many_versioned(
         self,
-        key_version_mapping: dict[tuple[str, str], Any],
+        key_version_mapping: Mapping[tuple[str, str], Any],
     ) -> None:
         with self.state.lock:
             for (key, version), value in key_version_mapping.items():

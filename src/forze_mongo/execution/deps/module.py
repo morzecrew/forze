@@ -1,7 +1,7 @@
 """Mongo dependency module for the application kernel."""
 
 from enum import StrEnum
-from typing import final
+from typing import Mapping, final
 
 import attrs
 
@@ -48,15 +48,13 @@ class MongoDepsModule(DepsModule):
     client: MongoClient
     """Pre-constructed Mongo client (not yet initialized)."""
 
-    ro_documents: dict[str | StrEnum, MongoReadOnlyDocumentConfig] = attrs.field(
-        factory=dict
-    )
+    ro_documents: Mapping[str | StrEnum, MongoReadOnlyDocumentConfig] | None = None
     """Mapping from read-only document names to their Mongo-specific configurations."""
 
-    rw_documents: dict[str | StrEnum, MongoDocumentConfig] = attrs.field(factory=dict)
+    rw_documents: Mapping[str | StrEnum, MongoDocumentConfig] | None = None
     """Mapping from read-write document names to their Mongo-specific configurations."""
 
-    tx: set[str | StrEnum] = attrs.field(factory=set)
+    tx: set[str | StrEnum] | None = None
     """Set of transaction routes to register."""
 
     # ....................... #

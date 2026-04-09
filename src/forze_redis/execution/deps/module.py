@@ -1,7 +1,7 @@
 """Redis dependency module for the application kernel."""
 
 from enum import StrEnum
-from typing import final
+from typing import Mapping, final
 
 import attrs
 
@@ -30,13 +30,13 @@ class RedisDepsModule(DepsModule):
     client: RedisClient
     """Pre-constructed Redis client (pool not yet initialized)."""
 
-    caches: dict[str | StrEnum, RedisCacheConfig] = attrs.field(factory=dict)
+    caches: Mapping[str | StrEnum, RedisCacheConfig] | None = None
     """Mapping from cache names to their Redis-specific configurations."""
 
-    counters: dict[str | StrEnum, RedisCounterConfig] = attrs.field(factory=dict)
+    counters: Mapping[str | StrEnum, RedisCounterConfig] | None = None
     """Mapping from counter names to their Redis-specific configurations."""
 
-    idempotency: dict[str | StrEnum, RedisIdempotencyConfig] = attrs.field(factory=dict)
+    idempotency: Mapping[str | StrEnum, RedisIdempotencyConfig] | None = None
     """Mapping from idempotency names to their Redis-specific configurations."""
 
     #! read and write separately?

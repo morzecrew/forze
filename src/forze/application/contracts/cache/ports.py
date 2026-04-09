@@ -1,4 +1,4 @@
-from typing import Any, Awaitable, Protocol, Sequence, runtime_checkable
+from typing import Any, Awaitable, Protocol, Sequence, runtime_checkable, Mapping
 
 from forze.base.primitives import JsonDict
 
@@ -40,7 +40,7 @@ class CacheCommandPort(Protocol):  # pragma: no cover
 
     def set_many_versioned(
         self,
-        key_version_mapping: dict[tuple[str, str], Any],
+        key_version_mapping: Mapping[tuple[str, str], Any],
     ) -> Awaitable[None]:
         """Bulk-store multiple versioned key/value pairs."""
         ...

@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Final, Sequence, final
+from typing import Any, Final, Sequence, final, Mapping
 
 import attrs
 
@@ -134,7 +134,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     async def __mset_bodies(
         self,
-        mapping: dict[tuple[str, str], Any],
+        mapping: Mapping[tuple[str, str], Any],
         *,
         ttl: timedelta,
     ) -> None:
@@ -282,7 +282,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
 
     async def set_many_versioned(
         self,
-        key_version_mapping: dict[tuple[str, str], Any],
+        key_version_mapping: Mapping[tuple[str, str], Any],
     ) -> None:
         if not key_version_mapping:
             return

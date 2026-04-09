@@ -1,4 +1,4 @@
-from typing import Sequence, TypedDict
+from typing import Mapping, Sequence, TypedDict
 
 import attrs
 from pydantic import BaseModel
@@ -36,7 +36,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
     fields: Sequence[str] = attrs.field(validator=attrs.validators.min_len(1))
     """Indexed fields."""
 
-    default_weights: dict[str, float] | None = None
+    default_weights: Mapping[str, float] | None = None
     """Default weights for fields."""
 
     fuzzy: SearchFuzzySpec | None = None

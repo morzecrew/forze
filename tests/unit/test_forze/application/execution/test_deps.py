@@ -130,7 +130,7 @@ class TestDepsWithout:
         d = Deps.routed({_R: {"only": 1}})
         d2 = d.without_route(_R, "only")
 
-        assert _R not in d2.routed_deps
+        assert _R not in (d2.routed_deps or {})
 
     def test_without_route_unknown_key_returns_copy(self) -> None:
         d = Deps.plain({_A: 1})
