@@ -27,7 +27,9 @@ class ConfigurableTemporalWorkflowQuery(WorkflowQueryDepPort):
     # ....................... #
 
     def __call__(
-        self, ctx: ExecutionContext, spec: WorkflowSpec[Any, Any]
+        self,
+        ctx: ExecutionContext,
+        spec: WorkflowSpec[Any, Any],
     ) -> TemporalWorkflowQueryAdapter[Any, Any]:
         client = ctx.dep(TemporalClientDepKey)
 
@@ -54,7 +56,9 @@ class ConfigurableTemporalWorkflowCommand(WorkflowCommandDepPort):
     # ....................... #
 
     def __call__(
-        self, ctx: ExecutionContext, spec: WorkflowSpec[Any, Any]
+        self,
+        ctx: ExecutionContext,
+        spec: WorkflowSpec[Any, Any],
     ) -> TemporalWorkflowCommandAdapter[Any, Any]:
         client = ctx.dep(TemporalClientDepKey)
 

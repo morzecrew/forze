@@ -1,7 +1,8 @@
 """Redis dependency module for the application kernel."""
 
+from collections.abc import Mapping as MappingABC
 from enum import StrEnum
-from typing import Mapping, final
+from typing import Any, Mapping, TypeGuard, final
 
 import attrs
 
@@ -22,6 +23,27 @@ from .keys import RedisClientDepKey
 # ----------------------- #
 
 
+def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfig]]:
+    if not isinstance(config, MappingABC):
+        return False
+
+    k = list(config.keys())  # type: ignore
+
+    return isinstance(config[k[0]], MappingABC)
+
+
+def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
+    if not isinstance(config, MappingABC):
+        return False
+
+    k = list(config.keys())  # type: ignore
+
+    return not isinstance(config[k[0]], MappingABC)
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
@@ -30,13 +52,15 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     client: RedisClient
     """Pre-constructed Redis client (pool not yet initialized)."""
 
-    caches: Mapping[K, RedisCacheConfig] | None = None
+    caches: Mapping[K, RedisCacheConfig] | None = attrs.field(default=None)
     """Mapping from cache names to their Redis-specific configurations."""
 
-    counters: Mapping[K, RedisCounterConfig] | None = None
+    counters: Mapping[K, RedisCounterConfig] | None = attrs.field(default=None)
     """Mapping from counter names to their Redis-specific configurations."""
 
-    idempotency: RedisIdempotencyConfig | None = None
+    idempotency: Mapping[K, RedisIdempotencyConfig] | RedisIdempotencyConfig | None = (
+        attrs.field(default=None)
+    )
     """Redis-specific configurations for idempotency."""
 
     #! read and write separately?
@@ -86,14 +110,27 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
             )
 
         if self.idempotency:
-            plain_deps = plain_deps.merge(
-                Deps[K].plain(
-                    {
-                        IdempotencyDepKey: ConfigurableRedisIdempotency(
-                            config=self.idempotency
-                        )
-                    }
+            if _is_idem_routed(self.idempotency):
+                idempotency_deps = idempotency_deps.merge(
+                    Deps[K].routed(
+                        {
+                            IdempotencyDepKey: {
+                                name: ConfigurableRedisIdempotency(config=config)
+                                for name, config in self.idempotency.items()
+                            }
+                        }
+                    )
                 )
-            )
+
+            elif _is_idem_plain(self.idempotency):
+                idempotency_deps = idempotency_deps.merge(
+                    Deps[K].plain(
+                        {
+                            IdempotencyDepKey: ConfigurableRedisIdempotency(
+                                config=self.idempotency
+                            )
+                        }
+                    )
+                )
 
         return plain_deps.merge(cache_deps, counter_deps, idempotency_deps)

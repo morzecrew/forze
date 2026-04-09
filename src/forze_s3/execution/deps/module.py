@@ -29,7 +29,7 @@ class S3DepsModule[K: str | StrEnum](DepsModule[K]):
     client: S3Client
     """Pre-constructed S3 client (session not yet initialized)."""
 
-    storages: Mapping[K, S3StorageConfig] | None = None
+    storages: Mapping[K, S3StorageConfig] | None = attrs.field(default=None)
     """Mapping from storage names to their S3-specific configurations."""
 
     # ....................... #

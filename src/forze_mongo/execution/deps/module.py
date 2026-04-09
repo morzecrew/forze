@@ -48,13 +48,15 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
     client: MongoClient
     """Pre-constructed Mongo client (not yet initialized)."""
 
-    ro_documents: Mapping[K, MongoReadOnlyDocumentConfig] | None = None
+    ro_documents: Mapping[K, MongoReadOnlyDocumentConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from read-only document names to their Mongo-specific configurations."""
 
-    rw_documents: Mapping[K, MongoDocumentConfig] | None = None
+    rw_documents: Mapping[K, MongoDocumentConfig] | None = attrs.field(default=None)
     """Mapping from read-write document names to their Mongo-specific configurations."""
 
-    tx: set[K] | None = None
+    tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
     # ....................... #

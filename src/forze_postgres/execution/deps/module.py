@@ -56,16 +56,18 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     client: PostgresClient
     """Pre-constructed Postgres client (pool not yet initialized)."""
 
-    ro_documents: Mapping[K, PostgresReadOnlyDocumentConfig] | None = None
+    ro_documents: Mapping[K, PostgresReadOnlyDocumentConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from read-only document names to their Postgres-specific configurations."""
 
-    rw_documents: Mapping[K, PostgresDocumentConfig] | None = None
+    rw_documents: Mapping[K, PostgresDocumentConfig] | None = attrs.field(default=None)
     """Mapping from read-write document names to their Postgres-specific configurations."""
 
-    searches: Mapping[K, PostgresSearchConfig] | None = None
+    searches: Mapping[K, PostgresSearchConfig] | None = attrs.field(default=None)
     """Mapping from search names to their Postgres-specific configurations."""
 
-    tx: set[K] | None = None
+    tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
     # ....................... #

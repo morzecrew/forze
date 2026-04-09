@@ -25,7 +25,7 @@ class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
     client: TemporalClient
     """Pre-constructed Temporal client (connection not yet initialized)."""
 
-    workflows: Mapping[K, TemporalWorkflowConfig] | None = None
+    workflows: Mapping[K, TemporalWorkflowConfig] | None = attrs.field(default=None)
     """Mapping from workflow names to their Temporal-specific configurations."""
 
     # ....................... #

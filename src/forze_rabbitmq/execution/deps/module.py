@@ -24,10 +24,10 @@ class RabbitMQDepsModule[K: str | StrEnum](DepsModule[K]):
     client: RabbitMQClient
     """Pre-constructed RabbitMQ client (connection not yet initialized)."""
 
-    queue_readers: Mapping[K, RabbitMQQueueConfig] | None = None
+    queue_readers: Mapping[K, RabbitMQQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
-    queue_writers: Mapping[K, RabbitMQQueueConfig] | None = None
+    queue_writers: Mapping[K, RabbitMQQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their RabbitMQ-specific configurations."""
 
     # ....................... #

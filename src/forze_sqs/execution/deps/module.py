@@ -24,10 +24,10 @@ class SQSDepsModule[K: str | StrEnum](DepsModule[K]):
     client: SQSClient
     """Pre-constructed SQS client (session not yet initialized)."""
 
-    queue_readers: Mapping[K, SQSQueueConfig] | None = None
+    queue_readers: Mapping[K, SQSQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their SQS-specific configurations."""
 
-    queue_writers: Mapping[K, SQSQueueConfig] | None = None
+    queue_writers: Mapping[K, SQSQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their SQS-specific configurations."""
 
     # ....................... #
