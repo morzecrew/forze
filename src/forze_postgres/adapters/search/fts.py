@@ -59,9 +59,6 @@ class PostgresFTSSearchAdapter[M: BaseModel](
     index_qname: PostgresQualifiedName
     """Qualified name of the FTS index (used only to resolve the ``tsvector`` expression)."""
 
-    source_qname: PostgresQualifiedName
-    """Source table qualified name (same relation as :attr:`~PostgresGateway.qname` for FTS)."""
-
     fts_groups: dict[FtsGroupLetter, Sequence[str]]
     """Mapping of FTS weight letters to field names."""
 

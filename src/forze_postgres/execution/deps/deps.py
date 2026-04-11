@@ -184,8 +184,8 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
             case "pgroonga":
                 return PostgresPGroongaSearchAdapter(
                     spec=spec,
-                    qname=index_qname,
-                    source_qname=source_qname,
+                    index_qname=index_qname,
+                    qname=source_qname,
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,
                     introspector=context.dep(PostgresIntrospectorDepKey),
@@ -205,7 +205,6 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
                     spec=spec,
                     qname=source_qname,
                     index_qname=index_qname,
-                    source_qname=source_qname,
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,
                     introspector=context.dep(PostgresIntrospectorDepKey),

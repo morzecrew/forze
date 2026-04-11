@@ -47,8 +47,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
     spec: SearchSpec[M]
     """Search specification."""
 
-    source_qname: PostgresQualifiedName
-    """Source table qualified name (where search index resides)."""
+    index_qname: PostgresQualifiedName
+    """Qualified name of the PGroonga index."""
 
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
@@ -80,7 +80,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         options = options or {}
         query = query.strip()
-        index = self.qname.string()
+        index = self.index_qname.string()
 
         if not query:
             return sql.SQL("TRUE"), []
@@ -105,8 +105,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             ratio = 0.34
 
         index_info = await self.introspector.get_index_info(
-            index=self.qname.name,
-            schema=self.qname.schema,
+            index=self.index_qname.name,
+            schema=self.index_qname.schema,
         )
 
         # check expression for array or single field
@@ -263,7 +263,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         # total
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
-            table=self.source_qname.ident(),
+            table=self.qname.ident(),
             where=where,
         )
         total = int(await self.client.fetch_value(count_stmt, params, default=0))
@@ -282,7 +282,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             """
         ).format(
             cols=self.return_clause(return_type, return_fields),
-            table=self.source_qname.ident(),
+            table=self.qname.ident(),
             table_alias=sql.Identifier(_TABLE_ALIAS),
             where=where,
             order_by=order_by,
