@@ -91,10 +91,11 @@ class UsecaseRegistry:
             return None
 
         else:
-            new_instance = type(self)(defaults=self.defaults)
-            new_instance._finalized = True
-            new_instance._registry_id = registry_id
-            return new_instance
+            new = attrs.evolve(self)
+            new._finalized = True
+            new._registry_id = registry_id
+
+            return new
 
     # ....................... #
 
@@ -175,8 +176,7 @@ class UsecaseRegistry:
             return None
 
         else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            return attrs.evolve(self, defaults=new)
 
     # ....................... #
 
@@ -242,8 +242,7 @@ class UsecaseRegistry:
             return None
 
         else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            return attrs.evolve(self, defaults=new)
 
     # ....................... #
 
@@ -317,8 +316,7 @@ class UsecaseRegistry:
             return None
 
         else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            return attrs.evolve(self, defaults=new)
 
     # ....................... #
 
@@ -395,8 +393,7 @@ class UsecaseRegistry:
             return None
 
         else:
-            new_instance = type(self)(defaults=new)
-            return new_instance
+            return attrs.evolve(self, defaults=new)
 
     # ....................... #
 
@@ -457,9 +454,10 @@ class UsecaseRegistry:
             return None
 
         else:
-            new_instance = type(self)(defaults=self.defaults)
-            new_instance._plan = merged
-            return new_instance
+            new = attrs.evolve(self)
+            new._plan = merged
+
+            return new
 
     # ....................... #
 
