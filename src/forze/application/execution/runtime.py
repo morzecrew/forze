@@ -47,6 +47,7 @@ class ExecutionRuntime:
         :returns: Context for the active scope.
         :raises RuntimeError: If no context has been created (e.g. outside scope).
         """
+
         return self.__ctx.get()
 
     # ....................... #

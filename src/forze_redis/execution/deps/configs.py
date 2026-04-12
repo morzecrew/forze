@@ -3,7 +3,7 @@ from typing import NotRequired, TypedDict, final
 # ----------------------- #
 
 
-class _BaseRedisConfig(TypedDict):
+class RedisUniversalConfig(TypedDict):
     """Base configuration for a Redis resource."""
 
     namespace: str
@@ -17,7 +17,7 @@ class _BaseRedisConfig(TypedDict):
 
 
 @final
-class RedisCacheConfig(_BaseRedisConfig):
+class RedisCacheConfig(RedisUniversalConfig):
     """Configuration for a Redis cache."""
 
 
@@ -25,7 +25,7 @@ class RedisCacheConfig(_BaseRedisConfig):
 
 
 @final
-class RedisCounterConfig(_BaseRedisConfig):
+class RedisCounterConfig(RedisUniversalConfig):
     """Configuration for a Redis counter."""
 
 
@@ -33,7 +33,7 @@ class RedisCounterConfig(_BaseRedisConfig):
 
 
 @final
-class RedisIdempotencyConfig(_BaseRedisConfig):
+class RedisIdempotencyConfig(RedisUniversalConfig):
     """Configuration for a Redis idempotency."""
 
 

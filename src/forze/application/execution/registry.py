@@ -35,13 +35,13 @@ class UsecaseRegistry:
     """Operation key to factory mapping."""
 
     # Non initable fields
-    __plan: UsecasePlan = attrs.field(factory=UsecasePlan, init=False, repr=False)
+    _plan: UsecasePlan = attrs.field(factory=UsecasePlan, init=False, repr=False)
     """Composition plan for middleware and transaction wrapping."""
 
-    __registry_id: str | None = attrs.field(default=None, init=False, repr=False)
+    _registry_id: str | None = attrs.field(default=None, init=False, repr=False)
     """The id of the registry."""
 
-    __finalized: bool = attrs.field(default=False, init=False, repr=False)
+    _finalized: bool = attrs.field(default=False, init=False, repr=False)
     """Whether the registry is finalized and immutable."""
 
     # ....................... #
@@ -49,7 +49,7 @@ class UsecaseRegistry:
     def _raise_if_finalized(self) -> None:
         """Raise an error if the registry is finalized."""
 
-        if self.__finalized:
+        if self._finalized:
             raise CoreError("Registry is finalized")
 
     # ....................... #
@@ -86,14 +86,14 @@ class UsecaseRegistry:
             raise CoreError("Registry id cannot be empty")
 
         if inplace:
-            self.__finalized = True
-            self.__registry_id = registry_id
+            self._finalized = True
+            self._registry_id = registry_id
             return None
 
         else:
             new_instance = type(self)(defaults=self.defaults)
-            new_instance.__finalized = True
-            new_instance.__registry_id = registry_id
+            new_instance._finalized = True
+            new_instance._registry_id = registry_id
             return new_instance
 
     # ....................... #
@@ -106,10 +106,10 @@ class UsecaseRegistry:
         :raises CoreError: If the registry id is not set.
         """
 
-        if not self.__registry_id:
+        if not self._registry_id:
             raise CoreError("Registry id is not set")
 
-        return f"{self.__registry_id}.{op}"
+        return f"{self._registry_id}.{op}"
 
     # ....................... #
 
@@ -450,15 +450,15 @@ class UsecaseRegistry:
             len(extra.ops),
         )
 
-        merged = self.__plan.merge(extra)
+        merged = self._plan.merge(extra)
 
         if inplace:
-            self.__plan = merged
+            self._plan = merged
             return None
 
         else:
             new_instance = type(self)(defaults=self.defaults)
-            new_instance.__plan = merged
+            new_instance._plan = merged
             return new_instance
 
     # ....................... #
@@ -495,7 +495,7 @@ class UsecaseRegistry:
             raise CoreError(f"Usecase factory is not registered for operation: {op}")
 
         logger.trace("Found factory (factory_id=%s)", id(factory))
-        resolved = self.__plan.resolve(op, ctx, factory)
+        resolved = self._plan.resolve(op, ctx, factory)
         assigned = resolved.with_operation_id(operation_id)
 
         return assigned
@@ -543,7 +543,7 @@ class UsecaseRegistry:
                 "Processing registry #%s (factory_count=%s, plan_ops=%s, registry_id=%s)",
                 idx,
                 len(reg.defaults),
-                len(reg.__plan.ops),
+                len(reg._plan.ops),
                 id(reg),
             )
 
@@ -582,15 +582,15 @@ class UsecaseRegistry:
             logger.trace(
                 "Merging plan from registry #%s (ops=%s)",
                 idx,
-                len(reg.__plan.ops),
+                len(reg._plan.ops),
             )
-            acc.extend_plan(reg.__plan, inplace=True)
+            acc.extend_plan(reg._plan, inplace=True)
 
         logger.trace(
             "Merged %s registries into one (factory_count=%s, plan_ops=%s)",
             len(registries),
             len(acc.defaults),
-            len(acc.__plan.ops),
+            len(acc._plan.ops),
         )
 
         return acc

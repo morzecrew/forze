@@ -12,7 +12,12 @@ from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import RedisClient
-from .configs import RedisCacheConfig, RedisCounterConfig, RedisIdempotencyConfig
+from .configs import (
+    RedisCacheConfig,
+    RedisCounterConfig,
+    RedisIdempotencyConfig,
+    RedisUniversalConfig,
+)
 from .deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
@@ -52,15 +57,22 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     client: RedisClient
     """Pre-constructed Redis client (pool not yet initialized)."""
 
-    caches: Mapping[K, RedisCacheConfig] | None = attrs.field(default=None)
+    caches: Mapping[K, RedisCacheConfig | RedisUniversalConfig] | None = attrs.field(
+        default=None
+    )
     """Mapping from cache names to their Redis-specific configurations."""
 
-    counters: Mapping[K, RedisCounterConfig] | None = attrs.field(default=None)
-    """Mapping from counter names to their Redis-specific configurations."""
-
-    idempotency: Mapping[K, RedisIdempotencyConfig] | RedisIdempotencyConfig | None = (
+    counters: Mapping[K, RedisCounterConfig | RedisUniversalConfig] | None = (
         attrs.field(default=None)
     )
+    """Mapping from counter names to their Redis-specific configurations."""
+
+    idempotency: (
+        Mapping[K, RedisIdempotencyConfig | RedisUniversalConfig]
+        | RedisIdempotencyConfig
+        | RedisUniversalConfig
+        | None
+    ) = attrs.field(default=None)
     """Redis-specific configurations for idempotency."""
 
     #! read and write separately?
