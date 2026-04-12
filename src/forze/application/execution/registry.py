@@ -94,6 +94,7 @@ class UsecaseRegistry:
             new = attrs.evolve(self)
             new._finalized = True
             new._registry_id = registry_id
+            new._plan = self._plan
 
             return new
 
