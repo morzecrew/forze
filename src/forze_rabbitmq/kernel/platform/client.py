@@ -457,14 +457,13 @@ class RabbitMQClient:
             return 0
 
         messages = await self.__pending_by_ids(queue, ids)
-        acked_ids: list[str] = []
+        if not messages:
+            return 0
 
-        for message_id, message in messages:
-            await message.ack()
-            acked_ids.append(message_id)
+        await asyncio.gather(*(message.ack() for _, message in messages))
+        acked_ids = [message_id for message_id, _ in messages]
 
-        if acked_ids:
-            await self.__drop_pending_many(acked_ids)
+        await self.__drop_pending_many(acked_ids)
 
         return len(acked_ids)
 
@@ -482,13 +481,14 @@ class RabbitMQClient:
             return 0
 
         messages = await self.__pending_by_ids(queue, ids)
-        nacked_ids: list[str] = []
+        if not messages:
+            return 0
 
-        for message_id, message in messages:
-            await message.nack(requeue=requeue)
-            nacked_ids.append(message_id)
+        await asyncio.gather(
+            *(message.nack(requeue=requeue) for _, message in messages)
+        )
+        nacked_ids = [message_id for message_id, _ in messages]
 
-        if nacked_ids:
-            await self.__drop_pending_many(nacked_ids)
+        await self.__drop_pending_many(nacked_ids)
 
         return len(nacked_ids)
