@@ -160,7 +160,15 @@ class LoggingMiddleware:
 def _get_path_with_query_string(scope: dict[str, Any]) -> str:
     res = urllib.parse.quote(scope["path"])
 
-    if scope.get("query_string", ""):
-        res = f"{res}?{scope['query_string'].decode('ascii')}"
+    query_string: bytes = scope.get("query_string", b"")
+    if query_string:
+        # The query_string in ASGI scope is already bytes that are usually url-encoded.
+        # However, we cannot trust it to be safely encoded for logging.
+        # We replace newline and carriage return characters which are the primary
+        # vectors for log injection, while keeping the rest of the string as is to
+        # avoid double-encoding issues.
+        decoded = query_string.decode("ascii", errors="replace")
+        safe_query = decoded.replace("\n", "%0A").replace("\r", "%0D")
+        res = f"{res}?{safe_query}"
 
     return res
