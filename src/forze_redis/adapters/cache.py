@@ -6,8 +6,9 @@ require_redis()
 
 # ....................... #
 
+import asyncio
 from datetime import timedelta
-from typing import Any, Optional, Sequence, final
+from typing import Any, Callable, Iterable, Optional, Sequence, final
 
 import attrs
 
@@ -57,6 +58,26 @@ class RedisCacheAdapter(CachePort):
     # ....................... #
     # Helpers
 
+    def _decode_batch(
+        self,
+        keys: Iterable[str],
+        raw: Sequence[Optional[bytes | str]],
+        loads: Callable[[bytes | str], Any],
+    ) -> dict[str, Any]:
+        res: dict[str, Any] = {}
+
+        for k, rv in zip(keys, raw, strict=True):
+            if rv is not None:
+                try:
+                    res[k] = loads(rv)
+
+                except (ValueError, TypeError):
+                    continue
+
+        return res
+
+    # ....................... #
+
     def __kv_key(self, key: str) -> str:
         if self.tenant_context is not None:
             return self.key_codec.join(
@@ -88,22 +109,16 @@ class RedisCacheAdapter(CachePort):
         if not keys:
             return {}
 
-        redis_keys = [self.__pointer_key(k) for k in keys]
+        key_helper = self.__pointer_key
+        redis_keys = [key_helper(k) for k in keys]
         raw = await self.client.mget(redis_keys)
 
-        res: dict[str, str] = {}
+        loads = self.text_codec.loads
 
-        for k, rv in zip(keys, raw, strict=True):
-            if rv is None:
-                continue
+        if len(keys) > 64:
+            return await asyncio.to_thread(self._decode_batch, keys, raw, loads)
 
-            try:
-                res[k] = self.text_codec.loads(rv)
-
-            except ValueError:
-                continue
-
-        return res
+        return self._decode_batch(keys, raw, loads)
 
     # ....................... #
 
@@ -111,7 +126,8 @@ class RedisCacheAdapter(CachePort):
         if not mapping:
             return
 
-        redis_mapping = {self.__pointer_key(k): v for k, v in mapping.items()}
+        key_helper = self.__pointer_key
+        redis_mapping = {key_helper(k): v for k, v in mapping.items()}
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
 
     # ....................... #
@@ -120,7 +136,8 @@ class RedisCacheAdapter(CachePort):
         if not keys:
             return
 
-        redis_keys = [self.__pointer_key(k) for k in keys]
+        key_helper = self.__pointer_key
+        redis_keys = [key_helper(k) for k in keys]
         await self.client.unlink(*redis_keys)
 
     # ....................... #
@@ -130,22 +147,17 @@ class RedisCacheAdapter(CachePort):
         if not mapping:
             return {}
 
-        redis_keys = [self.__body_key(k, v) for k, v in mapping.items()]
+        key_helper = self.__body_key
+        redis_keys = [key_helper(k, v) for k, v in mapping.items()]
         raw = await self.client.mget(redis_keys)
 
-        res: dict[str, Any] = {}
+        keys = mapping.keys()
+        loads = self.json_codec.loads
 
-        for k, rb in zip(mapping.keys(), raw, strict=True):
-            if rb is None:
-                continue
+        if len(mapping) > 64:
+            return await asyncio.to_thread(self._decode_batch, keys, raw, loads)
 
-            try:
-                res[k] = self.json_codec.loads(rb)
-
-            except ValueError:
-                continue
-
-        return res
+        return self._decode_batch(keys, raw, loads)
 
     # ....................... #
 
@@ -158,9 +170,10 @@ class RedisCacheAdapter(CachePort):
         if not mapping:
             return
 
+        key_helper = self.__body_key
+        dumps = self.json_codec.dumps
         redis_mapping = {
-            self.__body_key(k, v): self.json_codec.dumps(val)
-            for (k, v), val in mapping.items()
+            key_helper(k, v): dumps(val) for (k, v), val in mapping.items()
         }
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
 
@@ -170,7 +183,8 @@ class RedisCacheAdapter(CachePort):
         if not mapping:
             return
 
-        redis_keys = [self.__body_key(k, v) for k, v in mapping.items()]
+        key_helper = self.__body_key
+        redis_keys = [key_helper(k, v) for k, v in mapping.items()]
         await self.client.unlink(*redis_keys)
 
     # ....................... #
@@ -180,22 +194,16 @@ class RedisCacheAdapter(CachePort):
         if not keys:
             return {}
 
-        redis_keys = [self.__kv_key(k) for k in keys]
+        key_helper = self.__kv_key
+        redis_keys = [key_helper(k) for k in keys]
         raw = await self.client.mget(redis_keys)
 
-        res: dict[str, Any] = {}
+        loads = self.json_codec.loads
 
-        for k, rv in zip(keys, raw, strict=True):
-            if rv is None:
-                continue
+        if len(keys) > 64:
+            return await asyncio.to_thread(self._decode_batch, keys, raw, loads)
 
-            try:
-                res[k] = self.json_codec.loads(rv)
-
-            except ValueError:
-                continue
-
-        return res
+        return self._decode_batch(keys, raw, loads)
 
     # ....................... #
 
@@ -203,9 +211,9 @@ class RedisCacheAdapter(CachePort):
         if not mapping:
             return
 
-        redis_mapping = {
-            self.__kv_key(k): self.json_codec.dumps(v) for k, v in mapping.items()
-        }
+        key_helper = self.__kv_key
+        dumps = self.json_codec.dumps
+        redis_mapping = {key_helper(k): dumps(v) for k, v in mapping.items()}
         await self.client.mset(redis_mapping, ex=int(ttl.total_seconds()))
 
     # ....................... #
@@ -214,7 +222,8 @@ class RedisCacheAdapter(CachePort):
         if not keys:
             return
 
-        redis_keys = [self.__kv_key(k) for k in keys]
+        key_helper = self.__kv_key
+        redis_keys = [key_helper(k) for k in keys]
         await self.client.unlink(*redis_keys)
 
     # ....................... #
