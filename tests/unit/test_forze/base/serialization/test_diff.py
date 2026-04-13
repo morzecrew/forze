@@ -49,6 +49,30 @@ class TestApplyDictPatch:
         result = apply_dict_patch(before, patch)
         assert result == {"a": {"b": {"c": 1, "d": 2}}}
 
+    def test_apply_patch_with_none_deletes_key(self) -> None:
+        before: JsonDict = {"a": 1, "b": 2}
+        patch: JsonDict = {"a": None}
+        result = apply_dict_patch(before, patch)
+        assert result == {"b": 2}
+
+    def test_apply_patch_nested_none_deletes_key(self) -> None:
+        before: JsonDict = {"a": {"x": 1, "y": 2}}
+        patch: JsonDict = {"a": {"x": None}}
+        result = apply_dict_patch(before, patch)
+        assert result == {"a": {"y": 2}}
+
+    def test_apply_patch_type_mismatch_scalar_to_dict(self) -> None:
+        before: JsonDict = {"a": 1}
+        patch: JsonDict = {"a": {"b": 2}}
+        result = apply_dict_patch(before, patch)
+        assert result == {"a": {"b": 2}}
+
+    def test_apply_patch_type_mismatch_dict_to_scalar(self) -> None:
+        before: JsonDict = {"a": {"b": 1}}
+        patch: JsonDict = {"a": 2}
+        result = apply_dict_patch(before, patch)
+        assert result == {"a": 2}
+
 
 # ----------------------- #
 # calculate_dict_difference
@@ -110,6 +134,14 @@ class TestCalculateDictDifference:
         before: JsonDict = {"a": 1, "b": {"c": "old"}, "d": "old"}
         after: JsonDict = {"a": 1, "b": {"c": "new"}, "d": "new", "e": True}
         diff = calculate_dict_difference(before, after, deletions_as_none=False)
+        restored = apply_dict_patch(before, diff)
+        assert restored == after
+
+    def test_roundtrip_with_deletions_as_none(self) -> None:
+        before: JsonDict = {"a": 1, "b": 2}
+        after: JsonDict = {"a": 1}
+        diff = calculate_dict_difference(before, after, deletions_as_none=True)
+        assert diff == {"b": None}
         restored = apply_dict_patch(before, diff)
         assert restored == after
 
