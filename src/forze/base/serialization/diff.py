@@ -43,7 +43,10 @@ def _shallow_merge(base: JsonDict, patch: JsonDict) -> JsonDict:
     out = dict(base)
 
     for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
+        if v is None:
+            out.pop(k, None)
+
+        elif isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _shallow_merge(out[k], v)  # type: ignore[arg-type]
 
         else:
