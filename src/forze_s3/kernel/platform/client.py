@@ -7,7 +7,7 @@ require_s3()
 import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, TypedDict, cast, final
 
 import aioboto3
@@ -32,8 +32,8 @@ class S3Config(TypedDict, total=False):
     signature_version: str
     user_agent: str
     user_agent_extra: str
-    connect_timeout: int | float  #! TODO: use timedelta
-    read_timeout: int | float  #! TODO: use timedelta
+    connect_timeout: timedelta
+    read_timeout: timedelta
     parameter_validation: bool
     max_pool_connections: int
     proxies: dict[str, str]
@@ -137,11 +137,19 @@ class S3Client:
             return
 
         if config is None:
-            config = S3Config(retries={"max_attempts": 3, "mode": "adaptive"})
-        elif "retries" not in config:
-            config = {**config, "retries": {"max_attempts": 3, "mode": "adaptive"}}
+            aio_params = S3Config(retries={"max_attempts": 3, "mode": "adaptive"})
+        else:
+            aio_params = cast(S3Config, dict(config))
+            if "retries" not in aio_params:
+                aio_params["retries"] = {"max_attempts": 3, "mode": "adaptive"}
 
-        aio_config = AioConfig(**config)  # type: ignore
+        # Convert timedelta to float seconds for botocore
+        for key in ("connect_timeout", "read_timeout"):
+            val = aio_params.get(key)
+            if isinstance(val, timedelta):
+                aio_params[key] = val.total_seconds()  # type: ignore
+
+        aio_config = AioConfig(**aio_params)  # type: ignore
 
         self.__opts = _S3ConnectionOpts(
             endpoint=endpoint,

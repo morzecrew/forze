@@ -46,8 +46,8 @@ class SQSConfig(TypedDict, total=False):
     signature_version: str
     user_agent: str
     user_agent_extra: str
-    connect_timeout: int | float  #! TODO: use timedelta
-    read_timeout: int | float  #! TODO: use timedelta
+    connect_timeout: timedelta
+    read_timeout: timedelta
     parameter_validation: bool
     max_pool_connections: int
     proxies: dict[str, str]
@@ -110,7 +110,17 @@ class SQSClient:
         if self.__session is not None:
             return
 
-        aio_config = AioConfig(**config) if config else None
+        if config:
+            aio_params = cast(SQSConfig, dict(config))
+            for key in ("connect_timeout", "read_timeout"):
+                val = aio_params.get(key)
+                if isinstance(val, timedelta):
+                    aio_params[key] = val.total_seconds()  # type: ignore
+
+            aio_config = AioConfig(**aio_params)  # type: ignore
+        else:
+            aio_config = None
+
         self.__opts = _SQSConnectionOpts(
             endpoint=endpoint,
             region_name=region_name,

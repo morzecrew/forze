@@ -116,3 +116,35 @@ async def test_list_objects_stops_after_collecting_requested_window() -> None:
     assert paginator.calls == 2
     assert paginator.kwargs == {"Bucket": "bucket", "Prefix": "docs/"}
     assert api_client.paginator_requests == ["list_objects_v2"]
+
+@pytest.mark.asyncio
+async def test_initialize_converts_timedelta_to_float(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import timedelta
+    client = S3Client()
+    fake_session = object()
+
+    monkeypatch.setattr(s3_client_module, "AioConfig", _FakeAioConfig)
+    monkeypatch.setattr(s3_client_module.aioboto3, "Session", lambda: fake_session)
+
+    config: S3Config = {
+        "region_name": "us-east-1",
+        "connect_timeout": timedelta(seconds=10),
+        "read_timeout": timedelta(seconds=20),
+    }
+
+    await client.initialize(
+        endpoint="http://s3.local",
+        access_key_id="key",
+        secret_access_key="secret",
+        config=config,
+    )
+
+    opts = client._S3Client__opts
+    assert opts is not None
+    assert isinstance(opts.config, _FakeAioConfig)
+    assert opts.config.kwargs["connect_timeout"] == 10.0
+    assert opts.config.kwargs["read_timeout"] == 20.0
+    # Verify original config is not mutated
+    assert isinstance(config["connect_timeout"], timedelta)
