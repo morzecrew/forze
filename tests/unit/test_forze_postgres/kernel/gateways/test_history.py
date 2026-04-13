@@ -53,7 +53,7 @@ async def test_read_success() -> None:
     rev = 1
 
     client.fetch_one.return_value = {
-        "_data": {
+        "data": {
             "id": str(pk),
             "rev": rev,
             "name": "test",
@@ -90,7 +90,7 @@ async def test_read_many_success() -> None:
 
     client.fetch_all.return_value = [
         {
-            "_data": {
+            "data": {
                 "id": str(pk1),
                 "rev": 1,
                 "name": "test1",
@@ -99,7 +99,7 @@ async def test_read_many_success() -> None:
             }
         },
         {
-            "_data": {
+            "data": {
                 "id": str(pk2),
                 "rev": 2,
                 "name": "test2",
