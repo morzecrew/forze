@@ -210,6 +210,12 @@ class RedisClient:
         if not mapping:
             return True
 
+        # MSET command doesn't support expiration or conditional flags.
+        # If any are used, we fallback to pipelining individual SET calls.
+        if ex is None and px is None and not nx and not xx:
+            await self.__executor().mset(mapping)
+            return True
+
         async with self.pipeline(transaction=True) as pipe:
             for key, value in mapping.items():
                 await pipe.set(key, value, ex=ex, px=px, nx=nx, xx=xx)
