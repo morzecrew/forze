@@ -1,10 +1,4 @@
-"""Name-related mixins for documents with display and short names.
-
-Provides :class:`NameMixin` for models requiring a required ``name`` plus
-optional ``display_name``, ``short_name``, and ``description``, and
-corresponding command DTOs for create and update operations.
-"""
-
+from pydantic import field_validator
 
 from forze.base.primitives import LongString, String
 
@@ -19,11 +13,23 @@ class _NameMixinOptionalFields(CoreModel):
     display_name: String | None = None
     """Display name of the document."""
 
-    short_name: String | None = None
-    """Short name of the document."""
-
     description: LongString | None = None
     """Description of the document."""
+
+    # ....................... #
+
+    @field_validator("display_name", "description", mode="before")
+    @classmethod
+    def _validate_name_fields(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+
+        v = v.strip()
+
+        if not v:
+            return None
+
+        return v
 
 
 # ....................... #

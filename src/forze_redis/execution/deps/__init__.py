@@ -1,6 +1,11 @@
 """Redis dependency keys, module, and configurations."""
 
-from .configs import RedisCacheConfig, RedisCounterConfig, RedisIdempotencyConfig
+from .configs import (
+    RedisCacheConfig,
+    RedisCounterConfig,
+    RedisIdempotencyConfig,
+    RedisUniversalConfig,
+)
 from .keys import RedisClientDepKey
 from .module import RedisDepsModule
 
@@ -12,4 +17,5 @@ __all__ = [
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisIdempotencyConfig",
+    "RedisUniversalConfig",
 ]

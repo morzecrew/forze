@@ -28,8 +28,8 @@ class Pagination(BaseDTO):
 class Paginated[T: BaseModel](BaseDTO):
     """Paginated response with typed hit records.
 
-    Used when search returns domain read models (e.g. :class:`ReadDocument`).
-    ``page`` and ``size`` describe the requested slice; ``count`` is the
+    Used when search returns domain read models (e.g. `ReadDocument`).
+    `page` and `size` describe the requested slice; `count` is the
     total number of matching records.
     """
 
@@ -53,7 +53,7 @@ class RawPaginated(BaseDTO):
     """Paginated response with raw dict hit records.
 
     Used when search returns field-projected JSON mappings instead of typed
-    models. Same pagination semantics as :class:`Paginated`.
+    models. Same pagination semantics as `Paginated`.
     """
 
     hits: list[JsonDict]

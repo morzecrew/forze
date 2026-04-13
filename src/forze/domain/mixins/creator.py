@@ -1,5 +1,3 @@
-"""Mixin for documents and commands that track a creator identity."""
-
 from uuid import UUID
 
 from pydantic import Field

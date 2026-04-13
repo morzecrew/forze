@@ -1,9 +1,3 @@
-"""Soft-deletion mixin for documents that support logical deletion.
-
-Adds ``is_deleted`` and an :func:`~forze.domain.validation.update_validator`
-that blocks updates to soft-deleted documents except for the deletion flag itself.
-"""
-
 from typing import Self
 
 from forze.base.errors import ValidationError
@@ -38,7 +32,9 @@ class SoftDeletionMixin(CoreModel):
         """Reject updates to soft-deleted documents unless only ``is_deleted`` changes."""
 
         keys = set(diff.keys())
-        soft_deletion = SOFT_DELETE_FIELD in keys and keys <= _ALLOWED_SOFT_DELETE_DIFF_KEYS
+        soft_deletion = (
+            SOFT_DELETE_FIELD in keys and keys <= _ALLOWED_SOFT_DELETE_DIFF_KEYS
+        )
 
         if before.is_deleted and not soft_deletion:
             raise ValidationError("Cannot update a soft-deleted document.")

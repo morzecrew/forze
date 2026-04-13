@@ -1,4 +1,3 @@
-
 from pydantic import Field
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
@@ -12,8 +11,8 @@ from .paginated import Pagination
 class SearchRequestDTO(Pagination):
     """Search request payload for typed document search.
 
-    When :attr:`query` is non-empty, backends use full-text search (with fuzzy
-    matching when enabled). When empty, only :attr:`filters` and :attr:`sorts`
+    When `query` is non-empty, backends use full-text search (with fuzzy
+    matching when enabled). When empty, only `filters` and `sorts`
     apply (filter-only mode).
     """
 
@@ -24,7 +23,7 @@ class SearchRequestDTO(Pagination):
     """Optional filter expression (predicates, conjunctions, disjunctions)."""
 
     sorts: QuerySortExpression | None = None
-    """Optional sort expression (field name to ``"asc"`` or ``"desc"``)."""
+    """Optional sort expression (field name to `"asc"` or `"desc"`)."""
 
     options: SearchOptions | None = None
     """Optional search options."""
@@ -36,9 +35,9 @@ class SearchRequestDTO(Pagination):
 class RawSearchRequestDTO(SearchRequestDTO):
     """Search request with required field projection for raw results.
 
-    Extends :class:`SearchRequestDTO` with :attr:`return_fields`. Backends
-    return :class:`forze.base.primitives.JsonDict` hits instead of typed models.
-    Requires at least one field in ``return_fields``.
+    Extends `SearchRequestDTO` with `return_fields`.
+    Backends return `JsonDict` hits instead of typed models.
+    Requires at least one field in `return_fields`.
     """
 
     return_fields: set[str] = Field(min_length=1)

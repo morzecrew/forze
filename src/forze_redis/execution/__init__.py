@@ -6,6 +6,7 @@ from .deps import (
     RedisCounterConfig,
     RedisDepsModule,
     RedisIdempotencyConfig,
+    RedisUniversalConfig,
 )
 from .lifecycle import redis_lifecycle_step
 
@@ -18,4 +19,5 @@ __all__ = [
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisIdempotencyConfig",
+    "RedisUniversalConfig",
 ]

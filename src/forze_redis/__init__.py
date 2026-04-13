@@ -12,6 +12,7 @@ from .execution import (
     RedisCounterConfig,
     RedisDepsModule,
     RedisIdempotencyConfig,
+    RedisUniversalConfig,
     redis_lifecycle_step,
 )
 from .kernel.platform import RedisClient, RedisConfig
@@ -27,4 +28,5 @@ __all__ = [
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisIdempotencyConfig",
+    "RedisUniversalConfig",
 ]

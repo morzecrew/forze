@@ -1,10 +1,3 @@
-"""Numeric identifier mixins for documents with human-readable IDs.
-
-Provides :class:`NumberMixin` for models requiring a positive integer
-``number_id``, and corresponding command DTOs for create and update operations.
-"""
-
-
 from pydantic import PositiveInt
 
 from ..models import BaseDTO, CoreModel
