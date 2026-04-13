@@ -1,5 +1,7 @@
 """Parsing utilities that normalise raw ``redis-py`` responses into typed structures."""
 
+from typing import Any, Iterable
+
 from .types import (
     RawRedisPubSubMessage,
     RawRedisStreamResponse,
@@ -26,56 +28,7 @@ def parse_stream_entries(raw: RawRedisStreamResponse) -> RedisStreamResponse:
     if raw is None or not raw:
         return []
 
-    out: RedisStreamResponse = []
-
-    for stream_raw, messages in raw:
-        stream = (
-            stream_raw.decode("utf-8")
-            if isinstance(stream_raw, (bytes, bytearray))
-            else str(stream_raw)
-        )
-
-        parsed_messages: list[RedisStreamEntry] = []
-
-        for msg_id_raw, data_raw in messages:
-            msg_id = (
-                msg_id_raw.decode("utf-8")
-                if isinstance(msg_id_raw, (bytes, bytearray))
-                else str(msg_id_raw)
-            )
-
-            if isinstance(data_raw, dict):
-                data_dict = data_raw  # pyright: ignore[reportUnknownVariableType]
-
-            else:
-                data_dict = dict(data_raw)  # type: ignore[call-overload]
-
-            normalized: RedisStreamFields = {}
-
-            for k, v in data_dict.items():  # pyright: ignore[reportUnknownVariableType]
-                key = (
-                    k
-                    if isinstance(k, bytes)
-                    else str(k).encode(  # pyright: ignore[reportUnknownArgumentType]
-                        "utf-8"
-                    )
-                )
-
-                if isinstance(v, bytes):
-                    value = v
-
-                else:
-                    value = str(v).encode(  # pyright: ignore[reportUnknownArgumentType]
-                        "utf-8"
-                    )
-
-                normalized[key] = value
-
-            parsed_messages.append((msg_id, normalized))
-
-        out.append((stream, parsed_messages))
-
-    return out
+    return [(_to_str(s), _parse_stream_messages(m)) for s, m in raw]
 
 
 # ....................... #
@@ -103,13 +56,57 @@ def parse_pubsub_message(raw: RawRedisPubSubMessage) -> RedisPubSubMessage | Non
     if channel_raw is None or data_raw is None:
         return None
 
-    channel = (
-        channel_raw.decode("utf-8")
-        if isinstance(channel_raw, (bytes, bytearray))
-        else str(channel_raw)
-    )
-    data = (
-        data_raw if isinstance(data_raw, bytes) else str(data_raw).encode("utf-8")  # pyright: ignore[reportUnknownArgumentType]
-    )
+    return _to_str(channel_raw), _to_bytes(data_raw)
 
-    return channel, data
+
+# ....................... #
+# Internals
+
+
+def _parse_stream_messages(
+    messages: list[tuple[str | bytes, object]],
+) -> list[RedisStreamEntry]:
+    """Parse a list of raw stream messages into normalized entries."""
+
+    out: list[RedisStreamEntry] = []
+
+    for msg_id_raw, data_raw in messages:
+        msg_id = _to_str(msg_id_raw)
+
+        if isinstance(data_raw, dict):
+            data_dict: Iterable[tuple[Any, Any]] = data_raw.items()
+
+        else:
+            data_dict = data_raw  # type: ignore[assignment]
+
+        normalized: RedisStreamFields = {
+            _to_bytes(k): _to_bytes(v) for k, v in data_dict
+        }
+
+        out.append((msg_id, normalized))
+
+    return out
+
+
+# ....................... #
+
+
+def _to_str(value: str | bytes | Any) -> str:
+    """Coerce a value to a string, decoding bytes as UTF-8."""
+
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8")
+
+    return str(value)
+
+
+# ....................... #
+
+
+def _to_bytes(value: str | bytes | Any) -> bytes:
+    """Coerce a value to bytes, encoding strings as UTF-8."""
+
+    if isinstance(value, bytes):
+        return value
+
+    return str(value).encode("utf-8")
