@@ -626,11 +626,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
+        stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = ANY({ids})").format(
+            table=self.qname.ident(),
+            pk=self.ident_pk(),
+            ids=sql.Placeholder(),
+        )
+
+        tasks = []
+
         for start in range(0, len(pks), batch_size):
             batch = pks[start : start + batch_size]
-            stmt = sql.SQL("DELETE FROM {table} WHERE {pk} = ANY({ids})").format(
-                table=self.qname.ident(),
-                pk=self.ident_pk(),
-                ids=sql.Placeholder(),
-            )
-            await self.client.execute(stmt, [list(batch)])
+            tasks.append(self.client.execute(stmt, [list(batch)]))
+
+        await asyncio.gather(*tasks)
