@@ -74,13 +74,16 @@ def _parse_stream_messages(
         msg_id = _to_str(msg_id_raw)
 
         if isinstance(data_raw, dict):
-            data_dict: Iterable[tuple[Any, Any]] = data_raw.items()
+            data_dict: Iterable[  # pyright: ignore[reportUnknownVariableType]
+                tuple[Any, Any]
+            ] = data_raw.items()
 
         else:
             data_dict = data_raw  # type: ignore[assignment]
 
         normalized: RedisStreamFields = {
-            _to_bytes(k): _to_bytes(v) for k, v in data_dict
+            _to_bytes(k): _to_bytes(v)  # pyright: ignore[reportUnknownArgumentType]
+            for k, v in data_dict  # pyright: ignore[reportUnknownVariableType]
         }
 
         out.append((msg_id, normalized))

@@ -249,12 +249,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             + sql.SQL(")")
         )
 
-        result_raw: list[JsonDict] = []
-        offset = 0
-
-        while offset < len(insert_data):
-            batch = insert_data[offset : offset + batch_size]
-
+        async def _insert_batch(batch: Sequence[JsonDict]) -> list[JsonDict]:
             # ⚡ Bolt: Duplicate the precomputed row template
             value_parts = [row_template] * len(batch)
             params = [b[k] for b in batch for k in keys]
@@ -281,8 +276,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     code="create_many_mismatch",
                 )
 
+            return rows
+
+        batches = [
+            insert_data[offset : offset + batch_size]
+            for offset in range(0, len(insert_data), batch_size)
+        ]
+        batch_results = await asyncio.gather(*(_insert_batch(b) for b in batches))
+
+        result_raw: list[JsonDict] = []
+        for rows in batch_results:
             result_raw.extend(rows)
-            offset += batch_size
 
         if len(result_raw) != len(dtos):
             raise CoreError("Failed to create all records")
@@ -535,14 +539,19 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         updated_models: dict[UUID, D] = {}
         update_diffs: dict[UUID, JsonDict] = {}
 
+        work: list[tuple[tuple[str, ...], list[tuple[UUID, int, JsonDict]]]] = []
         for fields_key, rows in groups.items():
             for start in range(0, len(rows), batch_size):
-                batch = rows[start : start + batch_size]
-                updated = await self.__patch_group(fields_key, batch)
-                updated_models.update({m.id: m for m in updated})
+                work.append((fields_key, rows[start : start + batch_size]))
 
-                for m, d in zip(updated, batch, strict=True):
-                    update_diffs[m.id] = d[-1]
+        batch_results = await asyncio.gather(
+            *(self.__patch_group(fk, b) for fk, b in work)
+        )
+        for (_, batch), updated in zip(work, batch_results, strict=True):
+            updated_models.update({m.id: m for m in updated})
+
+            for m, d in zip(updated, batch, strict=True):
+                update_diffs[m.id] = d[-1]
 
         res = [updated_models.get(c.id, c) for c in currents]
         res_diffs = [update_diffs.get(c.id, {}) for c in res]
@@ -663,8 +672,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         if self.tenant_aware:
             n = await self.client.execute(stmt, params, return_rowcount=True)
+
             if n == 0:
                 raise NotFoundError(f"Record not found: {pk}")
+
         else:
             await self.client.execute(stmt, params)
 
@@ -682,20 +693,23 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        for start in range(0, len(pks), batch_size):
-            batch = pks[start : start + batch_size]
-            where_sql = sql.SQL("{pk} = ANY({ids})").format(
-                pk=self.ident_pk(),
-                ids=sql.Placeholder(),
-            )
-            params: list[Any] = [list(batch)]
-            where_sql, params = self._add_tenant_where(where_sql, params)  # type: ignore[assignment]
+        where_sql = sql.SQL("{pk} = ANY({ids})").format(
+            pk=self.ident_pk(),
+            ids=sql.Placeholder(),
+        )
+        trailing_params: list[Any] = []
+        where_sql, trailing_params = self._add_tenant_where(  # type: ignore[assignment]
+            where_sql,
+            trailing_params,
+        )
 
-            stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
-                table=self.qname.ident(),
-                where=where_sql,
-            )
+        stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
+            table=self.qname.ident(),
+            where=where_sql,
+        )
 
+        async def _delete_batch(batch: list[UUID]) -> None:
+            params: list[Any] = [list(batch), *trailing_params]
             if self.tenant_aware:
                 n = await self.client.execute(stmt, params, return_rowcount=True)
                 if n != len(batch):
@@ -704,3 +718,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     )
             else:
                 await self.client.execute(stmt, params)
+
+        batches = [
+            list(pks[start : start + batch_size])
+            for start in range(0, len(pks), batch_size)
+        ]
+        await asyncio.gather(*(_delete_batch(b) for b in batches))

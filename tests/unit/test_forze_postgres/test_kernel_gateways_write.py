@@ -90,24 +90,26 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
     result = await gw.create_many(dtos, batch_size=2)
 
     assert client.fetch_all.await_count == 2
-    first_call = client.fetch_all.await_args_list[0]
-    second_call = client.fetch_all.await_args_list[1]
+    calls = client.fetch_all.await_args_list
+    params_by_uuids: list[list[UUID]] = []
+    for call in calls:
+        params = call.args[1]
+        params_by_uuids.append([x for x in params if isinstance(x, UUID)])
+        assert call.kwargs["row_factory"] == "dict"
+        assert call.kwargs["commit"] is True
 
-    first_params = first_call.args[1]
-    second_params = second_call.args[1]
-
-    assert [x for x in first_params if isinstance(x, UUID)] == [id1, id2]
-    assert [x for x in first_params if x in {"first", "second", "third"}] == [
-        "first",
-        "second",
+    assert sorted(params_by_uuids, key=lambda u: u[0] if u else id1) == [
+        [id1, id2],
+        [id3],
     ]
-    assert [x for x in second_params if isinstance(x, UUID)] == [id3]
-    assert [x for x in second_params if x in {"first", "second", "third"}] == ["third"]
-
-    assert first_call.kwargs["row_factory"] == "dict"
-    assert first_call.kwargs["commit"] is True
-    assert second_call.kwargs["row_factory"] == "dict"
-    assert second_call.kwargs["commit"] is True
+    name_chunks: list[list[str]] = []
+    for call in calls:
+        params = call.args[1]
+        name_chunks.append([x for x in params if x in {"first", "second", "third"}])
+    assert sorted(name_chunks, key=lambda ns: ns[0] if ns else "") == [
+        ["first", "second"],
+        ["third"],
+    ]
 
     assert [x.id for x in result] == [id1, id2, id3]
     assert [x.name for x in result] == ["first", "second", "third"]

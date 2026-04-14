@@ -1,5 +1,7 @@
 """Redis-backed :class:`~forze.application.contracts.cache.CachePort` adapter."""
 
+import asyncio
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -7,7 +9,7 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Final, Sequence, final, Mapping
+from typing import Any, Callable, Final, Iterable, Mapping, Sequence, final
 
 import attrs
 
@@ -51,6 +53,26 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
     # Helpers
 
+    def _decode_batch(
+        self,
+        keys: Iterable[str],
+        raw: Sequence[bytes | str | None],
+        loads: Callable[[bytes | str], Any],
+    ) -> dict[str, Any]:
+        res: dict[str, Any] = {}
+
+        for k, rv in zip(keys, raw, strict=True):
+            if rv is not None:
+                try:
+                    res[k] = loads(rv)
+
+                except (ValueError, TypeError):
+                    continue
+
+        return res
+
+    # ....................... #
+
     def __kv_key(self, key: str) -> str:
         return self.construct_key((_CACHE_SCOPE, _KV_SCOPE), key)
 
@@ -74,19 +96,15 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         redis_keys = [self.__pointer_key(k) for k in keys]
         raw = await self.client.mget(redis_keys)
 
-        res: dict[str, str] = {}
+        if len(keys) > 64:
+            return await asyncio.to_thread(
+                self._decode_batch,
+                keys,
+                raw,
+                default_text_codec.loads,
+            )
 
-        for k, rv in zip(keys, raw, strict=True):
-            if rv is None:
-                continue
-
-            try:
-                res[k] = default_text_codec.loads(rv)
-
-            except ValueError:
-                continue
-
-        return res
+        return self._decode_batch(keys, raw, default_text_codec.loads)
 
     # ....................... #
 
@@ -116,19 +134,15 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         redis_keys = [self.__body_key(k, v) for k, v in mapping.items()]
         raw = await self.client.mget(redis_keys)
 
-        res: dict[str, Any] = {}
+        if len(mapping) > 64:
+            return await asyncio.to_thread(
+                self._decode_batch,
+                mapping.keys(),
+                raw,
+                default_json_codec.loads,
+            )
 
-        for k, rb in zip(mapping.keys(), raw, strict=True):
-            if rb is None:
-                continue
-
-            try:
-                res[k] = default_json_codec.loads(rb)
-
-            except ValueError:
-                continue
-
-        return res
+        return self._decode_batch(mapping.keys(), raw, default_json_codec.loads)
 
     # ....................... #
 
@@ -166,19 +180,15 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         redis_keys = [self.__kv_key(k) for k in keys]
         raw = await self.client.mget(redis_keys)
 
-        res: dict[str, Any] = {}
+        if len(keys) > 64:
+            return await asyncio.to_thread(
+                self._decode_batch,
+                keys,
+                raw,
+                default_json_codec.loads,
+            )
 
-        for k, rv in zip(keys, raw, strict=True):
-            if rv is None:
-                continue
-
-            try:
-                res[k] = default_json_codec.loads(rv)
-
-            except ValueError:
-                continue
-
-        return res
+        return self._decode_batch(keys, raw, default_json_codec.loads)
 
     # ....................... #
 
