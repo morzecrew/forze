@@ -106,9 +106,7 @@ async def test_pg_search_benchmark(async_benchmark, search_adapter) -> None:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_pg_search_with_limit_benchmark(
-    async_benchmark, search_adapter
-) -> None:
+async def test_pg_search_with_limit_benchmark(async_benchmark, search_adapter) -> None:
     """Benchmark search with limit."""
 
     async def run() -> None:
@@ -164,7 +162,7 @@ async def test_pg_search_large_corpus_benchmark(
     adapter = execution_context.search_query(spec)
 
     async def run() -> None:
-        res, cnt = await adapter.search("corpus")
+        res, cnt = await adapter.search("corpus", limit=100, offset=0)
         assert cnt >= 0
         assert isinstance(res, list)
 
