@@ -37,7 +37,7 @@ async def rabbitmq_queue(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_adapter_enqueue_benchmark(
+async def test_rabbitmq_adapter_enqueue_benchmark(
     async_benchmark, rabbitmq_queue: RabbitMQQueueAdapter[_QueuePayload]
 ) -> None:
     """Benchmark adapter enqueue with Pydantic payload."""
@@ -51,7 +51,7 @@ async def test_adapter_enqueue_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_adapter_enqueue_batch_benchmark(
+async def test_rabbitmq_adapter_enqueue_batch_benchmark(
     async_benchmark, rabbitmq_queue: RabbitMQQueueAdapter[_QueuePayload]
 ) -> None:
     """Benchmark adapter batch enqueue of 10 messages."""
@@ -68,7 +68,7 @@ async def test_adapter_enqueue_batch_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_adapter_enqueue_receive_ack_benchmark(
+async def test_rabbitmq_adapter_enqueue_receive_ack_benchmark(
     async_benchmark, rabbitmq_queue: RabbitMQQueueAdapter[_QueuePayload]
 ) -> None:
     """Benchmark adapter full round-trip: enqueue, receive, ack."""

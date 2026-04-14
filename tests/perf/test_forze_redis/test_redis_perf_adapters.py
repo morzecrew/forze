@@ -11,6 +11,8 @@ from forze_redis.adapters import RedisCacheAdapter, RedisCounterAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient
 
+_REDIS_CACHE_GET_MANY_LARGE = 200
+
 
 def _perf_namespace(prefix: str) -> str:
     return f"perf:{prefix}:{uuid4().hex[:12]}"
@@ -36,7 +38,7 @@ async def redis_counter(redis_client: RedisClient) -> RedisCounterAdapter:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_cache_set_benchmark(
+async def test_redis_cache_set_benchmark(
     async_benchmark, redis_cache: RedisCacheAdapter
 ) -> None:
     """Benchmark cache set."""
@@ -51,7 +53,7 @@ async def test_cache_set_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_cache_get_benchmark(
+async def test_redis_cache_get_benchmark(
     async_benchmark, redis_cache: RedisCacheAdapter
 ) -> None:
     """Benchmark cache get."""
@@ -67,7 +69,7 @@ async def test_cache_get_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_cache_get_many_benchmark(
+async def test_redis_cache_get_many_benchmark(
     async_benchmark, redis_cache: RedisCacheAdapter
 ) -> None:
     """Benchmark cache get_many with 10 keys."""
@@ -85,7 +87,25 @@ async def test_cache_get_many_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_cache_set_many_benchmark(
+async def test_redis_cache_get_many_large_benchmark(
+    async_benchmark, redis_cache: RedisCacheAdapter
+) -> None:
+    """Benchmark cache get_many with 200 keys (high volume)."""
+    keys = [f"k:{uuid4().hex[:8]}" for _ in range(_REDIS_CACHE_GET_MANY_LARGE)]
+    for k in keys:
+        await redis_cache.set(k, {"data": "v"})
+
+    async def run() -> None:
+        hits, misses = await redis_cache.get_many(keys)
+        assert len(hits) == _REDIS_CACHE_GET_MANY_LARGE
+        assert len(misses) == 0
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_redis_cache_set_many_benchmark(
     async_benchmark, redis_cache: RedisCacheAdapter
 ) -> None:
     """Benchmark cache set_many with 20 items."""
@@ -100,7 +120,7 @@ async def test_cache_set_many_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_counter_incr_benchmark(
+async def test_redis_counter_incr_benchmark(
     async_benchmark, redis_counter: RedisCounterAdapter
 ) -> None:
     """Benchmark counter incr."""
@@ -115,7 +135,7 @@ async def test_counter_incr_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_counter_incr_batch_benchmark(
+async def test_redis_counter_incr_batch_benchmark(
     async_benchmark, redis_counter: RedisCounterAdapter
 ) -> None:
     """Benchmark counter incr_batch with size 10."""

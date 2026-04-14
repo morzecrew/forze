@@ -25,7 +25,7 @@ async def _ensure_queue(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_adapter_enqueue_benchmark(
+async def test_sqs_adapter_enqueue_benchmark(
     async_benchmark,
     sqs_client: SQSClient,
     sqs_queue: SQSQueueAdapter,
@@ -43,7 +43,7 @@ async def test_adapter_enqueue_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_adapter_enqueue_batch_benchmark(
+async def test_sqs_adapter_enqueue_batch_benchmark(
     async_benchmark,
     sqs_client: SQSClient,
     sqs_queue: SQSQueueAdapter,
@@ -68,7 +68,7 @@ async def test_adapter_enqueue_batch_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_adapter_enqueue_receive_ack_benchmark(
+async def test_sqs_adapter_enqueue_receive_ack_benchmark(
     async_benchmark,
     sqs_client: SQSClient,
     sqs_queue: SQSQueueAdapter,

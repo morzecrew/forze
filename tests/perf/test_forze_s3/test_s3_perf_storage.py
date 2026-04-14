@@ -21,7 +21,7 @@ def _s3_ctx(client: S3Client, bucket: str) -> ExecutionContext:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_storage_upload_benchmark(
+async def test_s3_storage_upload_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark storage adapter upload."""
@@ -43,7 +43,7 @@ async def test_storage_upload_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_storage_list_benchmark(
+async def test_s3_storage_list_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark storage adapter list."""
@@ -68,7 +68,7 @@ async def test_storage_list_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_storage_download_benchmark(
+async def test_s3_storage_download_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark storage adapter download (object pre-seeded)."""
@@ -93,7 +93,7 @@ async def test_storage_download_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_storage_upload_list_download_delete_benchmark(
+async def test_s3_storage_upload_list_download_delete_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark storage adapter full round-trip."""

@@ -22,6 +22,10 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
+_PG_DOC_CREATE_MANY_LARGE = 500
+_PG_DOC_GET_MANY_LARGE = 200
+_PG_DOC_FIND_MANY_SEED = 2_000
+
 
 class PerfDoc(Document):
     """Domain model for perf tests."""
@@ -47,20 +51,15 @@ class PerfReadDoc(ReadDocument):
     name: str
 
 
-_PG_PERF_DOC_CONFIG = {
-    "perf_docs_ns": {
-        "read": ("public", "perf_docs"),
-        "write": ("public", "perf_docs"),
-    }
-}
-
-
 @pytest.fixture
 def execution_context(pg_client: PostgresClient):
     """Build execution context with Postgres deps."""
     configurable = ConfigurablePostgresDocument(
-        bookkeeping_strategy="application",
-        configs=_PG_PERF_DOC_CONFIG,
+        config={
+            "read": ("public", "perf_docs"),
+            "write": ("public", "perf_docs"),
+            "bookkeeping_strategy": "application",
+        }
     )
     deps = Deps.plain(
         {
@@ -103,7 +102,7 @@ async def document_adapter(pg_client: PostgresClient, execution_context):
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_create_benchmark(async_benchmark, document_adapter) -> None:
+async def test_pg_document_create_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document create."""
 
     async def run() -> None:
@@ -116,7 +115,7 @@ async def test_document_create_benchmark(async_benchmark, document_adapter) -> N
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_get_benchmark(async_benchmark, document_adapter) -> None:
+async def test_pg_document_get_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document get by id."""
     doc = await document_adapter.create(PerfCreateDoc(name="bench item"))
 
@@ -129,7 +128,7 @@ async def test_document_get_benchmark(async_benchmark, document_adapter) -> None
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_get_many_benchmark(async_benchmark, document_adapter) -> None:
+async def test_pg_document_get_many_benchmark(async_benchmark, document_adapter) -> None:
     """Benchmark document get_many with 10 ids."""
     docs = [
         await document_adapter.create(PerfCreateDoc(name=f"item {i}"))
@@ -146,7 +145,28 @@ async def test_document_get_many_benchmark(async_benchmark, document_adapter) ->
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_create_many_benchmark(
+async def test_pg_document_get_many_large_benchmark(
+    async_benchmark, document_adapter
+) -> None:
+    """Benchmark document get_many with a large id list (200)."""
+    docs = [
+        await document_adapter.create(PerfCreateDoc(name=f"bulk {i}"))
+        for i in range(_PG_DOC_GET_MANY_LARGE)
+    ]
+    pks = [d.id for d in docs]
+
+    async def run() -> None:
+        result = await document_adapter.get_many(pks)
+        assert len(result) == _PG_DOC_GET_MANY_LARGE
+
+    await async_benchmark(run)
+
+    await document_adapter.kill_many(pks)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_pg_document_create_many_benchmark(
     async_benchmark, document_adapter
 ) -> None:
     """Benchmark document create_many with 20 items."""
@@ -161,7 +181,22 @@ async def test_document_create_many_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_document_find_many_benchmark(
+async def test_pg_document_create_many_large_benchmark(
+    async_benchmark, document_adapter
+) -> None:
+    """Benchmark document create_many with a large batch (500 items)."""
+
+    async def run() -> None:
+        dtos = [PerfCreateDoc(name=f"batch-lg {i}") for i in range(_PG_DOC_CREATE_MANY_LARGE)]
+        result = await document_adapter.create_many(dtos)
+        await document_adapter.kill_many([doc.id for doc in result])
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_pg_document_find_many_benchmark(
     async_benchmark, document_adapter, pg_client
 ) -> None:
     """Benchmark document find_many with 50 pre-inserted rows."""
@@ -175,3 +210,28 @@ async def test_document_find_many_benchmark(
         assert len(rows) >= 50
 
     await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_pg_document_find_many_large_benchmark(
+    async_benchmark, document_adapter, pg_client
+) -> None:
+    """Benchmark find_many against a large table (2k rows, limit 500)."""
+    await pg_client.execute("TRUNCATE perf_docs")
+    batch_size = 200
+    for start in range(0, _PG_DOC_FIND_MANY_SEED, batch_size):
+        chunk = [
+            PerfCreateDoc(name=f"find-lg {i}")
+            for i in range(start, min(start + batch_size, _PG_DOC_FIND_MANY_SEED))
+        ]
+        await document_adapter.create_many(chunk)
+
+    async def run() -> None:
+        rows, cnt = await document_adapter.find_many(limit=500)
+        assert cnt >= 500
+        assert len(rows) >= 500
+
+    await async_benchmark(run)
+
+    await pg_client.execute("TRUNCATE perf_docs")

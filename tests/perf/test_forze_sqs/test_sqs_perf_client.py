@@ -21,20 +21,9 @@ def _perf_queue(prefix: str) -> str:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_health_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
-    """Benchmark SQS health check (list_queues)."""
-
-    async def run() -> None:
-        async with sqs_client.client():
-            status, ok = await sqs_client.health()
-            assert ok
-
-    await async_benchmark(run)
-
-
-@pytest.mark.perf
-@pytest.mark.asyncio
-async def test_client_context_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
+async def test_sqs_client_context_benchmark(
+    async_benchmark, sqs_client: SQSClient
+) -> None:
     """Benchmark client context manager (open/close)."""
 
     async def run() -> None:
@@ -46,7 +35,7 @@ async def test_client_context_benchmark(async_benchmark, sqs_client: SQSClient) 
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_enqueue_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
+async def test_sqs_enqueue_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
     """Benchmark single enqueue."""
 
     async def run() -> None:
@@ -60,7 +49,7 @@ async def test_enqueue_benchmark(async_benchmark, sqs_client: SQSClient) -> None
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_enqueue_batch_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
+async def test_sqs_enqueue_batch_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
     """Benchmark batch enqueue of 10 messages to the same queue."""
     queue = _perf_queue("enq_batch")
     ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -83,7 +72,7 @@ async def test_enqueue_batch_benchmark(async_benchmark, sqs_client: SQSClient) -
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_enqueue_receive_ack_benchmark(
+async def test_sqs_enqueue_receive_ack_benchmark(
     async_benchmark, sqs_client: SQSClient
 ) -> None:
     """Benchmark full round-trip: enqueue, receive, ack."""

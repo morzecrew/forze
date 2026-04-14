@@ -8,6 +8,10 @@ pytest.importorskip("redis")
 
 from forze_redis.kernel.platform.client import RedisClient
 
+_REDIS_MGET_LARGE = 1_000
+_REDIS_MSET_LARGE = 500
+_REDIS_PIPELINE_LARGE = 100
+
 
 def _perf_key(prefix: str, suffix: str = "") -> str:
     return f"perf:{prefix}:{uuid4().hex[:8]}{suffix}"
@@ -15,7 +19,7 @@ def _perf_key(prefix: str, suffix: str = "") -> str:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_get_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_get_benchmark(async_benchmark, redis_client: RedisClient) -> None:
     """Benchmark single get."""
     key = _perf_key("get")
     await redis_client.set(key, b"value")
@@ -29,7 +33,7 @@ async def test_get_benchmark(async_benchmark, redis_client: RedisClient) -> None
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_set_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_set_benchmark(async_benchmark, redis_client: RedisClient) -> None:
     """Benchmark single set."""
 
     async def run() -> None:
@@ -42,7 +46,9 @@ async def test_set_benchmark(async_benchmark, redis_client: RedisClient) -> None
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_mget_small_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_mget_small_benchmark(
+    async_benchmark, redis_client: RedisClient
+) -> None:
     """Benchmark mget with 10 keys."""
     keys = [_perf_key("mget", f":{i}") for i in range(10)]
     for k in keys:
@@ -57,7 +63,7 @@ async def test_mget_small_benchmark(async_benchmark, redis_client: RedisClient) 
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_mget_medium_benchmark(
+async def test_redis_mget_medium_benchmark(
     async_benchmark, redis_client: RedisClient
 ) -> None:
     """Benchmark mget with 100 keys."""
@@ -74,7 +80,24 @@ async def test_mget_medium_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_mset_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_mget_large_benchmark(
+    async_benchmark, redis_client: RedisClient
+) -> None:
+    """Benchmark mget with 1000 keys (high volume)."""
+    keys = [_perf_key("mget1k", f":{i}") for i in range(_REDIS_MGET_LARGE)]
+    for k in keys:
+        await redis_client.set(k, b"v")
+
+    async def run() -> None:
+        vals = await redis_client.mget(keys)
+        assert len(vals) == _REDIS_MGET_LARGE
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_redis_mset_benchmark(async_benchmark, redis_client: RedisClient) -> None:
     """Benchmark mset with 20 key-value pairs."""
 
     async def run() -> None:
@@ -87,7 +110,24 @@ async def test_mset_benchmark(async_benchmark, redis_client: RedisClient) -> Non
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_pipeline_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_mset_large_benchmark(
+    async_benchmark, redis_client: RedisClient
+) -> None:
+    """Benchmark mset with 500 key-value pairs (high volume)."""
+
+    async def run() -> None:
+        mapping = {_perf_key("mset500", f":{i}"): b"v" for i in range(_REDIS_MSET_LARGE)}
+        await redis_client.mset(mapping)
+        await redis_client.delete(*mapping.keys())
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_redis_pipeline_benchmark(
+    async_benchmark, redis_client: RedisClient
+) -> None:
     """Benchmark pipeline with 10 set operations."""
 
     async def run() -> None:
@@ -102,7 +142,24 @@ async def test_pipeline_benchmark(async_benchmark, redis_client: RedisClient) ->
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_incr_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_pipeline_large_benchmark(
+    async_benchmark, redis_client: RedisClient
+) -> None:
+    """Benchmark pipeline with 100 set operations (high volume)."""
+
+    async def run() -> None:
+        keys = [_perf_key("pipe100", f":{i}") for i in range(_REDIS_PIPELINE_LARGE)]
+        async with redis_client.pipeline(transaction=True):
+            for key in keys:
+                await redis_client.set(key, b"v")
+        await redis_client.delete(*keys)
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_redis_incr_benchmark(async_benchmark, redis_client: RedisClient) -> None:
     """Benchmark incr."""
     key = _perf_key("incr")
     await redis_client.set(key, b"0")
@@ -115,7 +172,7 @@ async def test_incr_benchmark(async_benchmark, redis_client: RedisClient) -> Non
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_delete_benchmark(async_benchmark, redis_client: RedisClient) -> None:
+async def test_redis_delete_benchmark(async_benchmark, redis_client: RedisClient) -> None:
     """Benchmark delete of 5 keys."""
 
     async def run() -> None:
@@ -129,7 +186,7 @@ async def test_delete_benchmark(async_benchmark, redis_client: RedisClient) -> N
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_set_with_ttl_benchmark(
+async def test_redis_set_with_ttl_benchmark(
     async_benchmark, redis_client: RedisClient
 ) -> None:
     """Benchmark set with expiration."""

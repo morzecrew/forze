@@ -6,10 +6,13 @@ pytest.importorskip("psycopg")
 
 from forze_postgres.kernel.platform.client import PostgresClient
 
+_PG_FETCH_LARGE_ROWS = 10_000
+_PG_EXECUTE_MANY_LARGE = 2_000
+
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_execute_benchmark(async_benchmark, pg_client: PostgresClient) -> None:
+async def test_pg_execute_benchmark(async_benchmark, pg_client: PostgresClient) -> None:
     """Benchmark single execute statement."""
 
     async def run() -> None:
@@ -20,7 +23,7 @@ async def test_execute_benchmark(async_benchmark, pg_client: PostgresClient) -> 
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_fetch_one_benchmark(async_benchmark, pg_client: PostgresClient) -> None:
+async def test_pg_fetch_one_benchmark(async_benchmark, pg_client: PostgresClient) -> None:
     """Benchmark fetch_one."""
     await pg_client.execute(
         """
@@ -44,7 +47,7 @@ async def test_fetch_one_benchmark(async_benchmark, pg_client: PostgresClient) -
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_fetch_all_small_benchmark(
+async def test_pg_fetch_all_small_benchmark(
     async_benchmark, pg_client: PostgresClient
 ) -> None:
     """Benchmark fetch_all with a small result set (10 rows)."""
@@ -71,7 +74,7 @@ async def test_fetch_all_small_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_fetch_all_medium_benchmark(
+async def test_pg_fetch_all_medium_benchmark(
     async_benchmark, pg_client: PostgresClient
 ) -> None:
     """Benchmark fetch_all with a medium result set (1000 rows)."""
@@ -97,7 +100,34 @@ async def test_fetch_all_medium_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_execute_many_benchmark(
+async def test_pg_fetch_all_large_benchmark(
+    async_benchmark, pg_client: PostgresClient
+) -> None:
+    """Benchmark fetch_all with a large result set (10k rows)."""
+    await pg_client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS perf_fetch_large (
+            id serial PRIMARY KEY,
+            val integer
+        );
+        """
+    )
+    await pg_client.execute("TRUNCATE perf_fetch_large")
+    await pg_client.execute_many(
+        "INSERT INTO perf_fetch_large (val) VALUES (%(v)s)",
+        [{"v": i} for i in range(_PG_FETCH_LARGE_ROWS)],
+    )
+
+    async def run() -> None:
+        rows = await pg_client.fetch_all("SELECT * FROM perf_fetch_large")
+        assert len(rows) == _PG_FETCH_LARGE_ROWS
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_pg_execute_many_benchmark(
     async_benchmark, pg_client: PostgresClient
 ) -> None:
     """Benchmark execute_many with 100 parameter sets."""
@@ -124,7 +154,33 @@ async def test_execute_many_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_transaction_benchmark(
+async def test_pg_execute_many_large_benchmark(
+    async_benchmark, pg_client: PostgresClient
+) -> None:
+    """Benchmark execute_many bulk insert (2k rows)."""
+    await pg_client.execute(
+        """
+        CREATE TABLE IF NOT EXISTS perf_exec_many_large (
+            id serial PRIMARY KEY,
+            val integer
+        );
+        """
+    )
+    params = [{"v": i} for i in range(_PG_EXECUTE_MANY_LARGE)]
+
+    async def run() -> None:
+        await pg_client.execute("DELETE FROM perf_exec_many_large")
+        await pg_client.execute_many(
+            "INSERT INTO perf_exec_many_large (val) VALUES (%(v)s)",
+            params,
+        )
+
+    await async_benchmark(run)
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+async def test_pg_transaction_benchmark(
     async_benchmark, pg_client: PostgresClient
 ) -> None:
     """Benchmark transaction commit overhead."""

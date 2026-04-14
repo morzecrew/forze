@@ -21,21 +21,7 @@ def _perf_queue(prefix: str) -> str:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_health_benchmark(
-    async_benchmark, rabbitmq_client: RabbitMQClient
-) -> None:
-    """Benchmark health check (channel open/close)."""
-
-    async def run() -> None:
-        status, ok = await rabbitmq_client.health()
-        assert ok
-
-    await async_benchmark(run)
-
-
-@pytest.mark.perf
-@pytest.mark.asyncio
-async def test_enqueue_benchmark(
+async def test_rabbitmq_enqueue_benchmark(
     async_benchmark, rabbitmq_client: RabbitMQClient
 ) -> None:
     """Benchmark single enqueue."""
@@ -49,7 +35,7 @@ async def test_enqueue_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_enqueue_batch_benchmark(
+async def test_rabbitmq_enqueue_batch_benchmark(
     async_benchmark, rabbitmq_client: RabbitMQClient
 ) -> None:
     """Benchmark batch enqueue of 10 messages to the same queue."""
@@ -66,7 +52,7 @@ async def test_enqueue_batch_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_enqueue_receive_ack_benchmark(
+async def test_rabbitmq_enqueue_receive_ack_benchmark(
     async_benchmark, rabbitmq_client: RabbitMQClient
 ) -> None:
     """Benchmark full round-trip: enqueue, receive, ack."""
@@ -86,7 +72,7 @@ async def test_enqueue_receive_ack_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_channel_benchmark(
+async def test_rabbitmq_channel_benchmark(
     async_benchmark, rabbitmq_client: RabbitMQClient
 ) -> None:
     """Benchmark channel context (open/close)."""

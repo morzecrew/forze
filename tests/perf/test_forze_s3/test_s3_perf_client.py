@@ -15,20 +15,7 @@ def _perf_key(prefix: str) -> str:
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_health_benchmark(async_benchmark, s3_client: S3Client) -> None:
-    """Benchmark S3 health check (list_buckets)."""
-
-    async def run() -> None:
-        async with s3_client.client():
-            status, ok = await s3_client.health()
-            assert ok
-
-    await async_benchmark(run)
-
-
-@pytest.mark.perf
-@pytest.mark.asyncio
-async def test_client_context_benchmark(async_benchmark, s3_client: S3Client) -> None:
+async def test_s3_client_context_benchmark(async_benchmark, s3_client: S3Client) -> None:
     """Benchmark client context manager (open/close)."""
 
     async def run() -> None:
@@ -40,7 +27,7 @@ async def test_client_context_benchmark(async_benchmark, s3_client: S3Client) ->
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_upload_bytes_benchmark(
+async def test_s3_upload_bytes_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark single object upload."""
@@ -61,7 +48,7 @@ async def test_upload_bytes_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_download_bytes_benchmark(
+async def test_s3_download_bytes_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark single object download (object pre-seeded)."""
@@ -89,7 +76,7 @@ async def test_download_bytes_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_head_object_benchmark(
+async def test_s3_head_object_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark head_object (metadata fetch)."""
@@ -117,7 +104,7 @@ async def test_head_object_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_list_objects_small_benchmark(
+async def test_s3_list_objects_small_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark list_objects with a small prefix (few objects)."""
@@ -151,7 +138,7 @@ async def test_list_objects_small_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_upload_download_roundtrip_benchmark(
+async def test_s3_upload_download_roundtrip_benchmark(
     async_benchmark, s3_client: S3Client, s3_bucket: str
 ) -> None:
     """Benchmark full round-trip: upload, download, delete."""
