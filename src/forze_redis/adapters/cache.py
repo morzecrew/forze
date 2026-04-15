@@ -276,9 +276,10 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     async def set_versioned(self, key: str, version: str, value: Any) -> None:
-        async with self.client.pipeline(transaction=False):
-            await self.__mset_pointers({key: version}, ttl=self.ttl_pointer)
-            await self.__mset_bodies({(key, version): value}, ttl=self.ttl_body)
+        await asyncio.gather(
+            self.__mset_pointers({key: version}, ttl=self.ttl_pointer),
+            self.__mset_bodies({(key, version): value}, ttl=self.ttl_body),
+        )
 
     # ....................... #
 
@@ -301,21 +302,29 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             key: version for (key, version) in key_version_mapping.keys()
         }
 
-        async with self.client.pipeline(transaction=False):
-            await self.__mset_pointers(pointer_mapping, ttl=self.ttl_pointer)
-            await self.__mset_bodies(key_version_mapping, ttl=self.ttl_body)
+        await asyncio.gather(
+            self.__mset_pointers(pointer_mapping, ttl=self.ttl_pointer),
+            self.__mset_bodies(key_version_mapping, ttl=self.ttl_body),
+        )
 
     # ....................... #
 
     async def delete(self, key: str, *, hard: bool) -> None:
-        await self.__mdelete_kv([key])
-
         if hard:
-            pointers = await self.__mget_pointers([key])
-            if pointers:
-                await self.__mdelete_bodies(pointers)
-
-        await self.__mdelete_pointers([key])
+            # Overlap kv-delete with pointer lookup; body-delete waits for the pointer.
+            pointers, _ = await asyncio.gather(
+                self.__mget_pointers([key]),
+                self.__mdelete_kv([key]),
+            )
+            await asyncio.gather(
+                self.__mdelete_bodies(pointers) if pointers else asyncio.sleep(0),
+                self.__mdelete_pointers([key]),
+            )
+        else:
+            await asyncio.gather(
+                self.__mdelete_kv([key]),
+                self.__mdelete_pointers([key]),
+            )
 
     # ....................... #
 
@@ -323,12 +332,18 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         if not keys:
             return
 
-        await self.__mdelete_kv(keys)
-
         if hard:
-            pointers = await self.__mget_pointers(keys)
-
-            if pointers:
-                await self.__mdelete_bodies(pointers)
-
-        await self.__mdelete_pointers(keys)
+            # Overlap kv-delete with pointer lookups; body-delete waits for the pointers.
+            pointers, _ = await asyncio.gather(
+                self.__mget_pointers(keys),
+                self.__mdelete_kv(keys),
+            )
+            await asyncio.gather(
+                self.__mdelete_bodies(pointers) if pointers else asyncio.sleep(0),
+                self.__mdelete_pointers(keys),
+            )
+        else:
+            await asyncio.gather(
+                self.__mdelete_kv(keys),
+                self.__mdelete_pointers(keys),
+            )

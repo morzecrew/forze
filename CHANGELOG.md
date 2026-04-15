@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `forze_postgres` / `forze_mongo` document adapters: all single-document mutating methods (`create`, `update`, `touch`, `delete`, `restore`) now run the cache-clear and the DB re-read concurrently via `asyncio.gather`, eliminating one sequential round-trip per write. The `return_new=False` path runs write + cache-clear concurrently as well.
+- `forze_postgres` / `forze_mongo` document adapters: all bulk mutating methods (`create_many`, `update_many`, `touch_many`, `kill_many`, `delete_many`, `restore_many`) similarly pipeline the DB write, cache-invalidation, and (when `return_new=True`) the read-back concurrently via `asyncio.gather`.
+- `forze_redis` cache adapter: `set_versioned` and `set_many_versioned` now write the pointer key and the body key concurrently via `asyncio.gather` (previously issued sequentially inside a non-functional `pipeline` context manager). `delete` and `delete_many` likewise run KV-delete and pointer-delete concurrently; the hard-delete path additionally overlaps the KV-delete with the pointer fetch, reducing it from three sequential round-trips to two.
+
 ### Removed
 
 ### Fixed

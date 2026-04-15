@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+import asyncio
 from functools import cached_property
 from typing import Literal, Sequence, TypeVar, final, overload
 from uuid import UUID
@@ -438,7 +439,11 @@ class PostgresDocumentAdapter(
             return None
 
         # Repeat read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get(domain.id)
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(domain.id),
+            self._clear_cache(domain.id),
+        )
         await self._set_cache(res)
 
         return res
@@ -480,19 +485,21 @@ class PostgresDocumentAdapter(
 
             return []
 
-        logger.debug(
-            "Creating %s '%s' documents",
-            len(dtos),
-            self.spec.name,
-        )
+        logger.debug("Creating %s '%s' documents", len(dtos), self.spec.name)
 
         domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
         if not return_new:
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many([x.id for x in domains])
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        pks_new = [x.id for x in domains]
+
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks_new),
+            self._clear_cache(*pks_new),
+        )
         await self._set_cache_many(res)
 
         return res
@@ -561,16 +568,21 @@ class PostgresDocumentAdapter(
         )
 
         _, diff = await w.update(pk, dto, rev=rev)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
+
             if return_diff:
                 return diff
 
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         if return_diff:
@@ -653,16 +665,21 @@ class PostgresDocumentAdapter(
             revs=revs,
             batch_size=self.eff_batch_size,
         )
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
+
             if return_diff:
                 return diffs
 
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         if return_diff:
@@ -688,13 +705,17 @@ class PostgresDocumentAdapter(
         )
 
         await w.touch(pk)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         return res
@@ -740,13 +761,17 @@ class PostgresDocumentAdapter(
         )
 
         await w.touch_many(pks, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # touch_many + _clear_cache are independent of the subsequent read.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         return res
@@ -762,8 +787,11 @@ class PostgresDocumentAdapter(
             pk,
         )
 
-        await w.kill(pk)
-        await self._clear_cache(pk)
+        # _clear_cache and the DB exec are independent; run them concurrently.
+        await asyncio.gather(
+            w.kill(pk),
+            self._clear_cache(pk),
+        )
 
     # ....................... #
 
@@ -784,8 +812,11 @@ class PostgresDocumentAdapter(
             pks[0],
         )
 
-        await w.kill_many(pks, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
+        # _clear_cache and the DB exec are independent; run them concurrently.
+        await asyncio.gather(
+            w.kill_many(pks, batch_size=self.eff_batch_size),
+            self._clear_cache(*pks),
+        )
 
     # ....................... #
 
@@ -817,13 +848,17 @@ class PostgresDocumentAdapter(
         )
 
         await w.delete(pk, rev=rev)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         return res
@@ -872,13 +907,17 @@ class PostgresDocumentAdapter(
         )
 
         await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # delete_many + _clear_cache are independent of the subsequent read.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         return res
@@ -913,13 +952,17 @@ class PostgresDocumentAdapter(
         )
 
         await w.restore(pk, rev=rev)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         return res
@@ -968,13 +1011,17 @@ class PostgresDocumentAdapter(
         )
 
         await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # restore_many + _clear_cache are independent of the subsequent read.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         return res

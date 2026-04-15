@@ -6,6 +6,7 @@ require_mongo()
 
 # ....................... #
 
+import asyncio
 from functools import cached_property
 from typing import Literal, Sequence, TypeVar, final, overload
 from uuid import UUID
@@ -427,8 +428,12 @@ class MongoDocumentAdapter(
         if not return_new:
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get(domain.id)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(domain.id),
+            self._clear_cache(domain.id),
+        )
         await self._set_cache(res)
 
         return res
@@ -472,8 +477,14 @@ class MongoDocumentAdapter(
         if not return_new:
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many([x.id for x in domains])
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        pks_new = [x.id for x in domains]
+
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks_new),
+            self._clear_cache(*pks_new),
+        )
         await self._set_cache_many(res)
 
         return res
@@ -543,15 +554,21 @@ class MongoDocumentAdapter(
         w = self._require_write()
 
         _, diff = await w.update(pk, dto, rev=rev)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
+
             if return_diff:
                 return diff
 
             return None
 
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         if return_diff:
@@ -634,16 +651,21 @@ class MongoDocumentAdapter(
             revs=revs,
             batch_size=self.eff_batch_size,
         )
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
+
             if return_diff:
                 return diffs
 
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         if return_diff:
@@ -668,12 +690,17 @@ class MongoDocumentAdapter(
         w = self._require_write()
 
         await w.touch(pk)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
             return None
 
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         return res
@@ -708,14 +735,19 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
+
         await w.touch_many(pks, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # touch_many + _clear_cache are independent of the subsequent read.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         return res
@@ -729,8 +761,11 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
-        await w.kill(pk)
-        await self._clear_cache(pk)
+
+        await asyncio.gather(
+            w.kill(pk),
+            self._clear_cache(pk),
+        )
 
     # ....................... #
 
@@ -741,8 +776,11 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
-        await w.kill_many(pks)  #! add support for batch size
-        await self._clear_cache(*pks)
+
+        await asyncio.gather(
+            w.kill_many(pks),
+            self._clear_cache(*pks),
+        )
 
     # ....................... #
 
@@ -774,12 +812,17 @@ class MongoDocumentAdapter(
         w = self._require_write()
 
         await w.delete(pk, rev=rev)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
             return None
 
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         return res
@@ -820,12 +863,17 @@ class MongoDocumentAdapter(
         revs = [x[1] for x in deletes]
 
         await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
             return None
 
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # delete_many + _clear_cache are independent of the subsequent read.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         return res
@@ -860,12 +908,17 @@ class MongoDocumentAdapter(
         w = self._require_write()
 
         await w.restore(pk, rev=rev)
-        await self._clear_cache(pk)
 
         if not return_new:
+            await self._clear_cache(pk)
             return None
 
-        res = await self.read_gw.get(pk)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # _clear_cache and the DB read are independent; run them concurrently.
+        res, _ = await asyncio.gather(
+            self.read_gw.get(pk),
+            self._clear_cache(pk),
+        )
         await self._set_cache(res)
 
         return res
@@ -906,13 +959,17 @@ class MongoDocumentAdapter(
         revs = [x[1] for x in restores]
 
         await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
-        await self._clear_cache(*pks)
 
         if not return_new:
+            await self._clear_cache(*pks)
             return None
 
-        # Repeate read is required to meet criteria for diverse read and write sources
-        res = await self.read_gw.get_many(pks)
+        # Repeat read is required to meet criteria for diverse read and write sources
+        # restore_many + _clear_cache are independent of the subsequent read.
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
         await self._set_cache_many(res)
 
         return res
