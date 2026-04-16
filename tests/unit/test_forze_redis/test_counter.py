@@ -55,3 +55,17 @@ async def test_redis_counter_adapter_with_tenant(redis_mock: Mock) -> None:
         f"tenant:{tid}:counter:ns:my-suffix",
         0,
     )
+
+
+@pytest.mark.asyncio
+async def test_redis_counter_incr_batch_returns_range(redis_mock: Mock) -> None:
+    counter = RedisCounterAdapter(
+        client=redis_mock,
+        key_codec=RedisKeyCodec(namespace="ns"),
+    )
+    redis_mock.incr = AsyncMock(return_value=10)
+
+    batch = await counter.incr_batch(size=3, suffix="b")
+
+    redis_mock.incr.assert_called_once_with("counter:ns:b", 3)
+    assert batch == [8, 9, 10]

@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `forze_s3` `S3StorageAdapter`: default `key_generator` now returns a new UUID v7 string on each call (previously used `str(uuid7)` and produced a constant key segment, so successive uploads could overwrite the same object).
+
+- `forze_redis` platform error handler: `AuthenticationError`, `BusyLoadingError`, and `ReadOnlyError` are matched before their respective `ConnectionError` / `ResponseError` base cases so redis-py subclasses map to the intended messages.
+
+- `RawListDocuments`: `find_many` now receives `return_fields` from the request DTO so raw list responses are projected dicts as intended.
+
 - Temporal integration docs (`pages/docs/integrations/temporal.md`) and workflow sections in `pages/docs/core-package/contracts.md` and `pages/docs/core-concepts/contracts-adapters.md` now describe `WorkflowCommandPort` / `WorkflowQueryPort`, `TemporalDepsModule`, and related keys instead of the removed `WorkflowPort` API.
 
 - Documentation in `pages/` was realigned with the current API: removed stale `tx_document_plan`, migrated examples to `UsecasePlan.tx(..., route="default")`, replaced deprecated `forze.application.contracts.deps` imports with `forze.application.contracts.base`, updated context docs from legacy tenant/actor ports to `PrincipalContext`/`CallContext`, and fixed examples for `ctx.transaction("default")` and `ctx.storage(StorageSpec(...))`.

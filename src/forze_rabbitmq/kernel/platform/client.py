@@ -239,6 +239,36 @@ class RabbitMQClient:
 
     # ....................... #
 
+    async def __register_pending_batch(
+        self,
+        queue: str,
+        raws: list[AbstractIncomingMessage],
+    ) -> list[str]:
+        """Register multiple messages atomically under a single lock acquisition."""
+
+        async with self.__pending_lock:
+            ids: list[str] = []
+
+            for raw in raws:
+                base = raw.message_id or (
+                    f"{queue}:{raw.delivery_tag}"
+                    if raw.delivery_tag is not None
+                    else uuid4().hex
+                )
+                candidate = base
+                suffix = 1
+
+                while candidate in self.__pending:
+                    suffix += 1
+                    candidate = f"{base}:{suffix}"
+
+                self.__pending[candidate] = (queue, raw)
+                ids.append(candidate)
+
+            return ids
+
+    # ....................... #
+
     async def __next_message_id(
         self,
         queue: str,
@@ -280,7 +310,33 @@ class RabbitMQClient:
         )
 
     # ....................... #
+
+    async def __to_message_batch(
+        self,
+        queue: str,
+        raws: list[AbstractIncomingMessage],
+    ) -> list[RabbitMQQueueMessage]:
+        message_ids = await self.__register_pending_batch(queue, raws)
+
+        rmq_messages: list[RabbitMQQueueMessage] = []
+
+        for message_id, raw in zip(message_ids, raws, strict=True):
+            m = RabbitMQQueueMessage(
+                queue=queue,
+                id=message_id,
+                body=raw.body,
+                type=raw.type,
+                enqueued_at=self.__extract_timestamp(raw.timestamp),
+                key=self.__extract_key(raw.headers),
+            )
+            rmq_messages.append(m)
+
+        return rmq_messages
+
+    # ....................... #
     # Canonical queue methods
+
+    #! TODO: Rewrite without enqueue_many
 
     @rabbitmq_handled("rabbitmq.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
@@ -334,27 +390,36 @@ class RabbitMQClient:
 
         if key is not None:
             headers = {_KEY_HEADER: key}
+
         delivery_mode = (
             DeliveryMode.PERSISTENT
             if self.__config.persistent_messages
             else DeliveryMode.NOT_PERSISTENT
         )
 
+        messages: list[Message] = []
+
+        for body, resolved_message_id in zip(bodies, resolved_ids, strict=True):
+            message = Message(
+                body=body,
+                content_type="application/json",
+                delivery_mode=delivery_mode,
+                message_id=resolved_message_id,
+                timestamp=enqueued_at,
+                type=type,
+                headers=headers,  # type: ignore[arg-type]
+            )
+            messages.append(message)
+
         async with self.channel() as channel:
             await self.__declare_queue(channel, queue)
 
-            for body, resolved_message_id in zip(bodies, resolved_ids, strict=True):
-                message = Message(
-                    body=body,
-                    content_type="application/json",
-                    delivery_mode=delivery_mode,
-                    message_id=resolved_message_id,
-                    timestamp=enqueued_at,
-                    type=type,
-                    headers=headers,  # type: ignore[arg-type]
+            await asyncio.gather(
+                *(
+                    channel.default_exchange.publish(message, routing_key=queue)
+                    for message in messages
                 )
-
-                await channel.default_exchange.publish(message, routing_key=queue)
+            )
 
         return resolved_ids
 
@@ -374,23 +439,19 @@ class RabbitMQClient:
             return []
 
         timeout_seconds = timeout.total_seconds() if timeout is not None else 0
-        out: list[RabbitMQQueueMessage] = []
+        raw_messages: list[AbstractIncomingMessage] = []
+
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        while len(out) < max_messages:
-            raw = await declared.get(
-                no_ack=False,
-                fail=False,
-                timeout=timeout_seconds,
-            )
+        async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
+            async for raw in it:
+                raw_messages.append(raw)
 
-            if raw is None:
-                break
+                if len(raw_messages) >= max_messages:
+                    break
 
-            out.append(await self.__to_message(queue, raw))
-
-        return out
+        return await self.__to_message_batch(queue, raw_messages)
 
     # ....................... #
 
@@ -405,17 +466,9 @@ class RabbitMQClient:
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        while True:
-            raw = await declared.get(
-                no_ack=False,
-                fail=False,
-                timeout=timeout_seconds,
-            )
-
-            if raw is None:
-                continue
-
-            yield await self.__to_message(queue, raw)
+        async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
+            async for raw in it:
+                yield await self.__to_message(queue, raw)
 
     # ....................... #
 
@@ -457,6 +510,7 @@ class RabbitMQClient:
             return 0
 
         messages = await self.__pending_by_ids(queue, ids)
+
         if not messages:
             return 0
 
@@ -481,6 +535,7 @@ class RabbitMQClient:
             return 0
 
         messages = await self.__pending_by_ids(queue, ids)
+
         if not messages:
             return 0
 

@@ -72,3 +72,64 @@ class TestMongoErrorHandler:
         result = _mongo_eh(e, "some_op")
         assert isinstance(result, InfrastructureError)
         assert "some_op" in result.message
+
+    def test_bulk_write_duplicate_key(self) -> None:
+        from pymongo.errors import BulkWriteError
+
+        e = BulkWriteError({"writeErrors": [{"code": 11000}]})
+        result = _mongo_eh(e, "bulk")
+        assert isinstance(result, ConflictError)
+
+    def test_bulk_write_non_duplicate_maps_to_infra(self) -> None:
+        from pymongo.errors import BulkWriteError
+
+        e = BulkWriteError({"writeErrors": [{"code": 121}]})
+        result = _mongo_eh(e, "bulk")
+        assert isinstance(result, InfrastructureError)
+        assert "bulk" in result.code.lower()
+
+    def test_write_error_duplicate_key(self) -> None:
+        from pymongo.errors import WriteError
+
+        e = WriteError("dup", code=11000)
+        result = _mongo_eh(e, "ins")
+        assert isinstance(result, ConflictError)
+
+    def test_write_error_other_code(self) -> None:
+        from pymongo.errors import WriteError
+
+        e = WriteError("other", code=2)
+        result = _mongo_eh(e, "ins")
+        assert isinstance(result, InfrastructureError)
+
+    def test_operation_failure_interrupted(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure("rs", code=11600)
+        result = _mongo_eh(e, "x")
+        assert isinstance(result, ConcurrencyError)
+        assert result.code == "interrupted"
+
+    def test_operation_failure_transaction_conflict(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure("abort", code=251)
+        result = _mongo_eh(e, "x")
+        assert isinstance(result, ConcurrencyError)
+        assert result.code == "transaction_conflict"
+
+    def test_operation_failure_unauthorized(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure("not authorized to run aggregate", code=13)
+        result = _mongo_eh(e, "x")
+        assert isinstance(result, InfrastructureError)
+        assert "authorization" in result.code.lower()
+
+    def test_operation_failure_generic(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        e = OperationFailure("some server error", code=999)
+        result = _mongo_eh(e, "my_op")
+        assert isinstance(result, InfrastructureError)
+        assert "my_op" in result.code

@@ -94,7 +94,7 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
             offset=offset,
             sorts=body.sorts,
             options=body.options,
-            return_fields=list(body.return_fields),
+            return_fields=tuple(body.return_fields),
         )
 
         return RawPaginated(hits=hits, page=page, size=size, count=count)

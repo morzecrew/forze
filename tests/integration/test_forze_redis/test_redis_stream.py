@@ -1,5 +1,7 @@
 """Integration tests for RedisStreamAdapter and RedisStreamGroupAdapter."""
 
+import asyncio
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -117,3 +119,25 @@ async def test_stream_group_ack(
     acked = await redis_stream_group.ack(group, stream, [msg_id])
     assert isinstance(acked, int)
     assert acked >= 0
+
+
+@pytest.mark.asyncio
+async def test_stream_tail_polls_new_messages(
+    redis_stream: RedisStreamAdapter,
+    stream_payload_cls,
+) -> None:
+    """tail() advances stream cursors and yields messages in order."""
+    stream = _stream_name()
+    await redis_stream.append(stream, stream_payload_cls(value="first"))
+    await redis_stream.append(stream, stream_payload_cls(value="second"))
+
+    agen = redis_stream.tail({stream: "0"}, timeout=timedelta(seconds=1))
+    try:
+        m1 = await asyncio.wait_for(agen.__anext__(), timeout=3)
+        m2 = await asyncio.wait_for(agen.__anext__(), timeout=3)
+    finally:
+        await agen.aclose()
+
+    assert m1["payload"].value == "first"
+    assert m2["payload"].value == "second"
+    assert m1["stream"] == stream == m2["stream"]

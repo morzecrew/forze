@@ -89,6 +89,7 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
             sorts=body.sorts,
             limit=limit,
             offset=offset,
+            return_fields=tuple(body.return_fields),
         )
 
         return RawPaginated(hits=hits, page=page, size=size, count=count)

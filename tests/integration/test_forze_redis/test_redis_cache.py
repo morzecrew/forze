@@ -84,3 +84,29 @@ async def test_cache_delete_many(redis_cache: RedisCacheAdapter) -> None:
     hits, misses = await redis_cache.get_many(["m1", "m2", "m3"])
     assert hits == {"m3": 3}
     assert set(misses) == {"m1", "m2"}
+
+
+@pytest.mark.asyncio
+async def test_cache_get_many_mixes_versioned_and_plain(redis_cache: RedisCacheAdapter) -> None:
+    """get_many can return both versioned entries and plain KV in one batch."""
+    await redis_cache.set_versioned("ver", "1", {"kind": "v"})
+    await redis_cache.set("plain", 42)
+
+    hits, misses = await redis_cache.get_many(["ver", "plain", "absent"])
+
+    assert hits["ver"] == {"kind": "v"}
+    assert hits["plain"] == 42
+    assert misses == ["absent"]
+
+
+@pytest.mark.asyncio
+async def test_cache_delete_many_hard_clears_versioned_bodies(redis_cache: RedisCacheAdapter) -> None:
+    """delete_many with hard=True removes versioned data for all keys."""
+    await redis_cache.set_many_versioned(
+        {("a", "v1"): {"n": 1}, ("b", "v1"): {"n": 2}},
+    )
+    await redis_cache.delete_many(["a", "b"], hard=True)
+
+    hits, misses = await redis_cache.get_many(["a", "b"])
+    assert hits == {}
+    assert set(misses) == {"a", "b"}

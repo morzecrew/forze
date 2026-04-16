@@ -49,8 +49,8 @@ class S3StorageAdapter(StoragePort, MultiTenancyMixin):
     bucket: str
     """S3 bucket name."""
 
-    key_generator: Callable[[], str] = attrs.field(default=lambda: str(uuid7))
-    """Callable to generate a unique key. Defaults to a UUID v7."""
+    key_generator: Callable[[], str] = attrs.field(default=lambda: str(uuid7()))
+    """Callable to generate a unique key. Defaults to a UUID v7 per :func:`~forze.base.primitives.uuid7`."""
 
     # ....................... #
 

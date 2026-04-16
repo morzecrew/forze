@@ -7,9 +7,9 @@ require_sqs()
 import base64
 import re
 from contextlib import asynccontextmanager
-from re import Pattern
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from re import Pattern
 from typing import Any, AsyncIterator, Sequence, TypedDict, cast, final
 from uuid import uuid4
 
@@ -482,6 +482,8 @@ class SQSClient:
         )
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
+
+        #! TODO: rewrite with asyncio.gather. And review batch size (chunking)
 
         for offset in range(0, len(bodies), 10):
             chunk = bodies[offset : offset + 10]

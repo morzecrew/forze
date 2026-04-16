@@ -116,3 +116,59 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
 
     await adapter.kill(created.id)
     assert await adapter.count() == 0
+
+
+@pytest.mark.asyncio
+async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> None:
+    """find_many honours sort order on the read model field."""
+    collection = f"docs_sort_{uuid4().hex[:8]}"
+    history_collection = f"{collection}_history"
+    db_name = mongo_client.db().name
+
+    spec = DocumentSpec(
+        name="mongo_sort_ns",
+        read=MyReadDoc,
+        write={
+            "domain": MyDoc,
+            "create_cmd": MyCreateDoc,
+            "update_cmd": MyUpdateDoc,
+        },
+        history_enabled=True,
+    )
+
+    configurable = ConfigurableMongoDocument(
+        config={
+            "read": (db_name, collection),
+            "write": (db_name, collection),
+            "history": (db_name, history_collection),
+        }
+    )
+    deps = Deps.plain(
+        {
+            MongoClientDepKey: mongo_client,
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
+        }
+    )
+    ctx = ExecutionContext(deps=deps)
+    adapter = ctx.doc_command(spec)
+
+    for name in ("charlie", "alice", "bob"):
+        await adapter.create(MyCreateDoc(name=name))
+
+    rows, total = await adapter.find_many(
+        None,
+        limit=10,
+        offset=0,
+        sorts={"name": "asc"},
+    )
+    assert total == 3
+    assert [r.name for r in rows] == ["alice", "bob", "charlie"]
+
+    rows_desc, _ = await adapter.find_many(
+        None,
+        limit=2,
+        offset=0,
+        sorts={"name": "desc"},
+    )
+    assert [r.name for r in rows_desc] == ["charlie", "bob"]

@@ -132,3 +132,24 @@ async def test_queue_adapter_consume(
     assert message["queue"] == queue
     assert message["payload"].value == "consume"
     assert await rabbitmq_queue.ack(queue, [message["id"]]) == 1
+
+
+@pytest.mark.asyncio
+async def test_queue_adapter_nack_requeues(
+    rabbitmq_queue: RabbitMQQueueAdapter,
+    queue_payload_cls,
+) -> None:
+    """nack(..., requeue=True) makes the message available again."""
+    queue = f"jobs-{uuid4().hex[:8]}"
+
+    await rabbitmq_queue.enqueue(queue, queue_payload_cls(value="retry-me"))
+
+    first = await _receive_until(rabbitmq_queue, queue)
+    assert first["payload"].value == "retry-me"
+
+    assert await rabbitmq_queue.nack(queue, [first["id"]], requeue=True) == 1
+
+    second = await _receive_until(rabbitmq_queue, queue)
+    assert second["payload"].value == "retry-me"
+
+    assert await rabbitmq_queue.ack(queue, [second["id"]]) == 1
