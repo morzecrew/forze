@@ -18,49 +18,49 @@ class TestRedisErrorHandler:
     def test_connection_error(self) -> None:
         r = _redis_eh(redis_errors.ConnectionError(), "get")
         assert isinstance(r, InfrastructureError)
-        assert "connection" in r.code.lower()
+        assert "connection" in r.message
 
     def test_timeout_error(self) -> None:
         r = _redis_eh(redis_errors.TimeoutError(), "get")
         assert isinstance(r, InfrastructureError)
-        assert "timeout" in r.code.lower()
+        assert "timeout" in r.message
 
     def test_authentication_error(self) -> None:
         r = _redis_eh(redis_errors.AuthenticationError(), "auth")
         assert isinstance(r, InfrastructureError)
-        assert "authentication" in r.code.lower()
+        assert "authentication" in r.message
 
     def test_busy_loading_error(self) -> None:
         r = _redis_eh(redis_errors.BusyLoadingError(), "get")
         assert isinstance(r, InfrastructureError)
-        assert "loading" in r.code.lower()
+        assert "loading" in r.message
 
     def test_read_only_error(self) -> None:
         r = _redis_eh(redis_errors.ReadOnlyError(), "set")
         assert isinstance(r, InfrastructureError)
-        assert "read-only" in r.code.lower()
+        assert "read-only" in r.message
 
     def test_data_error(self) -> None:
         r = _redis_eh(redis_errors.DataError(), "cmd")
         assert isinstance(r, InfrastructureError)
-        assert "arguments" in r.code.lower()
+        assert "arguments" in r.message
 
     def test_response_error_wrongtype(self) -> None:
         r = _redis_eh(redis_errors.ResponseError("WRONGTYPE ..."), "get")
         assert isinstance(r, InfrastructureError)
-        assert "wrong type" in r.code.lower()
+        assert "wrong type" in r.message
 
     def test_response_error_busy(self) -> None:
         r = _redis_eh(redis_errors.ResponseError("BUSY ..."), "x")
         assert isinstance(r, InfrastructureError)
-        assert "busy" in r.code.lower()
+        assert "busy" in r.message
 
     def test_response_error_generic(self) -> None:
         r = _redis_eh(redis_errors.ResponseError("something else"), "x")
         assert isinstance(r, InfrastructureError)
-        assert "response error" in r.code.lower()
+        assert "response error" in r.message
 
     def test_unknown_exception_fallback(self) -> None:
         r = _redis_eh(RuntimeError("boom"), "my_op")
         assert isinstance(r, InfrastructureError)
-        assert "my_op" in r.code
+        assert "my_op" in r.message

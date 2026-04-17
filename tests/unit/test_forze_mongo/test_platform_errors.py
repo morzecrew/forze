@@ -86,7 +86,7 @@ class TestMongoErrorHandler:
         e = BulkWriteError({"writeErrors": [{"code": 121}]})
         result = _mongo_eh(e, "bulk")
         assert isinstance(result, InfrastructureError)
-        assert "bulk" in result.code.lower()
+        assert "bulk" in result.message
 
     def test_write_error_duplicate_key(self) -> None:
         from pymongo.errors import WriteError
@@ -124,7 +124,7 @@ class TestMongoErrorHandler:
         e = OperationFailure("not authorized to run aggregate", code=13)
         result = _mongo_eh(e, "x")
         assert isinstance(result, InfrastructureError)
-        assert "authorization" in result.code.lower()
+        assert "authorization" in result.message
 
     def test_operation_failure_generic(self) -> None:
         from pymongo.errors import OperationFailure
@@ -132,4 +132,4 @@ class TestMongoErrorHandler:
         e = OperationFailure("some server error", code=999)
         result = _mongo_eh(e, "my_op")
         assert isinstance(result, InfrastructureError)
-        assert "my_op" in result.code
+        assert "my_op" in result.message

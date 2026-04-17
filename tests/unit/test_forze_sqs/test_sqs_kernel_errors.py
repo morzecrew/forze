@@ -76,21 +76,23 @@ class TestSqsErrorHandlerDirect:
 
     def test_read_timeout_maps(self) -> None:
         r = _sqs_eh(sqs_errors.ReadTimeoutError(endpoint_url="http://x"), "x")
-        assert "timed out" in r.code.lower()
+        assert "timed out" in r.message.lower()
 
     def test_partial_credentials(self) -> None:
         r = _sqs_eh(
-            sqs_errors.PartialCredentialsError(provider="env", cred_var="AWS_SECRET_ACCESS_KEY"),
+            sqs_errors.PartialCredentialsError(
+                provider="env", cred_var="AWS_SECRET_ACCESS_KEY"
+            ),
             "x",
         )
-        assert "credentials" in r.code.lower()
+        assert "credentials" in r.message.lower()
 
     def test_ssl_error(self) -> None:
         r = _sqs_eh(
             sqs_errors.SSLError(endpoint_url="https://x", error="e"),
             "x",
         )
-        assert "ssl" in r.code.lower()
+        assert "ssl" in r.message.lower()
 
     @pytest.mark.parametrize(
         ("code", "needle"),
@@ -112,12 +114,12 @@ class TestSqsErrorHandlerDirect:
     )
     def test_client_error_codes(self, code: str, needle: str) -> None:
         r = _sqs_eh(_client_error(code), "op")
-        assert needle in r.code.lower()
+        assert needle in r.message.lower()
 
     def test_botocore_fallback(self) -> None:
         r = _sqs_eh(sqs_errors.BotoCoreError(), "op")
-        assert "core error" in r.code.lower()
+        assert "core error" in r.message.lower()
 
     def test_generic_fallback(self) -> None:
         r = _sqs_eh(ValueError("bad"), "sqs_op")
-        assert "sqs_op" in r.code
+        assert "sqs_op" in r.message.lower()

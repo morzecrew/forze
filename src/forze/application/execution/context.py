@@ -50,6 +50,7 @@ class CallContext:
 
 
 # ....................... #
+#! TODO: replace with forze.application.contracts.auth
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -446,7 +447,7 @@ class ExecutionContext:
     # ....................... #
 
     def hub_search_query(self, spec: HubSearchSpec[Any]) -> SearchQueryPort[Any]:
-        """Resolve a hub (multi-leg) search query port.
+        """Resolve a hub (homogeneous multi-leg) search query port.
 
         :param spec: Hub search specification.
         :returns: Search query port returning hub rows.

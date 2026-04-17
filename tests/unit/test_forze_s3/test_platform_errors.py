@@ -25,20 +25,20 @@ class TestS3ErrorHandler:
     def test_endpoint_connection_error(self) -> None:
         r = _s3_eh(s3_errors.EndpointConnectionError(endpoint_url="http://x"), "put")
         assert isinstance(r, InfrastructureError)
-        assert "connection" in r.code.lower()
+        assert "connection" in r.message.lower()
 
     def test_timeouts(self) -> None:
         r1 = _s3_eh(s3_errors.ConnectTimeoutError(endpoint_url="http://x"), "x")
         r2 = _s3_eh(s3_errors.ReadTimeoutError(endpoint_url="http://x"), "x")
         assert isinstance(r1, InfrastructureError)
-        assert "timed out" in r1.code.lower()
+        assert "timed out" in r1.message.lower()
         assert isinstance(r2, InfrastructureError)
-        assert "timed out" in r2.code.lower()
+        assert "timed out" in r2.message.lower()
 
     def test_credentials_errors(self) -> None:
         r = _s3_eh(s3_errors.NoCredentialsError(), "x")
         assert isinstance(r, InfrastructureError)
-        assert "credentials" in r.code.lower()
+        assert "credentials" in r.message.lower()
 
     def test_ssl_error(self) -> None:
         r = _s3_eh(
@@ -46,7 +46,7 @@ class TestS3ErrorHandler:
             "x",
         )
         assert isinstance(r, InfrastructureError)
-        assert "ssl" in r.code.lower()
+        assert "ssl" in r.message.lower()
 
     @pytest.mark.parametrize(
         ("code", "needle"),
@@ -64,14 +64,14 @@ class TestS3ErrorHandler:
     def test_client_error_codes(self, code: str, needle: str) -> None:
         r = _s3_eh(_client_error(code), "op")
         assert isinstance(r, InfrastructureError)
-        assert needle in r.code.lower()
+        assert needle in r.message.lower()
 
     def test_botocore_fallback(self) -> None:
         r = _s3_eh(s3_errors.BotoCoreError(), "op")
         assert isinstance(r, InfrastructureError)
-        assert "core error" in r.code.lower()
+        assert "core error" in r.message.lower()
 
     def test_generic_fallback(self) -> None:
         r = _s3_eh(ValueError("nope"), "s3_op")
         assert isinstance(r, InfrastructureError)
-        assert "s3_op" in r.code
+        assert "s3_op" in r.message.lower()

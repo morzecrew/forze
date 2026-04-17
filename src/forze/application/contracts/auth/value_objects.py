@@ -28,9 +28,6 @@ class AuthIdentity:
     permissions: frozenset[str] = attrs.field(factory=frozenset)
     """Permissions assigned to the identity."""
 
-    is_authenticated: bool = attrs.field(default=True)
-    """Whether the identity is authenticated."""
-
     is_active: bool = attrs.field(default=True)
     """Whether the identity is active."""
 

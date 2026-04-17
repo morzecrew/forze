@@ -1,4 +1,4 @@
-from forze_simple_auth._compat import require_simple_auth
+from forze_auth._compat import require_simple_auth
 
 require_simple_auth()
 
@@ -27,8 +27,8 @@ class PasswordHasherConfig:
 
 
 @attrs.define(slots=True, kw_only=True)
-class PasswordHasherService:
-    """Password hasher."""
+class PasswordHasherGateway:
+    """Password hasher gateway."""
 
     config: PasswordHasherConfig = attrs.field(factory=PasswordHasherConfig)
 

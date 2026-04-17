@@ -107,7 +107,7 @@ socketio = [
     "python-socketio>=5.16.1",
     "python-socketio-stubs>=5.16.1.0.20260211",
 ]
-simple-auth = ["argon2-cffi>=25.1.0", "pyjwt>=2.12.1"]
+auth = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
 
 # ....................... #
 
@@ -146,7 +146,7 @@ packages = [
     "src/forze_rabbitmq",
     "src/forze_redis",
     "src/forze_s3",
-    "src/forze_simple_auth",
+    "src/forze_auth",
     "src/forze_socketio",
     "src/forze_sqs",
     "src/forze_temporal",
@@ -219,7 +219,7 @@ root_packages = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_simple_auth",
+    "forze_auth",
 ]
 exclude_type_checking_imports = true
 
@@ -262,19 +262,10 @@ protected_modules = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_simple_auth",
+    "forze_auth",
 ]
 allowed_importers = []
 as_packages = true
-
-# [[tool.importlinter.contracts]]
-# name = "Layered `forze_fastapi` package architecture"
-# type = "layers"
-# layers = [
-#     "forze_fastapi.routers",
-#     "forze_fastapi.routing",
-#     "forze_fastapi.constants",
-# ]
 
 # ....................... #
 # Dead code
@@ -292,7 +283,7 @@ paths = [
     "src/forze_mongo",
     "src/forze_rabbitmq",
     "src/forze_sqs",
-    "src/forze_simple_auth",
+    "src/forze_auth",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -321,7 +312,7 @@ known_first_party = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_simple_auth",
+    "forze_auth",
 ]
 ignore_notebooks = true
 
@@ -336,6 +327,7 @@ DEP002 = [
     "python-socketio-stubs",
     "python-multipart",
     "types-colorama",
+    "email-validator",       # required for pydantic.EmailStr
 ]
 DEP003 = [
     "types_aiobotocore_s3",

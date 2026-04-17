@@ -1,4 +1,4 @@
-from forze_simple_auth._compat import require_simple_auth
+from forze_auth._compat import require_simple_auth
 
 require_simple_auth()
 
@@ -10,7 +10,7 @@ from typing import NotRequired, Sequence, TypedDict
 import attrs
 import jwt
 
-from forze.base.errors import CoreError
+from forze.base.errors import AuthenticationError
 from forze.base.primitives import JsonDict, utcnow
 
 # ----------------------- #
@@ -50,8 +50,8 @@ class AccessTokenClaims(TypedDict):
 
 
 @attrs.define(slots=True, kw_only=True)
-class AccessTokenService:
-    """Access token service."""
+class AccessTokenGateway:
+    """Access token gateway."""
 
     secret_key: bytes = attrs.field(validator=attrs.validators.min_len(32))
     config: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
@@ -118,10 +118,16 @@ class AccessTokenService:
             return AccessTokenClaims(**res)  # type: ignore[typeddict-item]
 
         except jwt.ExpiredSignatureError:
-            raise CoreError("Access token expired")
+            raise AuthenticationError(
+                "Access token expired",
+                code="access_token_expired",
+            )
 
         except jwt.InvalidTokenError:
-            raise CoreError("Invalid access token")
+            raise AuthenticationError(
+                "Invalid access token",
+                code="invalid_access_token",
+            )
 
     # ....................... #
 

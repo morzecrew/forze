@@ -24,8 +24,8 @@ class RefreshTokenConfig:
 
 
 @attrs.define(slots=True, kw_only=True)
-class RefreshTokenService:
-    """Refresh token service."""
+class RefreshTokenGateway:
+    """Refresh token gateway."""
 
     pepper: bytes = attrs.field(validator=attrs.validators.min_len(32))
     config: RefreshTokenConfig = attrs.field(factory=RefreshTokenConfig)

@@ -95,7 +95,7 @@ class ValidationError(CoreError):
 class InfrastructureError(CoreError):
     """Error raised when an infrastructure component (DB, cache, etc.) fails."""
 
-    code: str = "infrastructure_error"
+    code: str = attrs.field(default="infrastructure_error", kw_only=True)
     message: str = "An infrastructure error occurred"
 
 
@@ -106,8 +106,30 @@ class InfrastructureError(CoreError):
 class ConcurrencyError(CoreError):
     """Error raised when a concurrency conflict occurs."""
 
-    code: str = "concurrency_error"
+    code: str = attrs.field(default="concurrency_error", kw_only=True)
     message: str = "Concurrency conflict occurred"
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, eq=False)
+class AuthenticationError(CoreError):
+    """Error raised when an authentication operation fails."""
+
+    code: str = attrs.field(default="authentication_error", kw_only=True)
+    message: str = "Authentication failed"
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, eq=False)
+class AuthorizationError(CoreError):
+    """Error raised when an authorization operation fails."""
+
+    code: str = attrs.field(default="authorization_error", kw_only=True)
+    message: str = "Authorization failed"
 
 
 # ....................... #

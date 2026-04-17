@@ -105,7 +105,10 @@ class TestPsycopgErrorHandlerBranches:
             (lambda: errors.CannotConnectNow(), InfrastructureError),
             (lambda: errors.ConnectionException(), InfrastructureError),
             (lambda: errors.ConnectionDoesNotExist(), InfrastructureError),
-            (lambda: errors.SqlclientUnableToEstablishSqlconnection(), InfrastructureError),
+            (
+                lambda: errors.SqlclientUnableToEstablishSqlconnection(),
+                InfrastructureError,
+            ),
             (
                 lambda: errors.SqlserverRejectedEstablishmentOfSqlconnection(),
                 InfrastructureError,
@@ -139,5 +142,5 @@ class TestPsycopgErrorHandlerBranches:
         """Unhandled exceptions use the generic fallback (details in ``code``)."""
         out = platform_errors._psycopg_eh(RuntimeError("weird"), "my_op")
         assert isinstance(out, InfrastructureError)
-        assert "my_op" in out.code
-        assert "weird" in out.code
+        assert "my_op" in out.message
+        assert "weird" in out.message
