@@ -174,6 +174,7 @@ def build_document_registry(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
             ),
+            inplace=True,
         )
 
     if spec.write is not None:
@@ -188,7 +189,7 @@ def build_document_registry(
             steps=update_steps,
         )
 
-        reg = reg.register_many(
+        reg.register_many(
             {
                 DocumentOperation.CREATE: lambda ctx: CreateDocument(
                     ctx=ctx,
@@ -199,7 +200,8 @@ def build_document_registry(
                     ctx=ctx,
                     doc=ctx.doc_command(spec),
                 ),
-            }
+            },
+            inplace=True,
         )
 
         if spec.supports_update():
