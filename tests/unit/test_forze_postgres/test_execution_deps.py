@@ -22,10 +22,14 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocume
 from forze_postgres.adapters import (
     PostgresDocumentAdapter,
     PostgresFTSSearchAdapter,
-    PostgresPGroongaSearchAdapter,
+    PostgresPGroongaSearchAdapterV2,
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
-from forze_postgres.execution.deps.configs import validate_pg_search_conf
+from forze_postgres.execution.deps.configs import (
+    PostgresHubSearchConfig,
+    validate_pg_search_conf,
+    validate_postgres_hub_search_conf,
+)
 from forze_postgres.execution.deps.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
@@ -63,7 +67,11 @@ def _rw_spec(*, history_enabled: bool = False) -> DocumentSpec:
     return DocumentSpec(
         name="dep_test",
         read=_R,
-        write={"domain": _D, "create_cmd": _C, "update_cmd": _U},
+        write={
+            "domain": _D,
+            "create_cmd": _C,
+            "update_cmd": _U,
+        },
         history_enabled=history_enabled,
     )
 
@@ -193,8 +201,8 @@ class TestConfigurablePostgresDocumentFactories:
 
         assert isinstance(adapter, PostgresDocumentAdapter)
         assert adapter.write_gw is None
-        assert adapter.read_gw.qname.schema == "public"
-        assert adapter.read_gw.qname.name == "v_docs"
+        assert adapter.read_gw.source_qname.schema == "public"
+        assert adapter.read_gw.source_qname.name == "v_docs"
 
     def test_command_requires_write_spec(self) -> None:
         factory = ConfigurablePostgresDocument(
@@ -253,20 +261,20 @@ class TestConfigurablePostgresSearch:
             config={
                 "engine": "pgroonga",
                 "index": ("public", "gi"),
-                "source": ("public", "gs"),
+                "read": ("public", "gs"),
             }
         )
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
 
-        assert isinstance(out, PostgresPGroongaSearchAdapter)
+        assert isinstance(out, PostgresPGroongaSearchAdapterV2)
 
     def test_fts_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
             config={
                 "engine": "fts",
                 "index": ("public", "fi"),
-                "source": ("public", "fs"),
+                "read": ("public", "fs"),
                 "fts_groups": {"A": ["title"]},
             }
         )
@@ -280,7 +288,7 @@ class TestConfigurablePostgresSearch:
             config={
                 "engine": "fts",
                 "index": ("public", "fi"),
-                "source": ("public", "fs"),
+                "read": ("public", "fs"),
             }
         )
         ctx = _ctx()
@@ -298,7 +306,7 @@ class TestConfigurablePostgresSearch:
             config={
                 "engine": "fts",
                 "index": ("public", "fi"),
-                "source": ("public", "fs"),
+                "read": ("public", "fs"),
                 "fts_groups": {"A": ["title"]},
             }
         )
@@ -325,7 +333,7 @@ def test_read_gw_factory() -> None:
     )
 
     assert isinstance(gw, PostgresReadGateway)
-    assert gw.qname.string() == "public.rel_a"
+    assert gw.source_qname.string() == "public.rel_a"
     assert gw.tenant_aware is True
 
 
@@ -358,4 +366,24 @@ def test_doc_write_gw_with_history() -> None:
     )
 
     assert gw.history_gw is not None
-    assert gw.history_gw.qname.name == "h"
+    assert gw.history_gw.source_qname.name == "h"
+
+
+def test_validate_postgres_hub_search_conf_duplicate_hub_fk() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "t1"),
+                "hub_fk": "x",
+            },
+            "m2": {
+                "index": ("public", "i2"),
+                "read": ("public", "t2"),
+                "hub_fk": "x",
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="hub_fk_column must be unique"):
+        validate_postgres_hub_search_conf(cfg)

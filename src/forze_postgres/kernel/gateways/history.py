@@ -68,7 +68,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
 
@@ -106,7 +106,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
 
         stmt = sql.SQL("SELECT {data} FROM {table} WHERE {where}").format(
             data=sql.Identifier(HISTORY_DATA_FIELD),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
 
@@ -142,7 +142,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
         params = list(insert_data.values())
 
         stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES ({vals})").format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             cols=sql.SQL(", ").join(cols),
             vals=sql.SQL(", ").join(vals),
         )
@@ -183,7 +183,7 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
             value_parts = [row_template] * len(batch)
 
             stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
-                table=self.qname.ident(),
+                table=self.source_qname.ident(),
                 cols=sql.SQL(", ").join(col_idents),
                 vals=sql.SQL(", ").join(value_parts),
             )

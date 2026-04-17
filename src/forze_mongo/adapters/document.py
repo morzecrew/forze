@@ -19,7 +19,11 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
-from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
+from forze.application.contracts.query import (
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -62,10 +66,10 @@ class MongoDocumentAdapter(
     read_gw: MongoReadGateway[R]
     """Gateway used for all read queries."""
 
-    write_gw: MongoWriteGateway[D, C, U] | None = None
+    write_gw: MongoWriteGateway[D, C, U] | None = attrs.field(default=None)
     """Optional gateway for mutations; ``None`` disables write operations."""
 
-    cache: CachePort | None = None
+    cache: CachePort | None = attrs.field(default=None)
     """Optional cache layer for read-through caching."""
 
     batch_size: int = 200
@@ -339,8 +343,7 @@ class MongoDocumentAdapter(
     async def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
@@ -352,8 +355,7 @@ class MongoDocumentAdapter(
     async def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
@@ -364,8 +366,7 @@ class MongoDocumentAdapter(
     async def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
@@ -386,6 +387,10 @@ class MongoDocumentAdapter(
 
         if not cnt:
             return [], 0
+
+        pagination = pagination or {}
+        limit = pagination.get("limit")
+        offset = pagination.get("offset")
 
         res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,

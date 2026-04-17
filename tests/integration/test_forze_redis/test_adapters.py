@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze.base.errors import ConflictError
 from forze_redis.adapters.cache import RedisCacheAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
@@ -65,18 +66,18 @@ async def test_redis_idempotency_adapter_replays_snapshot(
     with pytest.raises(ConflictError, match="pending"):
         await adapter.begin(op, key, payload_hash)
 
-    snapshot = {
-        "code": 201,
-        "content_type": "application/json",
-        "body": b'{"id":"1"}',
-    }
+    snapshot = IdempotencySnapshot(
+        code=201,
+        content_type="application/json",
+        body=b'{"id":"1"}',
+    )
     await adapter.commit(op, key, payload_hash, snapshot)
 
     replay = await adapter.begin(op, key, payload_hash)
     assert replay is not None
-    assert replay["code"] == 201
-    assert replay["content_type"] == "application/json"
-    assert replay["body"] == b'{"id":"1"}'
+    assert replay.code == 201
+    assert replay.content_type == "application/json"
+    assert replay.body == b'{"id":"1"}'
 
     with pytest.raises(ConflictError, match="Payload hash mismatch"):
         await adapter.begin(op, key, "hash-2")

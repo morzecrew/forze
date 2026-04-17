@@ -25,7 +25,7 @@ class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
     provider: ETagProviderPort
     """Provider used to generate the ETag value."""
 
-    auto_304: bool = True
+    auto_304: bool = attrs.field(default=True)
     """Whether to return a 304 Not Modified response when the ETag matches."""
 
     # ....................... #

@@ -25,7 +25,7 @@ DTOMapperStep = MapperPort[tuple[In, JsonDict], JsonDict]
 class DTOMapper(MapperPort[In, Out], Generic[In, Out]):
     """Pipeline that maps a Pydantic source model to an output DTO."""
 
-    requires_ctx: bool = False
+    requires_ctx: bool = attrs.field(default=False)
     """Whether the mapper requires a context."""
 
     in_: type[In]

@@ -38,7 +38,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
     codec: RabbitMQQueueCodec[M]
     """RabbitMQ queue codec instance."""
 
-    namespace: str | None = None
+    namespace: str | None = attrs.field(default=None)
     """RabbitMQ queue namespace."""
 
     # ....................... #

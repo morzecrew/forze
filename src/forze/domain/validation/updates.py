@@ -51,7 +51,7 @@ type UpdateValidatorLike[M] = Union[
 class UpdateValidatorMetadata:
     """Metadata attached to an update validator by :func:`update_validator`."""
 
-    fields: frozenset[str] | None = None
+    fields: frozenset[str] | None = attrs.field(default=None)
     """Fields that trigger the validator. If ``None``, the validator runs on any update."""
 
 

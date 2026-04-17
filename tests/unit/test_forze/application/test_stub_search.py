@@ -101,7 +101,7 @@ class TestMockSearchAdapter:
 
         for i in range(5):
             await doc.create(_CreateWithTitle(title="q"))
-        hits, count = await search.search("q", limit=2)
+        hits, count = await search.search("q", pagination={"limit": 2})
         assert count == 5
         assert len(hits) == 2
 
@@ -113,7 +113,7 @@ class TestMockSearchAdapter:
 
         for _ in range(5):
             await doc.create(_CreateWithTitle(title="q"))
-        hits, count = await search.search("q", offset=2, limit=2)
+        hits, count = await search.search("q", pagination={"offset": 2, "limit": 2})
         assert count == 5
         assert len(hits) == 2
 

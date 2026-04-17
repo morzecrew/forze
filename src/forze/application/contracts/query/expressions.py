@@ -60,9 +60,7 @@ QueryDisjunction = TypedDict(
 )
 """Disjunction of filter expressions."""
 
-QueryFilterExpression: TypeAlias = (
-    QueryPredicate | QueryConjunction | QueryDisjunction
-)
+QueryFilterExpression: TypeAlias = QueryPredicate | QueryConjunction | QueryDisjunction
 """Recursive filter expression (predicate, and, or)."""
 
 # ....................... #
@@ -72,3 +70,15 @@ QuerySortDirection = Literal["asc", "desc"]
 
 QuerySortExpression = Mapping[str, QuerySortDirection]
 """Map of field names to sort direction."""
+
+# ....................... #
+
+
+class PaginationExpression(TypedDict, total=False):
+    """Pagination expression."""
+
+    limit: int | None
+    """Limit."""
+
+    offset: int | None
+    """Offset."""

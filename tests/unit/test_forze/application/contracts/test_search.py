@@ -3,7 +3,12 @@
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
+from forze.application.contracts.search import (
+    HubSearchQueryDepKey,
+    HubSearchSpec,
+    SearchQueryDepKey,
+    SearchSpec,
+)
 from forze.base.errors import CoreError
 
 # ----------------------- #
@@ -54,6 +59,31 @@ class TestSearchQueryDepKey:
 
     def test_search_query_dep_key_name(self) -> None:
         assert SearchQueryDepKey.name == "search_query"
+
+    def test_hub_search_query_dep_key_name(self) -> None:
+        assert HubSearchQueryDepKey.name == "hub_search_query"
+
+
+class TestHubSearchSpec:
+    """Tests for HubSearchSpec."""
+
+    def test_hub_duplicate_leg_search_names_raise(self) -> None:
+        a = SearchSpec(
+            name="same_leg",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        b = SearchSpec(
+            name="same_leg",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        with pytest.raises(CoreError, match="distinct name"):
+            HubSearchSpec(
+                name="h",
+                model_type=_MinimalSearchModel,
+                members=(a, b),
+            )
 
 
 class TestExecutionContextSearchQuery:

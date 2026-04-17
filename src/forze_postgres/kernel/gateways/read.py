@@ -89,7 +89,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
             cols=self.return_clause(return_model, return_fields),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where_sql,
         )
 
@@ -168,7 +168,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
             cols=self.return_clause(return_model, return_fields),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where_sql,
         )
 
@@ -244,7 +244,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where} LIMIT 1").format(
             cols=self.return_clause(return_model, return_fields),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
 
@@ -331,7 +331,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
             cols=self.return_clause(return_model, return_fields),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
 
@@ -363,7 +363,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         where, params = await self.where_clause(filters)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
 

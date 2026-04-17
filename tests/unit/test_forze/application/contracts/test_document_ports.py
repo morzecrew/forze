@@ -169,7 +169,7 @@ class TestDocumentQueryPortViaMock:
     async def test_find_many_with_filters_and_pagination(self) -> None:
         port = _document_adapter()
         await port.create(CreateDocumentCmd())
-        items, total = await port.find_many(limit=1, offset=0)
+        items, total = await port.find_many(pagination={"limit": 1, "offset": 0})
         assert len(items) <= 1
         assert total >= 0
 

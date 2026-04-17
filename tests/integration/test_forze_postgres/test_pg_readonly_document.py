@@ -108,14 +108,15 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
 
     rows, total = await q.find_many(
         None,
-        limit=10,
-        offset=0,
+        pagination={"limit": 10, "offset": 0},
         sorts={"title": "asc"},
     )
     assert total == 3
     assert [r.title for r in rows] == ["alpha", "beta", "gamma"]
 
-    page, total_p = await q.find_many(None, limit=1, offset=1, sorts={"title": "asc"})
+    page, total_p = await q.find_many(
+        None, pagination={"limit": 1, "offset": 1}, sorts={"title": "asc"}
+    )
     assert total_p == 3
     assert len(page) == 1
     assert page[0].title == "beta"

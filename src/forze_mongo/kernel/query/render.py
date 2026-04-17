@@ -28,11 +28,11 @@ class MongoQueryRenderer:
     :attr:`null_matches_missing` and :attr:`require_exists_for_not_null`.
     """
 
-    null_matches_missing: bool = True
+    null_matches_missing: bool = attrs.field(default=True)
     """When ``True``, a ``$null`` check matches both explicit ``None`` and
     missing fields."""
 
-    require_exists_for_not_null: bool = True
+    require_exists_for_not_null: bool = attrs.field(default=True)
     """When ``True``, a not-null check adds an ``$exists: true`` guard."""
 
     # non initable fields

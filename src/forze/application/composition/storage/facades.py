@@ -23,10 +23,10 @@ L = TypeVar("L", bound=ListObjectsRequestDTO, default=ListObjectsRequestDTO)
 class StorageDTOs(Generic[U, L]):
     """DTO type mapping for storage operations."""
 
-    upload: type[U] | None = None
+    upload: type[U] | None = attrs.field(default=None)
     """Upload request DTO type."""
 
-    list: type[L] | None = None
+    list: type[L] | None = attrs.field(default=None)
     """List request DTO type."""
 
 

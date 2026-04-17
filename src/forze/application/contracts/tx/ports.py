@@ -8,7 +8,7 @@ import attrs
 from forze.base.primitives import uuid7
 
 # ----------------------- #
-#! questionable as shit
+#! TODO: get rid of redundant things
 
 
 @final

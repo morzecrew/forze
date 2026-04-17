@@ -4,6 +4,8 @@ from .deps import (
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
 )
@@ -18,4 +20,6 @@ __all__ = [
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",
+    "PostgresHubSearchConfig",
+    "PostgresHubSearchMemberConfig",
 ]

@@ -38,7 +38,7 @@ class SQSQueueAdapter[M: BaseModel](
     codec: SQSQueueCodec[M]
     """SQS queue codec instance."""
 
-    namespace: str | None = None
+    namespace: str | None = attrs.field(default=None)
     """SQS queue namespace."""
 
     # ....................... #

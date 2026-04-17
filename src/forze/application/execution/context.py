@@ -22,7 +22,13 @@ from ..contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
-from ..contracts.search import SearchQueryDepKey, SearchQueryPort, SearchSpec
+from ..contracts.search import (
+    HubSearchQueryDepKey,
+    HubSearchSpec,
+    SearchQueryDepKey,
+    SearchQueryPort,
+    SearchSpec,
+)
 from ..contracts.storage import StorageDepKey, StoragePort, StorageSpec
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 
@@ -39,7 +45,7 @@ class CallContext:
     correlation_id: UUID
     """The correlation id of the call."""
 
-    causation_id: UUID | None = None
+    causation_id: UUID | None = attrs.field(default=None)
     """The causation id of the call."""
 
 
@@ -50,10 +56,10 @@ class CallContext:
 class PrincipalContext:
     """Context for a principal on behalf of which the call is being executed."""
 
-    tenant_id: UUID | None = None
+    tenant_id: UUID | None = attrs.field(default=None)
     """The id of the tenant on behalf of which the call is being executed."""
 
-    actor_id: UUID | None = None
+    actor_id: UUID | None = attrs.field(default=None)
     """The id of the actor on behalf of which the call is being executed."""
 
 
@@ -431,6 +437,26 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved search query port '%s' -> %s",
+            str(spec.name),
+            type(se).__qualname__,
+        )
+
+        return se
+
+    # ....................... #
+
+    def hub_search_query(self, spec: HubSearchSpec[Any]) -> SearchQueryPort[Any]:
+        """Resolve a hub (multi-leg) search query port.
+
+        :param spec: Hub search specification.
+        :returns: Search query port returning hub rows.
+        """
+
+        dep = self.dep(HubSearchQueryDepKey, route=spec.name)
+        se = dep(self, spec)
+
+        logger.trace(
+            "Resolved hub search query port '%s' -> %s",
             str(spec.name),
             type(se).__qualname__,
         )

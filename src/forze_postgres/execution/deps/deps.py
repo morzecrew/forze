@@ -11,24 +11,34 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
     DocumentSpec,
 )
-from forze.application.contracts.search import SearchQueryDepPort, SearchSpec
+from forze.application.contracts.search import (
+    HubSearchQueryDepPort,
+    HubSearchSpec,
+    SearchQueryDepPort,
+    SearchSpec,
+)
 from forze.application.contracts.tx import TxManagerPort
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
+from forze.domain.constants import ID_FIELD
 
 from ...adapters import (
     FtsGroupLetter,
+    HubLegRuntime,
     PostgresDocumentAdapter,
     PostgresFTSSearchAdapter,
-    PostgresPGroongaSearchAdapter,
+    PostgresHubPGroongaSearchAdapter,
+    PostgresPGroongaSearchAdapterV2,
     PostgresTxManagerAdapter,
 )
 from ...kernel.gateways import PostgresQualifiedName
 from .._logger import logger
 from .configs import (
     PostgresDocumentConfig,
+    PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    validate_postgres_hub_search_conf,
 )
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 from .utils import doc_write_gw, read_gw
@@ -86,8 +96,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
         spec: DocumentSpec[Any, Any, Any, Any],
         cache: CachePort | None = None,
     ) -> PostgresDocumentAdapter[Any, Any, Any, Any]:
-        config = self.config
-        tenant_aware = config.get("tenant_aware", False)
+        tenant_aware = self.config.get("tenant_aware", False)
 
         if spec.write is None:
             raise CoreError("Write relation is required for non read-only documents.")
@@ -95,13 +104,13 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
         read = read_gw(
             context,
             read_type=spec.read,
-            read_relation=config["read"],
+            read_relation=self.config["read"],
             tenant_aware=tenant_aware,
         )
 
-        write_relation = config["write"]
-        history_relation = config.get("history")
-        bookkeeping_strategy = config["bookkeeping_strategy"]
+        write_relation = self.config["write"]
+        history_relation = self.config.get("history")
+        bookkeeping_strategy = self.config["bookkeeping_strategy"]
 
         # We only log a warning here because skipping history gateway is not critical.
         if history_relation is None and spec.history_enabled:
@@ -129,7 +138,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
             read_gw=read,
             write_gw=write,
             cache=cache,
-            batch_size=config.get("batch_size", 200),
+            batch_size=self.config.get("batch_size", 200),
         )
 
 
@@ -167,25 +176,24 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
         self,
         context: ExecutionContext,
         spec: SearchSpec[Any],
-    ) -> PostgresPGroongaSearchAdapter[Any] | PostgresFTSSearchAdapter[Any]:
-        config = self.config
-        tenant_aware = config.get("tenant_aware", False)
+    ) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapter[Any]:
+        tenant_aware = self.config.get("tenant_aware", False)
 
-        index_qname = PostgresQualifiedName(
-            schema=config["index"][0],
-            name=config["index"][1],
-        )
-        source_qname = PostgresQualifiedName(
-            schema=config["source"][0],
-            name=config["source"][1],
+        index_qname = PostgresQualifiedName(*self.config["index"])
+        read_qname = PostgresQualifiedName(*self.config["read"])
+        heap_qname = PostgresQualifiedName(
+            *self.config.get("heap", self.config["read"])
         )
 
-        match config["engine"]:
+        match self.config["engine"]:
             case "pgroonga":
-                return PostgresPGroongaSearchAdapter(
+                return PostgresPGroongaSearchAdapterV2(
                     spec=spec,
                     index_qname=index_qname,
-                    qname=source_qname,
+                    source_qname=read_qname,
+                    index_heap_qname=heap_qname,
+                    join_pairs=self.config.get("join_pairs"),
+                    index_field_map=self.config.get("field_map"),
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,
                     introspector=context.dep(PostgresIntrospectorDepKey),
@@ -194,7 +202,7 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
                 )
 
             case "fts":
-                fts_groups = config.get("fts_groups")
+                fts_groups = self.config.get("fts_groups")
 
                 if fts_groups is None:
                     raise CoreError("FTS groups are required for FTS engine.")
@@ -203,7 +211,7 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
 
                 return PostgresFTSSearchAdapter(
                     spec=spec,
-                    qname=source_qname,
+                    source_qname=read_qname,
                     index_qname=index_qname,
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,
@@ -212,6 +220,68 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
                     tenant_aware=tenant_aware,
                     fts_groups=fts_groups,
                 )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
+    """Build :class:`PostgresHubPGroongaSearchAdapter` from spec + :class:`PostgresHubSearchConfig`."""
+
+    config: PostgresHubSearchConfig
+    """Postgres hub relation, per-leg indexes/heaps, merge options."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: HubSearchSpec[Any],
+    ) -> PostgresHubPGroongaSearchAdapter[Any]:
+        validate_postgres_hub_search_conf(self.config)
+
+        if len(spec.members) != len(self.config["members"]):
+            raise CoreError(
+                "HubSearchSpec.members and PostgresHubSearchConfig['members'] must have the same length."
+            )
+
+        hub = PostgresQualifiedName(*self.config["hub"])
+        tenant_aware = self.config.get("tenant_aware", False)
+
+        members: list[HubLegRuntime] = []
+
+        for m in spec.members:
+            c = self.config["members"].get(m.name)
+
+            if c is None:
+                raise CoreError(
+                    f"Member '{m.name}' not found in PostgresHubSearchConfig['members']."
+                )
+
+            rt = HubLegRuntime(
+                search=m,
+                index_qname=PostgresQualifiedName(*c["index"]),
+                index_heap_qname=PostgresQualifiedName(*c.get("heap", c["read"])),
+                hub_fk_column=c["hub_fk"],
+                heap_pk_column=c.get("heap_pk", ID_FIELD),
+                index_field_map=c.get("field_map"),
+            )
+            members.append(rt)
+
+        return PostgresHubPGroongaSearchAdapter(
+            hub_spec=spec,
+            members=members,
+            combine=self.config.get("combine_strategy", "or"),
+            score_merge=self.config.get("merge_strategy", "max"),
+            source_qname=hub,
+            client=context.dep(PostgresClientDepKey),
+            model_type=spec.model_type,
+            introspector=context.dep(PostgresIntrospectorDepKey),
+            tenant_provider=context.get_tenant_id,
+            tenant_aware=tenant_aware,
+        )
 
 
 # ....................... #

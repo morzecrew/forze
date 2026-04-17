@@ -2,7 +2,7 @@
 
 from typing import Awaitable, Protocol, runtime_checkable
 
-from .types import IdempotencySnapshot
+from .value_objects import IdempotencySnapshot
 
 # ----------------------- #
 

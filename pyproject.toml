@@ -107,6 +107,7 @@ socketio = [
     "python-socketio>=5.16.1",
     "python-socketio-stubs>=5.16.1.0.20260211",
 ]
+simple-auth = ["argon2-cffi>=25.1.0", "pyjwt>=2.12.1"]
 
 # ....................... #
 
@@ -140,14 +141,15 @@ packages = [
     "src/forze",
     "src/forze_fastapi",
     "src/forze_mock",
+    "src/forze_mongo",
     "src/forze_postgres",
+    "src/forze_rabbitmq",
     "src/forze_redis",
     "src/forze_s3",
+    "src/forze_simple_auth",
     "src/forze_socketio",
-    "src/forze_temporal",
-    "src/forze_mongo",
-    "src/forze_rabbitmq",
     "src/forze_sqs",
+    "src/forze_temporal",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -217,6 +219,7 @@ root_packages = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
+    "forze_simple_auth",
 ]
 exclude_type_checking_imports = true
 
@@ -259,6 +262,7 @@ protected_modules = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
+    "forze_simple_auth",
 ]
 allowed_importers = []
 as_packages = true
@@ -288,6 +292,7 @@ paths = [
     "src/forze_mongo",
     "src/forze_rabbitmq",
     "src/forze_sqs",
+    "src/forze_simple_auth",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -316,6 +321,7 @@ known_first_party = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
+    "forze_simple_auth",
 ]
 ignore_notebooks = true
 

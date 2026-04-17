@@ -20,7 +20,7 @@ class WorkflowInvokeSpec(Generic[In, Out]):
     args_type: type[In]
     """The type of the arguments for the abstract invocation."""
 
-    return_type: type[Out] | None = None
+    return_type: type[Out] | None = attrs.field(default=None)
     """The type of the return value for the abstract invocation."""
 
 
@@ -95,5 +95,5 @@ class WorkflowHandle:
     workflow_id: str
     """The id of the workflow."""
 
-    run_id: str | None = None
+    run_id: str | None = attrs.field(default=None)
     """The id of the run."""

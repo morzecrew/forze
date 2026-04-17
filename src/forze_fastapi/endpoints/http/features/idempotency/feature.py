@@ -3,7 +3,11 @@ from typing import final
 import attrs
 from fastapi import HTTPException, Response
 
-from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
+from forze.application.contracts.idempotency import (
+    IdempotencyDepKey,
+    IdempotencySnapshot,
+    IdempotencySpec,
+)
 from forze.base.serialization import pydantic_model_hash
 from forze_fastapi.endpoints._logger import logger
 
@@ -59,9 +63,9 @@ class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
             if snap is not None:
                 #! log as replay response
                 return Response(
-                    content=snap["body"],
-                    status_code=int(snap["code"]),
-                    media_type=snap["content_type"],
+                    content=snap.body,
+                    status_code=snap.code,
+                    media_type=snap.content_type,
                 )
 
             result = await handler(ctx)
@@ -78,11 +82,11 @@ class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
                     ctx.operation_id,
                     idem_key,
                     payload_hash,
-                    {
-                        "code": int(ctx.spec.http.get("status_code", 200)),
-                        "content_type": content_type,
-                        "body": body_bytes,
-                    },
+                    IdempotencySnapshot(
+                        code=int(ctx.spec.http.get("status_code", 200)),
+                        content_type=content_type,
+                        body=body_bytes,
+                    ),
                 )
 
             except Exception:

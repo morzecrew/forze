@@ -15,7 +15,7 @@ class MultiTenancyMixin:
     tenant_aware: bool = False
     """Whether tenant ID is required for the class."""
 
-    tenant_provider: Callable[[], UUID | None] | None = None
+    tenant_provider: Callable[[], UUID | None] | None = attrs.field(default=None)
     """Callable to provide the tenant ID."""
 
     # ....................... #

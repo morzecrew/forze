@@ -37,7 +37,7 @@ def _fts_context(
                 SearchQueryDepKey: ConfigurablePostgresSearch(
                     config={
                         "index": ("public", index_name),
-                        "source": ("public", table),
+                        "read": ("public", table),
                         "engine": "fts",
                         "fts_groups": {
                             "A": ("title",),
@@ -111,8 +111,7 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
 
     page, n_total = await adapter.search(
         "text",
-        limit=1,
-        offset=0,
+        pagination={"limit": 1, "offset": 0},
         sorts={"title": "asc"},
         options={"weights": {"title": 0.6, "content": 0.4}},
     )

@@ -6,9 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.errors import CoreError
-from forze.base.errors import NotFoundError
-from forze.base.errors import ValidationError
+from forze.base.errors import CoreError, NotFoundError, ValidationError
 from forze.domain.constants import HISTORY_DATA_FIELD
 from forze.domain.models import Document
 from forze_postgres.kernel.gateways import PostgresHistoryGateway, PostgresQualifiedName
@@ -54,7 +52,7 @@ def _gw(
     intro.get_column_types = AsyncMock(return_value=_history_column_types())
 
     return PostgresHistoryGateway(
-        qname=PostgresQualifiedName(schema="public", name="hist_t"),
+        source_qname=PostgresQualifiedName(schema="public", name="hist_t"),
         target_qname=PostgresQualifiedName(schema="public", name="main_t"),
         strategy=strategy,  # type: ignore[arg-type]
         client=client,  # type: ignore[arg-type]
@@ -76,7 +74,7 @@ class TestPostgresHistoryGatewayInit:
 
         with pytest.raises(CoreError, match="Invalid bookkeeping strategy"):
             PostgresHistoryGateway(
-                qname=PostgresQualifiedName(schema="public", name="h"),
+                source_qname=PostgresQualifiedName(schema="public", name="h"),
                 target_qname=PostgresQualifiedName(schema="public", name="m"),
                 strategy="invalid",  # type: ignore[arg-type]
                 client=client,

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
-from ..query import QueryFilterExpression, QuerySortExpression
+from ..query import PaginationExpression, QueryFilterExpression, QuerySortExpression
 from .types import SearchOptions
 
 # ----------------------- #
@@ -21,8 +21,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -38,8 +37,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -52,8 +50,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -68,8 +65,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         self,
         query: str,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -80,8 +76,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
 
         :param query: Query expression interpreted by the backend.
         :param filters: Structured filters applied before scoring.
-        :param limit: Maximum number of hits to return.
-        :param offset: Offset into the result set.
+        :param pagination: Pagination expression.
         :param sorts: Field-level sort specification.
         :param options: Backend-specific tuning options.
         :param return_type: Optional model-based projection to return.

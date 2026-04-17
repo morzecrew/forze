@@ -21,7 +21,7 @@ class SQSStartupHook(LifecycleHook):
     region_name: str
     access_key_id: str
     secret_access_key: str
-    config: SQSConfig | None = None
+    config: SQSConfig | None = attrs.field(default=None)
 
     # ....................... #
 

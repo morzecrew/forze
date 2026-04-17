@@ -26,10 +26,10 @@ _ENCODING: Final[str] = "utf-8"
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TemporalDecodedContext:
-    execution_id: UUID | None = None
-    correlation_id: UUID | None = None
-    tenant_id: UUID | None = None
-    actor_id: UUID | None = None
+    execution_id: UUID | None = attrs.field(default=None)
+    correlation_id: UUID | None = attrs.field(default=None)
+    tenant_id: UUID | None = attrs.field(default=None)
+    actor_id: UUID | None = attrs.field(default=None)
 
 
 # ....................... #

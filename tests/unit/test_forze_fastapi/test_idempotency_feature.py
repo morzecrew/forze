@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException, Response
 from pydantic import BaseModel
 
-from forze.application.contracts.idempotency import IdempotencySpec
+from forze.application.contracts.idempotency import IdempotencySnapshot, IdempotencySpec
 from forze_fastapi.endpoints.http.contracts.context import HttpEndpointContext
 from forze_fastapi.endpoints.http.features.idempotency.constants import (
     IDEMPOTENCY_KEY_HEADER,
@@ -73,11 +73,11 @@ async def test_idempotency_replay_returns_raw_response() -> None:
     feature = IdempotencyFeature(spec=IdempotencySpec(name="r"))
     idem = MagicMock()
     idem.begin = AsyncMock(
-        return_value={
-            "body": b'{"cached":true}',
-            "code": 201,
-            "content_type": "application/json",
-        },
+        return_value=IdempotencySnapshot(
+            body=b'{"cached":true}',
+            code=201,
+            content_type="application/json",
+        ),
     )
     ctx = _make_ctx(
         headers={IDEMPOTENCY_KEY_HEADER: "k1"},
@@ -123,8 +123,8 @@ async def test_idempotency_executes_and_commits_snapshot() -> None:
     _op, _key, _hash, snap = idem.commit.await_args.args
     assert _op == "op.test"
     assert _key == "k2"
-    assert snap["code"] == 202
-    assert snap["content_type"] == "application/json"
+    assert snap.code == 202
+    assert snap.content_type == "application/json"
 
 
 @pytest.mark.asyncio

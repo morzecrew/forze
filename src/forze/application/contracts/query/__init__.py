@@ -1,11 +1,10 @@
-"""Query contracts for filter and sort expressions.
+"""Basic query contracts."""
 
-Provides :class:`FilterExpression` (predicates, conjunctions, disjunctions),
-:class:`SortExpression`, and the DSL in :mod:`query.internal` for parsing and
-rendering to backend-specific formats.
-"""
-
-from .expressions import QueryFilterExpression, QuerySortExpression
+from .expressions import (
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
 from .internal import (
     QueryAnd,
     QueryExpr,
@@ -21,6 +20,7 @@ from .types import QueryOp, QueryValue
 __all__ = [
     "QueryFilterExpression",
     "QuerySortExpression",
+    "PaginationExpression",
     "QueryFilterExpressionParser",
     "QueryValueCaster",
     "QueryAnd",

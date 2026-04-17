@@ -164,9 +164,9 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         idem_p = _Payload(
             st=_DONE,
             ph=payload_hash,
-            code=snapshot["code"],
-            ct=snapshot["content_type"],
-            body_b64=self.__encode_body(snapshot["body"]),
+            code=snapshot.code,
+            ct=snapshot.content_type,
+            body_b64=self.__encode_body(snapshot.body),
         )
 
         ok = await self.client.set(

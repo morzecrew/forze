@@ -72,7 +72,9 @@ def _deps(
 
 
 async def _history_row_count(
-    pg_client: PostgresClient, history_table: str, source: str
+    pg_client: PostgresClient,
+    history_table: str,
+    source: str,
 ) -> int:
     return int(
         await pg_client.fetch_value(

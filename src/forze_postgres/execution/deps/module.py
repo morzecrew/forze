@@ -9,7 +9,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.contracts.search import SearchQueryDepKey
+from forze.application.contracts.search import HubSearchQueryDepKey, SearchQueryDepKey
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
@@ -17,12 +17,14 @@ from ...kernel.introspect import PostgresIntrospector
 from ...kernel.platform import PostgresClient
 from .configs import (
     PostgresDocumentConfig,
+    PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     validate_pg_search_conf,
 )
 from .deps import (
     ConfigurablePostgresDocument,
+    ConfigurablePostgresHubSearch,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
@@ -30,22 +32,6 @@ from .deps import (
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #
-
-
-def _document_config_to_read_only(
-    config: PostgresDocumentConfig,
-) -> PostgresReadOnlyDocumentConfig:
-    """Derive a read-only config from a read-write document config (same ``read`` relation)."""
-
-    ro: PostgresReadOnlyDocumentConfig = {"read": config["read"]}
-
-    if "tenant_aware" in config:
-        ro["tenant_aware"] = config["tenant_aware"]
-
-    return ro
-
-
-# ....................... #
 
 
 @final
@@ -67,6 +53,9 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     searches: Mapping[K, PostgresSearchConfig] | None = attrs.field(default=None)
     """Mapping from search names to their Postgres-specific configurations."""
 
+    hub_searches: Mapping[K, PostgresHubSearchConfig] | None = attrs.field(default=None)
+    """Mapping from hub search names to their Postgres-specific configurations."""
+
     tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
@@ -84,6 +73,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         doc_deps = Deps[K]()
         search_deps = Deps[K]()
+        hub_search_deps = Deps[K]()
         tx_deps = Deps[K]()
 
         if self.ro_documents:
@@ -103,9 +93,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 Deps[K].routed(
                     {
                         DocumentQueryDepKey: {
-                            name: ConfigurablePostgresReadOnlyDocument(
-                                config=_document_config_to_read_only(config)
-                            )
+                            name: ConfigurablePostgresReadOnlyDocument(config=config)
                             for name, config in self.rw_documents.items()
                         },
                         DocumentCommandDepKey: {
@@ -127,6 +115,18 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                         SearchQueryDepKey: {
                             name: ConfigurablePostgresSearch(config=config)
                             for name, config in self.searches.items()
+                        }
+                    }
+                )
+            )
+
+        if self.hub_searches:
+            hub_search_deps = hub_search_deps.merge(
+                Deps[K].routed(
+                    {
+                        HubSearchQueryDepKey: {
+                            name: ConfigurablePostgresHubSearch(config=config)
+                            for name, config in self.hub_searches.items()
                         }
                     }
                 )

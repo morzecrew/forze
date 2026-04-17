@@ -97,16 +97,18 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
     http: HttpSpec
     """The HTTP specification of the endpoint."""
 
-    metadata: HttpMetadataSpec | None = None
+    metadata: HttpMetadataSpec | None = attrs.field(default=None)
     """The metadata specification of the endpoint."""
 
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = None
+    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = (
+        attrs.field(default=None)
+    )
     """The features specification of the endpoint."""
 
-    request: HttpRequestSpec[Q, P, H, C, B] | None = None
+    request: HttpRequestSpec[Q, P, H, C, B] | None = attrs.field(default=None)
     """The request specification of the endpoint."""
 
-    response: type[R] | None = None
+    response: type[R] | None = attrs.field(default=None)
     """The response model type of the endpoint."""
 
     mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In]

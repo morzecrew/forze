@@ -15,7 +15,7 @@ from uuid import UUID
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
-from ..query import QueryFilterExpression, QuerySortExpression
+from ..query import PaginationExpression, QueryFilterExpression, QuerySortExpression
 from .specs import DocumentSpec
 
 # ----------------------- #
@@ -157,8 +157,7 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
     def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
@@ -170,8 +169,7 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
     def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
@@ -182,8 +180,7 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
     def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,

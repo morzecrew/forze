@@ -110,7 +110,7 @@ async def test_pg_search_with_limit_benchmark(async_benchmark, search_adapter) -
     """Benchmark search with limit."""
 
     async def run() -> None:
-        res, cnt = await search_adapter.search("searchable", limit=10)
+        res, cnt = await search_adapter.search("searchable", pagination={"limit": 10})
         assert len(res) <= 10
 
     await async_benchmark(run)
@@ -162,7 +162,9 @@ async def test_pg_search_large_corpus_benchmark(
     adapter = execution_context.search_query(spec)
 
     async def run() -> None:
-        res, cnt = await adapter.search("corpus", limit=100, offset=0)
+        res, cnt = await adapter.search(
+            "corpus", pagination={"limit": 100, "offset": 0}
+        )
         assert cnt >= 0
         assert isinstance(res, list)
 

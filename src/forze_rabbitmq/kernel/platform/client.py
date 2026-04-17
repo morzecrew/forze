@@ -36,10 +36,10 @@ _KEY_HEADER = "forze_key"
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class RabbitMQConfig:
     heartbeat: int = 60
-    connect_timeout: float | None = 5.0
-    queue_durable: bool = True
-    persistent_messages: bool = True
-    publisher_confirms: bool = True
+    connect_timeout: float | None = attrs.field(default=5.0)
+    queue_durable: bool = attrs.field(default=True)
+    persistent_messages: bool = attrs.field(default=True)
+    publisher_confirms: bool = attrs.field(default=True)
     prefetch_count: int = 100
 
 

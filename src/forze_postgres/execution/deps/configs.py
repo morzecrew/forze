@@ -1,5 +1,5 @@
 from functools import reduce
-from typing import Literal, NotRequired, Sequence, TypedDict, final
+from typing import Literal, Mapping, NotRequired, Sequence, TypedDict, final
 
 from forze.base.errors import CoreError
 
@@ -49,21 +49,92 @@ class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):
 # ....................... #
 
 
-@final
 class PostgresSearchConfig(_BasePostgresConfig):
     """Configuration for a Postgres search."""
 
     index: tuple[str, str]
-    """Schema-qualified **index** name (used to resolve the search definition; not the ``FROM`` table)."""
+    """Index relation (schema, index name) - to resolve the search definition."""
 
-    source: tuple[str, str]
-    """Schema-qualified **heap** relation (table or view) that rows are selected from."""
+    read: tuple[str, str]
+    """Read relation (schema, table / view / materialized view) for filters and row shape."""
+
+    heap: NotRequired[tuple[str, str]]
+    """Heap relation (schema, table) where index is built on. If not provided, ``read`` is used."""
 
     engine: Literal["pgroonga", "fts"]
     """Search engine to use for the index."""
 
     fts_groups: NotRequired[dict[FtsGroupLetter, Sequence[str]]]
     """Mapping of FTS weight letters to field names (required only for FTS engines)."""
+
+    field_map: NotRequired[Mapping[str, str]]
+    """Maps :class:`SearchSpec` field names to physical heap columns when they differ."""
+
+    join_pairs: NotRequired[Sequence[tuple[str, str]]]
+    """Join pairs (projection column, index heap column)."""
+
+
+# ....................... #
+
+
+class PostgresHubSearchMemberConfig(PostgresSearchConfig):
+    """Configuration for a Postgres hub search member."""
+
+    hub_fk: str
+    """Hub foreign key column."""
+
+    heap_pk: NotRequired[str]
+    """Heap primary key column (default ``id``)."""
+
+
+# ....................... #
+
+
+@final
+class PostgresHubSearchConfig(_BasePostgresConfig):
+    """Postgres configuration for :class:`PostgresHubPGroongaSearchAdapter`."""
+
+    hub: tuple[str, str]
+    """Hub relation (schema, table / view / materialized view) for filters and row shape."""
+
+    members: Mapping[str, PostgresHubSearchMemberConfig]
+    """Mapping of member spec names to their Postgres-specific configurations."""
+
+    combine_strategy: NotRequired[Literal["or", "and"]]
+    """How leg text matches combine (default ``or``)."""
+
+    merge_strategy: NotRequired[Literal["max", "sum"]]
+    """How leg scores merge for ordering (default ``max``, i.e. greatest score wins)."""
+
+
+# ....................... #
+
+
+def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
+    """Validate a Postgres hub search configuration."""
+
+    legs = list(cfg["members"].values())
+
+    if len(legs) < 2:
+        raise CoreError("Hub search requires at least two leg configurations.")
+
+    fk_seen: list[str] = []
+
+    for i, leg in enumerate(legs):
+        if "index" not in leg or ("heap" not in leg and "read" not in leg):
+            raise CoreError(
+                f"Hub search leg {i} must include 'index' and 'heap' or 'read'."
+            )
+
+        if "hub_fk" not in leg:
+            raise CoreError(f"Hub search leg {i} must include 'hub_fk'.")
+
+        fk = leg["hub_fk"]
+
+        if fk in fk_seen:
+            raise CoreError("hub_fk_column must be unique for each leg.")
+
+        fk_seen.append(fk)
 
 
 # ....................... #

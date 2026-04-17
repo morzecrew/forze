@@ -83,7 +83,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     update_cmd_type: type[U]
     """Pydantic model for update payloads."""
 
-    history_gw: MongoHistoryGateway[D] | None = None
+    history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)
     """Optional history gateway for revision snapshots."""
 
     # ....................... #
@@ -530,9 +530,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise CoreError("Length mismatch between primary keys and revisions")
 
         updates = [{SOFT_DELETE_FIELD: True} for _ in pks]
-        res, _ = await self._patch_many(
-            pks, updates, revs=revs, batch_size=batch_size
-        )
+        res, _ = await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
 
         return res
 
@@ -582,8 +580,6 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
         updates = [{SOFT_DELETE_FIELD: False} for _ in pks]
 
-        res, _ = await self._patch_many(
-            pks, updates, revs=revs, batch_size=batch_size
-        )
+        res, _ = await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
 
         return res

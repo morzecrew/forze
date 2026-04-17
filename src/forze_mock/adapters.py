@@ -42,6 +42,7 @@ from forze.application.contracts.pubsub import (
     PubSubQueryPort,
 )
 from forze.application.contracts.query import (
+    PaginationExpression,
     QueryExpr,
     QueryField,
     QueryFilterExpression,
@@ -551,11 +552,16 @@ class MockDocumentAdapter[
         return_fields: Sequence[str] | None = None,
     ) -> R | JsonDict | None:
         del for_update
-        hits, _ = await self.find_many(
-            filters=filters, limit=1, return_fields=return_fields
+
+        hits, _ = await self.find_many(  # type: ignore[call-overload]
+            filters=filters,
+            pagination={"limit": 1},
+            return_fields=return_fields,
         )
+
         if not hits:
             return None
+
         return hits[0]
 
     # ....................... #
@@ -564,8 +570,7 @@ class MockDocumentAdapter[
     async def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
@@ -575,8 +580,7 @@ class MockDocumentAdapter[
     async def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
@@ -585,8 +589,7 @@ class MockDocumentAdapter[
     async def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
@@ -598,8 +601,13 @@ class MockDocumentAdapter[
         total = len(filtered)
         ordered = _sort_docs(filtered, sorts)
 
+        pagination = pagination or {}
+        limit = pagination.get("limit")
+        offset = pagination.get("offset")
+
         if offset:
             ordered = ordered[offset:]
+
         if limit is not None:
             ordered = ordered[:limit]
 
@@ -1187,8 +1195,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -1201,8 +1208,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -1215,8 +1221,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -1228,8 +1233,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         self,
         query: str,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -1258,8 +1262,13 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         if sorts:
             ordered = _sort_docs(ordered, sorts)
 
+        pagination = pagination or {}
+        limit = pagination.get("limit")
+        offset = pagination.get("offset")
+
         if offset:
             ordered = ordered[offset:]
+
         if limit is not None:
             ordered = ordered[:limit]
 
@@ -1502,7 +1511,7 @@ class MockIdempotencyAdapter(IdempotencyPort):
             self.state.idempotency[k] = (  # type: ignore[assignment]
                 "done",
                 payload_hash,
-                dict(snapshot),
+                snapshot,
             )
 
 

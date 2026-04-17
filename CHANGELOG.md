@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze_postgres`: `PostgresPGroongaSearchAdapterV2` runs PGroonga matching on an index heap table while applying filters and returning rows from a separate projection relation (view), using a `WITH filtered AS …, scored AS …` pipeline and `ORDER BY` that combines `pgroonga_score` with user sorts.
+- `forze.application.contracts.search`: `HubSearchSpec` (``legs`` are `SearchSpec` instances), `HubSearchQueryDepKey`, `HubSearchQueryDepPort`, and `ExecutionContext.hub_search_query`.
+- `forze_postgres`: `PostgresHubSearchConfig` / `PostgresHubSearchLegConfig` (hub relation, per-leg index/heap, `hub_fk_column`, optional `heap_pk_column`, optional `index_field_map`, `combine`, `score_merge`, `tenant_aware`); `ConfigurablePostgresHubSearch` zips config with `HubSearchSpec.legs`; `PostgresHubPGroongaSearchAdapter` and `HubLegRuntime`.
+
 ### Changed
 
 - `forze_postgres` / `forze_mongo` document adapters: all single-document mutating methods (`create`, `update`, `touch`, `delete`, `restore`) now run the cache-clear and the DB re-read concurrently via `asyncio.gather`, eliminating one sequential round-trip per write. The `return_new=False` path runs write + cache-clear concurrently as well.

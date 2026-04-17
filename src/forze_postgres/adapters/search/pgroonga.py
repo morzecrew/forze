@@ -12,7 +12,11 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
+from forze.application.contracts.query import (
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
 from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
@@ -207,8 +211,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -221,8 +224,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -235,8 +237,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         self,
         query: str,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
@@ -248,8 +249,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         self,
         query: str,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
@@ -263,7 +263,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         # total
         count_stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where,
         )
         total = int(await self.client.fetch_value(count_stmt, params, default=0))
@@ -282,11 +282,15 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             """
         ).format(
             cols=self.return_clause(return_type, return_fields),
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             table_alias=sql.Identifier(_TABLE_ALIAS),
             where=where,
             order_by=order_by,
         )
+
+        pagination = pagination or {}
+        limit = pagination.get("limit")
+        offset = pagination.get("offset")
 
         if limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())

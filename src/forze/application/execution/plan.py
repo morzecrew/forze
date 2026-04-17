@@ -99,7 +99,7 @@ class OperationPlan:
     When ``tx`` is ``True``, in-tx and after-commit buckets are used.
     """
 
-    tx: TransactionSpec | None = None
+    tx: TransactionSpec | None = attrs.field(default=None)
     """Transaction spec for the operation. None means non-transactional."""
 
     # outer

@@ -31,7 +31,7 @@ class TemporalConfig:
     lazy: bool = False
     """Whether to lazy initialize the client."""
 
-    interceptors: list[Interceptor] | None = None
+    interceptors: list[Interceptor] | None = attrs.field(default=None)
     """Interceptors to apply to the client."""
 
 

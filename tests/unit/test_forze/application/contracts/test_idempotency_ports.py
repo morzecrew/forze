@@ -2,8 +2,7 @@
 
 from typing import Optional
 
-from forze.application.contracts.idempotency.ports import IdempotencyPort
-from forze.application.contracts.idempotency.types import IdempotencySnapshot
+from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 
 
 class _StubIdempotency:
@@ -50,8 +49,8 @@ class TestIdempotencyPort:
         await stub.commit("create", "k1", "hash1", snap)
         result = await stub.begin("create", "k1", "hash1")
         assert result is not None
-        assert result["code"] == 200
-        assert result["body"] == b'{"ok":1}'
+        assert result.code == 200
+        assert result.body == b'{"ok":1}'
 
     async def test_different_keys_independent(self) -> None:
         stub = _StubIdempotency()
@@ -72,6 +71,6 @@ class TestIdempotencySnapshot:
         snap = IdempotencySnapshot(
             code=200, content_type="application/json", body=b"{}"
         )
-        assert snap["code"] == 200
-        assert snap["content_type"] == "application/json"
-        assert snap["body"] == b"{}"
+        assert snap.code == 200
+        assert snap.content_type == "application/json"
+        assert snap.body == b"{}"

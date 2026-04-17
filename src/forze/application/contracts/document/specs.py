@@ -50,13 +50,13 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     read: type[R]
     """Read specification for the document aggregate."""
 
-    write: DocumentWriteTypes[D, C, U] | None = None
+    write: DocumentWriteTypes[D, C, U] | None = attrs.field(default=None)
     """Write specification for the document aggregate."""
 
-    history_enabled: bool = False
+    history_enabled: bool = attrs.field(default=False)
     """Enable history for the document aggregate. Defaults to ``False``."""
 
-    cache: CacheSpec | None = None  #! something strange ....
+    cache: CacheSpec | None = attrs.field(default=None)
     """Cache specification for the document aggregate."""
 
     # ....................... #

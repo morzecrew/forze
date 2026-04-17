@@ -34,7 +34,7 @@ from ..query import PsycopgQueryRenderer
 
 
 @final
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True, frozen=True)
 class PostgresQualifiedName:
     """Immutable schema-qualified Postgres identifier.
 
@@ -96,8 +96,8 @@ class PostgresQualifiedName:
 class PostgresGateway[M: BaseModel](MultiTenancyMixin):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
-    qname: PostgresQualifiedName
-    """Postgres qualified name (schema, relation)."""
+    source_qname: PostgresQualifiedName
+    """Source Postgres qualified name (schema, relation)."""
 
     client: PostgresClient
     """Shared :class:`PostgresClient` instance."""
@@ -253,8 +253,8 @@ class PostgresGateway[M: BaseModel](MultiTenancyMixin):
 
     async def column_types(self) -> PostgresColumnTypes:
         return await self.introspector.get_column_types(
-            schema=self.qname.schema,
-            relation=self.qname.name,
+            schema=self.source_qname.schema,
+            relation=self.source_qname.name,
         )
 
     # ....................... #

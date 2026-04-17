@@ -36,6 +36,7 @@ Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp
 """All supported filter operators."""
 
 # ....................... #
+# Shit below is only for annotations and short imports
 
 
 class QueryOp:

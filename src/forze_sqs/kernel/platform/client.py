@@ -71,7 +71,7 @@ class _SQSConnectionOpts:
     region_name: str  #! Should NOT be required
     access_key_id: str
     secret_access_key: str | SecretStr
-    config: AioConfig | None = None
+    config: AioConfig | None = attrs.field(default=None)
 
 
 # ....................... #

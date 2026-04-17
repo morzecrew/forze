@@ -43,7 +43,7 @@ class MongoGateway[M: BaseModel]:
     model_type: type[M]
     """Pydantic model used for deserialization."""
 
-    database: str | None = None
+    database: str | None = attrs.field(default=None)
     """Mongo database name. ``None`` uses the client default."""
 
     collection: str
@@ -55,10 +55,10 @@ class MongoGateway[M: BaseModel]:
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
     """Query expression renderer."""
 
-    tenant_aware: bool = False
+    tenant_aware: bool = attrs.field(default=False)
     """Whether tenant ID is required for the gateway."""
 
-    tenant_provider: Callable[[], UUID | None] | None = None
+    tenant_provider: Callable[[], UUID | None] | None = attrs.field(default=None)
     """Callable to provide the tenant ID."""
 
     # ....................... #

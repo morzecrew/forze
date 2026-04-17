@@ -36,10 +36,10 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
     - routed dependencies: ``DepKey -> {routing_key -> provider}``
     """
 
-    plain_deps: PlainDepsMap | None = None
+    plain_deps: PlainDepsMap | None = attrs.field(default=None)
     """Dependencies registered without affinity."""
 
-    routed_deps: RoutedDeps[K] | None = None
+    routed_deps: RoutedDeps[K] | None = attrs.field(default=None)
     """Dependencies registered for specific affinity groups."""
 
     # ....................... #

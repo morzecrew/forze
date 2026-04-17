@@ -101,8 +101,7 @@ async def test_find_find_many_count_and_projections(
 
     rows, total = await cmd.find_many(
         {"$fields": {"kind": "a"}},
-        limit=10,
-        offset=0,
+        pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
     )
     assert total == 2

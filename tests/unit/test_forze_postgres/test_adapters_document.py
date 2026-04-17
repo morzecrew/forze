@@ -389,7 +389,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
 
         adapter = PostgresDocumentAdapter(spec=_full_spec(), read_gw=read_gw)
 
-        rows, cnt = await adapter.find_many(filters=None, limit=10)
+        rows, cnt = await adapter.find_many(filters=None, pagination={"limit": 10})
 
         assert rows == docs and cnt == 2
 

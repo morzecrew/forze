@@ -116,7 +116,7 @@ class PsycopgQueryRenderer:
     type and array operators are normalized automatically.
     """
 
-    types: PostgresColumnTypes | None = None
+    types: PostgresColumnTypes | None = attrs.field(default=None)
 
     # Non initable fields
     binder: PsycopgPositionalBinder = attrs.field(

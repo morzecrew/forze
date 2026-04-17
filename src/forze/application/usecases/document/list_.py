@@ -23,7 +23,9 @@ class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Ou
     doc: DocumentQueryPort[Out]
     """Document port for list operations."""
 
-    mapper: MapperPort[ListRequestDTO, ListRequestDTO] | None = None
+    mapper: MapperPort[ListRequestDTO, ListRequestDTO] | None = attrs.field(
+        default=None
+    )
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
@@ -46,8 +48,10 @@ class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Ou
         hits, count = await self.doc.find_many(
             filters=body.filters,
             sorts=body.sorts,
-            limit=limit,
-            offset=offset,
+            pagination={
+                "limit": limit,
+                "offset": offset,
+            },
         )
 
         return Paginated(hits=hits, page=page, size=size, count=count)
@@ -63,7 +67,9 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
     doc: DocumentQueryPort[Any]
     """Document port for list operations."""
 
-    mapper: MapperPort[RawListRequestDTO, RawListRequestDTO] | None = None
+    mapper: MapperPort[RawListRequestDTO, RawListRequestDTO] | None = attrs.field(
+        default=None
+    )
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
@@ -87,8 +93,10 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
         hits, count = await self.doc.find_many(
             filters=body.filters,
             sorts=body.sorts,
-            limit=limit,
-            offset=offset,
+            pagination={
+                "limit": limit,
+                "offset": offset,
+            },
             return_fields=tuple(body.return_fields),
         )
 

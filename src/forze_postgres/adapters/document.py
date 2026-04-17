@@ -19,7 +19,11 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
-from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
+from forze.application.contracts.query import (
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -62,10 +66,10 @@ class PostgresDocumentAdapter(
     read_gw: PostgresReadGateway[R]
     """Gateway used for all read queries."""
 
-    write_gw: PostgresWriteGateway[D, C, U] | None = None
+    write_gw: PostgresWriteGateway[D, C, U] | None = attrs.field(default=None)
     """Optional gateway for mutations; ``None`` disables write operations."""
 
-    cache: CachePort | None = None
+    cache: CachePort | None = attrs.field(default=None)
     """Optional cache layer for read-through caching."""
 
     batch_size: int = 200
@@ -348,8 +352,7 @@ class PostgresDocumentAdapter(
     async def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
@@ -359,8 +362,7 @@ class PostgresDocumentAdapter(
     async def find_many(
         self,
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        limit: int | None = ...,
-        offset: int | None = ...,
+        pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
@@ -369,12 +371,15 @@ class PostgresDocumentAdapter(
     async def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        limit: int | None = None,
-        offset: int | None = None,
+        pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[R] | list[JsonDict], int]:
+        pagination = pagination or {}
+        limit = pagination.get("limit")
+        offset = pagination.get("offset")
+
         logger.debug(
             "Finding '%s' documents (filter by %s, limit=%s, offset=%s, sorts=%s)",
             self.spec.name,

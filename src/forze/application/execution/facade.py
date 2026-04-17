@@ -41,7 +41,7 @@ class FacadeOpRef[Args, R]:
     uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
     """Optional usecase type to infer annotations from."""
 
-    name: str | None = None
+    name: str | None = attrs.field(default=None, kw_only=True)
     """Attribute name assigned on facade class."""
 
     # ....................... #

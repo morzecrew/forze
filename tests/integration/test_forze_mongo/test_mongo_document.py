@@ -81,7 +81,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert found is not None
     assert found.id == created.id
 
-    docs, total = await adapter.find_many(limit=10)
+    docs, total = await adapter.find_many(pagination={"limit": 10})
     assert total == 2
     assert {x.id for x in docs} == {created.id, created_2.id}
 
@@ -158,8 +158,7 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
 
     rows, total = await adapter.find_many(
         None,
-        limit=10,
-        offset=0,
+        pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
     )
     assert total == 3
@@ -167,8 +166,7 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
 
     rows_desc, _ = await adapter.find_many(
         None,
-        limit=2,
-        offset=0,
+        pagination={"limit": 2, "offset": 0},
         sorts={"name": "desc"},
     )
     assert [r.name for r in rows_desc] == ["charlie", "bob"]

@@ -17,9 +17,9 @@ class NormalizedEvent:
     level: str
     logger_name: str
     message: str
-    extras: tuple[tuple[str, str], ...] = ()
-    err_stack: str | None = None
-    exc_info: ExcInfo | None = None
+    extras: tuple[tuple[str, str], ...] = attrs.field(factory=tuple)
+    err_stack: str | None = attrs.field(default=None)
+    exc_info: ExcInfo | None = attrs.field(default=None)
     kind: Literal["common", "access"] = "common"
 
 

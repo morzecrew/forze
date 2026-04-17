@@ -32,7 +32,7 @@ class S3StartupHook(LifecycleHook):
     secret_access_key: str
     """Secret key for authentication."""
 
-    config: S3Config | None = None
+    config: S3Config | None = attrs.field(default=None)
     """Optional botocore config for retries, timeouts, etc."""
 
     # ....................... #

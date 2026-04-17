@@ -30,8 +30,8 @@ class RedisConfig:
     """Redis configuration."""
 
     max_size: int = 20
-    socket_timeout: float | None = None
-    connect_timeout: float | None = None
+    socket_timeout: float | None = attrs.field(default=None)
+    connect_timeout: float | None = attrs.field(default=None)
 
 
 # ....................... #

@@ -83,7 +83,7 @@ class _S3ConnectionOpts:
     endpoint: str
     access_key_id: str
     secret_access_key: str | SecretStr
-    config: AioConfig | None = None
+    config: AioConfig | None = attrs.field(default=None)
 
 
 # ....................... #

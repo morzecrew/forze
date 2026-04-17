@@ -41,10 +41,7 @@ def read_gw(
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresReadGateway(
-        qname=PostgresQualifiedName(
-            schema=read_relation[0],
-            name=read_relation[1],
-        ),
+        source_qname=PostgresQualifiedName(*read_relation),
         client=client,
         model_type=read_type,
         introspector=introspector,
@@ -80,14 +77,8 @@ def _doc_history_gw(
     introspector = ctx.dep(PostgresIntrospectorDepKey)
 
     return PostgresHistoryGateway(
-        qname=PostgresQualifiedName(
-            schema=history_relation[0],
-            name=history_relation[1],
-        ),
-        target_qname=PostgresQualifiedName(
-            schema=write_relation[0],
-            name=write_relation[1],
-        ),
+        source_qname=PostgresQualifiedName(*history_relation),
+        target_qname=PostgresQualifiedName(*write_relation),
         strategy=bookkeeping_strategy,
         client=client,
         model_type=domain_type,
@@ -144,10 +135,7 @@ def doc_write_gw(
         )
 
     return PostgresWriteGateway(
-        qname=PostgresQualifiedName(
-            schema=write_relation[0],
-            name=write_relation[1],
-        ),
+        source_qname=PostgresQualifiedName(*write_relation),
         client=client,
         introspector=introspector,
         read_gw=read,

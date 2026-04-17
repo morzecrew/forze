@@ -82,15 +82,15 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     read_gw: PostgresReadGateway[D]
     create_cmd_type: type[C]
     update_cmd_type: type[U]
-    history_gw: PostgresHistoryGateway[D] | None = None
+    history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)
     strategy: PostgresBookkeepingStrategy
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.qname != self.read_gw.qname:
+        if self.source_qname != self.read_gw.source_qname:
             raise CoreError(
-                "Table specification mismatch. Write gateway and nested read gateway must have the same specification."
+                f"Table specification mismatch. Write gateway and nested read gateway must have the same specification. Write: {self.source_qname}, Read: {self.read_gw.source_qname}"
             )
 
         if self.client is not self.read_gw.client:
@@ -109,9 +109,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     "Client mismatch. Write gateway and nested history gateway must use the same client."
                 )
 
-            if self.qname != self.history_gw.target_qname:
+            if self.source_qname != self.history_gw.target_qname:
                 raise CoreError(
-                    "Table specification mismatch. Write gateway and nested history gateway must have the same specification."
+                    f"Table specification mismatch. Write gateway and nested history gateway must have the same specification. Write: {self.source_qname}, History: {self.history_gw.target_qname}"
                 )
 
             if self.tenant_aware != self.history_gw.tenant_aware:
@@ -200,7 +200,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         stmt = sql.SQL(
             "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}"
         ).format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             cols=sql.SQL(", ").join(cols),
             vals=sql.SQL(", ").join(vals),
             ret=self.return_clause(),
@@ -257,7 +257,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             stmt = sql.SQL(
                 "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
             ).format(
-                table=self.qname.ident(),
+                table=self.source_qname.ident(),
                 cols=sql.SQL(", ").join(col_idents),
                 vals=sql.SQL(", ").join(value_parts),
                 ret=self.return_clause(),
@@ -349,7 +349,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         stmt = sql.SQL(
             "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
         ).format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             sets=sql.SQL(", ").join(set_parts),
             where=where_sql,
             ret=self.return_clause(),
@@ -429,7 +429,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             RETURNING {ret}
             """
         ).format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             sets=sql.SQL(", ").join(set_parts),
             vals=sql.SQL(", ").join(values_rows),
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
@@ -666,7 +666,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         where_sql, params = self._add_tenant_where(where_sql, params)  # type: ignore[assignment]
 
         stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where_sql,
         )
 
@@ -704,7 +704,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         )
 
         stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
-            table=self.qname.ident(),
+            table=self.source_qname.ident(),
             where=where_sql,
         )
 

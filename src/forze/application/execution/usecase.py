@@ -41,7 +41,7 @@ class Usecase[Args, R]:
     middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
     """Middlewares wrapping the usecase; first added runs outermost."""
 
-    operation_id: str | None = None
+    operation_id: str | None = attrs.field(default=None)
     """The operation id assigned to the usecase."""
 
     # ....................... #

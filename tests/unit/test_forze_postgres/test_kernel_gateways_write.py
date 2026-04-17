@@ -29,9 +29,9 @@ class MyUpdateDoc(BaseDTO):
     name: str | None = None
 
 
-def _build_gateway() -> tuple[
-    PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock
-]:
+def _build_gateway() -> (
+    tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]
+):
     client = MagicMock(spec=PostgresClient)
     client.fetch_all = AsyncMock()
 
@@ -40,12 +40,12 @@ def _build_gateway() -> tuple[
 
     qname = PostgresQualifiedName(schema="public", name="docs")
     read = MagicMock(spec=PostgresReadGateway)
-    read.qname = qname
+    read.source_qname = qname
     read.client = client
     read.tenant_aware = False
 
     gw = PostgresWriteGateway(
-        qname=qname,
+        source_qname=qname,
         client=client,
         model_type=MyDoc,
         introspector=introspector,
@@ -133,9 +133,9 @@ async def test_create_many_raises_when_batch_returns_fewer_rows() -> None:
         await gw.create_many(dtos, batch_size=100)
 
 
-def _build_tenant_aware_gateway() -> tuple[
-    PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock
-]:
+def _build_tenant_aware_gateway() -> (
+    tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]
+):
     tid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = MagicMock(spec=PostgresClient)
     client.execute = AsyncMock(return_value=1)
@@ -145,12 +145,12 @@ def _build_tenant_aware_gateway() -> tuple[
 
     qname = PostgresQualifiedName(schema="public", name="docs")
     read = MagicMock(spec=PostgresReadGateway)
-    read.qname = qname
+    read.source_qname = qname
     read.client = client
     read.tenant_aware = True
 
     gw = PostgresWriteGateway(
-        qname=qname,
+        source_qname=qname,
         client=client,
         model_type=MyDoc,
         introspector=introspector,

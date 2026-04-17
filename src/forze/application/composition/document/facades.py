@@ -33,10 +33,10 @@ class DocumentDTOs(Generic[R, C, U]):
     read: type[R]
     """Get command type (e.g. :class:`ReadDocument`)."""
 
-    create: type[C] | None = None
+    create: type[C] | None = attrs.field(default=None)
     """Create command type; optional when create is not supported."""
 
-    update: type[U] | None = None
+    update: type[U] | None = attrs.field(default=None)
     """Update command type; optional when update is not supported."""
 
 

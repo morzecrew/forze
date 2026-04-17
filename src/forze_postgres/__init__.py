@@ -10,6 +10,8 @@ from .execution import (
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     postgres_lifecycle_step,
@@ -27,4 +29,6 @@ __all__ = [
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",
+    "PostgresHubSearchConfig",
+    "PostgresHubSearchMemberConfig",
 ]

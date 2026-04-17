@@ -1,4 +1,4 @@
-from typing import Mapping, Sequence, TypedDict
+from typing import Any, Mapping, Sequence, TypedDict
 
 import attrs
 from pydantic import BaseModel
@@ -25,10 +25,7 @@ class SearchFuzzySpec(TypedDict, total=False):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchSpec[M: BaseModel](BaseSpec):
-    """Specification for simple search (one index).
-
-    #! TODO: add a proper description
-    """
+    """Specification for simple search (one index)."""
 
     model_type: type[M]
     """Pydantic model class for searchable documents."""
@@ -36,10 +33,10 @@ class SearchSpec[M: BaseModel](BaseSpec):
     fields: Sequence[str] = attrs.field(validator=attrs.validators.min_len(1))
     """Indexed fields."""
 
-    default_weights: Mapping[str, float] | None = None
+    default_weights: Mapping[str, float] | None = attrs.field(default=None)
     """Default weights for fields."""
 
-    fuzzy: SearchFuzzySpec | None = None
+    fuzzy: SearchFuzzySpec | None = attrs.field(default=None)
     """Fuzzy matching configuration."""
 
     # ....................... #
@@ -68,13 +65,46 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class FederatedSearchSpec[M: BaseModel]:
-    """Specification for federated search (many indexes)."""
-
-    name: str
-    """Logical search namespace name."""
+class HubSearchSpec[M: BaseModel](BaseSpec):
+    """Hub (junction) search (homogeneous search)."""
 
     model_type: type[M]
-    """Pydantic model class for searchable documents."""
+    """Pydantic read model for hub rows."""
 
-    #! container with simple search specs ????
+    members: Sequence[SearchSpec[Any]] = attrs.field(
+        validator=attrs.validators.min_len(2),
+    )
+    """At least two :class:`SearchSpec` members."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        names = [member.name for member in self.members]
+
+        if len(names) != len(set(names)):
+            raise CoreError(
+                "Each hub search member must use a SearchSpec with a distinct name."
+            )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FederatedSearchSpec[X: BaseModel](BaseSpec):
+    """Federated search specification (heterogeneous search)."""
+
+    members: Sequence[SearchSpec[X]] = attrs.field(
+        validator=attrs.validators.min_len(2),
+    )
+    """At least two :class:`SearchSpec` members."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        names = [member.name for member in self.members]
+
+        if len(names) != len(set(names)):
+            raise CoreError(
+                "Each federated search member must use a SearchSpec with a distinct name."
+            )

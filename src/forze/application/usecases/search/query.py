@@ -23,7 +23,9 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
     search: SearchQueryPort[Out]
     """Search port for search operations."""
 
-    mapper: MapperPort[SearchRequestDTO, SearchRequestDTO] | None = None
+    mapper: MapperPort[SearchRequestDTO, SearchRequestDTO] | None = attrs.field(
+        default=None
+    )
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
@@ -47,8 +49,10 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
         hits, count = await self.search.search(
             query=body.query,
             filters=body.filters,
-            limit=limit,
-            offset=offset,
+            pagination={
+                "limit": limit,
+                "offset": offset,
+            },
             sorts=body.sorts,
             options=body.options,
         )
@@ -66,7 +70,9 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
     search: SearchQueryPort[Any]
     """Search port for search operations."""
 
-    mapper: MapperPort[RawSearchRequestDTO, RawSearchRequestDTO] | None = None
+    mapper: MapperPort[RawSearchRequestDTO, RawSearchRequestDTO] | None = attrs.field(
+        default=None
+    )
     """Optional mapper to transform incoming request DTO"""
 
     # ....................... #
@@ -90,8 +96,10 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
         hits, count = await self.search.search(
             query=body.query,
             filters=body.filters,
-            limit=limit,
-            offset=offset,
+            pagination={
+                "limit": limit,
+                "offset": offset,
+            },
             sorts=body.sorts,
             options=body.options,
             return_fields=tuple(body.return_fields),

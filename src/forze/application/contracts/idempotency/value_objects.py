@@ -1,11 +1,12 @@
-"""Port for HTTP-style idempotency handling."""
+from typing import Mapping
 
-from typing import TypedDict
+import attrs
 
 # ----------------------- #
 
 
-class IdempotencySnapshot(TypedDict):
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class IdempotencySnapshot:
     """Serialized response snapshot stored for idempotent operations.
 
     Used to replay a previous response when a duplicate request is detected.
@@ -20,4 +21,5 @@ class IdempotencySnapshot(TypedDict):
     body: bytes
     """Response body bytes."""
 
-    #! should we have headers here?
+    headers: Mapping[str, str] | None = attrs.field(default=None)
+    """Response headers."""
