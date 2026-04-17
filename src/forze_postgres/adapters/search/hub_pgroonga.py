@@ -339,7 +339,7 @@ class PostgresHubPGroongaSearchAdapter[M: BaseModel](
                     sql.Identifier(_LEG_SCORE),
                 )
             else:
-                rank_expr = sql.SQL("(0)::double precision AS {})").format(
+                rank_expr = sql.SQL("(0)::double precision AS {}").format(
                     sql.Identifier(_LEG_SCORE),
                 )
 

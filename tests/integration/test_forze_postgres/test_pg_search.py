@@ -370,3 +370,10 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
 
     assert c3 == 1
     assert same[0].id == lid3
+
+    browse, c_browse = await adapter.search("")
+    assert c_browse == 3
+    assert {h.id for h in browse} == {lid1, lid2, lid3}
+
+    browse_ws, c_ws = await adapter.search("   \t")
+    assert c_ws == 3

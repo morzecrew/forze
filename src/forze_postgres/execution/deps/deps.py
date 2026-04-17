@@ -242,11 +242,6 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
     ) -> PostgresHubPGroongaSearchAdapter[Any]:
         validate_postgres_hub_search_conf(self.config)
 
-        if len(spec.members) != len(self.config["members"]):
-            raise CoreError(
-                "HubSearchSpec.members and PostgresHubSearchConfig['members'] must have the same length."
-            )
-
         hub = PostgresQualifiedName(*self.config["hub"])
         tenant_aware = self.config.get("tenant_aware", False)
 

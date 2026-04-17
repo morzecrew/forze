@@ -139,4 +139,4 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
-        return plain_deps.merge(doc_deps, search_deps, tx_deps)
+        return plain_deps.merge(doc_deps, search_deps, tx_deps, hub_search_deps)

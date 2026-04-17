@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `forze_postgres` `PostgresHubPGroongaSearchAdapter`: empty / whitespace-only queries no longer emit invalid SQL for the per-leg rank expression (extra parenthesis in the zero-score branch).
+
 - `forze_s3` `S3StorageAdapter`: default `key_generator` now returns a new UUID v7 string on each call (previously used `str(uuid7)` and produced a constant key segment, so successive uploads could overwrite the same object).
 
 - `forze_redis` platform error handler: `AuthenticationError`, `BusyLoadingError`, and `ReadOnlyError` are matched before their respective `ConnectionError` / `ResponseError` base cases so redis-py subclasses map to the intended messages.
