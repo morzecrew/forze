@@ -9,6 +9,7 @@ from forze.application.usecases.document import (
     CreateDocument,
     DeleteDocument,
     GetDocument,
+    GetDocumentByNumberId,
     KillDocument,
     RawListDocuments,
     RestoreDocument,
@@ -165,6 +166,15 @@ def build_document_registry(
             ),
         }
     )
+
+    if spec.supports_number_id():
+        reg.register(
+            DocumentOperation.GET_BY_NUMBER_ID,
+            lambda ctx: GetDocumentByNumberId(
+                ctx=ctx,
+                doc=ctx.doc_query(spec),
+            ),
+        )
 
     if spec.write is not None:
         create_mapper = build_document_create_mapper(

@@ -4,7 +4,8 @@ from typing import Generic, TypedDict, TypeVar, final
 
 import attrs
 
-from forze.domain.mixins import SoftDeletionMixin
+from forze.domain.constants import NUMBER_ID_FIELD, SOFT_DELETE_FIELD
+from forze.domain.mixins import NumberMixin, SoftDeletionMixin
 from forze.domain.models import (
     BaseDTO,
     CreateDocumentCmd,
@@ -67,7 +68,12 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if self.write is None:
             return False
 
-        return issubclass(self.write["domain"], SoftDeletionMixin)
+        d = self.write["domain"]
+
+        return (
+            issubclass(d, SoftDeletionMixin)
+            or SOFT_DELETE_FIELD in d.model_fields.keys()
+        )
 
     # ....................... #
 
@@ -78,3 +84,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             return False
 
         return self.write["update_cmd"].model_fields != {}
+
+    # ....................... #
+
+    def supports_number_id(self) -> bool:
+        """Return ``True`` when the domain model supports number ID."""
+
+        if self.write is None:
+            return False
+
+        d = self.write["domain"]
+
+        return issubclass(d, NumberMixin) or NUMBER_ID_FIELD in d.model_fields.keys()

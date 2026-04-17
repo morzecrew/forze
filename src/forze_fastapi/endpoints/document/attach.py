@@ -73,20 +73,29 @@ def attach_document_endpoints(
         )
 
     if not get_by_number_id_endpoint.get("disable", False):
-        get_by_number_id_endpoint_spec = build_document_get_by_number_id_endpoint_spec(
-            dtos=dtos,
-            path_override=get_by_number_id_endpoint.get("path_override", None),
-            metadata=get_by_number_id_endpoint.get("metadata", None),
-            etag=config.get("enable_etag", True),
-            etag_auto_304=config.get("etag_auto_304", True),
-        )
-        attach_http_endpoint(
-            router=router,
-            spec=get_by_number_id_endpoint_spec,
-            registry=registry,
-            ctx_dep=ctx_dep,
-            exclude_none=exclude_none,
-        )
+        if not document.supports_number_id():
+            logger.warning(
+                "Number ID is not supported for document '%s', skipping",
+                str(document.name),
+            )
+
+        else:
+            get_by_number_id_endpoint_spec = (
+                build_document_get_by_number_id_endpoint_spec(
+                    dtos=dtos,
+                    path_override=get_by_number_id_endpoint.get("path_override", None),
+                    metadata=get_by_number_id_endpoint.get("metadata", None),
+                    etag=config.get("enable_etag", True),
+                    etag_auto_304=config.get("etag_auto_304", True),
+                )
+            )
+            attach_http_endpoint(
+                router=router,
+                spec=get_by_number_id_endpoint_spec,
+                registry=registry,
+                ctx_dep=ctx_dep,
+                exclude_none=exclude_none,
+            )
 
     if not list_endpoint.get("disable", False):
         list_endpoint_spec = build_document_list_endpoint_spec(
