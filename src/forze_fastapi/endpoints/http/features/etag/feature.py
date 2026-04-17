@@ -28,6 +28,9 @@ class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
     auto_304: bool = attrs.field(default=True)
     """Whether to return a 304 Not Modified response when the ETag matches."""
 
+    exclude_none: bool = attrs.field(default=True)
+    """Whether to exclude ``None`` values from the ETag calculation."""
+
     # ....................... #
 
     def wrap(
@@ -39,7 +42,11 @@ class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
         ) -> R | Response:
             result = await handler(ctx)
 
-            body, _ = serialize_endpoint_result(result, ctx.spec.response)
+            body, _ = serialize_endpoint_result(
+                result,
+                ctx.spec.response,
+                self.exclude_none,
+            )
 
             raw_tag = self.provider(body)
 
@@ -57,6 +64,7 @@ class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
                 response_model=ctx.spec.response,
                 status_code=ctx.spec.http.get("status_code", 200),
                 extra_headers={ETAG_HEADER_KEY: etag},
+                exclude_none=self.exclude_none,
             )
 
         return wrapped

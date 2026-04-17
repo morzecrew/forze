@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 def serialize_endpoint_result(
     result: Any,
     response_model: type[Any] | None,
+    exclude_none: bool = True,
 ) -> tuple[bytes, str]:
     if isinstance(result, Response):
         body = getattr(result, "body", None)
@@ -37,7 +38,7 @@ def serialize_endpoint_result(
 
     if response_model is not None:
         adapter = TypeAdapter(response_model)
-        dumped = adapter.dump_python(result, mode="json")
+        dumped = adapter.dump_python(result, mode="json", exclude_none=exclude_none)
         return orjson.dumps(dumped), "application/json"
 
     if isinstance(result, (bytes, bytearray)):
@@ -58,6 +59,7 @@ def response_from_endpoint_result(
     response_model: type[Any] | None = None,
     status_code: int | None,
     extra_headers: dict[str, str] | None = None,
+    exclude_none: bool = True,
 ) -> Response:
     if isinstance(result, Response):
         if extra_headers:
@@ -66,7 +68,9 @@ def response_from_endpoint_result(
 
         return result
 
-    body_bytes, content_type = serialize_endpoint_result(result, response_model)
+    body_bytes, content_type = serialize_endpoint_result(
+        result, response_model, exclude_none
+    )
     headers = dict(extra_headers or {})
 
     return Response(
