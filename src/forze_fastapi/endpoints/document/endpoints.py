@@ -11,6 +11,7 @@ from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.dto import (
     DocumentIdDTO,
     DocumentIdRevDTO,
+    DocumentNumberIdDTO,
     DocumentUpdateDTO,
     ListRequestDTO,
     Paginated,
@@ -84,6 +85,55 @@ def build_document_get_endpoint_spec[R: ReadDocument](
         metadata=metadata,
         response=dtos.read,
         mapper=QueryAsIsMapper(DocumentIdDTO),
+        features=features,
+    )
+
+
+# ....................... #
+
+type GetByNumberIdDTOs[R: ReadDocument] = DocumentDTOs[R, Any, Any]
+type GetByNumberIdEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
+    DocumentNumberIdDTO,
+    Any,
+    Any,
+    Any,
+    Any,
+    Any,
+    R,
+    Facade,
+]
+
+
+def build_document_get_by_number_id_endpoint_spec[R: ReadDocument](
+    dtos: GetByNumberIdDTOs[R],
+    *,
+    path_override: str | None = None,
+    metadata: HttpMetadataSpec | None = None,
+    etag: bool = True,
+    etag_auto_304: bool = True,
+) -> GetByNumberIdEndpointSpec[R]:
+    path = path_override or "/get-by-num"
+    path = path_coerce(path)
+
+    features = (
+        [
+            ETag(
+                provider=document_etag,
+                auto_304=etag_auto_304,
+            )
+        ]
+        if etag
+        else None
+    )
+
+    return build_http_endpoint_spec(
+        Facade,
+        Facade.get_by_number_id,  # type: ignore[misc]
+        http={"method": "GET", "path": path},
+        request={"query_type": DocumentNumberIdDTO},
+        metadata=metadata,
+        response=dtos.read,
+        mapper=QueryAsIsMapper(DocumentNumberIdDTO),
         features=features,
     )
 

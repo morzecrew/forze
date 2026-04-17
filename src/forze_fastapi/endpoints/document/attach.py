@@ -19,6 +19,7 @@ from ..http import attach_http_endpoint
 from .endpoints import (
     build_document_create_endpoint_spec,
     build_document_delete_endpoint_spec,
+    build_document_get_by_number_id_endpoint_spec,
     build_document_get_endpoint_spec,
     build_document_kill_endpoint_spec,
     build_document_list_endpoint_spec,
@@ -46,6 +47,7 @@ def attach_document_endpoints(
     config = endpoints.get("config", {})
 
     get_endpoint = endpoints.get("get_", {})
+    get_by_number_id_endpoint = endpoints.get("get_by_number_id", {})
     list_endpoint = endpoints.get("list_", {})
     raw_list_endpoint = endpoints.get("raw_list", {})
     create_endpoint = endpoints.get("create", {})
@@ -65,6 +67,22 @@ def attach_document_endpoints(
         attach_http_endpoint(
             router=router,
             spec=get_endpoint_spec,
+            registry=registry,
+            ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
+        )
+
+    if not get_by_number_id_endpoint.get("disable", False):
+        get_by_number_id_endpoint_spec = build_document_get_by_number_id_endpoint_spec(
+            dtos=dtos,
+            path_override=get_by_number_id_endpoint.get("path_override", None),
+            metadata=get_by_number_id_endpoint.get("metadata", None),
+            etag=config.get("enable_etag", True),
+            etag_auto_304=config.get("etag_auto_304", True),
+        )
+        attach_http_endpoint(
+            router=router,
+            spec=get_by_number_id_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,

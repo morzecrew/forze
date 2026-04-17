@@ -7,7 +7,7 @@ backed by :class:`forze.application.contracts.document.DocumentWritePort` and
 
 from .create import CreateDocument
 from .delete import DeleteDocument, KillDocument, RestoreDocument
-from .get import GetDocument
+from .get import GetDocument, GetDocumentByNumberId
 from .list_ import RawListDocuments, TypedListDocuments
 from .update import UpdateDocument
 
@@ -19,6 +19,7 @@ __all__ = [
     "KillDocument",
     "RestoreDocument",
     "GetDocument",
+    "GetDocumentByNumberId",
     "UpdateDocument",
     "TypedListDocuments",
     "RawListDocuments",

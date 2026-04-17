@@ -9,17 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze_postgres`: `PostgresFTSSearchAdapterV2` runs native FTS (`tsvector` / `ts_rank_cd`) on an index heap while filters and row shape use a separate projection relation, using the same `WITH filtered AS …, scored AS …` pattern as `PostgresPGroongaSearchAdapterV2`.
+- `forze_postgres.adapters.search._fts_sql`: shared FTS helpers (`tsvector` resolution from the catalog, `websearch_to_tsquery`, group weights, match predicate, `ts_rank_cd`) for FTS v2 and hub legs.
 - `forze_postgres`: `PostgresPGroongaSearchAdapterV2` runs PGroonga matching on an index heap table while applying filters and returning rows from a separate projection relation (view), using a `WITH filtered AS …, scored AS …` pipeline and `ORDER BY` that combines `pgroonga_score` with user sorts.
 - `forze.application.contracts.search`: `HubSearchSpec` (``legs`` are `SearchSpec` instances), `HubSearchQueryDepKey`, `HubSearchQueryDepPort`, and `ExecutionContext.hub_search_query`.
-- `forze_postgres`: `PostgresHubSearchConfig` / `PostgresHubSearchLegConfig` (hub relation, per-leg index/heap, `hub_fk_column`, optional `heap_pk_column`, optional `index_field_map`, `combine`, `score_merge`, `tenant_aware`); `ConfigurablePostgresHubSearch` zips config with `HubSearchSpec.legs`; `PostgresHubPGroongaSearchAdapter` and `HubLegRuntime`.
+- `forze_postgres`: `PostgresHubSearchConfig` / `PostgresHubSearchLegConfig` (hub relation, per-leg index/heap, `hub_fk_column`, optional `heap_pk_column`, optional `index_field_map`, `combine`, `score_merge`, `tenant_aware`); `ConfigurablePostgresHubSearch` zips config with `HubSearchSpec.legs`; `PostgresHubSearchAdapter`, `HubSearchLegEngine`, `PgroongaHubLegEngine`, `FtsHubLegEngine`, `hub_leg_engine_for`, and `HubLegRuntime`.
+- `forze_postgres.adapters.search._pgroonga_sql`: shared PGroonga helpers (`pgroonga_match_clause`, `pgroonga_heap_column_names`, `pgroonga_score_rank_expr`) for `PostgresPGroongaSearchAdapterV2` and hub legs.
 
 ### Changed
 
+- `forze_postgres` `ConfigurablePostgresSearch` with `engine: "fts"` builds `PostgresFTSSearchAdapterV2` (projection + index heap); optional `heap` and `join_pairs` match the PGroonga search config shape.
+- `forze_postgres` hub search: `PostgresHubSearchAdapter` selects `PgroongaHubLegEngine` or `FtsHubLegEngine` per leg ``engine`` via `hub_leg_engine_for` (no default engine on the adapter). `PostgresHubPGroongaSearchAdapter` remains a backward-compatible alias. Hub members may use ``engine: "fts"`` with ``fts_groups`` (same rules as FTS search).
+- `forze_postgres.execution.deps.configs`: `validate_fts_groups_for_search_spec` shared by configurable FTS search and hub legs.
 - `forze_postgres` / `forze_mongo` document adapters: all single-document mutating methods (`create`, `update`, `touch`, `delete`, `restore`) now run the cache-clear and the DB re-read concurrently via `asyncio.gather`, eliminating one sequential round-trip per write. The `return_new=False` path runs write + cache-clear concurrently as well.
 - `forze_postgres` / `forze_mongo` document adapters: all bulk mutating methods (`create_many`, `update_many`, `touch_many`, `kill_many`, `delete_many`, `restore_many`) similarly pipeline the DB write, cache-invalidation, and (when `return_new=True`) the read-back concurrently via `asyncio.gather`.
 - `forze_redis` cache adapter: `set_versioned` and `set_many_versioned` now write the pointer key and the body key concurrently via `asyncio.gather` (previously issued sequentially inside a non-functional `pipeline` context manager). `delete` and `delete_many` likewise run KV-delete and pointer-delete concurrently; the hard-delete path additionally overlaps the KV-delete with the pointer fetch, reducing it from three sequential round-trips to two.
 
 ### Removed
+
+- `forze_postgres.adapters.search.hub_pgroonga` module (logic moved to `hub.py`).
+- `forze_postgres`: legacy single-relation search adapters `PostgresFTSSearchAdapter` and `PostgresPGroongaSearchAdapter` (`fts.py`, `pgroonga.py`); use `PostgresFTSSearchAdapterV2`, `PostgresPGroongaSearchAdapterV2`, or hub search instead.
 
 ### Fixed
 

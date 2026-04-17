@@ -107,6 +107,8 @@ async def test_postgres_search_adapter(
 
     adapter = execution_context.search_query(spec)
 
+    assert isinstance(adapter, PostgresPGroongaSearchAdapterV2)
+
     res, cnt = await adapter.search("python")
     assert cnt == 3
     assert len(res) == 3
@@ -221,6 +223,60 @@ async def test_postgres_pgroonga_search_adapter_v2_projection_vs_heap(
     )
     assert cnt_one == 1
     assert one[0].title == "Forze Framework"
+
+
+@pytest.mark.asyncio
+async def test_postgres_search_configurable_uses_heap_and_field_map(
+    pg_client: PostgresClient,
+) -> None:
+    """``ConfigurablePostgresSearch`` + ``heap`` / ``field_map`` for PGroonga v2."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    await pg_client.execute(
+        """
+        CREATE TABLE cfg_heap (
+            id uuid PRIMARY KEY,
+            t1 text NOT NULL,
+            t2 text NOT NULL
+        );
+        CREATE VIEW cfg_proj AS SELECT id, t1 AS title, t2 AS content FROM cfg_heap;
+        CREATE INDEX idx_cfg_pg ON cfg_heap USING pgroonga ((ARRAY[t1, t2]));
+        """
+    )
+    await pg_client.execute(
+        "INSERT INTO cfg_heap (id, t1, t2) VALUES (%(id)s, 'hello', 'world')",
+        {"id": uuid4()},
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config={
+                        "index": ("public", "idx_cfg_pg"),
+                        "read": ("public", "cfg_proj"),
+                        "heap": ("public", "cfg_heap"),
+                        "engine": "pgroonga",
+                        "field_map": {"title": "t1", "content": "t2"},
+                    }
+                ),
+            }
+        )
+    )
+    spec = SearchSpec(
+        name="cfg_ns",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    adapter = ctx.search_query(spec)
+    assert isinstance(adapter, PostgresPGroongaSearchAdapterV2)
+
+    rows, n = await adapter.search("hello")
+    assert n == 1
+    assert rows[0].title == "hello"
 
 
 class LinkModel(BaseModel):
@@ -377,3 +433,378 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
 
     browse_ws, c_ws = await adapter.search("   \t")
     assert c_ws == 3
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) -> None:
+    """OR across two GIN ``tsvector`` heaps (FTS hub legs); filters on link table."""
+
+    await pg_client.execute(
+        """
+        CREATE TABLE hub_fts_details (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_fts_specs (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_fts_links (
+            id uuid PRIMARY KEY,
+            detail_id uuid NOT NULL REFERENCES hub_fts_details (id),
+            spec_id uuid NOT NULL REFERENCES hub_fts_specs (id),
+            quantity int NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        """
+        CREATE INDEX idx_hub_fts_details_gin ON hub_fts_details
+        USING gin (to_tsvector('english', coalesce(name, '') || ' ' || coalesce(display_name, '')));
+        CREATE INDEX idx_hub_fts_specs_gin ON hub_fts_specs
+        USING gin (to_tsvector('english', coalesce(name, '') || ' ' || coalesce(display_name, '')));
+        """
+    )
+
+    d1, d2 = uuid4(), uuid4()
+    s1, s2 = uuid4(), uuid4()
+    await pg_client.execute(
+        "INSERT INTO hub_fts_details (id, name, display_name) VALUES (%(id)s, %(name)s, %(dn)s)",
+        {"id": d1, "name": "alpha detail", "dn": "Alpha D"},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_fts_details (id, name, display_name) VALUES (%(id)s, %(name)s, %(dn)s)",
+        {"id": d2, "name": "beta detail", "dn": "Beta D"},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_fts_specs (id, name, display_name) VALUES (%(id)s, %(name)s, %(dn)s)",
+        {"id": s1, "name": "gamma spec", "dn": "Gamma S"},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_fts_specs (id, name, display_name) VALUES (%(id)s, %(name)s, %(dn)s)",
+        {"id": s2, "name": "delta spec", "dn": "Delta S"},
+    )
+    lid1, lid2, lid3 = uuid4(), uuid4(), uuid4()
+    await pg_client.execute(
+        (
+            "INSERT INTO hub_fts_links (id, detail_id, spec_id, quantity) VALUES "
+            "(%(a)s, %(d1)s, %(s1)s, 1), (%(b)s, %(d2)s, %(s1)s, 2), (%(c)s, %(d1)s, %(s2)s, 3)"
+        ),
+        {"a": lid1, "b": lid2, "c": lid3, "d1": d1, "d2": d2, "s1": s1, "s2": s2},
+    )
+
+    det_name = "detail_fts"
+    spec_name = "spec_fts"
+    fts_groups = {"A": ("name",), "B": ("display_name",)}
+
+    detail_txt = SearchSpec(
+        name=det_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    spec_txt = SearchSpec(
+        name=spec_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name="hub_fts_links_search",
+        model_type=LinkModel,
+        members=(detail_txt, spec_txt),
+    )
+
+    hub_fts_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "hub_fts_links"),
+        "members": {
+            det_name: {
+                "index": ("public", "idx_hub_fts_details_gin"),
+                "read": ("public", "hub_fts_details"),
+                "hub_fk": "detail_id",
+                "engine": "fts",
+                "fts_groups": fts_groups,
+            },
+            spec_name: {
+                "index": ("public", "idx_hub_fts_specs_gin"),
+                "read": ("public", "hub_fts_specs"),
+                "hub_fk": "spec_id",
+                "engine": "fts",
+                "fts_groups": fts_groups,
+            },
+        },
+        "combine": "or",
+        "score_merge": "max",
+    }
+
+    introspector = PostgresIntrospector(client=pg_client)
+    ctx_hub = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: introspector,
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_fts_cfg)(ctx_hub, hub_spec)
+
+    hits, cnt = await adapter.search("alpha")
+    assert cnt == 2
+    assert {h.id for h in hits} == {lid1, lid3}
+
+    hits2, cnt2 = await adapter.search(
+        "gamma",
+        filters={"$fields": {"spec_id": str(s1)}},
+    )
+    assert cnt2 == 2
+    assert {h.id for h in hits2} == {lid1, lid2}
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_pgroonga_combine_or_vs_and(pg_client: PostgresClient) -> None:
+    """``combine_strategy`` OR includes a link if any leg matches; AND requires every leg."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    await pg_client.execute(
+        """
+        CREATE TABLE hub_and_detail (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_and_spec (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_and_link (
+            id uuid PRIMARY KEY,
+            detail_id uuid NOT NULL REFERENCES hub_and_detail (id),
+            spec_id uuid NOT NULL REFERENCES hub_and_spec (id),
+            quantity int NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        """
+        CREATE INDEX idx_hub_and_d ON hub_and_detail
+        USING pgroonga ((ARRAY[name, display_name]));
+        CREATE INDEX idx_hub_and_s ON hub_and_spec
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+
+    d1, d2 = uuid4(), uuid4()
+    s1, s2 = uuid4(), uuid4()
+    await pg_client.execute(
+        "INSERT INTO hub_and_detail (id, name, display_name) VALUES (%(id)s, 'findme', 'a')",
+        {"id": d1},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_and_detail (id, name, display_name) VALUES (%(id)s, 'findme', 'b')",
+        {"id": d2},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_and_spec (id, name, display_name) VALUES (%(id)s, 'other', 'c')",
+        {"id": s1},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_and_spec (id, name, display_name) VALUES (%(id)s, 'findme', 'd')",
+        {"id": s2},
+    )
+    lid_or, lid_and = uuid4(), uuid4()
+    await pg_client.execute(
+        (
+            "INSERT INTO hub_and_link (id, detail_id, spec_id, quantity) VALUES "
+            "(%(a)s, %(d1)s, %(s1)s, 1), (%(b)s, %(d2)s, %(s2)s, 3)"
+        ),
+        {"a": lid_or, "b": lid_and, "d1": d1, "d2": d2, "s1": s1, "s2": s2},
+    )
+
+    det_name = "dleg"
+    spec_name = "sleg"
+    detail_txt = SearchSpec(
+        name=det_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    spec_txt = SearchSpec(
+        name=spec_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name="hub_and_search",
+        model_type=LinkModel,
+        members=(detail_txt, spec_txt),
+    )
+
+    base_members: PostgresHubSearchConfig = {
+        "hub": ("public", "hub_and_link"),
+        "members": {
+            det_name: {
+                "index": ("public", "idx_hub_and_d"),
+                "read": ("public", "hub_and_detail"),
+                "hub_fk": "detail_id",
+            },
+            spec_name: {
+                "index": ("public", "idx_hub_and_s"),
+                "read": ("public", "hub_and_spec"),
+                "hub_fk": "spec_id",
+            },
+        },
+        "score_merge": "max",
+    }
+
+    introspector = PostgresIntrospector(client=pg_client)
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: introspector,
+            }
+        )
+    )
+
+    adapter_or = ConfigurablePostgresHubSearch(
+        config={**base_members, "combine_strategy": "or"}
+    )(ctx, hub_spec)
+    hits_or, n_or = await adapter_or.search("findme")
+    assert n_or == 2
+    assert {h.id for h in hits_or} == {lid_or, lid_and}
+
+    adapter_and = ConfigurablePostgresHubSearch(
+        config={**base_members, "combine_strategy": "and"}
+    )(ctx, hub_spec)
+    hits_and, n_and = await adapter_and.search("findme")
+    assert n_and == 1
+    assert hits_and[0].id == lid_and
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_mixed_pgroonga_and_fts_legs(pg_client: PostgresClient) -> None:
+    """One PGroonga leg and one FTS leg on the same link hub."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    await pg_client.execute(
+        """
+        CREATE TABLE hub_mix_detail (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_mix_spec (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE hub_mix_link (
+            id uuid PRIMARY KEY,
+            detail_id uuid NOT NULL REFERENCES hub_mix_detail (id),
+            spec_id uuid NOT NULL REFERENCES hub_mix_spec (id),
+            quantity int NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        """
+        CREATE INDEX idx_hub_mix_d_pg ON hub_mix_detail
+        USING pgroonga ((ARRAY[name, display_name]));
+        CREATE INDEX idx_hub_mix_s_fts ON hub_mix_spec
+        USING gin (to_tsvector('english', coalesce(name, '') || ' ' || coalesce(display_name, '')));
+        """
+    )
+
+    d1, d2 = uuid4(), uuid4()
+    s1, s2 = uuid4(), uuid4()
+    await pg_client.execute(
+        "INSERT INTO hub_mix_detail (id, name, display_name) VALUES (%(id)s, 'mixed alpha', 'a')",
+        {"id": d1},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_mix_detail (id, name, display_name) VALUES (%(id)s, 'mixed beta', 'b')",
+        {"id": d2},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_mix_spec (id, name, display_name) VALUES (%(id)s, 'mixed gamma', 'c')",
+        {"id": s1},
+    )
+    await pg_client.execute(
+        "INSERT INTO hub_mix_spec (id, name, display_name) VALUES (%(id)s, 'mixed delta', 'd')",
+        {"id": s2},
+    )
+    lid1, lid2, lid3 = uuid4(), uuid4(), uuid4()
+    await pg_client.execute(
+        (
+            "INSERT INTO hub_mix_link (id, detail_id, spec_id, quantity) VALUES "
+            "(%(a)s, %(d1)s, %(s1)s, 1), (%(b)s, %(d2)s, %(s1)s, 2), (%(c)s, %(d1)s, %(s2)s, 3)"
+        ),
+        {"a": lid1, "b": lid2, "c": lid3, "d1": d1, "d2": d2, "s1": s1, "s2": s2},
+    )
+
+    det_name = "mix_d"
+    spec_name = "mix_s"
+    fts_groups = {"A": ("name",), "B": ("display_name",)}
+    detail_txt = SearchSpec(
+        name=det_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    spec_txt = SearchSpec(
+        name=spec_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name="hub_mix_search",
+        model_type=LinkModel,
+        members=(detail_txt, spec_txt),
+    )
+
+    hub_mix_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "hub_mix_link"),
+        "members": {
+            det_name: {
+                "index": ("public", "idx_hub_mix_d_pg"),
+                "read": ("public", "hub_mix_detail"),
+                "hub_fk": "detail_id",
+                "engine": "pgroonga",
+            },
+            spec_name: {
+                "index": ("public", "idx_hub_mix_s_fts"),
+                "read": ("public", "hub_mix_spec"),
+                "hub_fk": "spec_id",
+                "engine": "fts",
+                "fts_groups": fts_groups,
+            },
+        },
+        "combine": "or",
+        "score_merge": "max",
+    }
+
+    introspector = PostgresIntrospector(client=pg_client)
+    ctx_hub = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: introspector,
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_mix_cfg)(ctx_hub, hub_spec)
+
+    hits, cnt = await adapter.search("mixed")
+    assert cnt == 3
+
+    hits_alpha, n_alpha = await adapter.search("alpha")
+    assert n_alpha == 2
+    assert {h.id for h in hits_alpha} == {lid1, lid3}
+
+    hits_gamma, n_gamma = await adapter.search(
+        "gamma",
+        filters={"$fields": {"spec_id": str(s1)}},
+    )
+    assert n_gamma == 2
+    assert {h.id for h in hits_gamma} == {lid1, lid2}

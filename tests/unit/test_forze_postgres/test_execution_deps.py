@@ -21,7 +21,7 @@ from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters import (
     PostgresDocumentAdapter,
-    PostgresFTSSearchAdapter,
+    PostgresFTSSearchAdapterV2,
     PostgresPGroongaSearchAdapterV2,
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
@@ -95,7 +95,7 @@ class TestValidatePgSearchConf:
             {
                 "engine": "pgroonga",
                 "index": ("public", "idx"),
-                "source": ("public", "src"),
+                "read": ("public", "src"),
             }
         )
 
@@ -105,7 +105,7 @@ class TestValidatePgSearchConf:
                 {
                     "engine": "fts",
                     "index": ("public", "idx"),
-                    "source": ("public", "src"),
+                    "read": ("public", "src"),
                 }
             )
 
@@ -115,7 +115,7 @@ class TestValidatePgSearchConf:
                 {
                     "engine": "fts",
                     "index": ("public", "idx"),
-                    "source": ("public", "src"),
+                    "read": ("public", "src"),
                     "fts_groups": {"A": ["a", "b"], "B": ["b"]},
                 }
             )
@@ -159,7 +159,7 @@ class TestPostgresDepsModule:
                 "find": {
                     "engine": "pgroonga",
                     "index": ("public", "idx_find"),
-                    "source": ("public", "src_find"),
+                    "read": ("public", "src_find"),
                 },
             },
             tx={"main"},
@@ -180,7 +180,7 @@ class TestPostgresDepsModule:
                 "bad": {
                     "engine": "fts",
                     "index": ("public", "i"),
-                    "source": ("public", "s"),
+                    "read": ("public", "s"),
                 },
             },
         )
@@ -281,7 +281,7 @@ class TestConfigurablePostgresSearch:
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
 
-        assert isinstance(out, PostgresFTSSearchAdapter)
+        assert isinstance(out, PostgresFTSSearchAdapterV2)
 
     def test_fts_missing_groups_in_call_raises(self) -> None:
         factory = ConfigurablePostgresSearch(
@@ -386,4 +386,26 @@ def test_validate_postgres_hub_search_conf_duplicate_hub_fk() -> None:
         },
     }
     with pytest.raises(CoreError, match="hub_fk_column must be unique"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_fts_requires_fts_groups() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "t1"),
+                "hub_fk": "a",
+                "engine": "fts",
+            },
+            "m2": {
+                "index": ("public", "i2"),
+                "read": ("public", "t2"),
+                "hub_fk": "b",
+                "engine": "fts",
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="fts_groups"):
         validate_postgres_hub_search_conf(cfg)

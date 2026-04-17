@@ -18,6 +18,7 @@ class DocumentConfigSpec(TypedDict, total=False):
 
 class DocumentEndpointsSpec(TypedDict, total=False):
     get_: SimpleHttpEndpointSpec
+    get_by_number_id: SimpleHttpEndpointSpec
     list_: SimpleHttpEndpointSpec
     raw_list: SimpleHttpEndpointSpec
     create: SimpleHttpEndpointSpec

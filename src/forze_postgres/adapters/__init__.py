@@ -1,11 +1,15 @@
 from .document import PostgresDocumentAdapter
 from .search import (
     FtsGroupLetter,
-    PostgresFTSSearchAdapter,
+    FtsHubLegEngine,
+    PostgresFTSSearchAdapterV2,
     HubLegRuntime,
+    HubSearchLegEngine,
+    PgroongaHubLegEngine,
     PostgresHubPGroongaSearchAdapter,
-    PostgresPGroongaSearchAdapter,
+    PostgresHubSearchAdapter,
     PostgresPGroongaSearchAdapterV2,
+    hub_leg_engine_for,
 )
 from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
@@ -13,11 +17,15 @@ from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
 __all__ = [
     "PostgresDocumentAdapter",
+    "FtsHubLegEngine",
     "HubLegRuntime",
+    "HubSearchLegEngine",
+    "PgroongaHubLegEngine",
+    "hub_leg_engine_for",
     "PostgresHubPGroongaSearchAdapter",
-    "PostgresPGroongaSearchAdapter",
+    "PostgresHubSearchAdapter",
     "PostgresPGroongaSearchAdapterV2",
-    "PostgresFTSSearchAdapter",
+    "PostgresFTSSearchAdapterV2",
     "PostgresTxManagerAdapter",
     "PostgresTxScopeKey",
     "FtsGroupLetter",

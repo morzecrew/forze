@@ -1,4 +1,4 @@
-"""PGroonga hub search: multiple indexed heaps, one hub projection (OR/AND legs)."""
+"""Multi-leg hub search: one hub projection, per-leg index heaps (engine-pluggable legs)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal, TypeVar, final, overload
+from typing import Any, Final, Literal, Protocol, TypeVar, final, overload
 
 import attrs
 from psycopg import sql
@@ -34,7 +34,16 @@ from forze.base.serialization import pydantic_validate_many
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ...kernel.introspect import PostgresIntrospector
 from ..txmanager import PostgresTxScopeKey
-from ._utils import calculate_effective_field_weights
+from ._fts_sql import (
+    FtsGroupLetter,
+    fts_effective_group_weights,
+    fts_match_predicate,
+    fts_rank_cd_expr,
+    fts_rank_cd_weight_array,
+    fts_resolve_tsvector_expr,
+    fts_tsquery_expr,
+)
+from ._pgroonga_sql import pgroonga_match_clause, pgroonga_score_rank_expr
 
 # ----------------------- #
 
@@ -60,122 +69,30 @@ class HubLegRuntime:
     hub_fk_column: str
     heap_pk_column: str
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
+    engine: Literal["pgroonga", "fts"] = "pgroonga"
+    fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = attrs.field(default=None)
+    """Required when :attr:`engine` is ``fts`` (same semantics as :class:`PostgresFTSSearchAdapterV2`)."""
 
 
 # ....................... #
 
 
-def _heap_columns(
-    search: SearchSpec[Any],
-    index_field_map: Mapping[str, str] | None,
-) -> list[str]:
-    if index_field_map is None:
-        return list(search.fields)
+class HubSearchLegEngine(Protocol):
+    """Builds heap ``WHERE``, rank column, and parameters for one hub leg."""
 
-    return [index_field_map.get(f, f) for f in search.fields]
+    async def build_leg(
+        self,
+        leg: HubLegRuntime,
+        *,
+        introspector: PostgresIntrospector,
+        index_alias: str,
+        query: str,
+        options: SearchOptions | None,
+        score_column: str,
+    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        """Return ``(where_sql, rank_select_sql, params)`` for the leg CTE."""
 
-
-# ....................... #
-
-
-async def _pgroonga_match_clause(
-    *,
-    search: SearchSpec[Any],
-    index_field_map: Mapping[str, str] | None,
-    index_qname: PostgresQualifiedName,
-    introspector: PostgresIntrospector,
-    index_alias: str,
-    query: str,
-    options: SearchOptions | None,
-) -> tuple[sql.Composable, list[Any]]:
-    options = options or {}
-    query = query.strip()
-    index = index_qname.string()
-    ia = index_alias
-
-    if not query:
-        return sql.SQL("TRUE"), []
-
-    params: list[Any] = [query, index]
-
-    q_ph = sql.Placeholder()
-    idx_ph = sql.Placeholder()
-    r_ph = sql.Placeholder()
-    w_ph = sql.Placeholder()
-
-    eff_float = calculate_effective_field_weights(search, options)
-    eff_weights = {f: int(w * 100) for f, w in eff_float.items()}
-    heap_cols = _heap_columns(search, index_field_map)
-
-    if len(heap_cols) != len(eff_weights):
-        raise CoreError("Search field / weight alignment error.")
-
-    weights = [eff_weights[f] for f in search.fields]
-    use_fuzzy = options.get("fuzzy", False)
-
-    if search.fuzzy is not None:
-        ratio = search.fuzzy.get("max_distance_ratio", 0.34)
-
-    else:
-        ratio = 0.34
-
-    index_info = await introspector.get_index_info(
-        index=index_qname.name,
-        schema=index_qname.schema,
-    )
-
-    if index_info.expr is None or ("ARRAY" not in index_info.expr.upper()):
-        col = heap_cols[0]
-        text_expr = sql.SQL("coalesce({}::text, '')").format(
-            sql.Identifier(ia, col),
-        )
-
-        if use_fuzzy:
-            params.append(float(ratio))
-            cond = sql.SQL(
-                (
-                    "pgroonga_condition({}::text, "
-                    "index_name => {}::text, "
-                    "fuzzy_max_distance_ratio => {}::float4)"
-                )
-            ).format(q_ph, idx_ph, r_ph)
-
-        else:
-            cond = sql.SQL(
-                "pgroonga_condition({}::text, index_name => {}::text)"
-            ).format(q_ph, idx_ph)
-
-        return sql.SQL("{} &@~ {}").format(text_expr, cond), params
-
-    array_expr = sql.SQL("(ARRAY[{}])").format(
-        sql.SQL(", ").join(
-            sql.SQL("coalesce({}::text, '')").format(sql.Identifier(ia, c))
-            for c in heap_cols
-        )
-    )
-    params.append(weights)
-
-    if use_fuzzy:
-        params.append(float(ratio))
-        cond = sql.SQL(
-            (
-                "pgroonga_condition({}::text, "
-                "index_name => {}::text, "
-                "weights => {}::int[], "
-                "fuzzy_max_distance_ratio => {}::float4)"
-            )
-        ).format(q_ph, idx_ph, w_ph, r_ph)
-
-    else:
-        cond = sql.SQL(
-            (
-                "pgroonga_condition({}::text, "
-                "index_name => {}::text, "
-                "weights => {}::int[])"
-            )
-        ).format(q_ph, idx_ph, w_ph)
-
-    return sql.SQL("{} &@~ {}").format(array_expr, cond), params
+        ...
 
 
 # ....................... #
@@ -183,15 +100,115 @@ async def _pgroonga_match_clause(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresHubPGroongaSearchAdapter[M: BaseModel](
+class PgroongaHubLegEngine(HubSearchLegEngine):
+    """PGroonga hub legs: ``&@~`` match and ``pgroonga_score``."""
+
+    async def build_leg(
+        self,
+        leg: HubLegRuntime,
+        *,
+        introspector: PostgresIntrospector,
+        index_alias: str,
+        query: str,
+        options: SearchOptions | None,
+        score_column: str,
+    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        sw, sp = await pgroonga_match_clause(
+            search=leg.search,
+            index_field_map=leg.index_field_map,
+            index_qname=leg.index_qname,
+            introspector=introspector,
+            index_alias=index_alias,
+            query=query,
+            options=options,
+        )
+        rank = pgroonga_score_rank_expr(
+            index_alias=index_alias,
+            rank_column=score_column,
+            query=query,
+        )
+        return sw, rank, sp
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FtsHubLegEngine(HubSearchLegEngine):
+    """Native FTS hub legs: ``tsvector @@ tsquery`` and ``ts_rank_cd``."""
+
+    async def build_leg(
+        self,
+        leg: HubLegRuntime,
+        *,
+        introspector: PostgresIntrospector,
+        index_alias: str,
+        query: str,
+        options: SearchOptions | None,
+        score_column: str,
+    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        _ = index_alias
+        groups = leg.fts_groups
+
+        if groups is None:
+            raise CoreError("FTS hub leg requires fts_groups.")
+
+        if not query.strip():
+            return (
+                sql.SQL("TRUE"),
+                sql.SQL("(0)::double precision AS {}").format(
+                    sql.Identifier(score_column),
+                ),
+                [],
+            )
+
+        tsv = await fts_resolve_tsvector_expr(introspector, leg.index_qname)
+        tsw_where, tsp_w = fts_tsquery_expr(query, options=options)
+        tsw_rank, tsp_r = fts_tsquery_expr(query, options=options)
+        sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)
+        gw = fts_effective_group_weights(leg.search, groups, options)
+        fts_weights = fts_rank_cd_weight_array(gw)
+        rank_inner = fts_rank_cd_expr(tsv=tsv, tsw=tsw_rank)
+        rank_expr = sql.SQL("{} AS {}").format(
+            rank_inner,
+            sql.Identifier(score_column),
+        )
+        sp = [fts_weights, *tsp_r, *tsp_w]
+
+        return sw, rank_expr, sp
+
+
+_PGROONGA_HUB_LEG_ENGINE: Final[PgroongaHubLegEngine] = PgroongaHubLegEngine()
+_FTS_HUB_LEG_ENGINE: Final[FtsHubLegEngine] = FtsHubLegEngine()
+
+
+def hub_leg_engine_for(leg: HubLegRuntime) -> HubSearchLegEngine:
+    """Resolve the leg engine implementation from :attr:`HubLegRuntime.engine`."""
+
+    eng = leg.engine
+
+    if eng == "pgroonga":
+        return _PGROONGA_HUB_LEG_ENGINE
+
+    if eng == "fts":
+        return _FTS_HUB_LEG_ENGINE
+
+    raise CoreError(f"Unsupported hub search leg engine: {eng!r}.")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresHubSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
     TxScopedPort,
 ):
-    """Multi-leg PGroonga search with a single hub row type.
+    """Multi-leg search with a single hub row type and merged per-leg scores.
 
-    Built via :class:`ConfigurablePostgresHubSearch` so index/heap wiring and
-    merge policy stay in :class:`PostgresHubSearchConfig`.
+    Each leg's :attr:`~HubLegRuntime.engine` selects the implementation
+    (:class:`PgroongaHubLegEngine` or :class:`FtsHubLegEngine`). Built via
+    :class:`ConfigurablePostgresHubSearch` from :class:`PostgresHubSearchConfig`.
     """
 
     hub_spec: HubSearchSpec[M]
@@ -307,14 +324,13 @@ class PostgresHubPGroongaSearchAdapter[M: BaseModel](
             t_alias = f"t{i}"
             lr_alias = leg_aliases[i]
 
-            sw, sp = await _pgroonga_match_clause(
-                search=leg.search,
-                index_field_map=leg.index_field_map,
-                index_qname=leg.index_qname,
+            sw, rank_expr, sp = await hub_leg_engine_for(leg).build_leg(
+                leg,
                 introspector=self.introspector,
                 index_alias=t_alias,
                 query=query,
                 options=options,
+                score_column=_LEG_SCORE,
             )
             params.extend(sp)
 
@@ -332,16 +348,6 @@ class PostgresHubPGroongaSearchAdapter[M: BaseModel](
                 sql.Identifier(t_alias, leg.heap_pk_column),
                 sql.Identifier(f"csub{i}", "cand_id"),
             )
-
-            if query.strip():
-                rank_expr = sql.SQL("{} AS {}").format(
-                    sql.SQL("pgroonga_score({})").format(sql.Identifier(t_alias)),
-                    sql.Identifier(_LEG_SCORE),
-                )
-            else:
-                rank_expr = sql.SQL("(0)::double precision AS {}").format(
-                    sql.Identifier(_LEG_SCORE),
-                )
 
             sel_pk = sql.SQL("{} AS {}").format(
                 sql.SQL("{}.{}").format(
@@ -515,3 +521,7 @@ class PostgresHubPGroongaSearchAdapter[M: BaseModel](
             return [{k: r.get(k, None) for k in return_fields} for r in rows], total
 
         return pydantic_validate_many(self.model_type, rows), total
+
+
+# Backward-compatible alias (PGroonga-only name before engine pluggability).
+PostgresHubPGroongaSearchAdapter = PostgresHubSearchAdapter

@@ -8,6 +8,7 @@ from forze.application.usecases.document import (
     DeleteDocument,
     GetDocument,
     KillDocument,
+    GetDocumentByNumberId,
     RawListDocuments,
     RestoreDocument,
     TypedListDocuments,
@@ -49,6 +50,11 @@ class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
 
     get = facade_op(DocumentOperation.GET, uc=GetDocument[R])
     """Get document usecase."""
+
+    get_by_number_id = facade_op(
+        DocumentOperation.GET_BY_NUMBER_ID, uc=GetDocumentByNumberId[R]
+    )
+    """Get document by number ID usecase."""
 
     list = facade_op(DocumentOperation.LIST, uc=TypedListDocuments[R])
     """List documents usecase."""

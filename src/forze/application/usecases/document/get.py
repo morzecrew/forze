@@ -1,8 +1,10 @@
 import attrs
 
 from forze.application.contracts.document import DocumentQueryPort
-from forze.application.dto import DocumentIdDTO
+from forze.application.dto import DocumentIdDTO, DocumentNumberIdDTO
 from forze.application.execution import Usecase
+from forze.base.errors import NotFoundError
+from forze.domain.constants import NUMBER_ID_FIELD
 from forze.domain.models import ReadDocument
 
 # ----------------------- #
@@ -29,3 +31,34 @@ class GetDocument[R: ReadDocument](Usecase[DocumentIdDTO, R]):
         """
 
         return await self.doc.get(pk=args.id)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class GetDocumentByNumberId[R: ReadDocument](Usecase[DocumentNumberIdDTO, R]):
+    """Usecase that fetches a single document by number ID."""
+
+    doc: DocumentQueryPort[R]
+    """Document port for get operations."""
+
+    # ....................... #
+
+    async def main(self, args: DocumentNumberIdDTO) -> R:
+        """Fetch a document by number ID.
+
+        :param args: Document number ID.
+        :returns: Read model.
+        """
+
+        res = await self.doc.find(
+            filters={
+                "$fields": {NUMBER_ID_FIELD: args.number_id},
+            }
+        )
+
+        if res is None:
+            raise NotFoundError(f"Document not found with number ID: {args.number_id}")
+
+        return res

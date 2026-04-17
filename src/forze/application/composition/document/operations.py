@@ -13,6 +13,9 @@ class DocumentOperation(StrEnum):
     GET = "document.get"
     """Fetch a single document by primary key."""
 
+    GET_BY_NUMBER_ID = "document.get_by_number_id"
+    """Fetch a single document by number ID."""
+
     CREATE = "document.create"
     """Create a new document."""
 

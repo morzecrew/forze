@@ -1,5 +1,7 @@
 from uuid import UUID
 
+from pydantic import PositiveInt
+
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -30,3 +32,13 @@ class DocumentUpdateDTO[In: BaseDTO](DocumentIdRevDTO):
 
     dto: In
     """Update payload DTO."""
+
+
+# ....................... #
+
+
+class DocumentNumberIdDTO(BaseDTO):
+    """DTO for the document number ID."""
+
+    number_id: PositiveInt
+    """Document number ID."""

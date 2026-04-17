@@ -39,7 +39,7 @@ def execution_context(pg_client: PostgresClient):
             SearchQueryDepKey: ConfigurablePostgresSearch(
                 config={
                     "index": ("public", "idx_perf_search_pgroonga"),
-                    "source": ("public", "perf_search_items"),
+                    "read": ("public", "perf_search_items"),
                     "engine": "pgroonga",
                 }
             ),

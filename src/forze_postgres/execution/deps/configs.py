@@ -1,6 +1,7 @@
 from functools import reduce
-from typing import Literal, Mapping, NotRequired, Sequence, TypedDict, final
+from typing import Any, Literal, Mapping, NotRequired, Sequence, TypedDict, final
 
+from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
 
 from ...adapters import FtsGroupLetter
@@ -92,7 +93,7 @@ class PostgresHubSearchMemberConfig(PostgresSearchConfig):
 
 @final
 class PostgresHubSearchConfig(_BasePostgresConfig):
-    """Postgres configuration for :class:`PostgresHubPGroongaSearchAdapter`."""
+    """Postgres configuration for :class:`PostgresHubSearchAdapter`."""
 
     hub: tuple[str, str]
     """Hub relation (schema, table / view / materialized view) for filters and row shape."""
@@ -135,6 +136,31 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
             raise CoreError("hub_fk_column must be unique for each leg.")
 
         fk_seen.append(fk)
+
+        eng = leg.get("engine", "pgroonga")
+
+        if eng == "fts" and not leg.get("fts_groups"):
+            raise CoreError(
+                f"Hub search leg {i} with engine 'fts' requires fts_groups."
+            )
+
+
+# ....................... #
+
+
+def validate_fts_groups_for_search_spec(
+    spec: SearchSpec[Any],
+    fts_groups: dict[FtsGroupLetter, Sequence[str]],
+) -> None:
+    """Ensure ``fts_groups`` covers every field in ``spec`` (shared by search + hub)."""
+
+    if not fts_groups:
+        raise CoreError("FTS groups are required for FTS engine.")
+
+    grouped_fields = reduce(lambda a, g: a + g, map(list, fts_groups.values()))
+
+    if any(f not in grouped_fields for f in spec.fields):
+        raise CoreError("All search fields must be included in FTS groups.")
 
 
 # ....................... #

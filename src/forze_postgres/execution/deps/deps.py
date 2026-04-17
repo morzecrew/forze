@@ -1,6 +1,5 @@
 """Factory functions for Postgres document and tx manager adapters."""
 
-from functools import reduce
 from typing import Any, Sequence, final
 
 import attrs
@@ -26,8 +25,8 @@ from ...adapters import (
     FtsGroupLetter,
     HubLegRuntime,
     PostgresDocumentAdapter,
-    PostgresFTSSearchAdapter,
-    PostgresHubPGroongaSearchAdapter,
+    PostgresFTSSearchAdapterV2,
+    PostgresHubSearchAdapter,
     PostgresPGroongaSearchAdapterV2,
     PostgresTxManagerAdapter,
 )
@@ -38,6 +37,7 @@ from .configs import (
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    validate_fts_groups_for_search_spec,
     validate_postgres_hub_search_conf,
 )
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -155,28 +155,11 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
 
     # ....................... #
 
-    def __validate_fts_groups(
-        self,
-        spec: SearchSpec[Any],
-        fts_groups: dict[FtsGroupLetter, Sequence[str]],
-    ) -> None:
-        """Validate FTS groups."""
-
-        if not fts_groups:
-            raise CoreError("FTS groups are required for FTS engine.")
-
-        grouped_fields = reduce(lambda a, g: a + g, map(list, fts_groups.values()))
-
-        if any(f not in grouped_fields for f in spec.fields):
-            raise CoreError("All search fields must be included in FTS groups.")
-
-    # ....................... #
-
     def __call__(
         self,
         context: ExecutionContext,
         spec: SearchSpec[Any],
-    ) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapter[Any]:
+    ) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapterV2[Any]:
         tenant_aware = self.config.get("tenant_aware", False)
 
         index_qname = PostgresQualifiedName(*self.config["index"])
@@ -207,18 +190,21 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
                 if fts_groups is None:
                     raise CoreError("FTS groups are required for FTS engine.")
 
-                self.__validate_fts_groups(spec, fts_groups)
+                validate_fts_groups_for_search_spec(spec, fts_groups)
 
-                return PostgresFTSSearchAdapter(
+                return PostgresFTSSearchAdapterV2(
                     spec=spec,
-                    source_qname=read_qname,
                     index_qname=index_qname,
+                    source_qname=read_qname,
+                    index_heap_qname=heap_qname,
+                    fts_groups=fts_groups,
+                    join_pairs=self.config.get("join_pairs"),
+                    index_field_map=self.config.get("field_map"),
                     client=context.dep(PostgresClientDepKey),
                     model_type=spec.model_type,
                     introspector=context.dep(PostgresIntrospectorDepKey),
                     tenant_provider=context.get_tenant_id,
                     tenant_aware=tenant_aware,
-                    fts_groups=fts_groups,
                 )
 
 
@@ -228,7 +214,7 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
-    """Build :class:`PostgresHubPGroongaSearchAdapter` from spec + :class:`PostgresHubSearchConfig`."""
+    """Build :class:`PostgresHubSearchAdapter` from spec + :class:`PostgresHubSearchConfig`."""
 
     config: PostgresHubSearchConfig
     """Postgres hub relation, per-leg indexes/heaps, merge options."""
@@ -239,7 +225,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
         self,
         context: ExecutionContext,
         spec: HubSearchSpec[Any],
-    ) -> PostgresHubPGroongaSearchAdapter[Any]:
+    ) -> PostgresHubSearchAdapter[Any]:
         validate_postgres_hub_search_conf(self.config)
 
         hub = PostgresQualifiedName(*self.config["hub"])
@@ -255,6 +241,23 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                     f"Member '{m.name}' not found in PostgresHubSearchConfig['members']."
                 )
 
+            engine = c.get("engine", "pgroonga")
+
+            fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = None
+
+            if engine == "fts":
+                fts_groups = c.get("fts_groups")
+
+                if fts_groups is None:
+                    raise CoreError("FTS groups are required for FTS hub leg.")
+
+                validate_fts_groups_for_search_spec(m, fts_groups)
+
+            elif engine != "pgroonga":
+                raise CoreError(
+                    f"Hub search leg engine {engine!r} is not supported; use 'pgroonga' or 'fts'."
+                )
+
             rt = HubLegRuntime(
                 search=m,
                 index_qname=PostgresQualifiedName(*c["index"]),
@@ -262,10 +265,12 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 hub_fk_column=c["hub_fk"],
                 heap_pk_column=c.get("heap_pk", ID_FIELD),
                 index_field_map=c.get("field_map"),
+                engine=engine,
+                fts_groups=fts_groups,
             )
             members.append(rt)
 
-        return PostgresHubPGroongaSearchAdapter(
+        return PostgresHubSearchAdapter(
             hub_spec=spec,
             members=members,
             combine=self.config.get("combine_strategy", "or"),
