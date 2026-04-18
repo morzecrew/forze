@@ -24,7 +24,7 @@ from .features import (
 )
 from .mapping import (
     BodyAsIsMapper,
-    NullMapper,
+    EmptyMapper,
     QueryAsIsBodyAssignMapper,
     QueryAsIsMapper,
 )
@@ -51,7 +51,7 @@ __all__ = [
     "BodyAsIsMapper",
     "QueryAsIsBodyAssignMapper",
     "QueryAsIsMapper",
-    "NullMapper",
     "facade_dependency",
     "SimpleHttpEndpointSpec",
+    "EmptyMapper",
 ]

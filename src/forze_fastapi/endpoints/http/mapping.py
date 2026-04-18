@@ -7,6 +7,7 @@ from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_validate
+from forze.domain.models import BaseDTO
 
 from .contracts import HttpRequestDTO
 
@@ -18,8 +19,8 @@ ReqDTO = HttpRequestDTO[Any, Any, Any, Any, Any]
 
 
 @attrs.define(slots=True, frozen=True)
-class NullMapper(MapperPort[ReqDTO, None]):
-    """Mapper that does nothing."""
+class EmptyMapper(MapperPort[ReqDTO, BaseDTO]):
+    """Mapper that maps the request to an empty DTO."""
 
     # ....................... #
 
@@ -29,8 +30,8 @@ class NullMapper(MapperPort[ReqDTO, None]):
         /,
         *,
         ctx: ExecutionContext | None = None,
-    ) -> None:
-        return None
+    ) -> BaseDTO:
+        return BaseDTO()
 
 
 # ....................... #
