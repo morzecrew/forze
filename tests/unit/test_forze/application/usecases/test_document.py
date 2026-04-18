@@ -7,8 +7,18 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentQueryPort
-from forze.application.dto import DocumentIdDTO, ListRequestDTO, RawListRequestDTO
-from forze.application.usecases.document import GetDocument, RawListDocuments, TypedListDocuments
+from forze.application.dto import (
+    DocumentIdDTO,
+    DocumentNumberIdDTO,
+    ListRequestDTO,
+    RawListRequestDTO,
+)
+from forze.application.usecases.document import (
+    GetDocument,
+    GetDocumentByNumberId,
+    RawListDocuments,
+    TypedListDocuments,
+)
 from forze.base.errors import NotFoundError
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 
@@ -82,6 +92,32 @@ class TestTypedListDocuments:
         )
         await uc(ListRequestDTO(page=1, size=10))
         mapper.assert_awaited_once()
+
+
+class TestGetDocumentByNumberId:
+    @pytest.mark.asyncio
+    async def test_get_by_number_id_returns_document(self, stub_ctx) -> None:
+        expected = object()
+        doc_port = AsyncMock(spec=DocumentQueryPort)
+        doc_port.find = AsyncMock(return_value=expected)
+
+        usecase = GetDocumentByNumberId(ctx=stub_ctx, doc=doc_port)
+        result = await usecase(DocumentNumberIdDTO(number_id=42))
+
+        doc_port.find.assert_awaited_once_with(filters={"$fields": {"number_id": 42}})
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_get_by_number_id_missing_raises(
+        self,
+        stub_ctx,
+    ) -> None:
+        doc_port = AsyncMock(spec=DocumentQueryPort)
+        doc_port.find = AsyncMock(return_value=None)
+        usecase = GetDocumentByNumberId(ctx=stub_ctx, doc=doc_port)
+
+        with pytest.raises(NotFoundError, match="Document not found with number ID"):
+            await usecase(DocumentNumberIdDTO(number_id=10_001))
 
 
 class TestRawListDocuments:
