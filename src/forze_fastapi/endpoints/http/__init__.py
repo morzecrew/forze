@@ -22,7 +22,12 @@ from .features import (
     ETagProviderPort,
     IdempotencyFeature,
 )
-from .mapping import BodyAsIsMapper, QueryAsIsBodyAssignMapper, QueryAsIsMapper
+from .mapping import (
+    BodyAsIsMapper,
+    NullMapper,
+    QueryAsIsBodyAssignMapper,
+    QueryAsIsMapper,
+)
 
 # ----------------------- #
 
@@ -46,6 +51,7 @@ __all__ = [
     "BodyAsIsMapper",
     "QueryAsIsBodyAssignMapper",
     "QueryAsIsMapper",
+    "NullMapper",
     "facade_dependency",
     "SimpleHttpEndpointSpec",
 ]

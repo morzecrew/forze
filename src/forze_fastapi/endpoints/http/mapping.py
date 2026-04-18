@@ -18,6 +18,25 @@ ReqDTO = HttpRequestDTO[Any, Any, Any, Any, Any]
 
 
 @attrs.define(slots=True, frozen=True)
+class NullMapper(MapperPort[ReqDTO, None]):
+    """Mapper that does nothing."""
+
+    # ....................... #
+
+    async def __call__(
+        self,
+        dto: ReqDTO,
+        /,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> None:
+        return None
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
 class QueryAsIsMapper[Out: BaseModel](MapperPort[ReqDTO, Out]):
     """Mapper that maps the query parameters to the output model."""
 
