@@ -33,6 +33,7 @@ from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
+from ._options import search_options_for_simple_adapter
 from ._pgroonga_sql import pgroonga_match_clause, pgroonga_score_rank_expr
 
 # ----------------------- #
@@ -264,6 +265,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
+        options = search_options_for_simple_adapter(options)
         fw, fp = await self.where_clause(filters)
         sw, sp = await self._pgroonga_match(query, options=options)
 

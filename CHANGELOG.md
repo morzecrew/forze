@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze_postgres` hub search: per-member score multipliers from `HubSearchSpec.default_member_weights` and `SearchOptions` (`member_weights`, `members`); legs with weight `0` skip index matching. `PostgresFTSSearchAdapterV2` / `PostgresPGroongaSearchAdapterV2` and `forze_mock` simple search log a warning and ignore hub-only option keys; hub search logs a warning and ignores `weights` / `fields` (use per-leg specs and member options instead).
 - `forze_postgres`: `PostgresFTSSearchAdapterV2` runs native FTS (`tsvector` / `ts_rank_cd`) on an index heap while filters and row shape use a separate projection relation, using the same `WITH filtered AS …, scored AS …` pattern as `PostgresPGroongaSearchAdapterV2`.
 - `forze_postgres.adapters.search._fts_sql`: shared FTS helpers (`tsvector` resolution from the catalog, `websearch_to_tsquery`, group weights, match predicate, `ts_rank_cd`) for FTS v2 and hub legs.
 - `forze_postgres`: `PostgresPGroongaSearchAdapterV2` runs PGroonga matching on an index heap table while applying filters and returning rows from a separate projection relation (view), using a `WITH filtered AS …, scored AS …` pipeline and `ORDER BY` that combines `pgroonga_score` with user sorts.

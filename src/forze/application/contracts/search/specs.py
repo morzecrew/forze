@@ -76,6 +76,9 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     )
     """At least two :class:`SearchSpec` members."""
 
+    default_member_weights: Mapping[str, float] | None = attrs.field(default=None)
+    """Default weights for hub members."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -85,6 +88,20 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             raise CoreError(
                 "Each hub search member must use a SearchSpec with a distinct name."
             )
+
+        if self.default_member_weights:
+            for member in self.members:
+                if member.name not in self.default_member_weights:
+                    raise CoreError(
+                        f"Default weight for unknown search field '{member.name}'."
+                    )
+
+                w = self.default_member_weights[member.name]
+
+                if w < 0 or w > 1:
+                    raise CoreError(
+                        f"Default weight for search field '{member.name}' should be between 0.0 and 1.0."
+                    )
 
 
 # ....................... #

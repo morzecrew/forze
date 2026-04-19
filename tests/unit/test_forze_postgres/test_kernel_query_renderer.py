@@ -141,6 +141,12 @@ class TestPsycopgQueryRenderer:
         assert p1 == [10]
         assert p2 == [20]
 
+    def test_sql_injection_like_strings_are_bound_not_interpolated(self) -> None:
+        """User-supplied text including quotes and SQL keywords is a single parameter."""
+        payload = "'; DROP TABLE users; --"
+        _, params = PsycopgQueryRenderer().render(QueryField("title", "$eq", payload))
+        assert params == [payload]
+
     def test_in_and_nin(self) -> None:
         """Membership operators bind an array parameter."""
         vals = [1, 2, 3]

@@ -20,3 +20,13 @@ class SearchOptions(TypedDict, total=False):
     For specified fields weights will be set to 1.0, for other fields weights will be set to 0.0.
     Ignored if weights are provided.
     """
+
+    member_weights: dict[str, float]
+    """Weights for hub members."""
+
+    members: Sequence[str]
+    """Simple alternative to member_weights for specifying hub members to search on.
+
+    For specified members weights will be set to 1.0, for other members weights will be set to 0.0.
+    Ignored if member_weights are provided.
+    """

@@ -126,6 +126,17 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     assert t2 >= 1
     assert set(titles[0].keys()) == {"title"}
 
+    no_hits, n_zero = await adapter.search("zzzabsenttoken")
+    assert n_zero == 0
+    assert no_hits == []
+
+    class TitleSlice(BaseModel):
+        title: str
+
+    slim, n_slim = await adapter.search("postgres OR search", return_type=TitleSlice)
+    assert n_slim == 1
+    assert slim[0].title == "PostgreSQL FTS"
+
 
 @pytest.mark.asyncio
 async def test_fts_search_with_filters_and_empty_query(

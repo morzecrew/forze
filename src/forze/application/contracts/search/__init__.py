@@ -1,4 +1,6 @@
 from .deps import (
+    FederatedSearchQueryDepKey,
+    FederatedSearchQueryDepPort,
     HubSearchQueryDepKey,
     HubSearchQueryDepPort,
     SearchCommandDepKey,
@@ -6,8 +8,9 @@ from .deps import (
     SearchQueryDepKey,
     SearchQueryDepPort,
 )
+from .models import FederatedSearchReadModel
 from .ports import SearchCommandPort, SearchQueryPort
-from .specs import HubSearchSpec, SearchSpec
+from .specs import FederatedSearchSpec, HubSearchSpec, SearchSpec
 from .types import SearchOptions
 
 # ----------------------- #
@@ -24,4 +27,8 @@ __all__ = [
     "SearchCommandDepPort",
     "SearchQueryDepPort",
     "HubSearchQueryDepPort",
+    "FederatedSearchQueryDepKey",
+    "FederatedSearchQueryDepPort",
+    "FederatedSearchSpec",
+    "FederatedSearchReadModel",
 ]

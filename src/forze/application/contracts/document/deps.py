@@ -1,27 +1,16 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..base import DepKey
 from ..cache import CachePort
-from .ports import DocumentCommandPort, DocumentQueryPort
+from .ports import C, D, DocumentCommandPort, DocumentQueryPort, R, U
 from .specs import DocumentSpec
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
-
-DocSpec = DocumentSpec[Any, Any, Any, Any]
-"""Type-erased document specification."""
-
-DocQueryPort = DocumentQueryPort[Any]
-"""Type-erased document query port."""
-
-DocCommandPort = DocumentCommandPort[Any, Any, Any, Any]
-"""Type-erased document command port."""
-
-# ....................... #
 
 
 @runtime_checkable
@@ -31,9 +20,9 @@ class DocumentQueryDepPort(Protocol):
     def __call__(
         self,
         context: "ExecutionContext",
-        spec: DocSpec,
+        spec: DocumentSpec[R, D, C, U],
         cache: CachePort | None = None,
-    ) -> DocQueryPort:
+    ) -> DocumentQueryPort[R]:
         """Build a document query port, optionally backed by a cache."""
         ...
 
@@ -48,9 +37,9 @@ class DocumentCommandDepPort(Protocol):
     def __call__(
         self,
         context: "ExecutionContext",
-        spec: DocSpec,
+        spec: DocumentSpec[R, D, C, U],
         cache: CachePort | None = None,
-    ) -> DocCommandPort:
+    ) -> DocumentCommandPort[R, D, C, U]:
         """Build a document command port, optionally backed by a cache."""
         ...
 

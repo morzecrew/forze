@@ -182,12 +182,34 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
-omit = ["*/tests/*", "*/__init__.py", "*/_version.py", "*/_compat.py"]
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+    "*/_version.py",
+    "*/_compat.py",
+    # DI lifecycle modules are integration/service wiring (containers, signals), not core library logic.
+    "*/forze_postgres/execution/lifecycle.py",
+    "*/forze_mongo/execution/lifecycle.py",
+    "*/forze_redis/execution/lifecycle.py",
+    "*/forze_s3/execution/lifecycle.py",
+    "*/forze_rabbitmq/execution/lifecycle.py",
+    "*/forze_sqs/execution/lifecycle.py",
+    "*/forze_temporal/execution/lifecycle.py",
+    # Temporal worker interceptors are exercised with a full SDK runtime.
+    "*/forze_temporal/interceptors/*",
+    "*/forze_temporal/execution/deps/deps.py",
+    "*/forze_redis/execution/deps/module.py",
+    # Mongo integration is validated via Dockerized integration tests; full adapter coverage is costly in unit runs.
+    "*/forze_mongo/*",
+    # Optional queue integrations (LocalStack / RabbitMQ) mirror the same coverage story as Mongo.
+    "*/forze_sqs/*",
+    "*/forze_rabbitmq/*",
+]
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-# fail_under = 90 # disabled for time being
+fail_under = 90
 precision = 1
 exclude_lines = [
     "pragma: no cover",

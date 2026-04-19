@@ -43,6 +43,7 @@ from ._fts_sql import (
     fts_resolve_tsvector_expr,
     fts_tsquery_expr,
 )
+from ._options import prepare_hub_search_options
 from ._pgroonga_sql import pgroonga_match_clause, pgroonga_score_rank_expr
 
 # ----------------------- #
@@ -298,6 +299,11 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
+        leg_options, member_weights_list = prepare_hub_search_options(
+            self.hub_spec,
+            options,
+        )
+
         fw, fp = await self.where_clause(filters)
 
         hub_cte = sql.SQL(
@@ -316,11 +322,17 @@ class PostgresHubSearchAdapter[M: BaseModel](
             fw=fw,
         )
 
+        active = [
+            (i, leg, member_weights_list[i])
+            for i, leg in enumerate(self.members)
+            if member_weights_list[i] > 0.0
+        ]
+
         params: list[Any] = [*fp]
         leg_cte_parts: list[sql.Composable] = []
         leg_aliases = [f"lr{i}" for i in range(len(self.members))]
 
-        for i, leg in enumerate(self.members):
+        for i, leg, _ in active:
             t_alias = f"t{i}"
             lr_alias = leg_aliases[i]
 
@@ -329,7 +341,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 introspector=self.introspector,
                 index_alias=t_alias,
                 query=query,
-                options=options,
+                options=leg_options,
                 score_column=_LEG_SCORE,
             )
             params.extend(sp)
@@ -378,73 +390,103 @@ class PostgresHubSearchAdapter[M: BaseModel](
             )
             leg_cte_parts.append(leg_cte)
 
-        score_terms = [
-            sql.SQL("COALESCE({}.{}, 0)").format(
-                sql.Identifier(leg_aliases[i]),
-                sql.Identifier(_LEG_SCORE),
-            )
-            for i in range(len(self.members))
-        ]
-        if self.score_merge == "max":
-            merge_expr = sql.SQL("GREATEST({})").format(sql.SQL(", ").join(score_terms))
-
-        else:
-            merge_expr = sql.SQL("({})").format(sql.SQL(" + ").join(score_terms))
-
-        join_parts: list[sql.Composable] = []
-
-        for i, leg in enumerate(self.members):
-            join_parts.append(
-                sql.SQL("LEFT JOIN {} ON {} = {}").format(
-                    sql.Identifier(leg_aliases[i]),
-                    sql.Identifier(_HUB_CTE, leg.hub_fk_column),
-                    sql.Identifier(leg_aliases[i], _LEG_EID),
-                )
-            )
-
-        leg_joins = sql.SQL(" ").join(join_parts)
-
-        if not query.strip():
-            combine_sql = sql.SQL("TRUE")
-
-        else:
-            leg_null_checks = [
-                sql.SQL("{} IS NOT NULL").format(
-                    sql.Identifier(leg_aliases[i], _LEG_EID),
-                )
-                for i in range(len(self.members))
-            ]
-
-            if self.combine == "or":
-                combine_sql = sql.SQL(" OR ").join(leg_null_checks)  # type: ignore[assignment]
-
-            else:
-                combine_sql = sql.SQL(" AND ").join(leg_null_checks)  # type: ignore[assignment]
-
         hf_cols = sql.SQL(", ").join(
             sql.SQL("{}.{}").format(sql.Identifier(_HUB_CTE), sql.Identifier(f))
             for f in sorted(self.read_fields)
         )
 
-        combo_cte = sql.SQL(
-            """
-            ,
-            {combo} AS (
-                SELECT {hf_cols}, {merge} AS {rank}
-                FROM {hf}
-                {leg_joins}
-                WHERE {combine}
+        merge_expr: sql.Composable
+        if not active:
+            merge_expr = sql.SQL("(0)::double precision")
+            combine_sql = sql.SQL("TRUE")
+
+            combo_cte = sql.SQL(
+                """
+                ,
+                {combo} AS (
+                    SELECT {hf_cols}, {merge} AS {rank}
+                    FROM {hf}
+                    WHERE {combine}
+                )
+                """
+            ).format(
+                combo=sql.Identifier("combo"),
+                hf_cols=hf_cols,
+                merge=merge_expr,
+                rank=sql.Identifier(_RANK),
+                hf=sql.Identifier(_HUB_CTE),
+                combine=combine_sql,
             )
-            """
-        ).format(
-            combo=sql.Identifier("combo"),
-            hf_cols=hf_cols,
-            merge=merge_expr,
-            rank=sql.Identifier(_RANK),
-            hf=sql.Identifier(_HUB_CTE),
-            leg_joins=leg_joins,
-            combine=combine_sql,
-        )
+
+        else:
+            score_terms = [
+                sql.SQL("({}) * {}").format(
+                    sql.SQL("COALESCE({}.{}, 0)").format(
+                        sql.Identifier(leg_aliases[i]),
+                        sql.Identifier(_LEG_SCORE),
+                    ),
+                    sql.Literal(float(w)),
+                )
+                for i, _, w in active
+            ]
+
+            if self.score_merge == "max":
+                merge_expr = sql.SQL("GREATEST({})").format(
+                    sql.SQL(", ").join(score_terms),
+                )
+
+            else:
+                merge_expr = sql.SQL("({})").format(sql.SQL(" + ").join(score_terms))
+
+            join_parts: list[sql.Composable] = []
+
+            for i, leg, _ in active:
+                join_parts.append(
+                    sql.SQL("LEFT JOIN {} ON {} = {}").format(
+                        sql.Identifier(leg_aliases[i]),
+                        sql.Identifier(_HUB_CTE, leg.hub_fk_column),
+                        sql.Identifier(leg_aliases[i], _LEG_EID),
+                    )
+                )
+
+            leg_joins = sql.SQL(" ").join(join_parts)
+
+            if not query.strip():
+                combine_sql = sql.SQL("TRUE")
+
+            else:
+                leg_null_checks = [
+                    sql.SQL("{} IS NOT NULL").format(
+                        sql.Identifier(leg_aliases[i], _LEG_EID),
+                    )
+                    for i, _, _ in active
+                ]
+
+                if self.combine == "or":
+                    combine_sql = sql.SQL(" OR ").join(leg_null_checks)  # type: ignore[assignment]
+
+                else:
+                    combine_sql = sql.SQL(" AND ").join(leg_null_checks)  # type: ignore[assignment]
+
+            combo_cte = sql.SQL(
+                """
+                ,
+                {combo} AS (
+                    SELECT {hf_cols}, {merge} AS {rank}
+                    FROM {hf}
+                    {leg_joins}
+                    WHERE {combine}
+                )
+                """
+            ).format(
+                combo=sql.Identifier("combo"),
+                hf_cols=hf_cols,
+                merge=merge_expr,
+                rank=sql.Identifier(_RANK),
+                hf=sql.Identifier(_HUB_CTE),
+                leg_joins=leg_joins,
+                combine=combine_sql,
+            )
 
         order_parts: list[sql.Composable] = [
             sql.SQL("{} DESC NULLS LAST").format(

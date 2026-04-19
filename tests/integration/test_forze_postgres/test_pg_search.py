@@ -50,6 +50,55 @@ def execution_context(pg_client: PostgresClient):
 
 
 @pytest.mark.asyncio
+async def test_postgres_pgroonga_single_column_index(
+    pg_client: PostgresClient,
+) -> None:
+    """PGroonga index on one column (non-ARRAY expression) exercises heap match path."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    await pg_client.execute(
+        """
+        CREATE TABLE pg1col_docs (
+            id uuid PRIMARY KEY,
+            title text NOT NULL
+        );
+        CREATE INDEX idx_pg1col_title ON pg1col_docs USING pgroonga (title);
+        """
+    )
+    await pg_client.execute(
+        "INSERT INTO pg1col_docs (id, title) VALUES (%(id)s, %(t)s)",
+        {"id": uuid4(), "t": "singleton pgroonga row"},
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config={
+                        "index": ("public", "idx_pg1col_title"),
+                        "read": ("public", "pg1col_docs"),
+                        "engine": "pgroonga",
+                    }
+                ),
+            }
+        )
+    )
+
+    class OneCol(BaseModel):
+        id: UUID
+        title: str
+
+    spec = SearchSpec(name="pg1col", model_type=OneCol, fields=["title"])
+    adapter = ctx.search_query(spec)
+    rows, n = await adapter.search("singleton", options={"fuzzy": True})
+    assert n == 1
+    assert rows[0].title == "singleton pgroonga row"
+
+
+@pytest.mark.asyncio
 async def test_postgres_search_adapter(
     pg_client: PostgresClient, execution_context: ExecutionContext
 ):
@@ -117,6 +166,19 @@ async def test_postgres_search_adapter(
     assert cnt2 == 1
     assert len(res2) == 1
     assert res2[0].title == "Forze Framework"
+
+    class TitleOnly(BaseModel):
+        title: str
+
+    as_titles, n_t = await adapter.search("python", return_type=TitleOnly)
+    assert n_t == 3
+    assert {r.title for r in as_titles} == {d["title"] for d in docs}
+
+    none_rows, n_none = await adapter.search("zznonexistent999")
+    assert n_none == 0
+    assert none_rows == []
+
+    await adapter.search("python", options={"fuzzy": True})
 
     # Weighted search, pagination, explicit sort, and partial field projection
     page, total = await adapter.search(
@@ -405,6 +467,55 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
 
+    sorted_by_qty, cnt_sort = await adapter.search(
+        "alpha",
+        sorts={"quantity": "asc"},
+    )
+    assert cnt_sort == 2
+    assert [h.quantity for h in sorted_by_qty] == [1, 3]
+
+    page1, cnt_page = await adapter.search(
+        "alpha",
+        pagination={"limit": 1, "offset": 0},
+    )
+    assert cnt_page == 2
+    assert len(page1) == 1
+
+    class LinkIdQty(BaseModel):
+        id: UUID
+        quantity: int
+
+    partial, cnt_partial = await adapter.search(
+        "alpha",
+        return_type=LinkIdQty,
+    )
+    assert cnt_partial == 2
+    assert {p.id for p in partial} == {lid1, lid3}
+    assert all(isinstance(p.quantity, int) for p in partial)
+
+    raw_links, cnt_raw = await adapter.search(
+        "alpha",
+        return_fields=["id", "quantity"],
+    )
+    assert cnt_raw == 2
+    assert {r["id"] for r in raw_links} == {lid1, lid3}
+
+    hub_pg_sum: PostgresHubSearchConfig = {**hub_pg, "score_merge": "sum"}
+    adapter_sum = ConfigurablePostgresHubSearch(config=hub_pg_sum)(ctx_hub, hub_spec)
+    sum_hits, sum_cnt = await adapter_sum.search("alpha")
+    assert sum_cnt == 2
+    assert {h.id for h in sum_hits} == {lid1, lid3}
+
+    all_legs_off, n_off = await adapter.search(
+        "alpha",
+        options={"member_weights": {det_name: 0.0, spec_name: 0.0}},
+    )
+    assert n_off == 3
+    assert {h.id for h in all_legs_off} == {lid1, lid2, lid3}
+
+    _, n_no_match = await adapter.search("no_such_term_xyz")
+    assert n_no_match == 0
+
     hits2, cnt2 = await adapter.search(
         "gamma",
         filters={"$fields": {"spec_id": str(s1)}},
@@ -433,6 +544,19 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
 
     browse_ws, c_ws = await adapter.search("   \t")
     assert c_ws == 3
+
+    zero_detail, c_z = await adapter.search(
+        "alpha",
+        options={"member_weights": {det_name: 0.0, spec_name: 1.0}},
+    )
+    assert c_z == 0
+
+    only_spec, c_os = await adapter.search(
+        "gamma",
+        options={"members": [spec_name]},
+    )
+    assert c_os == 2
+    assert {h.id for h in only_spec} == {lid1, lid2}
 
 
 @pytest.mark.asyncio
@@ -558,6 +682,10 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     )
     assert cnt2 == 2
     assert {h.id for h in hits2} == {lid1, lid2}
+
+    fts_browse, fts_cnt = await adapter.search("")
+    assert fts_cnt == 3
+    assert {h.id for h in fts_browse} == {lid1, lid2, lid3}
 
 
 @pytest.mark.asyncio

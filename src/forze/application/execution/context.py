@@ -3,14 +3,16 @@
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from enum import StrEnum
-from typing import Any, AsyncIterator, Iterator, final
+from typing import Any, AsyncIterator, Iterator, TypeVar, final
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 from structlog.contextvars import bound_contextvars
 
 from forze.application._logger import logger
 from forze.base.errors import CoreError
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from ..contracts.base import DepKey, DepsPort
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
@@ -23,6 +25,9 @@ from ..contracts.document import (
     DocumentSpec,
 )
 from ..contracts.search import (
+    FederatedSearchQueryDepKey,
+    FederatedSearchReadModel,
+    FederatedSearchSpec,
     HubSearchQueryDepKey,
     HubSearchSpec,
     SearchQueryDepKey,
@@ -33,6 +38,15 @@ from ..contracts.storage import StorageDepKey, StoragePort, StorageSpec
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 
 # ----------------------- #
+# TypeVars for consistency
+
+doc_R = TypeVar("doc_R", bound=ReadDocument)
+doc_D = TypeVar("doc_D", bound=Document)
+doc_C = TypeVar("doc_C", bound=CreateDocumentCmd)
+doc_U = TypeVar("doc_U", bound=BaseDTO)
+search_M = TypeVar("search_M", bound=BaseModel)
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -290,8 +304,8 @@ class ExecutionContext:
 
     def doc_query(
         self,
-        spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentQueryPort[Any]:
+        spec: DocumentSpec[doc_R, doc_D, doc_C, doc_U],
+    ) -> DocumentQueryPort[doc_R]:
         """Resolve a document query port for the given spec.
 
         :param spec: Document resource specification.
@@ -318,8 +332,8 @@ class ExecutionContext:
 
     def doc_command(
         self,
-        spec: DocumentSpec[Any, Any, Any, Any],
-    ) -> DocumentCommandPort[Any, Any, Any, Any]:
+        spec: DocumentSpec[doc_R, doc_D, doc_C, doc_U],
+    ) -> DocumentCommandPort[doc_R, doc_D, doc_C, doc_U]:
         """Resolve a document command port for the given spec.
 
         :param spec: Document resource specification.
@@ -426,7 +440,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def search_query(self, spec: SearchSpec[Any]) -> SearchQueryPort[Any]:
+    def search_query(self, spec: SearchSpec[search_M]) -> SearchQueryPort[search_M]:
         """Resolve a search query port.
 
         :param spec: Search resource specification.
@@ -446,7 +460,10 @@ class ExecutionContext:
 
     # ....................... #
 
-    def hub_search_query(self, spec: HubSearchSpec[Any]) -> SearchQueryPort[Any]:
+    def hub_search_query(
+        self,
+        spec: HubSearchSpec[search_M],
+    ) -> SearchQueryPort[search_M]:
         """Resolve a hub (homogeneous multi-leg) search query port.
 
         :param spec: Hub search specification.
@@ -458,6 +475,29 @@ class ExecutionContext:
 
         logger.trace(
             "Resolved hub search query port '%s' -> %s",
+            str(spec.name),
+            type(se).__qualname__,
+        )
+
+        return se
+
+    # ....................... #
+
+    def federated_search_query(
+        self,
+        spec: FederatedSearchSpec[search_M],
+    ) -> SearchQueryPort[FederatedSearchReadModel[search_M]]:
+        """Resolve a federated search query port.
+
+        :param spec: Federated search specification.
+        :returns: Search query port returning federated rows.
+        """
+
+        dep = self.dep(FederatedSearchQueryDepKey, route=spec.name)
+        se = dep(self, spec)
+
+        logger.trace(
+            "Resolved federated search query port '%s' -> %s",
             str(spec.name),
             type(se).__qualname__,
         )

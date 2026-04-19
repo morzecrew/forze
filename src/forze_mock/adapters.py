@@ -73,6 +73,7 @@ from forze.application.contracts.stream import (
 )
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
+from forze.base.logging import Logger
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     pydantic_dump,
@@ -93,6 +94,25 @@ M = TypeVar("M", bound=BaseModel)
 T = TypeVar("T", bound=BaseModel)
 
 _MISSING = object()
+
+_mock_search_logger = Logger("forze_mock.adapters")
+
+
+def _search_options_for_mock_simple(options: SearchOptions | None) -> SearchOptions:
+    opts = dict(options or {})
+
+    if "member_weights" in opts or "members" in opts:
+        _mock_search_logger.warning(
+            "mock_search_options_hub_keys_ignored",
+            message=(
+                "SearchOptions member_weights and members are ignored for simple "
+                "(single-index) mock search"
+            ),
+        )
+        opts.pop("member_weights", None)
+        opts.pop("members", None)
+
+    return cast(SearchOptions, opts)
 
 
 # ----------------------- #
@@ -1240,6 +1260,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
+        options = _search_options_for_mock_simple(options)
         fields, weights = self._resolve_fields(options)
 
         with self.state.lock:
