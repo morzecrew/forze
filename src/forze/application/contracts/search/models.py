@@ -10,5 +10,5 @@ class FederatedSearchReadModel[X: BaseModel](BaseModel):
     hit: X
     """Search hit data."""
 
-    branch_name: str
-    """Search branch name."""
+    member: str
+    """Leg :class:`~forze.application.contracts.search.SearchSpec` name (``spec.name``)."""

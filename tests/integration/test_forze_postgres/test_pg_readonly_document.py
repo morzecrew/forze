@@ -6,6 +6,7 @@ import pytest
 
 from forze.application.contracts.document import DocumentQueryDepKey, DocumentSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.errors import NotFoundError
 from forze.domain.models import ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresReadOnlyDocument
 from forze_postgres.execution.deps.keys import (
@@ -122,3 +123,69 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
     assert page[0].title == "beta"
 
     assert await q.count({"$fields": {"title": "gamma"}}) == 1
+
+
+@pytest.mark.asyncio
+async def test_readonly_get_missing_raises(pg_client: PostgresClient) -> None:
+    t = f"ro_miss_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL
+        );
+        """
+    )
+    ro = ConfigurablePostgresReadOnlyDocument(config={"read": ("public", t)})
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: ro,
+            }
+        )
+    )
+    q = ctx.doc_query(DocumentSpec(name="ro_miss_ns", read=_ReadOnlyRow, write=None))
+    with pytest.raises(NotFoundError, match="Record not found"):
+        await q.get(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_readonly_get_many_partial_missing_raises(pg_client: PostgresClient) -> None:
+    t = f"ro_gm_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL
+        );
+        """
+    )
+    doc_id = uuid4()
+    await pg_client.execute(
+        f"""
+        INSERT INTO {t} (id, rev, created_at, last_update_at, title)
+        VALUES (%(id)s, 1, NOW(), NOW(), %(title)s)
+        """,
+        {"id": doc_id, "title": "solo"},
+    )
+    ro = ConfigurablePostgresReadOnlyDocument(config={"read": ("public", t)})
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: ro,
+            }
+        )
+    )
+    q = ctx.doc_query(DocumentSpec(name="ro_gm_ns", read=_ReadOnlyRow, write=None))
+    with pytest.raises(NotFoundError, match="Some records not found"):
+        await q.get_many([doc_id, uuid4()])

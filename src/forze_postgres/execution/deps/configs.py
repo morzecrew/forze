@@ -26,6 +26,10 @@ class PostgresReadOnlyDocumentConfig(_BasePostgresConfig):
     read: tuple[str, str]
     """Read relation (schema, table / view / materialized view)"""
 
+    nested_field_hints: NotRequired[Mapping[str, Any]]
+    """Optional Python types (``type`` objects) for dot-separated filter/sort paths when
+    the read model alone does not resolve a leaf type (e.g. ``dict`` / ``Any``)."""
+
 
 # ....................... #
 
@@ -74,6 +78,9 @@ class PostgresSearchConfig(_BasePostgresConfig):
     join_pairs: NotRequired[Sequence[tuple[str, str]]]
     """Join pairs (projection column, index heap column)."""
 
+    nested_field_hints: NotRequired[Mapping[str, Any]]
+    """Same semantics as :attr:`PostgresReadOnlyDocumentConfig.nested_field_hints`."""
+
 
 # ....................... #
 
@@ -106,6 +113,49 @@ class PostgresHubSearchConfig(_BasePostgresConfig):
 
     merge_strategy: NotRequired[Literal["max", "sum"]]
     """How leg scores merge for ordering (default ``max``, i.e. greatest score wins)."""
+
+    nested_field_hints: NotRequired[Mapping[str, Any]]
+    """Per-path type hints for filters/sorts on the hub read projection."""
+
+
+# ....................... #
+
+
+@final
+class PostgresFederatedSearchConfig(_BasePostgresConfig):
+    """Postgres configuration for :class:`PostgresFederatedSearchAdapter`."""
+
+    members: Mapping[str, PostgresSearchConfig]
+    """Mapping of member spec names to single-index search configurations."""
+
+    rrf_k: NotRequired[int]
+    """RRF smoothing constant (default 60)."""
+
+    rrf_per_leg_limit: NotRequired[int]
+    """Max hits fetched per member for merging (default 5000)."""
+
+
+# ....................... #
+
+
+def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) -> None:
+    """Validate a Postgres federated search configuration."""
+
+    if len(cfg["members"]) < 2:
+        raise CoreError("Federated search requires at least two member configurations.")
+
+    for i, leg in enumerate(cfg["members"].values()):
+        if "index" not in leg or ("heap" not in leg and "read" not in leg):
+            raise CoreError(
+                f"Federated search member {i} must include 'index' and 'heap' or 'read'.",
+            )
+
+        eng = leg.get("engine", "pgroonga")
+
+        if eng == "fts" and not leg.get("fts_groups"):
+            raise CoreError(
+                f"Federated search member {i} with engine 'fts' requires fts_groups.",
+            )
 
 
 # ....................... #

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import attrs
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.query import (
     QueryAnd,
@@ -206,3 +207,69 @@ class TestPsycopgQueryRenderer:
         r = PsycopgQueryRenderer(types=types)
         _sql, params = r.render(QueryField("id", "$eq", str(uid)))
         assert params == [uid]
+
+    def test_nested_json_path_coerces_int(self) -> None:
+        class _Inner(BaseModel):
+            score: int
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("jsonb")}
+        r = PsycopgQueryRenderer(types=types, model_type=_Outer)
+        _sql, params = r.render(QueryField("meta.score", "$eq", "7"))
+        assert params == [7]
+
+    def test_nested_json_with_table_alias(self) -> None:
+        class _Inner(BaseModel):
+            score: int
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("jsonb")}
+        r = PsycopgQueryRenderer(
+            types=types,
+            model_type=_Outer,
+            table_alias="v",
+        )
+        _sql, params = r.render(QueryField("meta.score", "$gte", 1))
+        assert params == [1]
+        assert b"v" in _sql.as_bytes()  # qualified root column
+
+    def test_nested_field_hints_for_dict_leaf(self) -> None:
+        class _Blob(BaseModel):
+            data: dict[str, Any]
+
+        types: PostgresColumnTypes = {"data": _t("jsonb")}
+        r = PsycopgQueryRenderer(
+            types=types,
+            model_type=_Blob,
+            nested_field_hints={"data.x": int},
+        )
+        _sql, params = r.render(QueryField("data.x", "$eq", "3"))
+        assert params == [3]
+
+    def test_nested_unsupported_operator(self) -> None:
+        class _Inner(BaseModel):
+            score: int
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("jsonb")}
+        r = PsycopgQueryRenderer(types=types, model_type=_Outer)
+        with pytest.raises(CoreError, match="not supported for nested JSON"):
+            r.render(QueryField("meta.score", "$empty", True))
+
+    def test_nested_requires_json_column(self) -> None:
+        class _Inner(BaseModel):
+            score: int
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("int8")}
+        r = PsycopgQueryRenderer(types=types, model_type=_Outer)
+        with pytest.raises(CoreError, match="json or jsonb"):
+            r.render(QueryField("meta.score", "$eq", 1))

@@ -9,7 +9,11 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.contracts.search import HubSearchQueryDepKey, SearchQueryDepKey
+from forze.application.contracts.search import (
+    FederatedSearchQueryDepKey,
+    HubSearchQueryDepKey,
+    SearchQueryDepKey,
+)
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
@@ -17,13 +21,16 @@ from ...kernel.introspect import PostgresIntrospector
 from ...kernel.platform import PostgresClient
 from .configs import (
     PostgresDocumentConfig,
+    PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     validate_pg_search_conf,
+    validate_postgres_federated_search_conf,
 )
 from .deps import (
     ConfigurablePostgresDocument,
+    ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHubSearch,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
@@ -56,6 +63,11 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     hub_searches: Mapping[K, PostgresHubSearchConfig] | None = attrs.field(default=None)
     """Mapping from hub search names to their Postgres-specific configurations."""
 
+    federated_searches: Mapping[K, PostgresFederatedSearchConfig] | None = attrs.field(
+        default=None,
+    )
+    """Mapping from federated search names to their Postgres-specific configurations."""
+
     tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
@@ -74,6 +86,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
         doc_deps = Deps[K]()
         search_deps = Deps[K]()
         hub_search_deps = Deps[K]()
+        federated_search_deps = Deps[K]()
         tx_deps = Deps[K]()
 
         if self.ro_documents:
@@ -106,8 +119,8 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
         if self.searches:
             # fail fast on invalid configurations
-            for cfg in self.searches.values():
-                validate_pg_search_conf(cfg)
+            for search_cfg in self.searches.values():
+                validate_pg_search_conf(search_cfg)
 
             search_deps = search_deps.merge(
                 Deps[K].routed(
@@ -132,6 +145,21 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
+        if self.federated_searches:
+            for federated_cfg in self.federated_searches.values():
+                validate_postgres_federated_search_conf(federated_cfg)
+
+            federated_search_deps = federated_search_deps.merge(
+                Deps[K].routed(
+                    {
+                        FederatedSearchQueryDepKey: {
+                            name: ConfigurablePostgresFederatedSearch(config=config)
+                            for name, config in self.federated_searches.items()
+                        }
+                    }
+                )
+            )
+
         if self.tx:
             tx_deps = tx_deps.merge(
                 Deps[K].routed(
@@ -139,4 +167,10 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
-        return plain_deps.merge(doc_deps, search_deps, tx_deps, hub_search_deps)
+        return plain_deps.merge(
+            doc_deps,
+            search_deps,
+            tx_deps,
+            hub_search_deps,
+            federated_search_deps,
+        )

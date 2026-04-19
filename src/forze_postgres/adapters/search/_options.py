@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, Mapping, cast
 
-from forze.application.contracts.search import HubSearchSpec, SearchOptions
+from forze.application.contracts.search import (
+    FederatedSearchSpec,
+    HubSearchSpec,
+    SearchOptions,
+)
 from forze.base.errors import CoreError
 
 from .._logger import logger
@@ -51,7 +55,9 @@ def prepare_hub_search_options(
         opts.pop("weights", None)
         opts.pop("fields", None)
 
-    weights_list = _resolve_hub_member_weights(hub_spec, opts)
+    names = [m.name for m in hub_spec.members]
+    base = _member_weights_base(names, hub_spec.default_member_weights)
+    weights_list = _apply_member_weight_overrides(names, base, opts, scope="hub")
 
     leg_opts = dict(opts)
     leg_opts.pop("member_weights", None)
@@ -60,26 +66,63 @@ def prepare_hub_search_options(
     return cast(SearchOptions, leg_opts), weights_list
 
 
-def _resolve_hub_member_weights(
-    hub_spec: HubSearchSpec[Any],
+def prepare_federated_search_options(
+    federated_spec: FederatedSearchSpec[Any],
+    options: SearchOptions | None,
+) -> tuple[SearchOptions, list[float]]:
+    """Strip field-level tuning and federation member keys; return leg options + weights."""
+
+    opts = dict(options or {})
+
+    if "weights" in opts or "fields" in opts:
+        logger.warning(
+            "postgres_federated_search_options_field_tuning_ignored",
+            message=(
+                "SearchOptions weights and fields are ignored for federated search "
+                "(use per-member SearchSpec and member_weights / members instead)"
+            ),
+        )
+        opts.pop("weights", None)
+        opts.pop("fields", None)
+
+    names = [m.name for m in federated_spec.members]
+    base = _member_weights_base(names, None)
+    weights_list = _apply_member_weight_overrides(names, base, opts, scope="federated")
+
+    leg_opts = dict(opts)
+    leg_opts.pop("member_weights", None)
+    leg_opts.pop("members", None)
+
+    return cast(SearchOptions, leg_opts), weights_list
+
+
+def _member_weights_base(
+    names: list[str],
+    default_weights: Mapping[str, float] | None,
+) -> dict[str, float]:
+    if default_weights is not None:
+        return {n: float(default_weights[n]) for n in names}
+
+    return dict.fromkeys(names, 1.0)
+
+
+def _apply_member_weight_overrides(
+    names: list[str],
+    base: dict[str, float],
     opts: dict[str, Any],
+    *,
+    scope: Literal["hub", "federated"],
 ) -> list[float]:
-    names = [m.name for m in hub_spec.members]
-
-    if hub_spec.default_member_weights is not None:
-        base = {n: float(hub_spec.default_member_weights[n]) for n in names}
-
-    else:
-        base = dict.fromkeys(names, 1.0)
+    label = "hub" if scope == "hub" else "federated"
 
     if opts.get("member_weights"):
         mw = opts["member_weights"]
         for k, v in mw.items():
             if k not in base:
                 logger.warning(
-                    "postgres_hub_search_unknown_member_weight",
+                    f"postgres_{label}_search_unknown_member_weight",
                     member=k,
-                    message="Ignoring member_weights entry for unknown hub member",
+                    message=f"Ignoring member_weights entry for unknown {label} member",
                 )
                 continue
 
@@ -87,7 +130,7 @@ def _resolve_hub_member_weights(
 
             if w < 0 or w > 1:
                 raise CoreError(
-                    f"Member weight for hub member {k!r} must be between 0.0 and 1.0.",
+                    f"Member weight for {label} member {k!r} must be between 0.0 and 1.0.",
                 )
 
             base[k] = w

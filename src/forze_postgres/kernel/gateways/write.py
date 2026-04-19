@@ -389,7 +389,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         key: tuple[str, ...],
         batch: list[tuple[UUID, int, JsonDict]],
     ) -> list[D]:
-        cols = [ID_FIELD, REV_FIELD] + list(key)
+        # First two VALUES columns are the PK and the *expected* revision for the WHERE
+        # clause. When the patch bumps ``rev``, the diff also contains a new ``rev`` value
+        # for SET; naming the match column ``expected_rev`` avoids duplicate ``rev`` in
+        # ``AS v(...)``, which PostgreSQL rejects as ambiguous.
+        expected_rev_alias = "expected_rev"
+        value_cols = [ID_FIELD, expected_rev_alias] + list(key)
+        v_col_idents: list[sql.Composable] = [
+            self.ident_pk(),
+            sql.Identifier(expected_rev_alias),
+            *(sql.Identifier(k) for k in key),
+        ]
         values_rows: list[sql.Composable] = []
         params: list[Any] = []
 
@@ -397,7 +407,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
         row_template = (
             sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in cols)
+            + sql.SQL(", ").join(sql.Placeholder() for _ in value_cols)
             + sql.SQL(")")
         )
 
@@ -406,9 +416,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             params.extend(row_params)
             values_rows.append(row_template)
 
-        where_sql = sql.SQL("t.{pk} = v.{pk} AND t.{rev} = v.{rev}").format(
-            pk=self.ident_pk(),
-            rev=self._ident_rev(),
+        where_sql = sql.SQL("t.{tpk} = v.{vpk} AND t.{trev} = v.{vexp}").format(
+            tpk=self.ident_pk(),
+            vpk=self.ident_pk(),
+            trev=self._ident_rev(),
+            vexp=sql.Identifier(expected_rev_alias),
         )
         where_params: list[Any] = []
         where_sql, where_params = self._add_tenant_where(  # type: ignore[assignment]
@@ -432,7 +444,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             table=self.source_qname.ident(),
             sets=sql.SQL(", ").join(set_parts),
             vals=sql.SQL(", ").join(values_rows),
-            cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
+            cols=sql.SQL(", ").join(v_col_idents),
             where=where_sql,
             ret=self.return_clause(table_alias="t"),
         )

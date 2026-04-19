@@ -42,7 +42,11 @@ QueryFieldMapValue = QueryFieldOpConjunction | QueryFieldShortcutValue
 """Value for a single field: operator map or shortcut."""
 
 QueryFieldMap = Mapping[str, QueryFieldMapValue]
-"""Map of field names to filter values."""
+"""Map of field names to filter values.
+
+Keys may use dot notation (``meta.version``) for nested document fields. Backends
+interpret paths according to their storage (e.g. JSON column navigation on Postgres).
+"""
 
 # ....................... #
 
@@ -69,7 +73,7 @@ QuerySortDirection = Literal["asc", "desc"]
 """Sort direction for a field."""
 
 QuerySortExpression = Mapping[str, QuerySortDirection]
-"""Map of field names to sort direction."""
+"""Map of field names to sort direction (supports dot-separated paths like filters)."""
 
 # ....................... #
 

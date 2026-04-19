@@ -6,10 +6,12 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import Mapping
 from typing import Any
 
 import attrs
 from psycopg import sql
+from pydantic import BaseModel
 
 from forze.application.contracts.query import (
     QueryAnd,
@@ -23,9 +25,14 @@ from forze.application.contracts.query import (
 from forze.base.errors import CoreError
 
 from ..introspect import PostgresColumnTypes, PostgresType
+from .nested import build_nested_json_scalar_expr
 from .utils import PsycopgPositionalBinder
 
 # ----------------------- #
+
+_NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
+    ("$empty", "$superset", "$subset", "$disjoint", "$overlaps"),
+)
 
 
 @attrs.define(slots=True, frozen=True)
@@ -118,6 +125,15 @@ class PsycopgQueryRenderer:
 
     types: PostgresColumnTypes | None = attrs.field(default=None)
 
+    model_type: type[BaseModel] | None = attrs.field(default=None)
+    """Read model used to validate dot-separated paths and infer JSON leaf types."""
+
+    nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(default=None)
+    """Per-path Python type hints when the model annotation is ambiguous."""
+
+    table_alias: str | None = attrs.field(default=None)
+    """Qualify top-level column names (e.g. projection alias in search CTEs)."""
+
     # Non initable fields
     binder: PsycopgPositionalBinder = attrs.field(
         factory=PsycopgPositionalBinder,
@@ -141,6 +157,32 @@ class PsycopgQueryRenderer:
     def _render_expr(self, expr: QueryExpr) -> sql.Composable:
         match expr:
             case QueryField(name, op, value):
+                segments = name.split(".")
+                if len(segments) > 1:
+                    if self.types is None:
+                        raise CoreError(
+                            f"Nested filter path {name!r} requires column type metadata "
+                            "(introspected types).",
+                        )
+                    if self.model_type is None:
+                        raise CoreError(
+                            f"Nested filter path {name!r} requires gateway model_type "
+                            "for read-model validation.",
+                        )
+                    if op in _NESTED_JSON_UNSUPPORTED:
+                        raise CoreError(
+                            f"Operator {op!r} is not supported for nested JSON path {name!r}.",
+                        )
+                    col_expr, t = build_nested_json_scalar_expr(
+                        path=name,
+                        segments=segments,
+                        column_types=self.types,
+                        model_type=self.model_type,
+                        nested_field_hints=self.nested_field_hints,
+                        table_alias=self.table_alias,
+                    )
+                    return self._render_field(col_expr, op, value, t=t)
+
                 if self.types is not None:
                     t = self.types.get(name)
 
@@ -150,7 +192,11 @@ class PsycopgQueryRenderer:
                 else:
                     t = None
 
-                col = sql.Identifier(name)
+                col = (
+                    sql.Identifier(self.table_alias, name)
+                    if self.table_alias is not None
+                    else sql.Identifier(name)
+                )
                 return self._render_field(col, op, value, t=t)
 
             case QueryAnd(items):

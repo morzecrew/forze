@@ -126,24 +126,11 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
 
     # ....................... #
 
-    def _projection_order_by_clause(
+    async def _projection_order_by_clause(
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
-        if not sorts:
-            return None
-
-        parts: list[sql.Composable] = []
-
-        for field, order in sorts.items():
-            parts.append(
-                sql.SQL("{} {}").format(
-                    sql.Identifier(_PROJECTION_ALIAS, field),
-                    sql.SQL(order.upper()),
-                )
-            )
-
-        return sql.SQL(", ").join(parts)
+        return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
 
     # ....................... #
 
@@ -363,7 +350,7 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
                 sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
             )
         ]
-        extra_ob = self._projection_order_by_clause(sorts)
+        extra_ob = await self._projection_order_by_clause(sorts)
 
         if extra_ob is not None:
             order_parts.append(extra_ob)

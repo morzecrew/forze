@@ -11,9 +11,12 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.search import (
+    FederatedSearchQueryDepPort,
+    FederatedSearchSpec,
     HubSearchQueryDepPort,
     HubSearchSpec,
     SearchQueryDepPort,
+    SearchQueryPort,
     SearchSpec,
 )
 from forze.application.contracts.tx import TxManagerPort
@@ -25,6 +28,7 @@ from ...adapters import (
     FtsGroupLetter,
     HubLegRuntime,
     PostgresDocumentAdapter,
+    PostgresFederatedSearchAdapter,
     PostgresFTSSearchAdapterV2,
     PostgresHubSearchAdapter,
     PostgresPGroongaSearchAdapterV2,
@@ -34,10 +38,12 @@ from ...kernel.gateways import PostgresQualifiedName
 from .._logger import logger
 from .configs import (
     PostgresDocumentConfig,
+    PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     validate_fts_groups_for_search_spec,
+    validate_postgres_federated_search_conf,
     validate_postgres_hub_search_conf,
 )
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -67,6 +73,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort):
             read_type=spec.read,
             read_relation=self.config["read"],
             tenant_aware=self.config.get("tenant_aware", False),
+            nested_field_hints=self.config.get("nested_field_hints"),
         )
 
         return PostgresDocumentAdapter(
@@ -106,6 +113,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
             read_type=spec.read,
             read_relation=self.config["read"],
             tenant_aware=tenant_aware,
+            nested_field_hints=self.config.get("nested_field_hints"),
         )
 
         write_relation = self.config["write"]
@@ -131,6 +139,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
             history_enabled=spec.history_enabled,
             bookkeeping_strategy=bookkeeping_strategy,
             tenant_aware=tenant_aware,
+            nested_field_hints=self.config.get("nested_field_hints"),
         )
 
         return PostgresDocumentAdapter(
@@ -160,52 +169,7 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapterV2[Any]:
-        tenant_aware = self.config.get("tenant_aware", False)
-
-        index_qname = PostgresQualifiedName(*self.config["index"])
-        read_qname = PostgresQualifiedName(*self.config["read"])
-        heap_qname = PostgresQualifiedName(
-            *self.config.get("heap", self.config["read"])
-        )
-
-        match self.config["engine"]:
-            case "pgroonga":
-                return PostgresPGroongaSearchAdapterV2(
-                    spec=spec,
-                    index_qname=index_qname,
-                    source_qname=read_qname,
-                    index_heap_qname=heap_qname,
-                    join_pairs=self.config.get("join_pairs"),
-                    index_field_map=self.config.get("field_map"),
-                    client=context.dep(PostgresClientDepKey),
-                    model_type=spec.model_type,
-                    introspector=context.dep(PostgresIntrospectorDepKey),
-                    tenant_provider=context.get_tenant_id,
-                    tenant_aware=tenant_aware,
-                )
-
-            case "fts":
-                fts_groups = self.config.get("fts_groups")
-
-                if fts_groups is None:
-                    raise CoreError("FTS groups are required for FTS engine.")
-
-                validate_fts_groups_for_search_spec(spec, fts_groups)
-
-                return PostgresFTSSearchAdapterV2(
-                    spec=spec,
-                    index_qname=index_qname,
-                    source_qname=read_qname,
-                    index_heap_qname=heap_qname,
-                    fts_groups=fts_groups,
-                    join_pairs=self.config.get("join_pairs"),
-                    index_field_map=self.config.get("field_map"),
-                    client=context.dep(PostgresClientDepKey),
-                    model_type=spec.model_type,
-                    introspector=context.dep(PostgresIntrospectorDepKey),
-                    tenant_provider=context.get_tenant_id,
-                    tenant_aware=tenant_aware,
-                )
+        return _postgres_search_port_for_config(context, spec, self.config)
 
 
 # ....................... #
@@ -281,6 +245,122 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             introspector=context.dep(PostgresIntrospectorDepKey),
             tenant_provider=context.get_tenant_id,
             tenant_aware=tenant_aware,
+            filter_table_alias="h",
+            nested_field_hints=self.config.get("nested_field_hints"),
+        )
+
+
+# ....................... #
+
+
+def _postgres_search_port_for_config(
+    context: ExecutionContext,
+    member_spec: SearchSpec[Any],
+    c: PostgresSearchConfig,
+) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapterV2[Any]:
+    tenant_aware = c.get("tenant_aware", False)
+    index_qname = PostgresQualifiedName(*c["index"])
+    read_qname = PostgresQualifiedName(*c["read"])
+    heap_qname = PostgresQualifiedName(*c.get("heap", c["read"]))
+
+    match c["engine"]:
+        case "pgroonga":
+            return PostgresPGroongaSearchAdapterV2(
+                spec=member_spec,
+                index_qname=index_qname,
+                source_qname=read_qname,
+                index_heap_qname=heap_qname,
+                join_pairs=c.get("join_pairs"),
+                index_field_map=c.get("field_map"),
+                client=context.dep(PostgresClientDepKey),
+                model_type=member_spec.model_type,
+                introspector=context.dep(PostgresIntrospectorDepKey),
+                tenant_provider=context.get_tenant_id,
+                tenant_aware=tenant_aware,
+                filter_table_alias="v",
+                nested_field_hints=c.get("nested_field_hints"),
+            )
+
+        case "fts":
+            fts_groups = c.get("fts_groups")
+
+            if fts_groups is None:
+                raise CoreError("FTS groups are required for FTS engine.")
+
+            validate_fts_groups_for_search_spec(member_spec, fts_groups)
+
+            return PostgresFTSSearchAdapterV2(
+                spec=member_spec,
+                index_qname=index_qname,
+                source_qname=read_qname,
+                index_heap_qname=heap_qname,
+                fts_groups=fts_groups,
+                join_pairs=c.get("join_pairs"),
+                index_field_map=c.get("field_map"),
+                client=context.dep(PostgresClientDepKey),
+                model_type=member_spec.model_type,
+                introspector=context.dep(PostgresIntrospectorDepKey),
+                tenant_provider=context.get_tenant_id,
+                tenant_aware=tenant_aware,
+                filter_table_alias="v",
+                nested_field_hints=c.get("nested_field_hints"),
+            )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
+    """Build :class:`PostgresFederatedSearchAdapter` from spec + config."""
+
+    config: PostgresFederatedSearchConfig
+    """Per-member single-index search configuration."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: FederatedSearchSpec[Any],
+    ) -> PostgresFederatedSearchAdapter[Any]:
+        validate_postgres_federated_search_conf(self.config)
+
+        legs: list[tuple[str, SearchQueryPort[Any]]] = []
+
+        for m in spec.members:
+            c = self.config["members"].get(m.name)
+
+            if c is None:
+                raise CoreError(
+                    f"Member '{m.name}' not found in PostgresFederatedSearchConfig['members'].",
+                )
+
+            engine = c.get("engine", "pgroonga")
+
+            if engine not in ("pgroonga", "fts"):
+                raise CoreError(
+                    f"Federated search member engine {engine!r} is not supported; "
+                    "use 'pgroonga' or 'fts'.",
+                )
+
+            if engine == "fts":
+                fts_groups = c.get("fts_groups")
+
+                if fts_groups is None:
+                    raise CoreError("FTS groups are required for FTS federated member.")
+
+                validate_fts_groups_for_search_spec(m, fts_groups)
+
+            port = _postgres_search_port_for_config(context, m, c)
+            legs.append((m.name, port))
+
+        return PostgresFederatedSearchAdapter(
+            federated_spec=spec,
+            legs=tuple(legs),
+            rrf_k=int(self.config.get("rrf_k", 60)),
+            rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
         )
 
 

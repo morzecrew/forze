@@ -1,5 +1,6 @@
 """Gateway factory helpers for building Postgres read, write, search, and history gateways."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from forze.application.contracts.document import DocumentWriteTypes
@@ -27,6 +28,7 @@ def read_gw(
     read_type: type[Any],
     read_relation: tuple[str, str],
     tenant_aware: bool,
+    nested_field_hints: Mapping[str, type[Any]] | None = None,
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
@@ -47,6 +49,7 @@ def read_gw(
         introspector=introspector,
         tenant_provider=ctx.get_tenant_id,
         tenant_aware=tenant_aware,
+        nested_field_hints=nested_field_hints,
     )
 
 
@@ -100,6 +103,7 @@ def doc_write_gw(
     history_enabled: bool = False,
     bookkeeping_strategy: PostgresBookkeepingStrategy,
     tenant_aware: bool,
+    nested_field_hints: Mapping[str, type[Any]] | None = None,
 ) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -121,6 +125,7 @@ def doc_write_gw(
         read_type=write_types["domain"],
         read_relation=write_relation,
         tenant_aware=tenant_aware,
+        nested_field_hints=nested_field_hints,
     )
     hist = None
 

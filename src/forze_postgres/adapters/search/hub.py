@@ -228,24 +228,11 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    def _hub_order_by(
+    async def _hub_order_by(
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
-        if not sorts:
-            return None
-
-        parts: list[sql.Composable] = []
-
-        for field, order in sorts.items():
-            parts.append(
-                sql.SQL("{} {}").format(
-                    sql.Identifier(_COMBO_ALIAS, field),
-                    sql.SQL(order.upper()),
-                )
-            )
-
-        return sql.SQL(", ").join(parts)
+        return await self.order_by_clause(sorts, table_alias=_COMBO_ALIAS)
 
     # ....................... #
 
@@ -493,7 +480,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 sql.Identifier(_COMBO_ALIAS, _RANK),
             )
         ]
-        ob = self._hub_order_by(sorts)
+        ob = await self._hub_order_by(sorts)
 
         if ob is not None:
             order_parts.append(ob)

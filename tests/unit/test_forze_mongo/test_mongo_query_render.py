@@ -67,6 +67,11 @@ class TestMongoQueryRenderer:
         assert r.render(QueryField("n", "$eq", 3)) == {"n": 3}
         assert r.render(QueryField("n", "$neq", 3)) == {"n": {"$ne": 3}}
 
+    def test_dot_notation_nested_field_passthrough(self) -> None:
+        """MongoDB interprets dotted keys as nested paths in query documents."""
+        r = MongoQueryRenderer()
+        assert r.render(QueryField("meta.score", "$eq", 1)) == {"meta.score": 1}
+
     def test_membership(self) -> None:
         r = MongoQueryRenderer()
         assert r.render(QueryField("t", "$in", [1, 2])) == {"t": {"$in": [1, 2]}}

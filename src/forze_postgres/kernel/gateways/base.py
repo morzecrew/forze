@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import Mapping
 from functools import cached_property
 from typing import Any, Self, Sequence, final
 
@@ -29,6 +30,7 @@ from forze.infra.tenancy import MultiTenancyMixin
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClient
 from ..query import PsycopgQueryRenderer
+from ..query.nested import sort_key_expr
 
 # ----------------------- #
 
@@ -108,6 +110,12 @@ class PostgresGateway[M: BaseModel](MultiTenancyMixin):
     introspector: PostgresIntrospector
     """Postgres introspector instance."""
 
+    nested_field_hints: Mapping[str, type[Any]] | None = attrs.field(default=None)
+    """Optional per-path Python types when read-model annotations are ambiguous."""
+
+    filter_table_alias: str | None = attrs.field(default=None)
+    """SQL alias for the filtered relation (e.g. search projection ``v``)."""
+
     # ....................... #
 
     @cached_property  #! hmmmm.....
@@ -186,7 +194,12 @@ class PostgresGateway[M: BaseModel](MultiTenancyMixin):
             types = await self.column_types()
 
             p = QueryFilterExpressionParser()
-            r = PsycopgQueryRenderer(types=types)
+            r = PsycopgQueryRenderer(
+                types=types,
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+                table_alias=self.filter_table_alias,
+            )
 
             expr = p.parse(filters)
             query, params = r.render(expr)  # type: ignore[assignment]
@@ -197,19 +210,28 @@ class PostgresGateway[M: BaseModel](MultiTenancyMixin):
 
     # ....................... #
 
-    def order_by_clause(
+    async def order_by_clause(
         self,
         sorts: QuerySortExpression | None = None,
+        *,
+        table_alias: str | None = None,
     ) -> sql.Composable | None:
         if not sorts:
             return None
 
+        types = await self.column_types()
+        alias = self.filter_table_alias if table_alias is None else table_alias
         parts: list[sql.Composable] = []
 
         for field, order in sorts.items():
-            parts.append(
-                sql.SQL("{} {}").format(sql.Identifier(field), sql.SQL(order.upper()))
+            key = sort_key_expr(
+                field=field,
+                column_types=types,
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+                table_alias=alias,
             )
+            parts.append(sql.SQL("{} {}").format(key, sql.SQL(order.upper())))
 
         return sql.SQL(", ").join(parts)
 

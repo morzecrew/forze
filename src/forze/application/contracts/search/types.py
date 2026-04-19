@@ -22,10 +22,10 @@ class SearchOptions(TypedDict, total=False):
     """
 
     member_weights: dict[str, float]
-    """Weights for hub members."""
+    """Weights for hub / federation members."""
 
     members: Sequence[str]
-    """Simple alternative to member_weights for specifying hub members to search on.
+    """Simple alternative to member_weights for specifying hub / federation members to search on.
 
     For specified members weights will be set to 1.0, for other members weights will be set to 0.0.
     Ignored if member_weights are provided.

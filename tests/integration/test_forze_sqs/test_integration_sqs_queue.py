@@ -152,3 +152,22 @@ async def test_queue_adapter_consume(
     assert message["queue"] == queue
     assert message["payload"].value == "consume"
     assert await sqs_queue.ack(queue, [message["id"]]) == 1
+
+
+@pytest.mark.asyncio
+async def test_queue_adapter_nack_makes_message_visible_again(
+    sqs_client: SQSClient,
+    sqs_queue: SQSQueueAdapter,
+    queue_payload_cls,
+) -> None:
+    """Negative acknowledgement with requeue should allow receiving the message again."""
+    queue = f"jobs-{uuid4().hex[:8]}"
+    await _ensure_queue(sqs_client, sqs_queue, queue)
+
+    await sqs_queue.enqueue(queue, queue_payload_cls(value="nack-me"))
+    first = await _receive_until(sqs_queue, queue)
+    assert await sqs_queue.nack(queue, [first["id"]], requeue=True) == 1
+
+    second = await _receive_until(sqs_queue, queue)
+    assert second["payload"].value == "nack-me"
+    assert await sqs_queue.ack(queue, [second["id"]]) == 1

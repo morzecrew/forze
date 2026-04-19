@@ -5,9 +5,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import HubSearchSpec, SearchSpec
+from forze.application.contracts.search import (
+    FederatedSearchSpec,
+    HubSearchSpec,
+    SearchSpec,
+)
 from forze.base.errors import CoreError
 from forze_postgres.adapters.search._options import (
+    prepare_federated_search_options,
     prepare_hub_search_options,
     search_options_for_simple_adapter,
 )
@@ -98,6 +103,34 @@ def test_prepare_hub_member_weights_take_precedence_over_members() -> None:
     )
     _, weights = prepare_hub_search_options(
         hub,
+        {"member_weights": {"a": 0.0, "b": 1.0}, "members": ["a"]},
+    )
+    assert weights == [0.0, 1.0]
+
+
+def test_prepare_federated_strips_field_tuning_and_resolves_members() -> None:
+    fed = FederatedSearchSpec(
+        name="f",
+        members=(_leg("a"), _leg("b")),
+    )
+    leg_opts, weights = prepare_federated_search_options(
+        fed,
+        {"weights": {"x": 1.0}, "members": ["b"], "fuzzy": True},
+    )
+    assert "weights" not in leg_opts
+    assert "fields" not in leg_opts
+    assert "members" not in leg_opts
+    assert leg_opts.get("fuzzy") is True
+    assert weights == [0.0, 1.0]
+
+
+def test_prepare_federated_member_weights_take_precedence_over_members() -> None:
+    fed = FederatedSearchSpec(
+        name="f",
+        members=(_leg("a"), _leg("b")),
+    )
+    _, weights = prepare_federated_search_options(
+        fed,
         {"member_weights": {"a": 0.0, "b": 1.0}, "members": ["a"]},
     )
     assert weights == [0.0, 1.0]

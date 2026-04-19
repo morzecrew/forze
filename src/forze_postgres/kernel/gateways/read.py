@@ -327,7 +327,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     ) -> list[M] | list[T] | list[JsonDict]:
         # tenant id supplied by where clause
         where, params = await self.where_clause(filters)
-        sort_clause = self.order_by_clause(sorts)
+        sort_clause = await self.order_by_clause(sorts)
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
             cols=self.return_clause(return_model, return_fields),

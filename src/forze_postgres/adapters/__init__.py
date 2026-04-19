@@ -6,10 +6,12 @@ from .search import (
     HubLegRuntime,
     HubSearchLegEngine,
     PgroongaHubLegEngine,
+    PostgresFederatedSearchAdapter,
     PostgresHubPGroongaSearchAdapter,
     PostgresHubSearchAdapter,
     PostgresPGroongaSearchAdapterV2,
     hub_leg_engine_for,
+    weighted_rrf_merge_rows,
 )
 from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
@@ -21,6 +23,7 @@ __all__ = [
     "HubLegRuntime",
     "HubSearchLegEngine",
     "PgroongaHubLegEngine",
+    "PostgresFederatedSearchAdapter",
     "hub_leg_engine_for",
     "PostgresHubPGroongaSearchAdapter",
     "PostgresHubSearchAdapter",
@@ -29,4 +32,5 @@ __all__ = [
     "PostgresTxManagerAdapter",
     "PostgresTxScopeKey",
     "FtsGroupLetter",
+    "weighted_rrf_merge_rows",
 ]

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze_postgres`: dot-separated filter and sort field paths (e.g. ``meta.score``) for JSON/JSONB columns, validated against the read model with optional ``nested_field_hints`` on document and search configs (and hub search config) when leaf types are ambiguous.
+- `forze_postgres` federated search: `PostgresFederatedSearchAdapter` merges independent single-index searches with weighted RRF (`SearchOptions` `member_weights` / `members`, same semantics as hub; weight `0` skips a member). `PostgresFederatedSearchConfig`, `ConfigurablePostgresFederatedSearch`, `PostgresDepsModule.federated_searches`, and `prepare_federated_search_options` / `weighted_rrf_merge_rows`.
 - `forze_postgres` hub search: per-member score multipliers from `HubSearchSpec.default_member_weights` and `SearchOptions` (`member_weights`, `members`); legs with weight `0` skip index matching. `PostgresFTSSearchAdapterV2` / `PostgresPGroongaSearchAdapterV2` and `forze_mock` simple search log a warning and ignore hub-only option keys; hub search logs a warning and ignores `weights` / `fields` (use per-leg specs and member options instead).
 - `forze_postgres`: `PostgresFTSSearchAdapterV2` runs native FTS (`tsvector` / `ts_rank_cd`) on an index heap while filters and row shape use a separate projection relation, using the same `WITH filtered AS …, scored AS …` pattern as `PostgresPGroongaSearchAdapterV2`.
 - `forze_postgres.adapters.search._fts_sql`: shared FTS helpers (`tsvector` resolution from the catalog, `websearch_to_tsquery`, group weights, match predicate, `ts_rank_cd`) for FTS v2 and hub legs.
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `forze_postgres` `PostgresGateway.order_by_clause` is now ``async`` (callers must ``await`` it) so sort keys can use the same nested JSON path resolution as filters.
 - `forze_postgres` `ConfigurablePostgresSearch` with `engine: "fts"` builds `PostgresFTSSearchAdapterV2` (projection + index heap); optional `heap` and `join_pairs` match the PGroonga search config shape.
 - `forze_postgres` hub search: `PostgresHubSearchAdapter` selects `PgroongaHubLegEngine` or `FtsHubLegEngine` per leg ``engine`` via `hub_leg_engine_for` (no default engine on the adapter). `PostgresHubPGroongaSearchAdapter` remains a backward-compatible alias. Hub members may use ``engine: "fts"`` with ``fts_groups`` (same rules as FTS search).
 - `forze_postgres.execution.deps.configs`: `validate_fts_groups_for_search_spec` shared by configurable FTS search and hub legs.
@@ -32,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `forze_postgres`: legacy single-relation search adapters `PostgresFTSSearchAdapter` and `PostgresPGroongaSearchAdapter` (`fts.py`, `pgroonga.py`); use `PostgresFTSSearchAdapterV2`, `PostgresPGroongaSearchAdapterV2`, or hub search instead.
 
 ### Fixed
+
+- `forze_postgres` `PostgresWriteGateway`: batched patches (`update_many`, `touch_many`, `delete_many`, `restore_many`, etc.) no longer build a `FROM (VALUES …) AS v(…)` list with two `rev` columns when the diff bumps revision, which caused PostgreSQL `AmbiguousColumn` on multi-row updates.
 
 - `forze_postgres` `PostgresHubPGroongaSearchAdapter`: empty / whitespace-only queries no longer emit invalid SQL for the per-leg rank expression (extra parenthesis in the zero-score branch).
 
