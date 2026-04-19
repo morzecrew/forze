@@ -29,7 +29,7 @@ class IdempotencyPort(Protocol):
         :param payload_hash: Hash of the normalized request payload.
         :returns: A previously stored :class:`IdempotencySnapshot` or ``None``.
         """
-        ...
+        ...  # pragma: no cover
 
     def commit(
         self,
@@ -39,4 +39,4 @@ class IdempotencyPort(Protocol):
         snapshot: IdempotencySnapshot,
     ) -> Awaitable[None]:
         """Persist the snapshot for the given idempotent operation."""
-        ...
+        ...  # pragma: no cover

@@ -26,7 +26,7 @@ class QueueQueryPort[M: BaseModel](Protocol):
         timeout: timedelta | None = None,  # noqa: F841
     ) -> Awaitable[list[QueueMessage[M]]]:
         """Fetch a batch of messages from *queue*."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -37,13 +37,13 @@ class QueueQueryPort[M: BaseModel](Protocol):
         timeout: timedelta | None = None,  # noqa: F841
     ) -> AsyncIterator[QueueMessage[M]]:
         """Yield messages continuously from *queue* until *timeout* elapses."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
     def ack(self, queue: str, ids: Sequence[str]) -> Awaitable[int]:  # noqa: F841
         """Acknowledge processed messages, returning the count acknowledged."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -55,7 +55,7 @@ class QueueQueryPort[M: BaseModel](Protocol):
         requeue: bool = True,
     ) -> Awaitable[int]:
         """Negatively acknowledge messages, optionally requeuing them."""
-        ...
+        ...  # pragma: no cover
 
 
 # ....................... #
@@ -75,7 +75,7 @@ class QueueCommandPort[M: BaseModel](Protocol):
         enqueued_at: datetime | None = None,
     ) -> Awaitable[str]:
         """Enqueue a single message and return its identifier."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -89,4 +89,4 @@ class QueueCommandPort[M: BaseModel](Protocol):
         enqueued_at: datetime | None = None,
     ) -> Awaitable[list[str]]:
         """Enqueue multiple messages and return their identifiers."""
-        ...
+        ...  # pragma: no cover

@@ -37,7 +37,7 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
         raise_on_already_started: bool = True,
     ) -> Awaitable[WorkflowHandle]:
         """Start a new workflow run."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -49,7 +49,7 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
         args: S,
     ) -> Awaitable[None]:
         """Send a signal to an existing workflow instance."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -61,13 +61,13 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
         args: U,
     ) -> Awaitable[Res]:
         """Update an existing workflow instance."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
     def cancel(self, handle: WorkflowHandle) -> Awaitable[None]:
         """Cancel a running workflow instance."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -78,7 +78,7 @@ class WorkflowCommandPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol)
         reason: str | None = None,
     ) -> Awaitable[None]:
         """Terminate a running workflow instance."""
-        ...
+        ...  # pragma: no cover
 
 
 # ....................... #
@@ -96,10 +96,10 @@ class WorkflowQueryPort(BaseWorkflowPort[In, Out], Generic[In, Out], Protocol):
         args: Q,
     ) -> Awaitable[Res]:
         """Query an existing workflow instance."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
     def result(self, handle: WorkflowHandle) -> Awaitable[Out]:
         """Get the result of a workflow run."""
-        ...
+        ...  # pragma: no cover

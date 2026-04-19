@@ -16,6 +16,7 @@ from forze_postgres.adapters.search.federated import (
     weighted_rrf_merge_rows,
 )
 from forze_postgres.execution.deps.configs import validate_postgres_federated_search_conf
+from forze_postgres.execution.deps.deps import ConfigurablePostgresFederatedSearch
 
 # ----------------------- #
 
@@ -224,3 +225,74 @@ async def test_federated_search_applies_sorts_on_merged_field() -> None:
     assert total == 3
     assert len(out) == 3
     assert {row.hit.id for row in out} == {1, 2, 3}
+
+
+def _two_member_pgroonga_config() -> dict[str, object]:
+    return {
+        "members": {
+            "a": {
+                "index": ("public", "i_a"),
+                "read": ("public", "r_a"),
+                "engine": "pgroonga",
+            },
+            "b": {
+                "index": ("public", "i_b"),
+                "read": ("public", "r_b"),
+                "engine": "pgroonga",
+            },
+        },
+    }
+
+
+def _federated_exec_context() -> MagicMock:
+    ctx = MagicMock()
+
+    def _dep(_key: object) -> MagicMock:
+        return MagicMock()
+
+    ctx.dep = _dep
+    return ctx
+
+
+def test_configurable_federated_search_resolves_members() -> None:
+    factory = ConfigurablePostgresFederatedSearch(config=_two_member_pgroonga_config())
+    adapter = factory(_federated_exec_context(), _fed())
+    assert isinstance(adapter, PostgresFederatedSearchAdapter)
+
+
+def test_configurable_federated_search_member_missing_in_config() -> None:
+    factory = ConfigurablePostgresFederatedSearch(
+        config={
+            "members": {
+                "x": {
+                    "index": ("public", "i_x"),
+                    "read": ("public", "r_x"),
+                    "engine": "pgroonga",
+                },
+                "y": {
+                    "index": ("public", "i_y"),
+                    "read": ("public", "r_y"),
+                    "engine": "pgroonga",
+                },
+            },
+        },
+    )
+    with pytest.raises(CoreError, match="Member 'a' not found"):
+        factory(_federated_exec_context(), _fed())
+
+
+def test_configurable_federated_search_rejects_unknown_engine() -> None:
+    cfg = _two_member_pgroonga_config()
+    members = dict(cfg["members"])
+    members["a"] = {**members["a"], "engine": "unknown"}
+    factory = ConfigurablePostgresFederatedSearch(config={"members": members})
+    with pytest.raises(CoreError, match="not supported"):
+        factory(_federated_exec_context(), _fed())
+
+
+def test_configurable_federated_search_fts_requires_groups() -> None:
+    cfg = _two_member_pgroonga_config()
+    members = {k: {**v, "engine": "fts"} for k, v in dict(cfg["members"]).items()}
+    factory = ConfigurablePostgresFederatedSearch(config={"members": members})
+    with pytest.raises(CoreError, match="fts_groups"):
+        factory(_federated_exec_context(), _fed())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.workflow import (
@@ -95,3 +96,36 @@ class TestWorkflowPorts:
 
     def test_query_runtime_checkable(self) -> None:
         assert isinstance(_StubWorkflowQuery(), WorkflowQueryPort)
+
+
+@pytest.mark.asyncio
+async def test_workflow_command_methods() -> None:
+    cmd = _StubWorkflowCommand()
+    handle = await cmd.start(_In(n=1), workflow_id="w1", raise_on_already_started=False)
+    assert handle.workflow_id == "w1"
+    await cmd.signal(
+        handle,
+        signal=WorkflowSignalSpec(name="s", args_type=_In),
+        args=_In(n=2),
+    )
+    out = await cmd.update(
+        handle,
+        update=WorkflowUpdateSpec(name="u", args_type=_In, return_type=_Out),
+        args=_In(n=3),
+    )
+    assert out.msg == "updated"
+    await cmd.cancel(handle)
+    await cmd.terminate(handle, reason="done")
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_methods() -> None:
+    q = _StubWorkflowQuery()
+    handle = WorkflowHandle(workflow_id="h")
+    res = await q.query(
+        handle,
+        query=WorkflowQuerySpec(name="q", args_type=_In, return_type=_Out),
+        args=_In(n=0),
+    )
+    assert res.msg == "q"
+    assert (await q.result(handle)).msg == "final"

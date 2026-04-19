@@ -124,3 +124,26 @@ class TestHybridmethod:
         # _attr_name can be "merge" or "_merge_instance" depending on class dict order,
         # since the same descriptor is stored under both names when using @merge.instancemethod
         assert merge_desc._attr_name in ("merge", "_merge_instance")
+
+    def test_bind_class_invokes_cls_method(self) -> None:
+        """_bind_class returns a callable that forwards to the class-level function."""
+        desc = SampleClass.__dict__["merge"]
+        bound = desc._bind_class(SampleClass)
+        a = SampleClass(value=1)
+        b = SampleClass(value=2)
+        merged = bound(a, b)
+        assert merged.value == 3
+
+    def test_bind_instance_invokes_instance_method(self) -> None:
+        """_bind_instance returns a callable that forwards to the instance-level function."""
+        desc = SampleClass.__dict__["merge"]
+        obj = SampleClass(value=10)
+        bound = desc._bind_instance(obj)
+        merged = bound(SampleClass(value=1))
+        assert merged.value == 11
+
+    def test_bind_instance_raises_when_not_registered(self) -> None:
+        """_bind_instance raises when no instance implementation exists."""
+        desc = SampleWithoutInstance.__dict__["class_only"]
+        with pytest.raises(RuntimeError, match="unexpectedly missing"):
+            desc._bind_instance(SampleWithoutInstance())

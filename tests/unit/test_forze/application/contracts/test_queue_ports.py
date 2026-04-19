@@ -32,12 +32,12 @@ class _StubQueueQuery:
         ]
 
     async def consume(self, queue: str, *, timeout: timedelta | None = None):
-        if False:
-            yield {
-                "queue": queue,
-                "id": "",
-                "payload": _Msg(body=""),
-            }
+        _ = timeout
+        yield {
+            "queue": queue,
+            "id": "c1",
+            "payload": _Msg(body="streamed"),
+        }
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         return len(ids)
@@ -88,6 +88,15 @@ class TestQueueQueryPort:
         assert len(msgs) == 1
         assert await stub.ack("q", ("1",)) == 1
         assert await stub.nack("q", ("1",), requeue=False) == 1
+
+    @staticmethod
+    async def test_consume_yields_messages() -> None:
+        stub = _StubQueueQuery()
+        out: list[QueueMessage[_Msg]] = []
+        async for msg in stub.consume("q", timeout=timedelta(seconds=0.1)):
+            out.append(msg)
+        assert len(out) == 1
+        assert out[0]["payload"].body == "streamed"
 
     def test_non_conforming_not_instance(self) -> None:
         class Bad:

@@ -26,7 +26,7 @@ class StreamQueryPort[M: BaseModel](Protocol):
         timeout: timedelta | None = None,
     ) -> Awaitable[list[StreamMessage[M]]]:
         """Read a batch of messages from the streams in *stream_mapping*."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -37,7 +37,7 @@ class StreamQueryPort[M: BaseModel](Protocol):
         timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[M]]:
         """Continuously yield new messages from the mapped streams."""
-        ...
+        ...  # pragma: no cover
 
 
 # ....................... #
@@ -57,7 +57,7 @@ class StreamGroupQueryPort[M: BaseModel](Protocol):
         timeout: timedelta | None = None,
     ) -> Awaitable[list[StreamMessage[M]]]:
         """Read pending messages for *consumer* in *group*."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
@@ -70,13 +70,13 @@ class StreamGroupQueryPort[M: BaseModel](Protocol):
         timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[M]]:
         """Continuously yield new messages for *consumer* in *group*."""
-        ...
+        ...  # pragma: no cover
 
     # ....................... #
 
     def ack(self, group: str, stream: str, ids: Sequence[str]) -> Awaitable[int]:
         """Acknowledge processed messages within *group*."""
-        ...
+        ...  # pragma: no cover
 
 
 # ....................... #
@@ -96,4 +96,4 @@ class StreamCommandPort[M: BaseModel](Protocol):
         timestamp: datetime | None = None,
     ) -> Awaitable[str]:
         """Append a message to *stream* and return its identifier."""
-        ...
+        ...  # pragma: no cover

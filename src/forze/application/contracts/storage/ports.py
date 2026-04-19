@@ -26,15 +26,15 @@ class StoragePort(Protocol):
         :param description: Optional human-readable description.
         :param prefix: Optional key prefix (folder-like namespace).
         """
-        ...
+        ...  # pragma: no cover
 
     def download(self, key: str) -> Awaitable[DownloadedObject]:
         """Download previously stored object data by key."""
-        ...
+        ...  # pragma: no cover
 
     def delete(self, key: str) -> Awaitable[None]:
         """Delete an object identified by ``key``."""
-        ...
+        ...  # pragma: no cover
 
     def list(
         self,
@@ -50,4 +50,4 @@ class StoragePort(Protocol):
         :param prefix: Optional prefix filter.
         :returns: A pair of results and the total count.
         """
-        ...
+        ...  # pragma: no cover

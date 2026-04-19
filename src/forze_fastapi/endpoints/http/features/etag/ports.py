@@ -18,4 +18,4 @@ class ETagProviderPort(Protocol):
         :param response_body: Serialized response payload.
         :returns: Raw ETag value or ``None`` to skip ETag injection.
         """
-        ...
+        ...  # pragma: no cover

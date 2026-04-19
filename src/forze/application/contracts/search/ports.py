@@ -30,7 +30,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
     ) -> Awaitable[tuple[list[R], int]]:
         """Search documents and return typed read models."""
 
-        ...
+        ...  # pragma: no cover
 
     @overload
     def search(
@@ -43,7 +43,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         options: SearchOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
-    ) -> Awaitable[tuple[list[T], int]]: ...
+    ) -> Awaitable[tuple[list[T], int]]: ...  # pragma: no cover
 
     @overload
     def search(
@@ -59,7 +59,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
     ) -> Awaitable[tuple[list[JsonDict], int]]:
         """Search documents and project selected fields as JSON."""
 
-        ...
+        ...  # pragma: no cover
 
     def search(
         self,
@@ -83,11 +83,11 @@ class SearchQueryPort[R: BaseModel](Protocol):
         :param return_fields: Optional projection of fields.
         :returns: A tuple of hits and total hit count.
         """
-        ...
+        ...  # pragma: no cover
 
 
 # ....................... #
 
 
 #! Not implemented yet
-class SearchCommandPort[M: BaseModel](Protocol): ...
+class SearchCommandPort[M: BaseModel](Protocol): ...  # pragma: no cover
