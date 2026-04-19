@@ -178,33 +178,38 @@ def build_document_registry(
         )
 
     if spec.write is not None:
-        create_mapper = build_document_create_mapper(
-            spec,
-            dtos,
-            steps=create_steps,
-        )
-        update_mapper = build_document_update_mapper(
-            spec,
-            dtos,
-            steps=update_steps,
-        )
-
-        reg.register_many(
-            {
-                DocumentOperation.CREATE: lambda ctx: CreateDocument(
+        if dtos.create is not None:
+            create_mapper = build_document_create_mapper(
+                spec,
+                dtos,
+                steps=create_steps,
+            )
+            reg.register(
+                DocumentOperation.CREATE,
+                lambda ctx: CreateDocument(
                     ctx=ctx,
                     doc=ctx.doc_command(spec),
                     mapper=create_mapper,
                 ),
-                DocumentOperation.KILL: lambda ctx: KillDocument(
-                    ctx=ctx,
-                    doc=ctx.doc_command(spec),
-                ),
-            },
+                inplace=True,
+            )
+
+        reg.register(
+            DocumentOperation.KILL,
+            lambda ctx: KillDocument(
+                ctx=ctx,
+                doc=ctx.doc_command(spec),
+            ),
             inplace=True,
         )
 
-        if spec.supports_update():
+        if spec.supports_update() and dtos.update is not None:
+            update_mapper = build_document_update_mapper(
+                spec,
+                dtos,
+                steps=update_steps,
+            )
+
             reg.register(
                 DocumentOperation.UPDATE,
                 lambda ctx: UpdateDocument[Any, Any, Any](
