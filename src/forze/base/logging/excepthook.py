@@ -2,7 +2,7 @@ import sys
 from types import TracebackType
 from typing import Callable
 
-from forze._constants import ForzeLogger
+from forze._logging import ForzeLogger
 
 from .logger import Logger
 

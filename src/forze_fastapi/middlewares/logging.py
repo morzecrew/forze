@@ -15,7 +15,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.base.errors import CoreError
 from forze.base.logging import Logger
-from forze_fastapi._constants import ForzeFastAPILogger
+from forze_fastapi._logging import ForzeFastAPILogger
 
 # ----------------------- #
 

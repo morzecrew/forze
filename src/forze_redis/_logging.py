@@ -10,9 +10,9 @@ from typing import Final, final
 class ForzeRedisLogger(StrEnum):
     """Forze Redis logger names."""
 
-    ADAPTERS = "forze_redis.adapters"
-    EXECUTION = "forze_redis.execution"
-    KERNEL = "forze_redis.kernel"
+    ADAPTERS = "redis.adapters"
+    EXECUTION = "redis.execution"
+    KERNEL = "redis.kernel"
 
 
 # ....................... #

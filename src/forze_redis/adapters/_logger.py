@@ -1,5 +1,5 @@
 from forze.base.logging import Logger
-from forze_redis._constants import ForzeRedisLogger
+from forze_redis._logging import ForzeRedisLogger
 
 # ----------------------- #
 

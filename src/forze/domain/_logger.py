@@ -1,4 +1,4 @@
-from forze._constants import ForzeLogger
+from forze._logging import ForzeLogger
 from forze.base.logging import Logger
 
 # ----------------------- #

@@ -1,5 +1,5 @@
 from forze.base.logging import Logger
-from forze_fastapi._constants import ForzeFastAPILogger
+from forze_fastapi._logging import ForzeFastAPILogger
 
 # ----------------------- #
 

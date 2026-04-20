@@ -10,9 +10,9 @@ from typing import Final, final
 class ForzePostgresLogger(StrEnum):
     """Forze Postgres logger names."""
 
-    ADAPTERS = "forze_postgres.adapters"
-    EXECUTION = "forze_postgres.execution"
-    KERNEL = "forze_postgres.kernel"
+    ADAPTERS = "postgres.adapters"
+    EXECUTION = "postgres.execution"
+    KERNEL = "postgres.kernel"
 
 
 # ....................... #

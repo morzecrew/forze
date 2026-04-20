@@ -6,7 +6,6 @@ require_redis()
 
 # ....................... #
 
-from ._constants import FORZE_REDIS_LOGGER_NAMES
 from .execution import (
     RedisCacheConfig,
     RedisClientDepKey,
@@ -30,5 +29,4 @@ __all__ = [
     "RedisCounterConfig",
     "RedisIdempotencyConfig",
     "RedisUniversalConfig",
-    "FORZE_REDIS_LOGGER_NAMES",
 ]

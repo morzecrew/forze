@@ -10,9 +10,9 @@ from typing import Final, final
 class ForzeFastAPILogger(StrEnum):
     """Forze FastAPI logger names."""
 
-    ACCESS = "forze_fastapi.access"
-    ENDPOINTS = "forze_fastapi.endpoints"
-    MIDDLEWARES = "forze_fastapi.middlewares"
+    ACCESS = "fastapi.access"
+    ENDPOINTS = "fastapi.endpoints"
+    MIDDLEWARES = "fastapi.middlewares"
 
 
 # ....................... #
