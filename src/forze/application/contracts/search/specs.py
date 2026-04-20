@@ -111,7 +111,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
 class FederatedSearchSpec[X: BaseModel](BaseSpec):
     """Federated search specification (heterogeneous search)."""
 
-    members: Sequence[SearchSpec[X]] = attrs.field(
+    members: Sequence[SearchSpec[Any]] = attrs.field(
         validator=attrs.validators.min_len(2),
     )
     """At least two :class:`SearchSpec` members."""
