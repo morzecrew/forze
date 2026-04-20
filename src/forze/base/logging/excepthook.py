@@ -2,6 +2,8 @@ import sys
 from types import TracebackType
 from typing import Callable
 
+from forze._constants import ForzeLogger
+
 from .logger import Logger
 
 # ----------------------- #
@@ -10,7 +12,7 @@ __old_excepthook: (
     Callable[[type[BaseException], BaseException, TracebackType | None], None] | None
 ) = None
 
-uncaught_logger = Logger("forze.uncaught")
+uncaught_logger = Logger(str(ForzeLogger.UNCAUGHT))
 
 # ....................... #
 

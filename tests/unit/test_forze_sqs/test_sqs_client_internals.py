@@ -153,3 +153,86 @@ def test_chunked_ids() -> None:
         ["a", "b"],
         ["c"],
     ]
+
+
+@pytest.mark.asyncio
+async def test_client_nested_reuses_bound_client() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+    )
+
+    class _FakeSqs:
+        async def list_queues(self, **kwargs: object) -> dict[str, list[str]]:
+            return {"QueueUrls": []}
+
+    fake = _FakeSqs()
+    tok_c = client._SQSClient__ctx_client.set(fake)  # type: ignore[attr-defined]
+    tok_d = client._SQSClient__ctx_depth.set(1)
+    try:
+        async with client.client() as c:
+            assert c is fake
+            assert client._SQSClient__ctx_depth.get() == 2  # type: ignore[attr-defined]
+    finally:
+        client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
+        client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
+
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_health_returns_error_on_list_failure() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+    )
+
+    class _FakeSqs:
+        async def list_queues(self, **kwargs: object) -> None:
+            raise RuntimeError("down")
+
+    tok = client._SQSClient__ctx_client.set(_FakeSqs())  # type: ignore[attr-defined]
+    try:
+        msg, ok = await client.health()
+        assert ok is False
+        assert "down" in msg
+    finally:
+        client._SQSClient__ctx_client.reset(tok)  # type: ignore[attr-defined]
+
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_queue_url_uses_in_memory_cache() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+    )
+    client._SQSClient__queue_url_cache["my-queue"] = "https://x/y/my-queue"  # type: ignore[attr-defined]
+    url = await client.queue_url("my-queue")
+    assert url == "https://x/y/my-queue"
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_without_config_leaves_opts_config_none() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+    )
+    opts = client._SQSClient__opts  # type: ignore[attr-defined]
+    assert opts is not None
+    assert opts.config is None
+    client.close()

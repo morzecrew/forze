@@ -4,6 +4,7 @@ from enum import StrEnum
 from typing import final
 
 # ----------------------- #
+#! Review "DocumentInternalOperation" where can be: import, upsert, ensure
 
 
 @final

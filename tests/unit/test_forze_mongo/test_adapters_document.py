@@ -73,6 +73,68 @@ def _build_write_gateway(client: object) -> MagicMock:
 
 
 class TestMongoDocumentAdapter:
+    def test_post_init_rejects_mismatched_gateway_clients(self) -> None:
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(object())
+        with pytest.raises(CoreError, match="same client"):
+            MongoDocumentAdapter(
+                spec=_doc_spec(),
+                read_gw=read_gw,
+                write_gw=write_gw,
+            )
+
+    def test_post_init_rejects_tenant_aware_mismatch(self) -> None:
+        read_gw = _build_read_gateway()
+        write_gw = _build_write_gateway(read_gw.client)
+        write_gw.tenant_aware = True
+        read_gw.tenant_aware = False
+        with pytest.raises(CoreError, match="tenant"):
+            MongoDocumentAdapter(
+                spec=_doc_spec(),
+                read_gw=read_gw,
+                write_gw=write_gw,
+            )
+
+    def test_eff_batch_size_clamps_extremes(self) -> None:
+        small = MongoDocumentAdapter(
+            spec=_doc_spec(), read_gw=_build_read_gateway(), batch_size=5
+        )
+        assert small.eff_batch_size == 200
+        large = MongoDocumentAdapter(
+            spec=_doc_spec(), read_gw=_build_read_gateway(), batch_size=2000
+        )
+        assert large.eff_batch_size == 200
+
+    @pytest.mark.asyncio
+    async def test_get_continues_when_cache_set_fails(self) -> None:
+        pk = uuid4()
+        expected = _read_doc(pk)
+        read_gw = _build_read_gateway()
+        read_gw.get.return_value = expected
+
+        cache = MagicMock()
+        cache.get = AsyncMock(return_value=None)
+        cache.set_versioned = AsyncMock(side_effect=RuntimeError("set failed"))
+
+        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw, cache=cache)
+        result = await adapter.get(pk)
+
+        assert result == expected
+        cache.set_versioned.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_find_many_short_circuits_when_count_zero(self) -> None:
+        read_gw = _build_read_gateway()
+        read_gw.count = AsyncMock(return_value=0)
+        read_gw.find_many = AsyncMock()
+
+        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw)
+        rows, total = await adapter.find_many(None, pagination=None, sorts=None)
+
+        assert rows == []
+        assert total == 0
+        read_gw.find_many.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_get_falls_back_to_read_gateway_when_cache_get_fails(self) -> None:
         pk = uuid4()

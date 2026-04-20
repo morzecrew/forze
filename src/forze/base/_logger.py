@@ -1,5 +1,7 @@
+from forze._constants import ForzeLogger
+
 from .logging import Logger
 
 # ----------------------- #
 
-logger = Logger("forze.base")
+logger = Logger(str(ForzeLogger.BASE))

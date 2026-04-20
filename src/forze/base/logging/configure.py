@@ -5,7 +5,7 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 
 import logging
 import sys
-from typing import Final, Literal, Sequence, TextIO, TypedDict
+from typing import Literal, Sequence, TextIO, TypedDict
 
 import structlog
 from structlog.types import Processor
@@ -128,22 +128,13 @@ def build_foreign_formatter(
 
 # ....................... #
 
-DEFAULT_LOGGER_NAMES: Final[tuple[str, ...]] = (
-    "forze",
-    "forze.uncaught",
-    "forze.application",
-    "forze.domain",
-    "forze.base",
-)
-"""Default logger names to configure logging for."""
-
 
 def configure_logging(
     *,
     level: LogLevel = "info",
     render_mode: Literal["console", "json"] = "console",
     custom_console_renderer: structlog.types.Processor | None = None,
-    logger_names: Sequence[str] = DEFAULT_LOGGER_NAMES,
+    logger_names: Sequence[str] | None = None,
     stream: TextIO = sys.stdout,
     otel_config: OpenTelemetryConfig | None = None,
 ) -> None:
@@ -184,7 +175,7 @@ def configure_logging(
         ],
     )
 
-    for name in logger_names:
+    for name in logger_names or []:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.setLevel(LogLevelToRank.get(level, 0))

@@ -1,6 +1,3 @@
-from starlette.responses import JSONResponse
-
-from forze.base.errors import CoreError
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -13,11 +10,19 @@ from typing import Any
 
 import attrs
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from forze.base.errors import CoreError
 from forze.base.logging import Logger
+from forze_fastapi._constants import ForzeFastAPILogger
 
 # ----------------------- #
+
+logger = Logger(str(ForzeFastAPILogger.ACCESS))
+"""The logger for the logging middleware."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True)
@@ -29,9 +34,6 @@ class LoggingMiddleware:
 
     process_time_header: str = attrs.field(kw_only=True, default="X-Process-Time")
     """The header name for the process time."""
-
-    logger_name: str = attrs.field(kw_only=True, default="api.access")
-    """The logger name."""
 
     # ....................... #
 
@@ -124,12 +126,6 @@ class LoggingMiddleware:
 
     # ....................... #
 
-    @property
-    def _logger(self) -> Logger:
-        return Logger(self.logger_name)
-
-    # ....................... #
-
     def _log_access(
         self,
         request: Request,
@@ -140,7 +136,7 @@ class LoggingMiddleware:
         log_extra = self._prepare_log_extra(
             request, scope, status_code, process_time_ms
         )
-        self._logger.info("Processed request", **log_extra)
+        logger.info("Processed request", **log_extra)
 
     # ....................... #
 
@@ -151,7 +147,7 @@ class LoggingMiddleware:
         process_time_ms: int,
     ) -> None:
         log_extra = self._prepare_log_extra(request, scope, 500, process_time_ms)
-        self._logger.critical_exception("Unhandled exception", **log_extra)
+        logger.critical_exception("Unhandled exception", **log_extra)
 
 
 # ....................... #

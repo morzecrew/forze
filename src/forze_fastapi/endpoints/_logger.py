@@ -1,5 +1,6 @@
 from forze.base.logging import Logger
+from forze_fastapi._constants import ForzeFastAPILogger
 
 # ----------------------- #
 
-logger = Logger("forze_fastapi.endpoints")
+logger = Logger(str(ForzeFastAPILogger.ENDPOINTS))

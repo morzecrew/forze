@@ -1,5 +1,3 @@
-import attrs
-
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -8,6 +6,7 @@ require_fastapi()
 
 from typing import Callable
 
+import attrs
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 

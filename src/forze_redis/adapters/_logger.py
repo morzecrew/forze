@@ -1,6 +1,7 @@
 from forze.base.logging import Logger
+from forze_redis._constants import ForzeRedisLogger
 
 # ----------------------- #
 
-logger = Logger("forze_redis.adapters")
+logger = Logger(str(ForzeRedisLogger.ADAPTERS))
 """Redis adapters logger."""
