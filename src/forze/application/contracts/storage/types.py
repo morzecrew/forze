@@ -41,6 +41,7 @@ class ObjectMetadata(TypedDict):
     size: str
     """Formatted size (e.g. ``"42 KB"``)."""
 
+    #! TODO: str | None; need to add tags as Mapping[str, str] | None
     description: NotRequired[str]
     """Optional description if present."""
 

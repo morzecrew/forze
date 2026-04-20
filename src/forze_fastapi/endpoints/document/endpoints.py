@@ -60,8 +60,8 @@ def build_document_get_endpoint_spec[R: ReadDocument](
     *,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
-    etag: bool = True,
-    etag_auto_304: bool = True,
+    etag: bool = False,
+    etag_auto_304: bool = False,
 ) -> GetEndpointSpec[R]:
     path = path_override or "/get"
     path = path_coerce(path)
@@ -109,8 +109,8 @@ def build_document_get_by_number_id_endpoint_spec[R: ReadDocument](
     *,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
-    etag: bool = True,
-    etag_auto_304: bool = True,
+    etag: bool = False,
+    etag_auto_304: bool = False,
 ) -> GetByNumberIdEndpointSpec[R]:
     path = path_override or "/get-by-num"
     path = path_coerce(path)
