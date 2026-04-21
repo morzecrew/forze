@@ -108,7 +108,7 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R, F]):
     request: HttpRequestSpec[Q, P, H, C, B] | None = attrs.field(default=None)
     """The request specification of the endpoint."""
 
-    response: type[R] | None = attrs.field(default=None)
+    response: type[R | None] = attrs.field(default=type(None))
     """The response model type of the endpoint."""
 
     mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In]
@@ -145,7 +145,7 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R, F]):
             if self.http.get("status_code", 204) != 204:
                 raise CoreError("DELETE method must have status code 204")
 
-            if self.response is not None:
+            if self.response is not type(None):
                 raise CoreError("DELETE method must not have a response model")
 
 

@@ -117,11 +117,16 @@ def attach_http_endpoint(
         # Only docstring hack allows to use Markdown formatting
         endpoint.__doc__ = description
 
+    rsp: type[R] | type[None] | None = spec.response
+
+    if rsp is type(None):
+        rsp = None  # type: ignore[assignment]
+
     router.add_api_route(
         path,
         endpoint,
         methods=[method],
-        response_model=spec.response,
+        response_model=rsp,
         status_code=spec.http.get("status_code"),
         operation_id=operation_id,
         summary=metadata.get("summary"),
@@ -137,9 +142,7 @@ def attach_http_endpoint(
 def attach_http_endpoints(
     router: APIRouter,
     *,
-    specs: Sequence[
-        HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
-    ],
+    specs: Sequence[HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]],
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,

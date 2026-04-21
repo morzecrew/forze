@@ -3,6 +3,7 @@ from typing import Sequence
 from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import facade_call, facade_op
 from forze.base.errors import CoreError
+from forze_fastapi.endpoints.http.mapping import EmptyMapper
 
 from ..contracts import (
     HttpEndpointFeaturePort,
@@ -21,8 +22,9 @@ from ..features import ETagFeature, IdempotencyFeature
 
 def validate_http_features(
     http: HttpSpec,
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]]
-    | None = None,
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None
+    ) = None,
 ) -> None:
     if features is None:
         return
@@ -50,12 +52,13 @@ def build_http_endpoint_spec(
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
-    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In],
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = EmptyMapper(),  # type: ignore[assignment]
     metadata: HttpMetadataSpec | None = None,
-    response: type[R] | None = None,
+    response: type[R | None] = type(None),
     response_mapper: MapperPort[Raw, R] | None = None,
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]]
-    | None = None,
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None
+    ) = None,
 ) -> HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F]:
 
     # fail fast if features are invalid
@@ -79,8 +82,9 @@ def build_http_endpoint_spec(
 
 def compose_endpoint_features(
     handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]]
-    | None = None,
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None
+    ) = None,
 ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
     wrapped = handler
 

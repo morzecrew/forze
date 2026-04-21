@@ -333,7 +333,6 @@ def build_document_kill_endpoint_spec(
         request={"query_type": DocumentIdDTO},
         metadata=metadata,
         mapper=QueryAsIsMapper(DocumentIdDTO),
-        response=None,
     )
 
 
