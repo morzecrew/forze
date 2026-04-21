@@ -6,7 +6,7 @@ from fastapi import Request
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import JsonDict
 
-from .typevars import B, C, F, H, In, P, Q, R
+from .typevars import B, C, F, H, In, P, Q, R, Raw
 
 if TYPE_CHECKING:
     from .specs import HttpEndpointSpec, HttpRequestDTO
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class HttpEndpointContext(Generic[Q, P, H, C, B, In, R, F]):
+class HttpEndpointContext(Generic[Q, P, H, C, B, In, Raw, R, F]):
     """Context for an HTTP endpoint."""
 
     raw_request: Request
@@ -36,7 +36,7 @@ class HttpEndpointContext(Generic[Q, P, H, C, B, In, R, F]):
     input: In
     """Mapped usecase input."""
 
-    spec: "HttpEndpointSpec[Q, P, H, C, B, In, R, F]"
+    spec: "HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F]"
     """The endpoint specification."""
 
     operation_id: str

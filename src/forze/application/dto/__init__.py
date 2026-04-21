@@ -5,6 +5,7 @@ from .document import (
     DocumentIdRevDTO,
     DocumentNumberIdDTO,
     DocumentUpdateDTO,
+    DocumentUpdateRes,
 )
 from .list_ import ListRequestDTO, RawListRequestDTO
 from .paginated import Paginated, Pagination, RawPaginated
@@ -27,4 +28,5 @@ __all__ = [
     "DocumentIdRevDTO",
     "DocumentUpdateDTO",
     "DocumentNumberIdDTO",
+    "DocumentUpdateRes",
 ]

@@ -4,10 +4,11 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperPort
+from forze.application.dto import DocumentUpdateRes
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_validate
-from forze.domain.models import BaseDTO
+from forze.domain.models import BaseDTO, ReadDocument
 
 from .contracts import HttpRequestDTO
 
@@ -126,3 +127,20 @@ class QueryAsIsBodyAssignMapper[Out: BaseModel](MapperPort[ReqDTO, Out]):
         result = pydantic_validate(self.out, {**dump, self.body_key: body})
 
         return result
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class DocumentUpdateResDataMapper[Out: ReadDocument](MapperPort[DocumentUpdateRes[Out], Out]):
+    """Maps :class:`~forze.application.dto.DocumentUpdateRes` to the read model for HTTP."""
+
+    async def __call__(
+        self,
+        source: DocumentUpdateRes[Out],
+        /,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> Out:
+        return source.data

@@ -15,7 +15,7 @@ from forze.base.errors import CoreError
 
 from ..._utils import facade_dependency
 from ..contracts import HttpEndpointContext, HttpEndpointSpec
-from ..contracts.typevars import B, C, F, H, In, P, Q, R
+from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 from .dto import build_request_dto
 from .handler import UsecaseHttpEndpointHandler
 from .helpers import compose_endpoint_features, validate_http_features
@@ -54,7 +54,7 @@ def _has_route(router: APIRouter, *, path: str, method: str) -> bool:
 def attach_http_endpoint(
     router: APIRouter,
     *,
-    spec: HttpEndpointSpec[Q, P, H, C, B, In, R, F],
+    spec: HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F],
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,
@@ -75,7 +75,7 @@ def attach_http_endpoint(
         ctx_dep=ctx_dep,
     )
     operation_id = registry.qualify_operation(spec.call.op)
-    base_handler = UsecaseHttpEndpointHandler[Q, P, H, C, B, In, R, F]()
+    base_handler = UsecaseHttpEndpointHandler[Q, P, H, C, B, In, Raw, R, F]()
     handler = compose_endpoint_features(base_handler, spec.features)
 
     async def endpoint(
@@ -137,7 +137,9 @@ def attach_http_endpoint(
 def attach_http_endpoints(
     router: APIRouter,
     *,
-    specs: Sequence[HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]],
+    specs: Sequence[
+        HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+    ],
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,

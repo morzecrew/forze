@@ -13,7 +13,7 @@ from ..contracts import (
     HttpRequestSpec,
     HttpSpec,
 )
-from ..contracts.typevars import B, C, F, H, In, P, Q, R
+from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 from ..features import ETagFeature, IdempotencyFeature
 
 # ----------------------- #
@@ -21,7 +21,8 @@ from ..features import ETagFeature, IdempotencyFeature
 
 def validate_http_features(
     http: HttpSpec,
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = None,
+    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]]
+    | None = None,
 ) -> None:
     if features is None:
         return
@@ -45,15 +46,17 @@ def validate_http_features(
 
 def build_http_endpoint_spec(
     facade_type: type[F],
-    call: facade_op[In, R],
+    call: facade_op[In, Raw],
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
     mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In],
     metadata: HttpMetadataSpec | None = None,
     response: type[R] | None = None,
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = None,
-) -> HttpEndpointSpec[Q, P, H, C, B, In, R, F]:
+    response_mapper: MapperPort[Raw, R] | None = None,
+    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]]
+    | None = None,
+) -> HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F]:
 
     # fail fast if features are invalid
     validate_http_features(http, features)
@@ -65,6 +68,7 @@ def build_http_endpoint_spec(
         request=request,
         response=response,
         mapper=mapper,
+        response_mapper=response_mapper,
         facade_type=facade_type,
         call=facade_call(call),
     )
@@ -74,9 +78,10 @@ def build_http_endpoint_spec(
 
 
 def compose_endpoint_features(
-    handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, R, F],
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = None,
-) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, R, F]:
+    handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
+    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]]
+    | None = None,
+) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
     wrapped = handler
 
     if features is not None:

@@ -16,7 +16,7 @@ from ...contracts import (
     HttpEndpointFeaturePort,
     HttpEndpointHandlerPort,
 )
-from ...contracts.typevars import B, C, F, H, In, P, Q, R
+from ...contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 from ..utils import serialize_endpoint_result
 from .constants import IDEMPOTENCY_KEY_HEADER
 
@@ -25,7 +25,7 @@ from .constants import IDEMPOTENCY_KEY_HEADER
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
+class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]):
     """Feature that adds idempotency semantics to an HTTP endpoint.
 
     Before executing the endpoint, checks for an existing idempotency
@@ -40,11 +40,11 @@ class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
 
     def wrap(
         self,
-        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, R, F],
-    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, R, F]:
+        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
+    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
 
         async def wrapped(
-            ctx: HttpEndpointContext[Q, P, H, C, B, In, R, F],
+            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
         ) -> R | Response:
             idem_key = ctx.raw_request.headers.get(IDEMPOTENCY_KEY_HEADER)
 

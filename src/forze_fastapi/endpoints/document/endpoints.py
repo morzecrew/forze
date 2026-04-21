@@ -13,6 +13,7 @@ from forze.application.dto import (
     DocumentIdRevDTO,
     DocumentNumberIdDTO,
     DocumentUpdateDTO,
+    DocumentUpdateRes,
     ListRequestDTO,
     Paginated,
     RawListRequestDTO,
@@ -24,6 +25,7 @@ from forze.domain.models import BaseDTO, ReadDocument
 from .._utils import path_coerce
 from ..http import (
     BodyAsIsMapper,
+    DocumentUpdateResDataMapper,
     ETagFeature,
     HttpEndpointSpec,
     HttpMetadataSpec,
@@ -37,8 +39,8 @@ from .features import document_etag
 # ----------------------- #
 
 Facade = DocumentUsecasesFacade[Any, Any, Any]
-Idempotency = IdempotencyFeature[Any, Any, Any, Any, Any, Any, Any, Any]
-ETag = ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any]
+Idempotency = IdempotencyFeature[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+ETag = ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any, Any]
 
 # ....................... #
 
@@ -50,6 +52,7 @@ type GetEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
     Any,
     Any,
     Any,
+    R,
     R,
     Facade,
 ]
@@ -100,6 +103,7 @@ type GetByNumberIdEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
     Any,
     Any,
     R,
+    R,
     Facade,
 ]
 
@@ -149,6 +153,7 @@ type ListEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
     ListRequestDTO,
     ListRequestDTO,
     Paginated[R],
+    Paginated[R],
     Facade,
 ]
 
@@ -184,6 +189,7 @@ type RawListEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
     RawListRequestDTO,
     RawListRequestDTO,
     RawPaginated,
+    RawPaginated,
     Facade,
 ]
 
@@ -218,6 +224,7 @@ type CreateEndpointSpec[R: ReadDocument, C: BaseDTO] = HttpEndpointSpec[
     Any,
     C,
     C,
+    R,
     R,
     Facade,
 ]
@@ -260,6 +267,7 @@ type UpdateEndpointSpec[R: ReadDocument, U: BaseDTO] = HttpEndpointSpec[
     Any,
     U,
     DocumentUpdateDTO[U],
+    DocumentUpdateRes[R],
     R,
     Facade,
 ]
@@ -291,6 +299,7 @@ def build_document_update_endpoint_spec[R: ReadDocument, U: BaseDTO](
             DocumentUpdateDTO[dtos.update],  # type: ignore[name-defined]
             body_key="dto",
         ),
+        response_mapper=DocumentUpdateResDataMapper(),
     )
 
 
@@ -298,6 +307,7 @@ def build_document_update_endpoint_spec[R: ReadDocument, U: BaseDTO](
 
 KillEndpointSpec = HttpEndpointSpec[
     DocumentIdDTO,
+    Any,
     Any,
     Any,
     Any,
@@ -337,6 +347,7 @@ type SoftDeleteEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
     Any,
     Any,
     Any,
+    R,
     R,
     Facade,
 ]

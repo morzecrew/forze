@@ -18,7 +18,7 @@ from ..contracts import (
     HttpBodyMode,
     HttpEndpointSpec,
 )
-from ..contracts.typevars import B, C, F, H, In, P, Q, R
+from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 from ..features import (
     IDEMPOTENCY_KEY_HEADER,
     IF_NONE_MATCH_HEADER_KEY,
@@ -40,7 +40,7 @@ from .utils import (
 
 def build_http_endpoint_signature(
     *,
-    spec: HttpEndpointSpec[Q, P, H, C, B, In, R, F],
+    spec: HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F],
     facade_dep: Callable[[ExecutionContext], F],
     ctx_dep: Callable[[], ExecutionContext],
 ) -> inspect.Signature:

@@ -234,7 +234,7 @@ def _minimal_get_spec(
     path: str = "/ping",
     metadata: dict[str, str] | None = None,
     features: Any = None,
-) -> HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]:
+) -> HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]:
     class Facade:
         pass
 

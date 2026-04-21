@@ -39,6 +39,7 @@ type TypedSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     SearchRequestDTO,
     SearchRequestDTO,
     Paginated[M],
+    Paginated[M],
     Facade,
 ]
 
@@ -73,6 +74,7 @@ type RawSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     Any,
     RawSearchRequestDTO,
     RawSearchRequestDTO,
+    RawPaginated,
     RawPaginated,
     Facade,
 ]

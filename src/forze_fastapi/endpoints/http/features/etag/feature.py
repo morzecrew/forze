@@ -8,7 +8,7 @@ from ...contracts import (
     HttpEndpointFeaturePort,
     HttpEndpointHandlerPort,
 )
-from ...contracts.typevars import B, C, F, H, In, P, Q, R
+from ...contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 from ..utils import response_from_endpoint_result, serialize_endpoint_result
 from .constants import ETAG_HEADER_KEY, IF_NONE_MATCH_HEADER_KEY
 from .ports import ETagProviderPort
@@ -19,7 +19,7 @@ from .utils import ensure_quoted_etag, etag_matches
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
+class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]):
     """Feature that adds ETag support to an HTTP endpoint."""
 
     provider: ETagProviderPort
@@ -35,10 +35,10 @@ class ETagFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]):
 
     def wrap(
         self,
-        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, R, F],
-    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, R, F]:
+        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
+    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
         async def wrapped(
-            ctx: HttpEndpointContext[Q, P, H, C, B, In, R, F],
+            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
         ) -> R | Response:
             result = await handler(ctx)
 

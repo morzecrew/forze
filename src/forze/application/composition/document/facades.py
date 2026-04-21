@@ -48,7 +48,10 @@ class DocumentDTOs(Generic[R, C, U]):
 class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
     """Typed facade for document usecases."""
 
-    get = facade_op(DocumentOperation.GET, uc=GetDocument[R])
+    get = facade_op(
+        DocumentOperation.GET,
+        uc=GetDocument[R],
+    )
     """Get document usecase."""
 
     get_by_number_id = facade_op(
@@ -57,23 +60,44 @@ class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
     )
     """Get document by number ID usecase."""
 
-    list = facade_op(DocumentOperation.LIST, uc=TypedListDocuments[R])
+    list = facade_op(
+        DocumentOperation.LIST,
+        uc=TypedListDocuments[R],
+    )
     """List documents usecase."""
 
-    raw_list = facade_op(DocumentOperation.RAW_LIST, uc=RawListDocuments)
+    raw_list = facade_op(
+        DocumentOperation.RAW_LIST,
+        uc=RawListDocuments,
+    )
     """Raw list documents usecase."""
 
-    create = facade_op(DocumentOperation.CREATE, uc=CreateDocument[C, Any, R])
+    create = facade_op(
+        DocumentOperation.CREATE,
+        uc=CreateDocument[C, Any, R],
+    )
     """Create document usecase."""
 
-    update = facade_op(DocumentOperation.UPDATE, uc=UpdateDocument[U, Any, R])
+    update = facade_op(
+        DocumentOperation.UPDATE,
+        uc=UpdateDocument[U, Any, R],
+    )
     """Update document usecase."""
 
-    kill = facade_op(DocumentOperation.KILL, uc=KillDocument)
+    kill = facade_op(
+        DocumentOperation.KILL,
+        uc=KillDocument,
+    )
     """Kill document usecase."""
 
-    delete = facade_op(DocumentOperation.DELETE, uc=DeleteDocument[R])
+    delete = facade_op(
+        DocumentOperation.DELETE,
+        uc=DeleteDocument[R],
+    )
     """Delete document usecase."""
 
-    restore = facade_op(DocumentOperation.RESTORE, uc=RestoreDocument[R])
+    restore = facade_op(
+        DocumentOperation.RESTORE,
+        uc=RestoreDocument[R],
+    )
     """Restore document usecase."""

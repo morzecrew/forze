@@ -14,4 +14,7 @@ B = TypeVar("B", bound=BaseModel)
 R = TypeVar("R")
 
 In = TypeVar("In", bound=BaseModel)
+Raw = TypeVar("Raw")
+"""Usecase return value before optional HTTP response projection."""
+
 F = TypeVar("F", bound=UsecasesFacade)

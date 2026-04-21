@@ -24,6 +24,7 @@ from .features import (
 )
 from .mapping import (
     BodyAsIsMapper,
+    DocumentUpdateResDataMapper,
     EmptyMapper,
     QueryAsIsBodyAssignMapper,
     QueryAsIsMapper,
@@ -49,6 +50,7 @@ __all__ = [
     "ETAG_HEADER_KEY",
     "IF_NONE_MATCH_HEADER_KEY",
     "BodyAsIsMapper",
+    "DocumentUpdateResDataMapper",
     "QueryAsIsBodyAssignMapper",
     "QueryAsIsMapper",
     "facade_dependency",

@@ -9,7 +9,7 @@ from forze.domain.models import BaseDTO
 
 from .constants import HttpBodyMode
 from .ports import HttpEndpointFeaturePort
-from .typevars import B, C, F, H, In, P, Q, R
+from .typevars import B, C, F, H, In, P, Q, R, Raw
 
 # ----------------------- #
 
@@ -91,7 +91,7 @@ class HttpRequestDTO(BaseDTO, Generic[Q, P, H, C, B]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
+class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R, F]):
     """Specification for an HTTP endpoint."""
 
     http: HttpSpec
@@ -100,7 +100,7 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
     metadata: HttpMetadataSpec | None = attrs.field(default=None)
     """The metadata specification of the endpoint."""
 
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, R, F]] | None = (
+    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None = (
         attrs.field(default=None)
     )
     """The features specification of the endpoint."""
@@ -114,10 +114,13 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
     mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In]
     """The mapper that maps the request to the input model."""
 
+    response_mapper: MapperPort[Raw, R] | None = attrs.field(default=None)
+    """Maps usecase output to the HTTP response model; omit when Raw is R (identity)."""
+
     facade_type: type[F]
     """The type of the usecases facade to use for the endpoint."""
 
-    call: FacadeOpRef[In, R]
+    call: FacadeOpRef[In, Raw]
     """The call operation to use for the endpoint."""
 
     # ....................... #

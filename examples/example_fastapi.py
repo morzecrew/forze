@@ -123,7 +123,7 @@ endpoint_spec = build_http_endpoint_spec(
     response=HelloOutput,
     mapper=map_hello,
     features=[
-        ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any](
+        ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any, Any](
             provider=lambda response_body: "1234"
         ),
     ],
