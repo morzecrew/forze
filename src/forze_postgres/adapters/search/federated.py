@@ -132,7 +132,9 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 "Federated adapter legs must match FederatedSearchSpec.members length.",
             )
 
-        for (leg_member, _), m in zip(self.legs, self.federated_spec.members, strict=True):
+        for (leg_member, _), m in zip(
+            self.legs, self.federated_spec.members, strict=True
+        ):
             if leg_member != m.name:
                 raise CoreError(
                     f"Federated leg member {leg_member!r} does not match SearchSpec.name {m.name!r}.",
@@ -195,7 +197,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     ]:
         if return_fields is not None:
             raise CoreError(
-                "return_fields is not supported for federated search; use return_type=None.",
+                "Fields selection with `return_fields` is not supported for federated search. "
+                "Use `return_type` instead",
             )
 
         leg_opts, member_weights = prepare_federated_search_options(

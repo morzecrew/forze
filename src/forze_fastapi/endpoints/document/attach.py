@@ -61,8 +61,8 @@ def attach_document_endpoints(
             dtos=dtos,
             path_override=get_endpoint.get("path_override", None),
             metadata=get_endpoint.get("metadata", None),
-            etag=config.get("enable_etag", True),
-            etag_auto_304=config.get("etag_auto_304", True),
+            etag=config.get("enable_etag", False),
+            etag_auto_304=config.get("etag_auto_304", False),
         )
         attach_http_endpoint(
             router=router,
@@ -85,8 +85,8 @@ def attach_document_endpoints(
                     dtos=dtos,
                     path_override=get_by_number_id_endpoint.get("path_override", None),
                     metadata=get_by_number_id_endpoint.get("metadata", None),
-                    etag=config.get("enable_etag", True),
-                    etag_auto_304=config.get("etag_auto_304", True),
+                    etag=config.get("enable_etag", False),
+                    etag_auto_304=config.get("etag_auto_304", False),
                 )
             )
             attach_http_endpoint(
