@@ -17,15 +17,15 @@ class DocumentConfigSpec(TypedDict, total=False):
 
 
 class DocumentEndpointsSpec(TypedDict, total=False):
-    get_: SimpleHttpEndpointSpec
-    get_by_number_id: SimpleHttpEndpointSpec
-    list_: SimpleHttpEndpointSpec
-    raw_list: SimpleHttpEndpointSpec
-    create: SimpleHttpEndpointSpec
-    update: SimpleHttpEndpointSpec
-    kill: SimpleHttpEndpointSpec
-    delete: SimpleHttpEndpointSpec
-    restore: SimpleHttpEndpointSpec
+    get_: SimpleHttpEndpointSpec | bool
+    get_by_number_id: SimpleHttpEndpointSpec | bool
+    list_: SimpleHttpEndpointSpec | bool
+    raw_list: SimpleHttpEndpointSpec | bool
+    create: SimpleHttpEndpointSpec | bool
+    update: SimpleHttpEndpointSpec | bool
+    kill: SimpleHttpEndpointSpec | bool
+    delete: SimpleHttpEndpointSpec | bool
+    restore: SimpleHttpEndpointSpec | bool
 
     # ....................... #
 

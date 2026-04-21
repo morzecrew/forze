@@ -57,6 +57,7 @@ class TestAttachSearchRoutes:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
+            endpoints={"search": True, "raw_search": True},
         )
 
         assert result is router
@@ -83,6 +84,7 @@ class TestAttachSearchRoutes:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
+            endpoints={"search": True, "raw_search": True},
         )
 
         app = FastAPI()
@@ -118,8 +120,8 @@ class TestAttachSearchRoutes:
             registry=reg,
             ctx_dep=ctx_dep,
             endpoints={
-                "search": {"disable": True},
-                "raw_search": {},
+                "search": False,
+                "raw_search": True,
             },
         )
 
@@ -150,6 +152,7 @@ class TestBuildSearchRouter:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
+            endpoints={"search": True, "raw_search": True},
         )
 
         assert isinstance(router, APIRouter)
@@ -178,7 +181,7 @@ class TestBuildSearchRouter:
             ctx_dep=ctx_dep,
             endpoints={
                 "search": {"path_override": "/query"},
-                "raw_search": {"disable": True},
+                "raw_search": False,
             },
         )
 

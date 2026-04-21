@@ -296,7 +296,7 @@ class TestAttachDocumentRoutes:
         self,
         composition_ctx,
     ) -> None:
-        """List and raw-list endpoints are attached by default."""
+        """List and raw-list routes are registered when enabled in the endpoints spec."""
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = _build_registry(spec, dtos)
@@ -311,7 +311,11 @@ class TestAttachDocumentRoutes:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
-            endpoints=_metadata_endpoints(),
+            endpoints={
+                **_metadata_endpoints(),
+                "list_": True,
+                "raw_list": True,
+            },
         )
 
         paths = {r.path for r in router.routes}
@@ -338,12 +342,12 @@ class TestAttachDocumentRoutes:
             registry=reg,
             ctx_dep=ctx_dep,
             endpoints={
-                "get_": {"disable": True},
-                "create": {"disable": True},
-                "update": {"disable": True},
-                "delete": {"disable": True},
-                "restore": {"disable": True},
-                "kill": {"disable": True},
+                "get_": False,
+                "create": False,
+                "update": False,
+                "delete": False,
+                "restore": False,
+                "kill": False,
             },
         )
 

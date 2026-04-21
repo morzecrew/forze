@@ -152,6 +152,5 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, R, F]):
 class SimpleHttpEndpointSpec(TypedDict, total=False):
     """Extra contract for built-in HTTP endpoints."""
 
-    disable: bool
     path_override: str
     metadata: HttpMetadataSpec

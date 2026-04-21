@@ -15,7 +15,7 @@ from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
 from .._logger import logger
-from ..http import attach_http_endpoint
+from ..http import SimpleHttpEndpointSpec, attach_http_endpoint
 from .endpoints import (
     build_document_create_endpoint_spec,
     build_document_delete_endpoint_spec,
@@ -46,21 +46,23 @@ def attach_document_endpoints(
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
 
-    get_endpoint = endpoints.get("get_", {})
-    get_by_number_id_endpoint = endpoints.get("get_by_number_id", {})
-    list_endpoint = endpoints.get("list_", {})
-    raw_list_endpoint = endpoints.get("raw_list", {})
-    create_endpoint = endpoints.get("create", {})
-    update_endpoint = endpoints.get("update", {})
-    kill_endpoint = endpoints.get("kill", {})
-    delete_endpoint = endpoints.get("delete", {})
-    restore_endpoint = endpoints.get("restore", {})
+    get_endpoint = endpoints.get("get_", False)
+    get_by_number_id_endpoint = endpoints.get("get_by_number_id", False)
+    list_endpoint = endpoints.get("list_", False)
+    raw_list_endpoint = endpoints.get("raw_list", False)
+    create_endpoint = endpoints.get("create", False)
+    update_endpoint = endpoints.get("update", False)
+    kill_endpoint = endpoints.get("kill", False)
+    delete_endpoint = endpoints.get("delete", False)
+    restore_endpoint = endpoints.get("restore", False)
 
-    if not get_endpoint.get("disable", False):
+    if get_endpoint is not False:
+        _get = get_endpoint if get_endpoint is not True else SimpleHttpEndpointSpec()
+
         get_endpoint_spec = build_document_get_endpoint_spec(
             dtos=dtos,
-            path_override=get_endpoint.get("path_override", None),
-            metadata=get_endpoint.get("metadata", None),
+            path_override=_get.get("path_override"),
+            metadata=_get.get("metadata"),
             etag=config.get("enable_etag", False),
             etag_auto_304=config.get("etag_auto_304", False),
         )
@@ -72,7 +74,13 @@ def attach_document_endpoints(
             exclude_none=exclude_none,
         )
 
-    if not get_by_number_id_endpoint.get("disable", False):
+    if get_by_number_id_endpoint is not False:
+        _get_by_number_id = (
+            get_by_number_id_endpoint
+            if get_by_number_id_endpoint is not True
+            else SimpleHttpEndpointSpec()
+        )
+
         if not document.supports_number_id():
             logger.warning(
                 "Number ID is not supported for document '%s', skipping",
@@ -83,8 +91,8 @@ def attach_document_endpoints(
             get_by_number_id_endpoint_spec = (
                 build_document_get_by_number_id_endpoint_spec(
                     dtos=dtos,
-                    path_override=get_by_number_id_endpoint.get("path_override", None),
-                    metadata=get_by_number_id_endpoint.get("metadata", None),
+                    path_override=_get_by_number_id.get("path_override"),
+                    metadata=_get_by_number_id.get("metadata"),
                     etag=config.get("enable_etag", False),
                     etag_auto_304=config.get("etag_auto_304", False),
                 )
@@ -97,11 +105,13 @@ def attach_document_endpoints(
                 exclude_none=exclude_none,
             )
 
-    if not list_endpoint.get("disable", False):
+    if list_endpoint is not False:
+        _list = list_endpoint if list_endpoint is not True else SimpleHttpEndpointSpec()
+
         list_endpoint_spec = build_document_list_endpoint_spec(
             dtos=dtos,
-            path_override=list_endpoint.get("path_override", None),
-            metadata=list_endpoint.get("metadata", None),
+            path_override=_list.get("path_override"),
+            metadata=_list.get("metadata"),
         )
         attach_http_endpoint(
             router=router,
@@ -111,11 +121,17 @@ def attach_document_endpoints(
             exclude_none=exclude_none,
         )
 
-    if not raw_list_endpoint.get("disable", False):
+    if raw_list_endpoint is not False:
+        _raw_list = (
+            raw_list_endpoint
+            if raw_list_endpoint is not True
+            else SimpleHttpEndpointSpec()
+        )
+
         raw_list_endpoint_spec = build_document_raw_list_endpoint_spec(
             dtos=dtos,
-            path_override=raw_list_endpoint.get("path_override", None),
-            metadata=raw_list_endpoint.get("metadata", None),
+            path_override=_raw_list.get("path_override"),
+            metadata=_raw_list.get("metadata"),
         )
         attach_http_endpoint(
             router=router,
@@ -125,7 +141,11 @@ def attach_document_endpoints(
             exclude_none=exclude_none,
         )
 
-    if not create_endpoint.get("disable", False):
+    if create_endpoint is not False:
+        _create = (
+            create_endpoint if create_endpoint is not True else SimpleHttpEndpointSpec()
+        )
+
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
@@ -150,8 +170,8 @@ def attach_document_endpoints(
 
             create_endpoint_spec = build_document_create_endpoint_spec(
                 dtos=dtos,
-                path_override=create_endpoint.get("path_override", None),
-                metadata=create_endpoint.get("metadata", None),
+                path_override=_create.get("path_override"),
+                metadata=_create.get("metadata"),
                 idempotency=idempotency,
             )
             attach_http_endpoint(
@@ -162,7 +182,11 @@ def attach_document_endpoints(
                 exclude_none=exclude_none,
             )
 
-    if not update_endpoint.get("disable", False):
+    if update_endpoint is not False:
+        _update = (
+            update_endpoint if update_endpoint is not True else SimpleHttpEndpointSpec()
+        )
+
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
@@ -184,8 +208,8 @@ def attach_document_endpoints(
         else:
             update_endpoint_spec = build_document_update_endpoint_spec(
                 dtos=dtos,
-                path_override=update_endpoint.get("path_override", None),
-                metadata=update_endpoint.get("metadata", None),
+                path_override=_update.get("path_override"),
+                metadata=_update.get("metadata"),
             )
             attach_http_endpoint(
                 router=router,
@@ -195,7 +219,9 @@ def attach_document_endpoints(
                 exclude_none=exclude_none,
             )
 
-    if not kill_endpoint.get("disable", False):
+    if kill_endpoint is not False:
+        _kill = kill_endpoint if kill_endpoint is not True else SimpleHttpEndpointSpec()
+
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
@@ -204,8 +230,8 @@ def attach_document_endpoints(
 
         else:
             kill_endpoint_spec = build_document_kill_endpoint_spec(
-                path_override=kill_endpoint.get("path_override", None),
-                metadata=kill_endpoint.get("metadata", None),
+                path_override=_kill.get("path_override"),
+                metadata=_kill.get("metadata"),
             )
             attach_http_endpoint(
                 router=router,
@@ -215,7 +241,11 @@ def attach_document_endpoints(
                 exclude_none=exclude_none,
             )
 
-    if not delete_endpoint.get("disable", False):
+    if delete_endpoint is not False:
+        _delete = (
+            delete_endpoint if delete_endpoint is not True else SimpleHttpEndpointSpec()
+        )
+
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
@@ -231,8 +261,8 @@ def attach_document_endpoints(
         else:
             delete_endpoint_spec = build_document_delete_endpoint_spec(
                 dtos=dtos,
-                path_override=delete_endpoint.get("path_override", None),
-                metadata=delete_endpoint.get("metadata", None),
+                path_override=_delete.get("path_override"),
+                metadata=_delete.get("metadata"),
             )
             attach_http_endpoint(
                 router=router,
@@ -242,7 +272,13 @@ def attach_document_endpoints(
                 exclude_none=exclude_none,
             )
 
-    if not restore_endpoint.get("disable", False):
+    if restore_endpoint is not False:
+        _restore = (
+            restore_endpoint
+            if restore_endpoint is not True
+            else SimpleHttpEndpointSpec()
+        )
+
         if document.write is None:
             logger.warning(
                 "Write operations are not supported for document '%s', skipping",
@@ -258,8 +294,8 @@ def attach_document_endpoints(
         else:
             restore_endpoint_spec = build_document_restore_endpoint_spec(
                 dtos=dtos,
-                path_override=restore_endpoint.get("path_override", None),
-                metadata=restore_endpoint.get("metadata", None),
+                path_override=_restore.get("path_override"),
+                metadata=_restore.get("metadata"),
             )
             attach_http_endpoint(
                 router=router,

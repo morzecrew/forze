@@ -112,7 +112,12 @@ class TestDocumentCreateIdempotencyIntegration:
             dtos=dtos,
             registry=reg,
             ctx_dep=_ctx_factory,
-            endpoints={"get_": {"disable": True}, "list_": {"disable": True}, "raw_list": {"disable": True}},
+            endpoints={
+                "get_": False,
+                "list_": False,
+                "raw_list": False,
+                "create": True,
+            },
         )
         app.include_router(router)
         client = TestClient(app)
