@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Sequence, TypedDict
+from typing import Any, Mapping, Sequence, TypeAlias, TypedDict
 
 import attrs
 from pydantic import BaseModel
@@ -106,15 +106,18 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
 
 # ....................... #
 
+FederatedSearchMemberSpec: TypeAlias = SearchSpec[Any] | HubSearchSpec[Any]
+"""A federated leg: single-index :class:`SearchSpec` or nested :class:`HubSearchSpec`."""
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FederatedSearchSpec[X: BaseModel](BaseSpec):
     """Federated search specification (heterogeneous search)."""
 
-    members: Sequence[SearchSpec[Any]] = attrs.field(
+    members: Sequence[FederatedSearchMemberSpec] = attrs.field(
         validator=attrs.validators.min_len(2),
     )
-    """At least two :class:`SearchSpec` members."""
+    """At least two members, each a :class:`SearchSpec` or :class:`HubSearchSpec`."""
 
     # ....................... #
 
@@ -123,5 +126,6 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
 
         if len(names) != len(set(names)):
             raise CoreError(
-                "Each federated search member must use a SearchSpec with a distinct name."
+                "Each federated search member must use a distinct name "
+                "(the SearchSpec or HubSearchSpec name)."
             )

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
+    HubSearchSpec,
     SearchSpec,
 )
 from forze.base.errors import CoreError
@@ -79,6 +80,37 @@ def test_validate_postgres_federated_search_conf_requires_two_members() -> None:
                 },
             },
         )
+
+
+def test_validate_postgres_federated_search_conf_accepts_embedded_hub_member() -> None:
+    validate_postgres_federated_search_conf(
+        {
+            "members": {
+                "hub": {
+                    "hub": ("public", "hub_v"),
+                    "members": {
+                        "in_a": {
+                            "index": ("public", "i_a"),
+                            "read": ("public", "r_a"),
+                            "engine": "pgroonga",
+                            "hub_fk": "a_id",
+                        },
+                        "in_b": {
+                            "index": ("public", "i_b"),
+                            "read": ("public", "r_b"),
+                            "engine": "pgroonga",
+                            "hub_fk": "b_id",
+                        },
+                    },
+                },
+                "flat": {
+                    "index": ("public", "i_f"),
+                    "read": ("public", "r_f"),
+                    "engine": "pgroonga",
+                },
+            },
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -295,4 +327,103 @@ def test_configurable_federated_search_fts_requires_groups() -> None:
     members = {k: {**v, "engine": "fts"} for k, v in dict(cfg["members"]).items()}
     factory = ConfigurablePostgresFederatedSearch(config={"members": members})
     with pytest.raises(CoreError, match="fts_groups"):
+        factory(_federated_exec_context(), _fed())
+
+
+def _fed_hub_and_flat() -> FederatedSearchSpec[_Hit]:
+    return FederatedSearchSpec(
+        name="fed",
+        members=(
+            HubSearchSpec(
+                name="hub",
+                model_type=_Hit,
+                members=(
+                    SearchSpec(name="in_a", model_type=_Hit, fields=["label"]),
+                    SearchSpec(name="in_b", model_type=_Hit, fields=["label"]),
+                ),
+            ),
+            SearchSpec(name="flat", model_type=_Hit, fields=["label"]),
+        ),
+    )
+
+
+def _federated_config_hub_and_flat() -> dict[str, object]:
+    return {
+        "members": {
+            "hub": {
+                "hub": ("public", "hub_v"),
+                "members": {
+                    "in_a": {
+                        "index": ("public", "i_a"),
+                        "read": ("public", "r_a"),
+                        "engine": "pgroonga",
+                        "hub_fk": "a_id",
+                    },
+                    "in_b": {
+                        "index": ("public", "i_b"),
+                        "read": ("public", "r_b"),
+                        "engine": "pgroonga",
+                        "hub_fk": "b_id",
+                    },
+                },
+            },
+            "flat": {
+                "index": ("public", "i_f"),
+                "read": ("public", "r_f"),
+                "engine": "pgroonga",
+            },
+        },
+    }
+
+
+def test_configurable_federated_search_resolves_hub_member() -> None:
+    factory = ConfigurablePostgresFederatedSearch(config=_federated_config_hub_and_flat())
+    adapter = factory(_federated_exec_context(), _fed_hub_and_flat())
+    assert isinstance(adapter, PostgresFederatedSearchAdapter)
+
+
+def test_configurable_federated_search_hub_member_requires_embedded_hub_config() -> None:
+    cfg = _two_member_pgroonga_config()
+    members = dict(cfg["members"])
+    factory = ConfigurablePostgresFederatedSearch(
+        config={
+            "members": {
+                "hub": members["a"],
+                "flat": members["b"],
+            },
+        },
+    )
+    with pytest.raises(CoreError, match="'hub' and 'members'"):
+        factory(_federated_exec_context(), _fed_hub_and_flat())
+
+
+def test_configurable_federated_search_searchspec_rejects_hub_shaped_config() -> None:
+    cfg = {
+        "members": {
+            "a": {
+                "hub": ("public", "hub_v"),
+                "members": {
+                    "in_a": {
+                        "index": ("public", "i_a"),
+                        "read": ("public", "r_a"),
+                        "engine": "pgroonga",
+                        "hub_fk": "x",
+                    },
+                    "in_b": {
+                        "index": ("public", "i_b"),
+                        "read": ("public", "r_b"),
+                        "engine": "pgroonga",
+                        "hub_fk": "y",
+                    },
+                },
+            },
+            "b": {
+                "index": ("public", "i_b"),
+                "read": ("public", "r_b"),
+                "engine": "pgroonga",
+            },
+        },
+    }
+    factory = ConfigurablePostgresFederatedSearch(config=cfg)
+    with pytest.raises(CoreError, match="looks like an embedded hub"):
         factory(_federated_exec_context(), _fed())

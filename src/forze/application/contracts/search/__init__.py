@@ -10,13 +10,19 @@ from .deps import (
 )
 from .models import FederatedSearchReadModel
 from .ports import SearchCommandPort, SearchQueryPort
-from .specs import FederatedSearchSpec, HubSearchSpec, SearchSpec
+from .specs import (
+    FederatedSearchMemberSpec,
+    FederatedSearchSpec,
+    HubSearchSpec,
+    SearchSpec,
+)
 from .types import SearchOptions
 
 # ----------------------- #
 
 __all__ = [
     "SearchSpec",
+    "FederatedSearchMemberSpec",
     "HubSearchSpec",
     "SearchOptions",
     "SearchQueryPort",

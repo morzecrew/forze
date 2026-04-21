@@ -1,10 +1,12 @@
 from .configs import (
     PostgresDocumentConfig,
+    PostgresFederatedMemberConfig,
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    is_postgres_federated_embedded_hub_config,
     validate_postgres_federated_search_conf,
     validate_postgres_hub_search_conf,
 )
@@ -19,7 +21,9 @@ __all__ = [
     "PostgresClientDepKey",
     "PostgresDocumentConfig",
     "PostgresSearchConfig",
+    "PostgresFederatedMemberConfig",
     "PostgresFederatedSearchConfig",
+    "is_postgres_federated_embedded_hub_config",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
     "validate_postgres_hub_search_conf",

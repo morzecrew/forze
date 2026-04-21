@@ -1,6 +1,6 @@
 """Factory functions for Postgres document and tx manager adapters."""
 
-from typing import Any, Sequence, final
+from typing import Any, Sequence, cast, final
 
 import attrs
 
@@ -42,6 +42,7 @@ from .configs import (
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    is_postgres_federated_embedded_hub_config,
     validate_fts_groups_for_search_spec,
     validate_postgres_federated_search_conf,
     validate_postgres_hub_search_conf,
@@ -337,7 +338,31 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
                     f"Member '{m.name}' not found in PostgresFederatedSearchConfig['members'].",
                 )
 
+            if isinstance(m, HubSearchSpec):
+                if not is_postgres_federated_embedded_hub_config(c):
+                    raise CoreError(
+                        f"Federated hub member {m.name!r} must use a Postgres config with "
+                        "'hub' and 'members' (embedded PostgresHubSearchConfig).",
+                    )
+
+                hub_cfg = dict(c)
+
+                if "tenant_aware" not in hub_cfg:
+                    hub_cfg["tenant_aware"] = self.config.get("tenant_aware", False)
+
+                port = ConfigurablePostgresHubSearch(
+                    config=cast(PostgresHubSearchConfig, hub_cfg),
+                )(context, m)
+                legs.append((m.name, port))
+                continue
+
             engine = c.get("engine", "pgroonga")
+
+            if is_postgres_federated_embedded_hub_config(c):
+                raise CoreError(
+                    f"Federated search member {m.name!r} is a SearchSpec but its Postgres "
+                    "config looks like an embedded hub (has 'hub' and 'members').",
+                )
 
             if engine not in ("pgroonga", "fts"):
                 raise CoreError(
@@ -351,10 +376,14 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
                 if fts_groups is None:
                     raise CoreError("FTS groups are required for FTS federated member.")
 
-                validate_fts_groups_for_search_spec(m, fts_groups)
+                validate_fts_groups_for_search_spec(m, fts_groups)  # type: ignore[arg-type]
 
-            port = _postgres_search_port_for_config(context, m, c)
-            legs.append((m.name, port))
+            port_plain = _postgres_search_port_for_config(
+                context,
+                m,
+                cast(PostgresSearchConfig, c),
+            )
+            legs.append((m.name, port_plain))
 
         return PostgresFederatedSearchAdapter(
             federated_spec=spec,

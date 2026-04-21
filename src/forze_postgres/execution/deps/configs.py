@@ -1,5 +1,5 @@
 from functools import reduce
-from typing import Any, Literal, Mapping, NotRequired, Sequence, TypedDict, final
+from typing import Any, Literal, Mapping, NotRequired, Sequence, TypedDict, Union, cast, final
 
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
@@ -120,13 +120,16 @@ class PostgresHubSearchConfig(_BasePostgresConfig):
 
 # ....................... #
 
+PostgresFederatedMemberConfig = Union[PostgresSearchConfig, PostgresHubSearchConfig]
+"""Per-leg Postgres wiring: single-index search or embedded :class:`PostgresHubSearchConfig`."""
+
 
 @final
 class PostgresFederatedSearchConfig(_BasePostgresConfig):
     """Postgres configuration for :class:`PostgresFederatedSearchAdapter`."""
 
-    members: Mapping[str, PostgresSearchConfig]
-    """Mapping of member spec names to single-index search configurations."""
+    members: Mapping[str, PostgresFederatedMemberConfig]
+    """Mapping of federated member names to single-index configs or embedded hub configs."""
 
     rrf_k: NotRequired[int]
     """RRF smoothing constant (default 60)."""
@@ -138,23 +141,37 @@ class PostgresFederatedSearchConfig(_BasePostgresConfig):
 # ....................... #
 
 
+def is_postgres_federated_embedded_hub_config(obj: Mapping[str, Any]) -> bool:
+    """Return True if ``obj`` is shaped like :class:`PostgresHubSearchConfig` (embedded hub leg)."""
+
+    return "hub" in obj and "members" in obj
+
+
+# ....................... #
+
+
 def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) -> None:
     """Validate a Postgres federated search configuration."""
 
     if len(cfg["members"]) < 2:
         raise CoreError("Federated search requires at least two member configurations.")
 
-    for i, leg in enumerate(cfg["members"].values()):
+    for name, leg in cfg["members"].items():
+        if is_postgres_federated_embedded_hub_config(leg):
+            validate_postgres_hub_search_conf(cast(PostgresHubSearchConfig, leg))
+            continue
+
         if "index" not in leg or ("heap" not in leg and "read" not in leg):
             raise CoreError(
-                f"Federated search member {i} must include 'index' and 'heap' or 'read'.",
+                f"Federated search member {name!r} must include 'index' and 'heap' or 'read', "
+                "or be an embedded hub with 'hub' and 'members'.",
             )
 
         eng = leg.get("engine", "pgroonga")
 
         if eng == "fts" and not leg.get("fts_groups"):
             raise CoreError(
-                f"Federated search member {i} with engine 'fts' requires fts_groups.",
+                f"Federated search member {name!r} with engine 'fts' requires fts_groups.",
             )
 
 

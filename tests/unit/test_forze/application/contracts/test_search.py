@@ -4,6 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
+    FederatedSearchSpec,
     HubSearchQueryDepKey,
     HubSearchSpec,
     SearchQueryDepKey,
@@ -84,6 +85,51 @@ class TestHubSearchSpec:
                 model_type=_MinimalSearchModel,
                 members=(a, b),
             )
+
+
+class TestFederatedSearchSpec:
+    """Tests for FederatedSearchSpec including nested hub members."""
+
+    def test_federated_accepts_hub_and_search_members(self) -> None:
+        leg_a = SearchSpec(
+            name="leg_a",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        leg_b = SearchSpec(
+            name="leg_b",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        hub = HubSearchSpec(
+            name="hub_leg",
+            model_type=_MinimalSearchModel,
+            members=(leg_a, leg_b),
+        )
+        standalone = SearchSpec(
+            name="standalone",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        fed = FederatedSearchSpec(
+            name="fed",
+            members=(hub, standalone),
+        )
+        assert [m.name for m in fed.members] == ["hub_leg", "standalone"]
+
+    def test_federated_rejects_duplicate_member_names(self) -> None:
+        a = SearchSpec(
+            name="dup",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        b = SearchSpec(
+            name="dup",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        with pytest.raises(CoreError, match="distinct name"):
+            FederatedSearchSpec(name="fed", members=(a, b))
 
 
 class TestExecutionContextSearchQuery:

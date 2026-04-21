@@ -136,6 +136,23 @@ def test_prepare_federated_member_weights_take_precedence_over_members() -> None
     assert weights == [0.0, 1.0]
 
 
+def test_prepare_federated_resolves_weights_for_hub_member() -> None:
+    hub = HubSearchSpec(
+        name="hub",
+        model_type=_M,
+        members=(_leg("in_a"), _leg("in_b")),
+    )
+    fed = FederatedSearchSpec(
+        name="f",
+        members=(hub, _leg("flat")),
+    )
+    _, weights = prepare_federated_search_options(
+        fed,
+        {"members": ["hub"]},
+    )
+    assert weights == [1.0, 0.0]
+
+
 def test_search_options_for_simple_adapter_warns_on_members_only() -> None:
     fake_log = MagicMock()
     with patch("forze_postgres.adapters.search._options.logger", fake_log):
