@@ -5,7 +5,11 @@ import pytest
 from forze.application.execution import ExecutionContext, Usecase
 from forze.application.execution.middleware import (
     EffectMiddleware,
+    Failed,
+    FinallyMiddleware,
     GuardMiddleware,
+    OnFailureMiddleware,
+    Successful,
     TxMiddleware,
 )
 
@@ -116,3 +120,70 @@ class TestTxMiddleware:
         result = await mw(next_fn, "x")
         assert result == "result"
         assert seen == ["commit:result"]
+
+
+class TestOnFailureMiddleware:
+    """Tests for OnFailureMiddleware."""
+
+    @pytest.mark.asyncio
+    async def test_runs_hook_on_exception_then_reraises(self) -> None:
+        seen: list[str] = []
+
+        async def hook(args: str, exc: Exception) -> None:
+            seen.append(f"fail:{args}:{type(exc).__name__}")
+
+        async def next_fn(args: str) -> str:
+            raise ValueError("boom")
+
+        mw = OnFailureMiddleware(hook=hook)
+        with pytest.raises(ValueError, match="boom"):
+            await mw(next_fn, "x")
+
+        assert seen == ["fail:x:ValueError"]
+
+    @pytest.mark.asyncio
+    async def test_skipped_on_success(self) -> None:
+        async def hook(args: str, exc: Exception) -> None:
+            raise AssertionError("should not run")
+
+        async def next_fn(args: str) -> str:
+            return "ok"
+
+        mw = OnFailureMiddleware(hook=hook)
+        assert await mw(next_fn, "x") == "ok"
+
+
+class TestFinallyMiddleware:
+    """Tests for FinallyMiddleware."""
+
+    @pytest.mark.asyncio
+    async def test_success_path_passes_successful(self) -> None:
+        seen: list[str] = []
+
+        async def hook(args: str, outcome: Successful[str] | Failed) -> None:
+            assert isinstance(outcome, Successful)
+            seen.append(f"ok:{outcome.value}")
+
+        async def next_fn(args: str) -> str:
+            return "inner"
+
+        mw = FinallyMiddleware(hook=hook)
+        assert await mw(next_fn, "a") == "inner"
+        assert seen == ["ok:inner"]
+
+    @pytest.mark.asyncio
+    async def test_failure_path_passes_failed(self) -> None:
+        seen: list[str] = []
+
+        async def hook(args: str, outcome: Successful[str] | Failed) -> None:
+            assert isinstance(outcome, Failed)
+            seen.append(f"err:{type(outcome.exc).__name__}")
+
+        async def next_fn(args: str) -> str:
+            raise RuntimeError("x")
+
+        mw = FinallyMiddleware(hook=hook)
+        with pytest.raises(RuntimeError, match="x"):
+            await mw(next_fn, "a")
+
+        assert seen == ["err:RuntimeError"]

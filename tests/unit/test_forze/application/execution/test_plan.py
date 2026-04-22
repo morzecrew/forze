@@ -21,6 +21,11 @@ class StubUsecase(Usecase[str, str]):
         return f"ok:{args}"
 
 
+class BoomUsecase(Usecase[str, str]):
+    async def main(self, args: str) -> str:
+        raise ValueError("boom")
+
+
 class TestMiddlewareSpec:
     """Tests for MiddlewareSpec."""
 
@@ -53,6 +58,10 @@ class TestOperationPlan:
         op = OperationPlan()
         assert op.outer_before == ()
         assert op.outer_after == ()
+        assert op.outer_finally == ()
+        assert op.outer_on_failure == ()
+        assert op.in_tx_finally == ()
+        assert op.in_tx_on_failure == ()
         assert op.tx is None
 
     def test_add_appends_to_bucket(self) -> None:
@@ -86,6 +95,36 @@ class TestOperationPlan:
 
         spec = MiddlewareSpec(priority=1, factory=factory)
         plan = OperationPlan(in_tx_before=(spec,))
+        with pytest.raises(CoreError, match="tx.*not enabled"):
+            plan.validate()
+
+    def test_validate_in_tx_finally_without_tx_raises(self) -> None:
+        from forze.application.execution.middleware import FinallyMiddleware
+        from forze.base.errors import CoreError
+
+        async def hook(args, outcome):
+            pass
+
+        def factory(ctx):
+            return FinallyMiddleware(hook=hook)
+
+        spec = MiddlewareSpec(priority=1, factory=factory)
+        plan = OperationPlan(in_tx_finally=(spec,))
+        with pytest.raises(CoreError, match="tx.*not enabled"):
+            plan.validate()
+
+    def test_validate_in_tx_on_failure_without_tx_raises(self) -> None:
+        from forze.application.execution.middleware import OnFailureMiddleware
+        from forze.base.errors import CoreError
+
+        async def hook(args, exc):
+            pass
+
+        def factory(ctx):
+            return OnFailureMiddleware(hook=hook)
+
+        spec = MiddlewareSpec(priority=1, factory=factory)
+        plan = OperationPlan(in_tx_on_failure=(spec,))
         with pytest.raises(CoreError, match="tx.*not enabled"):
             plan.validate()
 
@@ -627,6 +666,78 @@ class TestUsecasePlanPipelines:
         )
         assert [s.priority for s in plan.ops["create"].after_commit] == [2, -8]
 
+    def test_outer_finally_pipeline_priorities(self) -> None:
+        def f0(ctx: ExecutionContext):
+            async def _hook(args, outcome):
+                pass
+
+            return _hook
+
+        def f1(ctx: ExecutionContext):
+            async def _hook(args, outcome):
+                pass
+
+            return _hook
+
+        plan = UsecasePlan().outer_finally_pipeline("get", [f0, f1], first_priority=11)
+        assert [s.priority for s in plan.ops["get"].outer_finally] == [11, 1]
+
+    def test_outer_on_failure_pipeline_priorities(self) -> None:
+        def h0(ctx: ExecutionContext):
+            async def _hook(args, exc):
+                pass
+
+            return _hook
+
+        def h1(ctx: ExecutionContext):
+            async def _hook(args, exc):
+                pass
+
+            return _hook
+
+        plan = UsecasePlan().outer_on_failure_pipeline("get", [h0, h1], first_priority=4)
+        assert [s.priority for s in plan.ops["get"].outer_on_failure] == [4, -6]
+
+    def test_in_tx_finally_pipeline_priorities(self) -> None:
+        def f0(ctx: ExecutionContext):
+            async def _hook(args, outcome):
+                pass
+
+            return _hook
+
+        def f1(ctx: ExecutionContext):
+            async def _hook(args, outcome):
+                pass
+
+            return _hook
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_finally_pipeline("create", [f0, f1], first_priority=8)
+        )
+        assert [s.priority for s in plan.ops["create"].in_tx_finally] == [8, -2]
+
+    def test_in_tx_on_failure_pipeline_priorities(self) -> None:
+        def h0(ctx: ExecutionContext):
+            async def _hook(args, exc):
+                pass
+
+            return _hook
+
+        def h1(ctx: ExecutionContext):
+            async def _hook(args, exc):
+                pass
+
+            return _hook
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_on_failure_pipeline("create", [h0, h1], first_priority=3)
+        )
+        assert [s.priority for s in plan.ops["create"].in_tx_on_failure] == [3, -7]
+
     def test_empty_pipeline_does_not_create_op(self) -> None:
         base = UsecasePlan()
         plan = base.before_pipeline("get", [])
@@ -964,6 +1075,8 @@ class TestUsecasePlanListOp:
             assert [s.priority for s in plan.ops[k].in_tx_before] == [5]
             assert plan.ops[k].in_tx_after == ()
             assert plan.ops[k].in_tx_wrap == ()
+            assert plan.ops[k].in_tx_finally == ()
+            assert plan.ops[k].in_tx_on_failure == ()
 
         plan2 = (
             UsecasePlan()
@@ -974,6 +1087,8 @@ class TestUsecasePlanListOp:
             assert [s.priority for s in plan2.ops[k].in_tx_after] == [0, -10]
             assert plan2.ops[k].in_tx_before == ()
             assert plan2.ops[k].in_tx_wrap == ()
+            assert plan2.ops[k].in_tx_finally == ()
+            assert plan2.ops[k].in_tx_on_failure == ()
 
     @pytest.mark.asyncio
     async def test_resolve_in_tx_pipeline_list_runs_in_tx_guards(self, stub_ctx) -> None:
@@ -1031,3 +1146,144 @@ class TestUsecasePlanListOp:
         assert "other" in plan.ops
         assert len(plan.ops["mock"].outer_before) == 1
         assert len(plan.ops["other"].outer_before) == 1
+
+
+class TestUsecasePlanFinallyOnFailure:
+    """Integration tests for finally and on_failure plan buckets."""
+
+    @pytest.mark.asyncio
+    async def test_outer_on_failure_then_outer_finally_on_error(self, stub_ctx) -> None:
+        from forze.application.execution.middleware import Failed
+
+        seen: list[str] = []
+
+        def on_fail(ctx: ExecutionContext):
+            async def h(args: str, exc: Exception) -> None:
+                seen.append("on_failure")
+
+            return h
+
+        def fin(ctx: ExecutionContext):
+            async def h(args: str, outcome) -> None:
+                assert isinstance(outcome, Failed)
+                seen.append("finally")
+
+            return h
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .outer_finally("create", fin, priority=1)
+            .outer_on_failure("create", on_fail, priority=1)
+        )
+        uc = plan.resolve("create", stub_ctx, lambda ctx: BoomUsecase(ctx=ctx))
+        with pytest.raises(ValueError, match="boom"):
+            await uc("x")
+        assert seen == ["on_failure", "finally"]
+
+    @pytest.mark.asyncio
+    async def test_outer_finally_on_success_only(self, stub_ctx) -> None:
+        from forze.application.execution.middleware import Successful
+
+        seen: list[str] = []
+
+        def fin(ctx: ExecutionContext):
+            async def h(args: str, outcome) -> None:
+                assert isinstance(outcome, Successful)
+                seen.append("ok")
+
+            return h
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .outer_finally("create", fin, priority=0)
+        )
+        uc = plan.resolve("create", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+        await uc("x")
+        assert seen == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_after_commit_skipped_when_main_raises(self, stub_ctx) -> None:
+        seen: list[str] = []
+
+        def ac(ctx: ExecutionContext):
+            async def effect(args: str, res: str) -> str:
+                seen.append("ac")
+                return res
+
+            return effect
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .after_commit("create", ac, priority=1)
+        )
+        uc = plan.resolve("create", stub_ctx, lambda ctx: BoomUsecase(ctx=ctx))
+        with pytest.raises(ValueError):
+            await uc("x")
+        assert seen == []
+
+    @pytest.mark.asyncio
+    async def test_in_tx_on_failure_before_outer_on_failure(self, stub_ctx) -> None:
+        seen: list[str] = []
+
+        def inner(ctx: ExecutionContext):
+            async def h(args: str, exc: Exception) -> None:
+                seen.append("in_tx")
+
+            return h
+
+        def outer(ctx: ExecutionContext):
+            async def h(args: str, exc: Exception) -> None:
+                seen.append("outer")
+
+            return h
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .outer_on_failure("create", outer, priority=1)
+            .in_tx_on_failure("create", inner, priority=1)
+        )
+        uc = plan.resolve("create", stub_ctx, lambda ctx: BoomUsecase(ctx=ctx))
+        with pytest.raises(ValueError):
+            await uc("x")
+        assert seen == ["in_tx", "outer"]
+
+    @pytest.mark.asyncio
+    async def test_outer_hooks_without_tx(self, stub_ctx) -> None:
+        from forze.application.execution.middleware import Failed, Successful
+
+        seen: list[str] = []
+
+        def on_fail(ctx: ExecutionContext):
+            async def h(args: str, exc: Exception) -> None:
+                seen.append("fail")
+
+            return h
+
+        def fin(ctx: ExecutionContext):
+            async def h(args: str, outcome) -> None:
+                if isinstance(outcome, Successful):
+                    seen.append("fin_ok")
+                else:
+                    assert isinstance(outcome, Failed)
+                    seen.append("fin_err")
+
+            return h
+
+        plan = (
+            UsecasePlan()
+            .outer_finally("solo", fin, priority=0)
+            .outer_on_failure("solo", on_fail, priority=0)
+        )
+        uc = plan.resolve("solo", stub_ctx, lambda ctx: BoomUsecase(ctx=ctx))
+        with pytest.raises(ValueError):
+            await uc("z")
+        assert seen == ["fail", "fin_err"]
+
+        seen.clear()
+        uc2 = plan.resolve("solo", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+        await uc2("z")
+        assert seen == ["fin_ok"]

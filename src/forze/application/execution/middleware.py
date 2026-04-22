@@ -2,12 +2,12 @@
 
 Provides :class:`Middleware`, :class:`Guard`, :class:`Effect` protocols and
 concrete implementations: :class:`GuardMiddleware`, :class:`EffectMiddleware`,
-:class:`TxMiddleware`. Middlewares wrap usecases in a chain; guards run before,
-effects after.
+:class:`OnFailureMiddleware`, :class:`FinallyMiddleware`, :class:`TxMiddleware`.
+Middlewares wrap usecases in a chain; guards run before, effects after.
 """
 
 from enum import StrEnum
-from typing import Awaitable, Callable, Protocol, Self, final
+from typing import Awaitable, Callable, Generic, Protocol, Self, TypeVar, final
 
 import attrs
 
@@ -66,6 +66,60 @@ class Guard[Args](Protocol):  # pragma: no cover
 # ....................... #
 
 
+R_co = TypeVar("R_co", covariant=True)
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class Successful(Generic[R_co]):
+    """Successful usecase outcome passed to :class:`Finally` hooks."""
+
+    value: R_co
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class Failed:
+    """Failed usecase outcome passed to :class:`Finally` hooks."""
+
+    exc: Exception
+
+
+type UsecaseOutcome[R] = Successful[R] | Failed
+"""Discriminated outcome for :class:`Finally` middleware."""
+
+
+class OnFailure[Args](Protocol):  # pragma: no cover
+    """Hook invoked when an :class:`Exception` escapes the inner chain.
+
+    Does not run for :class:`BaseException` subclasses such as
+    :class:`KeyboardInterrupt`. The original exception is re-raised after the
+    hook returns unless the hook raises.
+    """
+
+    async def __call__(self, args: Args, exc: Exception) -> None:
+        """Handle failure; may raise to replace the error."""
+        ...
+
+
+class Finally[Args, R](Protocol):  # pragma: no cover
+    """Hook invoked after the inner chain finishes (success or :class:`Exception`).
+
+    Receives a :class:`Successful` or :class:`Failed` outcome. On failure, runs
+    after any inner :class:`OnFailureMiddleware` hooks on that path. Does not
+    run for :class:`BaseException` subclasses escaping the inner chain.
+    """
+
+    async def __call__(
+        self,
+        args: Args,
+        outcome: Successful[R] | Failed,  # noqa: F841
+    ) -> None:
+        """Observe completion; may raise."""
+        ...
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GuardMiddleware[Args, R](Middleware[Args, R]):
     """Middleware that runs a guard before invoking the next call."""
@@ -101,6 +155,63 @@ class EffectMiddleware[Args, R](Middleware[Args, R]):
 
         logger.debug("Running effect: '%s'", type(self.effect).__qualname__)
         res = await self.effect(args, res)
+
+        return res
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class OnFailureMiddleware[Args, R](Middleware[Args, R]):
+    """Middleware that runs a hook when the inner chain raises :class:`Exception`."""
+
+    hook: OnFailure[Args]
+    """Called with the exception before it is re-raised."""
+
+    # ....................... #
+
+    async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
+        try:
+            return await next(args)
+
+        except Exception as exc:
+            logger.debug("Running on_failure: '%s'", type(self.hook).__qualname__)
+            await self.hook(args, exc)
+
+            raise
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FinallyMiddleware[Args, R](Middleware[Args, R]):
+    """Middleware that runs a hook after success or handled failure of the inner chain."""
+
+    hook: Finally[Args, R]
+    """Called with :class:`Successful` or :class:`Failed` for each completion."""
+
+    # ....................... #
+
+    async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
+        try:
+            res = await next(args)
+
+        except Exception as exc:
+            logger.debug(
+                "Running finally (failure path): '%s'",
+                type(self.hook).__qualname__,
+            )
+            await self.hook(args, Failed(exc=exc))
+
+            raise
+
+        logger.debug(
+            "Running finally (success path): '%s'",
+            type(self.hook).__qualname__,
+        )
+        await self.hook(args, Successful(value=res))
 
         return res
 

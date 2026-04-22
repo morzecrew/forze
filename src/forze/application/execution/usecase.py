@@ -8,7 +8,14 @@ from forze.application._logger import logger
 from forze.base.errors import CoreError
 
 from .context import ExecutionContext
-from .middleware import EffectMiddleware, GuardMiddleware, Middleware, NextCall
+from .middleware import (
+    EffectMiddleware,
+    FinallyMiddleware,
+    GuardMiddleware,
+    Middleware,
+    NextCall,
+    OnFailureMiddleware,
+)
 
 # ----------------------- #
 
@@ -117,6 +124,12 @@ class Usecase[Args, R]:
 
             elif isinstance(mw, EffectMiddleware):
                 qualname = type(mw.effect).__qualname__
+
+            elif isinstance(mw, OnFailureMiddleware):
+                qualname = type(mw.hook).__qualname__
+
+            elif isinstance(mw, FinallyMiddleware):
+                qualname = type(mw.hook).__qualname__
 
             else:
                 qualname = type(mw).__qualname__

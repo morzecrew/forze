@@ -25,9 +25,13 @@ from .context import ExecutionContext
 from .middleware import (
     Effect,
     EffectMiddleware,
+    Finally,
+    FinallyMiddleware,
     Guard,
     GuardMiddleware,
     Middleware,
+    OnFailure,
+    OnFailureMiddleware,
     TxMiddleware,
 )
 from .usecase import Usecase
@@ -43,6 +47,12 @@ GuardFactory = Callable[[ExecutionContext], Guard[Any]]
 EffectFactory = Callable[[ExecutionContext], Effect[Any, Any]]
 """Factory that builds an effect from execution context."""
 
+FinallyFactory = Callable[[ExecutionContext], Finally[Any, Any]]
+"""Factory that builds a finally hook from execution context."""
+
+OnFailureFactory = Callable[[ExecutionContext], OnFailure[Any]]
+"""Factory that builds an on-failure hook from execution context."""
+
 MiddlewareFactory = Callable[[ExecutionContext], Middleware[Any, Any]]
 """Factory that builds a middleware from execution context."""
 
@@ -55,8 +65,12 @@ WILDCARD: Final[str] = "*"
 PlanBucket = Literal[
     "outer_before",
     "outer_wrap",
+    "outer_finally",
+    "outer_on_failure",
     "outer_after",
     "in_tx_before",
+    "in_tx_finally",
+    "in_tx_on_failure",
     "in_tx_wrap",
     "in_tx_after",
     "after_commit",
@@ -67,6 +81,10 @@ _EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE: Final[frozenset[PlanBucket]] 
     frozenset(
         {
             "outer_wrap",
+            "outer_finally",
+            "outer_on_failure",
+            "in_tx_finally",
+            "in_tx_on_failure",
             "in_tx_wrap",
             "outer_after",
             "in_tx_after",
@@ -121,9 +139,11 @@ class TransactionSpec:
 class OperationPlan:
     """Per-operation middleware composition with transaction support.
 
-    Buckets: ``outer_*`` run outside tx; ``in_tx_*`` inside
-    :class:`TxMiddleware`; ``after_commit`` runs after successful commit.
-    When ``tx`` is ``True``, in-tx and after-commit buckets are used.
+    Buckets: ``outer_*`` run outside :class:`TxMiddleware`; ``outer_finally`` and
+    ``outer_on_failure`` are placed after ``outer_wrap`` and wrap the
+    transactional segment (or core usecase when tx is disabled). ``in_tx_*``
+    run inside the transaction scope. ``after_commit`` runs only after a
+    successful commit.
     """
 
     tx: TransactionSpec | None = attrs.field(default=None)
@@ -136,12 +156,24 @@ class OperationPlan:
     outer_wrap: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Wrapping middlewares outside the transaction."""
 
+    outer_finally: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Finally hooks outside the transaction (wrap failed or successful tx scope)."""
+
+    outer_on_failure: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """On-failure hooks outside the transaction (after rollback when tx is used)."""
+
     outer_after: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Guards/effects after the transaction."""
 
     # in tx
     in_tx_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Guards/effects inside the transaction, before the usecase."""
+
+    in_tx_finally: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """Finally hooks inside the transaction (before commit/rollback completes)."""
+
+    in_tx_on_failure: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
+    """On-failure hooks inside the transaction."""
 
     in_tx_wrap: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Wrapping middlewares inside the transaction."""
@@ -195,6 +227,8 @@ class OperationPlan:
             self.in_tx_before
             or self.in_tx_after
             or self.in_tx_wrap
+            or self.in_tx_finally
+            or self.in_tx_on_failure
             or self.after_commit
         ) and self.tx is None:
             raise CoreError(
@@ -296,8 +330,12 @@ class OperationPlan:
                 tx=acc.tx or plan.tx,
                 outer_before=(*acc.outer_before, *plan.outer_before),
                 outer_wrap=(*acc.outer_wrap, *plan.outer_wrap),
+                outer_finally=(*acc.outer_finally, *plan.outer_finally),
+                outer_on_failure=(*acc.outer_on_failure, *plan.outer_on_failure),
                 outer_after=(*acc.outer_after, *plan.outer_after),
                 in_tx_before=(*acc.in_tx_before, *plan.in_tx_before),
+                in_tx_finally=(*acc.in_tx_finally, *plan.in_tx_finally),
+                in_tx_on_failure=(*acc.in_tx_on_failure, *plan.in_tx_on_failure),
                 in_tx_wrap=(*acc.in_tx_wrap, *plan.in_tx_wrap),
                 in_tx_after=(*acc.in_tx_after, *plan.in_tx_after),
                 after_commit=(*acc.after_commit, *plan.after_commit),
@@ -536,6 +574,92 @@ class UsecasePlan:
 
     # ....................... #
 
+    def outer_finally(
+        self,
+        op: OpKey | list[OpKey],
+        hook: FinallyFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        def factory(ctx: ExecutionContext) -> FinallyMiddleware[Any, Any]:
+            return FinallyMiddleware[Any, Any](hook=hook(ctx))
+
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o,
+                "outer_finally",
+                MiddlewareSpec(factory=factory, priority=priority),
+            )
+
+        return out
+
+    # ....................... #
+
+    def outer_finally_pipeline(
+        self,
+        op: OpKey | list[OpKey],
+        hooks: Sequence[FinallyFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+
+        for i, hook in enumerate(hooks):
+            priority = first_priority - i * 10
+            out = out.outer_finally(op, hook, priority=priority)
+
+        return out
+
+    # ....................... #
+
+    def outer_on_failure(
+        self,
+        op: OpKey | list[OpKey],
+        hook: OnFailureFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        def factory(ctx: ExecutionContext) -> OnFailureMiddleware[Any, Any]:
+            return OnFailureMiddleware[Any, Any](hook=hook(ctx))
+
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o,
+                "outer_on_failure",
+                MiddlewareSpec(factory=factory, priority=priority),
+            )
+
+        return out
+
+    # ....................... #
+
+    def outer_on_failure_pipeline(
+        self,
+        op: OpKey | list[OpKey],
+        hooks: Sequence[OnFailureFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+
+        for i, hook in enumerate(hooks):
+            priority = first_priority - i * 10
+            out = out.outer_on_failure(op, hook, priority=priority)
+
+        return out
+
+    # ....................... #
+
     def in_tx_before(
         self,
         op: OpKey | list[OpKey],
@@ -574,6 +698,92 @@ class UsecasePlan:
         for i, guard in enumerate(guards):
             priority = first_priority - i * 10
             out = out.in_tx_before(op, guard, priority=priority)
+
+        return out
+
+    # ....................... #
+
+    def in_tx_finally(
+        self,
+        op: OpKey | list[OpKey],
+        hook: FinallyFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        def factory(ctx: ExecutionContext) -> FinallyMiddleware[Any, Any]:
+            return FinallyMiddleware[Any, Any](hook=hook(ctx))
+
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o,
+                "in_tx_finally",
+                MiddlewareSpec(factory=factory, priority=priority),
+            )
+
+        return out
+
+    # ....................... #
+
+    def in_tx_finally_pipeline(
+        self,
+        op: OpKey | list[OpKey],
+        hooks: Sequence[FinallyFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+
+        for i, hook in enumerate(hooks):
+            priority = first_priority - i * 10
+            out = out.in_tx_finally(op, hook, priority=priority)
+
+        return out
+
+    # ....................... #
+
+    def in_tx_on_failure(
+        self,
+        op: OpKey | list[OpKey],
+        hook: OnFailureFactory,
+        *,
+        priority: int = 0,
+    ) -> Self:
+        def factory(ctx: ExecutionContext) -> OnFailureMiddleware[Any, Any]:
+            return OnFailureMiddleware[Any, Any](hook=hook(ctx))
+
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o,
+                "in_tx_on_failure",
+                MiddlewareSpec(factory=factory, priority=priority),
+            )
+
+        return out
+
+    # ....................... #
+
+    def in_tx_on_failure_pipeline(
+        self,
+        op: OpKey | list[OpKey],
+        hooks: Sequence[OnFailureFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+
+        for i, hook in enumerate(hooks):
+            priority = first_priority - i * 10
+            out = out.in_tx_on_failure(op, hook, priority=priority)
 
         return out
 
@@ -706,6 +916,8 @@ class UsecasePlan:
         before: Sequence[GuardFactory] | None = None,
         after: Sequence[EffectFactory] | None = None,
         wrap: Sequence[MiddlewareFactory] | None = None,
+        on_failure: Sequence[OnFailureFactory] | None = None,
+        finally_hooks: Sequence[FinallyFactory] | None = None,
         *,
         first_priority: int = 0,
     ) -> Self:
@@ -714,11 +926,21 @@ class UsecasePlan:
         if before is not None:
             out = out.in_tx_before_pipeline(op, before, first_priority=first_priority)
 
-        if after is not None:
-            out = out.in_tx_after_pipeline(op, after, first_priority=first_priority)
+        if finally_hooks is not None:
+            out = out.in_tx_finally_pipeline(
+                op, finally_hooks, first_priority=first_priority
+            )
+
+        if on_failure is not None:
+            out = out.in_tx_on_failure_pipeline(
+                op, on_failure, first_priority=first_priority
+            )
 
         if wrap is not None:
             out = out.in_tx_wrap_pipeline(op, wrap, first_priority=first_priority)
+
+        if after is not None:
+            out = out.in_tx_after_pipeline(op, after, first_priority=first_priority)
 
         return out
 
@@ -730,6 +952,8 @@ class UsecasePlan:
         before: Sequence[GuardFactory] | None = None,
         after: Sequence[EffectFactory] | None = None,
         wrap: Sequence[MiddlewareFactory] | None = None,
+        on_failure: Sequence[OnFailureFactory] | None = None,
+        finally_hooks: Sequence[FinallyFactory] | None = None,
         *,
         first_priority: int = 0,
     ) -> Self:
@@ -738,11 +962,21 @@ class UsecasePlan:
         if before is not None:
             out = out.before_pipeline(op, before, first_priority=first_priority)
 
-        if after is not None:
-            out = out.after_pipeline(op, after, first_priority=first_priority)
-
         if wrap is not None:
             out = out.wrap_pipeline(op, wrap, first_priority=first_priority)
+
+        if finally_hooks is not None:
+            out = out.outer_finally_pipeline(
+                op, finally_hooks, first_priority=first_priority
+            )
+
+        if on_failure is not None:
+            out = out.outer_on_failure_pipeline(
+                op, on_failure, first_priority=first_priority
+            )
+
+        if after is not None:
+            out = out.after_pipeline(op, after, first_priority=first_priority)
 
         return out
 
@@ -778,9 +1012,13 @@ class UsecasePlan:
 
         outer_before = _middleware_specs_for_usecase_tuple(plan, "outer_before")
         outer_wrap = _middleware_specs_for_usecase_tuple(plan, "outer_wrap")
+        outer_finally = _middleware_specs_for_usecase_tuple(plan, "outer_finally")
+        outer_on_failure = _middleware_specs_for_usecase_tuple(plan, "outer_on_failure")
         outer_after = _middleware_specs_for_usecase_tuple(plan, "outer_after")
 
         in_tx_before = _middleware_specs_for_usecase_tuple(plan, "in_tx_before")
+        in_tx_finally = _middleware_specs_for_usecase_tuple(plan, "in_tx_finally")
+        in_tx_on_failure = _middleware_specs_for_usecase_tuple(plan, "in_tx_on_failure")
         in_tx_wrap = _middleware_specs_for_usecase_tuple(plan, "in_tx_wrap")
         in_tx_after = _middleware_specs_for_usecase_tuple(plan, "in_tx_after")
 
@@ -808,6 +1046,8 @@ class UsecasePlan:
 
         chain.extend(s.factory(ctx) for s in outer_before)
         chain.extend(s.factory(ctx) for s in outer_wrap)
+        chain.extend(s.factory(ctx) for s in outer_finally)
+        chain.extend(s.factory(ctx) for s in outer_on_failure)
 
         if plan.tx is not None:
             chain.append(
@@ -817,6 +1057,8 @@ class UsecasePlan:
                 ).with_after_commit(*after_commit_effects)
             )
             chain.extend(s.factory(ctx) for s in in_tx_before)
+            chain.extend(s.factory(ctx) for s in in_tx_finally)
+            chain.extend(s.factory(ctx) for s in in_tx_on_failure)
             chain.extend(s.factory(ctx) for s in in_tx_wrap)
             chain.extend(s.factory(ctx) for s in in_tx_after)
 
