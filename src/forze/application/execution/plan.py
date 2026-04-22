@@ -593,6 +593,54 @@ class UsecasePlan:
 
     # ....................... #
 
+    def in_tx_pipeline(
+        self,
+        op: OpKey,
+        before: Sequence[GuardFactory] | None = None,
+        after: Sequence[EffectFactory] | None = None,
+        wrap: Sequence[MiddlewareFactory] | None = None,
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+
+        if before is not None:
+            out = out.before_pipeline(op, before, first_priority=first_priority)
+
+        if after is not None:
+            out = out.after_pipeline(op, after, first_priority=first_priority)
+
+        if wrap is not None:
+            out = out.wrap_pipeline(op, wrap, first_priority=first_priority)
+
+        return out
+
+    # ....................... #
+
+    def outer_pipeline(
+        self,
+        op: OpKey,
+        before: Sequence[GuardFactory] | None = None,
+        after: Sequence[EffectFactory] | None = None,
+        wrap: Sequence[MiddlewareFactory] | None = None,
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+
+        if before is not None:
+            out = out.before_pipeline(op, before, first_priority=first_priority)
+
+        if after is not None:
+            out = out.after_pipeline(op, after, first_priority=first_priority)
+
+        if wrap is not None:
+            out = out.wrap_pipeline(op, wrap, first_priority=first_priority)
+
+        return out
+
+    # ....................... #
+
     def resolve(
         self,
         op: OpKey,
