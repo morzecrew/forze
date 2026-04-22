@@ -344,7 +344,7 @@ class UsecasePlan:
 
     # ....................... #
 
-    def tx(self, op: OpKey, *, route: str | StrEnum) -> Self:
+    def tx(self, op: OpKey | list[OpKey], *, route: str | StrEnum) -> Self:
         """Enable transaction wrapping for the operation.
 
         :param op: Operation key.
@@ -352,47 +352,72 @@ class UsecasePlan:
         :returns: New plan instance.
         """
 
-        logger.trace("Enabling transaction for operation '%s' (route=%s)", op, route)
-        cur = self._op(op)
+        out: Self = self
 
-        return self._put(op, attrs.evolve(cur, tx=TransactionSpec(route=route)))
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            logger.trace("Enabling transaction for operation '%s' (route=%s)", o, route)
+            cur = out._op(o)
+
+            out = out._put(o, attrs.evolve(cur, tx=TransactionSpec(route=route)))
+
+        return out
 
     # ....................... #
 
-    def no_tx(self, op: OpKey) -> Self:
+    def no_tx(self, op: OpKey | list[OpKey]) -> Self:
         """Disable transaction wrapping for the operation.
 
         :param op: Operation key.
         :returns: New plan instance.
         """
 
-        logger.trace("Disabling transaction for operation '%s'", op)
-        cur = self._op(op)
+        out: Self = self
 
-        return self._put(op, attrs.evolve(cur, tx=None))
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            logger.trace("Disabling transaction for operation '%s'", o)
+            cur = out._op(o)
+
+            out = out._put(o, attrs.evolve(cur, tx=None))
+
+        return out
 
     # ....................... #
 
-    def before(self, op: OpKey, guard: GuardFactory, *, priority: int = 0) -> Self:
+    def before(
+        self, op: OpKey | list[OpKey], guard: GuardFactory, *, priority: int = 0
+    ) -> Self:
         def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
 
-        return self._add(
-            op,
-            "outer_before",
-            MiddlewareSpec(factory=factory, priority=priority),
-        )
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o, "outer_before", MiddlewareSpec(factory=factory, priority=priority)
+            )
+
+        return out
 
     # ....................... #
 
     def before_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         guards: Sequence[GuardFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, guard in enumerate(guards):
             priority = first_priority - i * 10
             out = out.before(op, guard, priority=priority)
@@ -401,26 +426,35 @@ class UsecasePlan:
 
     # ....................... #
 
-    def after(self, op: OpKey, effect: EffectFactory, *, priority: int = 0) -> Self:
+    def after(
+        self, op: OpKey | list[OpKey], effect: EffectFactory, *, priority: int = 0
+    ) -> Self:
         def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
 
-        return self._add(
-            op,
-            "outer_after",
-            MiddlewareSpec(factory=factory, priority=priority),
-        )
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o, "outer_after", MiddlewareSpec(factory=factory, priority=priority)
+            )
+
+        return out
 
     # ....................... #
 
     def after_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         effects: Sequence[EffectFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, effect in enumerate(effects):
             priority = first_priority - i * 10
             out = out.after(op, effect, priority=priority)
@@ -431,27 +465,36 @@ class UsecasePlan:
 
     def wrap(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         middleware: MiddlewareFactory,
         *,
         priority: int = 0,
     ) -> Self:
-        return self._add(
-            op,
-            "outer_wrap",
-            MiddlewareSpec(factory=middleware, priority=priority),
-        )
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o,
+                "outer_wrap",
+                MiddlewareSpec(factory=middleware, priority=priority),
+            )
+
+        return out
 
     # ....................... #
 
     def wrap_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         middlewares: Sequence[MiddlewareFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, middleware in enumerate(middlewares):
             priority = first_priority - i * 10
             out = out.wrap(op, middleware, priority=priority)
@@ -462,7 +505,7 @@ class UsecasePlan:
 
     def in_tx_before(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         guard: GuardFactory,
         *,
         priority: int = 0,
@@ -470,22 +513,31 @@ class UsecasePlan:
         def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
 
-        return self._add(
-            op,
-            "in_tx_before",
-            MiddlewareSpec(factory=factory, priority=priority),
-        )
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o,
+                "in_tx_before",
+                MiddlewareSpec(factory=factory, priority=priority),
+            )
+
+        return out
 
     # ....................... #
 
     def in_tx_before_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         guards: Sequence[GuardFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, guard in enumerate(guards):
             priority = first_priority - i * 10
             out = out.in_tx_before(op, guard, priority=priority)
@@ -496,7 +548,7 @@ class UsecasePlan:
 
     def in_tx_after(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         effect: EffectFactory,
         *,
         priority: int = 0,
@@ -504,22 +556,29 @@ class UsecasePlan:
         def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
 
-        return self._add(
-            op,
-            "in_tx_after",
-            MiddlewareSpec(factory=factory, priority=priority),
-        )
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o, "in_tx_after", MiddlewareSpec(factory=factory, priority=priority)
+            )
+
+        return out
 
     # ....................... #
 
     def in_tx_after_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         effects: Sequence[EffectFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, effect in enumerate(effects):
             priority = first_priority - i * 10
             out = out.in_tx_after(op, effect, priority=priority)
@@ -530,27 +589,35 @@ class UsecasePlan:
 
     def in_tx_wrap(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         middleware: MiddlewareFactory,
         *,
         priority: int = 0,
     ) -> Self:
-        return self._add(
-            op,
-            "in_tx_wrap",
-            MiddlewareSpec(factory=middleware, priority=priority),
-        )
+
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o, "in_tx_wrap", MiddlewareSpec(factory=middleware, priority=priority)
+            )
+
+        return out
 
     # ....................... #
 
     def in_tx_wrap_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         middlewares: Sequence[MiddlewareFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, middleware in enumerate(middlewares):
             priority = first_priority - i * 10
             out = out.in_tx_wrap(op, middleware, priority=priority)
@@ -561,7 +628,7 @@ class UsecasePlan:
 
     def after_commit(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         effect: EffectFactory,
         *,
         priority: int = 0,
@@ -569,22 +636,29 @@ class UsecasePlan:
         def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
 
-        return self._add(
-            op,
-            "after_commit",
-            MiddlewareSpec(factory=factory, priority=priority),
-        )
+        out: Self = self
+
+        if not isinstance(op, list):
+            op = [op]
+
+        for o in op:
+            out = out._add(
+                o, "after_commit", MiddlewareSpec(factory=factory, priority=priority)
+            )
+
+        return out
 
     # ....................... #
 
     def after_commit_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         effects: Sequence[EffectFactory],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
+
         for i, effect in enumerate(effects):
             priority = first_priority - i * 10
             out = out.after_commit(op, effect, priority=priority)
@@ -595,7 +669,7 @@ class UsecasePlan:
 
     def in_tx_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         before: Sequence[GuardFactory] | None = None,
         after: Sequence[EffectFactory] | None = None,
         wrap: Sequence[MiddlewareFactory] | None = None,
@@ -605,13 +679,13 @@ class UsecasePlan:
         out: Self = self
 
         if before is not None:
-            out = out.before_pipeline(op, before, first_priority=first_priority)
+            out = out.in_tx_before_pipeline(op, before, first_priority=first_priority)
 
         if after is not None:
-            out = out.after_pipeline(op, after, first_priority=first_priority)
+            out = out.in_tx_after_pipeline(op, after, first_priority=first_priority)
 
         if wrap is not None:
-            out = out.wrap_pipeline(op, wrap, first_priority=first_priority)
+            out = out.in_tx_wrap_pipeline(op, wrap, first_priority=first_priority)
 
         return out
 
@@ -619,7 +693,7 @@ class UsecasePlan:
 
     def outer_pipeline(
         self,
-        op: OpKey,
+        op: OpKey | list[OpKey],
         before: Sequence[GuardFactory] | None = None,
         after: Sequence[EffectFactory] | None = None,
         wrap: Sequence[MiddlewareFactory] | None = None,

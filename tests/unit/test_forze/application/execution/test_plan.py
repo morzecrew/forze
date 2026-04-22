@@ -658,3 +658,304 @@ class TestUsecasePlanPipelines:
         uc = plan.resolve("get", ctx, lambda ctx: StubUsecase(ctx=ctx))
         await uc("x")
         assert seen == [1, 2, 3]
+
+
+class TestUsecasePlanListOp:
+    """``op`` as ``list[OpKey]`` applies the same spec to every listed operation."""
+
+    def test_tx_with_list(self) -> None:
+        plan = UsecasePlan().tx(["get", "list", "search"], route="mock")
+        for k in ("get", "list", "search"):
+            assert plan.ops[k].tx is not None
+            assert plan.ops[k].tx.route == "mock"
+
+    def test_no_tx_with_list(self) -> None:
+        plan = (
+            UsecasePlan()
+            .tx(["a", "b"], route="mock")
+            .no_tx(["a", "b"])
+        )
+        for k in ("a", "b"):
+            assert plan.ops[k].tx is None
+
+    def test_before_with_list_same_middleware(self) -> None:
+        def guard(ctx: ExecutionContext):
+            async def _guard(args):
+                pass
+
+            return _guard
+
+        plan = UsecasePlan().before(["get", "list"], guard, priority=3)
+        for k in ("get", "list"):
+            assert len(plan.ops[k].outer_before) == 1
+            assert plan.ops[k].outer_before[0].priority == 3
+
+    def test_after_with_list(self) -> None:
+        e0, _e1, _e2 = _effects3()
+        plan = UsecasePlan().after(["x", "y"], e0, priority=4)
+        for k in ("x", "y"):
+            assert len(plan.ops[k].outer_after) == 1
+            assert plan.ops[k].outer_after[0].priority == 4
+
+    def test_wrap_with_list(self) -> None:
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def mw(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = UsecasePlan().wrap(["p", "q"], mw, priority=2)
+        for k in ("p", "q"):
+            assert len(plan.ops[k].outer_wrap) == 1
+
+    def test_before_pipeline_with_list(self) -> None:
+        g0, g1, _ = _guards3()
+        plan = UsecasePlan().before_pipeline(
+            ["get", "list"],
+            [g0, g1],
+            first_priority=50,
+        )
+        for k in ("get", "list"):
+            assert [s.priority for s in plan.ops[k].outer_before] == [50, 40]
+
+    def test_in_tx_variants_with_list(self) -> None:
+        g0, _g1, _ = _guards3()
+        e0, _e1, _ = _effects3()
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def wrap_mw(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = (
+            UsecasePlan()
+            .tx(["create", "update"], route="r")
+            .in_tx_before(["create", "update"], g0, priority=1)
+            .in_tx_after(["create", "update"], e0, priority=1)
+            .in_tx_wrap(["create", "update"], wrap_mw, priority=1)
+        )
+        for k in ("create", "update"):
+            assert len(plan.ops[k].in_tx_before) == 1
+            assert len(plan.ops[k].in_tx_after) == 1
+            assert len(plan.ops[k].in_tx_wrap) == 1
+
+    def test_in_tx_pipelines_with_list(self) -> None:
+        g0, g1, _ = _guards3()
+        e0, e1, _ = _effects3()
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def mw0(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        def mw1(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = (
+            UsecasePlan()
+            .tx(["create", "update"], route="m")
+            .in_tx_before_pipeline(["create", "update"], [g0, g1], first_priority=10)
+            .in_tx_after_pipeline(["create", "update"], [e0, e1], first_priority=3)
+            .in_tx_wrap_pipeline(["create", "update"], [mw0, mw1], first_priority=0)
+        )
+        for k in ("create", "update"):
+            assert [s.priority for s in plan.ops[k].in_tx_before] == [10, 0]
+            assert [s.priority for s in plan.ops[k].in_tx_after] == [3, -7]
+            assert [s.priority for s in plan.ops[k].in_tx_wrap] == [0, -10]
+
+    def test_after_commit_with_list(self) -> None:
+        e0, e1, _ = _effects3()
+        plan = (
+            UsecasePlan()
+            .tx(["a", "b"], route="z")
+            .after_commit(["a", "b"], e0, priority=5)
+            .after_commit_pipeline(["a", "b"], [e0, e1], first_priority=1)
+        )
+        for k in ("a", "b"):
+            assert len(plan.ops[k].after_commit) == 3
+            assert [s.priority for s in plan.ops[k].after_commit] == [5, 1, -9]
+
+    def test_outer_pipeline_with_list(self) -> None:
+        g0, _g1, _ = _guards3()
+        e0, _e1, _ = _effects3()
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def w0(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = UsecasePlan().outer_pipeline(
+            ["a", "b"],
+            before=[g0],
+            after=[e0],
+            wrap=[w0],
+            first_priority=6,
+        )
+        for k in ("a", "b"):
+            assert [s.priority for s in plan.ops[k].outer_before] == [6]
+            assert [s.priority for s in plan.ops[k].outer_after] == [6]
+            assert [s.priority for s in plan.ops[k].outer_wrap] == [6]
+
+    def test_in_tx_pipeline_with_list(self) -> None:
+        """``in_tx_pipeline`` with ``op`` list wires in-tx buckets for each key."""
+
+        g0, _g1, _ = _guards3()
+        e0, _e1, _ = _effects3()
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def w0(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = (
+            UsecasePlan()
+            .tx(["a", "b"], route="m")
+            .in_tx_pipeline(
+                ["a", "b"],
+                before=[g0],
+                after=[e0],
+                wrap=[w0],
+                first_priority=2,
+            )
+        )
+        for k in ("a", "b"):
+            assert plan.ops[k].tx is not None
+            assert [s.priority for s in plan.ops[k].in_tx_before] == [2]
+            assert [s.priority for s in plan.ops[k].in_tx_after] == [2]
+            assert [s.priority for s in plan.ops[k].in_tx_wrap] == [2]
+            assert plan.ops[k].outer_before == ()
+            assert plan.ops[k].outer_after == ()
+            assert plan.ops[k].outer_wrap == ()
+
+    def test_in_tx_pipeline_list_multiple_ops_stepped_priorities(self) -> None:
+        g0, g1, _ = _guards3()
+        e0, e1, _ = _effects3()
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def mw0(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        def mw1(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        keys = ("create", "update", "delete")
+        plan = (
+            UsecasePlan()
+            .tx(list(keys), route="db")
+            .in_tx_pipeline(
+                list(keys),
+                before=[g0, g1],
+                after=[e0, e1],
+                wrap=[mw0, mw1],
+                first_priority=20,
+            )
+        )
+        for k in keys:
+            assert [s.priority for s in plan.ops[k].in_tx_before] == [20, 10]
+            assert [s.priority for s in plan.ops[k].in_tx_after] == [20, 10]
+            assert [s.priority for s in plan.ops[k].in_tx_wrap] == [20, 10]
+            assert plan.ops[k].outer_before == ()
+            assert plan.ops[k].outer_after == ()
+            assert plan.ops[k].outer_wrap == ()
+
+    def test_in_tx_pipeline_list_partial_sections(self) -> None:
+        """Only pass ``before`` / ``after`` / ``wrap`` sections that are needed."""
+
+        g0, _g1, _ = _guards3()
+        e0, e1, _ = _effects3()
+
+        plan = (
+            UsecasePlan()
+            .tx(["p", "q"], route="r")
+            .in_tx_pipeline(["p", "q"], before=[g0], first_priority=5)
+        )
+        for k in ("p", "q"):
+            assert [s.priority for s in plan.ops[k].in_tx_before] == [5]
+            assert plan.ops[k].in_tx_after == ()
+            assert plan.ops[k].in_tx_wrap == ()
+
+        plan2 = (
+            UsecasePlan()
+            .tx(["u", "v"], route="r")
+            .in_tx_pipeline(["u", "v"], after=[e0, e1], first_priority=0)
+        )
+        for k in ("u", "v"):
+            assert [s.priority for s in plan2.ops[k].in_tx_after] == [0, -10]
+            assert plan2.ops[k].in_tx_before == ()
+            assert plan2.ops[k].in_tx_wrap == ()
+
+    @pytest.mark.asyncio
+    async def test_resolve_in_tx_pipeline_list_runs_in_tx_guards(self, stub_ctx) -> None:
+        seen: list[str] = []
+
+        def in_tx_guard(ctx):
+            async def guard(args):
+                seen.append("in_tx_before")
+
+            return guard
+
+        plan = (
+            UsecasePlan()
+            .tx(["op_a", "op_b"], route="mock")
+            .in_tx_pipeline(
+                ["op_a", "op_b"],
+                before=[in_tx_guard],
+                first_priority=1,
+            )
+        )
+        for op in ("op_a", "op_b"):
+            uc = plan.resolve(op, stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+            result = await uc("x")
+            assert result == "ok:x"
+        assert seen == ["in_tx_before", "in_tx_before"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_before_list_runs_guard_per_op(self) -> None:
+        seen: list[str] = []
+
+        def guard(ctx: ExecutionContext):
+            async def _guard(args):
+                seen.append("g")
+
+            return _guard
+
+        ctx = ExecutionContext(deps=Deps())
+        plan = UsecasePlan().before(["get", "list"], guard, priority=1)
+        await plan.resolve("get", ctx, lambda ctx: StubUsecase(ctx=ctx))("x")
+        await plan.resolve("list", ctx, lambda ctx: StubUsecase(ctx=ctx))("y")
+        assert seen == ["g", "g"]
+
+    def test_list_mixed_str_and_str_enum(self) -> None:
+        class Route(StrEnum):
+            MOCK = "mock"
+
+        def guard(ctx: ExecutionContext):
+            async def _guard(args):
+                pass
+
+            return _guard
+
+        plan = UsecasePlan().before([Route.MOCK, "other"], guard, priority=0)
+        assert "mock" in plan.ops
+        assert "other" in plan.ops
+        assert len(plan.ops["mock"].outer_before) == 1
+        assert len(plan.ops["other"].outer_before) == 1
