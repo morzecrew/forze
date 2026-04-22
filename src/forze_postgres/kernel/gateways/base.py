@@ -25,7 +25,7 @@ from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
-from forze.infra.tenancy import MultiTenancyMixin
+from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClient

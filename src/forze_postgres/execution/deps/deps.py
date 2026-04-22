@@ -10,6 +10,10 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
     DocumentSpec,
 )
+from forze.application.contracts.embeddings import (
+    EmbeddingsProviderPort,
+    EmbeddingsSpec,
+)
 from forze.application.contracts.search import (
     FederatedSearchQueryDepPort,
     FederatedSearchSpec,
@@ -33,6 +37,7 @@ from ...adapters import (
     PostgresHubSearchAdapter,
     PostgresPGroongaSearchAdapterV2,
     PostgresTxManagerAdapter,
+    PostgresVectorSearchAdapterV2,
 )
 from ...kernel.gateways import PostgresQualifiedName
 from .._logger import logger
@@ -42,8 +47,10 @@ from .configs import (
     PostgresHubSearchConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    VectorEngineDistance,
     is_postgres_federated_embedded_hub_config,
     validate_fts_groups_for_search_spec,
+    validate_pg_search_conf,
     validate_postgres_federated_search_conf,
     validate_postgres_hub_search_conf,
 )
@@ -169,7 +176,11 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
         self,
         context: ExecutionContext,
         spec: SearchSpec[Any],
-    ) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapterV2[Any]:
+    ) -> (
+        PostgresPGroongaSearchAdapterV2[Any]
+        | PostgresFTSSearchAdapterV2[Any]
+        | PostgresVectorSearchAdapterV2[Any]
+    ):
         return _postgres_search_port_for_config(context, spec, self.config)
 
 
@@ -197,8 +208,9 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
         tenant_aware = self.config.get("tenant_aware", False)
 
         members: list[HubLegRuntime] = []
+        vector_embedders: dict[int, EmbeddingsProviderPort] = {}
 
-        for m in spec.members:
+        for i, m in enumerate(spec.members):
             c = self.config["members"].get(m.name)
 
             if c is None:
@@ -209,6 +221,9 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             engine = c.get("engine", "pgroonga")
 
             fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = None
+            v_col: str | None = None
+            v_dim: int | None = None
+            v_dist: VectorEngineDistance = c.get("vector_distance", "l2")
 
             if engine == "fts":
                 fts_groups = c.get("fts_groups")
@@ -218,9 +233,25 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
 
                 validate_fts_groups_for_search_spec(m, fts_groups)
 
+            elif engine == "vector":
+                v_col = c.get("vector_column")
+                v_dim = c.get("embedding_dimensions")
+                e_name = c.get("embeddings_name")
+                if v_col is None or v_dim is None or e_name is None:
+                    raise CoreError(
+                        "vector hub leg requires vector_column, embedding_dimensions, and embeddings_name.",
+                    )
+                vector_embedders[i] = context.embeddings_provider(
+                    EmbeddingsSpec(
+                        name=str(e_name),
+                        dimensions=int(v_dim),
+                    )
+                )
+
             elif engine != "pgroonga":
                 raise CoreError(
-                    f"Hub search leg engine {engine!r} is not supported; use 'pgroonga' or 'fts'."
+                    f"Hub search leg engine {engine!r} is not supported; "
+                    "use 'pgroonga', 'fts', or 'vector'."
                 )
 
             rt = HubLegRuntime(
@@ -232,12 +263,16 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 index_field_map=c.get("field_map"),
                 engine=engine,
                 fts_groups=fts_groups,
+                vector_column=v_col,
+                vector_distance=v_dist,
+                embedding_dimensions=v_dim,
             )
             members.append(rt)
 
         return PostgresHubSearchAdapter(
             hub_spec=spec,
             members=members,
+            vector_embedders=vector_embedders,
             combine=self.config.get("combine_strategy", "or"),
             score_merge=self.config.get("merge_strategy", "max"),
             source_qname=hub,
@@ -258,7 +293,13 @@ def _postgres_search_port_for_config(
     context: ExecutionContext,
     member_spec: SearchSpec[Any],
     c: PostgresSearchConfig,
-) -> PostgresPGroongaSearchAdapterV2[Any] | PostgresFTSSearchAdapterV2[Any]:
+) -> (
+    PostgresPGroongaSearchAdapterV2[Any]
+    | PostgresFTSSearchAdapterV2[Any]
+    | PostgresVectorSearchAdapterV2[Any]
+):
+    validate_pg_search_conf(c)
+
     tenant_aware = c.get("tenant_aware", False)
     index_qname = PostgresQualifiedName(*c["index"])
     read_qname = PostgresQualifiedName(*c["read"])
@@ -296,6 +337,38 @@ def _postgres_search_port_for_config(
                 source_qname=read_qname,
                 index_heap_qname=heap_qname,
                 fts_groups=fts_groups,
+                join_pairs=c.get("join_pairs"),
+                index_field_map=c.get("field_map"),
+                client=context.dep(PostgresClientDepKey),
+                model_type=member_spec.model_type,
+                introspector=context.dep(PostgresIntrospectorDepKey),
+                tenant_provider=context.get_tenant_id,
+                tenant_aware=tenant_aware,
+                filter_table_alias="v",
+                nested_field_hints=c.get("nested_field_hints"),
+            )
+
+        case "vector":
+            en = c.get("embeddings_name")
+            ed = c.get("embedding_dimensions")
+            vcol = c.get("vector_column")
+            if en is None or ed is None or vcol is None:
+                raise CoreError(
+                    "vector engine requires embeddings_name, embedding_dimensions, and vector_column.",
+                )
+            es = EmbeddingsSpec(
+                name=str(en),
+                dimensions=int(ed),
+            )
+            return PostgresVectorSearchAdapterV2(
+                spec=member_spec,
+                index_qname=index_qname,
+                source_qname=read_qname,
+                index_heap_qname=heap_qname,
+                embedder=context.embeddings_provider(es),
+                embeddings_spec=es,
+                vector_column=str(vcol),
+                vector_distance=c.get("vector_distance", "l2"),
                 join_pairs=c.get("join_pairs"),
                 index_field_map=c.get("field_map"),
                 client=context.dep(PostgresClientDepKey),
@@ -364,10 +437,10 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
                     "config looks like an embedded hub (has 'hub' and 'members').",
                 )
 
-            if engine not in ("pgroonga", "fts"):
+            if engine not in ("pgroonga", "fts", "vector"):
                 raise CoreError(
                     f"Federated search member engine {engine!r} is not supported; "
-                    "use 'pgroonga' or 'fts'.",
+                    "use 'pgroonga', 'fts', or 'vector'.",
                 )
 
             if engine == "fts":

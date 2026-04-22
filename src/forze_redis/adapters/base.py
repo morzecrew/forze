@@ -8,7 +8,7 @@ from typing import Any
 
 import attrs
 
-from forze.infra.tenancy import MultiTenancyMixin
+from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import RedisClient
 from .codecs import RedisKeyCodec

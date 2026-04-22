@@ -160,7 +160,7 @@ def attach_document_endpoints(
 
         else:
             idempotency_ttl = config.get("idempotency_ttl", timedelta(seconds=30))
-            enable_idempotency = config.get("enable_idempotency", True)
+            enable_idempotency = config.get("enable_idempotency", False)
 
             idempotency = (
                 IdempotencySpec(name=str(document.name), ttl=idempotency_ttl)

@@ -13,7 +13,12 @@ from ...adapters import (
     RedisIdempotencyAdapter,
     RedisKeyCodec,
 )
-from .configs import RedisCacheConfig, RedisCounterConfig, RedisIdempotencyConfig
+from .configs import (
+    RedisCacheConfig,
+    RedisCounterConfig,
+    RedisIdempotencyConfig,
+    RedisUniversalConfig,
+)
 from .keys import RedisClientDepKey
 
 # ----------------------- #
@@ -24,7 +29,7 @@ from .keys import RedisClientDepKey
 class ConfigurableRedisCache(CacheDepPort):
     """Configurable Redis cache adapter."""
 
-    config: RedisCacheConfig
+    config: RedisCacheConfig | RedisUniversalConfig
     """Configuration for the cache."""
 
     # ....................... #
@@ -35,7 +40,7 @@ class ConfigurableRedisCache(CacheDepPort):
         spec: CacheSpec,
     ) -> RedisCacheAdapter:
         client = ctx.dep(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=self.config["namespace"])
+        key_codec = RedisKeyCodec(namespace=str(self.config["namespace"]))
 
         return RedisCacheAdapter(
             client=client,
@@ -56,7 +61,7 @@ class ConfigurableRedisCache(CacheDepPort):
 class ConfigurableRedisCounter(CounterDepPort):
     """Configurable Redis counter adapter."""
 
-    config: RedisCounterConfig
+    config: RedisCounterConfig | RedisUniversalConfig
     """Configuration for the counter."""
 
     # ....................... #
@@ -67,7 +72,7 @@ class ConfigurableRedisCounter(CounterDepPort):
         spec: CounterSpec,
     ) -> RedisCounterAdapter:
         client = ctx.dep(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=self.config["namespace"])
+        key_codec = RedisKeyCodec(namespace=str(self.config["namespace"]))
 
         return RedisCounterAdapter(
             client=client,
@@ -85,7 +90,7 @@ class ConfigurableRedisCounter(CounterDepPort):
 class ConfigurableRedisIdempotency(IdempotencyDepPort):
     """Configurable Redis idempotency adapter."""
 
-    config: RedisIdempotencyConfig
+    config: RedisIdempotencyConfig | RedisUniversalConfig
     """Configuration for the idempotency."""
 
     # ....................... #
@@ -96,7 +101,7 @@ class ConfigurableRedisIdempotency(IdempotencyDepPort):
         spec: IdempotencySpec,
     ) -> RedisIdempotencyAdapter:
         client = ctx.dep(RedisClientDepKey)
-        key_codec = RedisKeyCodec(namespace=self.config["namespace"])
+        key_codec = RedisKeyCodec(namespace=str(self.config["namespace"]))
 
         return RedisIdempotencyAdapter(
             client=client,

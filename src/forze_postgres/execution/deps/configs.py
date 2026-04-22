@@ -1,5 +1,15 @@
 from functools import reduce
-from typing import Any, Literal, Mapping, NotRequired, Sequence, TypedDict, Union, cast, final
+from typing import (
+    Any,
+    Literal,
+    Mapping,
+    NotRequired,
+    Sequence,
+    TypedDict,
+    Union,
+    cast,
+    final,
+)
 
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
@@ -54,6 +64,12 @@ class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):
 # ....................... #
 
 
+VectorEngineDistance = Literal["l2", "cosine", "inner_product"]
+
+
+# ....................... #
+
+
 class PostgresSearchConfig(_BasePostgresConfig):
     """Configuration for a Postgres search."""
 
@@ -66,11 +82,23 @@ class PostgresSearchConfig(_BasePostgresConfig):
     heap: NotRequired[tuple[str, str]]
     """Heap relation (schema, table) where index is built on. If not provided, ``read`` is used."""
 
-    engine: Literal["pgroonga", "fts"]
-    """Search engine to use for the index."""
+    engine: Literal["pgroonga", "fts", "vector"]
+    """Search engine to use (full-text or pgvector KNN on a ``vector`` column)."""
 
     fts_groups: NotRequired[dict[FtsGroupLetter, Sequence[str]]]
     """Mapping of FTS weight letters to field names (required only for FTS engines)."""
+
+    vector_column: NotRequired[str]
+    """Heap column with type ``vector`` (required for ``vector`` engine)."""
+
+    vector_distance: NotRequired[VectorEngineDistance]
+    """``pgvector`` operator family; default is ``l2`` (Euclidean)."""
+
+    embeddings_name: NotRequired[str]
+    """:class:`EmbeddingsSpec` ``name`` to resolve the query embedder (``vector`` engine)."""
+
+    embedding_dimensions: NotRequired[int]
+    """Expected query embedding size; must match the ``vector`` column (``vector`` engine)."""
 
     field_map: NotRequired[Mapping[str, str]]
     """Maps :class:`SearchSpec` field names to physical heap columns when they differ."""
@@ -85,6 +113,7 @@ class PostgresSearchConfig(_BasePostgresConfig):
 # ....................... #
 
 
+@final
 class PostgresHubSearchMemberConfig(PostgresSearchConfig):
     """Configuration for a Postgres hub search member."""
 
@@ -174,6 +203,20 @@ def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) 
                 f"Federated search member {name!r} with engine 'fts' requires fts_groups.",
             )
 
+        if eng == "vector":
+            if not leg.get("vector_column"):
+                raise CoreError(
+                    f"Federated search member {name!r} with engine 'vector' requires vector_column.",
+                )
+            if leg.get("embedding_dimensions") is None:
+                raise CoreError(
+                    f"Federated search member {name!r} with engine 'vector' requires embedding_dimensions.",
+                )
+            if not leg.get("embeddings_name"):
+                raise CoreError(
+                    f"Federated search member {name!r} with engine 'vector' requires embeddings_name.",
+                )
+
 
 # ....................... #
 
@@ -211,6 +254,20 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
                 f"Hub search leg {i} with engine 'fts' requires fts_groups."
             )
 
+        if eng == "vector":
+            if not leg.get("vector_column"):
+                raise CoreError(
+                    f"Hub search leg {i} with engine 'vector' requires vector_column."
+                )
+            if leg.get("embedding_dimensions") is None:
+                raise CoreError(
+                    f"Hub search leg {i} with engine 'vector' requires embedding_dimensions."
+                )
+            if not leg.get("embeddings_name"):
+                raise CoreError(
+                    f"Hub search leg {i} with engine 'vector' requires embeddings_name."
+                )
+
 
 # ....................... #
 
@@ -237,15 +294,29 @@ def validate_fts_groups_for_search_spec(
 def validate_pg_search_conf(cfg: PostgresSearchConfig) -> None:
     """Validate a Postgres search configuration."""
 
-    if cfg["engine"] == "pgroonga":
-        return
+    eng = cfg["engine"]
 
-    fts_groups = cfg.get("fts_groups")
+    match eng:
+        case "vector":
+            if not cfg.get("vector_column"):
+                raise CoreError("vector_column is required for vector engine.")
 
-    if not fts_groups:
-        raise CoreError("FTS groups are required for FTS engine.")
+            if cfg.get("embedding_dimensions") is None:
+                raise CoreError("embedding_dimensions is required for vector engine.")
 
-    all_fields = reduce(lambda a, g: a + g, map(list, fts_groups.values()))
+            if not cfg.get("embeddings_name"):
+                raise CoreError("embeddings_name is required for vector engine.")
 
-    if len(all_fields) != len(set(all_fields)):
-        raise CoreError("FTS groups cannot contain duplicate fields.")
+        case "fts":
+            fts_groups = cfg.get("fts_groups")
+
+            if not fts_groups:
+                raise CoreError("FTS groups are required for FTS engine.")
+
+            all_fields = reduce(lambda a, g: a + g, map(list, fts_groups.values()))
+
+            if len(all_fields) != len(set(all_fields)):
+                raise CoreError("FTS groups cannot contain duplicate fields.")
+
+        case "pgroonga":
+            pass

@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import NotRequired, TypedDict, final
 
 # ----------------------- #
@@ -6,7 +7,7 @@ from typing import NotRequired, TypedDict, final
 class RedisUniversalConfig(TypedDict):
     """Base configuration for a Redis resource."""
 
-    namespace: str
+    namespace: str | StrEnum
     """Namespace for the keys."""
 
     tenant_aware: NotRequired[bool]

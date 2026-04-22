@@ -1,4 +1,6 @@
-"""FTS search with projection vs index-heap separation (CTE pipeline)."""
+"""Vector (pgvector) search with projection vs index-heap separation (CTE pipeline)."""
+
+from __future__ import annotations
 
 from forze_postgres._compat import require_psycopg
 
@@ -13,6 +15,7 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.embeddings import EmbeddingsProviderPort, EmbeddingsSpec
 from forze.application.contracts.query import (
     PaginationExpression,
     QueryFilterExpression,
@@ -32,16 +35,12 @@ from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
-from ._options import search_options_for_simple_adapter
-from ._fts_sql import (
-    FtsGroupLetter,
-    fts_effective_group_weights,
-    fts_match_predicate,
-    fts_rank_cd_expr,
-    fts_rank_cd_weight_array,
-    fts_resolve_tsvector_expr,
-    fts_tsquery_expr,
-    fts_tsquery_expr_disjunction,
+from ._vector_sql import (
+    VectorDistanceKind,
+    assert_embedding_shape,
+    vector_knn_multi_score_expr,
+    vector_knn_score_expr,
+    vector_param_literal,
 )
 
 # ----------------------- #
@@ -54,60 +53,46 @@ _FILTERED_CTE_ALIAS: Final[str] = "f"
 _INDEX_ALIAS: Final[str] = "t"
 _PROJECTION_ALIAS: Final[str] = "v"
 _SCORED_CTE_ALIAS: Final[str] = "s"
-_RANK_COLUMN: Final[str] = "_fts_rank"
+_RANK_COLUMN: Final[str] = "_vector_rank"
 
 # ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresFTSSearchAdapterV2[M: BaseModel](
+class PostgresVectorSearchAdapterV2[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
     TxScopedPort,
 ):
-    """FTS :class:`SearchQueryPort` using a projection relation and index heap.
-
-    Structured filters (and tenant scope) apply on the **projection** relation
-    (:attr:`~PostgresGateway.qname`), typically a view. Matching and
-    ``ts_rank_cd`` use the **index heap** (:attr:`index_heap_qname`) and the
-    ``tsvector`` expression from :attr:`index_qname`, mirroring
-    :class:`PostgresPGroongaSearchAdapterV2`.
-
-    Query shape (simplified)::
-
-        WITH filtered AS (
-            SELECT v.<join keys> FROM <projection> v WHERE <filters>
-        ),
-        scored AS (
-            SELECT t.<heap cols> AS <proj keys>, <rank>
-            FROM <index heap> t
-            INNER JOIN filtered f ON <join>
-            WHERE <fts match or TRUE>
-        )
-        SELECT v.<read fields>
-        FROM <projection> v
-        INNER JOIN scored s ON <join to projection keys>
-        ORDER BY s.<rank> DESC NULLS LAST, <user sorts on v>
-    """
+    """pgvector :class:`SearchQueryPort`: KNN on a heap column with projection filters."""
 
     spec: SearchSpec[M]
     """Search specification."""
 
     index_qname: PostgresQualifiedName
-    """Qualified name of the FTS index (resolves the ``tsvector`` expression)."""
+    """Qualified name for configuration symmetry (index object); not read at query time."""
 
     index_heap_qname: PostgresQualifiedName
-    """Index heap qualified name (relation the index is built on)."""
+    """Heap that holds the ``vector`` column used for distance scoring."""
 
-    fts_groups: dict[FtsGroupLetter, Sequence[str]]
-    """Mapping of FTS weight letters to field names."""
+    embedder: EmbeddingsProviderPort
+    """Text-to-vector (query string encoding)."""
+
+    embeddings_spec: EmbeddingsSpec
+    """Expected vector dimension; must match the ``vector`` column and embedder output."""
+
+    vector_column: str
+    """Heap column with type ``vector`` (or compatible)."""
+
+    vector_distance: VectorDistanceKind = "l2"
+    """pgvector distance operator family (``<->`` / ``<=>`` / ``<#>``)."""
 
     join_pairs: Sequence[tuple[str, str]] | None = attrs.field(default=None)
     """Join pairs (projection column, index heap column)."""
 
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
-    """Reserved for API symmetry with PGroonga v2; FTS uses the catalog ``tsvector``."""
+    """Optional map from :class:`SearchSpec` field names to heap column names (unused in v2)."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
     """Transaction scope."""
@@ -121,6 +106,7 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        _ = self.index_qname, self.index_field_map
         proj_keys = {pc for pc, _ in self._safe_join_pairs}
 
         if len(proj_keys) != len(self._safe_join_pairs):
@@ -186,40 +172,6 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
 
     # ....................... #
 
-    def _scored_select_empty_query(
-        self,
-    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        """Keys, zero rank, no extra rank parameters."""
-
-        key_cols = self._scored_key_columns()
-        rank = sql.SQL("(0)::double precision AS {}").format(
-            sql.Identifier(_RANK_COLUMN),
-        )
-        return key_cols, rank, []
-
-    # ....................... #
-
-    def _scored_select_with_rank(
-        self,
-        *,
-        tsv: sql.Composable,
-        tsw_rank: sql.Composable,
-        options: SearchOptions | None,
-    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        """Keys, ``ts_rank_cd`` column, parameters for rank (weights + tsquery)."""
-
-        key_cols = self._scored_key_columns()
-        gw = fts_effective_group_weights(self.spec, self.fts_groups, options)
-        fts_weights = fts_rank_cd_weight_array(gw)
-        rank_expr = sql.SQL("{} AS {}").format(
-            fts_rank_cd_expr(tsv=tsv, tsw=tsw_rank),
-            sql.Identifier(_RANK_COLUMN),
-        )
-
-        return key_cols, rank_expr, [fts_weights]
-
-    # ....................... #
-
     @overload
     async def search(
         self,
@@ -270,35 +222,48 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
-        options = search_options_for_simple_adapter(options)
+        _ = options
         fw, fp = await self.where_clause(filters)
 
-        tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
-
+        key_cols = self._scored_key_columns()
+        scored_rank: sql.Composable
         terms = normalize_search_queries(query)
-
-        params_body: list[Any]
         if not terms:
-            sw = sql.SQL("TRUE")  # type: ignore[assignment]
-            scored_keys, scored_rank, _rank_extra = self._scored_select_empty_query()
-            params_body = []
-
-        else:
-            if len(terms) == 1:
-                tsw_where, tsp_w = fts_tsquery_expr(terms[0], options=options)
-                tsw_rank, tsp_r = fts_tsquery_expr(terms[0], options=options)
-            else:
-                tsw_where, tsp_w = fts_tsquery_expr_disjunction(terms, options=options)
-                tsw_rank, tsp_r = fts_tsquery_expr_disjunction(terms, options=options)
-            sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)  # type: ignore[assignment]
-            scored_keys, scored_rank, rank_w = self._scored_select_with_rank(
-                tsv=tsv,
-                tsw_rank=tsw_rank,
-                options=options,
+            sw = sql.SQL("TRUE")
+            scored_rank = sql.SQL("(0)::double precision AS {}").format(
+                sql.Identifier(_RANK_COLUMN),
             )
-            # ``WITH filtered`` uses ``fp``; ``scored`` SELECT lists ``ts_rank_cd`` before
-            # ``WHERE``, so: ``fp``, ``weights``, rank ``tsquery``, where ``tsquery``.
-            params_body = [*fp, *rank_w, *tsp_r, *tsp_w]
+            params_body: list[Any] = [*fp]
+        elif len(terms) == 1:
+            one = await self.embedder.embed_one(terms[0], input_kind="query")
+            assert_embedding_shape(
+                one,
+                expect_dim=self.embeddings_spec.dimensions,
+            )
+            sw = sql.SQL("TRUE")
+            scored_rank = vector_knn_score_expr(
+                index_alias=_INDEX_ALIAS,
+                column=self.vector_column,
+                kind=self.vector_distance,
+                score_name=_RANK_COLUMN,
+            )
+            params_body = [*fp, vector_param_literal(one)]
+        else:
+            vecs = await self.embedder.embed(terms, input_kind="query")
+            for vec in vecs:
+                assert_embedding_shape(
+                    vec,
+                    expect_dim=self.embeddings_spec.dimensions,
+                )
+            sw = sql.SQL("TRUE")
+            scored_rank = vector_knn_multi_score_expr(
+                index_alias=_INDEX_ALIAS,
+                column=self.vector_column,
+                kind=self.vector_distance,
+                score_name=_RANK_COLUMN,
+                n_queries=len(vecs),
+            )
+            params_body = [*fp, *[vector_param_literal(v) for v in vecs]]
 
         key_sel = self._filtered_select_list()
 
@@ -329,7 +294,7 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
             )"""
         ).format(
             scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            scored_keys=scored_keys,
+            scored_keys=key_cols,
             scored_rank=scored_rank,
             heap=self.index_heap_qname.ident(),
             ia=sql.Identifier(_INDEX_ALIAS),
@@ -366,8 +331,6 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
         order_sql = sql.SQL(", ").join(order_parts)
         with_clause = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
 
-        params_count = [*fp] if not terms else params_body
-
         count_stmt = sql.SQL(
             """
             {with_clause}
@@ -376,7 +339,7 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
         ).format(with_clause=with_clause, from_outer=from_outer)
 
         total = int(
-            await self.client.fetch_value(count_stmt, params_count, default=0),
+            await self.client.fetch_value(count_stmt, params_body, default=0),
         )
 
         if total == 0:
@@ -401,7 +364,7 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
             order=order_sql,
         )
 
-        params = [*fp] if not terms else params_body
+        params = list(params_body)
 
         pagination = pagination or {}
         limit = pagination.get("limit")

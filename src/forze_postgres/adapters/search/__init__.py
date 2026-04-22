@@ -8,9 +8,11 @@ from .hub import (
     PgroongaHubLegEngine,
     PostgresHubPGroongaSearchAdapter,
     PostgresHubSearchAdapter,
+    VectorHubLegEngine,
     hub_leg_engine_for,
 )
 from .pgroonga_v2 import PostgresPGroongaSearchAdapterV2
+from .vector_v2 import PostgresVectorSearchAdapterV2
 
 # ----------------------- #
 
@@ -19,12 +21,14 @@ __all__ = [
     "HubLegRuntime",
     "HubSearchLegEngine",
     "PgroongaHubLegEngine",
+    "VectorHubLegEngine",
     "PostgresFederatedSearchAdapter",
     "PostgresHubPGroongaSearchAdapter",
     "PostgresHubSearchAdapter",
     "hub_leg_engine_for",
     "PostgresPGroongaSearchAdapterV2",
     "PostgresFTSSearchAdapterV2",
+    "PostgresVectorSearchAdapterV2",
     "FtsGroupLetter",
     "weighted_rrf_merge_rows",
 ]

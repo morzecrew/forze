@@ -137,6 +137,14 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     assert n_slim == 1
     assert slim[0].title == "PostgreSQL FTS"
 
+    multi, n_multi = await adapter.search(["search", "recipe"])
+    assert n_multi == 2
+    assert {r.title for r in multi} == {"PostgreSQL FTS", "Cooking"}
+
+    str_or, n_str = await adapter.search("search OR recipe")
+    assert n_str == n_multi
+    assert {r.title for r in str_or} == {r.title for r in multi}
+
 
 @pytest.mark.asyncio
 async def test_fts_search_with_filters_and_empty_query(

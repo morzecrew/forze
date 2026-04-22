@@ -9,7 +9,7 @@ from typing import Callable
 import attrs
 
 from forze.base.primitives import uuid4
-from forze.infra.tenancy import MultiTenancyMixin
+from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import TemporalClient
 

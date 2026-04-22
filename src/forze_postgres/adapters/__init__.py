@@ -10,6 +10,8 @@ from .search import (
     PostgresHubPGroongaSearchAdapter,
     PostgresHubSearchAdapter,
     PostgresPGroongaSearchAdapterV2,
+    PostgresVectorSearchAdapterV2,
+    VectorHubLegEngine,
     hub_leg_engine_for,
     weighted_rrf_merge_rows,
 )
@@ -29,6 +31,8 @@ __all__ = [
     "PostgresHubSearchAdapter",
     "PostgresPGroongaSearchAdapterV2",
     "PostgresFTSSearchAdapterV2",
+    "PostgresVectorSearchAdapterV2",
+    "VectorHubLegEngine",
     "PostgresTxManagerAdapter",
     "PostgresTxScopeKey",
     "FtsGroupLetter",

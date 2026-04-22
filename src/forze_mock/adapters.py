@@ -59,6 +59,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchSpec,
+    normalize_search_queries,
 )
 from forze.application.contracts.storage import (
     DownloadedObject,
@@ -1185,6 +1186,19 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
 
     # ....................... #
 
+    def _document_score_disjunctive(
+        self,
+        terms: tuple[str, ...],
+        doc: JsonDict,
+        fields: Sequence[str],
+        weights: dict[str, float] | None,
+    ) -> float:
+        if not terms:
+            return self._document_score("", doc, fields, weights)
+        return max(self._document_score(q, doc, fields, weights) for q in terms)
+
+    # ....................... #
+
     def _document_score(
         self,
         query: str,
@@ -1213,7 +1227,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -1226,7 +1240,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -1239,7 +1253,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -1251,7 +1265,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
 
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
@@ -1262,6 +1276,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         options = _search_options_for_mock_simple(options)
         fields, weights = self._resolve_fields(options)
+        terms = normalize_search_queries(query)
 
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
@@ -1271,7 +1286,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
             if not _match_filters(doc, filters):
                 continue
 
-            score = self._document_score(query, doc, fields, weights)
+            score = self._document_score_disjunctive(terms, doc, fields, weights)
             if score <= 0.0:
                 continue
             ranked.append((score, doc))

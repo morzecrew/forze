@@ -24,6 +24,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchSpec,
+    normalize_search_queries,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -34,7 +35,11 @@ from forze.domain.constants import ID_FIELD
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
 from ._options import search_options_for_simple_adapter
-from ._pgroonga_sql import pgroonga_match_clause, pgroonga_score_rank_expr
+from ._pgroonga_sql import (
+    pgroonga_disjunctive_match_text,
+    pgroonga_match_clause,
+    pgroonga_score_rank_expr,
+)
 
 # ----------------------- #
 
@@ -126,17 +131,20 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
     async def _pgroonga_match(
         self,
-        query: str,
+        terms: tuple[str, ...],
         *,
         options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
+        mq = pgroonga_disjunctive_match_text(terms)
+        if not mq:
+            return sql.SQL("TRUE"), []
         return await pgroonga_match_clause(
             search=self.spec,
             index_field_map=self.index_field_map,
             index_qname=self.index_qname,
             introspector=self.introspector,
             index_alias=_INDEX_ALIAS,
-            query=query,
+            query=mq,
             options=options,
         )
 
@@ -205,7 +213,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -218,7 +226,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -231,7 +239,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -243,7 +251,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
@@ -254,10 +262,12 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
         options = search_options_for_simple_adapter(options)
         fw, fp = await self.where_clause(filters)
-        sw, sp = await self._pgroonga_match(query, options=options)
+        terms = normalize_search_queries(query)
+        sw, sp = await self._pgroonga_match(terms, options=options)
 
         key_sel = self._filtered_select_list()
-        scored_keys, scored_rank = self._scored_select_keys_and_rank(query=query)
+        mq = pgroonga_disjunctive_match_text(terms)
+        scored_keys, scored_rank = self._scored_select_keys_and_rank(query=mq)
 
         filtered_cte = sql.SQL(
             """

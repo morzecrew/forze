@@ -21,6 +21,19 @@ from ._utils import calculate_effective_field_weights
 # ----------------------- #
 
 
+def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:
+    """Build one PGroonga query string as OR of parenthesized sub-queries."""
+
+    if not terms:
+        return ""
+    if len(terms) == 1:
+        return terms[0]
+    return " OR ".join(f"({t})" for t in terms)
+
+
+# ....................... #
+
+
 def pgroonga_heap_column_names(
     search: SearchSpec[Any],
     index_field_map: Mapping[str, str] | None,

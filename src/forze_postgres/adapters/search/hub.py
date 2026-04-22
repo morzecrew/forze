@@ -15,6 +15,7 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.query import (
     PaginationExpression,
     QueryFilterExpression,
@@ -25,6 +26,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchSpec,
+    normalize_search_queries,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -42,9 +44,21 @@ from ._fts_sql import (
     fts_rank_cd_weight_array,
     fts_resolve_tsvector_expr,
     fts_tsquery_expr,
+    fts_tsquery_expr_disjunction,
 )
 from ._options import prepare_hub_search_options
-from ._pgroonga_sql import pgroonga_match_clause, pgroonga_score_rank_expr
+from ._pgroonga_sql import (
+    pgroonga_disjunctive_match_text,
+    pgroonga_match_clause,
+    pgroonga_score_rank_expr,
+)
+from ._vector_sql import (
+    VectorDistanceKind,
+    assert_embedding_shape,
+    vector_knn_multi_score_expr,
+    vector_knn_score_expr,
+    vector_param_literal,
+)
 
 # ----------------------- #
 
@@ -60,6 +74,13 @@ _LEG_EID: Final[str] = "eid"
 # ....................... #
 
 
+def _empty_vector_embedders() -> dict[int, EmbeddingsProviderPort]:
+    return {}
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class HubLegRuntime:
     """Resolved leg: :class:`SearchSpec` plus Postgres index/heap wiring."""
@@ -70,9 +91,25 @@ class HubLegRuntime:
     hub_fk_column: str
     heap_pk_column: str
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
-    engine: Literal["pgroonga", "fts"] = "pgroonga"
+    engine: Literal["pgroonga", "fts", "vector"] = "pgroonga"
     fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = attrs.field(default=None)
     """Required when :attr:`engine` is ``fts`` (same semantics as :class:`PostgresFTSSearchAdapterV2`)."""
+
+    vector_column: str | None = None
+    """Heap column of type ``vector`` when :attr:`engine` is ``vector``."""
+
+    vector_distance: VectorDistanceKind = "l2"
+    """pgvector distance family when :attr:`engine` is ``vector``."""
+
+    embedding_dimensions: int | None = None
+    """Expected query embedding length for ``vector`` legs."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.engine == "vector":
+            if not self.vector_column or self.embedding_dimensions is None:
+                raise CoreError(
+                    "Vector hub leg requires vector_column and embedding_dimensions.",
+                )
 
 
 # ....................... #
@@ -87,7 +124,7 @@ class HubSearchLegEngine(Protocol):
         *,
         introspector: PostgresIntrospector,
         index_alias: str,
-        query: str,
+        queries: tuple[str, ...],
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
@@ -110,23 +147,32 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
         *,
         introspector: PostgresIntrospector,
         index_alias: str,
-        query: str,
+        queries: tuple[str, ...],
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        if not queries:
+            return (
+                sql.SQL("TRUE"),
+                sql.SQL("(0)::double precision AS {}").format(
+                    sql.Identifier(score_column),
+                ),
+                [],
+            )
+        mq = pgroonga_disjunctive_match_text(queries)
         sw, sp = await pgroonga_match_clause(
             search=leg.search,
             index_field_map=leg.index_field_map,
             index_qname=leg.index_qname,
             introspector=introspector,
             index_alias=index_alias,
-            query=query,
+            query=mq,
             options=options,
         )
         rank = pgroonga_score_rank_expr(
             index_alias=index_alias,
             rank_column=score_column,
-            query=query,
+            query=mq,
         )
         return sw, rank, sp
 
@@ -142,7 +188,7 @@ class FtsHubLegEngine(HubSearchLegEngine):
         *,
         introspector: PostgresIntrospector,
         index_alias: str,
-        query: str,
+        queries: tuple[str, ...],
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
@@ -152,7 +198,7 @@ class FtsHubLegEngine(HubSearchLegEngine):
         if groups is None:
             raise CoreError("FTS hub leg requires fts_groups.")
 
-        if not query.strip():
+        if not queries:
             return (
                 sql.SQL("TRUE"),
                 sql.SQL("(0)::double precision AS {}").format(
@@ -162,8 +208,12 @@ class FtsHubLegEngine(HubSearchLegEngine):
             )
 
         tsv = await fts_resolve_tsvector_expr(introspector, leg.index_qname)
-        tsw_where, tsp_w = fts_tsquery_expr(query, options=options)
-        tsw_rank, tsp_r = fts_tsquery_expr(query, options=options)
+        if len(queries) == 1:
+            tsw_where, tsp_w = fts_tsquery_expr(queries[0], options=options)
+            tsw_rank, tsp_r = fts_tsquery_expr(queries[0], options=options)
+        else:
+            tsw_where, tsp_w = fts_tsquery_expr_disjunction(queries, options=options)
+            tsw_rank, tsp_r = fts_tsquery_expr_disjunction(queries, options=options)
         sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)
         gw = fts_effective_group_weights(leg.search, groups, options)
         fts_weights = fts_rank_cd_weight_array(gw)
@@ -177,11 +227,75 @@ class FtsHubLegEngine(HubSearchLegEngine):
         return sw, rank_expr, sp
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class VectorHubLegEngine(HubSearchLegEngine):
+    """Vector hub legs: KNN score on a ``vector`` heap column."""
+
+    embedder: EmbeddingsProviderPort
+
+    async def build_leg(
+        self,
+        leg: HubLegRuntime,
+        *,
+        introspector: PostgresIntrospector,
+        index_alias: str,
+        queries: tuple[str, ...],
+        options: SearchOptions | None,
+        score_column: str,
+    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        _ = introspector, options
+        if leg.engine != "vector" or leg.vector_column is None:
+            raise CoreError("VectorHubLegEngine requires a vector hub leg.")
+        if not queries:
+            return (
+                sql.SQL("TRUE"),
+                sql.SQL("(0)::double precision AS {}").format(
+                    sql.Identifier(score_column),
+                ),
+                [],
+            )
+
+        edim = leg.embedding_dimensions
+
+        if edim is None:
+            raise CoreError("embedding_dimensions is required for vector engine.")
+
+        sw = sql.SQL("TRUE")
+        if len(queries) == 1:
+            one = await self.embedder.embed_one(queries[0], input_kind="query")
+            assert_embedding_shape(one, expect_dim=edim)
+            rank = vector_knn_score_expr(
+                index_alias=index_alias,
+                column=leg.vector_column,
+                kind=leg.vector_distance,
+                score_name=score_column,
+            )
+            sp = [vector_param_literal(one)]
+        else:
+            vecs = await self.embedder.embed(queries, input_kind="query")
+            for vec in vecs:
+                assert_embedding_shape(vec, expect_dim=edim)
+            rank = vector_knn_multi_score_expr(
+                index_alias=index_alias,
+                column=leg.vector_column,
+                kind=leg.vector_distance,
+                score_name=score_column,
+                n_queries=len(vecs),
+            )
+            sp = [vector_param_literal(v) for v in vecs]
+        return sw, rank, sp
+
+
 _PGROONGA_HUB_LEG_ENGINE: Final[PgroongaHubLegEngine] = PgroongaHubLegEngine()
 _FTS_HUB_LEG_ENGINE: Final[FtsHubLegEngine] = FtsHubLegEngine()
 
 
-def hub_leg_engine_for(leg: HubLegRuntime) -> HubSearchLegEngine:
+def hub_leg_engine_for(
+    leg: HubLegRuntime,
+    *,
+    vector_embedder: EmbeddingsProviderPort | None = None,
+) -> HubSearchLegEngine:
     """Resolve the leg engine implementation from :attr:`HubLegRuntime.engine`."""
 
     eng = leg.engine
@@ -191,6 +305,11 @@ def hub_leg_engine_for(leg: HubLegRuntime) -> HubSearchLegEngine:
 
     if eng == "fts":
         return _FTS_HUB_LEG_ENGINE
+
+    if eng == "vector":
+        if vector_embedder is None:
+            raise CoreError("Vector hub leg requires an embeddings provider.")
+        return VectorHubLegEngine(embedder=vector_embedder)
 
     raise CoreError(f"Unsupported hub search leg engine: {eng!r}.")
 
@@ -208,12 +327,17 @@ class PostgresHubSearchAdapter[M: BaseModel](
     """Multi-leg search with a single hub row type and merged per-leg scores.
 
     Each leg's :attr:`~HubLegRuntime.engine` selects the implementation
-    (:class:`PgroongaHubLegEngine` or :class:`FtsHubLegEngine`). Built via
+    (PGroonga, FTS, or :class:`VectorHubLegEngine`). Built via
     :class:`ConfigurablePostgresHubSearch` from :class:`PostgresHubSearchConfig`.
     """
 
     hub_spec: HubSearchSpec[M]
     members: Sequence[HubLegRuntime]
+    vector_embedders: Mapping[int, EmbeddingsProviderPort] = attrs.field(
+        factory=_empty_vector_embedders,
+    )
+    """Per-leg index → embedder for :attr:`~HubLegRuntime.engine` ``vector`` legs."""
+
     combine: Literal["or", "and"] = "or"
     score_merge: Literal["max", "sum"] = "max"
 
@@ -239,7 +363,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -252,7 +376,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -265,7 +389,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -277,7 +401,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
@@ -286,6 +410,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
+        terms = normalize_search_queries(query)
+
         leg_options, member_weights_list = prepare_hub_search_options(
             self.hub_spec,
             options,
@@ -323,11 +449,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
             t_alias = f"t{i}"
             lr_alias = leg_aliases[i]
 
-            sw, rank_expr, sp = await hub_leg_engine_for(leg).build_leg(
+            v_emb = self.vector_embedders.get(i) if leg.engine == "vector" else None
+            sw, rank_expr, sp = await hub_leg_engine_for(
+                leg,
+                vector_embedder=v_emb,
+            ).build_leg(
                 leg,
                 introspector=self.introspector,
                 index_alias=t_alias,
-                query=query,
+                queries=terms,
                 options=leg_options,
                 score_column=_LEG_SCORE,
             )
@@ -438,7 +568,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
             leg_joins = sql.SQL(" ").join(join_parts)
 
-            if not query.strip():
+            if not terms:
                 combine_sql = sql.SQL("TRUE")
 
             else:

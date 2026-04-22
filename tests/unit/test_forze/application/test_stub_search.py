@@ -94,6 +94,18 @@ class TestMockSearchAdapter:
         assert hits[1].title == "foo"
 
     @pytest.mark.asyncio
+    async def test_search_list_query_matches_any_term(self) -> None:
+        state = MockState()
+        doc = _doc_adapter(state)
+        search = _search_adapter(state)
+
+        await doc.create(_CreateWithTitle(title="alpha"))
+        await doc.create(_CreateWithTitle(title="beta"))
+        hits, count = await search.search(["alpha", "gamma"])
+        assert count == 1
+        assert hits[0].title == "alpha"
+
+    @pytest.mark.asyncio
     async def test_search_respects_limit(self) -> None:
         state = MockState()
         doc = _doc_adapter(state)

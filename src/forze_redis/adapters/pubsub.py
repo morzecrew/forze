@@ -17,7 +17,7 @@ from forze.application.contracts.pubsub import (
     PubSubMessage,
     PubSubQueryPort,
 )
-from forze.infra.tenancy import MultiTenancyMixin
+from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import RedisClient
 from .codecs import RedisPubSubCodec

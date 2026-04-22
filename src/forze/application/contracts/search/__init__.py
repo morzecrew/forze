@@ -16,6 +16,7 @@ from .specs import (
     HubSearchSpec,
     SearchSpec,
 )
+from .query_normalization import normalize_search_queries
 from .types import SearchOptions
 
 # ----------------------- #
@@ -37,4 +38,5 @@ __all__ = [
     "FederatedSearchQueryDepPort",
     "FederatedSearchSpec",
     "FederatedSearchReadModel",
+    "normalize_search_queries",
 ]

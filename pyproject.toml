@@ -139,6 +139,7 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/forze",
+    "src/forze_contrib",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_mongo",
@@ -228,6 +229,7 @@ warn_unused_ignores = false
 [tool.importlinter]
 root_packages = [
     "forze",
+    "forze_contrib",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -292,6 +294,7 @@ as_packages = true
 [tool.vulture]
 paths = [
     "src/forze",
+    "src/forze_contrib",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_postgres",
@@ -321,6 +324,7 @@ mi_min = "B"
 [tool.deptry]
 known_first_party = [
     "forze",
+    "forze_contrib",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",

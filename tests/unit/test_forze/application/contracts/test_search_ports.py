@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 from pydantic import BaseModel
 
@@ -20,7 +22,7 @@ class _Alt(BaseModel):
 class _StubSearch:
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters=None,
         pagination=None,
         sorts=None,
@@ -65,3 +67,11 @@ async def test_search_return_fields_json() -> None:
     hits, total = await stub.search("q", return_fields=["id"])
     assert total == 1
     assert hits[0]["id"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_query_sequence() -> None:
+    stub = _StubSearch()
+    hits, total = await stub.search(["a", "b"])
+    assert total == 1
+    assert hits[0].id == "1"

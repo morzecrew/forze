@@ -145,7 +145,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -158,7 +158,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -171,7 +171,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     @overload
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -183,7 +183,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     async def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,

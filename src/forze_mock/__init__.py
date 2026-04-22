@@ -18,6 +18,7 @@ from .adapters import (
     MockStreamGroupAdapter,
     MockTxManagerAdapter,
 )
+from .embeddings import MockHashEmbeddingsProvider
 from .execution import MockDepsModule, MockStateDepKey
 
 # ----------------------- #
@@ -37,4 +38,5 @@ __all__ = [
     "MockPubSubAdapter",
     "MockStreamAdapter",
     "MockStreamGroupAdapter",
+    "MockHashEmbeddingsProvider",
 ]

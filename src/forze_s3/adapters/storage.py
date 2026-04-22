@@ -23,7 +23,7 @@ from forze.application.contracts.storage import (
 )
 from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
-from forze.infra.tenancy import MultiTenancyMixin
+from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import S3Client
 from .codecs import default_b64_codec, default_path_codec

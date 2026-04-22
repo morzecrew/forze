@@ -24,6 +24,7 @@ from ..contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
+from ..contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsProviderPort, EmbeddingsSpec
 from ..contracts.search import (
     FederatedSearchQueryDepKey,
     FederatedSearchReadModel,
@@ -457,6 +458,22 @@ class ExecutionContext:
         )
 
         return se
+
+    # ....................... #
+
+    def embeddings_provider(self, spec: EmbeddingsSpec) -> EmbeddingsProviderPort:
+        """Resolve an embeddings provider for the given spec."""
+
+        dep = self.dep(EmbeddingsProviderDepKey, route=spec.name)
+        ep = dep(self, spec)
+
+        logger.trace(
+            "Resolved embeddings provider for '%s' -> %s",
+            str(spec.name),
+            type(ep).__qualname__,
+        )
+
+        return ep
 
     # ....................... #
 

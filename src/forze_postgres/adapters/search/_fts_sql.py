@@ -64,6 +64,30 @@ def fts_tsquery_expr(
 # ....................... #
 
 
+def fts_tsquery_expr_disjunction(
+    queries: Sequence[str],
+    *,
+    options: SearchOptions | None = None,
+) -> tuple[sql.Composable, list[Any]]:
+    """Build one ``websearch_to_tsquery`` argument with `` OR `` between sub-queries.
+
+    Using a single parser pass matches the behavior of passing ``"a OR b"`` as one
+    string (same configuration and operator semantics as :func:`fts_tsquery_expr`).
+    """
+
+    parts = [q.strip() for q in queries if q.strip()]
+    if not parts:
+        raise CoreError("fts_tsquery_expr_disjunction requires at least one non-empty query.")
+    if len(parts) == 1:
+        return fts_tsquery_expr(parts[0], options=options)
+
+    combined = " OR ".join(parts)
+    return fts_tsquery_expr(combined, options=options)
+
+
+# ....................... #
+
+
 def fts_effective_group_weights(
     spec: SearchSpec[Any],
     fts_groups: dict[FtsGroupLetter, Sequence[str]],

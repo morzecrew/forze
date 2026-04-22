@@ -104,6 +104,25 @@ class TestTypedSearch:
         assert titles == ["a", "b"]
 
     @pytest.mark.asyncio
+    async def test_typed_search_disjunctive_list_query(
+        self,
+        stub_ctx,
+    ) -> None:
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
+
+        await doc_port.create(_SearchCreate(title="only_a", content="alpha"))
+        await doc_port.create(_SearchCreate(title="only_b", content="beta"))
+
+        usecase = TypedSearch(ctx=stub_ctx, search=search_port)
+        result = await usecase(
+            SearchRequestDTO(query=["alpha", "beta"], page=1, size=10)
+        )
+
+        assert result.count == 2
+        assert {h.title for h in result.hits} == {"only_a", "only_b"}
+
+    @pytest.mark.asyncio
     async def test_typed_search_empty_query_returns_default(
         self,
         stub_ctx,

@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol, Sequence, TypeVar, overload
+from collections.abc import Sequence
+from typing import Awaitable, Protocol, TypeVar, overload
 
 from pydantic import BaseModel
 
@@ -19,7 +20,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
     @overload
     def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -35,7 +36,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
     @overload
     def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -48,7 +49,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
     @overload
     def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
@@ -63,7 +64,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
 
     def search(
         self,
-        query: str,
+        query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
@@ -74,7 +75,8 @@ class SearchQueryPort[R: BaseModel](Protocol):
     ) -> Awaitable[tuple[list[R] | list[T] | list[JsonDict], int]]:
         """Search documents using a query string and optional filters.
 
-        :param query: Query expression interpreted by the backend.
+        :param query: Query expression interpreted by the backend, or several
+            strings combined with **OR** (disjunction) by the adapter.
         :param filters: Structured filters applied before scoring.
         :param pagination: Pagination expression.
         :param sorts: Field-level sort specification.

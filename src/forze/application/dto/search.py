@@ -11,13 +11,15 @@ from .paginated import Pagination
 class SearchRequestDTO(Pagination):
     """Search request payload for typed document search.
 
-    When `query` is non-empty, backends use full-text search (with fuzzy
-    matching when enabled). When empty, only `filters` and `sorts`
-    apply (filter-only mode).
+    When `query` is non-empty (or a non-empty list of phrases), backends run
+    search (with fuzzy matching when enabled). A single string, or several
+    strings, are combined with **OR** by the search adapter. When empty (or
+    only blank list entries), only `filters` and `sorts` apply (filter-only
+    mode).
     """
 
-    query: str = ""
-    """Full-text search query; empty string for filter-only mode."""
+    query: str | list[str] = ""
+    """Full-text query string, or list of alternative phrases (OR)."""
 
     filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
     """Optional filter expression (predicates, conjunctions, disjunctions)."""

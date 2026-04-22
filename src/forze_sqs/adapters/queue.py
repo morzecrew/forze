@@ -15,7 +15,7 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
-from forze.infra.tenancy import MultiTenancyMixin
+from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import SQSClient
 from .codecs import SQSQueueCodec
