@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Callable, Final, Iterable, Literal, Self, TypeVar, final
+from typing import (
+    Any,
+    Callable,
+    Final,
+    Iterable,
+    Literal,
+    Self,
+    Sequence,
+    TypeVar,
+    final,
+)
 
 import attrs
 
@@ -375,6 +385,22 @@ class UsecasePlan:
 
     # ....................... #
 
+    def before_pipeline(
+        self,
+        op: OpKey,
+        guards: Sequence[GuardFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, guard in enumerate(guards):
+            priority = first_priority - i * 10
+            out = out.before(op, guard, priority=priority)
+
+        return out
+
+    # ....................... #
+
     def after(self, op: OpKey, effect: EffectFactory, *, priority: int = 0) -> Self:
         def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
             return EffectMiddleware[Any, Any](effect=effect(ctx))
@@ -384,6 +410,22 @@ class UsecasePlan:
             "outer_after",
             MiddlewareSpec(factory=factory, priority=priority),
         )
+
+    # ....................... #
+
+    def after_pipeline(
+        self,
+        op: OpKey,
+        effects: Sequence[EffectFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, effect in enumerate(effects):
+            priority = first_priority - i * 10
+            out = out.after(op, effect, priority=priority)
+
+        return out
 
     # ....................... #
 
@@ -399,6 +441,22 @@ class UsecasePlan:
             "outer_wrap",
             MiddlewareSpec(factory=middleware, priority=priority),
         )
+
+    # ....................... #
+
+    def wrap_pipeline(
+        self,
+        op: OpKey,
+        middlewares: Sequence[MiddlewareFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, middleware in enumerate(middlewares):
+            priority = first_priority - i * 10
+            out = out.wrap(op, middleware, priority=priority)
+
+        return out
 
     # ....................... #
 
@@ -420,6 +478,22 @@ class UsecasePlan:
 
     # ....................... #
 
+    def in_tx_before_pipeline(
+        self,
+        op: OpKey,
+        guards: Sequence[GuardFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, guard in enumerate(guards):
+            priority = first_priority - i * 10
+            out = out.in_tx_before(op, guard, priority=priority)
+
+        return out
+
+    # ....................... #
+
     def in_tx_after(
         self,
         op: OpKey,
@@ -438,6 +512,22 @@ class UsecasePlan:
 
     # ....................... #
 
+    def in_tx_after_pipeline(
+        self,
+        op: OpKey,
+        effects: Sequence[EffectFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, effect in enumerate(effects):
+            priority = first_priority - i * 10
+            out = out.in_tx_after(op, effect, priority=priority)
+
+        return out
+
+    # ....................... #
+
     def in_tx_wrap(
         self,
         op: OpKey,
@@ -450,6 +540,22 @@ class UsecasePlan:
             "in_tx_wrap",
             MiddlewareSpec(factory=middleware, priority=priority),
         )
+
+    # ....................... #
+
+    def in_tx_wrap_pipeline(
+        self,
+        op: OpKey,
+        middlewares: Sequence[MiddlewareFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, middleware in enumerate(middlewares):
+            priority = first_priority - i * 10
+            out = out.in_tx_wrap(op, middleware, priority=priority)
+
+        return out
 
     # ....................... #
 
@@ -468,6 +574,22 @@ class UsecasePlan:
             "after_commit",
             MiddlewareSpec(factory=factory, priority=priority),
         )
+
+    # ....................... #
+
+    def after_commit_pipeline(
+        self,
+        op: OpKey,
+        effects: Sequence[EffectFactory],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        out: Self = self
+        for i, effect in enumerate(effects):
+            priority = first_priority - i * 10
+            out = out.after_commit(op, effect, priority=priority)
+
+        return out
 
     # ....................... #
 

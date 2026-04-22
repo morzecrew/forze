@@ -500,3 +500,161 @@ class TestUsecasePlan:
         plan = UsecasePlan(ops={"create": op_plan})
         with pytest.raises(CoreError, match="Expected EffectMiddleware"):
             plan.resolve("create", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+
+
+def _guards3() -> tuple:
+    def g0(ctx: ExecutionContext):
+        async def _guard(args):
+            pass
+
+        return _guard
+
+    def g1(ctx: ExecutionContext):
+        async def _guard(args):
+            pass
+
+        return _guard
+
+    def g2(ctx: ExecutionContext):
+        async def _guard(args):
+            pass
+
+        return _guard
+
+    return (g0, g1, g2)
+
+
+def _effects3() -> tuple:
+    def e0(ctx: ExecutionContext):
+        async def _effect(args, res):
+            return res
+
+        return _effect
+
+    def e1(ctx: ExecutionContext):
+        async def _effect(args, res):
+            return res
+
+        return _effect
+
+    def e2(ctx: ExecutionContext):
+        async def _effect(args, res):
+            return res
+
+        return _effect
+
+    return (e0, e1, e2)
+
+
+class TestUsecasePlanPipelines:
+    """UsecasePlan *_pipeline methods: batch attach with stepped priorities."""
+
+    def test_before_pipeline_adds_guards_with_stepped_priority(self) -> None:
+        g0, g1, g2 = _guards3()
+        plan = UsecasePlan().before_pipeline("get", [g0, g1, g2], first_priority=100)
+        specs = plan.ops["get"].outer_before
+        assert [s.priority for s in specs] == [100, 90, 80]
+
+    def test_after_pipeline_adds_effects_with_stepped_priority(self) -> None:
+        e0, e1, e2 = _effects3()
+        plan = UsecasePlan().after_pipeline("get", [e0, e1, e2], first_priority=50)
+        assert [s.priority for s in plan.ops["get"].outer_after] == [50, 40, 30]
+
+    def test_wrap_pipeline_adds_middlewares_with_stepped_priority(self) -> None:
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def m0(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        def m1(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = UsecasePlan().wrap_pipeline("get", [m0, m1], first_priority=7)
+        assert [s.priority for s in plan.ops["get"].outer_wrap] == [7, -3]
+
+    def test_in_tx_before_pipeline(self) -> None:
+        g0, g1, _ = _guards3()
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_before_pipeline("create", [g0, g1], first_priority=20)
+        )
+        assert [s.priority for s in plan.ops["create"].in_tx_before] == [20, 10]
+
+    def test_in_tx_after_pipeline(self) -> None:
+        e0, e1, e2 = _effects3()
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_after_pipeline("create", [e0, e1, e2], first_priority=0)
+        )
+        assert [s.priority for s in plan.ops["create"].in_tx_after] == [0, -10, -20]
+
+    def test_in_tx_wrap_pipeline(self) -> None:
+        from forze.application.execution.middleware import GuardMiddleware
+
+        def m0(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        def m1(ctx):
+            async def guard(args):
+                pass
+
+            return GuardMiddleware(guard=guard)
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_wrap_pipeline("create", [m0, m1], first_priority=15)
+        )
+        assert [s.priority for s in plan.ops["create"].in_tx_wrap] == [15, 5]
+
+    def test_after_commit_pipeline(self) -> None:
+        e0, e1, _e2 = _effects3()
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .after_commit_pipeline("create", [e0, e1], first_priority=2)
+        )
+        assert [s.priority for s in plan.ops["create"].after_commit] == [2, -8]
+
+    def test_empty_pipeline_does_not_create_op(self) -> None:
+        base = UsecasePlan()
+        plan = base.before_pipeline("get", [])
+        assert plan is base
+        assert "get" not in plan.ops
+
+    def test_pipeline_does_not_mutate_original(self) -> None:
+        g0, g1, _ = _guards3()
+        base = UsecasePlan()
+        derived = base.before_pipeline("get", [g0, g1])
+        assert "get" not in base.ops
+        assert len(derived.ops["get"].outer_before) == 2
+
+    @pytest.mark.asyncio
+    async def test_resolve_before_pipeline_runs_guards_in_order(self) -> None:
+        seen: list[int] = []
+
+        def g(i: int):
+            def factory(ctx: ExecutionContext):
+                async def guard(args):
+                    seen.append(i)
+
+                return guard
+
+            return factory
+
+        ctx = ExecutionContext(deps=Deps())
+        plan = UsecasePlan().before_pipeline("get", [g(1), g(2), g(3)], first_priority=30)
+        uc = plan.resolve("get", ctx, lambda ctx: StubUsecase(ctx=ctx))
+        await uc("x")
+        assert seen == [1, 2, 3]
