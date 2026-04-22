@@ -63,6 +63,23 @@ PlanBucket = Literal[
 ]
 """Bucket names for middleware placement in the chain."""
 
+_EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE: Final[frozenset[PlanBucket]] = (
+    frozenset(
+        {
+            "outer_wrap",
+            "in_tx_wrap",
+            "outer_after",
+            "in_tx_after",
+        }
+    )
+)
+"""Buckets whose :meth:`OperationPlan.build` order is reversed when appending to
+:class:`Usecase` so that higher priority always means "runs first" in the logical
+sense: first guard on the way in, first effect after ``main``, first wrap entry
+innermost. ``after_commit`` is not included; it runs in ``build`` order (see
+:class:`TxMiddleware`).
+"""
+
 # ....................... #
 
 
@@ -245,7 +262,10 @@ class OperationPlan:
         Otherwise only provided plans are merged.
 
         Deduplicates by priority and factory id, then sorts by priority
-        descending (higher first).
+        descending (higher first). :meth:`UsecasePlan.resolve` may reverse that
+        order for effect and wrap buckets when constructing the flat
+        :attr:`Usecase.middlewares` tuple; see
+        ``_EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE``.
 
         :param bucket: Bucket name.
         :returns: Ordered specs.
@@ -295,6 +315,15 @@ class OperationPlan:
         """Merge multiple plans into a single aggregate plan."""
 
         return type(self).merge(self, *plans)
+
+
+def _middleware_specs_for_usecase_tuple(plan: OperationPlan, bucket: PlanBucket) -> tuple[MiddlewareSpec, ...]:
+    """Map :meth:`OperationPlan.build` output to `Usecase.middlewares` segment order."""
+
+    built = plan.build(bucket)
+    if bucket in _EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE:
+        return tuple(reversed(built))
+    return built
 
 
 # ....................... #
@@ -390,7 +419,11 @@ class UsecasePlan:
     # ....................... #
 
     def before(
-        self, op: OpKey | list[OpKey], guard: GuardFactory, *, priority: int = 0
+        self,
+        op: OpKey | list[OpKey],
+        guard: GuardFactory,
+        *,
+        priority: int = 0,
     ) -> Self:
         def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
@@ -743,13 +776,13 @@ class UsecasePlan:
         plan = OperationPlan.merge(self._base(), self._op(op))
         plan.validate()
 
-        outer_before = plan.build("outer_before")
-        outer_wrap = plan.build("outer_wrap")
-        outer_after = plan.build("outer_after")
+        outer_before = _middleware_specs_for_usecase_tuple(plan, "outer_before")
+        outer_wrap = _middleware_specs_for_usecase_tuple(plan, "outer_wrap")
+        outer_after = _middleware_specs_for_usecase_tuple(plan, "outer_after")
 
-        in_tx_before = plan.build("in_tx_before")
-        in_tx_wrap = plan.build("in_tx_wrap")
-        in_tx_after = plan.build("in_tx_after")
+        in_tx_before = _middleware_specs_for_usecase_tuple(plan, "in_tx_before")
+        in_tx_wrap = _middleware_specs_for_usecase_tuple(plan, "in_tx_wrap")
+        in_tx_after = _middleware_specs_for_usecase_tuple(plan, "in_tx_after")
 
         after_commit = plan.build("after_commit")
 
@@ -777,7 +810,6 @@ class UsecasePlan:
         chain.extend(s.factory(ctx) for s in outer_wrap)
 
         if plan.tx is not None:
-            # is it correct order of the chain?
             chain.append(
                 TxMiddleware[Any, Any](
                     ctx=ctx,

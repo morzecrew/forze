@@ -30,16 +30,17 @@ class UsecaseFactory(Protocol):
 class Usecase[Args, R]:
     """Base class for asynchronous application usecases.
 
-    Subclasses implement :meth:`main`. Middlewares wrap the usecase in a chain
-    (guards run before, effects after; order is reversed so middlewares added
-    first run outermost). Invoke via :meth:`__call__` to run the full chain.
+    Subclasses implement :meth:`main`. The ``middlewares`` tuple is built by
+    :class:`~forze.application.execution.plan.UsecasePlan` so that priority and
+    pipeline list order have consistent semantics; see :meth:`_build_chain` for
+    how that tuple is wrapped. Invoke via :meth:`__call__`.
     """
 
     ctx: ExecutionContext
     """Execution context for resolving ports and transactions."""
 
     middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
-    """Middlewares wrapping the usecase; first added runs outermost."""
+    """Wrapping middlewares, outer-to-inner in resolve order; see :meth:`_build_chain`."""
 
     operation_id: str | None = attrs.field(default=None)
     """The operation id assigned to the usecase."""

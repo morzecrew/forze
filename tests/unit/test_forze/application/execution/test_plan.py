@@ -659,6 +659,78 @@ class TestUsecasePlanPipelines:
         await uc("x")
         assert seen == [1, 2, 3]
 
+    @pytest.mark.asyncio
+    async def test_resolve_after_pipeline_runs_effects_in_list_order(self, stub_ctx) -> None:
+        seen: list[int] = []
+
+        def e(i: int):
+            def factory(ctx: ExecutionContext):
+                async def effect(args, res):
+                    seen.append(i)
+                    return res
+
+                return effect
+
+            return factory
+
+        plan = (
+            UsecasePlan()
+            .tx("x", route="mock")
+            .after_pipeline("x", [e(1), e(2), e(3)], first_priority=20)
+        )
+        uc = plan.resolve("x", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+        await uc("a")
+        assert seen == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_resolve_in_tx_after_pipeline_runs_effects_in_list_order(
+        self, stub_ctx
+    ) -> None:
+        seen: list[int] = []
+
+        def e(i: int):
+            def factory(ctx: ExecutionContext):
+                async def effect(args, res):
+                    seen.append(i)
+                    return res
+
+                return effect
+
+            return factory
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_after_pipeline("create", [e(1), e(2), e(3)], first_priority=0)
+        )
+        uc = plan.resolve("create", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+        await uc("a")
+        assert seen == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_resolve_in_tx_wrap_pipeline_first_in_list_is_innermost(self, stub_ctx) -> None:
+        from forze.application.execution.middleware import GuardMiddleware
+
+        seen: list[str] = []
+
+        def w(label: str):
+            def factory(ctx: ExecutionContext):
+                async def guard(args):
+                    seen.append(label)
+
+                return GuardMiddleware(guard=guard)
+
+            return factory
+
+        plan = (
+            UsecasePlan()
+            .tx("create", route="mock")
+            .in_tx_wrap_pipeline("create", [w("inner"), w("outer")], first_priority=20)
+        )
+        uc = plan.resolve("create", stub_ctx, lambda ctx: StubUsecase(ctx=ctx))
+        await uc("a")
+        assert seen == ["outer", "inner"]
+
 
 class TestUsecasePlanListOp:
     """``op`` as ``list[OpKey]`` applies the same spec to every listed operation."""
