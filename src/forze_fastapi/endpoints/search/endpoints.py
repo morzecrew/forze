@@ -21,6 +21,8 @@ from ..http import (
     BodyAsIsMapper,
     HttpEndpointSpec,
     HttpMetadataSpec,
+    HttpRequestSpec,
+    HttpSpec,
     build_http_endpoint_spec,
 )
 
@@ -53,11 +55,16 @@ def build_typed_search_endpoint_spec[M: BaseModel](
     path = path_override or "/search"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, SearchRequestDTO] = {
+        "body_type": SearchRequestDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.search,  # type: ignore[misc]
-        http={"method": "POST", "path": path},
-        request={"body_type": SearchRequestDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=Paginated[dtos.read],  # type: ignore[name-defined]
         mapper=BodyAsIsMapper(SearchRequestDTO),
@@ -89,11 +96,16 @@ def build_raw_search_endpoint_spec[M: BaseModel](
     path = path_override or "/raw-search"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, RawSearchRequestDTO] = {
+        "body_type": RawSearchRequestDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.raw_search,  # type: ignore[misc]
-        http={"method": "POST", "path": path},
-        request={"body_type": RawSearchRequestDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=RawPaginated,
         mapper=BodyAsIsMapper(RawSearchRequestDTO),

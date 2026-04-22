@@ -14,8 +14,10 @@ from forze.application.execution import (
 )
 from forze.base.logging import configure_logging, install_excepthook
 from forze_fastapi.endpoints.http import (
-    ETagFeature,
+    HttpEndpointSpec,
     HttpRequestDTO,
+    HttpRequestSpec,
+    HttpSpec,
     attach_http_endpoint,
     build_http_endpoint_spec,
 )
@@ -104,29 +106,37 @@ def execution_context() -> ExecutionContext:
 
 _ROUTER = APIRouter(prefix="/api", tags=["example"])
 
-endpoint_spec = build_http_endpoint_spec(
+_http: HttpSpec = {
+    "method": "POST",
+    "path": "/hello",
+}
+_request: HttpRequestSpec[HelloPath, Any, HelloHeader, Any, HelloBody] = {
+    "query_type": HelloPath,
+    "header_type": HelloHeader,
+    "body_type": HelloBody,
+    "body_mode": "form",
+}
+
+endpoint_spec: HttpEndpointSpec[
+    HelloPath,
+    Any,
+    HelloHeader,
+    Any,
+    HelloBody,
+    HelloInput,
+    HelloOutput,
+    HelloOutput,
+    HelloUsecasesFacade,
+] = build_http_endpoint_spec(
     HelloUsecasesFacade,
     HelloUsecasesFacade.hello,
-    http={
-        "method": "POST",
-        "path": "/hello",
-    },
+    http=_http,
+    request=_request,
     metadata={
         "summary": "Run a tiny usecase (no infra ports)",
     },
-    request={
-        "query_type": HelloPath,
-        "header_type": HelloHeader,
-        "body_type": HelloBody,
-        "body_mode": "form",
-    },
     response=HelloOutput,
     mapper=map_hello,
-    features=[
-        ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any, Any](
-            provider=lambda response_body: "1234"
-        ),
-    ],
 )
 
 attach_http_endpoint(

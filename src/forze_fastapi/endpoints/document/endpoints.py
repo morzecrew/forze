@@ -29,6 +29,8 @@ from ..http import (
     ETagFeature,
     HttpEndpointSpec,
     HttpMetadataSpec,
+    HttpRequestSpec,
+    HttpSpec,
     IdempotencyFeature,
     QueryAsIsBodyAssignMapper,
     QueryAsIsMapper,
@@ -39,8 +41,6 @@ from .features import document_etag
 # ----------------------- #
 
 Facade = DocumentUsecasesFacade[Any, Any, Any]
-Idempotency = IdempotencyFeature[Any, Any, Any, Any, Any, Any, Any, Any, Any]
-ETag = ETagFeature[Any, Any, Any, Any, Any, Any, Any, Any, Any]
 
 # ....................... #
 
@@ -69,22 +69,27 @@ def build_document_get_endpoint_spec[R: ReadDocument](
     path = path_override or "/get"
     path = path_coerce(path)
 
-    features = (
-        [
-            ETag(
+    http_spec: HttpSpec = {"method": "GET", "path": path}
+    request_spec: HttpRequestSpec[DocumentIdDTO, Any, Any, Any, Any] = {
+        "query_type": DocumentIdDTO,
+    }
+
+    features: list[ETagFeature[DocumentIdDTO, Any, Any, Any, Any, DocumentIdDTO, R, R, Facade]] | None
+    if etag:
+        features = [
+            ETagFeature(
                 provider=document_etag,
                 auto_304=etag_auto_304,
             )
         ]
-        if etag
-        else None
-    )
+    else:
+        features = None
 
     return build_http_endpoint_spec(
         Facade,
         Facade.get,  # type: ignore[misc]
-        http={"method": "GET", "path": path},
-        request={"query_type": DocumentIdDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=dtos.read,
         mapper=QueryAsIsMapper(DocumentIdDTO),
@@ -119,22 +124,27 @@ def build_document_get_by_number_id_endpoint_spec[R: ReadDocument](
     path = path_override or "/get-by-num"
     path = path_coerce(path)
 
-    features = (
-        [
-            ETag(
+    http_spec: HttpSpec = {"method": "GET", "path": path}
+    request_spec: HttpRequestSpec[DocumentNumberIdDTO, Any, Any, Any, Any] = {
+        "query_type": DocumentNumberIdDTO,
+    }
+
+    features: list[ETagFeature[DocumentNumberIdDTO, Any, Any, Any, Any, DocumentNumberIdDTO, R, R, Facade]] | None
+    if etag:
+        features = [
+            ETagFeature(
                 provider=document_etag,
                 auto_304=etag_auto_304,
             )
         ]
-        if etag
-        else None
-    )
+    else:
+        features = None
 
     return build_http_endpoint_spec(
         Facade,
         Facade.get_by_number_id,  # type: ignore[misc]
-        http={"method": "GET", "path": path},
-        request={"query_type": DocumentNumberIdDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=dtos.read,
         mapper=QueryAsIsMapper(DocumentNumberIdDTO),
@@ -167,11 +177,16 @@ def build_document_list_endpoint_spec[R: ReadDocument](
     path = path_override or "/list"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, ListRequestDTO] = {
+        "body_type": ListRequestDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.list,  # type: ignore[misc]
-        http={"method": "POST", "path": path},
-        request={"body_type": ListRequestDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=Paginated[dtos.read],  # type: ignore[name-defined]
         mapper=BodyAsIsMapper(ListRequestDTO),
@@ -203,11 +218,16 @@ def build_document_raw_list_endpoint_spec[R: ReadDocument](
     path = path_override or "/raw-list"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, RawListRequestDTO] = {
+        "body_type": RawListRequestDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.raw_list,  # type: ignore[misc]
-        http={"method": "POST", "path": path},
-        request={"body_type": RawListRequestDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=RawPaginated,
         mapper=BodyAsIsMapper(RawListRequestDTO),
@@ -243,13 +263,20 @@ def build_document_create_endpoint_spec[R: ReadDocument, C: BaseDTO](
     if dtos.create is None:
         raise CoreError("Create DTO is not provided")
 
-    features = [Idempotency(spec=idempotency)] if idempotency is not None else None
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, C] = {"body_type": dtos.create}
+
+    features: list[IdempotencyFeature[Any, Any, Any, Any, C, C, R, R, Facade]] | None
+    if idempotency is not None:
+        features = [IdempotencyFeature(spec=idempotency)]
+    else:
+        features = None
 
     return build_http_endpoint_spec(
         Facade,
         Facade.create,  # type: ignore[misc]
-        http={"method": "POST", "path": path},
-        request={"body_type": dtos.create},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=dtos.read,
         mapper=BodyAsIsMapper(dtos.create),
@@ -285,14 +312,17 @@ def build_document_update_endpoint_spec[R: ReadDocument, U: BaseDTO](
     if dtos.update is None:
         raise CoreError("Update DTO is not provided")
 
+    http_spec: HttpSpec = {"method": "PATCH", "path": path}
+    request_spec: HttpRequestSpec[DocumentIdRevDTO, Any, Any, Any, U] = {
+        "query_type": DocumentIdRevDTO,
+        "body_type": dtos.update,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.update,  # type: ignore[misc]
-        http={"method": "PATCH", "path": path},
-        request={
-            "query_type": DocumentIdRevDTO,
-            "body_type": dtos.update,
-        },
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         response=dtos.read,
         mapper=QueryAsIsBodyAssignMapper(
@@ -326,11 +356,20 @@ def build_document_kill_endpoint_spec(
     path = path_override or "/kill"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {
+        "method": "DELETE",
+        "path": path,
+        "status_code": 204,
+    }
+    request_spec: HttpRequestSpec[DocumentIdDTO, Any, Any, Any, Any] = {
+        "query_type": DocumentIdDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.kill,  # type: ignore[misc]
-        http={"method": "DELETE", "path": path, "status_code": 204},
-        request={"query_type": DocumentIdDTO},
+        http=http_spec,
+        request=request_spec,
         metadata=metadata,
         mapper=QueryAsIsMapper(DocumentIdDTO),
     )
@@ -361,11 +400,16 @@ def build_document_delete_endpoint_spec[R: ReadDocument](
     path = path_override or "/delete"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {"method": "PATCH", "path": path}
+    request_spec: HttpRequestSpec[DocumentIdRevDTO, Any, Any, Any, Any] = {
+        "query_type": DocumentIdRevDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.delete,  # type: ignore[misc]
-        http={"method": "PATCH", "path": path},
-        request={"query_type": DocumentIdRevDTO},
+        http=http_spec,
+        request=request_spec,
         response=dtos.read,
         metadata=metadata,
         mapper=QueryAsIsMapper(DocumentIdRevDTO),
@@ -381,11 +425,16 @@ def build_document_restore_endpoint_spec[R: ReadDocument](
     path = path_override or "/restore"
     path = path_coerce(path)
 
+    http_spec: HttpSpec = {"method": "PATCH", "path": path}
+    request_spec: HttpRequestSpec[DocumentIdRevDTO, Any, Any, Any, Any] = {
+        "query_type": DocumentIdRevDTO,
+    }
+
     return build_http_endpoint_spec(
         Facade,
         Facade.restore,  # type: ignore[misc]
-        http={"method": "PATCH", "path": path},
-        request={"query_type": DocumentIdRevDTO},
+        http=http_spec,
+        request=request_spec,
         response=dtos.read,
         metadata=metadata,
         mapper=QueryAsIsMapper(DocumentIdRevDTO),

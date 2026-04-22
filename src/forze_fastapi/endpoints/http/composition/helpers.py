@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Sequence, TypeVar, overload
 
 from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import facade_call, facade_op
@@ -18,6 +18,11 @@ from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 from ..features import ETagFeature, IdempotencyFeature
 
 # ----------------------- #
+
+_RR = TypeVar("_RR")
+_RM = TypeVar("_RM")
+
+# ....................... #
 
 
 def validate_http_features(
@@ -45,6 +50,91 @@ def validate_http_features(
 
 # ....................... #
 
+# Mypy: explicit ``response: type[...]`` first; no-body last before the generic
+# fallback, so a non-default ``response=`` is not checked against the no-body
+# branch first. Call sites use annotated ``HttpSpec`` / ``HttpRequestSpec[...]``
+# locals so dict literals are checked against those TypedDicts.
+
+
+@overload
+def build_http_endpoint_spec(
+    facade_type: type[F],
+    call: facade_op[In, Raw],
+    *,
+    http: HttpSpec,
+    request: HttpRequestSpec[Q, P, H, C, B] | None = None,
+    metadata: HttpMetadataSpec | None = None,
+    response: type[_RR],
+    response_mapper: MapperPort[Raw, _RR] | None = None,
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = ...,  # type: ignore[assignment]
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, _RR, F]] | None
+    ) = None,
+) -> HttpEndpointSpec[Q, P, H, C, B, In, Raw, _RR, F]: ...
+
+
+# ....................... #
+
+
+@overload
+def build_http_endpoint_spec(
+    facade_type: type[F],
+    call: facade_op[In, Raw],
+    *,
+    http: HttpSpec,
+    request: HttpRequestSpec[Q, P, H, C, B] | None = None,
+    metadata: HttpMetadataSpec | None = None,
+    response: type[None] = type(None),
+    response_mapper: MapperPort[Raw, _RM],
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = ...,  # type: ignore[assignment]
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, _RM, F]] | None
+    ) = None,
+) -> HttpEndpointSpec[Q, P, H, C, B, In, Raw, _RM, F]: ...
+
+
+# ....................... #
+
+
+@overload
+def build_http_endpoint_spec(
+    facade_type: type[F],
+    call: facade_op[In, Raw],
+    *,
+    http: HttpSpec,
+    request: HttpRequestSpec[Q, P, H, C, B] | None = None,
+    metadata: HttpMetadataSpec | None = None,
+    response: type[None] = type(None),
+    response_mapper: None = None,
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = ...,  # type: ignore[assignment]
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, None, F]] | None
+    ) = None,
+) -> HttpEndpointSpec[Q, P, H, C, B, In, Raw, None, F]: ...
+
+
+# ....................... #
+
+
+@overload
+def build_http_endpoint_spec(
+    facade_type: type[F],
+    call: facade_op[In, Raw],
+    *,
+    http: HttpSpec,
+    request: HttpRequestSpec[Q, P, H, C, B] | None = None,
+    metadata: HttpMetadataSpec | None = None,
+    response: type[R | None] = type(None),
+    response_mapper: MapperPort[Raw, R] | None = None,
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = ...,  # type: ignore[assignment]
+    features: (
+        Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None
+    ) = None,
+) -> HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F]: ...
+
+
+# ....................... #
+
 
 def build_http_endpoint_spec(
     facade_type: type[F],
@@ -52,10 +142,10 @@ def build_http_endpoint_spec(
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
-    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = EmptyMapper(),  # type: ignore[assignment]
     metadata: HttpMetadataSpec | None = None,
     response: type[R | None] = type(None),
     response_mapper: MapperPort[Raw, R] | None = None,
+    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In] = EmptyMapper(),  # type: ignore[assignment]
     features: (
         Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None
     ) = None,
