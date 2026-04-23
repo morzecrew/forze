@@ -335,8 +335,6 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
         options = search_options_for_simple_adapter(options)
         fw, fp = await self.where_clause(filters)
 
-        tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
-
         terms = normalize_search_queries(query)
 
         params_body: list[Any]
@@ -346,9 +344,12 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
             params_body = []
 
         else:
+            tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
+
             if len(terms) == 1:
                 tsw_where, tsp_w = fts_tsquery_expr(terms[0], options=options)
-                tsw_rank, tsp_r = fts_tsquery_expr(terms[0], options=options)
+                tsw_rank = tsw_where
+                tsp_r = tsp_w
             else:
                 fn = (
                     fts_tsquery_expr_disjunction
@@ -365,6 +366,8 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
             )
             # ``WITH filtered`` uses ``fp``; ``scored`` SELECT lists ``ts_rank_cd`` before
             # ``WHERE``, so: ``fp``, ``weights``, rank ``tsquery``, where ``tsquery``.
+            # Single term: one ``fts_tsquery_expr``; ``tsw_rank``/``tsp`` match ``tsw_where``;
+            # params still list the tsquery twice (two ``Placeholder``\ s in the SQL).
             params_body = [*fp, *rank_w, *tsp_r, *tsp_w]
 
         key_sel = self._filtered_select_list()

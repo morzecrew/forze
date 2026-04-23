@@ -13,6 +13,12 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.query import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -27,12 +33,6 @@ from forze.application.contracts.search import (
     normalize_search_queries,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
-from forze.application.contracts.base import (
-    CountlessPage,
-    CursorPage,
-    Page,
-    page_from_limit_offset,
-)
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
@@ -135,16 +135,12 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
     # ....................... #
 
-    async def _pgroonga_match(
+    async def _pgroonga_match_combined_query(
         self,
-        terms: tuple[str, ...],
+        mq: str,
         *,
         options: SearchOptions | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
-        mq = pgroonga_phrase_match_text(
-            terms,
-            combine=effective_phrase_combine(options),
-        )
         if not mq:
             return sql.SQL("TRUE"), []
 
@@ -326,12 +322,102 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         options = search_options_for_simple_adapter(options)
         fw, fp = await self.where_clause(filters)
         terms = normalize_search_queries(query)
-        sw, sp = await self._pgroonga_match(terms, options=options)
+        combine = effective_phrase_combine(options)
+        mq = pgroonga_phrase_match_text(terms, combine=combine)
+
+        if not terms:
+            extra_ob = await self._projection_order_by_clause(sorts)
+            order_parts: list[sql.Composable] = (  # type: ignore[assignment]
+                [extra_ob]
+                if extra_ob is not None
+                else [
+                    sql.SQL("{} ASC").format(
+                        sql.Identifier(_PROJECTION_ALIAS, sorted(self.read_fields)[0]),
+                    ),
+                ]
+            )
+            order_sql = sql.SQL(", ").join(order_parts)
+            count_stmt = sql.SQL(
+                """
+                SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
+                """
+            ).format(
+                proj=self.source_qname.ident(),
+                pa=sql.Identifier(_PROJECTION_ALIAS),
+                fw=fw,
+            )
+            params_base = list(fp)
+            total = 0
+
+            if return_count:
+                total = int(
+                    await self.client.fetch_value(count_stmt, params_base, default=0),
+                )
+                if total == 0:
+                    return page_from_limit_offset(
+                        [],
+                        pagination or {},
+                        total=0,
+                    )
+
+            cols = self.return_clause(
+                return_type,
+                return_fields,
+                table_alias=_PROJECTION_ALIAS,
+            )
+            data_stmt = sql.SQL(
+                """
+                SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
+                """
+            ).format(
+                cols=cols,
+                proj=self.source_qname.ident(),
+                pa=sql.Identifier(_PROJECTION_ALIAS),
+                fw=fw,
+                order=order_sql,
+            )
+
+            params = params_base
+            pagination = pagination or {}
+            limit = pagination.get("limit")
+            offset = pagination.get("offset")
+
+            if limit is not None:
+                data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+                params.append(int(limit))
+
+            if offset is not None:
+                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+                params.append(int(offset))
+
+            rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+            if return_type is not None:
+                v = pydantic_validate_many(return_type, rows)
+
+                if return_count:
+                    return page_from_limit_offset(v, pagination, total=total)
+
+                return page_from_limit_offset(v, pagination, total=None)
+
+            if return_fields is not None:
+                raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
+
+                if return_count:
+                    return page_from_limit_offset(raw, pagination, total=total)
+
+                return page_from_limit_offset(raw, pagination, total=None)
+
+            m = pydantic_validate_many(self.model_type, rows)
+
+            if return_count:
+                return page_from_limit_offset(m, pagination, total=total)
+
+            return page_from_limit_offset(m, pagination, total=None)
+
+        sw, sp = await self._pgroonga_match_combined_query(mq, options=options)
 
         key_sel = self._filtered_select_list()
-        mq = pgroonga_phrase_match_text(
-            terms, combine=effective_phrase_combine(options)
-        )
         scored_keys, scored_rank = self._scored_select_keys_and_rank(query=mq)
 
         filtered_cte = sql.SQL(
@@ -385,7 +471,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             join_vs=join_vs,
         )
 
-        order_parts: list[sql.Composable] = [
+        order_parts: list[sql.Composable] = [  # type: ignore[no-redef]
             sql.SQL("{} DESC NULLS LAST").format(
                 sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
             )
@@ -407,6 +493,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
         params_count = [*fp, *sp]
         total = 0
+
         if return_count:
             total = int(
                 await self.client.fetch_value(count_stmt, params_count, default=0),
@@ -454,19 +541,25 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
+
             if return_count:
                 return page_from_limit_offset(v, pagination, total=total)
+
             return page_from_limit_offset(v, pagination, total=None)
 
         if return_fields is not None:
             raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
+
             if return_count:
                 return page_from_limit_offset(raw, pagination, total=total)
+
             return page_from_limit_offset(raw, pagination, total=None)
 
         m = pydantic_validate_many(self.model_type, rows)
+
         if return_count:
             return page_from_limit_offset(m, pagination, total=total)
+
         return page_from_limit_offset(m, pagination, total=None)
 
     # ....................... #

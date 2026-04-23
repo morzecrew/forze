@@ -579,63 +579,66 @@ class PostgresHubSearchAdapter[M: BaseModel](
             if member_weights_list[i] > 0.0
         ]
 
+        do_legs = bool(terms) and bool(active)
+
         params: list[Any] = [*fp]
         leg_cte_parts: list[sql.Composable] = []
         leg_aliases = [f"lr{i}" for i in range(len(self.members))]
 
-        for i, leg, _ in active:
-            t_alias = f"t{i}"
-            lr_alias = leg_aliases[i]
+        if do_legs:
+            for i, leg, _ in active:
+                t_alias = f"t{i}"
+                lr_alias = leg_aliases[i]
 
-            v_emb = self.vector_embedders.get(i) if leg.engine == "vector" else None
-            sw, rank_expr, sp = await hub_leg_engine_for(
-                leg,
-                vector_embedder=v_emb,
-            ).build_leg(
-                leg,
-                introspector=self.introspector,
-                index_alias=t_alias,
-                queries=terms,
-                options=leg_options,
-                score_column=_LEG_SCORE,
-            )
-            params.extend(sp)
-
-            cand_sub = _hub_leg_candidate_subquery(leg, f"csub{i}")
-
-            join_on = sql.SQL("{} = {}").format(
-                sql.Identifier(t_alias, leg.heap_pk_column),
-                sql.Identifier(f"csub{i}", "cand_id"),
-            )
-
-            sel_pk = sql.SQL("{} AS {}").format(
-                sql.SQL("{}.{}").format(
-                    sql.Identifier(t_alias),
-                    sql.Identifier(leg.heap_pk_column),
-                ),
-                sql.Identifier(_LEG_EID),
-            )
-            leg_cte = sql.SQL(
-                """
-                ,
-                {lr} AS (
-                    SELECT {sel_pk}, {rank_expr}
-                    FROM {heap} {t}
-                    INNER JOIN {cand} ON ({join_on})
-                    WHERE {sw}
+                v_emb = self.vector_embedders.get(i) if leg.engine == "vector" else None
+                sw, rank_expr, sp = await hub_leg_engine_for(
+                    leg,
+                    vector_embedder=v_emb,
+                ).build_leg(
+                    leg,
+                    introspector=self.introspector,
+                    index_alias=t_alias,
+                    queries=terms,
+                    options=leg_options,
+                    score_column=_LEG_SCORE,
                 )
-                """
-            ).format(
-                lr=sql.Identifier(lr_alias),
-                sel_pk=sel_pk,
-                rank_expr=rank_expr,
-                heap=leg.index_heap_qname.ident(),
-                t=sql.Identifier(t_alias),
-                sw=sw,
-                cand=cand_sub,
-                join_on=join_on,
-            )
-            leg_cte_parts.append(leg_cte)
+                params.extend(sp)
+
+                cand_sub = _hub_leg_candidate_subquery(leg, f"csub{i}")
+
+                join_on = sql.SQL("{} = {}").format(
+                    sql.Identifier(t_alias, leg.heap_pk_column),
+                    sql.Identifier(f"csub{i}", "cand_id"),
+                )
+
+                sel_pk = sql.SQL("{} AS {}").format(
+                    sql.SQL("{}.{}").format(
+                        sql.Identifier(t_alias),
+                        sql.Identifier(leg.heap_pk_column),
+                    ),
+                    sql.Identifier(_LEG_EID),
+                )
+                leg_cte = sql.SQL(
+                    """
+                    ,
+                    {lr} AS (
+                        SELECT {sel_pk}, {rank_expr}
+                        FROM {heap} {t}
+                        INNER JOIN {cand} ON ({join_on})
+                        WHERE {sw}
+                    )
+                    """
+                ).format(
+                    lr=sql.Identifier(lr_alias),
+                    sel_pk=sel_pk,
+                    rank_expr=rank_expr,
+                    heap=leg.index_heap_qname.ident(),
+                    t=sql.Identifier(t_alias),
+                    sw=sw,
+                    cand=cand_sub,
+                    join_on=join_on,
+                )
+                leg_cte_parts.append(leg_cte)
 
         hf_cols = sql.SQL(", ").join(
             sql.SQL("{}.{}").format(sql.Identifier(_HUB_CTE), sql.Identifier(f))
@@ -643,7 +646,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         merge_expr: sql.Composable
-        if not active:
+        if not do_legs:
             merge_expr = sql.SQL("(0)::double precision")
             combine_sql = sql.SQL("TRUE")
 
@@ -694,25 +697,21 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
             leg_joins = sql.SQL(" ").join(join_parts)
 
-            if not terms:
-                combine_sql = sql.SQL("TRUE")
+            leg_null_checks = [
+                sql.SQL("{} IS NOT NULL").format(
+                    sql.SQL("{}.{}").format(
+                        sql.Identifier(f"lp{i}"),
+                        sql.Identifier(_LEG_EID),
+                    ),
+                )
+                for i, _, _ in active
+            ]
+
+            if self.combine == "or":
+                combine_sql = sql.SQL(" OR ").join(leg_null_checks)  # type: ignore[assignment]
 
             else:
-                leg_null_checks = [
-                    sql.SQL("{} IS NOT NULL").format(
-                        sql.SQL("{}.{}").format(
-                            sql.Identifier(f"lp{i}"),
-                            sql.Identifier(_LEG_EID),
-                        ),
-                    )
-                    for i, _, _ in active
-                ]
-
-                if self.combine == "or":
-                    combine_sql = sql.SQL(" OR ").join(leg_null_checks)  # type: ignore[assignment]
-
-                else:
-                    combine_sql = sql.SQL(" AND ").join(leg_null_checks)  # type: ignore[assignment]
+                combine_sql = sql.SQL(" AND ").join(leg_null_checks)  # type: ignore[assignment]
 
             combo_cte = sql.SQL(
                 """
@@ -734,17 +733,31 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 combine=combine_sql,
             )
 
-        order_parts: list[sql.Composable] = [
-            sql.SQL("{} DESC NULLS LAST").format(
-                sql.Identifier(_COMBO_ALIAS, _RANK),
-            )
-        ]
-        ob = await self._hub_order_by(sorts)
+        if do_legs:
+            order_parts: list[sql.Composable] = [
+                sql.SQL("{} DESC NULLS LAST").format(
+                    sql.Identifier(_COMBO_ALIAS, _RANK),
+                )
+            ]
+            ob = await self._hub_order_by(sorts)
 
-        if ob is not None:
-            order_parts.append(ob)
+            if ob is not None:
+                order_parts.append(ob)
 
-        order_sql = sql.SQL(", ").join(order_parts)
+            order_sql = sql.SQL(", ").join(order_parts)
+
+        else:
+            ob = await self._hub_order_by(sorts)
+            if ob is not None:
+                order_parts = [ob]
+            else:
+                first = sorted(self.read_fields)[0]
+                order_parts = [
+                    sql.SQL("{} ASC").format(
+                        sql.Identifier(_COMBO_ALIAS, first),
+                    ),
+                ]
+            order_sql = sql.SQL(", ").join(order_parts)
 
         with_clause = sql.SQL("WITH {}{}{}").format(
             hub_cte,

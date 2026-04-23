@@ -423,6 +423,7 @@ class PostgresDocumentAdapter(
         )
 
         cnt = 0
+
         if return_count:
             cnt = await self.read_gw.count(filters)
             if not cnt:
@@ -440,6 +441,7 @@ class PostgresDocumentAdapter(
                 cnt,
                 self.spec.name,
             )
+
         res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,
             limit=limit,
@@ -447,12 +449,14 @@ class PostgresDocumentAdapter(
             sorts=sorts,
             return_fields=return_fields,  # type: ignore[arg-type]
         )
+
         if return_count:
             return page_from_limit_offset(  # type: ignore[return-value]
                 list(res),
                 pagination,
                 total=cnt,
             )
+
         return page_from_limit_offset(list(res), pagination, total=None)  # type: ignore[return-value]
 
     # ....................... #
