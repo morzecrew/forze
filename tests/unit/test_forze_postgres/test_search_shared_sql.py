@@ -20,6 +20,7 @@ from forze_postgres.adapters.search._pgroonga_sql import (
     pgroonga_heap_column_names,
     pgroonga_match_clause,
     pgroonga_phrase_match_text,
+    pgroonga_score_rank_expr,
 )
 from forze_postgres.adapters.search._vector_sql import vector_knn_multi_score_expr
 from forze_postgres.adapters.search.hub import (
@@ -276,6 +277,30 @@ def test_pgroonga_disjunctive_match_text() -> None:
 def test_pgroonga_phrase_match_text_all() -> None:
     assert pgroonga_phrase_match_text((), combine="any") == ""
     assert pgroonga_phrase_match_text(("a", "b"), combine="all") == "(a) (b)"
+
+
+def test_pgroonga_score_rank_expr_v2_uses_tableoid_ctid() -> None:
+    frag = pgroonga_score_rank_expr(
+        index_alias="t",
+        rank_column="r",
+        query="q",
+        score_version="v2",
+    )
+    s = str(frag)
+    assert "tableoid" in s
+    assert "ctid" in s
+
+
+def test_pgroonga_score_rank_expr_v1_single_alias() -> None:
+    frag = pgroonga_score_rank_expr(
+        index_alias="t",
+        rank_column="r",
+        query="q",
+        score_version="v1",
+    )
+    s = str(frag)
+    assert "tableoid" not in s
+    assert "pgroonga_score" in s
 
 
 def test_vector_knn_multi_score_expr_greatest() -> None:

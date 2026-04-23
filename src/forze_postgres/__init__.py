@@ -7,6 +7,7 @@ require_psycopg()
 # ....................... #
 
 from .execution import (
+    PgroongaScoreVersion,
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
@@ -27,6 +28,7 @@ __all__ = [
     "PostgresConfig",
     "PostgresClientDepKey",
     "postgres_lifecycle_step",
+    "PgroongaScoreVersion",
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",

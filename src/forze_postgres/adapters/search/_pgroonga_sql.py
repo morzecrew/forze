@@ -7,7 +7,7 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 from forze.application.contracts.search import PhraseCombine
 
@@ -170,15 +170,33 @@ def pgroonga_score_rank_expr(
     index_alias: str,
     rank_column: str,
     query: str,
+    score_version: Literal["v1", "v2"] = "v2",
 ) -> sql.Composable:
-    """``SELECT`` fragment for per-row rank: ``pgroonga_score`` or zero when query is empty."""
+    """``SELECT`` fragment for per-row rank: ``pgroonga_score`` or zero when query is empty.
+
+    ``score_version``:
+
+    * ``v2`` (default): ``pgroonga_score(alias.tableoid, alias.ctid)`` (PGroonga 2.0.4+; faster).
+      Requires the heap scan to expose ``tableoid`` / ``ctid`` (typically a base table).
+    * ``v1``: ``pgroonga_score(alias)`` — legacy single-argument form; for heaps where ``v2``
+      is not valid (e.g. some view-only scans); see PGroonga ``pgroonga_score`` docs.
+    """
 
     if not query.strip():
         return sql.SQL("(0)::double precision AS {}").format(
             sql.Identifier(rank_column),
         )
 
-    return sql.SQL("{} AS {}").format(
-        sql.SQL("pgroonga_score({})").format(sql.Identifier(index_alias)),
-        sql.Identifier(rank_column),
-    )
+    if score_version == "v1":
+        score_call = sql.SQL("pgroonga_score({})").format(sql.Identifier(index_alias))
+    else:
+        score_call = sql.Composed(
+            [
+                sql.SQL("pgroonga_score("),
+                sql.Identifier(index_alias),
+                sql.SQL(".tableoid, "),
+                sql.Identifier(index_alias),
+                sql.SQL(".ctid)"),
+            ]
+        )
+    return sql.SQL("{} AS {}").format(score_call, sql.Identifier(rank_column))

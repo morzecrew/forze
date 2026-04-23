@@ -80,6 +80,9 @@ _COMBO_ALIAS: Final[str] = "comb"
 _RANK: Final[str] = "_hub_rank"
 _LEG_SCORE: Final[str] = "s"
 _LEG_EID: Final[str] = "eid"
+# Groonga v2 needs physical row ids: projected when a pgroonga leg uses same_heap_as_hub.
+_HUB_GROONGA_TABLEOID: Final[str] = "_hub_groonga_tableoid"
+_HUB_GROONGA_CTID: Final[str] = "_hub_groonga_ctid"
 
 # ....................... #
 
@@ -166,6 +169,9 @@ class HubLegRuntime:
     hub_fk_columns: tuple[str, ...] = attrs.field(converter=normalize_hub_fk_columns)
     heap_pk_column: str
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
+    pgroonga_score_version: Literal["v1", "v2"] | None = attrs.field(default=None)
+    """``v1`` / ``v2`` :func:`pgroonga_score` form when :attr:`engine` is ``pgroonga``; else ``None``."""
+
     engine: Literal["pgroonga", "fts", "vector"] = "pgroonga"
     fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = attrs.field(default=None)
     """Required when :attr:`engine` is ``fts`` (same semantics as :class:`PostgresFTSSearchAdapterV2`)."""
@@ -178,6 +184,9 @@ class HubLegRuntime:
 
     embedding_dimensions: int | None = None
     """Expected query embedding length for ``vector`` legs."""
+
+    same_heap_as_hub: bool = False
+    """If True, the leg is evaluated on the hub CTE (``hf``) without joining the heap again."""
 
     def __attrs_post_init__(self) -> None:
         if self.engine == "vector":
@@ -251,6 +260,7 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
             index_alias=index_alias,
             rank_column=score_column,
             query=mq,
+            score_version=leg.pgroonga_score_version or "v2",
         )
         return sw, rank, sp
 
@@ -430,10 +440,18 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    def _hub_select_list(self) -> sql.Composable:
-        return sql.SQL(", ").join(
+    def _hub_select_list(self, *, include_groonga_sys: bool) -> sql.Composable:
+        base = sql.SQL(", ").join(
             sql.Identifier(_HUB_ROW_ALIAS, f) for f in sorted(self.read_fields)
         )
+        if not include_groonga_sys:
+            return base
+        ha = sql.Identifier(_HUB_ROW_ALIAS)
+        ext = sql.SQL("{}, {}").format(
+            sql.SQL("{}.tableoid AS {}").format(ha, sql.Identifier(_HUB_GROONGA_TABLEOID)),
+            sql.SQL("{}.ctid AS {}").format(ha, sql.Identifier(_HUB_GROONGA_CTID)),
+        )
+        return sql.SQL("{}, {}").format(base, ext)
 
     # ....................... #
 
@@ -557,6 +575,17 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
         fw, fp = await self.where_clause(filters)
 
+        active = [
+            (i, leg, member_weights_list[i])
+            for i, leg in enumerate(self.members)
+            if member_weights_list[i] > 0.0
+        ]
+
+        do_legs = bool(terms) and bool(active)
+        need_groonga_sys = do_legs and any(
+            leg.same_heap_as_hub and leg.engine == "pgroonga" for _, leg, _ in active
+        )
+
         hub_cte = sql.SQL(
             """
             {hub_cte} AS (
@@ -567,19 +596,11 @@ class PostgresHubSearchAdapter[M: BaseModel](
             """
         ).format(
             hub_cte=sql.Identifier(_HUB_CTE),
-            hub_cols=self._hub_select_list(),
+            hub_cols=self._hub_select_list(include_groonga_sys=need_groonga_sys),
             hub_rel=self.source_qname.ident(),
             ha=sql.Identifier(_HUB_ROW_ALIAS),
             fw=fw,
         )
-
-        active = [
-            (i, leg, member_weights_list[i])
-            for i, leg in enumerate(self.members)
-            if member_weights_list[i] > 0.0
-        ]
-
-        do_legs = bool(terms) and bool(active)
 
         params: list[Any] = [*fp]
         leg_cte_parts: list[sql.Composable] = []
@@ -587,7 +608,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
         if do_legs:
             for i, leg, _ in active:
-                t_alias = f"t{i}"
+                t_alias = _HUB_ROW_ALIAS if leg.same_heap_as_hub else f"t{i}"
                 lr_alias = leg_aliases[i]
 
                 v_emb = self.vector_embedders.get(i) if leg.engine == "vector" else None
@@ -604,12 +625,14 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 )
                 params.extend(sp)
 
-                cand_sub = _hub_leg_candidate_subquery(leg, f"csub{i}")
-
-                join_on = sql.SQL("{} = {}").format(
-                    sql.Identifier(t_alias, leg.heap_pk_column),
-                    sql.Identifier(f"csub{i}", "cand_id"),
-                )
+                if leg.same_heap_as_hub and leg.engine == "pgroonga" and terms:
+                    rank_expr = sql.SQL("pgroonga_score({}.{}, {}.{}) AS {}").format(
+                        sql.Identifier(t_alias),
+                        sql.Identifier(_HUB_GROONGA_TABLEOID),
+                        sql.Identifier(t_alias),
+                        sql.Identifier(_HUB_GROONGA_CTID),
+                        sql.Identifier(_LEG_SCORE),
+                    )
 
                 sel_pk = sql.SQL("{} AS {}").format(
                     sql.SQL("{}.{}").format(
@@ -618,26 +641,51 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     ),
                     sql.Identifier(_LEG_EID),
                 )
-                leg_cte = sql.SQL(
-                    """
-                    ,
-                    {lr} AS (
-                        SELECT {sel_pk}, {rank_expr}
-                        FROM {heap} {t}
-                        INNER JOIN {cand} ON ({join_on})
-                        WHERE {sw}
+
+                if leg.same_heap_as_hub:
+                    leg_cte = sql.SQL(
+                        """
+                        ,
+                        {lr} AS (
+                            SELECT {sel_pk}, {rank_expr}
+                            FROM {hf} {t}
+                            WHERE {sw}
+                        )
+                        """
+                    ).format(
+                        lr=sql.Identifier(lr_alias),
+                        sel_pk=sel_pk,
+                        rank_expr=rank_expr,
+                        hf=sql.Identifier(_HUB_CTE),
+                        t=sql.Identifier(t_alias),
+                        sw=sw,
                     )
-                    """
-                ).format(
-                    lr=sql.Identifier(lr_alias),
-                    sel_pk=sel_pk,
-                    rank_expr=rank_expr,
-                    heap=leg.index_heap_qname.ident(),
-                    t=sql.Identifier(t_alias),
-                    sw=sw,
-                    cand=cand_sub,
-                    join_on=join_on,
-                )
+                else:
+                    cand_sub = _hub_leg_candidate_subquery(leg, f"csub{i}")
+                    join_on = sql.SQL("{} = {}").format(
+                        sql.Identifier(t_alias, leg.heap_pk_column),
+                        sql.Identifier(f"csub{i}", "cand_id"),
+                    )
+                    leg_cte = sql.SQL(
+                        """
+                        ,
+                        {lr} AS (
+                            SELECT {sel_pk}, {rank_expr}
+                            FROM {heap} {t}
+                            INNER JOIN {cand} ON ({join_on})
+                            WHERE {sw}
+                        )
+                        """
+                    ).format(
+                        lr=sql.Identifier(lr_alias),
+                        sel_pk=sel_pk,
+                        rank_expr=rank_expr,
+                        heap=leg.index_heap_qname.ident(),
+                        t=sql.Identifier(t_alias),
+                        sw=sw,
+                        cand=cand_sub,
+                        join_on=join_on,
+                    )
                 leg_cte_parts.append(leg_cte)
 
         hf_cols = sql.SQL(", ").join(

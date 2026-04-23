@@ -108,6 +108,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
     """Index field map (projection column -> index heap column)."""
 
+    pgroonga_score_version: Literal["v1", "v2"] = "v2"
+    """
+    Which ``pgroonga_score`` form to emit (from :attr:`PostgresSearchConfig.pgroonga_score_version`).
+
+    ``v2``: ``pgroonga_score(tableoid, ctid)``. ``v1``: ``pgroonga_score(heap alias)`` when the heap
+    scan does not support the ``v2`` system columns.
+    """
+
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
     """Transaction scope."""
 
@@ -211,6 +219,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             index_alias=_INDEX_ALIAS,
             rank_column=_RANK_COLUMN,
             query=query,
+            score_version=self.pgroonga_score_version,
         )
         return key_cols, rank
 

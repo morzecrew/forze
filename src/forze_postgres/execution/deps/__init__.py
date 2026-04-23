@@ -1,4 +1,5 @@
 from .configs import (
+    PgroongaScoreVersion,
     PostgresDocumentConfig,
     PostgresFederatedMemberConfig,
     PostgresFederatedSearchConfig,
@@ -19,6 +20,7 @@ from .module import PostgresDepsModule
 __all__ = [
     "PostgresDepsModule",
     "PostgresClientDepKey",
+    "PgroongaScoreVersion",
     "PostgresDocumentConfig",
     "PostgresSearchConfig",
     "PostgresFederatedMemberConfig",

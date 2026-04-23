@@ -316,6 +316,32 @@ class TestConfigurablePostgresSearch:
         with pytest.raises(CoreError, match="All search fields must be included"):
             factory(ctx, spec)
 
+    def test_pgroonga_invalid_score_version_validates(self) -> None:
+        factory = ConfigurablePostgresSearch(
+            config={
+                "engine": "pgroonga",
+                "index": ("public", "gi"),
+                "read": ("public", "gs"),
+                "pgroonga_score_version": "bad",
+            }
+        )
+        ctx = _ctx()
+        with pytest.raises(CoreError, match="pgroonga_score_version"):
+            factory(ctx, self._search_spec())
+
+    def test_pgroonga_score_version_v1_builds(self) -> None:
+        factory = ConfigurablePostgresSearch(
+            config={
+                "engine": "pgroonga",
+                "index": ("public", "gi"),
+                "read": ("public", "gs"),
+                "pgroonga_score_version": "v1",
+            }
+        )
+        ctx = _ctx()
+        out = factory(ctx, self._search_spec())
+        assert out.pgroonga_score_version == "v1"
+
 
 def test_postgres_txmanager_builds_adapter() -> None:
     ctx = _ctx()
@@ -504,4 +530,104 @@ def test_validate_postgres_hub_search_conf_fts_requires_fts_groups() -> None:
         },
     }
     with pytest.raises(CoreError, match="fts_groups"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_same_heap_as_hub_ok() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "h"),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_same_heap_as_hub_mismatched_read() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "other"),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="same qualified relation"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_same_heap_as_hub_fk_not_pk() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "h"),
+                "hub_fk": "ref_id",
+                "heap_pk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="heap_pk"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_same_heap_as_hub_fts() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "h"),
+                "hub_fk": "id",
+                "engine": "fts",
+                "fts_groups": {"A": ("a",)},
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="same_heap_as_hub with engine 'fts'"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_same_heap_as_hub_field_map() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "h"),
+                "hub_fk": "id",
+                "field_map": {"a": "b"},
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="field_map"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_same_heap_as_hub_pgroonga_v1() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "h"),
+                "hub_fk": "id",
+                "pgroonga_score_version": "v1",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="v2"):
         validate_postgres_hub_search_conf(cfg)

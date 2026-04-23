@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze_postgres` hub search: optional `PostgresHubSearchMemberConfig` field `same_heap_as_hub` to run a leg against the hub CTE (no extra heap join) when the leg’s heap matches the hub relation and `hub_fk` is a single column equal to the heap primary key. PGroonga legs require `pgroonga_score_version: "v2"` and are incompatible with `field_map` on that leg. Not supported for `fts` legs.
 - `forze_fastapi`: `attach_http_endpoint` with `body_mode: "form"` binds `UploadFile` and `list[UploadFile]` body fields with FastAPI `File()` and other body fields with `Form()` for multipart requests.
 - `forze_postgres`: dot-separated filter and sort field paths (e.g. ``meta.score``) for JSON/JSONB columns, validated against the read model with optional ``nested_field_hints`` on document and search configs (and hub search config) when leaf types are ambiguous.
 - `forze_postgres` federated search: `PostgresFederatedSearchAdapter` merges independent single-index searches with weighted RRF (`SearchOptions` `member_weights` / `members`, same semantics as hub; weight `0` skips a member). `PostgresFederatedSearchConfig`, `ConfigurablePostgresFederatedSearch`, `PostgresDepsModule.federated_searches`, and `prepare_federated_search_options` / `weighted_rrf_merge_rows`.

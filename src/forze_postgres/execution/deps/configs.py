@@ -13,6 +13,7 @@ from typing import (
 
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
+from forze.domain.constants import ID_FIELD
 
 from ...adapters import FtsGroupLetter
 from ...kernel.gateways import PostgresBookkeepingStrategy
@@ -67,6 +68,9 @@ class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):
 
 VectorEngineDistance = Literal["l2", "cosine", "inner_product"]
 
+PgroongaScoreVersion = Literal["v1", "v2"]
+"""``v1``: ``pgroonga_score(heap_alias)``. ``v2``: ``pgroonga_score(tableoid, ctid)`` (default)."""
+
 
 # ....................... #
 
@@ -110,6 +114,15 @@ class PostgresSearchConfig(_BasePostgresConfig):
     nested_field_hints: NotRequired[Mapping[str, Any]]
     """Same semantics as :attr:`PostgresReadOnlyDocumentConfig.nested_field_hints`."""
 
+    pgroonga_score_version: NotRequired[PgroongaScoreVersion]
+    """
+    Which ``pgroonga_score`` overload to use when :attr:`engine` is ``pgroonga``.
+
+    ``v2`` (default when omitted): ``pgroonga_score(tableoid, ctid)`` — faster (PGroonga 2.0.4+).
+    ``v1``: ``pgroonga_score(heap row alias)`` — legacy single-argument form; use if the heap is a
+    view or another case where ``tableoid``/``ctid`` are not available on the scan.
+    """
+
 
 # ....................... #
 
@@ -123,6 +136,16 @@ class PostgresHubSearchMemberConfig(PostgresSearchConfig):
 
     heap_pk: NotRequired[str]
     """Heap primary key column (default ``id``)."""
+
+    same_heap_as_hub: NotRequired[bool]
+    """
+    When ``True``, this leg’s heap is the same relation as the hub: skip the
+    leg’s heap self-join and evaluate the leg match directly on the hub CTE
+    (``hf``). Requires ``hub_fk`` to be a single column equal to
+    :attr:`heap_pk`, the leg ``read``/``heap`` to match the hub pair, and (for
+    ``pgroonga``) :attr:`pgroonga_score_version` ``v2`` and no :attr:`field_map`.
+    Not supported for ``fts`` engine.
+    """
 
 
 # ....................... #
@@ -222,6 +245,48 @@ def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) 
 # ....................... #
 
 
+def _validate_same_heap_as_hub(
+    leg: Mapping[str, Any],
+    leg_index: int,
+    cfg: PostgresHubSearchConfig,
+    eng: str,
+) -> None:
+    if eng == "fts":
+        raise CoreError(
+            f"Hub search leg {leg_index} cannot use same_heap_as_hub with engine 'fts'.",
+        )
+    if leg.get("field_map"):
+        raise CoreError(
+            f"Hub search leg {leg_index} cannot use same_heap_as_hub together with 'field_map'.",
+        )
+    hub_pair = cfg["hub"]
+    heap_read = leg.get("heap", leg.get("read"))
+    if not heap_read:
+        raise CoreError(
+            f"Hub search leg {leg_index} with same_heap_as_hub must include 'heap' or 'read'.",
+        )
+    if tuple(hub_pair) != tuple(heap_read):
+        raise CoreError(
+            f"Hub search leg {leg_index} with same_heap_as_hub must use the same "
+            "qualified relation as the hub in 'read' or 'heap'.",
+        )
+    hpk = str(leg.get("heap_pk", ID_FIELD))
+    fk_cols = normalize_hub_fk_columns(leg["hub_fk"])
+    if len(fk_cols) != 1 or fk_cols[0] != hpk:
+        raise CoreError(
+            f"Hub search leg {leg_index} with same_heap_as_hub requires 'hub_fk' "
+            "to be a single column name equal to 'heap_pk' (default 'id').",
+        )
+    if eng == "pgroonga" and leg.get("pgroonga_score_version", "v2") != "v2":
+        raise CoreError(
+            f"Hub search leg {leg_index} with same_heap_as_hub and engine 'pgroonga' "
+            "requires 'pgroonga_score_version' 'v2'.",
+        )
+
+
+# ....................... #
+
+
 def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
     """Validate a Postgres hub search configuration."""
 
@@ -269,6 +334,14 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
                 raise CoreError(
                     f"Hub search leg {i} with engine 'vector' requires embeddings_name."
                 )
+
+        if leg.get("same_heap_as_hub"):
+            _validate_same_heap_as_hub(leg, i, cfg, eng)
+
+        if eng == "pgroonga":
+            pv = leg.get("pgroonga_score_version", "v2")
+            if pv not in ("v1", "v2"):
+                raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")
 
 
 # ....................... #
@@ -321,4 +394,6 @@ def validate_pg_search_conf(cfg: PostgresSearchConfig) -> None:
                 raise CoreError("FTS groups cannot contain duplicate fields.")
 
         case "pgroonga":
-            pass
+            v = cfg.get("pgroonga_score_version", "v2")
+            if v not in ("v1", "v2"):
+                raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")

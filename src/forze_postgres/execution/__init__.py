@@ -1,6 +1,7 @@
 """Postgres execution wiring for the application kernel."""
 
 from .deps import (
+    PgroongaScoreVersion,
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
@@ -18,6 +19,7 @@ __all__ = [
     "PostgresDepsModule",
     "PostgresClientDepKey",
     "postgres_lifecycle_step",
+    "PgroongaScoreVersion",
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",
     "PostgresSearchConfig",

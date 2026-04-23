@@ -1143,3 +1143,83 @@ async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(pg_client: PostgresCl
     n_all = __p.count
     assert n_all == 2
     assert {h.id for h in browse} == {c1, c2}
+
+
+class _SameHeapHubRow(BaseModel):
+    id: UUID
+    name: str
+    display_name: str
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_same_heap_as_hub_single_leg(pg_client: PostgresClient) -> None:
+    """Hub leg on the same table as the hub uses the hf-only path (no heap self-join)."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    await pg_client.execute(
+        """
+        CREATE TABLE hub_same_heap (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_hub_same_heap_pg ON hub_same_heap
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    a, b = uuid4(), uuid4()
+    await pg_client.execute(
+        (
+            "INSERT INTO hub_same_heap (id, name, display_name) VALUES "
+            "(%(a)s, %(na)s, %(da)s), (%(b)s, %(nb)s, %(db)s)"
+        ),
+        {
+            "a": a,
+            "na": "match one",
+            "da": "First",
+            "b": b,
+            "nb": "other",
+            "db": "Second",
+        },
+    )
+
+    leg_name = "doc_leg"
+    doc_leg = SearchSpec(
+        name=leg_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name="hub_same_heap_search",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_pg: PostgresHubSearchConfig = {
+        "hub": ("public", "hub_same_heap"),
+        "members": {
+            leg_name: {
+                "index": ("public", "idx_hub_same_heap_pg"),
+                "read": ("public", "hub_same_heap"),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    introspector = PostgresIntrospector(client=pg_client)
+    ctx_hub = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: introspector,
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_pg)(ctx_hub, hub_spec)
+
+    __p = await adapter.search("match", return_count=True)
+    assert __p.count == 1
+    assert __p.hits[0].id == a
+
+    __p = await adapter.search("", return_count=True)
+    assert __p.count == 2
+    assert {h.id for h in __p.hits} == {a, b}

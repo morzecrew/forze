@@ -1,6 +1,6 @@
 """Factory functions for Postgres document and tx manager adapters."""
 
-from typing import Any, Sequence, cast, final
+from typing import Any, Literal, Sequence, cast, final
 
 import attrs
 
@@ -26,6 +26,7 @@ from forze.application.contracts.search import (
 from forze.application.contracts.tx import TxManagerPort
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
+from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
 
 from ...adapters import (
@@ -254,6 +255,21 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                     "use 'pgroonga', 'fts', or 'vector'."
                 )
 
+            if c.get("same_heap_as_hub"):
+                hub_fields = pydantic_field_names(spec.model_type)
+                for field in m.fields:
+                    if field not in hub_fields:
+                        raise CoreError(
+                            f"same_heap_as_hub member {m.name!r}: search field {field!r} must "
+                            "be a field on the hub SearchSpec model_type (hub row shape).",
+                        )
+
+            pg_sv: Literal["v1", "v2"] | None = None
+            if engine == "pgroonga":
+                pg_sv = c.get("pgroonga_score_version", "v2")
+                if pg_sv not in ("v1", "v2"):
+                    raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")
+
             rt = HubLegRuntime(
                 search=m,
                 index_qname=PostgresQualifiedName(*c["index"]),
@@ -261,11 +277,13 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 hub_fk_columns=c["hub_fk"],
                 heap_pk_column=c.get("heap_pk", ID_FIELD),
                 index_field_map=c.get("field_map"),
+                pgroonga_score_version=pg_sv,
                 engine=engine,
                 fts_groups=fts_groups,
                 vector_column=v_col,
                 vector_distance=v_dist,
                 embedding_dimensions=v_dim,
+                same_heap_as_hub=bool(c.get("same_heap_as_hub", False)),
             )
             members.append(rt)
 
@@ -314,6 +332,7 @@ def _postgres_search_port_for_config(
                 index_heap_qname=heap_qname,
                 join_pairs=c.get("join_pairs"),
                 index_field_map=c.get("field_map"),
+                pgroonga_score_version=c.get("pgroonga_score_version", "v2"),
                 client=context.dep(PostgresClientDepKey),
                 model_type=member_spec.model_type,
                 introspector=context.dep(PostgresIntrospectorDepKey),
