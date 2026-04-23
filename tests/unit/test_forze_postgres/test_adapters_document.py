@@ -247,7 +247,7 @@ class TestPostgresDocumentAdapterEffBatchSize:
         a = PostgresDocumentAdapter(
             spec=_full_spec(),
             read_gw=_read_gw_full(),
-            batch_size=5000,
+            batch_size=500000,
         )
         assert a.eff_batch_size == 200
 
@@ -279,9 +279,7 @@ class TestPostgresDocumentAdapterGetPaths:
         out = await adapter.get(pk, return_fields=["id"])
 
         assert out == {"id": str(pk)}
-        read_gw.get.assert_awaited_once_with(
-            pk, for_update=False, return_fields=["id"]
-        )
+        read_gw.get.assert_awaited_once_with(pk, for_update=False, return_fields=["id"])
         cache.get.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -366,9 +364,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         out = await adapter.find(filt, for_update=True)
 
         assert out == doc
-        read_gw.find.assert_awaited_once_with(
-            filt, for_update=True, return_fields=None
-        )
+        read_gw.find.assert_awaited_once_with(filt, for_update=True, return_fields=None)
 
     @pytest.mark.asyncio
     async def test_find_many_short_circuits_when_count_zero(self) -> None:

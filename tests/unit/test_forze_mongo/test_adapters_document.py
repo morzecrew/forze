@@ -101,7 +101,7 @@ class TestMongoDocumentAdapter:
         )
         assert small.eff_batch_size == 200
         large = MongoDocumentAdapter(
-            spec=_doc_spec(), read_gw=_build_read_gateway(), batch_size=2000
+            spec=_doc_spec(), read_gw=_build_read_gateway(), batch_size=200000
         )
         assert large.eff_batch_size == 200
 
@@ -185,7 +185,9 @@ class TestMongoDocumentAdapter:
         expected_read = _read_doc(pk, rev=2, name="after")
         read_gw.get.return_value = expected_read
 
-        adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw, write_gw=write_gw)
+        adapter = MongoDocumentAdapter(
+            spec=_doc_spec(), read_gw=read_gw, write_gw=write_gw
+        )
         updated = await adapter.update(pk, 1, MyUpdateDoc(name="after"))
 
         assert isinstance(updated, MyReadDoc)
