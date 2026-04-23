@@ -112,13 +112,38 @@ class TestPsycopgQueryRenderer:
         assert p2 == []
 
     def test_empty_operators_on_array_column(self) -> None:
-        """$empty uses cardinality for array-typed columns."""
+        """$empty uses cardinality for native array-typed columns."""
         types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
         r = PsycopgQueryRenderer(types=types)
-        _, p1 = r.render(QueryField("tags", "$empty", True))
-        _, p2 = r.render(QueryField("tags", "$empty", False))
+        sql_true, p1 = r.render(QueryField("tags", "$empty", True))
+        sql_false, p2 = r.render(QueryField("tags", "$empty", False))
         assert p1 == []
         assert p2 == []
+        assert b"cardinality" in sql_true.as_bytes()
+        assert b"cardinality" in sql_false.as_bytes()
+
+    def test_empty_operators_on_jsonb_column(self) -> None:
+        """$empty on jsonb uses jsonb_typeof / jsonb_array_length, not cardinality."""
+        types: PostgresColumnTypes = {"characteristics": _t("jsonb")}
+        r = PsycopgQueryRenderer(types=types)
+        sql_true, p1 = r.render(QueryField("characteristics", "$empty", True))
+        sql_false, p2 = r.render(QueryField("characteristics", "$empty", False))
+        assert p1 == []
+        assert p2 == []
+        b_true = sql_true.as_bytes()
+        b_false = sql_false.as_bytes()
+        assert b"jsonb_typeof" in b_true and b"jsonb_array_length" in b_true
+        assert b"cardinality" not in b_true
+        assert b"jsonb_typeof" in b_false and b"jsonb_array_length" in b_false
+        assert b"cardinality" not in b_false
+
+    def test_empty_operators_on_json_column(self) -> None:
+        """$empty on json column casts to jsonb for length checks."""
+        types: PostgresColumnTypes = {"payload": _t("json")}
+        r = PsycopgQueryRenderer(types=types)
+        sql_false, _ = r.render(QueryField("payload", "$empty", False))
+        assert b"::jsonb" in sql_false.as_bytes()
+        assert b"jsonb_array_length" in sql_false.as_bytes()
 
     @pytest.mark.parametrize(
         ("op", "value"),

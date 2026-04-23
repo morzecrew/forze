@@ -298,6 +298,18 @@ class PsycopgQueryRenderer:
         *,
         t: PostgresType | None,
     ) -> sql.Composable:
+        # JSON/JSONB columns store JSON arrays; cardinality() is for native PG arrays only.
+        if t is not None and not t.is_array and t.base in ("jsonb", "json"):
+            j = sql.SQL("({})::jsonb").format(col)
+            if value is True:
+                return sql.SQL(
+                    "(jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) = 0)"
+                ).format(j=j)
+
+            return sql.SQL(
+                "(jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) > 0)"
+            ).format(j=j)
+
         return (
             sql.SQL("cardinality({}) = 0").format(col)
             if value is True
