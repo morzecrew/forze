@@ -13,6 +13,12 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
     DocumentCommandPort,
@@ -20,12 +26,6 @@ from forze.application.contracts.document import (
     DocumentSpec,
     assert_unique_ensure_ids,
     require_create_id_for_ensure,
-)
-from forze.application.contracts.base import (
-    CountlessPage,
-    CursorPage,
-    Page,
-    page_from_limit_offset,
 )
 from forze.application.contracts.query import (
     CursorPaginationExpression,
@@ -108,7 +108,7 @@ class MongoDocumentAdapter(
 
             return 200
 
-        if self.batch_size > 1000:
+        if self.batch_size > 20000:
             logger.warning("Batch size is too large, using default value of 200")
 
             return 200

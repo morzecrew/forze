@@ -43,7 +43,7 @@ class ContextualBuffer[T]:
     def clear(self) -> None:
         """Clear all buffered objects from the context variable."""
 
-        logger.debug("Clearing contextual buffer")
+        logger.trace("Clearing contextual buffer")
 
         self.__buffer.set([])
 
@@ -52,7 +52,7 @@ class ContextualBuffer[T]:
     def push(self, e: Sequence[T]) -> None:
         """Append objects to the buffer. Extends the current list in place."""
 
-        logger.debug("Pushing %s item(s) to contextual buffer", len(e))
+        logger.trace("Pushing %s item(s) to contextual buffer", len(e))
 
         buf = self.peek()
         buf.extend(list(e))
@@ -66,7 +66,7 @@ class ContextualBuffer[T]:
 
         buf = self.peek()
 
-        logger.debug("Popping %s item(s) from contextual buffer", len(buf))
+        logger.trace("Popping %s item(s) from contextual buffer", len(buf))
 
         self.clear()
 
@@ -82,7 +82,7 @@ class ContextualBuffer[T]:
         is restored.
         """
 
-        logger.debug("Entering contextual buffer scope")
+        logger.trace("Entering contextual buffer scope")
         token = self.__buffer.set([])
 
         try:
@@ -91,7 +91,7 @@ class ContextualBuffer[T]:
         finally:
             buf = self.peek()
 
-            logger.debug(
+            logger.trace(
                 "Leaving contextual buffer scope (%s buffered item(s))",
                 len(buf),
             )

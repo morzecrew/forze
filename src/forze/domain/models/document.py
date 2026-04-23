@@ -165,7 +165,7 @@ class Document(CoreModel):
         * runs registered :func:`update_validator` hooks.
         """
 
-        logger.debug(
+        logger.trace(
             "Updating %s with keys=%s",
             type(self).__qualname__,
             tuple(data.keys()),
@@ -190,7 +190,7 @@ class Document(CoreModel):
     def touch(self) -> tuple[Self, JsonDict]:
         """Update only ``last_update_at`` and return a new instance and diff."""
 
-        logger.debug("Touching %s", type(self).__qualname__)
+        logger.trace("Touching %s", type(self).__qualname__)
 
         diff = {"last_update_at": utcnow()}
         model_copy = self.model_copy(update=diff)
@@ -206,7 +206,7 @@ class Document(CoreModel):
         reconstructing state from history.
         """
 
-        logger.debug(
+        logger.trace(
             "Validating historical consistency for %s with update keys=%s",
             type(self).__qualname__,
             tuple(data.keys()),
