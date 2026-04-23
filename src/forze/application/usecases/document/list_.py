@@ -14,7 +14,6 @@ from forze.application.dto import (
     RawListRequestDTO,
     RawPaginated,
 )
-from forze.application.dto.paginated import to_cursor_expression
 from forze.application.execution import Usecase
 from forze.domain.models import ReadDocument
 
@@ -137,7 +136,7 @@ class TypedCursorListDocuments[Out: ReadDocument](
 
         res = await self.doc.find_many_with_cursor(
             filters=body.filters,
-            cursor=to_cursor_expression(body),
+            cursor=body.to_cursor_expression(),
             sorts=body.sorts,
         )
 
@@ -169,7 +168,7 @@ class RawCursorListDocuments(Usecase[RawCursorListRequestDTO, RawCursorPaginated
 
         res = await self.doc.find_many_with_cursor(
             filters=body.filters,
-            cursor=to_cursor_expression(body),
+            cursor=body.to_cursor_expression(),
             sorts=body.sorts,
             return_fields=tuple(body.return_fields),
         )

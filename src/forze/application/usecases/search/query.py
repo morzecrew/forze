@@ -8,14 +8,13 @@ from forze.application.contracts.search import SearchQueryPort
 from forze.application.dto import (
     CursorPaginated,
     CursorSearchRequestDTO,
+    Paginated,
     RawCursorPaginated,
     RawCursorSearchRequestDTO,
-    RawSearchRequestDTO,
-    Paginated,
     RawPaginated,
+    RawSearchRequestDTO,
     SearchRequestDTO,
 )
-from forze.application.dto.paginated import to_cursor_expression
 from forze.application.execution import Usecase
 
 # ----------------------- #
@@ -119,14 +118,16 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedCursorSearch[Out: BaseModel](Usecase[CursorSearchRequestDTO, CursorPaginated[Out]]):
+class TypedCursorSearch[Out: BaseModel](
+    Usecase[CursorSearchRequestDTO, CursorPaginated[Out]]
+):
     """Usecase that searches with typed results and cursor (keyset) pagination."""
 
     search: SearchQueryPort[Out]
     """Search port for search operations."""
 
-    mapper: MapperPort[CursorSearchRequestDTO, CursorSearchRequestDTO] | None = attrs.field(
-        default=None
+    mapper: MapperPort[CursorSearchRequestDTO, CursorSearchRequestDTO] | None = (
+        attrs.field(default=None)
     )
     """Optional mapper to transform incoming request DTO"""
 
@@ -141,7 +142,7 @@ class TypedCursorSearch[Out: BaseModel](Usecase[CursorSearchRequestDTO, CursorPa
         res = await self.search.search_with_cursor(
             query=body.query,
             filters=body.filters,
-            cursor=to_cursor_expression(body),
+            cursor=body.to_cursor_expression(),
             sorts=body.sorts,
             options=body.options,
         )
@@ -175,7 +176,7 @@ class RawCursorSearch(Usecase[RawCursorSearchRequestDTO, RawCursorPaginated]):
         res = await self.search.search_with_cursor(
             query=body.query,
             filters=body.filters,
-            cursor=to_cursor_expression(body),
+            cursor=body.to_cursor_expression(),
             sorts=body.sorts,
             options=body.options,
             return_fields=tuple(body.return_fields),

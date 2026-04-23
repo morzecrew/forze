@@ -130,7 +130,9 @@ Use separate routers or prefixes when combining document and search routes on th
 
 For routes that are not covered by the document or search attach helpers, use `attach_http_endpoint` with a spec from `build_http_endpoint_spec` (`forze_fastapi.endpoints.http`). Document and search attach functions are implemented on top of these primitives.
 
-Idempotency and ETag are implemented as endpoint features (`IdempotencyFeature`, `ETagFeature`); POST routes with idempotency require the `Idempotency-Key` header and a registered idempotency adapter (for example via `RedisDepsModule`).
+When `body_mode` is `form` (multipart), declare `UploadFile` or `list[UploadFile]` on the Pydantic body model. The adapter binds file fields with FastAPI’s `File()` and other body fields with `Form()`. Pairing parallel lists of files and metadata (for example) is your mapper’s responsibility.
+
+Idempotency and ETag are implemented as endpoint features (`IdempotencyFeature`, `ETagFeature`); POST routes with idempotency require the `Idempotency-Key` header and a registered idempotency adapter (for example via `RedisDepsModule`). The idempotency feature hashes the mapped use case input, not the raw request; avoid storing `UploadFile` in that input and prefer bytes or a stable id after reading the stream if you use idempotency on upload routes.
 
 ## Idempotency
 

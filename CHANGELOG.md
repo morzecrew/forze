@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze_fastapi`: `attach_http_endpoint` with `body_mode: "form"` binds `UploadFile` and `list[UploadFile]` body fields with FastAPI `File()` and other body fields with `Form()` for multipart requests.
 - `forze_postgres`: dot-separated filter and sort field paths (e.g. ``meta.score``) for JSON/JSONB columns, validated against the read model with optional ``nested_field_hints`` on document and search configs (and hub search config) when leaf types are ambiguous.
 - `forze_postgres` federated search: `PostgresFederatedSearchAdapter` merges independent single-index searches with weighted RRF (`SearchOptions` `member_weights` / `members`, same semantics as hub; weight `0` skips a member). `PostgresFederatedSearchConfig`, `ConfigurablePostgresFederatedSearch`, `PostgresDepsModule.federated_searches`, and `prepare_federated_search_options` / `weighted_rrf_merge_rows`.
 - `forze_postgres` hub search: per-member score multipliers from `HubSearchSpec.default_member_weights` and `SearchOptions` (`member_weights`, `members`); legs with weight `0` skip index matching. `PostgresFTSSearchAdapterV2` / `PostgresPGroongaSearchAdapterV2` and `forze_mock` simple search log a warning and ignore hub-only option keys; hub search logs a warning and ignores `weights` / `fields` (use per-leg specs and member options instead).

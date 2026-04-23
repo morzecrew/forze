@@ -68,6 +68,15 @@ class TestSearchQueryDepKey:
 class TestHubSearchSpec:
     """Tests for HubSearchSpec."""
 
+    def test_hub_accepts_single_member(self) -> None:
+        one = SearchSpec(
+            name="only_leg",
+            model_type=_MinimalSearchModel,
+            fields=["title"],
+        )
+        hub = HubSearchSpec(name="h", model_type=_MinimalSearchModel, members=(one,))
+        assert len(hub.members) == 1
+
     def test_hub_duplicate_leg_search_names_raise(self) -> None:
         a = SearchSpec(
             name="same_leg",

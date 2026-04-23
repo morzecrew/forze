@@ -227,8 +227,8 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
 
     legs = list(cfg["members"].values())
 
-    if len(legs) < 2:
-        raise CoreError("Hub search requires at least two leg configurations.")
+    if not legs:
+        raise CoreError("Hub search requires at least one leg configuration.")
 
     fk_seen: set[str] = set()
 

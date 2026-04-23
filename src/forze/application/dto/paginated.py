@@ -34,7 +34,7 @@ class Pagination(BaseDTO):
 class CursorPagination(BaseDTO):
     """Cursor pagination request payload."""
 
-    limit: int | None = None
+    size: PositiveInt = 10
     """Page size. Adapters may apply a default when omitted."""
 
     after: str | None = None
@@ -43,20 +43,20 @@ class CursorPagination(BaseDTO):
     before: str | None = None
     """Opaque token from a prior response's ``prev_cursor`` (backward)"""
 
+    # ....................... #
 
-def to_cursor_expression(
-    p: CursorPagination,
-) -> CursorPaginationExpression | None:
-    """Map :class:`CursorPagination` to a :class:`~forze.application.contracts.query.CursorPaginationExpression`."""
+    def to_cursor_expression(self) -> CursorPaginationExpression:
+        c: CursorPaginationExpression = {}
 
-    c: CursorPaginationExpression = {}
-    if p.limit is not None:
-        c["limit"] = p.limit
-    if p.after is not None:
-        c["after"] = p.after
-    if p.before is not None:
-        c["before"] = p.before
-    return c or None
+        c["limit"] = self.size
+
+        if self.after is not None:
+            c["after"] = self.after
+
+        if self.before is not None:
+            c["before"] = self.before
+
+        return c
 
 
 # ....................... #

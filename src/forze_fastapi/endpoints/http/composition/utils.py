@@ -5,10 +5,12 @@ require_fastapi()
 # ....................... #
 
 import inspect
+import types
 from collections import defaultdict
-from typing import Any, Iterable
+from typing import Any, Iterable, Union, get_args, get_origin
 
-from fastapi.params import Body, Cookie, Depends, Form, Header, Path, Query
+from fastapi import UploadFile
+from fastapi.params import Body, Cookie, Depends, File, Form, Header, Path, Query
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
@@ -181,6 +183,53 @@ def form_from_field(field: Any) -> Any:
     return Form(default=default_from_field(field), **common_kwargs(field))
 
 
+def file_from_field(field: Any) -> Any:
+    return File(default=default_from_field(field), **common_kwargs(field))
+
+
+def _is_uploadfile_annotation(ann: Any) -> bool:
+    if ann is None or ann is type(None) or isinstance(ann, (str, bytes)):
+        return False
+    o = get_origin(ann)
+    if o is Union or o is types.UnionType:
+        members = (a for a in get_args(ann) if a is not type(None))
+        alts = tuple(members)
+        if len(alts) == 1:
+            return _is_uploadfile_annotation(alts[0])
+        return False
+    return ann is UploadFile
+
+
+def _is_list_of_uploadfile_annotation(ann: Any) -> bool:
+    if ann is None or isinstance(ann, (str, bytes)):
+        return False
+    o = get_origin(ann)
+    if o in (list, tuple):
+        args = get_args(ann)
+        if len(args) == 1:
+            return _is_uploadfile_annotation(args[0])
+        return False
+    if o is Union or o is types.UnionType:
+        return any(
+            _is_list_of_uploadfile_annotation(a)
+            for a in get_args(ann)
+            if a is not type(None)
+        )
+    return False
+
+
+def field_accepts_file_upload(field: Any) -> bool:
+    """Whether this body field is bound with ``File()`` (single or list of files)."""
+    if field is None:
+        return False
+    ann = getattr(field, "annotation", None)
+    if ann is None:
+        return False
+    if _is_list_of_uploadfile_annotation(ann):
+        return True
+    return _is_uploadfile_annotation(ann)
+
+
 def body_from_field(field: Any) -> Any:
     return Body(default=default_from_field(field), **common_kwargs(field))
 
@@ -225,11 +274,15 @@ def build_cookie_parameter(field_name: str, field: Any) -> inspect.Parameter:
 
 
 def build_form_parameter(field_name: str, field: Any) -> inspect.Parameter:
+    if field_accepts_file_upload(field):
+        default = file_from_field(field)
+    else:
+        default = form_from_field(field)
     return inspect.Parameter(
         name=field_name,
         kind=inspect.Parameter.KEYWORD_ONLY,
         annotation=field.annotation,
-        default=form_from_field(field),
+        default=default,
     )
 
 

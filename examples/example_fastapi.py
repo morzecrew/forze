@@ -1,7 +1,7 @@
 from typing import Any
 
 import attrs
-from fastapi import APIRouter, FastAPI, File, UploadFile
+from fastapi import APIRouter, FastAPI, UploadFile
 from pydantic import BaseModel, Field
 
 from forze.application.execution import (
@@ -41,11 +41,11 @@ class HelloHeader(BaseModel):
 
 
 class HelloBody(BaseModel):
-    """JSON body for POST /hello."""
+    """Form body for POST /hello (optional file + fields)."""
 
     name: str = Field(default="world", examples=["Ada"])
     biba_boba: int = 10
-    some_file: UploadFile | None = File(default=None)
+    some_file: UploadFile | None = None
 
 
 class HelloInput(BaseModel):

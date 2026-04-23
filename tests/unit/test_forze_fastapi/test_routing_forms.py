@@ -1,9 +1,13 @@
 """Unit tests for HTTP body parameter building (form mode)."""
 
+from fastapi import UploadFile
+from fastapi.params import File, Form
 from pydantic import BaseModel
-from fastapi.params import Form
 
-from forze_fastapi.endpoints.http.composition.utils import build_body_parameters
+from forze_fastapi.endpoints.http.composition.utils import (
+    build_body_parameters,
+    field_accepts_file_upload,
+)
 
 # ----------------------- #
 
@@ -24,6 +28,32 @@ class TestBuildBodyParametersForm:
         assert params[1].name == "body"
         for p in params:
             assert isinstance(p.default, Form)
+
+    def test_mixed_file_and_form_use_file_and_form(self) -> None:
+        class Mixed(BaseModel):
+            title: str
+            attachment: UploadFile
+            items: list[UploadFile]
+
+        params = build_body_parameters(Mixed, "form")
+        by_name = {p.name: p for p in params}
+        assert isinstance(by_name["title"].default, Form)
+        assert isinstance(by_name["attachment"].default, File)
+        assert isinstance(by_name["items"].default, File)
+
+    def test_field_accepts_file_upload(self) -> None:
+        class M(BaseModel):
+            a: str
+            b: UploadFile
+            c: UploadFile | None
+            d: list[UploadFile]
+            e: list[UploadFile] | None
+
+        assert field_accepts_file_upload(M.model_fields["a"]) is False
+        assert field_accepts_file_upload(M.model_fields["b"]) is True
+        assert field_accepts_file_upload(M.model_fields["c"]) is True
+        assert field_accepts_file_upload(M.model_fields["d"]) is True
+        assert field_accepts_file_upload(M.model_fields["e"]) is True
 
     def test_model_class_unchanged(self) -> None:
         """build_body_parameters does not mutate the model class."""

@@ -72,9 +72,9 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     """Pydantic read model for hub rows."""
 
     members: Sequence[SearchSpec[Any]] = attrs.field(
-        validator=attrs.validators.min_len(2),
+        validator=attrs.validators.min_len(1),
     )
-    """At least two :class:`SearchSpec` members."""
+    """At least one :class:`SearchSpec` (hub leg / linked index)."""
 
     default_member_weights: Mapping[str, float] | None = attrs.field(default=None)
     """Default weights for hub members."""

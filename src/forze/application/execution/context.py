@@ -481,7 +481,7 @@ class ExecutionContext:
         self,
         spec: HubSearchSpec[search_M],
     ) -> SearchQueryPort[search_M]:
-        """Resolve a hub (homogeneous multi-leg) search query port.
+        """Resolve a hub (homogeneous) search query port (one or more legs).
 
         :param spec: Hub search specification.
         :returns: Search query port returning hub rows.

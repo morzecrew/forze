@@ -383,6 +383,29 @@ def test_normalize_hub_fk_columns_rejects_empty_and_dupes() -> None:
         normalize_hub_fk_columns(("p", "p"))
 
 
+def test_validate_postgres_hub_search_conf_accepts_single_leg() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "t1"),
+                "hub_fk": "party_id",
+            },
+        },
+    }
+    validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_rejects_empty_members() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {},
+    }
+    with pytest.raises(CoreError, match="at least one leg"):
+        validate_postgres_hub_search_conf(cfg)
+
+
 def test_validate_postgres_hub_search_conf_accepts_hub_fk_list() -> None:
     cfg: PostgresHubSearchConfig = {
         "hub": ("public", "h"),

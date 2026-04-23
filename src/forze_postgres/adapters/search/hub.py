@@ -1,4 +1,4 @@
-"""Multi-leg hub search: one hub projection, per-leg index heaps (engine-pluggable legs)."""
+"""Hub search: one hub projection and one or more per-leg index heaps (engine-pluggable legs)."""
 
 from __future__ import annotations
 
@@ -409,7 +409,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
     SearchQueryPort[M],
     TxScopedPort,
 ):
-    """Multi-leg search with a single hub row type and merged per-leg scores.
+    """Search over a hub row type with one or more legs and merged per-leg scores.
 
     Each leg's :attr:`~HubLegRuntime.engine` selects the implementation
     (PGroonga, FTS, or :class:`VectorHubLegEngine`). Built via
