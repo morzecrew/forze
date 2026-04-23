@@ -86,3 +86,23 @@ class PaginationExpression(TypedDict, total=False):
 
     offset: int | None
     """Offset."""
+
+
+# ....................... #
+
+
+class CursorPaginationExpression(TypedDict, total=False):
+    """Cursor (keyset) pagination request.
+
+    Pass at most one of ``after`` or ``before``; if both are set, adapters may
+    raise. Opaque cursors are returned on :class:`~forze.application.contracts.base.CursorPage`.
+    """
+
+    limit: int | None
+    """Page size. Adapters may apply a default when omitted."""
+
+    after: str | None
+    """Opaque token from a prior response's ``next_cursor`` (forward)."""
+
+    before: str | None
+    """Opaque token from a prior response's ``prev_cursor`` (backward)."""

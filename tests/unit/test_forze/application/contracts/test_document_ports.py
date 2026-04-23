@@ -160,18 +160,21 @@ class TestDocumentQueryPortViaMock:
     @pytest.mark.asyncio
     async def test_find_many_returns_tuple(self) -> None:
         port = _document_adapter()
-        items, total = await port.find_many()
-        assert isinstance(items, list)
-        assert isinstance(total, int)
-        assert total >= 0
+        page = await port.find_many(return_count=True)
+        assert isinstance(page.hits, list)
+        assert isinstance(page.count, int)
+        assert page.count >= 0
 
     @pytest.mark.asyncio
     async def test_find_many_with_filters_and_pagination(self) -> None:
         port = _document_adapter()
         await port.create(CreateDocumentCmd())
-        items, total = await port.find_many(pagination={"limit": 1, "offset": 0})
-        assert len(items) <= 1
-        assert total >= 0
+        page = await port.find_many(
+            pagination={"limit": 1, "offset": 0},
+            return_count=True,
+        )
+        assert len(page.hits) <= 1
+        assert page.count >= 0
 
     @pytest.mark.asyncio
     async def test_count_returns_int(self) -> None:

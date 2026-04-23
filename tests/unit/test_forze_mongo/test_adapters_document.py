@@ -129,10 +129,12 @@ class TestMongoDocumentAdapter:
         read_gw.find_many = AsyncMock()
 
         adapter = MongoDocumentAdapter(spec=_doc_spec(), read_gw=read_gw)
-        rows, total = await adapter.find_many(None, pagination=None, sorts=None)
+        page = await adapter.find_many(
+            None, pagination=None, sorts=None, return_count=True
+        )
 
-        assert rows == []
-        assert total == 0
+        assert page.hits == []
+        assert page.count == 0
         read_gw.find_many.assert_not_awaited()
 
     @pytest.mark.asyncio

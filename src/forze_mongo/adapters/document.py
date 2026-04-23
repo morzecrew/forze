@@ -19,7 +19,14 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.query import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -347,7 +354,34 @@ class MongoDocumentAdapter(
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]:
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]:
+        """Find documents projected to *return_fields* (no count query)."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[R]:
+        """Find documents as the read model (no count query)."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+        return_count: Literal[True],
+    ) -> Page[JsonDict]:
         """Find documents projected to *return_fields* with total count."""
         ...
 
@@ -359,7 +393,8 @@ class MongoDocumentAdapter(
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
-    ) -> tuple[list[R], int]:
+        return_count: Literal[True],
+    ) -> Page[R]:
         """Find documents as the read model with total count."""
         ...
 
@@ -370,25 +405,21 @@ class MongoDocumentAdapter(
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[list[R] | list[JsonDict], int]:
-        """Find documents with pagination and return the total matching count.
-
-        Issues a count query first; if zero, returns early with an empty list.
-
-        :param filters: Optional filter expression.
-        :param limit: Maximum number of results.
-        :param offset: Number of results to skip.
-        :param sorts: Sort expression.
-        :param return_fields: Optional field subset to project.
-        :returns: A tuple of ``(results, total_count)``.
-        """
-
-        cnt = await self.read_gw.count(filters)
-
-        if not cnt:
-            return [], 0
+        return_count: bool = False,
+    ) -> Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]:
+        """Find documents with optional pagination, sort, and total count."""
 
         pagination = pagination or {}
+        cnt = 0
+        if return_count:
+            cnt = await self.read_gw.count(filters)
+            if not cnt:
+                return page_from_limit_offset(
+                    [],
+                    pagination,
+                    total=0,
+                )
+
         limit = pagination.get("limit")
         offset = pagination.get("offset")
 
@@ -400,7 +431,50 @@ class MongoDocumentAdapter(
             return_fields=return_fields,  # type: ignore[arg-type]
         )
 
-        return res, cnt
+        if return_count:
+            return page_from_limit_offset(  # type: ignore[return-value]
+                list(res),
+                pagination,
+                total=cnt,
+            )
+        return page_from_limit_offset(list(res), pagination, total=None)  # type: ignore[return-value]
+
+    # ....................... #
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+    ) -> CursorPage[R]: ...
+
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_fields: Sequence[str] | None = None,
+    ) -> CursorPage[R] | CursorPage[JsonDict]:
+        del filters, cursor, sorts, return_fields
+        raise NotImplementedError(
+            "MongoDocumentAdapter.find_many_with_cursor is not implemented yet; "
+            "requires DocumentSpec or gateway support for a stable keyset order and "
+            "encoded cursor (see forze.application.contracts.document.ports module doc).",
+        )
 
     # ....................... #
 

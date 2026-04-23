@@ -9,6 +9,8 @@ from typing import Any
 from forze.application.composition.document import DocumentDTOs, DocumentUsecasesFacade
 from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.dto import (
+    CursorListRequestDTO,
+    CursorPaginated,
     DocumentIdDTO,
     DocumentIdRevDTO,
     DocumentNumberIdDTO,
@@ -16,6 +18,8 @@ from forze.application.dto import (
     DocumentUpdateRes,
     ListRequestDTO,
     Paginated,
+    RawCursorListRequestDTO,
+    RawCursorPaginated,
     RawListRequestDTO,
     RawPaginated,
 )
@@ -231,6 +235,88 @@ def build_document_raw_list_endpoint_spec[R: ReadDocument](
         metadata=metadata,
         response=RawPaginated,
         mapper=BodyAsIsMapper(RawListRequestDTO),
+    )
+
+
+# ....................... #
+
+type ListCursorDTOs[R: ReadDocument] = DocumentDTOs[R, Any, Any]
+type ListCursorEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
+    Any,
+    Any,
+    Any,
+    Any,
+    CursorListRequestDTO,
+    CursorListRequestDTO,
+    CursorPaginated[R],
+    CursorPaginated[R],
+    Facade,
+]
+
+
+def build_document_list_cursor_endpoint_spec[R: ReadDocument](
+    dtos: ListCursorDTOs[R],
+    *,
+    path_override: str | None = None,
+    metadata: HttpMetadataSpec | None = None,
+) -> ListCursorEndpointSpec[R]:
+    path = path_override or "/list-cursor"
+    path = path_coerce(path)
+
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, CursorListRequestDTO] = {
+        "body_type": CursorListRequestDTO,
+    }
+
+    return build_http_endpoint_spec(
+        Facade,
+        Facade.list_cursor,  # type: ignore[misc]
+        http=http_spec,
+        request=request_spec,
+        metadata=metadata,
+        response=CursorPaginated[dtos.read],  # type: ignore[name-defined]
+        mapper=BodyAsIsMapper(CursorListRequestDTO),
+    )
+
+
+# ....................... #
+
+type RawListCursorDTOs[R: ReadDocument] = DocumentDTOs[R, Any, Any]
+type RawListCursorEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
+    Any,
+    Any,
+    Any,
+    Any,
+    RawCursorListRequestDTO,
+    RawCursorListRequestDTO,
+    RawCursorPaginated,
+    RawCursorPaginated,
+    Facade,
+]
+
+
+def build_document_raw_list_cursor_endpoint_spec[R: ReadDocument](
+    dtos: RawListCursorDTOs[R],
+    *,
+    path_override: str | None = None,
+    metadata: HttpMetadataSpec | None = None,
+) -> RawListCursorEndpointSpec[R]:
+    path = path_override or "/raw-list-cursor"
+    path = path_coerce(path)
+
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, RawCursorListRequestDTO] = {
+        "body_type": RawCursorListRequestDTO,
+    }
+
+    return build_http_endpoint_spec(
+        Facade,
+        Facade.raw_list_cursor,  # type: ignore[misc]
+        http=http_spec,
+        request=request_spec,
+        metadata=metadata,
+        response=RawCursorPaginated,
+        mapper=BodyAsIsMapper(RawCursorListRequestDTO),
     )
 
 

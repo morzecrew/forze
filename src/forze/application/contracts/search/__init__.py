@@ -16,16 +16,19 @@ from .specs import (
     HubSearchSpec,
     SearchSpec,
 )
+from .phrase_combine import effective_phrase_combine
 from .query_normalization import normalize_search_queries
-from .types import SearchOptions
+from .types import PhraseCombine, SearchOptions
 
 # ----------------------- #
 
 __all__ = [
+    "PhraseCombine",
     "SearchSpec",
     "FederatedSearchMemberSpec",
     "HubSearchSpec",
     "SearchOptions",
+    "effective_phrase_combine",
     "SearchQueryPort",
     "SearchCommandPort",
     "SearchQueryDepKey",

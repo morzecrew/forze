@@ -375,9 +375,12 @@ class TestPostgresDocumentAdapterQueryDelegation:
 
         adapter = PostgresDocumentAdapter(spec=_full_spec(), read_gw=read_gw)
 
-        rows, cnt = await adapter.find_many(filters={"x": 1})
+        page = await adapter.find_many(
+            filters={"x": 1},
+            return_count=True,
+        )
 
-        assert rows == [] and cnt == 0
+        assert page.hits == [] and page.count == 0
         read_gw.find_many.assert_not_called()
 
     @pytest.mark.asyncio
@@ -389,9 +392,11 @@ class TestPostgresDocumentAdapterQueryDelegation:
 
         adapter = PostgresDocumentAdapter(spec=_full_spec(), read_gw=read_gw)
 
-        rows, cnt = await adapter.find_many(filters=None, pagination={"limit": 10})
+        page = await adapter.find_many(
+            filters=None, pagination={"limit": 10}, return_count=True
+        )
 
-        assert rows == docs and cnt == 2
+        assert page.hits == docs and page.count == 2
 
     @pytest.mark.asyncio
     async def test_count_delegates(self) -> None:

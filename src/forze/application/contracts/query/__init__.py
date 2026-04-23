@@ -1,6 +1,7 @@
 """Basic query contracts."""
 
 from .expressions import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -21,6 +22,7 @@ __all__ = [
     "QueryFilterExpression",
     "QuerySortExpression",
     "PaginationExpression",
+    "CursorPaginationExpression",
     "QueryFilterExpressionParser",
     "QueryValueCaster",
     "QueryAnd",

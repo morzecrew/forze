@@ -6,11 +6,16 @@ from pydantic import BaseModel
 from forze.application.contracts.mapping import MapperPort
 from forze.application.contracts.search import SearchQueryPort
 from forze.application.dto import (
+    CursorPaginated,
+    CursorSearchRequestDTO,
+    RawCursorPaginated,
+    RawCursorSearchRequestDTO,
+    RawSearchRequestDTO,
     Paginated,
     RawPaginated,
-    RawSearchRequestDTO,
     SearchRequestDTO,
 )
+from forze.application.dto.paginated import to_cursor_expression
 from forze.application.execution import Usecase
 
 # ----------------------- #
@@ -46,7 +51,7 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        hits, count = await self.search.search(
+        res = await self.search.search(
             query=body.query,
             filters=body.filters,
             pagination={
@@ -55,9 +60,10 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
             },
             sorts=body.sorts,
             options=body.options,
+            return_count=True,
         )
 
-        return Paginated(hits=hits, page=page, size=size, count=count)
+        return Paginated.from_page(res)
 
 
 # ....................... #
@@ -93,7 +99,7 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        hits, count = await self.search.search(
+        res = await self.search.search(
             query=body.query,
             filters=body.filters,
             pagination={
@@ -103,6 +109,76 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
             sorts=body.sorts,
             options=body.options,
             return_fields=tuple(body.return_fields),
+            return_count=True,
         )
 
-        return RawPaginated(hits=hits, page=page, size=size, count=count)
+        return RawPaginated.from_page(res)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class TypedCursorSearch[Out: BaseModel](Usecase[CursorSearchRequestDTO, CursorPaginated[Out]]):
+    """Usecase that searches with typed results and cursor (keyset) pagination."""
+
+    search: SearchQueryPort[Out]
+    """Search port for search operations."""
+
+    mapper: MapperPort[CursorSearchRequestDTO, CursorSearchRequestDTO] | None = attrs.field(
+        default=None
+    )
+    """Optional mapper to transform incoming request DTO"""
+
+    # ....................... #
+
+    async def main(self, args: CursorSearchRequestDTO) -> CursorPaginated[Out]:
+        body = args
+
+        if self.mapper:
+            body = await self.mapper(body, ctx=self.ctx)
+
+        res = await self.search.search_with_cursor(
+            query=body.query,
+            filters=body.filters,
+            cursor=to_cursor_expression(body),
+            sorts=body.sorts,
+            options=body.options,
+        )
+
+        return CursorPaginated.from_page(res)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RawCursorSearch(Usecase[RawCursorSearchRequestDTO, RawCursorPaginated]):
+    """Usecase that searches with raw results and cursor (keyset) pagination."""
+
+    search: SearchQueryPort[Any]
+    """Search port for search operations."""
+
+    mapper: MapperPort[RawCursorSearchRequestDTO, RawCursorSearchRequestDTO] | None = (
+        attrs.field(default=None)
+    )
+    """Optional mapper to transform incoming request DTO"""
+
+    # ....................... #
+
+    async def main(self, args: RawCursorSearchRequestDTO) -> RawCursorPaginated:
+        body = args
+
+        if self.mapper:
+            body = await self.mapper(body, ctx=self.ctx)
+
+        res = await self.search.search_with_cursor(
+            query=body.query,
+            filters=body.filters,
+            cursor=to_cursor_expression(body),
+            sorts=body.sorts,
+            options=body.options,
+            return_fields=tuple(body.return_fields),
+        )
+
+        return RawCursorPaginated.from_page(res)

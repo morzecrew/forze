@@ -76,9 +76,9 @@ class TestMockSearchAdapter:
     async def test_search_empty_returns_empty(self) -> None:
         state = MockState()
         search = _search_adapter(state)
-        hits, count = await search.search("q")
-        assert hits == []
-        assert count == 0
+        page = await search.search("q", return_count=True)
+        assert page.hits == []
+        assert page.count == 0
 
     @pytest.mark.asyncio
     async def test_search_returns_documents_matching_query(self) -> None:
@@ -88,10 +88,10 @@ class TestMockSearchAdapter:
 
         await doc.create(_CreateWithTitle(title="foo"))
         await doc.create(_CreateWithTitle(title="foo"))
-        hits, count = await search.search("foo")
-        assert count == 2
-        assert hits[0].title == "foo"
-        assert hits[1].title == "foo"
+        page = await search.search("foo", return_count=True)
+        assert page.count == 2
+        assert page.hits[0].title == "foo"
+        assert page.hits[1].title == "foo"
 
     @pytest.mark.asyncio
     async def test_search_list_query_matches_any_term(self) -> None:
@@ -101,9 +101,12 @@ class TestMockSearchAdapter:
 
         await doc.create(_CreateWithTitle(title="alpha"))
         await doc.create(_CreateWithTitle(title="beta"))
-        hits, count = await search.search(["alpha", "gamma"])
-        assert count == 1
-        assert hits[0].title == "alpha"
+        page = await search.search(
+            ["alpha", "gamma"],
+            return_count=True,
+        )
+        assert page.count == 1
+        assert page.hits[0].title == "alpha"
 
     @pytest.mark.asyncio
     async def test_search_respects_limit(self) -> None:
@@ -113,9 +116,11 @@ class TestMockSearchAdapter:
 
         for i in range(5):
             await doc.create(_CreateWithTitle(title="q"))
-        hits, count = await search.search("q", pagination={"limit": 2})
-        assert count == 5
-        assert len(hits) == 2
+        page = await search.search(
+            "q", pagination={"limit": 2}, return_count=True
+        )
+        assert page.count == 5
+        assert len(page.hits) == 2
 
     @pytest.mark.asyncio
     async def test_search_respects_offset(self) -> None:
@@ -125,9 +130,13 @@ class TestMockSearchAdapter:
 
         for _ in range(5):
             await doc.create(_CreateWithTitle(title="q"))
-        hits, count = await search.search("q", pagination={"offset": 2, "limit": 2})
-        assert count == 5
-        assert len(hits) == 2
+        page = await search.search(
+            "q",
+            pagination={"offset": 2, "limit": 2},
+            return_count=True,
+        )
+        assert page.count == 5
+        assert len(page.hits) == 2
 
     @pytest.mark.asyncio
     async def test_search_with_return_fields_projects(self) -> None:
@@ -136,9 +145,11 @@ class TestMockSearchAdapter:
         search = _search_adapter(state)
 
         await doc.create(_CreateWithTitle(title="foo"))
-        hits, count = await search.search("foo", return_fields=["title"])
-        assert count == 1
-        assert hits[0] == {"title": "foo"}
+        page = await search.search(
+            "foo", return_fields=["title"], return_count=True
+        )
+        assert page.count == 1
+        assert page.hits[0] == {"title": "foo"}
 
     @pytest.mark.asyncio
     async def test_search_with_typed_hits(self) -> None:
@@ -147,6 +158,6 @@ class TestMockSearchAdapter:
         search = _search_adapter(state)
 
         await doc.create(_CreateWithTitle(title="first"))
-        hits, count = await search.search("first")
-        assert count == 1
-        assert hits[0].title == "first"
+        page = await search.search("first", return_count=True)
+        assert page.count == 1
+        assert page.hits[0].title == "first"

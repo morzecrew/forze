@@ -22,7 +22,9 @@ from .endpoints import (
     build_document_get_by_number_id_endpoint_spec,
     build_document_get_endpoint_spec,
     build_document_kill_endpoint_spec,
+    build_document_list_cursor_endpoint_spec,
     build_document_list_endpoint_spec,
+    build_document_raw_list_cursor_endpoint_spec,
     build_document_raw_list_endpoint_spec,
     build_document_restore_endpoint_spec,
     build_document_update_endpoint_spec,
@@ -50,6 +52,8 @@ def attach_document_endpoints(
     get_by_number_id_endpoint = endpoints.get("get_by_number_id", False)
     list_endpoint = endpoints.get("list_", False)
     raw_list_endpoint = endpoints.get("raw_list", False)
+    list_cursor_endpoint = endpoints.get("list_cursor", False)
+    raw_list_cursor_endpoint = endpoints.get("raw_list_cursor", False)
     create_endpoint = endpoints.get("create", False)
     update_endpoint = endpoints.get("update", False)
     kill_endpoint = endpoints.get("kill", False)
@@ -136,6 +140,46 @@ def attach_document_endpoints(
         attach_http_endpoint(
             router=router,
             spec=raw_list_endpoint_spec,
+            registry=registry,
+            ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
+        )
+
+    if list_cursor_endpoint is not False:
+        _list_c = (
+            list_cursor_endpoint
+            if list_cursor_endpoint is not True
+            else SimpleHttpEndpointSpec()
+        )
+
+        list_cursor_endpoint_spec = build_document_list_cursor_endpoint_spec(
+            dtos=dtos,
+            path_override=_list_c.get("path_override"),
+            metadata=_list_c.get("metadata"),
+        )
+        attach_http_endpoint(
+            router=router,
+            spec=list_cursor_endpoint_spec,
+            registry=registry,
+            ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
+        )
+
+    if raw_list_cursor_endpoint is not False:
+        _raw_list_c = (
+            raw_list_cursor_endpoint
+            if raw_list_cursor_endpoint is not True
+            else SimpleHttpEndpointSpec()
+        )
+
+        raw_list_cursor_endpoint_spec = build_document_raw_list_cursor_endpoint_spec(
+            dtos=dtos,
+            path_override=_raw_list_c.get("path_override"),
+            metadata=_raw_list_c.get("metadata"),
+        )
+        attach_http_endpoint(
+            router=router,
+            spec=raw_list_cursor_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,

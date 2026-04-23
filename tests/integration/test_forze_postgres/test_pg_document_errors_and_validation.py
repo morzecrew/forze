@@ -209,7 +209,11 @@ async def test_count_and_find_many_on_empty_table(pg_client: PostgresClient) -> 
     query = ctx.doc_query(spec)
     assert await query.count() == 0
     assert await query.count(None) == 0
-    rows, total = await query.find_many(None, pagination={"limit": 10, "offset": 0})
+    __p = await query.find_many(
+        None, pagination={"limit": 10, "offset": 0}, return_count=True
+    )
+    rows = __p.hits
+    total = __p.count
     assert rows == [] and total == 0
 
 

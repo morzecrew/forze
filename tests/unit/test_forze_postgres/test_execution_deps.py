@@ -30,6 +30,7 @@ from forze_postgres.execution.deps.configs import (
     validate_pg_search_conf,
     validate_postgres_hub_search_conf,
 )
+from forze_postgres.kernel.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.execution.deps.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
@@ -369,6 +370,38 @@ def test_doc_write_gw_with_history() -> None:
     assert gw.history_gw.source_qname.name == "h"
 
 
+def test_normalize_hub_fk_columns_str_and_sequence() -> None:
+    assert normalize_hub_fk_columns("a") == ("a",)
+    assert normalize_hub_fk_columns(["x", "y"]) == ("x", "y")
+
+
+def test_normalize_hub_fk_columns_rejects_empty_and_dupes() -> None:
+    with pytest.raises(CoreError, match="at least one column"):
+        normalize_hub_fk_columns([])
+
+    with pytest.raises(CoreError, match="unique within a leg"):
+        normalize_hub_fk_columns(("p", "p"))
+
+
+def test_validate_postgres_hub_search_conf_accepts_hub_fk_list() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "t1"),
+                "hub_fk": ["a", "b"],
+            },
+            "m2": {
+                "index": ("public", "i2"),
+                "read": ("public", "t2"),
+                "hub_fk": "c",
+            },
+        },
+    }
+    validate_postgres_hub_search_conf(cfg)
+
+
 def test_validate_postgres_hub_search_conf_duplicate_hub_fk() -> None:
     cfg: PostgresHubSearchConfig = {
         "hub": ("public", "h"),
@@ -385,7 +418,47 @@ def test_validate_postgres_hub_search_conf_duplicate_hub_fk() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="hub_fk_column must be unique"):
+    with pytest.raises(CoreError, match="duplicate column across legs"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_duplicate_hub_fk_within_leg() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "t1"),
+                "hub_fk": ("x", "x"),
+            },
+            "m2": {
+                "index": ("public", "i2"),
+                "read": ("public", "t2"),
+                "hub_fk": "y",
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="unique within a leg"):
+        validate_postgres_hub_search_conf(cfg)
+
+
+def test_validate_postgres_hub_search_conf_list_overlaps_other_leg() -> None:
+    cfg: PostgresHubSearchConfig = {
+        "hub": ("public", "h"),
+        "members": {
+            "m1": {
+                "index": ("public", "i1"),
+                "read": ("public", "t1"),
+                "hub_fk": ["a", "b"],
+            },
+            "m2": {
+                "index": ("public", "i2"),
+                "read": ("public", "t2"),
+                "hub_fk": "b",
+            },
+        },
+    }
+    with pytest.raises(CoreError, match="duplicate column across legs"):
         validate_postgres_hub_search_conf(cfg)
 
 

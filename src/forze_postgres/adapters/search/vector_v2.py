@@ -9,14 +9,21 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, TypeVar, final, overload
+from typing import Any, Final, Literal, TypeVar, final, overload
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.embeddings import EmbeddingsProviderPort, EmbeddingsSpec
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.query import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -25,6 +32,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchSpec,
+    effective_phrase_combine,
     normalize_search_queries,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
@@ -183,7 +191,8 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
-    ) -> tuple[list[M], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[M]: ...
 
     @overload
     async def search(
@@ -196,7 +205,8 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
-    ) -> tuple[list[T], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
 
     @overload
     async def search(
@@ -209,7 +219,50 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[M]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[T]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+        return_count: Literal[True] = ...,
+    ) -> Page[JsonDict]: ...
 
     async def search(
         self,
@@ -221,8 +274,16 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         options: SearchOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
-        _ = options
+        return_count: bool = False,
+    ) -> (
+        CountlessPage[M]
+        | CountlessPage[T]
+        | CountlessPage[JsonDict]
+        | Page[M]
+        | Page[T]
+        | Page[JsonDict]
+    ):
+        combine = effective_phrase_combine(options)
         fw, fp = await self.where_clause(filters)
 
         key_cols = self._scored_key_columns()
@@ -262,6 +323,7 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                 kind=self.vector_distance,
                 score_name=_RANK_COLUMN,
                 n_queries=len(vecs),
+                phrase_combine=combine,
             )
             params_body = [*fp, *[vector_param_literal(v) for v in vecs]]
 
@@ -338,12 +400,17 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             """
         ).format(with_clause=with_clause, from_outer=from_outer)
 
-        total = int(
-            await self.client.fetch_value(count_stmt, params_body, default=0),
-        )
-
-        if total == 0:
-            return [], total
+        total = 0
+        if return_count:
+            total = int(
+                await self.client.fetch_value(count_stmt, params_body, default=0),
+            )
+            if total == 0:
+                return page_from_limit_offset(
+                    [],
+                    pagination or {},
+                    total=0,
+                )
 
         cols = self.return_clause(
             return_type,
@@ -381,9 +448,76 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
 
         if return_type is not None:
-            return pydantic_validate_many(return_type, rows), total
+            v = pydantic_validate_many(return_type, rows)
+            if return_count:
+                return page_from_limit_offset(v, pagination, total=total)
+            return page_from_limit_offset(v, pagination, total=None)
 
         if return_fields is not None:
-            return [{k: r.get(k, None) for k in return_fields} for r in rows], total
+            raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
+            if return_count:
+                return page_from_limit_offset(raw, pagination, total=total)
+            return page_from_limit_offset(raw, pagination, total=None)
 
-        return pydantic_validate_many(self.model_type, rows), total
+        m = pydantic_validate_many(self.model_type, rows)
+        if return_count:
+            return page_from_limit_offset(m, pagination, total=total)
+        return page_from_limit_offset(m, pagination, total=None)
+
+    # ....................... #
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+    ) -> CursorPage[M]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+    ) -> CursorPage[T]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
+        del query, filters, cursor, sorts, options, return_type, return_fields
+        raise NotImplementedError(
+            "PostgresVectorSearchAdapterV2.search_with_cursor is not implemented yet; "
+            "see forze.application.contracts.search.ports module doc.",
+        )

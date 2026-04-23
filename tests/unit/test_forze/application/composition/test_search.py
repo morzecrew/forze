@@ -41,6 +41,8 @@ class TestBuildSearchRegistry:
         reg = build_search_registry(spec)
         assert reg.exists(SearchOperation.TYPED_SEARCH)
         assert reg.exists(SearchOperation.RAW_SEARCH)
+        assert reg.exists(SearchOperation.TYPED_SEARCH_CURSOR)
+        assert reg.exists(SearchOperation.RAW_SEARCH_CURSOR)
 
     def test_resolve_raw_returns_usecase(
         self,

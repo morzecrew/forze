@@ -121,15 +121,27 @@ async def test_vector_l2_knn_orders_by_nearest(pgvector_client: PostgresClient) 
     assert isinstance(port, PostgresVectorSearchAdapterV2)
     _ = port.index_qname, PostgresQualifiedName("public", index_name)
 
-    hits, total = await port.search("alpha")
+    __p = await port.search("alpha", return_count=True)
+    hits = __p.hits
+    total = __p.count
     assert total == 2
     assert hits[0].id == a_id
     assert hits[1].id == b_id
 
-    disj, n_disj = await port.search(["alpha", "beta"])
+    __p = await port.search(["alpha", "beta"], return_count=True)
+    disj = __p.hits
+    n_disj = __p.count
     assert n_disj == 2
     assert {row.id for row in disj} == {a_id, b_id}
     assert disj[0].id == a_id
+
+    __p = await port.search(
+        ["alpha", "beta"],
+        options={"phrase_combine": "all"}, return_count=True)
+    conj = __p.hits
+    n_conj = __p.count
+    assert n_conj == 2
+    assert {row.id for row in conj} == {a_id, b_id}
 
 
 @pytest.mark.asyncio
@@ -170,7 +182,9 @@ async def test_vector_l2_with_hnsw_index(pgvector_client: PostgresClient) -> Non
         pgvector_client, table=table, index_name=index_name, vector_distance="l2"
     )
     port = ctx.search_query(spec)
-    out, n = await port.search("xkey")
+    __p = await port.search("xkey", return_count=True)
+    out = __p.hits
+    n = __p.count
     assert n == 2
     assert out[0].id == x
     assert out[1].id == y
@@ -212,7 +226,9 @@ async def test_vector_cosine_knn_orders_by_nearest(pgvector_client: PostgresClie
         pgvector_client, table=table, index_name=index_name, vector_distance="cosine"
     )
     port = ctx.search_query(spec)
-    rows, total = await port.search("one")
+    __p = await port.search("one", return_count=True)
+    rows = __p.hits
+    total = __p.count
     assert total == 2
     assert rows[0].id == a_id
 
@@ -258,7 +274,9 @@ async def test_vector_inner_product_knn_orders_by_nearest(
         vector_distance="inner_product",
     )
     port = ctx.search_query(spec)
-    rows, total = await port.search("ip_a")
+    __p = await port.search("ip_a", return_count=True)
+    rows = __p.hits
+    total = __p.count
     assert total == 2
     assert rows[0].id == a_id
 
@@ -297,7 +315,9 @@ async def test_vector_empty_query_zero_rank_includes_all_filtered_rows(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    _rows, total = await port.search("   ")
+    __p = await port.search("   ", return_count=True)
+    _rows = __p.hits
+    total = __p.count
     assert total == 2
 
 
@@ -340,7 +360,9 @@ async def test_vector_respects_eq_filter_on_projection(pgvector_client: Postgres
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
     flt: QueryFilterExpression = {"$fields": {"label": "keep"}}
-    rows, n = await port.search("filter_me", filters=flt)
+    __p = await port.search("filter_me", filters=flt, return_count=True)
+    rows = __p.hits
+    n = __p.count
     assert n == 1
     assert rows[0].id == keep
     assert rows[0].label == "keep"

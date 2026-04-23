@@ -9,8 +9,10 @@ from forze.application.usecases.document import (
     GetDocument,
     GetDocumentByNumberId,
     KillDocument,
+    RawCursorListDocuments,
     RawListDocuments,
     RestoreDocument,
+    TypedCursorListDocuments,
     TypedListDocuments,
     UpdateDocument,
 )
@@ -71,6 +73,18 @@ class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
         uc=RawListDocuments,
     )
     """Raw list documents usecase."""
+
+    list_cursor = facade_op(
+        DocumentOperation.LIST_CURSOR,
+        uc=TypedCursorListDocuments[R],
+    )
+    """List documents with cursor (keyset) pagination."""
+
+    raw_list_cursor = facade_op(
+        DocumentOperation.RAW_LIST_CURSOR,
+        uc=RawCursorListDocuments,
+    )
+    """Raw list with cursor (keyset) pagination."""
 
     create = facade_op(
         DocumentOperation.CREATE,

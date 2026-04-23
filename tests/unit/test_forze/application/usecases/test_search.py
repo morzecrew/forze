@@ -8,12 +8,21 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.dto import (
+    CursorPaginated,
+    CursorSearchRequestDTO,
     Paginated,
+    RawCursorPaginated,
+    RawCursorSearchRequestDTO,
     RawPaginated,
     RawSearchRequestDTO,
     SearchRequestDTO,
 )
-from forze.application.usecases.search import RawSearch, TypedSearch
+from forze.application.usecases.search import (
+    RawCursorSearch,
+    RawSearch,
+    TypedCursorSearch,
+    TypedSearch,
+)
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 # ----------------------- #
@@ -186,3 +195,51 @@ class TestRawSearch:
 
         assert result.count == 5
         assert len(result.hits) == 2
+
+
+class TestTypedCursorSearch:
+    """Tests for TypedCursorSearch usecase."""
+
+    @pytest.mark.asyncio
+    async def test_typed_cursor_search_returns_cursor_paginated(
+        self,
+        stub_ctx,
+    ) -> None:
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
+
+        await doc_port.create(_SearchCreate(title="a", content="foo"))
+
+        usecase = TypedCursorSearch(ctx=stub_ctx, search=search_port)
+        result = await usecase(
+            CursorSearchRequestDTO(query="foo", limit=10)
+        )
+
+        assert isinstance(result, CursorPaginated)
+        assert len(result.hits) >= 1
+        assert result.hits[0].title == "a"
+
+
+class TestRawCursorSearch:
+    """Tests for RawCursorSearch usecase."""
+
+    @pytest.mark.asyncio
+    async def test_raw_cursor_search_returns_raw_cursor_paginated(
+        self,
+        stub_ctx,
+    ) -> None:
+        doc_port = stub_ctx.doc_command(_search_document_spec())
+        search_port = stub_ctx.search_query(_search_spec())
+
+        await doc_port.create(_SearchCreate(title="x", content="bar"))
+
+        usecase = RawCursorSearch(ctx=stub_ctx, search=search_port)
+        result = await usecase(
+            RawCursorSearchRequestDTO(
+                query="bar", return_fields={"id", "title"}, limit=10
+            )
+        )
+
+        assert isinstance(result, RawCursorPaginated)
+        assert "id" in result.hits[0]
+        assert result.hits[0]["title"] == "x"

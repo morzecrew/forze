@@ -21,6 +21,8 @@ class DocumentEndpointsSpec(TypedDict, total=False):
     get_by_number_id: SimpleHttpEndpointSpec | bool
     list_: SimpleHttpEndpointSpec | bool
     raw_list: SimpleHttpEndpointSpec | bool
+    list_cursor: SimpleHttpEndpointSpec | bool
+    raw_list_cursor: SimpleHttpEndpointSpec | bool
     create: SimpleHttpEndpointSpec | bool
     update: SimpleHttpEndpointSpec | bool
     kill: SimpleHttpEndpointSpec | bool

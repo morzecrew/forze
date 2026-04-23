@@ -9,6 +9,8 @@ require_psycopg()
 from collections.abc import Mapping
 from typing import Any
 
+from forze.application.contracts.search import PhraseCombine
+
 from psycopg import sql
 
 from forze.application.contracts.search import SearchOptions, SearchSpec
@@ -21,14 +23,23 @@ from ._utils import calculate_effective_field_weights
 # ----------------------- #
 
 
-def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:
-    """Build one PGroonga query string as OR of parenthesized sub-queries."""
+def pgroonga_phrase_match_text(terms: tuple[str, ...], *, combine: PhraseCombine) -> str:
+    """Build one PGroonga query string: ``OR`` between phrases, or implicit AND (whitespace) for ``all``."""
 
     if not terms:
         return ""
     if len(terms) == 1:
         return terms[0]
-    return " OR ".join(f"({t})" for t in terms)
+    if combine == "any":
+        return " OR ".join(f"({t})" for t in terms)
+    # AND: Groonga / PGroonga use implicit AND (whitespace), not the ``AND`` keyword.
+    return " ".join(f"({t})" for t in terms)
+
+
+def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:
+    """Build one PGroonga query string as OR of parenthesized sub-queries."""
+
+    return pgroonga_phrase_match_text(terms, combine="any")
 
 
 # ....................... #

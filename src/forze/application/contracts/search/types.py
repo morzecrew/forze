@@ -1,8 +1,11 @@
-from typing import Sequence, TypedDict
+from typing import Literal, Sequence, TypedDict
 
 # ----------------------- #
-#! Switch to support `mode` with values: fulltext, phrase, prefix, exact, fuzzy
-#! instead of separate `fuzzy` bool flag
+
+PhraseCombine = Literal["any", "all"]
+"""``any``: at least one list phrase matches (disjunction). ``all``: every phrase must match."""
+
+# ....................... #
 
 
 class SearchOptions(TypedDict, total=False):
@@ -29,4 +32,11 @@ class SearchOptions(TypedDict, total=False):
 
     For specified members weights will be set to 1.0, for other members weights will be set to 0.0.
     Ignored if member_weights are provided.
+    """
+
+    phrase_combine: PhraseCombine
+    """When ``query`` is a list of strings, how to combine them.
+
+    ``any`` (default): disjunction (match if any phrase matches).
+    ``all``: conjunction (match every phrase).
     """

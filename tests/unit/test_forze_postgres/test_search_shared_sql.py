@@ -12,12 +12,14 @@ from forze_postgres.adapters.search._fts_sql import (
     fts_effective_group_weights,
     fts_rank_cd_weight_array,
     fts_tsquery_expr,
+    fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
 from forze_postgres.adapters.search._pgroonga_sql import (
     pgroonga_disjunctive_match_text,
     pgroonga_heap_column_names,
     pgroonga_match_clause,
+    pgroonga_phrase_match_text,
 )
 from forze_postgres.adapters.search._vector_sql import vector_knn_multi_score_expr
 from forze_postgres.adapters.search.hub import (
@@ -76,7 +78,7 @@ def test_hub_leg_engine_for_pgroonga() -> None:
         search=_spec(),
         index_qname=PostgresQualifiedName("public", "idx"),
         index_heap_qname=PostgresQualifiedName("public", "heap"),
-        hub_fk_column="fk",
+        hub_fk_columns="fk",
         heap_pk_column="id",
         engine="pgroonga",
     )
@@ -88,7 +90,7 @@ def test_hub_leg_engine_for_fts() -> None:
         search=_spec(),
         index_qname=PostgresQualifiedName("public", "idx"),
         index_heap_qname=PostgresQualifiedName("public", "heap"),
-        hub_fk_column="fk",
+        hub_fk_columns="fk",
         heap_pk_column="id",
         engine="fts",
         fts_groups={"A": ("a",), "B": ("b",)},
@@ -101,7 +103,7 @@ def test_hub_leg_engine_for_rejects_unknown_engine() -> None:
         search=_spec(),
         index_qname=PostgresQualifiedName("public", "idx"),
         index_heap_qname=PostgresQualifiedName("public", "heap"),
-        hub_fk_column="fk",
+        hub_fk_columns="fk",
         heap_pk_column="id",
         engine=cast(Any, "bogus"),
     )
@@ -120,7 +122,7 @@ def test_hub_leg_engine_for_vector() -> None:
         search=_spec(),
         index_qname=PostgresQualifiedName("public", "idx"),
         index_heap_qname=PostgresQualifiedName("public", "heap"),
-        hub_fk_column="fk",
+        hub_fk_columns="fk",
         heap_pk_column="id",
         engine="vector",
         vector_column="emb",
@@ -137,7 +139,7 @@ def test_hub_leg_engine_for_vector_without_embedder_raises() -> None:
         search=_spec(),
         index_qname=PostgresQualifiedName("public", "idx"),
         index_heap_qname=PostgresQualifiedName("public", "heap"),
-        hub_fk_column="fk",
+        hub_fk_columns="fk",
         heap_pk_column="id",
         engine="vector",
         vector_column="emb",
@@ -153,7 +155,7 @@ async def test_fts_hub_leg_engine_requires_fts_groups() -> None:
         search=_spec(),
         index_qname=PostgresQualifiedName("public", "idx"),
         index_heap_qname=PostgresQualifiedName("public", "heap"),
-        hub_fk_column="fk",
+        hub_fk_columns="fk",
         heap_pk_column="id",
         engine="fts",
         fts_groups=None,
@@ -254,10 +256,26 @@ def test_fts_tsquery_expr_disjunction_or_combines() -> None:
     assert params == ["a OR b"]
 
 
+def test_fts_tsquery_expr_conjunction_and_combines() -> None:
+    single, p1 = fts_tsquery_expr_conjunction(("only",))
+    plain, p2 = fts_tsquery_expr("only")
+    assert p1 == p2
+    assert str(single) == str(plain)
+
+    frag, params = fts_tsquery_expr_conjunction(("a", "b"))
+    assert "websearch_to_tsquery" in str(frag)
+    assert params == ["a AND b"]
+
+
 def test_pgroonga_disjunctive_match_text() -> None:
     assert pgroonga_disjunctive_match_text(()) == ""
     assert pgroonga_disjunctive_match_text(("x",)) == "x"
     assert pgroonga_disjunctive_match_text(("a", "b")) == "(a) OR (b)"
+
+
+def test_pgroonga_phrase_match_text_all() -> None:
+    assert pgroonga_phrase_match_text((), combine="any") == ""
+    assert pgroonga_phrase_match_text(("a", "b"), combine="all") == "(a) (b)"
 
 
 def test_vector_knn_multi_score_expr_greatest() -> None:
@@ -270,3 +288,15 @@ def test_vector_knn_multi_score_expr_greatest() -> None:
     )
     s = str(frag)
     assert "GREATEST" in s
+
+
+def test_vector_knn_multi_score_expr_least_for_all() -> None:
+    frag = vector_knn_multi_score_expr(
+        index_alias="t",
+        column="emb",
+        kind="l2",
+        score_name="r",
+        n_queries=2,
+        phrase_combine="all",
+    )
+    assert "LEAST" in str(frag)

@@ -1,4 +1,15 @@
-"""Ports for document storage and retrieval"""
+"""Ports for document storage and retrieval.
+
+**Cursor pagination (``find_many_with_cursor``):** Production adapters need a
+defined total order (sort keys + disambiguator, usually primary key) and
+encoding rules for opaque cursors. Typical additions: optional
+``cursor_sort_keys`` / ``cursor_tiebreak`` on :class:`.DocumentSpec` or
+per-relation config; read gateways then emit ``WHERE (k1, k2) > (:v1, :v2)``
+for forward pages. SQL search adapters need the same relative to the ranked
+``ORDER BY``. Until configured, RDBMS / Mongo adapters may raise
+``NotImplementedError``; the in-memory mock implements index-based cursors for
+tests.
+"""
 
 from typing import (
     Any,
@@ -15,7 +26,13 @@ from uuid import UUID
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
-from ..query import PaginationExpression, QueryFilterExpression, QuerySortExpression
+from ..base import CountlessPage, CursorPage, Page
+from ..query import (
+    CursorPaginationExpression,
+    PaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
 from .specs import DocumentSpec
 
 # ----------------------- #
@@ -151,7 +168,6 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         ...  # pragma: no cover
 
     # ....................... #
-    #! add `return_type` support for `find_many`
 
     @overload
     def find_many(
@@ -161,8 +177,9 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
-    ) -> Awaitable[tuple[list[JsonDict], int]]:
-        """Find many documents and project selected fields as JSON."""
+        return_count: Literal[False] = False,
+    ) -> Awaitable[CountlessPage[JsonDict]]:
+        """Find many documents and project selected fields as JSON (no count query)."""
         ...  # pragma: no cover
 
     @overload
@@ -173,8 +190,35 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
-    ) -> Awaitable[tuple[list[R], int]]:
-        """Find many documents and return typed read models."""
+        return_count: Literal[False] = False,
+    ) -> Awaitable[CountlessPage[R]]:
+        """Find many documents and return typed read models (no count query)."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+        return_count: Literal[True],
+    ) -> Awaitable[Page[JsonDict]]:
+        """Find many documents, project as JSON, and return the total count."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Awaitable[Page[R]]:
+        """Find many documents and return typed read models and total count."""
         ...  # pragma: no cover
 
     def find_many(
@@ -184,12 +228,56 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
-    ) -> Awaitable[tuple[list[R] | list[JsonDict], int]]:
+        return_count: bool = False,
+    ) -> Awaitable[
+        Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]
+    ]:
         """Find many documents, optionally paginated and sorted.
 
-        :returns: A tuple of result list and total count.
+        When ``return_count`` is ``True``, runs a count query and returns
+        ``(results, total)``. Otherwise returns only ``results`` (default).
         """
         ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+    ) -> Awaitable[CursorPage[JsonDict]]:
+        """Keyset / cursor page with field projection (opaque ``prev`` / ``next`` cursors)."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+    ) -> Awaitable[CursorPage[R]]:
+        """Keyset / cursor page with typed read models.
+
+        **Adapter note:** Opaque cursors require a stable sort order and encoded
+        key columns; production backends need spec/config for cursor keys
+        (see port module docstring on this file for outline).
+        """
+        ...  # pragma: no cover
+
+    def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_fields: Sequence[str] | None = None,
+    ) -> Awaitable[CursorPage[R] | CursorPage[JsonDict]]: ...  # pragma: no cover
 
     # ....................... #
 

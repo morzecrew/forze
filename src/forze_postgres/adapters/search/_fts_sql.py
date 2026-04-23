@@ -85,6 +85,23 @@ def fts_tsquery_expr_disjunction(
     return fts_tsquery_expr(combined, options=options)
 
 
+def fts_tsquery_expr_conjunction(
+    queries: Sequence[str],
+    *,
+    options: SearchOptions | None = None,
+) -> tuple[sql.Composable, list[Any]]:
+    """Build one ``websearch_to_tsquery`` argument with `` AND `` between sub-queries."""
+
+    parts = [q.strip() for q in queries if q.strip()]
+    if not parts:
+        raise CoreError("fts_tsquery_expr_conjunction requires at least one non-empty query.")
+    if len(parts) == 1:
+        return fts_tsquery_expr(parts[0], options=options)
+
+    combined = " AND ".join(parts)
+    return fts_tsquery_expr(combined, options=options)
+
+
 # ....................... #
 
 

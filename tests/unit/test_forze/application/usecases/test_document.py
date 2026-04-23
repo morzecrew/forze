@@ -8,15 +8,19 @@ import pytest
 
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.dto import (
+    CursorListRequestDTO,
     DocumentIdDTO,
     DocumentNumberIdDTO,
     ListRequestDTO,
+    RawCursorListRequestDTO,
     RawListRequestDTO,
 )
 from forze.application.usecases.document import (
     GetDocument,
     GetDocumentByNumberId,
+    RawCursorListDocuments,
     RawListDocuments,
+    TypedCursorListDocuments,
     TypedListDocuments,
 )
 from forze.base.errors import NotFoundError
@@ -92,6 +96,59 @@ class TestTypedListDocuments:
         )
         await uc(ListRequestDTO(page=1, size=10))
         mapper.assert_awaited_once()
+
+
+class TestTypedCursorListDocuments:
+    @pytest.mark.asyncio
+    async def test_cursor_list_returns_cursor_paginated(
+        self,
+        stub_ctx,
+        stub_document_port: DocumentQueryPort,
+    ) -> None:
+        port = stub_document_port
+        for _ in range(2):
+            await port.create(CreateDocumentCmd())
+
+        uc = TypedCursorListDocuments[ReadDocument](ctx=stub_ctx, doc=port)
+        result = await uc(CursorListRequestDTO(limit=10))
+
+        assert result.has_more in (True, False)
+        assert len(result.hits) >= 1
+
+    @pytest.mark.asyncio
+    async def test_cursor_list_invokes_optional_mapper(
+        self,
+        stub_ctx,
+        stub_document_port: DocumentQueryPort,
+    ) -> None:
+        mapper = AsyncMock(side_effect=lambda body, ctx=None: body)
+        uc = TypedCursorListDocuments[ReadDocument](
+            ctx=stub_ctx,
+            doc=stub_document_port,
+            mapper=mapper,
+        )
+        await uc(CursorListRequestDTO(limit=5))
+        mapper.assert_awaited_once()
+
+
+class TestRawCursorListDocuments:
+    @pytest.mark.asyncio
+    async def test_raw_cursor_list_returns_raw_cursor_paginated(
+        self,
+        stub_ctx,
+        stub_document_port: DocumentQueryPort,
+    ) -> None:
+        port = stub_document_port
+        await port.create(CreateDocumentCmd())
+
+        uc = RawCursorListDocuments(ctx=stub_ctx, doc=port)
+        result = await uc(
+            RawCursorListRequestDTO(
+                return_fields={"id", "rev"},
+                limit=5,
+            )
+        )
+        assert "id" in result.hits[0]
 
 
 class TestGetDocumentByNumberId:

@@ -355,7 +355,9 @@ class OperationPlan:
         return type(self).merge(self, *plans)
 
 
-def _middleware_specs_for_usecase_tuple(plan: OperationPlan, bucket: PlanBucket) -> tuple[MiddlewareSpec, ...]:
+def _middleware_specs_for_usecase_tuple(
+    plan: OperationPlan, bucket: PlanBucket
+) -> tuple[MiddlewareSpec, ...]:
     """Map :meth:`OperationPlan.build` output to `Usecase.middlewares` segment order."""
 
     built = plan.build(bucket)

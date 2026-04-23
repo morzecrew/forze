@@ -15,8 +15,15 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.query import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -26,6 +33,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchSpec,
+    effective_phrase_combine,
     normalize_search_queries,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
@@ -34,6 +42,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
+from ...kernel.hub_fk_columns import normalize_hub_fk_columns
 from ...kernel.introspect import PostgresIntrospector
 from ..txmanager import PostgresTxScopeKey
 from ._fts_sql import (
@@ -44,12 +53,13 @@ from ._fts_sql import (
     fts_rank_cd_weight_array,
     fts_resolve_tsvector_expr,
     fts_tsquery_expr,
+    fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
 from ._options import prepare_hub_search_options
 from ._pgroonga_sql import (
-    pgroonga_disjunctive_match_text,
     pgroonga_match_clause,
+    pgroonga_phrase_match_text,
     pgroonga_score_rank_expr,
 )
 from ._vector_sql import (
@@ -81,6 +91,71 @@ def _empty_vector_embedders() -> dict[int, EmbeddingsProviderPort]:
 # ....................... #
 
 
+def _hub_leg_candidate_subquery(leg: HubLegRuntime, csub_alias: str) -> sql.Composable:
+    """Distinct heap PK candidates from the hub CTE (UNION when multiple hub FKs)."""
+
+    cols = leg.hub_fk_columns
+    hf = sql.Identifier(_HUB_CTE)
+    csub = sql.Identifier(csub_alias)
+
+    if len(cols) == 1:
+        fk = sql.Identifier(_HUB_CTE, cols[0])
+        return sql.SQL(
+            "( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL ) {csub}",
+        ).format(fk=fk, hf=hf, csub=csub)
+
+    branches = [
+        sql.SQL(
+            "( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL )",
+        ).format(fk=sql.Identifier(_HUB_CTE, col), hf=hf)
+        for col in cols
+    ]
+    unioned = sql.SQL(" UNION ").join(branches)
+    return sql.SQL("({u}) {csub}").format(u=unioned, csub=csub)
+
+
+def _hub_leg_lateral_pick_join(
+    leg: HubLegRuntime,
+    leg_cte_alias: str,
+    pick_alias: str,
+) -> sql.Composable:
+    """Pick the best-scoring leg row per hub row (OR across hub FKs; avoids join fan-out)."""
+
+    t = sql.Identifier("t")
+    lr = sql.Identifier(leg_cte_alias)
+    pick = sql.Identifier(pick_alias)
+    t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
+    t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
+    or_parts = [
+        sql.SQL("{} = {}").format(
+            sql.Identifier(_HUB_CTE, col),
+            t_eid,
+        )
+        for col in leg.hub_fk_columns
+    ]
+    cond = sql.SQL(" OR ").join(or_parts)
+
+    return sql.SQL(
+        "LEFT JOIN LATERAL ( "
+        "SELECT {te} AS {eid}, {ts} AS {sc} "
+        "FROM {lr} {t} WHERE ({cond}) "
+        "ORDER BY {ts} DESC NULLS LAST LIMIT 1 "
+        ") {pick} ON TRUE",
+    ).format(
+        te=t_eid,
+        eid=sql.Identifier(_LEG_EID),
+        ts=t_s,
+        sc=sql.Identifier(_LEG_SCORE),
+        lr=lr,
+        t=t,
+        cond=cond,
+        pick=pick,
+    )
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class HubLegRuntime:
     """Resolved leg: :class:`SearchSpec` plus Postgres index/heap wiring."""
@@ -88,7 +163,7 @@ class HubLegRuntime:
     search: SearchSpec[Any]
     index_qname: PostgresQualifiedName
     index_heap_qname: PostgresQualifiedName
-    hub_fk_column: str
+    hub_fk_columns: tuple[str, ...] = attrs.field(converter=normalize_hub_fk_columns)
     heap_pk_column: str
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
     engine: Literal["pgroonga", "fts", "vector"] = "pgroonga"
@@ -159,7 +234,10 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
                 ),
                 [],
             )
-        mq = pgroonga_disjunctive_match_text(queries)
+        mq = pgroonga_phrase_match_text(
+            queries,
+            combine=effective_phrase_combine(options),
+        )
         sw, sp = await pgroonga_match_clause(
             search=leg.search,
             index_field_map=leg.index_field_map,
@@ -212,8 +290,13 @@ class FtsHubLegEngine(HubSearchLegEngine):
             tsw_where, tsp_w = fts_tsquery_expr(queries[0], options=options)
             tsw_rank, tsp_r = fts_tsquery_expr(queries[0], options=options)
         else:
-            tsw_where, tsp_w = fts_tsquery_expr_disjunction(queries, options=options)
-            tsw_rank, tsp_r = fts_tsquery_expr_disjunction(queries, options=options)
+            fn = (
+                fts_tsquery_expr_disjunction
+                if effective_phrase_combine(options) == "any"
+                else fts_tsquery_expr_conjunction
+            )
+            tsw_where, tsp_w = fn(queries, options=options)
+            tsw_rank, tsp_r = fn(queries, options=options)
         sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)
         gw = fts_effective_group_weights(leg.search, groups, options)
         fts_weights = fts_rank_cd_weight_array(gw)
@@ -244,7 +327,8 @@ class VectorHubLegEngine(HubSearchLegEngine):
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        _ = introspector, options
+        _ = introspector
+        combine = effective_phrase_combine(options)
         if leg.engine != "vector" or leg.vector_column is None:
             raise CoreError("VectorHubLegEngine requires a vector hub leg.")
         if not queries:
@@ -282,6 +366,7 @@ class VectorHubLegEngine(HubSearchLegEngine):
                 kind=leg.vector_distance,
                 score_name=score_column,
                 n_queries=len(vecs),
+                phrase_combine=combine,
             )
             sp = [vector_param_literal(v) for v in vecs]
         return sw, rank, sp
@@ -371,7 +456,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
-    ) -> tuple[list[M], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[M]: ...
 
     @overload
     async def search(
@@ -384,7 +470,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
-    ) -> tuple[list[T], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
 
     @overload
     async def search(
@@ -397,7 +484,50 @@ class PostgresHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[M]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[T]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+        return_count: Literal[True] = ...,
+    ) -> Page[JsonDict]: ...
 
     async def search(
         self,
@@ -409,7 +539,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
+        return_count: bool = False,
+    ) -> (
+        CountlessPage[M]
+        | CountlessPage[T]
+        | CountlessPage[JsonDict]
+        | Page[M]
+        | Page[T]
+        | Page[JsonDict]
+    ):
         terms = normalize_search_queries(query)
 
         leg_options, member_weights_list = prepare_hub_search_options(
@@ -463,15 +601,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             )
             params.extend(sp)
 
-            cand_sub = sql.SQL(
-                """
-                ( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL ) {csub}
-                """
-            ).format(
-                fk=sql.Identifier(_HUB_CTE, leg.hub_fk_column),
-                hf=sql.Identifier(_HUB_CTE),
-                csub=sql.Identifier(f"csub{i}"),
-            )
+            cand_sub = _hub_leg_candidate_subquery(leg, f"csub{i}")
 
             join_on = sql.SQL("{} = {}").format(
                 sql.Identifier(t_alias, leg.heap_pk_column),
@@ -539,7 +669,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             score_terms = [
                 sql.SQL("({}) * {}").format(
                     sql.SQL("COALESCE({}.{}, 0)").format(
-                        sql.Identifier(leg_aliases[i]),
+                        sql.Identifier(f"lp{i}"),
                         sql.Identifier(_LEG_SCORE),
                     ),
                     sql.Literal(float(w)),
@@ -559,11 +689,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
             for i, leg, _ in active:
                 join_parts.append(
-                    sql.SQL("LEFT JOIN {} ON {} = {}").format(
-                        sql.Identifier(leg_aliases[i]),
-                        sql.Identifier(_HUB_CTE, leg.hub_fk_column),
-                        sql.Identifier(leg_aliases[i], _LEG_EID),
-                    )
+                    _hub_leg_lateral_pick_join(leg, leg_aliases[i], f"lp{i}"),
                 )
 
             leg_joins = sql.SQL(" ").join(join_parts)
@@ -574,7 +700,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
             else:
                 leg_null_checks = [
                     sql.SQL("{} IS NOT NULL").format(
-                        sql.Identifier(leg_aliases[i], _LEG_EID),
+                        sql.SQL("{}.{}").format(
+                            sql.Identifier(f"lp{i}"),
+                            sql.Identifier(_LEG_EID),
+                        ),
                     )
                     for i, _, _ in active
                 ]
@@ -634,10 +763,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
             ca=sql.Identifier(_COMBO_ALIAS),
         )
 
-        total = int(await self.client.fetch_value(count_stmt, params, default=0))
-
-        if total == 0:
-            return [], total
+        total = 0
+        if return_count:
+            total = int(await self.client.fetch_value(count_stmt, params, default=0))
+            if total == 0:
+                return page_from_limit_offset(
+                    [],
+                    pagination or {},
+                    total=0,
+                )
 
         cols = self.return_clause(
             return_type,
@@ -674,12 +808,79 @@ class PostgresHubSearchAdapter[M: BaseModel](
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
 
         if return_type is not None:
-            return pydantic_validate_many(return_type, rows), total
+            v = pydantic_validate_many(return_type, rows)
+            if return_count:
+                return page_from_limit_offset(v, pagination, total=total)
+            return page_from_limit_offset(v, pagination, total=None)
 
         if return_fields is not None:
-            return [{k: r.get(k, None) for k in return_fields} for r in rows], total
+            raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
+            if return_count:
+                return page_from_limit_offset(raw, pagination, total=total)
+            return page_from_limit_offset(raw, pagination, total=None)
 
-        return pydantic_validate_many(self.model_type, rows), total
+        m = pydantic_validate_many(self.model_type, rows)
+        if return_count:
+            return page_from_limit_offset(m, pagination, total=total)
+        return page_from_limit_offset(m, pagination, total=None)
+
+    # ....................... #
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+    ) -> CursorPage[M]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+    ) -> CursorPage[T]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
+        del query, filters, cursor, sorts, options, return_type, return_fields
+        raise NotImplementedError(
+            "PostgresHubSearchAdapter.search_with_cursor is not implemented yet; "
+            "see forze.application.contracts.search.ports module doc.",
+        )
 
 
 # Backward-compatible alias (PGroonga-only name before engine pluggability).

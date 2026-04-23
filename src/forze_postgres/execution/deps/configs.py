@@ -16,6 +16,7 @@ from forze.base.errors import CoreError
 
 from ...adapters import FtsGroupLetter
 from ...kernel.gateways import PostgresBookkeepingStrategy
+from ...kernel.hub_fk_columns import normalize_hub_fk_columns
 
 # ----------------------- #
 
@@ -117,8 +118,8 @@ class PostgresSearchConfig(_BasePostgresConfig):
 class PostgresHubSearchMemberConfig(PostgresSearchConfig):
     """Configuration for a Postgres hub search member."""
 
-    hub_fk: str
-    """Hub foreign key column."""
+    hub_fk: str | Sequence[str]
+    """Hub foreign key column(s); multiple columns OR-link the hub row to the same heap."""
 
     heap_pk: NotRequired[str]
     """Heap primary key column (default ``id``)."""
@@ -229,7 +230,7 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
     if len(legs) < 2:
         raise CoreError("Hub search requires at least two leg configurations.")
 
-    fk_seen: list[str] = []
+    fk_seen: set[str] = set()
 
     for i, leg in enumerate(legs):
         if "index" not in leg or ("heap" not in leg and "read" not in leg):
@@ -240,12 +241,13 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
         if "hub_fk" not in leg:
             raise CoreError(f"Hub search leg {i} must include 'hub_fk'.")
 
-        fk = leg["hub_fk"]
-
-        if fk in fk_seen:
-            raise CoreError("hub_fk_column must be unique for each leg.")
-
-        fk_seen.append(fk)
+        for col in normalize_hub_fk_columns(leg["hub_fk"]):
+            if col in fk_seen:
+                raise CoreError(
+                    "Each hub_fk column may belong to at most one leg "
+                    "(duplicate column across legs).",
+                )
+            fk_seen.add(col)
 
         eng = leg.get("engine", "pgroonga")
 

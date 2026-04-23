@@ -2,7 +2,12 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.execution import UsecasesFacade, facade_op
-from forze.application.usecases.search import RawSearch, TypedSearch
+from forze.application.usecases.search import (
+    RawCursorSearch,
+    RawSearch,
+    TypedCursorSearch,
+    TypedSearch,
+)
 
 from .operations import SearchOperation
 
@@ -29,3 +34,15 @@ class SearchUsecasesFacade[M: BaseModel](UsecasesFacade):
 
     search = facade_op(SearchOperation.TYPED_SEARCH, uc=TypedSearch[M])
     """Typed search usecase."""
+
+    search_cursor = facade_op(
+        SearchOperation.TYPED_SEARCH_CURSOR,
+        uc=TypedCursorSearch[M],
+    )
+    """Typed search with cursor (keyset) pagination."""
+
+    raw_search_cursor = facade_op(
+        SearchOperation.RAW_SEARCH_CURSOR,
+        uc=RawCursorSearch,
+    )
+    """Raw search with cursor (keyset) pagination."""

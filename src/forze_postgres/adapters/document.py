@@ -19,7 +19,14 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.query import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -356,7 +363,8 @@ class PostgresDocumentAdapter(
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
 
     @overload
     async def find_many(
@@ -366,7 +374,30 @@ class PostgresDocumentAdapter(
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
-    ) -> tuple[list[R], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[R]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+        return_count: Literal[True],
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[R]: ...
 
     async def find_many(
         self,
@@ -375,35 +406,40 @@ class PostgresDocumentAdapter(
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[list[R] | list[JsonDict], int]:
+        return_count: bool = False,
+    ) -> Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]:
         pagination = pagination or {}
         limit = pagination.get("limit")
         offset = pagination.get("offset")
 
         logger.debug(
-            "Finding '%s' documents (filter by %s, limit=%s, offset=%s, sorts=%s)",
+            "Finding '%s' documents (filter by %s, limit=%s, offset=%s, sorts=%s, return_count=%s)",
             self.spec.name,
             list(filters.keys()) if filters else "N/A",  # type: ignore[attr-defined]
             limit if limit is not None else "N/A",
             offset if offset is not None else "N/A",
             sorts if sorts is not None else "N/A",
+            return_count,
         )
 
-        cnt = await self.read_gw.count(filters)
-
-        if not cnt:
+        cnt = 0
+        if return_count:
+            cnt = await self.read_gw.count(filters)
+            if not cnt:
+                logger.debug(
+                    "No '%s' documents matching filters",
+                    self.spec.name,
+                )
+                return page_from_limit_offset(
+                    [],
+                    pagination,
+                    total=0,
+                )
             logger.debug(
-                "No '%s' documents matching filters",
+                "Found %s '%s' documents matching filters",
+                cnt,
                 self.spec.name,
             )
-            return [], 0
-
-        logger.debug(
-            "Found %s '%s' documents matching filters",
-            cnt,
-            self.spec.name,
-        )
-
         res = await self.read_gw.find_many(  # type: ignore[misc]
             filters=filters,
             limit=limit,
@@ -411,8 +447,50 @@ class PostgresDocumentAdapter(
             sorts=sorts,
             return_fields=return_fields,  # type: ignore[arg-type]
         )
+        if return_count:
+            return page_from_limit_offset(  # type: ignore[return-value]
+                list(res),
+                pagination,
+                total=cnt,
+            )
+        return page_from_limit_offset(list(res), pagination, total=None)  # type: ignore[return-value]
 
-        return res, cnt
+    # ....................... #
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+    ) -> CursorPage[R]: ...
+
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_fields: Sequence[str] | None = None,
+    ) -> CursorPage[R] | CursorPage[JsonDict]:
+        del filters, cursor, sorts, return_fields
+        raise NotImplementedError(
+            "PostgresDocumentAdapter.find_many_with_cursor is not implemented yet; "
+            "requires DocumentSpec or gateway support for a stable keyset order and "
+            "encoded cursor (see forze.application.contracts.document.ports module doc).",
+        )
 
     # ....................... #
 

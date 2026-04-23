@@ -37,3 +37,9 @@ class DocumentOperation(StrEnum):
 
     RAW_LIST = "document.raw_list"
     """List documents with raw results."""
+
+    LIST_CURSOR = "document.list_cursor"
+    """List documents with cursor-based pagination."""
+
+    RAW_LIST_CURSOR = "document.raw_list_cursor"
+    """List documents with cursor-based pagination and raw results."""

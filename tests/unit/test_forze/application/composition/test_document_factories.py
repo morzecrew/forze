@@ -95,6 +95,8 @@ class TestBuildDocumentRegistry:
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
         assert reg.exists(DocumentOperation.GET)
+        assert reg.exists(DocumentOperation.LIST_CURSOR)
+        assert reg.exists(DocumentOperation.RAW_LIST_CURSOR)
 
     def test_registers_create_and_kill(self) -> None:
         spec = _write_spec()

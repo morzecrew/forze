@@ -108,42 +108,63 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
 
     assert isinstance(adapter, PostgresFTSSearchAdapterV2)
 
-    res, total = await adapter.search("postgres OR search")
+    __p = await adapter.search("postgres OR search", return_count=True)
+    res = __p.hits
+    total = __p.count
     assert total == 1
     assert len(res) == 1
     assert res[0].title == "PostgreSQL FTS"
 
-    page, n_total = await adapter.search(
+    __p = await adapter.search(
         "text",
         pagination={"limit": 1, "offset": 0},
         sorts={"title": "asc"},
-        options={"weights": {"title": 0.6, "content": 0.4}},
-    )
+        options={"weights": {"title": 0.6, "content": 0.4}}, return_count=True)
+    page = __p.hits
+    n_total = __p.count
     assert n_total >= 1
     assert len(page) == 1
 
-    titles, t2 = await adapter.search("text", return_fields=["title"])
+    __p = await adapter.search("text", return_fields=["title"], return_count=True)
+    titles = __p.hits
+    t2 = __p.count
     assert t2 >= 1
     assert set(titles[0].keys()) == {"title"}
 
-    no_hits, n_zero = await adapter.search("zzzabsenttoken")
+    __p = await adapter.search("zzzabsenttoken", return_count=True)
+    no_hits = __p.hits
+    n_zero = __p.count
     assert n_zero == 0
     assert no_hits == []
 
     class TitleSlice(BaseModel):
         title: str
 
-    slim, n_slim = await adapter.search("postgres OR search", return_type=TitleSlice)
+    __p = await adapter.search("postgres OR search", return_type=TitleSlice, return_count=True)
+    slim = __p.hits
+    n_slim = __p.count
     assert n_slim == 1
     assert slim[0].title == "PostgreSQL FTS"
 
-    multi, n_multi = await adapter.search(["search", "recipe"])
+    __p = await adapter.search(["search", "recipe"], return_count=True)
+    multi = __p.hits
+    n_multi = __p.count
     assert n_multi == 2
     assert {r.title for r in multi} == {"PostgreSQL FTS", "Cooking"}
 
-    str_or, n_str = await adapter.search("search OR recipe")
+    __p = await adapter.search("search OR recipe", return_count=True)
+    str_or = __p.hits
+    n_str = __p.count
     assert n_str == n_multi
     assert {r.title for r in str_or} == {r.title for r in multi}
+
+    __p = await adapter.search(
+        ["search", "full"],
+        options={"phrase_combine": "all"}, return_count=True)
+    and_hits = __p.hits
+    n_and = __p.count
+    assert n_and == 1
+    assert and_hits[0].title == "PostgreSQL FTS"
 
 
 @pytest.mark.asyncio
@@ -190,7 +211,9 @@ async def test_fts_search_with_filters_and_empty_query(
     adapter = ctx.search_query(spec)
 
     flt: QueryFilterExpression = {"$fields": {"title": "keep"}}
-    rows, cnt = await adapter.search("", filters=flt)
+    __p = await adapter.search("", filters=flt, return_count=True)
+    rows = __p.hits
+    cnt = __p.count
     assert cnt == 1
     assert rows[0].title == "keep"
 
@@ -260,7 +283,9 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
 
     assert isinstance(adapter, PostgresFTSSearchAdapterV2)
 
-    res, total = await adapter.search("fts")
+    __p = await adapter.search("fts", return_count=True)
+    res = __p.hits
+    total = __p.count
     assert total == 1
     assert len(res) == 1
     assert res[0].title == "view fts"
@@ -315,6 +340,8 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
         tenant_aware=False,
     )
 
-    rows, n = await adapter.search("hello")
+    __p = await adapter.search("hello", return_count=True)
+    rows = __p.hits
+    n = __p.count
     assert n == 1
     assert rows[0].title == "hello fts"

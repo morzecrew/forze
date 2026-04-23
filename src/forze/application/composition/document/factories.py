@@ -3,7 +3,12 @@
 from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.dto import ListRequestDTO, RawListRequestDTO
+from forze.application.dto import (
+    CursorListRequestDTO,
+    ListRequestDTO,
+    RawCursorListRequestDTO,
+    RawListRequestDTO,
+)
 from forze.application.execution import UsecaseRegistry
 from forze.application.usecases.document import (
     CreateDocument,
@@ -11,8 +16,10 @@ from forze.application.usecases.document import (
     GetDocument,
     GetDocumentByNumberId,
     KillDocument,
+    RawCursorListDocuments,
     RawListDocuments,
     RestoreDocument,
+    TypedCursorListDocuments,
     TypedListDocuments,
     UpdateDocument,
 )
@@ -125,6 +132,38 @@ def build_document_raw_list_mapper(
 # ....................... #
 
 
+def build_document_list_cursor_mapper(
+    *,
+    steps: tuple[DTOMapperStep[Any], ...] = (),
+) -> DTOMapper[Any, Any]:
+    """Build a DTO mapper for cursor list requests."""
+
+    mapper = DTOMapper(
+        in_=CursorListRequestDTO,
+        out=CursorListRequestDTO,
+    )
+    return mapper.with_steps(*steps)
+
+
+# ....................... #
+
+
+def build_document_raw_list_cursor_mapper(
+    *,
+    steps: tuple[DTOMapperStep[Any], ...] = (),
+) -> DTOMapper[Any, Any]:
+    """Build a DTO mapper for raw cursor list requests."""
+
+    mapper = DTOMapper(
+        in_=RawCursorListRequestDTO,
+        out=RawCursorListRequestDTO,
+    )
+    return mapper.with_steps(*steps)
+
+
+# ....................... #
+
+
 def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
@@ -133,6 +172,8 @@ def build_document_registry(
     update_steps: tuple[DTOMapperStep[Any], ...] = (),
     list_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_list_steps: tuple[DTOMapperStep[Any], ...] = (),
+    list_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
+    raw_list_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
     """Build a usecase registry for the given document spec.
 
@@ -142,11 +183,17 @@ def build_document_registry(
     :param update_steps: Optional mapping steps to append to the update mapper.
     :param list_steps: Optional mapping steps to append to the list mapper.
     :param raw_list_steps: Optional mapping steps to append to the raw list mapper.
+    :param list_cursor_steps: Optional mapping steps for cursor list requests.
+    :param raw_list_cursor_steps: Optional mapping steps for raw cursor list requests.
     :returns: Usecase registry with all supported operations.
     """
 
     list_mapper = build_document_list_mapper(steps=list_steps)
     raw_list_mapper = build_document_raw_list_mapper(steps=raw_list_steps)
+    list_cursor_mapper = build_document_list_cursor_mapper(steps=list_cursor_steps)
+    raw_list_cursor_mapper = build_document_raw_list_cursor_mapper(
+        steps=raw_list_cursor_steps,
+    )
 
     reg = UsecaseRegistry(
         {
@@ -163,6 +210,16 @@ def build_document_registry(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=raw_list_mapper,
+            ),
+            DocumentOperation.LIST_CURSOR: lambda ctx: TypedCursorListDocuments(
+                ctx=ctx,
+                doc=ctx.doc_query(spec),
+                mapper=list_cursor_mapper,
+            ),
+            DocumentOperation.RAW_LIST_CURSOR: lambda ctx: RawCursorListDocuments(
+                ctx=ctx,
+                doc=ctx.doc_query(spec),
+                mapper=raw_list_cursor_mapper,
             ),
         }
     )

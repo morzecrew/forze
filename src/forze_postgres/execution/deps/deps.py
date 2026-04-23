@@ -258,7 +258,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 search=m,
                 index_qname=PostgresQualifiedName(*c["index"]),
                 index_heap_qname=PostgresQualifiedName(*c.get("heap", c["read"])),
-                hub_fk_column=c["hub_fk"],
+                hub_fk_columns=c["hub_fk"],
                 heap_pk_column=c.get("heap_pk", ID_FIELD),
                 index_field_map=c.get("field_map"),
                 engine=engine,

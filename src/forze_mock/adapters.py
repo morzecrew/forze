@@ -8,6 +8,8 @@ search contracts observe the same data.
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import mimetypes
 import threading
 from contextlib import asynccontextmanager
@@ -28,6 +30,12 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.counter import CounterPort
 from forze.application.contracts.document import (
@@ -42,6 +50,7 @@ from forze.application.contracts.pubsub import (
     PubSubQueryPort,
 )
 from forze.application.contracts.query import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryExpr,
     QueryField,
@@ -56,9 +65,11 @@ from forze.application.contracts.queue import (
     QueueQueryPort,
 )
 from forze.application.contracts.search import (
+    PhraseCombine,
     SearchOptions,
     SearchQueryPort,
     SearchSpec,
+    effective_phrase_combine,
     normalize_search_queries,
 )
 from forze.application.contracts.storage import (
@@ -406,6 +417,67 @@ def _sort_docs(
     return out
 
 
+# ....................... #
+
+
+def _b64url_json_dumps(payload: dict[str, int]) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _b64url_json_loads_dict(token: str) -> dict[str, int]:
+    pad = "=" * (-len(token) % 4)
+    raw = base64.urlsafe_b64decode(token + pad)
+    data_any: Any = json.loads(raw.decode())
+    if not isinstance(data_any, dict) or "s" not in data_any:
+        raise ValueError
+    return {"s": int(cast(Any, data_any["s"]))}
+
+
+def _mock_cursor_start_and_limit(
+    cursor: CursorPaginationExpression | None,
+    *,
+    default_limit: int = 10,
+) -> tuple[int, int]:
+    c = dict(cursor or {})
+    if c.get("after") and c.get("before"):
+        raise CoreError("Cursor pagination: pass at most one of 'after' or 'before'")
+    lim_raw = c.get("limit")
+    lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
+    if lim < 1:
+        raise CoreError("Cursor pagination 'limit' must be positive")
+    start = 0
+    if c.get("after"):
+        try:
+            payload = _b64url_json_loads_dict(str(c["after"]))
+        except (ValueError, KeyError, json.JSONDecodeError) as e:
+            raise CoreError("Invalid cursor token") from e
+        start = int(payload["s"])
+    elif c.get("before"):
+        try:
+            payload = _b64url_json_loads_dict(str(c["before"]))
+        except (ValueError, KeyError, json.JSONDecodeError) as e:
+            raise CoreError("Invalid cursor token") from e
+        page_start = int(payload["s"])
+        start = max(0, page_start - lim)
+    return start, int(lim)
+
+
+def _mock_cursor_tokens(
+    start: int,
+    page_len: int,
+    *,
+    has_more: bool,
+) -> tuple[str | None, str | None]:
+    next_c: str | None = None
+    if has_more:
+        next_c = _b64url_json_dumps({"s": start + page_len})
+    prev_c: str | None = None
+    if start > 0:
+        prev_c = _b64url_json_dumps({"s": start})
+    return next_c, prev_c
+
+
 # ----------------------- #
 # Core adapters
 
@@ -574,16 +646,17 @@ class MockDocumentAdapter[
     ) -> R | JsonDict | None:
         del for_update
 
-        hits, _ = await self.find_many(  # type: ignore[call-overload]
+        page = await self.find_many(  # type: ignore[call-overload]
             filters=filters,
             pagination={"limit": 1},
             return_fields=return_fields,
+            return_count=False,
         )
 
-        if not hits:
+        if not page.hits:
             return None
 
-        return hits[0]
+        return page.hits[0]
 
     # ....................... #
 
@@ -595,7 +668,8 @@ class MockDocumentAdapter[
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
 
     @overload
     async def find_many(
@@ -605,7 +679,30 @@ class MockDocumentAdapter[
         sorts: QuerySortExpression | None = ...,
         *,
         return_fields: None = ...,
-    ) -> tuple[list[R], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[R]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+        return_count: Literal[True],
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[R]: ...
 
     async def find_many(
         self,
@@ -614,7 +711,8 @@ class MockDocumentAdapter[
         sorts: QuerySortExpression | None = None,
         *,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[list[R] | list[JsonDict], int]:
+        return_count: bool = False,
+    ) -> Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]:
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
 
@@ -634,7 +732,71 @@ class MockDocumentAdapter[
 
         out = [self._to_read_or_projection(doc, return_fields) for doc in ordered]
 
-        return out, total  # type: ignore[return-value]
+        if return_count:
+            return page_from_limit_offset(  # type: ignore[return-value]
+                out,
+                pagination,
+                total=total,
+            )
+        return page_from_limit_offset(out, pagination, total=None)  # type: ignore[return-value]
+
+    # ....................... #
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_fields: None = ...,
+    ) -> CursorPage[R]: ...
+
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_fields: Sequence[str] | None = None,
+    ) -> CursorPage[R] | CursorPage[JsonDict]:
+        with self.state.lock:
+            docs = [dict(doc) for doc in self._store().values()]
+
+        filtered = [doc for doc in docs if _match_filters(doc, filters)]
+        ordered = _sort_docs(filtered, sorts)
+        start, lim = _mock_cursor_start_and_limit(cursor)
+        window = ordered[start : start + lim + 1]
+        has_more = len(window) > lim
+        page_docs = window[:lim]
+        next_c, prev_c = _mock_cursor_tokens(start, len(page_docs), has_more=has_more)
+        if return_fields is not None:
+            out_raw = [
+                self._to_read_or_projection(doc, return_fields) for doc in page_docs
+            ]
+            return CursorPage(
+                hits=cast(list[JsonDict], out_raw),
+                next_cursor=next_c,
+                prev_cursor=prev_c,
+                has_more=has_more,
+            )
+        out_typed = [self._to_read_or_projection(doc, None) for doc in page_docs]
+        return CursorPage(
+            hits=cast(list[R], out_typed),
+            next_cursor=next_c,
+            prev_cursor=prev_c,
+            has_more=has_more,
+        )
 
     # ....................... #
 
@@ -1186,16 +1348,19 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
 
     # ....................... #
 
-    def _document_score_disjunctive(
+    def _document_score_multi_phrase(
         self,
         terms: tuple[str, ...],
         doc: JsonDict,
         fields: Sequence[str],
         weights: dict[str, float] | None,
+        *,
+        combine: PhraseCombine,
     ) -> float:
         if not terms:
             return self._document_score("", doc, fields, weights)
-        return max(self._document_score(q, doc, fields, weights) for q in terms)
+        scores = [self._document_score(q, doc, fields, weights) for q in terms]
+        return max(scores) if combine == "any" else min(scores)
 
     # ....................... #
 
@@ -1224,6 +1389,42 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
 
     # ....................... #
 
+    def _full_ordered_search_documents(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        options: SearchOptions | None,
+    ) -> list[JsonDict]:
+        options = _search_options_for_mock_simple(options)
+        fields, weights = self._resolve_fields(options)
+        terms = normalize_search_queries(query)
+        combine = effective_phrase_combine(options)
+
+        with self.state.lock:
+            docs = [dict(doc) for doc in self._store().values()]
+
+        ranked: list[tuple[float, JsonDict]] = []
+        for doc in docs:
+            if not _match_filters(doc, filters):
+                continue
+
+            score = self._document_score_multi_phrase(
+                terms, doc, fields, weights, combine=combine
+            )
+            if score <= 0.0:
+                continue
+            ranked.append((score, doc))
+
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        ordered = [d for _, d in ranked]
+
+        if sorts:
+            ordered = _sort_docs(ordered, sorts)
+        return ordered
+
+    # ....................... #
+
     @overload
     async def search(
         self,
@@ -1235,7 +1436,8 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
-    ) -> tuple[list[M], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[M]: ...
 
     @overload
     async def search(
@@ -1248,7 +1450,8 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         options: SearchOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
-    ) -> tuple[list[T], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
 
     @overload
     async def search(
@@ -1261,7 +1464,50 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[M]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[T]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+        return_count: Literal[True] = ...,
+    ) -> Page[JsonDict]: ...
 
     async def search(
         self,
@@ -1273,31 +1519,17 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         options: SearchOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[list[M] | list[T] | list[JsonDict], int]:
-        options = _search_options_for_mock_simple(options)
-        fields, weights = self._resolve_fields(options)
-        terms = normalize_search_queries(query)
-
-        with self.state.lock:
-            docs = [dict(doc) for doc in self._store().values()]
-
-        ranked: list[tuple[float, JsonDict]] = []
-        for doc in docs:
-            if not _match_filters(doc, filters):
-                continue
-
-            score = self._document_score_disjunctive(terms, doc, fields, weights)
-            if score <= 0.0:
-                continue
-            ranked.append((score, doc))
-
-        total = len(ranked)
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        ordered = [doc for _, doc in ranked]
-
-        if sorts:
-            ordered = _sort_docs(ordered, sorts)
-
+        return_count: bool = False,
+    ) -> (
+        CountlessPage[M]
+        | CountlessPage[T]
+        | CountlessPage[JsonDict]
+        | Page[M]
+        | Page[T]
+        | Page[JsonDict]
+    ):
+        ordered = self._full_ordered_search_documents(query, filters, sorts, options)
+        total = len(ordered)
         pagination = pagination or {}
         limit = pagination.get("limit")
         offset = pagination.get("offset")
@@ -1309,15 +1541,119 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
             ordered = ordered[:limit]
 
         if return_fields is not None:
-            return [_project(doc, return_fields) for doc in ordered], total
+            proj = [_project(doc, return_fields) for doc in ordered]
+            if return_count:
+                return page_from_limit_offset(  # type: ignore[return-value]
+                    proj, pagination, total=total
+                )
+            return page_from_limit_offset(proj, pagination, total=None)  # type: ignore[return-value]
 
         if return_type is not None:
-            return pydantic_validate_many(return_type, ordered), total
+            out = pydantic_validate_many(return_type, ordered)
+            if return_count:
+                return page_from_limit_offset(  # type: ignore[return-value]
+                    out, pagination, total=total
+                )
+            return page_from_limit_offset(out, pagination, total=None)  # type: ignore[return-value]
 
         allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
+        out = pydantic_validate_many(self.spec.model_type, typed_docs)  # type: ignore[arg-type]
+        if return_count:
+            return page_from_limit_offset(  # type: ignore[return-value]
+                out, pagination, total=total
+            )
+        return page_from_limit_offset(out, pagination, total=None)  # type: ignore[return-value]
 
-        return pydantic_validate_many(self.spec.model_type, typed_docs), total
+    # ....................... #
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+    ) -> CursorPage[M]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+    ) -> CursorPage[T]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
+        ordered = self._full_ordered_search_documents(query, filters, sorts, options)
+        start, lim = _mock_cursor_start_and_limit(cursor)
+        window = ordered[start : start + lim + 1]
+        has_more = len(window) > lim
+        page = window[:lim]
+        next_c, prev_c = _mock_cursor_tokens(start, len(page), has_more=has_more)
+
+        if return_fields is not None:
+            hits_JD = [_project(doc, return_fields) for doc in page]
+
+            return CursorPage(
+                hits=hits_JD,
+                next_cursor=next_c,
+                prev_cursor=prev_c,
+                has_more=has_more,
+            )
+
+        if return_type is not None:
+            hits_T = pydantic_validate_many(return_type, page)
+
+            return CursorPage(  # type: ignore[return-value]
+                hits=hits_T,
+                next_cursor=next_c,
+                prev_cursor=prev_c,
+                has_more=has_more,
+            )
+
+        allowed = set(self.spec.model_type.model_fields.keys())
+        typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
+        hits = pydantic_validate_many(self.spec.model_type, typed_docs)
+
+        return CursorPage(  # type: ignore[return-value]
+            hits=hits,
+            next_cursor=next_c,
+            prev_cursor=prev_c,
+            has_more=has_more,
+        )
 
 
 # ----------------------- #

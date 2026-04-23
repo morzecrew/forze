@@ -100,29 +100,53 @@ async def test_document_filter_sort_projection_and_search() -> None:
     )
 
     # Filter by scalar shortcut and sort descending by title.
-    rows, count = await doc.find_many(
+    page = await doc.find_many(
         filters={"$fields": {"category": "books"}},
         sorts={"title": "desc"},
         return_fields=["title", "category"],
+        return_count=True,
     )
-    assert count == 2
-    assert [row["title"] for row in rows] == ["TypeScript Guide", "Rust Book"]
+    assert page.count == 2
+    assert [row["title"] for row in page.hits] == ["TypeScript Guide", "Rust Book"]
 
     # $in shortcut over list fields.
-    rows, count = await doc.find_many(
+    page = await doc.find_many(
         filters={"$fields": {"tags": {"$in": ["rust"]}}},
+        return_count=True,
     )
-    assert count == 1
-    assert rows[0].title == "Rust Book"
+    assert page.count == 1
+    assert page.hits[0].title == "Rust Book"
 
     # Search sees the same namespace as document adapter.
-    hits, total = await search.search("rust")
-    assert total == 1
-    assert hits[0].title == "Rust Book"
+    s_page = await search.search("rust", return_count=True)
+    assert s_page.count == 1
+    assert s_page.hits[0].title == "Rust Book"
 
-    raw_hits, raw_total = await search.search("rust", return_fields=["title"])
-    assert raw_total == 1
-    assert raw_hits == [{"title": "Rust Book"}]
+    any_p = await search.search(
+        ["rust", "typescript"],
+        return_count=True,
+    )
+    assert any_p.count == 2
+    all_p = await search.search(
+        ["rust", "typescript"],
+        options={"phrase_combine": "all"},
+        return_count=True,
+    )
+    assert all_p.count == 0
+
+    both_p = await search.search(
+        ["rust", "book"],
+        options={"phrase_combine": "all"},
+        return_count=True,
+    )
+    assert both_p.count == 1
+    assert both_p.hits[0].title == "Rust Book"
+
+    raw_page = await search.search(
+        "rust", return_fields=["title"], return_count=True
+    )
+    assert raw_page.count == 1
+    assert raw_page.hits == [{"title": "Rust Book"}]
 
     # Soft delete + restore.
     deleted = await doc.delete(created.id, created.rev)

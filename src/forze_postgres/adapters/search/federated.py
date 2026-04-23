@@ -6,12 +6,19 @@ import asyncio
 import json
 from collections.abc import Sequence
 from functools import partial
-from typing import Any, Final, TypeVar, final, overload
+from typing import Any, Final, Literal, TypeVar, final, overload
 
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import (
+    CountlessPage,
+    CursorPage,
+    Page,
+    page_from_limit_offset,
+)
 from forze.application.contracts.query import (
+    CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -153,7 +160,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
-    ) -> tuple[list[FederatedSearchReadModel[M]], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[FederatedSearchReadModel[M]]: ...
 
     @overload
     async def search(
@@ -166,7 +174,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
-    ) -> tuple[list[T], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
 
     @overload
     async def search(
@@ -179,7 +188,50 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
-    ) -> tuple[list[JsonDict], int]: ...
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[FederatedSearchReadModel[M]]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[T]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+        return_count: Literal[True] = ...,
+    ) -> Page[JsonDict]: ...
 
     async def search(
         self,
@@ -191,10 +243,15 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> tuple[
-        list[FederatedSearchReadModel[M]] | list[T] | list[JsonDict],
-        int,
-    ]:
+        return_count: bool = False,
+    ) -> (
+        CountlessPage[FederatedSearchReadModel[M]]
+        | CountlessPage[T]
+        | CountlessPage[JsonDict]
+        | Page[FederatedSearchReadModel[M]]
+        | Page[T]
+        | Page[JsonDict]
+    ):
         if return_fields is not None:
             raise CoreError(
                 "Fields selection with `return_fields` is not supported for federated search. "
@@ -213,7 +270,13 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         ]
 
         if not active:
-            return [], 0
+            if return_count:
+                return page_from_limit_offset(
+                    [],
+                    pagination or {},
+                    total=0,
+                )
+            return page_from_limit_offset([], pagination or {}, total=None)
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
@@ -223,14 +286,15 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             port: SearchQueryPort[M],
             weight: float,
         ) -> tuple[str, list[M], float]:
-            hits, _t = await port.search(
+            page = await port.search(
                 query,
                 filters,
                 leg_page,
                 None,
                 options=leg_opts,
+                return_count=False,
             )
-            return name, hits, weight
+            return name, page.hits, weight
 
         leg_results = await asyncio.gather(
             *(_run_leg(n, p, w) for n, p, w in active),
@@ -264,8 +328,73 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 }
                 for it in window
             ]
-            return pydantic_validate_many(return_type, rows), total
+            v = pydantic_validate_many(return_type, rows)
+            if return_count:
+                return page_from_limit_offset(v, pagination, total=total)
+            return page_from_limit_offset(v, pagination, total=None)
 
         out = [it[0] for it in window]
 
-        return out, total
+        if return_count:
+            return page_from_limit_offset(out, pagination, total=total)
+        return page_from_limit_offset(out, pagination, total=None)
+
+    # ....................... #
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+    ) -> CursorPage[FederatedSearchReadModel[M]]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+    ) -> CursorPage[T]: ...
+
+    @overload
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> (
+        CursorPage[FederatedSearchReadModel[M]] | CursorPage[T] | CursorPage[JsonDict]
+    ):
+        del query, filters, cursor, sorts, options, return_type, return_fields
+        raise NotImplementedError(
+            "PostgresFederatedSearchAdapter.search_with_cursor is not implemented yet; "
+            "see forze.application.contracts.search.ports module doc.",
+        )

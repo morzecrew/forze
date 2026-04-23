@@ -77,11 +77,14 @@ async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
     await cmd.create(RowCreate(title="a", meta=Meta(score=10)))
     await cmd.create(RowCreate(title="b", meta=Meta(score=20)))
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 3
     assert [r.meta.score for r in rows] == [10, 20, 30]
 
@@ -96,10 +99,13 @@ async def test_filter_nested_numeric_operator(mongo_client: MongoClient) -> None
     await cmd.create(RowCreate(title="in", meta=Meta(score=3, tag="x")))
     await cmd.create(RowCreate(title="out", meta=Meta(score=300, tag="y")))
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         {"$fields": {"meta.score": {"$lt": 10}}},
         pagination={"limit": 10, "offset": 0},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 1
     assert rows[0].title == "in"
 
@@ -132,11 +138,14 @@ async def test_and_or_combinators_with_nested_paths(
             {"$fields": {"meta.tag": {"$eq": "t2"}}},
         ]
     }
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         or_filt,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 2
     assert {r.title for r in rows} == {"beta", "gamma"}
 
@@ -153,11 +162,14 @@ async def test_multi_field_sort_including_nested(mongo_client: MongoClient) -> N
     await cmd.create(RowCreate(title="a", meta=Meta(score=10)))
     await cmd.create(RowCreate(title="z", meta=Meta(score=5)))
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "desc", "title": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 3
     # score 10: title asc → a, b; then score 5: z
     assert [r.title for r in rows] == ["a", "b", "z"]

@@ -108,11 +108,14 @@ async def test_sort_by_nested_jsonb_field(pg_client: PostgresClient) -> None:
         RowCreate(title="b", meta=Meta(score=20, tag="high")),
     )
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 3
     assert [r.meta.score for r in rows] == [10, 20, 30]
 
@@ -140,10 +143,13 @@ async def test_filter_on_nested_jsonb_scalar(pg_client: PostgresClient) -> None:
     await cmd.create(RowCreate(title="keep", meta=Meta(score=5, tag="x")))
     await cmd.create(RowCreate(title="drop", meta=Meta(score=50, tag="y")))
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         {"$fields": {"meta.score": {"$lte": 10}}},
         pagination={"limit": 10, "offset": 0},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 1
     assert rows[0].title == "keep"
     assert rows[0].meta.score == 5
@@ -217,11 +223,14 @@ async def test_logical_or_nested_and_top_level(pg_client: PostgresClient) -> Non
             {"$fields": {"title": {"$eq": "low"}}},
         ]
     }
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         filt,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 2
     assert {r.title for r in rows} == {"low", "high"}
 
@@ -249,10 +258,13 @@ async def test_filter_on_nested_string_leaf(pg_client: PostgresClient) -> None:
     await cmd.create(RowCreate(title="x", meta=Meta(score=1, tag="gold")))
     await cmd.create(RowCreate(title="y", meta=Meta(score=2, tag="silver")))
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         {"$fields": {"meta.tag": "gold"}},
         pagination={"limit": 10, "offset": 0},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 1 and rows[0].title == "x"
 
 
@@ -280,10 +292,13 @@ async def test_multi_field_sort_nested_then_scalar(pg_client: PostgresClient) ->
     await cmd.create(RowCreate(title="a", meta=Meta(score=10, tag="q")))
     await cmd.create(RowCreate(title="z", meta=Meta(score=5, tag="r")))
 
-    rows, total = await query.find_many(
+    __p = await query.find_many(
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "desc", "title": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 3
     assert [r.title for r in rows] == ["a", "b", "z"]

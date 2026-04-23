@@ -9,8 +9,10 @@ from pydantic import BaseModel
 from forze.application.composition.search import SearchOperation
 from forze.application.composition.search.factories import (
     build_hub_search_registry,
+    build_search_raw_cursor_mapper,
     build_search_raw_mapper,
     build_search_registry,
+    build_search_typed_cursor_mapper,
     build_search_typed_mapper,
 )
 from forze.application.contracts.search import (
@@ -19,9 +21,19 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
     SearchSpec,
 )
-from forze.application.dto import RawSearchRequestDTO, SearchRequestDTO
+from forze.application.dto import (
+    CursorSearchRequestDTO,
+    RawCursorSearchRequestDTO,
+    RawSearchRequestDTO,
+    SearchRequestDTO,
+)
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.usecases.search.query import RawSearch, TypedSearch
+from forze.application.usecases.search.query import (
+    RawCursorSearch,
+    RawSearch,
+    TypedCursorSearch,
+    TypedSearch,
+)
 
 
 class _Hit(BaseModel):
@@ -79,6 +91,16 @@ class TestSearchMapperFactories:
         assert m.in_ is RawSearchRequestDTO
         assert m.out is RawSearchRequestDTO
 
+    def test_typed_cursor_mapper_round_trip_types(self) -> None:
+        m = build_search_typed_cursor_mapper()
+        assert m.in_ is CursorSearchRequestDTO
+        assert m.out is CursorSearchRequestDTO
+
+    def test_raw_cursor_mapper_round_trip_types(self) -> None:
+        m = build_search_raw_cursor_mapper()
+        assert m.in_ is RawCursorSearchRequestDTO
+        assert m.out is RawCursorSearchRequestDTO
+
 
 class TestSearchRegistryFactories:
     def test_build_search_registry_registers_operations(self) -> None:
@@ -86,6 +108,8 @@ class TestSearchRegistryFactories:
         reg = build_search_registry(spec)
         assert reg.exists(SearchOperation.TYPED_SEARCH)
         assert reg.exists(SearchOperation.RAW_SEARCH)
+        assert reg.exists(SearchOperation.TYPED_SEARCH_CURSOR)
+        assert reg.exists(SearchOperation.RAW_SEARCH_CURSOR)
 
     def test_factory_builds_typed_search(self) -> None:
         spec = _search_spec()
@@ -101,11 +125,29 @@ class TestSearchRegistryFactories:
         uc = reg.defaults[str(SearchOperation.RAW_SEARCH)](ctx)
         assert isinstance(uc, RawSearch)
 
+    def test_factory_builds_typed_cursor_search(self) -> None:
+        spec = _search_spec()
+        reg = build_search_registry(spec)
+        ctx = _ctx_for_search(spec)
+        uc = reg.defaults[str(SearchOperation.TYPED_SEARCH_CURSOR)](ctx)
+        assert isinstance(uc, TypedCursorSearch)
+
+    def test_factory_builds_raw_cursor_search(self) -> None:
+        spec = _search_spec()
+        reg = build_search_registry(spec)
+        ctx = _ctx_for_search(spec)
+        uc = reg.defaults[str(SearchOperation.RAW_SEARCH_CURSOR)](ctx)
+        assert isinstance(uc, RawCursorSearch)
+
     def test_hub_registry_factories_use_hub_search_query(self) -> None:
         spec = _hub_spec()
         reg = build_hub_search_registry(spec)
         ctx = _ctx_for_hub(spec)
         typed = reg.defaults[str(SearchOperation.TYPED_SEARCH)](ctx)
         raw = reg.defaults[str(SearchOperation.RAW_SEARCH)](ctx)
+        tcur = reg.defaults[str(SearchOperation.TYPED_SEARCH_CURSOR)](ctx)
+        rcur = reg.defaults[str(SearchOperation.RAW_SEARCH_CURSOR)](ctx)
         assert isinstance(typed, TypedSearch)
         assert isinstance(raw, RawSearch)
+        assert isinstance(tcur, TypedCursorSearch)
+        assert isinstance(rcur, RawCursorSearch)

@@ -99,11 +99,14 @@ async def test_find_find_many_count_and_projections(
     assert found is not None
     assert found.name == "beta"
 
-    rows, total = await cmd.find_many(
+    __p = await cmd.find_many(
         {"$fields": {"kind": "a"}},
         pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
     assert total == 2
     assert [r.name for r in rows] == ["alpha", "gamma"]
 

@@ -57,13 +57,20 @@ class TestAttachSearchRoutes:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
-            endpoints={"search": True, "raw_search": True},
+            endpoints={
+                "search": True,
+                "raw_search": True,
+                "search_cursor": True,
+                "raw_search_cursor": True,
+            },
         )
 
         assert result is router
         paths = {r.path for r in router.routes}
         assert "/search" in paths or "/api/search" in paths
         assert "/raw-search" in paths or "/api/raw-search" in paths
+        assert "/search-cursor" in paths or "/api/search-cursor" in paths
+        assert "/raw-search-cursor" in paths or "/api/raw-search-cursor" in paths
 
     def test_search_endpoint_returns_paginated(
         self,
@@ -84,7 +91,12 @@ class TestAttachSearchRoutes:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
-            endpoints={"search": True, "raw_search": True},
+            endpoints={
+                "search": True,
+                "raw_search": True,
+                "search_cursor": True,
+                "raw_search_cursor": True,
+            },
         )
 
         app = FastAPI()
@@ -152,13 +164,26 @@ class TestBuildSearchRouter:
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
-            endpoints={"search": True, "raw_search": True},
+            endpoints={
+                "search": True,
+                "raw_search": True,
+                "search_cursor": True,
+                "raw_search_cursor": True,
+            },
         )
 
         assert isinstance(router, APIRouter)
         paths = {r.path for r in router.routes}
         assert "/search/search" in paths or "/search" in paths
         assert "/search/raw-search" in paths or "/raw-search" in paths
+        assert any(
+            p.endswith("/search-cursor") or p.endswith("/search/search-cursor")
+            for p in paths
+        )
+        assert any(
+            p.endswith("/raw-search-cursor") or p.endswith("/search/raw-search-cursor")
+            for p in paths
+        )
 
     def test_respects_endpoint_flags_and_path_overrides(
         self,

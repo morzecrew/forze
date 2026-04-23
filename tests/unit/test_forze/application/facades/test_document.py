@@ -25,6 +25,8 @@ class TestDocumentOperation:
         assert DocumentOperation.KILL == "document.kill"
         assert DocumentOperation.DELETE == "document.delete"
         assert DocumentOperation.RESTORE == "document.restore"
+        assert DocumentOperation.LIST_CURSOR == "document.list_cursor"
+        assert DocumentOperation.RAW_LIST_CURSOR == "document.raw_list_cursor"
 
 
 class TestDocumentUsecasesFacade:

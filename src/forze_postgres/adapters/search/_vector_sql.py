@@ -6,6 +6,7 @@ from typing import Literal, Sequence
 
 from psycopg import sql
 
+from forze.application.contracts.search import PhraseCombine
 from forze.base.errors import CoreError
 
 # ----------------------- #
@@ -82,8 +83,9 @@ def vector_knn_multi_score_expr(
     kind: VectorDistanceKind,
     score_name: str,
     n_queries: int,
+    phrase_combine: PhraseCombine = "any",
 ) -> sql.Composable:
-    """``GREATEST`` of per-query ``-(heap_col <op> $k::vector)`` (disjunctive KNN)."""
+    """``GREATEST`` (``any``) or ``LEAST`` (``all``) of per-query KNN negated distances."""
 
     if n_queries < 1:
         raise CoreError("n_queries must be at least 1.")
@@ -100,7 +102,8 @@ def vector_knn_multi_score_expr(
         )
         for _ in range(n_queries)
     ]
-    inner = sql.SQL("GREATEST({})").format(sql.SQL(", ").join(terms))
+    combiner = "GREATEST" if phrase_combine == "any" else "LEAST"
+    inner = sql.SQL(combiner + "({})").format(sql.SQL(", ").join(terms))
     return sql.SQL("{inner} AS {sc}").format(
         inner=inner,
         sc=sql.Identifier(score_name),

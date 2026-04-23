@@ -81,7 +81,12 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert found is not None
     assert found.id == created.id
 
-    docs, total = await adapter.find_many(pagination={"limit": 10})
+    __p = await adapter.find_many(
+        pagination={"limit": 10},
+        return_count=True,
+    )
+    docs = __p.hits
+    total = __p.count
     assert total == 2
     assert {x.id for x in docs} == {created.id, created_2.id}
 
@@ -156,17 +161,23 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
     for name in ("charlie", "alice", "bob"):
         await adapter.create(MyCreateDoc(name=name))
 
-    rows, total = await adapter.find_many(
+    q_adapter = ctx.doc_query(spec)
+
+    __p = await q_adapter.find_many(
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
+        return_count=True,
     )
+    rows = __p.hits
+    total = __p.count
+
     assert total == 3
     assert [r.name for r in rows] == ["alice", "bob", "charlie"]
 
-    rows_desc, _ = await adapter.find_many(
+    rows_desc = await q_adapter.find_many(
         None,
         pagination={"limit": 2, "offset": 0},
         sorts={"name": "desc"},
     )
-    assert [r.name for r in rows_desc] == ["charlie", "bob"]
+    assert [r.name for r in rows_desc.hits] == ["charlie", "bob"]

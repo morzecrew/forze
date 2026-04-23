@@ -20,6 +20,12 @@ class TestSearchOperation:
     def test_raw_search_value(self) -> None:
         assert SearchOperation.RAW_SEARCH == "search.raw"
 
+    def test_typed_search_cursor_value(self) -> None:
+        assert SearchOperation.TYPED_SEARCH_CURSOR == "search.typed_cursor"
+
+    def test_raw_search_cursor_value(self) -> None:
+        assert SearchOperation.RAW_SEARCH_CURSOR == "search.raw_cursor"
+
     def test_all_members_string_values(self) -> None:
         for op in SearchOperation:
             assert isinstance(op.value, str)

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CursorPage, page_from_limit_offset
 from forze.application.contracts.search import SearchQueryPort
 from forze.application.contracts.search.types import SearchOptions
 
@@ -30,13 +31,51 @@ class _StubSearch:
         options: SearchOptions | None = None,
         return_type: type[BaseModel] | None = None,
         return_fields=None,
+        return_count: bool = False,
     ):
         _ = query, filters, pagination, sorts, options
         if return_fields is not None:
-            return ([{"id": "1"}], 1)
+            data: list[object] = [{"id": "1"}]
+        elif return_type is not None:
+            data = [return_type(name="x")]
+        else:
+            data = [_Hit(id="1")]
+        if return_count:
+            return page_from_limit_offset(data, pagination, total=1)
+        return page_from_limit_offset(data, pagination, total=None)
+
+    async def search_with_cursor(
+        self,
+        query: str | Sequence[str],
+        filters=None,
+        cursor=None,
+        sorts=None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[BaseModel] | None = None,
+        return_fields=None,
+    ):
+        _ = query, filters, cursor, sorts, options
+        if return_fields is not None:
+            return CursorPage(
+                hits=[{"id": "1"}],
+                next_cursor=None,
+                prev_cursor=None,
+                has_more=False,
+            )
         if return_type is not None:
-            return ([return_type(name="x")], 1)
-        return ([_Hit(id="1")], 1)
+            return CursorPage(
+                hits=[return_type(name="x")],
+                next_cursor=None,
+                prev_cursor=None,
+                has_more=False,
+            )  # type: ignore[valid-type]
+        return CursorPage(
+            hits=[_Hit(id="1")],
+            next_cursor=None,
+            prev_cursor=None,
+            has_more=False,
+        )
 
 
 def test_search_query_port_structural() -> None:
@@ -48,30 +87,30 @@ def test_search_query_port_structural() -> None:
 @pytest.mark.asyncio
 async def test_search_default_projection() -> None:
     stub = _StubSearch()
-    hits, total = await stub.search("q")
-    assert total == 1
-    assert hits[0].id == "1"
+    page = await stub.search("q", return_count=True)
+    assert page.count == 1
+    assert page.hits[0].id == "1"
 
 
 @pytest.mark.asyncio
 async def test_search_return_type_projection() -> None:
     stub = _StubSearch()
-    hits, total = await stub.search("q", return_type=_Alt)
-    assert total == 1
-    assert hits[0].name == "x"
+    page = await stub.search("q", return_type=_Alt, return_count=True)
+    assert page.count == 1
+    assert page.hits[0].name == "x"
 
 
 @pytest.mark.asyncio
 async def test_search_return_fields_json() -> None:
     stub = _StubSearch()
-    hits, total = await stub.search("q", return_fields=["id"])
-    assert total == 1
-    assert hits[0]["id"] == "1"
+    page = await stub.search("q", return_fields=["id"], return_count=True)
+    assert page.count == 1
+    assert page.hits[0]["id"] == "1"
 
 
 @pytest.mark.asyncio
 async def test_search_accepts_query_sequence() -> None:
     stub = _StubSearch()
-    hits, total = await stub.search(["a", "b"])
-    assert total == 1
-    assert hits[0].id == "1"
+    page = await stub.search(["a", "b"], return_count=True)
+    assert page.count == 1
+    assert page.hits[0].id == "1"

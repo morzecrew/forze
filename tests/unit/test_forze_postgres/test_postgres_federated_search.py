@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.base import page_from_limit_offset
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
@@ -116,34 +117,43 @@ def test_validate_postgres_federated_search_conf_accepts_embedded_hub_member() -
 @pytest.mark.asyncio
 async def test_federated_search_skips_zero_weight_members() -> None:
     pa = MagicMock()
-    pa.search = AsyncMock(return_value=([_Hit(id=1)], 1))
+    pa.search = AsyncMock(
+        return_value=page_from_limit_offset([_Hit(id=1)], {}, total=None)
+    )
     pb = MagicMock()
-    pb.search = AsyncMock(return_value=([_Hit(id=2)], 1))
+    pb.search = AsyncMock(
+        return_value=page_from_limit_offset([_Hit(id=2)], {}, total=None)
+    )
     adapter = PostgresFederatedSearchAdapter(
         federated_spec=_fed(),
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=50,
     )
-    out, total = await adapter.search(
+    page = await adapter.search(
         "q",
         options={"member_weights": {"a": 0.0, "b": 1.0}},
+        return_count=True,
     )
     pa.search.assert_not_awaited()
     pb.search.assert_awaited_once()
-    assert total == 1
-    assert len(out) == 1
-    assert isinstance(out[0], FederatedSearchReadModel)
-    assert out[0].member == "b"
-    assert out[0].hit.id == 2
+    assert page.count == 1
+    assert len(page.hits) == 1
+    assert isinstance(page.hits[0], FederatedSearchReadModel)
+    assert page.hits[0].member == "b"
+    assert page.hits[0].hit.id == 2
 
 
 @pytest.mark.asyncio
 async def test_federated_search_pagination_on_merged_pool() -> None:
     async def leg_a(*_a, **_kw):
-        return [_Hit(id=i) for i in range(3)], 3
+        return page_from_limit_offset(
+            [_Hit(id=i) for i in range(3)], {}, total=None
+        )
 
     async def leg_b(*_a, **_kw):
-        return [_Hit(id=i + 10) for i in range(3)], 3
+        return page_from_limit_offset(
+            [_Hit(id=i + 10) for i in range(3)], {}, total=None
+        )
 
     pa = MagicMock()
     pa.search = AsyncMock(side_effect=leg_a)
@@ -155,9 +165,11 @@ async def test_federated_search_pagination_on_merged_pool() -> None:
         rrf_k=60,
         rrf_per_leg_limit=10,
     )
-    out, total = await adapter.search("q", pagination={"offset": 2, "limit": 2})
-    assert total == 6
-    assert len(out) == 2
+    page = await adapter.search(
+        "q", pagination={"offset": 2, "limit": 2}, return_count=True
+    )
+    assert page.count == 6
+    assert len(page.hits) == 2
 
 
 @pytest.mark.asyncio
@@ -170,9 +182,11 @@ async def test_federated_search_all_members_disabled_returns_empty() -> None:
         federated_spec=_fed(),
         legs=(("a", na), ("b", nb)),
     )
-    out, total = await adapter.search("q", options={"members": []})
-    assert out == []
-    assert total == 0
+    page = await adapter.search(
+        "q", options={"members": []}, return_count=True
+    )
+    assert page.hits == []
+    assert page.count == 0
 
 
 def test_federated_adapter_rejects_leg_count_mismatch() -> None:
@@ -213,7 +227,7 @@ async def test_federated_search_return_type_validates_rows() -> None:
     h = _Hit(id=1, label="a")
 
     async def one_hit(*_a, **_kw):
-        return [h], 1
+        return page_from_limit_offset([h], {}, total=None)
 
     pa = MagicMock()
     pa.search = AsyncMock(side_effect=one_hit)
@@ -224,21 +238,25 @@ async def test_federated_search_return_type_validates_rows() -> None:
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
     )
-    out, total = await adapter.search("q", return_type=_FedRow)
-    assert total >= 1
-    assert len(out) >= 1
-    assert isinstance(out[0], _FedRow)
-    assert out[0].member in {"a", "b"}
-    assert out[0].hit.id == 1
+    page = await adapter.search(
+        "q", return_type=_FedRow, return_count=True
+    )
+    assert page.count >= 1
+    assert len(page.hits) >= 1
+    assert isinstance(page.hits[0], _FedRow)
+    assert page.hits[0].member in {"a", "b"}
+    assert page.hits[0].hit.id == 1
 
 
 @pytest.mark.asyncio
 async def test_federated_search_applies_sorts_on_merged_field() -> None:
     async def leg_a(*_a, **_kw):
-        return [_Hit(id=1, label="b"), _Hit(id=2, label="a")], 2
+        return page_from_limit_offset(
+            [_Hit(id=1, label="b"), _Hit(id=2, label="a")], {}, total=None
+        )
 
     async def leg_b(*_a, **_kw):
-        return [_Hit(id=3, label="c")], 1
+        return page_from_limit_offset([_Hit(id=3, label="c")], {}, total=None)
 
     pa = MagicMock()
     pa.search = AsyncMock(side_effect=leg_a)
@@ -249,14 +267,15 @@ async def test_federated_search_applies_sorts_on_merged_field() -> None:
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
     )
-    out, total = await adapter.search(
+    page = await adapter.search(
         "q",
         sorts={"label": "asc"},
         pagination={"offset": 0, "limit": 10},
+        return_count=True,
     )
-    assert total == 3
-    assert len(out) == 3
-    assert {row.hit.id for row in out} == {1, 2, 3}
+    assert page.count == 3
+    assert len(page.hits) == 3
+    assert {row.hit.id for row in page.hits} == {1, 2, 3}
 
 
 def _two_member_pgroonga_config() -> dict[str, object]:

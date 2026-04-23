@@ -244,6 +244,8 @@ class TestBuildDocumentRouter:
                 "get_": {"path_override": "/meta"},
                 "list_": {"path_override": "/query"},
                 "raw_list": {"path_override": "/raw-query"},
+                "list_cursor": {"path_override": "/query-cursor"},
+                "raw_list_cursor": {"path_override": "/raw-query-cursor"},
                 "create": {"path_override": "/new"},
                 "update": {"path_override": "/edit"},
                 "delete": {"path_override": "/archive"},
@@ -256,6 +258,8 @@ class TestBuildDocumentRouter:
         assert any(path.endswith("/meta") for path in paths)
         assert any(path.endswith("/query") for path in paths)
         assert any(path.endswith("/raw-query") for path in paths)
+        assert any(path.endswith("/query-cursor") for path in paths)
+        assert any(path.endswith("/raw-query-cursor") for path in paths)
         assert any(path.endswith("/new") for path in paths)
         assert any(path.endswith("/edit") for path in paths)
         assert any(path.endswith("/archive") for path in paths)
@@ -321,6 +325,36 @@ class TestAttachDocumentRoutes:
         paths = {r.path for r in router.routes}
         assert any(path.endswith("/list") for path in paths)
         assert any(path.endswith("/raw-list") for path in paths)
+
+    def test_can_enable_list_cursor_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """List cursor and raw list cursor routes register when enabled."""
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = APIRouter(prefix="/api")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints={
+                **_metadata_endpoints(),
+                "list_cursor": True,
+                "raw_list_cursor": True,
+            },
+        )
+
+        paths = {r.path for r in router.routes}
+        assert any(path.endswith("/list-cursor") for path in paths)
+        assert any(path.endswith("/raw-list-cursor") for path in paths)
 
     def test_can_disable_metadata_and_write_related_endpoints(
         self,

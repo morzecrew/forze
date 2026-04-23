@@ -13,3 +13,9 @@ class SearchOperation(StrEnum):
 
     RAW_SEARCH = "search.raw"
     """Search with field-projected raw results."""
+
+    TYPED_SEARCH_CURSOR = "search.typed_cursor"
+    """Search with typed results and cursor-based pagination."""
+
+    RAW_SEARCH_CURSOR = "search.raw_cursor"
+    """Search with field-projected raw results and cursor-based pagination."""
