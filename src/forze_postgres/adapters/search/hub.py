@@ -117,43 +117,139 @@ def _hub_leg_candidate_subquery(leg: HubLegRuntime, csub_alias: str) -> sql.Comp
     return sql.SQL("({u}) {csub}").format(u=unioned, csub=csub)
 
 
-def _hub_leg_lateral_pick_join(
+def _hub_leg_equi_pick_join(
     leg: HubLegRuntime,
     leg_cte_alias: str,
     pick_alias: str,
 ) -> sql.Composable:
-    """Pick the best-scoring leg row per hub row (OR across hub FKs; avoids join fan-out)."""
+    """Equi-join the single hub FK to the leg (``eid``, ``s``).
 
-    t = sql.Identifier("t")
+    Inlines ``LEFT JOIN (SELECT DISTINCT ON (eid) …) … ON (hf.fk = eid)`` so the
+    planner can use a hash/merge plan. For multiple hub FKs, use
+    :func:`_hub_leg_leg_u_cte` and :func:`_hub_leg_multi_equi_pick_join`.
+    """
+
+    (col,) = leg.hub_fk_columns
+
     lr = sql.Identifier(leg_cte_alias)
     pick = sql.Identifier(pick_alias)
+    t = sql.Identifier("t")
     t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
     t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
-    or_parts = [
-        sql.SQL("{} = {}").format(
-            sql.Identifier(_HUB_CTE, col),
-            t_eid,
-        )
-        for col in leg.hub_fk_columns
-    ]
-    cond = sql.SQL(" OR ").join(or_parts)
+    hf_fk = sql.Identifier(_HUB_CTE, col)
 
     return sql.SQL(
-        "LEFT JOIN LATERAL ( "
-        "SELECT {te} AS {eid}, {ts} AS {sc} "
-        "FROM {lr} {t} WHERE ({cond}) "
-        "ORDER BY {ts} DESC NULLS LAST LIMIT 1 "
-        ") {pick} ON TRUE",
+        "LEFT JOIN ( "
+        "SELECT DISTINCT ON ({t_eid}) {t_eid} AS {eid}, {t_s} AS {sc} "
+        "FROM {lr} {t} "
+        "ORDER BY {t_eid}, {t_s} DESC NULLS LAST"
+        ") {pick} ON ({hf_fk} = {t_eid_qualified})"
     ).format(
-        te=t_eid,
+        t_eid=t_eid,
         eid=sql.Identifier(_LEG_EID),
-        ts=t_s,
+        t_s=t_s,
         sc=sql.Identifier(_LEG_SCORE),
         lr=lr,
         t=t,
-        cond=cond,
         pick=pick,
+        hf_fk=hf_fk,
+        t_eid_qualified=sql.SQL("{}.{}").format(
+            pick,
+            sql.Identifier(_LEG_EID),
+        ),
     )
+
+
+def _hub_leg_leg_u_cte(leg_cte_alias: str, u_cte_name: str) -> sql.Composable:
+    """Deduplicate a leg to one ``(eid, s)`` per ``eid`` (best ``s``), for multi-FK joins."""
+
+    lr = sql.Identifier(leg_cte_alias)
+    lr_u = sql.Identifier(u_cte_name)
+    t = sql.Identifier("t")
+    t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
+    t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
+    return sql.SQL(
+        """
+        ,
+        {lr_u} AS (
+            SELECT DISTINCT ON ({t_eid}) {t_eid} AS {eid}, {t_s} AS {sc}
+            FROM {lr} {t}
+            ORDER BY {t_eid}, {t_s} DESC NULLS LAST
+        )
+        """
+    ).format(
+        lr_u=lr_u,
+        lr=lr,
+        t=t,
+        t_eid=t_eid,
+        t_s=t_s,
+        eid=sql.Identifier(_LEG_EID),
+        sc=sql.Identifier(_LEG_SCORE),
+    )
+
+
+def _hub_leg_multi_equi_pick_join(
+    leg: HubLegRuntime,
+    leg_u_cte: str,
+    base_pick_prefix: str,
+) -> sql.Composable:
+    """K ``LEFT JOIN``s from hub FK columns to deduplicated ``leg_u`` (OR + best score in SELECT)."""
+
+    leg_u = sql.Identifier(leg_u_cte)
+    parts: list[sql.Composable] = []
+    for j, col in enumerate(leg.hub_fk_columns):
+        pick = sql.Identifier(f"{base_pick_prefix}_{j}")
+        hf_fk = sql.Identifier(_HUB_CTE, col)
+        t_eid_q = sql.SQL("{}.{}").format(pick, sql.Identifier(_LEG_EID))
+        parts.append(
+            sql.SQL("LEFT JOIN {leg_u} {pick} ON ({hf_fk} = {eid})").format(
+                leg_u=leg_u,
+                pick=pick,
+                hf_fk=hf_fk,
+                eid=t_eid_q,
+            ),
+        )
+    return sql.SQL(" ").join(parts)
+
+
+def _hub_leg_merge_coalesce(leg: HubLegRuntime, leg_index: int) -> sql.Composable:
+    """Per-leg match score: single FK uses one join; multi-FK uses ``GREATEST`` of K joins."""
+
+    if len(leg.hub_fk_columns) == 1:
+        return sql.SQL("COALESCE({}.{}, 0)").format(
+            sql.Identifier(f"lp{leg_index}"),
+            sql.Identifier(_LEG_SCORE),
+        )
+    br = [
+        sql.SQL("COALESCE({}.{}, 0)").format(
+            sql.Identifier(f"lp{leg_index}_{j}"),
+            sql.Identifier(_LEG_SCORE),
+        )
+        for j in range(len(leg.hub_fk_columns))
+    ]
+    return sql.SQL("GREATEST({})").format(sql.SQL(", ").join(br))
+
+
+def _hub_leg_merge_matched(leg: HubLegRuntime, leg_index: int) -> sql.Composable:
+    """Whether this leg matched: non-null leg ``eid`` on any FK join branch."""
+
+    if len(leg.hub_fk_columns) == 1:
+        return sql.SQL("{} IS NOT NULL").format(
+            sql.SQL("{}.{}").format(
+                sql.Identifier(f"lp{leg_index}"),
+                sql.Identifier(_LEG_EID),
+            ),
+        )
+    eid_null = [
+        sql.SQL("{} IS NOT NULL").format(
+            sql.SQL("{}.{}").format(
+                sql.Identifier(f"lp{leg_index}_{j}"),
+                sql.Identifier(_LEG_EID),
+            ),
+        )
+        for j in range(len(leg.hub_fk_columns))
+    ]
+    return sql.SQL("({})").format(sql.SQL(" OR ").join(eid_null))
 
 
 # ....................... #
@@ -448,7 +544,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return base
         ha = sql.Identifier(_HUB_ROW_ALIAS)
         ext = sql.SQL("{}, {}").format(
-            sql.SQL("{}.tableoid AS {}").format(ha, sql.Identifier(_HUB_GROONGA_TABLEOID)),
+            sql.SQL("{}.tableoid AS {}").format(
+                ha, sql.Identifier(_HUB_GROONGA_TABLEOID)
+            ),
             sql.SQL("{}.ctid AS {}").format(ha, sql.Identifier(_HUB_GROONGA_CTID)),
         )
         return sql.SQL("{}, {}").format(base, ext)
@@ -687,6 +785,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
                         join_on=join_on,
                     )
                 leg_cte_parts.append(leg_cte)
+                if len(leg.hub_fk_columns) > 1:
+                    leg_cte_parts.append(
+                        _hub_leg_leg_u_cte(lr_alias, f"{lr_alias}_u"),
+                    )
 
         hf_cols = sql.SQL(", ").join(
             sql.SQL("{}.{}").format(sql.Identifier(_HUB_CTE), sql.Identifier(f))
@@ -719,13 +821,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
         else:
             score_terms = [
                 sql.SQL("({}) * {}").format(
-                    sql.SQL("COALESCE({}.{}, 0)").format(
-                        sql.Identifier(f"lp{i}"),
-                        sql.Identifier(_LEG_SCORE),
-                    ),
+                    _hub_leg_merge_coalesce(leg, i),
                     sql.Literal(float(w)),
                 )
-                for i, _, w in active
+                for i, leg, w in active
             ]
 
             if self.score_merge == "max":
@@ -739,20 +838,23 @@ class PostgresHubSearchAdapter[M: BaseModel](
             join_parts: list[sql.Composable] = []
 
             for i, leg, _ in active:
-                join_parts.append(
-                    _hub_leg_lateral_pick_join(leg, leg_aliases[i], f"lp{i}"),
-                )
+                if len(leg.hub_fk_columns) == 1:
+                    join_parts.append(
+                        _hub_leg_equi_pick_join(leg, leg_aliases[i], f"lp{i}"),
+                    )
+                else:
+                    join_parts.append(
+                        _hub_leg_multi_equi_pick_join(
+                            leg,
+                            f"{leg_aliases[i]}_u",
+                            f"lp{i}",
+                        ),
+                    )
 
             leg_joins = sql.SQL(" ").join(join_parts)
 
             leg_null_checks = [
-                sql.SQL("{} IS NOT NULL").format(
-                    sql.SQL("{}.{}").format(
-                        sql.Identifier(f"lp{i}"),
-                        sql.Identifier(_LEG_EID),
-                    ),
-                )
-                for i, _, _ in active
+                _hub_leg_merge_matched(leg, i) for i, leg, _ in active
             ]
 
             if self.combine == "or":

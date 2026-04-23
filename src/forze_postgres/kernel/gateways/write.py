@@ -298,6 +298,156 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def ensure(self, dto: C) -> D:
+        """Insert a row when the primary key is absent; otherwise return the existing row.
+
+        The caller must supply a primary key on the create command; conflict
+        is resolved on the primary key column (``id``) without updating
+        existing rows.
+        """
+
+        model = pydantic_transform(self.model_type, dto)
+        insert_data_raw = pydantic_dump(model)
+        insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
+
+        cols = [sql.Identifier(k) for k in insert_data.keys()]
+        vals = [sql.Placeholder() for _ in insert_data.keys()]
+        params = list(insert_data.values())
+
+        stmt = sql.SQL(
+            "INSERT INTO {table} ({cols}) VALUES ({vals}) "
+            "ON CONFLICT ({pk}) DO NOTHING "
+            "RETURNING {ret}"
+        ).format(
+            table=self.source_qname.ident(),
+            cols=sql.SQL(", ").join(cols),
+            vals=sql.SQL(", ").join(vals),
+            pk=self.ident_pk(),
+            ret=self.return_clause(),
+        )
+
+        row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
+
+        if row is not None:
+            res = pydantic_validate(self.model_type, row)
+            await self._write_history(res)
+            return res
+
+        existing = await self.read_gw.get(model.id)
+        return existing
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        """Bulk insert rows when their primary keys are absent; return full rows in order.
+
+        The caller must supply a primary key on every create command; each id
+        must appear at most once in ``dtos``. Conflicts on the primary key
+        column do not update existing rows. History is written only for newly
+        inserted documents.
+        """
+
+        if not dtos:
+            return []
+
+        models = pydantic_transform_many(self.model_type, dtos)
+        insert_data_raw = pydantic_dump_many(models)
+        insert_data = await self.adapt_many_payload_for_write(
+            insert_data_raw,
+            create=True,
+        )
+
+        keys = list(insert_data[0].keys())
+        col_idents = [sql.Identifier(k) for k in keys]
+        row_template = (
+            sql.SQL("(")
+            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+            + sql.SQL(")")
+        )
+
+        def _pk_from_row(r: JsonDict) -> UUID:
+            v = r[ID_FIELD]
+            if isinstance(v, UUID):
+                return v
+            return UUID(str(v))
+
+        async def _ensure_batch(
+            batch: Sequence[JsonDict],
+            model_batch: Sequence[D],
+        ) -> list[D]:
+            value_parts = [row_template] * len(batch)
+            params = [b[k] for b in batch for k in keys]
+
+            stmt = sql.SQL(
+                "INSERT INTO {table} ({cols}) VALUES {vals} "
+                "ON CONFLICT ({pk}) DO NOTHING "
+                "RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                cols=sql.SQL(", ").join(col_idents),
+                vals=sql.SQL(", ").join(value_parts),
+                pk=self.ident_pk(),
+                ret=self.return_clause(),
+            )
+
+            rows = await self.client.fetch_all(
+                stmt,
+                params,
+                row_factory="dict",
+                commit=True,
+            )
+
+            by_returned: dict[UUID, JsonDict] = {
+                _pk_from_row(r): r for r in rows
+            }
+            need = [m.id for m in model_batch if m.id not in by_returned]
+            if need:
+                fetched = await self.read_gw.get_many(need)
+                by_existing = {d.id: d for d in fetched}
+            else:
+                by_existing = {}
+
+            ordered: list[D] = []
+            inserted: list[D] = []
+            for m in model_batch:
+                rj = by_returned.get(m.id)
+                if rj is not None:
+                    dom = pydantic_validate(self.model_type, rj)
+                    inserted.append(dom)
+                    ordered.append(dom)
+                else:
+                    ex = by_existing.get(m.id)
+                    if ex is None:
+                        raise NotFoundError(
+                            f"Record not found after ensure_many conflict: {m.id!s}",
+                        )
+                    ordered.append(ex)
+
+            if inserted:
+                await self._write_history(*inserted)
+
+            return ordered
+
+        out: list[D] = []
+        for offset in range(0, len(insert_data), batch_size):
+            data_batch = insert_data[offset : offset + batch_size]
+            model_batch = models[offset : offset + batch_size]
+            out.extend(await _ensure_batch(data_batch, model_batch))
+
+        if len(out) != len(dtos):
+            raise CoreError("ensure_many result length does not match input")
+
+        return out
+
+    # ....................... #
+
     def __bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
         if self.strategy == "application":
             diff[REV_FIELD] = current.rev + 1

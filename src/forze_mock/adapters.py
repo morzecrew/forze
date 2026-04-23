@@ -42,6 +42,8 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    assert_unique_ensure_ids,
+    require_create_id_for_ensure,
 )
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.pubsub import (
@@ -857,6 +859,76 @@ class MockDocumentAdapter[
             return [await self.create(dto, return_new=True) for dto in dtos]
         for dto in dtos:
             await self.create(dto, return_new=False)
+        return None
+
+    # ....................... #
+
+    @overload
+    async def ensure(
+        self,
+        dto: C,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def ensure(
+        self,
+        dto: C,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
+        _ = require_create_id_for_ensure(dto)
+        domain_model = self._require_domain_model()
+        payload = pydantic_dump(dto, exclude={"none": True})
+        domain = pydantic_validate(domain_model, payload)
+        with self.state.lock:
+            store = self._store()
+            if domain.id in store:
+                raw = dict(store[domain.id])
+            else:
+                serialized = pydantic_dump(domain)
+                store[domain.id] = serialized
+                raw = serialized
+        if not return_new:
+            return None
+        return self._to_read(raw)
+
+    # ....................... #
+
+    @overload
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        if not dtos:
+            if not return_new:
+                return None
+            return []
+        assert_unique_ensure_ids(dtos)
+        if return_new:
+            return [await self.ensure(dto, return_new=True) for dto in dtos]
+        for dto in dtos:
+            await self.ensure(dto, return_new=False)
         return None
 
     # ....................... #

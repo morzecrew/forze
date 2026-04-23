@@ -18,6 +18,8 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    assert_unique_ensure_ids,
+    require_create_id_for_ensure,
 )
 from forze.application.contracts.base import (
     CountlessPage,
@@ -566,6 +568,79 @@ class MongoDocumentAdapter(
         )
         await self._set_cache_many(res)
 
+        return res
+
+    # ....................... #
+
+    @overload
+    async def ensure(
+        self,
+        dto: C,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def ensure(
+        self,
+        dto: C,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
+        w = self._require_write()
+        _ = require_create_id_for_ensure(dto)
+        domain = await w.ensure(dto)
+
+        if not return_new:
+            return None
+        res, _ = await asyncio.gather(
+            self.read_gw.get(domain.id),
+            self._clear_cache(domain.id),
+        )
+        await self._set_cache(res)
+        return res
+
+    # ....................... #
+
+    @overload
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        w = self._require_write()
+        if not dtos:
+            if not return_new:
+                return None
+            return []
+        assert_unique_ensure_ids(dtos)
+        domains = await w.ensure_many(dtos, batch_size=self.eff_batch_size)
+        if not return_new:
+            return None
+        pks = [x.id for x in domains]
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
+        await self._set_cache_many(res)
         return res
 
     # ....................... #

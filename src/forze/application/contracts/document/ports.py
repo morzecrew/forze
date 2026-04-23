@@ -346,6 +346,62 @@ class DocumentCommandPort[
     # ....................... #
 
     @overload
+    def ensure(self, dto: C, *, return_new: Literal[True] = True) -> Awaitable[R]:
+        """Insert when missing; if a row with the same id exists, return it unchanged."""
+        ...  # pragma: no cover
+
+    @overload
+    def ensure(self, dto: C, *, return_new: Literal[False]) -> Awaitable[None]:
+        """Insert when missing; no read when ``return_new`` is false."""
+        ...  # pragma: no cover
+
+    def ensure(self, dto: C, *, return_new: bool = True) -> Awaitable[R | None]:
+        """Insert when missing; if a row with the same primary key exists, return it unchanged.
+
+        Requires :attr:`~CreateDocumentCmd.id` to be set on ``dto`` so the
+        operation is idempotent by primary key (insert-only; no updates to
+        existing rows).
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
+        """Bulk insert-when-missing; existing primary keys are left unchanged."""
+        ...  # pragma: no cover
+
+    @overload
+    def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Bulk insert-when-missing without re-reads."""
+        ...  # pragma: no cover
+
+    def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | None]:
+        """Bulk insert-when-missing; existing primary keys are left unchanged.
+
+        Requires each DTO to set :attr:`~CreateDocumentCmd.id` and ids must be
+        unique within ``dtos``. Order of the returned read models matches ``dtos``.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
     def update(
         self,
         pk: UUID,

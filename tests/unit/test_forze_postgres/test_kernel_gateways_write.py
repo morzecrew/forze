@@ -133,6 +133,40 @@ async def test_create_many_raises_when_batch_returns_fewer_rows() -> None:
         await gw.create_many(dtos, batch_size=100)
 
 
+@pytest.mark.asyncio
+async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
+    gw, client = _build_gateway()
+    read = gw.read_gw
+    read.get = AsyncMock()
+    read.get_many = AsyncMock()
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    id1 = UUID("11111111-1111-1111-1111-111111111111")
+    id2 = UUID("22222222-2222-2222-2222-222222222222")
+    conflict_row = _row(pk=id1, name="unchanged", ts=ts)
+    insert_row = _row(pk=id2, name="inserted", ts=ts)
+    dtos = [
+        MyCreateDoc(id=id1, created_at=ts, name="try-overwrite"),
+        MyCreateDoc(id=id2, created_at=ts, name="inserted"),
+    ]
+    client.fetch_all.return_value = [insert_row]
+    read.get_many = AsyncMock(
+        return_value=[
+            MyDoc(
+                id=id1,
+                rev=1,
+                created_at=ts,
+                last_update_at=ts,
+                name=conflict_row["name"],  # type: ignore[arg-type]
+            )
+        ],
+    )
+    out = await gw.ensure_many(dtos, batch_size=20)
+    assert [d.id for d in out] == [id1, id2]
+    assert out[0].name == "unchanged"
+    assert out[1].name == "inserted"
+    read.get_many.assert_awaited_once_with([id1])
+
+
 def _build_tenant_aware_gateway() -> (
     tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]
 ):

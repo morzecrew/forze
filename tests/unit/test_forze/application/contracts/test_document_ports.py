@@ -14,7 +14,7 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
 )
 from forze.application.contracts.query import QueryFilterExpression
-from forze.base.errors import NotFoundError
+from forze.base.errors import NotFoundError, ValidationError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from forze_mock import MockState
@@ -202,6 +202,30 @@ class TestDocumentCommandPortViaMock:
         cmds = [CreateDocumentCmd(), CreateDocumentCmd()]
         result = await port.create_many(cmds)
         assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_ensure_requires_id(self) -> None:
+        port = _document_adapter()
+        with pytest.raises(ValidationError, match="id"):
+            await port.ensure(CreateDocumentCmd())
+
+    @pytest.mark.asyncio
+    async def test_ensure_idempotent_does_not_overwrite(self) -> None:
+        port = _document_adapter_with_title()
+        uid = uuid4()
+        first = await port.ensure(_CreateWithTitle(id=uid, title="first"))
+        second = await port.ensure(_CreateWithTitle(id=uid, title="second"))
+        assert first.id == second.id
+        assert second.title == "first"
+
+    @pytest.mark.asyncio
+    async def test_ensure_many_requires_distinct_ids(self) -> None:
+        port = _document_adapter()
+        u = uuid4()
+        with pytest.raises(ValidationError, match="distinct"):
+            await port.ensure_many(
+                [CreateDocumentCmd(id=u), CreateDocumentCmd(id=u)],
+            )
 
     @pytest.mark.asyncio
     async def test_update_bumps_rev(self) -> None:

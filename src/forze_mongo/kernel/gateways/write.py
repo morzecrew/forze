@@ -6,10 +6,11 @@ require_mongo()
 
 # ....................... #
 
-from typing import Sequence, final
+from typing import Any, Mapping, Sequence, cast, final
 from uuid import UUID
 
 import attrs
+from pymongo import UpdateOne
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -245,6 +246,76 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         await self._write_history(*created)
 
         return created
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def ensure(self, dto: C) -> D:
+        """Insert a document when missing using ``$setOnInsert`` upsert; no field updates on match."""
+
+        model = self._from_cdto(dto)
+        data = pydantic_dump(model)
+        data = self.adapt_payload_for_write(data, create=True)
+        storage = self._storage_doc(data)
+        flt: JsonDict = self._add_tenant_filter(
+            {"_id": self._storage_pk(model.id)},
+        )
+        res: Any = await self.client.update_one_upsert(
+            self.coll(),
+            flt,
+            {"$setOnInsert": storage},
+        )
+        created = await self.read_gw.get(model.id)
+        if res.upserted_id is not None:
+            await self._write_history(created)
+        return created
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        """Bulk insert-when-missing with ``$setOnInsert`` upserts; order preserved for reads."""
+
+        if not dtos:
+            return []
+
+        models = self._from_cdto_many(dtos)
+        raw_payloads = pydantic_dump_many(models)
+        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        new_indices: list[int] = []
+        for offset in range(0, len(dtos), batch_size):
+            chunk_payloads = payloads[offset : offset + batch_size]
+            chunk_models = models[offset : offset + batch_size]
+            ops: list[UpdateOne] = [
+                UpdateOne(
+                    self._add_tenant_filter(
+                        {"_id": self._storage_pk(m.id)},
+                    ),
+                    {"$setOnInsert": self._storage_doc(p)},
+                    upsert=True,
+                )
+                for m, p in zip(chunk_models, chunk_payloads, strict=True)
+            ]
+            bres: Any = await self.client.bulk_write(
+                self.coll(),
+                ops,
+                ordered=False,
+            )
+            umap = cast(Mapping[int, Any], bres.upserted_ids or {})
+            for idx in umap:
+                new_indices.append(offset + int(idx))
+
+        if new_indices:
+            new_pks = [models[i].id for i in new_indices]
+            hist = await self.read_gw.get_many(new_pks)
+            await self._write_history(*hist)
+
+        return await self.read_gw.get_many([m.id for m in models])
 
     # ....................... #
 

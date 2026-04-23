@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
-from forze.base.errors import CoreError
+from forze.base.errors import CoreError, ValidationError
 from forze.base.serialization import pydantic_cache_dump
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
@@ -201,6 +201,8 @@ def _write_gw() -> MagicMock:
     gw.tenant_aware = False
     gw.update = AsyncMock(return_value=(None, {}))
     gw.update_many = AsyncMock(return_value=([], []))
+    gw.ensure = AsyncMock()
+    gw.ensure_many = AsyncMock()
     return gw
 
 
@@ -453,6 +455,41 @@ class TestPostgresDocumentAdapterCommands:
 
         assert await adapter.create_many([]) == []
         write_gw.create_many.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ensure_delegates_and_validates_id(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        pk = uuid4()
+        dom = _tdoc(pk)
+        read_doc = _tread(pk, rev=dom.rev)
+        write_gw.ensure = AsyncMock(return_value=dom)
+        read_gw.get = AsyncMock(return_value=read_doc)
+
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+        )
+        out = await adapter.ensure(TCreate(id=pk, title="n"))
+        assert out == read_doc
+        write_gw.ensure.assert_awaited_once()
+        ca = write_gw.ensure.await_args
+        assert ca[0][0].id == pk
+
+    @pytest.mark.asyncio
+    async def test_ensure_rejects_missing_id(self) -> None:
+        read_gw = _read_gw_full()
+        write_gw = _write_gw()
+        write_gw.client = read_gw.client
+        adapter = PostgresDocumentAdapter(
+            spec=_full_spec(),
+            read_gw=read_gw,
+            write_gw=write_gw,
+        )
+        with pytest.raises(ValidationError, match="id"):
+            await adapter.ensure(TCreate(title="n"))  # type: ignore[call-arg]
 
     @pytest.mark.asyncio
     async def test_update_clears_cache_and_reloads(self) -> None:

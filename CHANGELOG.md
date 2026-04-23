@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze.application.contracts.document`: `DocumentCommandPort.ensure` and `ensure_many` (insert a row only when the primary key is missing; no updates to existing rows). Requires each `CreateDocumentCmd` to set `id`; `ensure_many` also requires unique ids in the batch. Helpers `require_create_id_for_ensure` and `assert_unique_ensure_ids`. `PostgresWriteGateway` / `PostgresDocumentAdapter` use `INSERT … ON CONFLICT (id) DO NOTHING`; `MongoWriteGateway` / `MongoDocumentAdapter` use `$setOnInsert` upserts; `MockDocumentAdapter` mirrors the semantics in memory.
 - `forze_postgres` hub search: optional `PostgresHubSearchMemberConfig` field `same_heap_as_hub` to run a leg against the hub CTE (no extra heap join) when the leg’s heap matches the hub relation and `hub_fk` is a single column equal to the heap primary key. PGroonga legs require `pgroonga_score_version: "v2"` and are incompatible with `field_map` on that leg. Not supported for `fts` legs.
 - `forze_fastapi`: `attach_http_endpoint` with `body_mode: "form"` binds `UploadFile` and `list[UploadFile]` body fields with FastAPI `File()` and other body fields with `Form()` for multipart requests.
 - `forze_postgres`: dot-separated filter and sort field paths (e.g. ``meta.score``) for JSON/JSONB columns, validated against the read model with optional ``nested_field_hints`` on document and search configs (and hub search config) when leaf types are ambiguous.
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `forze_postgres` `PostgresHubSearchAdapter`: hub legs with multiple `hub_fk` columns no longer use a correlated `LATERAL` over the full leg; they use a deduplicated per-leg CTE (``DISTINCT ON (eid)``) and one equi-``LEFT JOIN`` per FK into that set, with ``GREATEST`` / ``OR`` semantics unchanged for merge and combine.
 - `forze_postgres` `PostgresGateway.order_by_clause` is now ``async`` (callers must ``await`` it) so sort keys can use the same nested JSON path resolution as filters.
 - `forze_postgres` `ConfigurablePostgresSearch` with `engine: "fts"` builds `PostgresFTSSearchAdapterV2` (projection + index heap); optional `heap` and `join_pairs` match the PGroonga search config shape.
 - `forze_postgres` hub search: `PostgresHubSearchAdapter` selects `PgroongaHubLegEngine` or `FtsHubLegEngine` per leg ``engine`` via `hub_leg_engine_for` (no default engine on the adapter). `PostgresHubPGroongaSearchAdapter` remains a backward-compatible alias. Hub members may use ``engine: "fts"`` with ``fts_groups`` (same rules as FTS search).

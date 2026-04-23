@@ -398,6 +398,40 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.bulk_write")  # type: ignore[untyped-decorator]
+    async def bulk_write(
+        self,
+        coll: AsyncCollection[Any],
+        operations: Sequence[Any],
+        *,
+        ordered: bool = True,
+    ) -> Any:
+        """Run ``bulk_write`` on a collection; returns the driver's result object."""
+
+        session = self.__current_session()
+        return await coll.bulk_write(list(operations), ordered=ordered, session=session)
+
+    # ....................... #
+
+    @mongo_handled("mongo.update_one_upsert")  # type: ignore[untyped-decorator]
+    async def update_one_upsert(
+        self,
+        coll: AsyncCollection[Any],
+        flt: Mapping[str, Any],
+        update: Mapping[str, Any],
+    ) -> Any:
+        """``update_one`` with ``upsert=True``; returns the full driver result (e.g. ``upserted_id``)."""
+
+        session = self.__current_session()
+        return await coll.update_one(
+            flt,
+            update,
+            upsert=True,
+            session=session,
+        )
+
+    # ....................... #
+
     @mongo_handled("mongo.update_one")  # type: ignore[untyped-decorator]
     async def update_one(
         self,
