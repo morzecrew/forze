@@ -599,6 +599,7 @@ class PostgresDocumentAdapter(
         domain = await w.create(dto)
 
         if not return_new:
+            await self._clear_cache(domain.id)
             return None
 
         # Repeat read is required to meet criteria for diverse read and write sources
@@ -653,6 +654,7 @@ class PostgresDocumentAdapter(
         domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
         if not return_new:
+            await self._clear_cache(*[x.id for x in domains])
             return None
 
         # Repeat read is required to meet criteria for diverse read and write sources
@@ -694,6 +696,7 @@ class PostgresDocumentAdapter(
         domain = await w.ensure(dto)
 
         if not return_new:
+            await self._clear_cache(domain.id)
             return None
 
         res, _ = await asyncio.gather(
@@ -742,6 +745,7 @@ class PostgresDocumentAdapter(
         domains = await w.ensure_many(dtos, batch_size=self.eff_batch_size)
 
         if not return_new:
+            await self._clear_cache(*[x.id for x in domains])
             return None
 
         pks = [x.id for x in domains]
@@ -788,6 +792,7 @@ class PostgresDocumentAdapter(
         domain = await w.upsert(create_dto, update_dto)
 
         if not return_new:
+            await self._clear_cache(domain.id)
             return None
 
         res, _ = await asyncio.gather(
@@ -836,6 +841,7 @@ class PostgresDocumentAdapter(
         domains = await w.upsert_many(pairs, batch_size=self.eff_batch_size)
 
         if not return_new:
+            await self._clear_cache(*[x.id for x in domains])
             return None
 
         pks = [x.id for x in domains]

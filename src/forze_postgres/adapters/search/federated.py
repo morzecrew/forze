@@ -34,6 +34,8 @@ from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
+from ...kernel.db_gather import gather_db_work
+from ...kernel.platform.client import PostgresClient
 from ..txmanager import PostgresTxScopeKey
 from ._options import prepare_federated_search_options
 
@@ -128,6 +130,9 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     rrf_per_leg_limit: int = _DEFAULT_PER_LEG_LIMIT
     """Maximum hits pulled per member for merging (truncation bounds :meth:`search` totals)."""
+
+    postgres_client: PostgresClient | None = None
+    """When set, leg queries respect pool / transaction concurrency rules."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
@@ -296,9 +301,15 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             )
             return name, page.hits, weight
 
-        leg_results = await asyncio.gather(
-            *(_run_leg(n, p, w) for n, p, w in active),
-        )
+        if self.postgres_client is not None:
+            leg_results = await gather_db_work(
+                self.postgres_client,
+                [partial(_run_leg, n, p, w) for n, p, w in active],
+            )
+        else:
+            leg_results = await asyncio.gather(
+                *(_run_leg(n, p, w) for n, p, w in active),
+            )
 
         merged = weighted_rrf_merge_rows(leg_rows=leg_results, k=int(self.rrf_k))
 
@@ -390,9 +401,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> (
-        CursorPage[FederatedSearchReadModel[M]] | CursorPage[T] | CursorPage[JsonDict]
-    ):
+    ) -> CursorPage[FederatedSearchReadModel[M]] | CursorPage[T] | CursorPage[JsonDict]:
         del query, filters, cursor, sorts, options, return_type, return_fields
         raise CoreError(
             "search_with_cursor is not implemented for federated (RRF) search; use search() "

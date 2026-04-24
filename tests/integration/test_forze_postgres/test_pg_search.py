@@ -3,6 +3,8 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page
+from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     HubSearchSpec,
@@ -10,6 +12,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.errors import CoreError
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapterV2
 from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
 from forze_postgres.execution.deps.deps import (
@@ -1223,3 +1226,723 @@ async def test_postgres_hub_same_heap_as_hub_single_leg(pg_client: PostgresClien
     __p = await adapter.search("", return_count=True)
     assert __p.count == 2
     assert {h.id for h in __p.hits} == {a, b}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
+    pg_client: PostgresClient,
+) -> None:
+    """No full-text terms: projection scan, optional count, limit/offset, ``return_fields``."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    heap = f"es_heap_{suffix}"
+    proj = f"es_proj_{suffix}"
+    idx = f"es_idx_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {heap} (
+            id uuid PRIMARY KEY,
+            doc_title text NOT NULL,
+            doc_body text NOT NULL
+        );
+        CREATE VIEW {proj} AS
+        SELECT id, doc_title AS title, doc_body AS content FROM {heap};
+        CREATE INDEX {idx}
+        ON {heap} USING pgroonga ((ARRAY[doc_title, doc_body]));
+        """
+    )
+
+    d1 = uuid4()
+    d2 = uuid4()
+    await pg_client.execute(
+        f"INSERT INTO {heap} (id, doc_title, doc_body) VALUES (%(id)s, 'Apple', 'red')",
+        {"id": d1},
+    )
+    await pg_client.execute(
+        f"INSERT INTO {heap} (id, doc_title, doc_body) VALUES (%(id)s, 'Banana', 'yellow')",
+        {"id": d2},
+    )
+
+    introspector = PostgresIntrospector(client=pg_client)
+    spec = SearchSpec(
+        name=f"es_{suffix}",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    adapter = PostgresPGroongaSearchAdapterV2(
+        spec=spec,
+        source_qname=PostgresQualifiedName(schema="public", name=proj),
+        index_qname=PostgresQualifiedName(schema="public", name=idx),
+        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        client=pg_client,
+        model_type=SearchableModel,
+        introspector=introspector,
+        tenant_provider=None,
+        tenant_aware=False,
+        index_field_map={"title": "doc_title", "content": "doc_body"},
+    )
+
+    z = await adapter.search(
+        "",
+        filters={"$fields": {"title": "Nope"}},
+        return_count=True,
+    )
+    assert z.count == 0
+    assert z.hits == []
+
+    page = await adapter.search(
+        "",
+        filters={"$fields": {"title": "Apple"}},
+        pagination={"limit": 5, "offset": 0},
+        sorts={"title": "asc"},
+        return_fields=("title", "id"),
+        return_count=True,
+    )
+    assert page.count == 1
+    assert page.hits[0] == {"title": "Apple", "id": d1}
+
+    class Row(BaseModel):
+        id: UUID
+        title: str
+
+    typed = await adapter.search(
+        "",
+        sorts={"title": "desc"},
+        return_type=Row,
+        return_count=False,
+    )
+    assert [r.title for r in typed.hits] == ["Banana", "Apple"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_pgroonga_v2_nonempty_query_count_zero_short_circuit(
+    pg_client: PostgresClient,
+) -> None:
+    """Ranked PGroonga path: ``return_count`` with zero hits skips the data query."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    heap = f"zq_heap_{suffix}"
+    proj = f"zq_proj_{suffix}"
+    idx = f"zq_idx_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {heap} (
+            id uuid PRIMARY KEY,
+            doc_title text NOT NULL,
+            doc_body text NOT NULL
+        );
+        CREATE VIEW {proj} AS
+        SELECT id, doc_title AS title, doc_body AS content FROM {heap};
+        CREATE INDEX {idx}
+        ON {heap} USING pgroonga ((ARRAY[doc_title, doc_body]));
+        """
+    )
+    await pg_client.execute(
+        f"INSERT INTO {heap} (id, doc_title, doc_body) VALUES (%(id)s, 'only', 'row');",
+        {"id": uuid4()},
+    )
+
+    introspector = PostgresIntrospector(client=pg_client)
+    spec = SearchSpec(
+        name=f"zq_{suffix}",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    adapter = PostgresPGroongaSearchAdapterV2(
+        spec=spec,
+        source_qname=PostgresQualifiedName(schema="public", name=proj),
+        index_qname=PostgresQualifiedName(schema="public", name=idx),
+        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        client=pg_client,
+        model_type=SearchableModel,
+        introspector=introspector,
+        tenant_provider=None,
+        tenant_aware=False,
+        index_field_map={"title": "doc_title", "content": "doc_body"},
+    )
+
+    empty = await adapter.search("xyznonmatch12345", return_count=True)
+    assert empty.count == 0
+    assert empty.hits == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_pgroonga_v2_ranked_search_uses_score_v1(
+    pg_client: PostgresClient,
+) -> None:
+    """``pgroonga_score_version='v1'`` still returns ranked hits."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    heap = f"v1_heap_{suffix}"
+    proj = f"v1_proj_{suffix}"
+    idx = f"v1_idx_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {heap} (
+            id uuid PRIMARY KEY,
+            doc_title text NOT NULL,
+            doc_body text NOT NULL
+        );
+        CREATE VIEW {proj} AS
+        SELECT id, doc_title AS title, doc_body AS content FROM {heap};
+        CREATE INDEX {idx}
+        ON {heap} USING pgroonga ((ARRAY[doc_title, doc_body]));
+        """
+    )
+    await pg_client.execute(
+        f"INSERT INTO {heap} (id, doc_title, doc_body) VALUES (%(id)s, 'alpha', 'beta gamma')",
+        {"id": uuid4()},
+    )
+
+    introspector = PostgresIntrospector(client=pg_client)
+    spec = SearchSpec(
+        name=f"v1_{suffix}",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    adapter = PostgresPGroongaSearchAdapterV2(
+        spec=spec,
+        source_qname=PostgresQualifiedName(schema="public", name=proj),
+        index_qname=PostgresQualifiedName(schema="public", name=idx),
+        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        client=pg_client,
+        model_type=SearchableModel,
+        introspector=introspector,
+        tenant_provider=None,
+        tenant_aware=False,
+        index_field_map={"title": "doc_title", "content": "doc_body"},
+        pgroonga_score_version="v1",
+    )
+
+    page = await adapter.search("gamma", return_count=True)
+    assert page.count == 1
+    assert page.hits[0].title == "alpha"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
+    pg_client: PostgresClient,
+) -> None:
+    """Keyset pagination on the projection when the full-text query is empty."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    heap = f"cur_heap_{suffix}"
+    proj = f"cur_proj_{suffix}"
+    idx = f"cur_idx_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {heap} (
+            id uuid PRIMARY KEY,
+            doc_title text NOT NULL,
+            doc_body text NOT NULL
+        );
+        CREATE VIEW {proj} AS
+        SELECT id, doc_title AS title, doc_body AS content FROM {heap};
+        CREATE INDEX {idx}
+        ON {heap} USING pgroonga ((ARRAY[doc_title, doc_body]));
+        """
+    )
+    for title in ("a", "b", "c"):
+        await pg_client.execute(
+            f"INSERT INTO {heap} (id, doc_title, doc_body) VALUES (%(id)s, %(t)s, 'x')",
+            {"id": uuid4(), "t": title},
+        )
+
+    introspector = PostgresIntrospector(client=pg_client)
+    spec = SearchSpec(
+        name=f"cur_{suffix}",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    adapter = PostgresPGroongaSearchAdapterV2(
+        spec=spec,
+        source_qname=PostgresQualifiedName(schema="public", name=proj),
+        index_qname=PostgresQualifiedName(schema="public", name=idx),
+        index_heap_qname=PostgresQualifiedName(schema="public", name=heap),
+        client=pg_client,
+        model_type=SearchableModel,
+        introspector=introspector,
+        tenant_provider=None,
+        tenant_aware=False,
+        index_field_map={"title": "doc_title", "content": "doc_body"},
+    )
+
+    with pytest.raises(CoreError, match="non-empty full-text query"):
+        await adapter.search_with_cursor("hello")
+
+    with pytest.raises(CoreError, match="at most one"):
+        await adapter.search_with_cursor("", cursor={"after": "x", "before": "y"})
+
+    with pytest.raises(CoreError, match="positive"):
+        await adapter.search_with_cursor("", cursor={"limit": 0})
+
+    with pytest.raises(CoreError, match="sort and"):
+        await adapter.search_with_cursor(
+            "",
+            sorts={"title": "asc"},
+            return_fields=["title"],
+        )
+
+    p1 = await adapter.search_with_cursor(
+        "",
+        sorts={"title": "asc"},
+        return_fields=["title", "content", "id"],
+        cursor={"limit": 2},
+    )
+    assert len(p1.hits) == 2
+    assert p1.has_more is True
+    assert p1.next_cursor is not None
+
+    p2 = await adapter.search_with_cursor(
+        "",
+        sorts={"title": "asc"},
+        return_fields=["title", "content", "id"],
+        cursor={"limit": 2, "after": p1.next_cursor},
+    )
+    assert len(p2.hits) >= 1
+
+    class Hit(BaseModel):
+        id: UUID
+        title: str
+
+    p3 = await adapter.search_with_cursor(
+        "",
+        sorts={"title": "asc"},
+        return_type=Hit,
+        cursor={"limit": 10},
+    )
+    assert len(p3.hits) == 3
+    assert isinstance(p3.hits[0], Hit)
+
+
+class _MqBody(BaseModel):
+    body: str
+
+
+class MqLinkModel(BaseModel):
+    id: UUID
+    body_id: UUID
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_fts_leg_multi_query_phrase_combine(
+    pg_client: PostgresClient,
+) -> None:
+    """FTS hub leg with multiple terms: conjunction vs disjunction tsquery."""
+    suffix = uuid4().hex[:8]
+    body_t = f"hub_mq_body_{suffix}"
+    link_t = f"hub_mq_link_{suffix}"
+    idx = f"idx_hub_mq_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {body_t} (
+            id uuid PRIMARY KEY,
+            body text NOT NULL
+        );
+        CREATE TABLE {link_t} (
+            id uuid PRIMARY KEY,
+            body_id uuid NOT NULL REFERENCES {body_t} (id)
+        );
+        CREATE INDEX {idx} ON {body_t}
+        USING gin (to_tsvector('english', coalesce(body, '')));
+        """
+    )
+
+    b1, b2, b3 = uuid4(), uuid4(), uuid4()
+    l1, l2, l3 = uuid4(), uuid4(), uuid4()
+    await pg_client.execute(
+        f"""
+        INSERT INTO {body_t} (id, body) VALUES
+        (%(b1)s, 'alpha beta gamma'),
+        (%(b2)s, 'alpha only here'),
+        (%(b3)s, 'beta standalone')
+        """,
+        {"b1": b1, "b2": b2, "b3": b3},
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO {link_t} (id, body_id) VALUES
+        (%(l1)s, %(b1)s), (%(l2)s, %(b2)s), (%(l3)s, %(b3)s)
+        """,
+        {"l1": l1, "l2": l2, "l3": l3, "b1": b1, "b2": b2, "b3": b3},
+    )
+
+    leg_n = "mq_body"
+    body_spec = SearchSpec(
+        name=leg_n,
+        model_type=_MqBody,
+        fields=["body"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_mq_{suffix}",
+        model_type=MqLinkModel,
+        members=(body_spec,),
+    )
+    fts_groups = {"A": ("body",)}
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", link_t),
+        "members": {
+            leg_n: {
+                "index": ("public", idx),
+                "read": ("public", body_t),
+                "hub_fk": "body_id",
+                "engine": "fts",
+                "fts_groups": fts_groups,
+            },
+        },
+    }
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    page_all = await adapter.search(
+        ["alpha", "beta"],
+        options={"phrase_combine": "all"},
+        return_count=True,
+    )
+    assert page_all.count == 1
+    assert page_all.hits[0].id == l1
+
+    page_any = await adapter.search(
+        ["alpha", "beta"],
+        options={"phrase_combine": "any"},
+        return_count=True,
+    )
+    assert page_any.count == 3
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_combine_and_with_score_merge_sum(
+    pg_client: PostgresClient,
+) -> None:
+    """``combine: and`` requires every leg to match; ``score_merge: sum`` merges scores."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    dt = f"hub_sum_d_{suffix}"
+    st = f"hub_sum_s_{suffix}"
+    lt = f"hub_sum_l_{suffix}"
+    idx_d = f"idx_sum_d_{suffix}"
+    idx_s = f"idx_sum_s_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {dt} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE {st} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE TABLE {lt} (
+            id uuid PRIMARY KEY,
+            detail_id uuid NOT NULL REFERENCES {dt} (id),
+            spec_id uuid NOT NULL REFERENCES {st} (id),
+            quantity int NOT NULL
+        );
+        CREATE INDEX {idx_d} ON {dt}
+        USING pgroonga ((ARRAY[name, display_name]));
+        CREATE INDEX {idx_s} ON {st}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+
+    d1, s1 = uuid4(), uuid4()
+    link_id = uuid4()
+    await pg_client.execute(
+        f"INSERT INTO {dt} (id, name, display_name) VALUES (%(id)s, 'unique detail', 'D')",
+        {"id": d1},
+    )
+    await pg_client.execute(
+        f"INSERT INTO {st} (id, name, display_name) VALUES (%(id)s, 'unique spec', 'S')",
+        {"id": s1},
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO {lt} (id, detail_id, spec_id, quantity)
+        VALUES (%(lid)s, %(d)s, %(s)s, 1)
+        """,
+        {"lid": link_id, "d": d1, "s": s1},
+    )
+
+    det_name = f"sum_d_{suffix}"
+    spec_name = f"sum_s_{suffix}"
+    detail_txt = SearchSpec(
+        name=det_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    spec_txt = SearchSpec(
+        name=spec_name,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_sum_{suffix}",
+        model_type=LinkModel,
+        members=(detail_txt, spec_txt),
+    )
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", lt),
+        "members": {
+            det_name: {
+                "index": ("public", idx_d),
+                "read": ("public", dt),
+                "hub_fk": "detail_id",
+                "engine": "pgroonga",
+            },
+            spec_name: {
+                "index": ("public", idx_s),
+                "read": ("public", st),
+                "hub_fk": "spec_id",
+                "engine": "pgroonga",
+            },
+        },
+        "combine_strategy": "and",
+        "merge_strategy": "sum",
+    }
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    page = await adapter.search("unique", return_count=True)
+    assert page.count == 1
+    assert page.hits[0].id == link_id
+
+    empty = await adapter.search("onlydetailnomatch", return_count=True)
+    assert empty.count == 0
+
+
+class HubHitId(BaseModel):
+    id: UUID
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_return_count_zero_and_projections(
+    pg_client: PostgresClient,
+) -> None:
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_proj_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_pg ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    u = uuid4()
+    await pg_client.execute(
+        f"INSERT INTO {ht} (id, name, display_name) VALUES (%(id)s, 'solo', 'S')",
+        {"id": u},
+    )
+
+    leg_n = f"leg_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_proj_spec_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", ht),
+        "members": {
+            leg_n: {
+                "index": ("public", f"idx_{suffix}_pg"),
+                "read": ("public", ht),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    impossible: QueryFilterExpression = {"$fields": {"name": "nope"}}
+    z = await adapter.search("solo", filters=impossible, return_count=True)
+    assert isinstance(z, Page)
+    assert z.count == 0
+    assert z.hits == []
+
+    rf = await adapter.search(
+        "solo",
+        return_fields=["id", "name"],
+        return_count=False,
+    )
+    assert not isinstance(rf, Page)
+    assert rf.hits[0] == {"id": u, "name": "solo"}
+
+    rt = await adapter.search("solo", return_type=HubHitId, return_count=False)
+    assert isinstance(rt, CountlessPage)
+    assert isinstance(rt.hits[0], HubHitId)
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_browse_empty_query_with_sorts(
+    pg_client: PostgresClient,
+) -> None:
+    """No search terms: hub scan with explicit ``sorts`` (no leg CTEs)."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_br_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_br ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    a, b = uuid4(), uuid4()
+    await pg_client.execute(
+        f"""
+        INSERT INTO {ht} (id, name, display_name) VALUES
+        (%(a)s, 'b', 'B'), (%(b)s, 'a', 'A')
+        """,
+        {"a": a, "b": b},
+    )
+
+    leg_n = f"br_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_br_spec_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", ht),
+        "members": {
+            leg_n: {
+                "index": ("public", f"idx_{suffix}_br"),
+                "read": ("public", ht),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    page = await adapter.search("", sorts={"name": "asc"}, return_count=True)
+    assert page.count == 2
+    assert [h.name for h in page.hits] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_search_with_cursor_not_implemented(
+    pg_client: PostgresClient,
+) -> None:
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_cur_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_cur ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+
+    leg_n = f"cur_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_cur_spec_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", ht),
+        "members": {
+            leg_n: {
+                "index": ("public", f"idx_{suffix}_cur"),
+                "read": ("public", ht),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    with pytest.raises(CoreError, match="search_with_cursor is not implemented for hub"):
+        await adapter.search_with_cursor("x")

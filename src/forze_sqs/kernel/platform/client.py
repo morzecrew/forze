@@ -4,13 +4,14 @@ require_sqs()
 
 # ....................... #
 
+import asyncio
 import base64
 import re
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from re import Pattern
-from typing import Any, AsyncIterator, Sequence, TypedDict, cast, final
+from typing import Any, AsyncIterator, Final, Sequence, TypedDict, cast, final
 from uuid import uuid4
 
 import aioboto3
@@ -31,6 +32,15 @@ _KEY_ATTR = "forze_key"
 _ENQUEUED_AT_ATTR = "forze_enqueued_at"
 _ENCODING_ATTR = "forze_encoding"
 _ENCODING_B64 = "b64"
+
+_SQS_SEND_MESSAGE_BATCH_MAX: Final[int] = 10
+"""AWS limit for ``send_message_batch`` entries per request."""
+
+_MAX_ENQUEUE_BATCH_CONCURRENCY: Final[int] = 32
+"""Upper bound for parallel ``send_message_batch`` calls in :meth:`SQSClient.enqueue_many`."""
+
+_DEFAULT_HTTP_POOL_SIZE: Final[int] = 10
+"""Botocore default when ``max_pool_connections`` is omitted."""
 
 _RE_UNSUPPORTED_CHARS: Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
 _RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
@@ -93,6 +103,11 @@ class SQSClient:
     )
 
     __queue_url_cache: dict[str, str] = attrs.field(factory=dict, init=False)
+    __enqueue_batch_concurrency: int = attrs.field(
+        default=_DEFAULT_HTTP_POOL_SIZE,
+        init=False,
+    )
+    """Max concurrent ``send_message_batch`` calls for :meth:`enqueue_many`."""
 
     # ....................... #
     # Lifecycle
@@ -110,6 +125,8 @@ class SQSClient:
         if self.__session is not None:
             return
 
+        pool_cap = _DEFAULT_HTTP_POOL_SIZE
+
         if config:
             aio_params = cast(SQSConfig, dict(config))
             for key in ("connect_timeout", "read_timeout"):
@@ -117,9 +134,18 @@ class SQSClient:
                 if isinstance(val, timedelta):
                     aio_params[key] = val.total_seconds()  # type: ignore
 
+            raw_pool = aio_params.get("max_pool_connections")
+            if raw_pool is not None:
+                pool_cap = max(1, int(raw_pool))
+
             aio_config = AioConfig(**aio_params)  # type: ignore
         else:
             aio_config = None
+
+        self.__enqueue_batch_concurrency = max(
+            1,
+            min(pool_cap, _MAX_ENQUEUE_BATCH_CONCURRENCY),
+        )
 
         self.__opts = _SQSConnectionOpts(
             endpoint=endpoint,
@@ -462,7 +488,14 @@ class SQSClient:
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
     ) -> list[str]:
-        """Send a batch of messages and return resolved message identifiers."""
+        """Send a batch of messages and return resolved message identifiers.
+
+        Splits into chunks of up to :data:`_SQS_SEND_MESSAGE_BATCH_MAX` (AWS limit).
+        Multiple chunks are sent with bounded concurrency derived from
+        ``max_pool_connections`` in :meth:`initialize` so large publishes do not
+        serialize on the network while staying within the HTTP connection pool.
+        """
+
         if not bodies:
             return []
 
@@ -475,7 +508,7 @@ class SQSClient:
             else [uuid4().hex for _ in range(len(bodies))]
         )
         queue_url = await self.__resolve_queue_url(queue)
-        attrs = self.__build_message_attributes(
+        msg_attrs = self.__build_message_attributes(
             type=type,
             key=key,
             enqueued_at=enqueued_at,
@@ -483,11 +516,10 @@ class SQSClient:
         is_fifo = self.__is_fifo_target(queue, queue_url)
         c = self.__require_client()
 
-        #! TODO: rewrite with asyncio.gather. And review batch size (chunking)
-
-        for offset in range(0, len(bodies), 10):
-            chunk = bodies[offset : offset + 10]
-            chunk_ids = resolved_ids[offset : offset + 10]
+        def _entries_for_chunk(
+            chunk: list[bytes],
+            chunk_ids: list[str],
+        ) -> list[dict[str, Any]]:
             entries: list[dict[str, Any]] = []
 
             for i, (body, chunk_message_id) in enumerate(
@@ -496,7 +528,7 @@ class SQSClient:
                 entry: dict[str, Any] = {
                     "Id": f"m{i}",
                     "MessageBody": self.__encode_body(body),
-                    "MessageAttributes": attrs,
+                    "MessageAttributes": msg_attrs,
                 }
 
                 if is_fifo:
@@ -505,9 +537,12 @@ class SQSClient:
 
                 entries.append(entry)
 
+            return entries
+
+        async def _send_chunk(chunk: list[bytes], chunk_ids: list[str]) -> None:
             resp = await c.send_message_batch(
                 QueueUrl=queue_url,
-                Entries=entries,  # type: ignore[arg-type]
+                Entries=_entries_for_chunk(chunk, chunk_ids),  # type: ignore[arg-type]
             )
             failed = resp.get("Failed") or []
 
@@ -516,6 +551,27 @@ class SQSClient:
                 raise InfrastructureError(
                     f"SQS send_message_batch has failed entries: {failed_ids}"
                 )
+
+        chunks: list[tuple[list[bytes], list[str]]] = []
+
+        for offset in range(0, len(bodies), _SQS_SEND_MESSAGE_BATCH_MAX):
+            chunk = list(bodies[offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX])
+            chunk_ids = resolved_ids[offset : offset + _SQS_SEND_MESSAGE_BATCH_MAX]
+            chunks.append((chunk, chunk_ids))
+
+        if len(chunks) == 1:
+            await _send_chunk(chunks[0][0], chunks[0][1])
+            return resolved_ids
+
+        sem = asyncio.Semaphore(self.__enqueue_batch_concurrency)
+
+        async def _bounded(chunk: list[bytes], chunk_ids: list[str]) -> None:
+            async with sem:
+                await _send_chunk(chunk, chunk_ids)
+
+        async with asyncio.TaskGroup() as tg:
+            for ch, ids in chunks:
+                tg.create_task(_bounded(ch, ids))
 
         return resolved_ids
 

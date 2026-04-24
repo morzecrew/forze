@@ -8,9 +8,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
+from forze.application.contracts.base import Page
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.errors import CoreError
 from forze_postgres.adapters.search import PostgresVectorSearchAdapterV2
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
@@ -27,6 +29,13 @@ from forze_mock import MockHashEmbeddingsProvider
 
 
 class VecDoc(BaseModel):
+    id: UUID
+    label: str
+
+
+class VecDocView(BaseModel):
+    """Alternate read model with the same columns as :class:`VecDoc` (``return_type`` tests)."""
+
     id: UUID
     label: str
 
@@ -366,3 +375,283 @@ async def test_vector_respects_eq_filter_on_projection(pgvector_client: Postgres
     assert n == 1
     assert rows[0].id == keep
     assert rows[0].label == "keep"
+
+
+@pytest.mark.asyncio
+async def test_vector_return_count_no_matches_short_circuit(
+    pgvector_client: PostgresClient,
+) -> None:
+    """``return_count=True`` with an empty filtered CTE returns a zero page without listing rows."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_zc_{suffix}"
+    index_name = f"idx_vec_zc_{suffix}"
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    one_id = uuid4()
+    v = vector_param_literal(await prov.embed_one("lonely"))
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES (%(i)s, 'only', '{v}'::vector)
+        """,
+        {"i": one_id},
+    )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    impossible: QueryFilterExpression = {"$fields": {"label": "nope"}}
+    page = await port.search("lonely", filters=impossible, return_count=True)
+    assert isinstance(page, Page)
+    assert page.count == 0
+    assert page.hits == []
+
+
+@pytest.mark.asyncio
+async def test_vector_sorts_add_secondary_order_on_tied_rank(
+    pgvector_client: PostgresClient,
+) -> None:
+    """Whitespace query ties vector rank; ``sorts`` adds a projection ``ORDER BY`` tie-breaker."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_sort_{suffix}"
+    index_name = f"idx_vec_sort_{suffix}"
+    a_id, b_id = uuid4(), uuid4()
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    z = vector_param_literal(await prov.embed_one("tie"))
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES
+        (%(b)s, 'b', '{z}'::vector), (%(a)s, 'a', '{z}'::vector)
+        """,
+        {"a": a_id, "b": b_id},
+    )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    page = await port.search(" ", sorts={"label": "asc"}, return_count=True)
+    assert page.count == 2
+    assert [h.label for h in page.hits] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_vector_return_fields_and_pagination(
+    pgvector_client: PostgresClient,
+) -> None:
+    """Tied ranks + ``sorts`` yields stable order for ``LIMIT`` / ``OFFSET`` and projections."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_rf_{suffix}"
+    index_name = f"idx_vec_rf_{suffix}"
+    ids = [uuid4() for _ in range(3)]
+    labels = ["a", "b", "c"]
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    z = vector_param_literal(await prov.embed_one("tie"))
+    for u, lb in zip(ids, labels, strict=True):
+        await pgvector_client.execute(
+            f"""
+            INSERT INTO {table} (id, label, emb) VALUES (%(id)s, %(lb)s, '{z}'::vector)
+            """,
+            {"id": u, "lb": lb},
+        )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+
+    counted = await port.search(
+        " ",
+        sorts={"label": "asc"},
+        pagination={"limit": 2, "offset": 0},
+        return_fields=["id", "label"],
+        return_count=True,
+    )
+    assert counted.count == 3
+    assert len(counted.hits) == 2
+    assert all(set(r.keys()) == {"id", "label"} for r in counted.hits)
+    assert [r["label"] for r in counted.hits] == ["a", "b"]
+
+    page2 = await port.search(
+        " ",
+        sorts={"label": "asc"},
+        pagination={"limit": 2, "offset": 2},
+        return_fields=["label"],
+        return_count=False,
+    )
+    assert not isinstance(page2, Page)
+    assert len(page2.hits) == 1
+    assert page2.hits[0] == {"label": "c"}
+
+
+@pytest.mark.asyncio
+async def test_vector_search_return_type_override(
+    pgvector_client: PostgresClient,
+) -> None:
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_rt_{suffix}"
+    index_name = f"idx_vec_rt_{suffix}"
+    row_id = uuid4()
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    v = vector_param_literal(await prov.embed_one("typed"))
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES (%(i)s, 'x', '{v}'::vector)
+        """,
+        {"i": row_id},
+    )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    page = await port.search("typed", return_type=VecDocView, return_count=True)
+    assert page.count == 1
+    assert isinstance(page.hits[0], VecDocView)
+    assert page.hits[0].id == row_id
+
+
+@pytest.mark.asyncio
+async def test_vector_search_return_type_countless_page(
+    pgvector_client: PostgresClient,
+) -> None:
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_rt0_{suffix}"
+    index_name = f"idx_vec_rt0_{suffix}"
+    row_id = uuid4()
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    v = vector_param_literal(await prov.embed_one("rt0"))
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES (%(i)s, 'y', '{v}'::vector)
+        """,
+        {"i": row_id},
+    )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    page = await port.search("rt0", return_type=VecDocView, return_count=False)
+    assert not isinstance(page, Page)
+    assert len(page.hits) == 1
+    assert isinstance(page.hits[0], VecDocView)
+
+
+@pytest.mark.asyncio
+async def test_vector_search_default_model_countless_page(
+    pgvector_client: PostgresClient,
+) -> None:
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_nc_{suffix}"
+    index_name = f"idx_vec_nc_{suffix}"
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    z = vector_param_literal(await prov.embed_one("nc"))
+    u = uuid4()
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES (%(i)s, 'only', '{z}'::vector)
+        """,
+        {"i": u},
+    )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    page = await port.search("nc", return_count=False)
+    assert not isinstance(page, Page)
+    assert len(page.hits) == 1
+    assert isinstance(page.hits[0], VecDoc)
+
+
+@pytest.mark.asyncio
+async def test_vector_search_with_cursor_raises_core_error(
+    pgvector_client: PostgresClient,
+) -> None:
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_cur_{suffix}"
+    index_name = f"idx_vec_cur_{suffix}"
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    with pytest.raises(CoreError, match="search_with_cursor is not implemented"):
+        await port.search_with_cursor("q")

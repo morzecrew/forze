@@ -1,6 +1,8 @@
 """Unit tests for :class:`~forze_sqs.kernel.platform.client.SQSClient` helpers (no I/O)."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
@@ -235,4 +237,89 @@ async def test_initialize_without_config_leaves_opts_config_none() -> None:
     opts = client._SQSClient__opts  # type: ignore[attr-defined]
     assert opts is not None
     assert opts.config is None
+    assert client._SQSClient__enqueue_batch_concurrency == 10  # type: ignore[attr-defined]
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_sets_enqueue_concurrency_from_max_pool_connections() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+        config={"max_pool_connections": 3},
+    )
+    assert client._SQSClient__enqueue_batch_concurrency == 3  # type: ignore[attr-defined]
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_many_parallel_batches_respects_concurrency_cap() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+        config={"max_pool_connections": 2},
+    )
+
+    in_flight = 0
+    max_in_flight = 0
+    lock = asyncio.Lock()
+
+    async def send_message_batch(**kwargs: object) -> dict[str, list[object]]:
+        nonlocal in_flight, max_in_flight
+        async with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.02)
+        async with lock:
+            in_flight -= 1
+        return {"Failed": []}
+
+    fake = AsyncMock()
+    fake.send_message_batch = AsyncMock(side_effect=send_message_batch)
+
+    client._SQSClient__queue_url_cache["q"] = "https://x/q"  # type: ignore[attr-defined]
+    tok_c = client._SQSClient__ctx_client.set(fake)  # type: ignore[attr-defined]
+    tok_d = client._SQSClient__ctx_depth.set(1)
+    try:
+        bodies = [b"x"] * 25
+        ids = await client.enqueue_many("q", bodies, message_ids=[f"id{i}" for i in range(25)])
+        assert len(ids) == 25
+        assert fake.send_message_batch.await_count == 3
+        assert max_in_flight == 2
+    finally:
+        client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
+        client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
+
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_many_single_chunk_no_task_group_path() -> None:
+    client = SQSClient()
+    await client.initialize(
+        endpoint="http://localhost:4566",
+        access_key_id="k",
+        secret_access_key="s",
+        region_name="us-east-1",
+    )
+
+    fake = AsyncMock()
+    fake.send_message_batch = AsyncMock(return_value={"Failed": []})
+
+    client._SQSClient__queue_url_cache["q"] = "https://x/q"  # type: ignore[attr-defined]
+    tok_c = client._SQSClient__ctx_client.set(fake)  # type: ignore[attr-defined]
+    tok_d = client._SQSClient__ctx_depth.set(1)
+    try:
+        await client.enqueue_many("q", [b"a", b"b"])
+        fake.send_message_batch.assert_awaited_once()
+    finally:
+        client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
+        client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
+
     client.close()

@@ -482,6 +482,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             legs=tuple(legs),
             rrf_k=int(self.config.get("rrf_k", 60)),
             rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
+            postgres_client=context.dep(PostgresClientDepKey),
         )
 
 

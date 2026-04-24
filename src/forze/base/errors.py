@@ -59,6 +59,17 @@ class CoreError(Exception):
 
 
 @attrs.define(slots=True, eq=False)
+class DomainError(CoreError):
+    """Error raised when a domain-level invariant is violated."""
+
+    code: str = attrs.field(default="domain_error", kw_only=True)
+    message: str = "Domain invariant violation"
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, eq=False)
 class NotFoundError(CoreError):
     """Error raised when a requested resource cannot be found."""
 
@@ -86,6 +97,17 @@ class ValidationError(CoreError):
 
     code: str = attrs.field(default="validation_error", kw_only=True)
     message: str = "Validation failed"
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, eq=False)
+class InvalidOperationError(CoreError):
+    """Error raised when an application-level invariant is violated."""
+
+    code: str = attrs.field(default="invalid_operation", kw_only=True)
+    message: str = "Application invariant violation"
 
 
 # ....................... #

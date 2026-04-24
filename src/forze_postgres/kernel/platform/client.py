@@ -58,6 +58,25 @@ class PostgresTransactionOptions(TypedDict, total=False):
     """Transaction isolation level. Omitted means default (read committed)."""
 
 
+def _isolation_level_sql_fragment(isolation: str) -> sql.Composable:
+    """Return an SQL fragment for ``SET TRANSACTION ISOLATION LEVEL …`` (keyword, not quoted)."""
+
+    key = isolation.strip().lower()
+    levels: dict[str, sql.SQL] = {
+        "read committed": sql.SQL("READ COMMITTED"),
+        "repeatable read": sql.SQL("REPEATABLE READ"),
+        "serializable": sql.SQL("SERIALIZABLE"),
+    }
+    frag = levels.get(key)
+    if frag is None:
+        raise CoreError(
+            f"Unsupported transaction isolation level {isolation!r}; "
+            f"expected one of: {', '.join(sorted(levels))}",
+        )
+
+    return frag
+
+
 # ....................... #
 #! TypedDict instead ? or typed dict adapter with cast to dataclass (attrs)
 
@@ -85,6 +104,15 @@ class PostgresConfig:
     num_workers: int = 4
     """Number of worker threads for the pool."""
 
+    pool_headroom: int = 2
+    """Connections left for other work when deriving :attr:`max_concurrent_queries`."""
+
+    max_concurrent_queries: int | None = None
+    """Max parallel checkout-heavy batch operations outside transactions.
+
+    ``None`` means ``max(1, max_size - pool_headroom)``.
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -99,6 +127,12 @@ class PostgresConfig:
 
         if self.num_workers < 0:
             raise CoreError("Number of workers must be greater than 0")
+
+        if self.pool_headroom < 0:
+            raise CoreError("pool_headroom must be greater than or equal to 0")
+
+        if self.max_concurrent_queries is not None and self.max_concurrent_queries < 1:
+            raise CoreError("max_concurrent_queries must be at least 1 when set")
 
         if self.min_size > 10:
             logger.warning(
@@ -147,6 +181,8 @@ class PostgresClient:
     __acquire_timeout: timedelta = attrs.field(
         default=timedelta(seconds=0.5), init=False
     )
+    __max_concurrent_queries: int = attrs.field(default=1, init=False)
+    """Cap for parallel operations that each checkout a pool connection."""
 
     # ....................... #
     # Lifecycle
@@ -169,6 +205,11 @@ class PostgresClient:
 
         if self.__pool is not None:
             return
+
+        if config.max_concurrent_queries is not None:
+            self.__max_concurrent_queries = config.max_concurrent_queries
+        else:
+            self.__max_concurrent_queries = max(1, config.max_size - config.pool_headroom)
 
         self.__pool = AsyncConnectionPool(
             conninfo=dsn,
@@ -256,11 +297,54 @@ class PostgresClient:
 
         return self.__ctx_depth.get() > 0 and self.__current_conn() is not None
 
+    def query_concurrency_limit(self) -> int:
+        """Maximum parallel operations that should each acquire a pool connection.
+
+        Ignored when :meth:`is_in_transaction` is true (work is serialized).
+        """
+
+        return self.__max_concurrent_queries
+
     def require_transaction(self) -> None:
         """Raises :exc:`InfrastructureError` if the current context is not inside a transaction."""
 
         if not self.is_in_transaction():
             raise InfrastructureError("Transactional context is required")
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def bound_connection(self) -> AsyncIterator[AsyncConnection]:
+        """Check out one pool connection and bind it as the current context connection.
+
+        While this context is active, query methods and a top-level
+        :meth:`transaction` use this connection — the latter runs ``BEGIN`` /
+        ``COMMIT`` / ``ROLLBACK`` on it instead of checking out another handle.
+
+        Intended for unit-of-work style composition and tests that must exercise
+        the pre-bound connection path of :meth:`transaction`.
+
+        :yields: The checked-out connection.
+        :raises InfrastructureError: If a connection is already bound or a
+            transaction/savepoint stack is already active.
+        """
+
+        if self.__ctx_depth.get() > 0:
+            raise InfrastructureError(
+                "Cannot bind a connection while already inside a transaction",
+            )
+
+        if self.__current_conn() is not None:
+            raise InfrastructureError("A connection is already bound in this context")
+
+        async with self.__require_pool().connection(
+            timeout=self.__acquire_timeout.total_seconds()
+        ) as conn:
+            token = self.__ctx_conn.set(conn)
+            try:
+                yield conn
+            finally:
+                self.__ctx_conn.reset(token)
 
     # ....................... #
 
@@ -340,8 +424,8 @@ class PostgresClient:
                     if isolation:
                         await cur.execute(
                             sql.SQL("SET TRANSACTION ISOLATION LEVEL {}").format(
-                                sql.Identifier(isolation.upper())
-                            )
+                                _isolation_level_sql_fragment(isolation),
+                            ),
                         )
 
                     if read_only:
@@ -376,8 +460,8 @@ class PostgresClient:
                     if isolation:
                         await cur.execute(
                             sql.SQL("SET TRANSACTION ISOLATION LEVEL {}").format(
-                                sql.Identifier(isolation.upper())
-                            )
+                                _isolation_level_sql_fragment(isolation),
+                            ),
                         )
 
                     if read_only:

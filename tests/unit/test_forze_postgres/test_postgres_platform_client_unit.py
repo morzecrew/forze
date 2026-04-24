@@ -1,11 +1,17 @@
 """Unit tests for :mod:`forze_postgres.kernel.platform.client` helpers (no DB I/O)."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 pytest.importorskip("psycopg")
 
 from forze.base.errors import CoreError
-from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
+from forze_postgres.kernel.platform.client import (
+    PostgresClient,
+    PostgresConfig,
+    _isolation_level_sql_fragment,
+)
 
 
 # ----------------------- #
@@ -23,6 +29,29 @@ class TestPostgresConfig:
     def test_rejects_negative_num_workers(self) -> None:
         with pytest.raises(CoreError, match="workers must be greater"):
             PostgresConfig(num_workers=-1)
+
+    def test_rejects_negative_pool_headroom(self) -> None:
+        with pytest.raises(CoreError, match="pool_headroom"):
+            PostgresConfig(pool_headroom=-1)
+
+    def test_rejects_max_concurrent_queries_below_one(self) -> None:
+        with pytest.raises(CoreError, match="max_concurrent_queries"):
+            PostgresConfig(max_concurrent_queries=0)
+
+    def test_warns_on_large_min_and_max_pool_size(self) -> None:
+        mock_logger = MagicMock()
+        with patch("forze_postgres.kernel.platform.client.logger", mock_logger):
+            PostgresConfig(min_size=11, max_size=101)
+        assert mock_logger.warning.call_count == 2
+        joined = " ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "Minimum size is greater than 10" in joined
+        assert "Maximum size is greater than 100" in joined
+
+
+class TestIsolationLevelSql:
+    def test_rejects_unknown_level(self) -> None:
+        with pytest.raises(CoreError, match="Unsupported transaction isolation"):
+            _isolation_level_sql_fragment("phantom")
 
 
 class TestPostgresClientRowHelpers:

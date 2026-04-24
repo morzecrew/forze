@@ -6,8 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-import asyncio
 from collections import defaultdict
+from functools import partial
 from typing import Any, Sequence, final, get_args
 from uuid import UUID
 
@@ -40,6 +40,7 @@ from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
+from ..db_gather import gather_db_work
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
@@ -282,7 +283,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             insert_data[offset : offset + batch_size]
             for offset in range(0, len(insert_data), batch_size)
         ]
-        batch_results = await asyncio.gather(*(_insert_batch(b) for b in batches))
+        batch_results = await gather_db_work(
+            self.client,
+            [partial(_insert_batch, b) for b in batches],
+        )
 
         result_raw: list[JsonDict] = []
         for rows in batch_results:
@@ -404,9 +408,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 commit=True,
             )
 
-            by_returned: dict[UUID, JsonDict] = {
-                _pk_from_row(r): r for r in rows
-            }
+            by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
             need = [m.id for m in model_batch if m.id not in by_returned]
             if need:
                 fetched = await self.read_gw.get_many(need)
@@ -553,9 +555,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 commit=True,
             )
 
-            by_returned: dict[UUID, JsonDict] = {
-                _pk_from_row(r): r for r in rows
-            }
+            by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
 
             inserted: list[D] = []
             for m in model_batch:
@@ -804,6 +804,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         currents = await self.read_gw.get_many(pks)
 
+        await self.column_types()
+
         groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = defaultdict(
             list
         )
@@ -817,7 +819,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 return c.id, c.rev, adapted_diff
 
-            results = await asyncio.gather(*(_prepare_touch(c) for c in currents))
+            results = await gather_db_work(
+                self.client,
+                [partial(_prepare_touch, c) for c in currents],
+            )
             for cid, crev, diff in results:
                 # always the same key so we can handle only one group
                 key = tuple(sorted(diff.keys()))
@@ -853,8 +858,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     await self.adapt_payload_for_write(diff, create=False),
                 )
 
-            results = await asyncio.gather(  # type: ignore[assignment]
-                *(_prepare_update(c, u) for c, u in zip(currents, updates))
+            results = await gather_db_work(
+                self.client,
+                [
+                    partial(_prepare_update, c, u)  # type: ignore[misc]
+                    for c, u in zip(currents, updates, strict=True)
+                ],
             )
             for r in results:
                 if r:
@@ -874,8 +883,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             for start in range(0, len(rows), batch_size):
                 work.append((fields_key, rows[start : start + batch_size]))
 
-        batch_results = await asyncio.gather(
-            *(self.__patch_group(fk, b) for fk, b in work)
+        batch_results = await gather_db_work(
+            self.client,
+            [partial(self.__patch_group, fk, bb) for fk, bb in work],
         )
         for (_, batch), updated in zip(work, batch_results, strict=True):
             updated_models.update({m.id: m for m in updated})
@@ -1053,4 +1063,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             list(pks[start : start + batch_size])
             for start in range(0, len(pks), batch_size)
         ]
-        await asyncio.gather(*(_delete_batch(b) for b in batches))
+        await gather_db_work(
+            self.client,
+            [partial(_delete_batch, b) for b in batches],
+        )

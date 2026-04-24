@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.base import page_from_limit_offset
+from forze.application.contracts.base import CountlessPage, page_from_limit_offset
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
@@ -187,6 +187,55 @@ async def test_federated_search_all_members_disabled_returns_empty() -> None:
     )
     assert page.hits == []
     assert page.count == 0
+
+
+@pytest.mark.asyncio
+async def test_federated_search_all_members_disabled_countless_page() -> None:
+    """Disabled legs short-circuit without ``return_count`` (total stays unknown)."""
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=_fed(),
+        legs=(("a", MagicMock()), ("b", MagicMock())),
+    )
+    page = await adapter.search("q", options={"members": []}, return_count=False)
+    assert page.hits == []
+    assert isinstance(page, CountlessPage)
+
+
+@pytest.mark.asyncio
+async def test_federated_search_runs_legs_via_gather_db_when_postgres_client_set() -> None:
+    """When ``postgres_client`` is set, leg work is dispatched through :func:`gather_db_work`."""
+    pg = MagicMock()
+    pg.is_in_transaction.return_value = False
+    pg.query_concurrency_limit.return_value = 4
+
+    async def leg_a(*_a, **_kw):
+        return page_from_limit_offset([_Hit(id=1)], {}, total=None)
+
+    pa = MagicMock()
+    pa.search = AsyncMock(side_effect=leg_a)
+    pb = MagicMock()
+    pb.search = AsyncMock(side_effect=leg_a)
+
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=_fed(),
+        legs=(("a", pa), ("b", pb)),
+        rrf_per_leg_limit=10,
+        postgres_client=pg,
+    )
+    page = await adapter.search("q")
+    pa.search.assert_awaited_once()
+    pb.search.assert_awaited_once()
+    assert len(page.hits) >= 1
+
+
+@pytest.mark.asyncio
+async def test_federated_search_with_cursor_is_not_implemented() -> None:
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=_fed(),
+        legs=(("a", MagicMock()), ("b", MagicMock())),
+    )
+    with pytest.raises(CoreError, match="search_with_cursor"):
+        await adapter.search_with_cursor("q")
 
 
 def test_federated_adapter_rejects_leg_count_mismatch() -> None:

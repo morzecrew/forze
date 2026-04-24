@@ -24,6 +24,25 @@ def _spec() -> SearchSpec[_Entity]:
     return SearchSpec(name="s", model_type=_Entity, fields=["a", "b"])
 
 
+@pytest.mark.asyncio
+async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> None:
+    """Empty match text skips PGroonga clause construction (filter-only path uses ``TRUE`` elsewhere)."""
+    adapter = PostgresPGroongaSearchAdapterV2(
+        spec=_spec(),
+        source_qname=PostgresQualifiedName("public", "v"),
+        index_qname=PostgresQualifiedName("public", "i"),
+        index_heap_qname=PostgresQualifiedName("public", "h"),
+        client=MagicMock(),
+        model_type=_Entity,
+        introspector=MagicMock(),
+        tenant_provider=None,
+        tenant_aware=False,
+    )
+    sw, params = await adapter._pgroonga_match_combined_query("")
+    assert params == []
+    assert "TRUE" in str(sw)
+
+
 def test_pgroonga_v2_rejects_duplicate_projection_join_columns() -> None:
     with pytest.raises(CoreError, match="unique"):
         PostgresPGroongaSearchAdapterV2(

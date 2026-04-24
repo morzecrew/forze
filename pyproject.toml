@@ -201,6 +201,8 @@ omit = [
     "*/forze_temporal/execution/deps/deps.py",
     # Redis deps module is exercised with a full SDK runtime.
     "*/forze_redis/execution/deps/module.py",
+    # Mock
+    "*/forze_mock/*",
 ]
 
 [tool.coverage.report]
