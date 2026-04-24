@@ -497,14 +497,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                         v,
                         pagination,
                         total=total,
-                        result_snapshot=handle_no,
+                        snapshot=handle_no,
                     )
 
                 return page_from_limit_offset(
                     v,
                     pagination,
                     total=None,
-                    result_snapshot=handle_no,
+                    snapshot=handle_no,
                 )
 
             if return_fields is not None:
@@ -515,14 +515,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                         raw,
                         pagination,
                         total=total,
-                        result_snapshot=handle_no,
+                        snapshot=handle_no,
                     )
 
                 return page_from_limit_offset(
                     raw,
                     pagination,
                     total=None,
-                    result_snapshot=handle_no,
+                    snapshot=handle_no,
                 )
 
             m = pydantic_validate_many(self.model_type, rows)
@@ -532,14 +532,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                     m,
                     pagination,
                     total=total,
-                    result_snapshot=handle_no,
+                    snapshot=handle_no,
                 )
 
             return page_from_limit_offset(
                 m,
                 pagination,
                 total=None,
-                result_snapshot=handle_no,
+                snapshot=handle_no,
             )
 
         sw, sp = await self._pgroonga_match_combined_query(mq, options=options)
@@ -700,14 +700,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                     v,
                     pagination,
                     total=total,
-                    result_snapshot=handle_sc,
+                    snapshot=handle_sc,
                 )
 
             return page_from_limit_offset(
                 v,
                 pagination,
                 total=None,
-                result_snapshot=handle_sc,
+                snapshot=handle_sc,
             )
 
         if return_fields is not None:
@@ -718,14 +718,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                     raw,
                     pagination,
                     total=total,
-                    result_snapshot=handle_sc,
+                    snapshot=handle_sc,
                 )
 
             return page_from_limit_offset(
                 raw,
                 pagination,
                 total=None,
-                result_snapshot=handle_sc,
+                snapshot=handle_sc,
             )
 
         m = pydantic_validate_many(self.model_type, rows)
@@ -735,14 +735,14 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                 m,
                 pagination,
                 total=total,
-                result_snapshot=handle_sc,
+                snapshot=handle_sc,
             )
 
         return page_from_limit_offset(
             m,
             pagination,
             total=None,
-            result_snapshot=handle_sc,
+            snapshot=handle_sc,
         )
 
     # ....................... #

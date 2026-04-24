@@ -124,8 +124,8 @@ class Paginated[T: BaseModel](BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
-    result_snapshot: SearchSnapshotHandleDTO | None = None
-    """When present, KV result snapshot metadata for paged follow-up (send back in request ``options``)."""
+    snapshot: SearchSnapshotHandleDTO | None = None
+    """When present, KV result snapshot metadata for paged follow-up (send back in request ``snapshot``)."""
 
     # ....................... #
 
@@ -138,7 +138,7 @@ class Paginated[T: BaseModel](BaseDTO):
             page=page.page,
             size=page.size,
             count=page.count,
-            result_snapshot=SearchSnapshotHandleDTO.from_handle(page.result_snapshot),
+            snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
         )
 
 
@@ -164,8 +164,8 @@ class RawPaginated(BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
-    result_snapshot: SearchSnapshotHandleDTO | None = None
-    """When present, KV result snapshot metadata for paged follow-up (send back in request ``options``)."""
+    snapshot: SearchSnapshotHandleDTO | None = None
+    """When present, KV result snapshot metadata for paged follow-up (send back in request ``snapshot``)."""
 
     # ....................... #
 
@@ -176,7 +176,7 @@ class RawPaginated(BaseDTO):
             page=page.page,
             size=page.size,
             count=page.count,
-            result_snapshot=SearchSnapshotHandleDTO.from_handle(page.result_snapshot),
+            snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
         )
 
 

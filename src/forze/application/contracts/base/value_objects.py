@@ -42,7 +42,7 @@ class CountlessPage[T]:
     size: int
     """Page size (number of records per page)."""
 
-    result_snapshot: SearchSnapshotHandle | None = None
+    snapshot: SearchSnapshotHandle | None = None
     """When present, a snapshot of ordered ids was used or created for this search."""
 
 
@@ -88,7 +88,7 @@ def page_from_limit_offset[T](
     pagination: Mapping[str, Any] | None,
     *,
     total: int | None = None,
-    result_snapshot: SearchSnapshotHandle | None = None,
+    snapshot: SearchSnapshotHandle | None = None,
 ) -> Page[T] | CountlessPage[T]:
     """Build :class:`Page` or :class:`CountlessPage` from offset/limit window params.
 
@@ -110,7 +110,10 @@ def page_from_limit_offset[T](
 
     if total is None:
         return CountlessPage(
-            hits=hits, page=page_num, size=size, result_snapshot=result_snapshot
+            hits=hits,
+            page=page_num,
+            size=size,
+            snapshot=snapshot,
         )
 
     return Page(
@@ -118,5 +121,5 @@ def page_from_limit_offset[T](
         page=page_num,
         size=size,
         count=int(total),
-        result_snapshot=result_snapshot,
+        snapshot=snapshot,
     )

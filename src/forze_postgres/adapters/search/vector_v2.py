@@ -557,14 +557,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                     v,
                     pagination,
                     total=total,
-                    result_snapshot=handle_out,
+                    snapshot=handle_out,
                 )
 
             return page_from_limit_offset(
                 v,
                 pagination,
                 total=None,
-                result_snapshot=handle_out,
+                snapshot=handle_out,
             )
 
         if return_fields is not None:
@@ -575,14 +575,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                     raw,
                     pagination,
                     total=total,
-                    result_snapshot=handle_out,
+                    snapshot=handle_out,
                 )
 
             return page_from_limit_offset(
                 raw,
                 pagination,
                 total=None,
-                result_snapshot=handle_out,
+                snapshot=handle_out,
             )
 
         m = pydantic_validate_many(self.model_type, rows)
@@ -592,14 +592,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                 m,
                 pagination,
                 total=total,
-                result_snapshot=handle_out,
+                snapshot=handle_out,
             )
 
         return page_from_limit_offset(
             m,
             pagination,
             total=None,
-            result_snapshot=handle_out,
+            snapshot=handle_out,
         )
 
     # ....................... #

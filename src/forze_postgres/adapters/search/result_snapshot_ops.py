@@ -235,11 +235,17 @@ async def read_simple_result_snapshot(
 
         if return_count:
             return page_from_limit_offset(
-                v, pagination_d, total=total_snap, result_snapshot=handle
+                v,
+                pagination_d,
+                total=total_snap,
+                snapshot=handle,
             )
 
         return page_from_limit_offset(
-            v, pagination_d, total=None, result_snapshot=handle
+            v,
+            pagination_d,
+            total=None,
+            snapshot=handle,
         )
 
     if return_fields is not None:
@@ -247,20 +253,32 @@ async def read_simple_result_snapshot(
 
         if return_count:
             return page_from_limit_offset(
-                raw, pagination_d, total=total_snap, result_snapshot=handle
+                raw,
+                pagination_d,
+                total=total_snap,
+                snapshot=handle,
             )
 
         return page_from_limit_offset(
-            raw, pagination_d, total=None, result_snapshot=handle
+            raw,
+            pagination_d,
+            total=None,
+            snapshot=handle,
         )
 
     if return_count:
         return page_from_limit_offset(  # type: ignore[return-value]
-            hydrated, pagination_d, total=total_snap, result_snapshot=handle
+            hydrated,
+            pagination_d,
+            total=total_snap,
+            snapshot=handle,
         )
 
     return page_from_limit_offset(  # type: ignore[return-value]
-        hydrated, pagination_d, total=None, result_snapshot=handle
+        hydrated,
+        pagination_d,
+        total=None,
+        snapshot=handle,
     )
 
 
@@ -328,31 +346,49 @@ async def read_hub_result_snapshot(
         )
         if return_count:
             return page_from_limit_offset(
-                v, pagination_d, total=total_snap, result_snapshot=handle
+                v,
+                pagination_d,
+                total=total_snap,
+                snapshot=handle,
             )
 
         return page_from_limit_offset(
-            v, pagination_d, total=None, result_snapshot=handle
+            v,
+            pagination_d,
+            total=None,
+            snapshot=handle,
         )
 
     if return_fields is not None:
         raw = [{k: getattr(h, k, None) for k in return_fields} for h in hydrated]
         if return_count:
             return page_from_limit_offset(
-                raw, pagination_d, total=total_snap, result_snapshot=handle
+                raw,
+                pagination_d,
+                total=total_snap,
+                snapshot=handle,
             )
 
         return page_from_limit_offset(
-            raw, pagination_d, total=None, result_snapshot=handle
+            raw,
+            pagination_d,
+            total=None,
+            snapshot=handle,
         )
 
     if return_count:
         return page_from_limit_offset(  # type: ignore[return-value]
-            hydrated, pagination_d, total=total_snap, result_snapshot=handle
+            hydrated,
+            pagination_d,
+            total=total_snap,
+            snapshot=handle,
         )
 
     return page_from_limit_offset(  # type: ignore[return-value]
-        hydrated, pagination_d, total=None, result_snapshot=handle
+        hydrated,
+        pagination_d,
+        total=None,
+        snapshot=handle,
     )
 
 

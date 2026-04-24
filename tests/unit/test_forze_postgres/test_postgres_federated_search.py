@@ -24,7 +24,9 @@ from forze_postgres.adapters.search.federated_snapshot import (
     federated_fingerprint,
     federated_row_key_string,
 )
-from forze_postgres.execution.deps.configs import validate_postgres_federated_search_conf
+from forze_postgres.execution.deps.configs import (
+    validate_postgres_federated_search_conf,
+)
 from forze_postgres.execution.deps.deps import ConfigurablePostgresFederatedSearch
 
 # ----------------------- #
@@ -137,9 +139,7 @@ def test_validate_postgres_federated_search_conf_accepts_embedded_hub_member() -
 async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     h = _Hit(id=1, label="x")
     row_key = federated_row_key_string("a", h)
-    fp = federated_fingerprint(
-        "q", None, None, spec_name="fed", rrf_k=60
-    )
+    fp = federated_fingerprint("q", None, None, spec_name="fed", rrf_k=60)
     store = MagicMock()
     store.get_id_range = AsyncMock(return_value=[row_key])
     store.get_meta = AsyncMock(
@@ -176,9 +176,9 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     assert len(page.hits) == 1
     assert page.hits[0].member == "a"
     assert page.hits[0].hit.id == 1
-    assert page.result_snapshot is not None
-    assert page.result_snapshot.id == "run-1"
-    assert page.result_snapshot.fingerprint == fp
+    assert page.snapshot is not None
+    assert page.snapshot.id == "run-1"
+    assert page.snapshot.fingerprint == fp
     store.get_id_range.assert_awaited_once()
     get_kw = store.get_id_range.call_args[1]
     assert get_kw.get("expected_fingerprint") == fp
@@ -208,10 +208,10 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
         pagination={"offset": 0, "limit": 5},
         return_count=True,
     )
-    assert page.result_snapshot is not None
-    run_id = page.result_snapshot.id
+    assert page.snapshot is not None
+    run_id = page.snapshot.id
     assert run_id
-    assert page.result_snapshot.capped is False
+    assert page.snapshot.capped is False
     store.put_run.assert_awaited_once()
     pr_kw = store.put_run.call_args[1]
     assert pr_kw["run_id"] == run_id
@@ -250,9 +250,7 @@ async def test_federated_search_skips_zero_weight_members() -> None:
 @pytest.mark.asyncio
 async def test_federated_search_pagination_on_merged_pool() -> None:
     async def leg_a(*_a, **_kw):
-        return page_from_limit_offset(
-            [_Hit(id=i) for i in range(3)], {}, total=None
-        )
+        return page_from_limit_offset([_Hit(id=i) for i in range(3)], {}, total=None)
 
     async def leg_b(*_a, **_kw):
         return page_from_limit_offset(
@@ -286,9 +284,7 @@ async def test_federated_search_all_members_disabled_returns_empty() -> None:
         federated_spec=_fed(),
         legs=(("a", na), ("b", nb)),
     )
-    page = await adapter.search(
-        "q", options={"members": []}, return_count=True
-    )
+    page = await adapter.search("q", options={"members": []}, return_count=True)
     assert page.hits == []
     assert page.count == 0
 
@@ -306,7 +302,9 @@ async def test_federated_search_all_members_disabled_countless_page() -> None:
 
 
 @pytest.mark.asyncio
-async def test_federated_search_runs_legs_via_gather_db_when_postgres_client_set() -> None:
+async def test_federated_search_runs_legs_via_gather_db_when_postgres_client_set() -> (
+    None
+):
     """When ``postgres_client`` is set, leg work is dispatched through :func:`gather_db_work`."""
     pg = MagicMock()
     pg.is_in_transaction.return_value = False
@@ -391,9 +389,7 @@ async def test_federated_search_return_type_validates_rows() -> None:
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
     )
-    page = await adapter.search(
-        "q", return_type=_FedRow, return_count=True
-    )
+    page = await adapter.search("q", return_type=_FedRow, return_count=True)
     assert page.count >= 1
     assert len(page.hits) >= 1
     assert isinstance(page.hits[0], _FedRow)
@@ -549,12 +545,16 @@ def _federated_config_hub_and_flat() -> dict[str, object]:
 
 
 def test_configurable_federated_search_resolves_hub_member() -> None:
-    factory = ConfigurablePostgresFederatedSearch(config=_federated_config_hub_and_flat())
+    factory = ConfigurablePostgresFederatedSearch(
+        config=_federated_config_hub_and_flat()
+    )
     adapter = factory(_federated_exec_context(), _fed_hub_and_flat())
     assert isinstance(adapter, PostgresFederatedSearchAdapter)
 
 
-def test_configurable_federated_search_hub_member_requires_embedded_hub_config() -> None:
+def test_configurable_federated_search_hub_member_requires_embedded_hub_config() -> (
+    None
+):
     cfg = _two_member_pgroonga_config()
     members = dict(cfg["members"])
     factory = ConfigurablePostgresFederatedSearch(

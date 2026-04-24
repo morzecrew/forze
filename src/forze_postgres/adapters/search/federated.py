@@ -351,14 +351,14 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                             v2,
                             pagination,
                             total=total_snap,
-                            result_snapshot=handle,
+                            snapshot=handle,
                         )
 
                     return page_from_limit_offset(
                         v2,
                         pagination,
                         total=None,
-                        result_snapshot=handle,
+                        snapshot=handle,
                     )
 
                 if return_count:
@@ -366,11 +366,14 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                         hydrated,
                         pagination,
                         total=total_snap,
-                        result_snapshot=handle,
+                        snapshot=handle,
                     )
 
                 return page_from_limit_offset(
-                    hydrated, pagination, total=None, result_snapshot=handle
+                    hydrated,
+                    pagination,
+                    total=None,
+                    snapshot=handle,
                 )
 
         active = [
@@ -480,22 +483,34 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             v = pydantic_validate_many(return_type, rows)
             if return_count:
                 return page_from_limit_offset(
-                    v, pagination, total=total, result_snapshot=handle_out
+                    v,
+                    pagination,
+                    total=total,
+                    snapshot=handle_out,
                 )
 
             return page_from_limit_offset(
-                v, pagination, total=None, result_snapshot=handle_out
+                v,
+                pagination,
+                total=None,
+                snapshot=handle_out,
             )
 
         out = [it[0] for it in window]
 
         if return_count:
             return page_from_limit_offset(
-                out, pagination, total=total, result_snapshot=handle_out
+                out,
+                pagination,
+                total=total,
+                snapshot=handle_out,
             )
 
         return page_from_limit_offset(
-            out, pagination, total=None, result_snapshot=handle_out
+            out,
+            pagination,
+            total=None,
+            snapshot=handle_out,
         )
 
     # ....................... #

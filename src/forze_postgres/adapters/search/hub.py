@@ -63,6 +63,7 @@ from ...kernel.introspect import PostgresIntrospector
 from ...kernel.query.nested import sort_key_expr
 from ...pagination import build_seek_condition
 from ..txmanager import PostgresTxScopeKey
+from ._cursor_keyset import cursor_return_fields_for_select
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,
@@ -74,7 +75,6 @@ from ._fts_sql import (
     fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
-from ._cursor_keyset import cursor_return_fields_for_select
 from ._options import prepare_hub_search_options
 from ._pgroonga_sql import (
     pgroonga_match_clause,
@@ -1151,14 +1151,14 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     v,
                     pagination,
                     total=total,
-                    result_snapshot=handle_h,
+                    snapshot=handle_h,
                 )
 
             return page_from_limit_offset(
                 v,
                 pagination,
                 total=None,
-                result_snapshot=handle_h,
+                snapshot=handle_h,
             )
 
         if return_fields is not None:
@@ -1168,13 +1168,13 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     raw,
                     pagination,
                     total=total,
-                    result_snapshot=handle_h,
+                    snapshot=handle_h,
                 )
             return page_from_limit_offset(
                 raw,
                 pagination,
                 total=None,
-                result_snapshot=handle_h,
+                snapshot=handle_h,
             )
 
         m = pydantic_validate_many(self.model_type, rows)
@@ -1183,13 +1183,13 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 m,
                 pagination,
                 total=total,
-                result_snapshot=handle_h,
+                snapshot=handle_h,
             )
         return page_from_limit_offset(
             m,
             pagination,
             total=None,
-            result_snapshot=handle_h,
+            snapshot=handle_h,
         )
 
     # ....................... #
