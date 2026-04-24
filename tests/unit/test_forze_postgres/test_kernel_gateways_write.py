@@ -167,6 +167,54 @@ async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
     read.get_many.assert_awaited_once_with([id1])
 
 
+@pytest.mark.asyncio
+async def test_upsert_inserts_or_updates() -> None:
+    gw, client = _build_gateway()
+    read = gw.read_gw
+    read.get = AsyncMock()
+    read.get_many = AsyncMock()
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    id1 = UUID("11111111-1111-1111-1111-111111111111")
+    id2 = UUID("22222222-2222-2222-2222-222222222222")
+    c1 = MyCreateDoc(id=id1, created_at=ts, name="one")
+    c2 = MyCreateDoc(id=id2, created_at=ts, name="two")
+    u2 = MyUpdateDoc(name="patched")
+    new_row = _row(pk=id1, name="one", ts=ts)
+    existing = MyDoc(
+        id=id2,
+        rev=1,
+        created_at=ts,
+        last_update_at=ts,
+        name="old",
+    )
+    updated_row = {
+        "id": id2,
+        "rev": 2,
+        "created_at": ts,
+        "last_update_at": ts,
+        "name": "patched",
+    }
+    read.get.return_value = existing
+    client.fetch_one = AsyncMock(
+        side_effect=[
+            new_row,
+            None,
+            updated_row,
+        ]
+    )
+
+    out1 = await gw.upsert(c1, MyUpdateDoc())
+    assert out1.id == id1
+    assert out1.name == "one"
+
+    out2 = await gw.upsert(c2, u2)
+    assert out2.id == id2
+    assert out2.name == "patched"
+    assert out2.rev == 2
+    assert read.get.await_count >= 1
+    assert any(call.args[0] == id2 for call in read.get.await_args_list)
+
+
 def _build_tenant_aware_gateway() -> (
     tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]
 ):

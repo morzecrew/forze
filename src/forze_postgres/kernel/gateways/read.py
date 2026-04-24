@@ -6,17 +6,28 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Never, Sequence, TypeVar, final, overload
+from typing import Any, Never, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.base.errors import NotFoundError
+from forze.application.contracts.query import (
+    CursorPaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+)
+from forze.base.errors import CoreError, NotFoundError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.query.nested import sort_key_expr
+from forze_postgres.pagination import (
+    build_order_by_sql,
+    build_seek_condition,
+    decode_keyset_v1,
+    normalize_sorts_with_id,
+)
 
 from .base import PostgresGateway
 
@@ -355,6 +366,148 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             return [{k: row.get(k, None) for k in return_fields} for row in rows]
 
         return pydantic_validate_many(self.model_type, rows)
+
+    # ....................... #
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: None = ...,
+        return_fields: None = ...,
+    ) -> list[M]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: type[T],
+        return_fields: None = ...,
+    ) -> list[T]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: None = ...,
+        return_fields: Sequence[str],
+    ) -> list[JsonDict]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: type[T],
+        return_fields: Sequence[str],
+    ) -> Never: ...
+
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> list[M] | list[T] | list[JsonDict]:
+        c = dict(cursor or {})
+
+        if c.get("after") and c.get("before"):
+            raise CoreError(
+                "Cursor pagination: pass at most one of 'after' or 'before'"
+            )
+
+        limit_raw = c.get("limit")
+
+        lim: int = 10 if limit_raw is None else int(limit_raw)  # type: ignore[call-overload]
+
+        if lim < 1:
+            raise CoreError("Cursor pagination 'limit' must be positive")
+
+        use_before = c.get("before") is not None
+        use_after = c.get("after") is not None
+
+        normalized = normalize_sorts_with_id(sorts)
+        sort_keys = [k for k, _ in normalized]
+        directions = [d for _, d in normalized]
+
+        where_base, params = await self.where_clause(filters)
+        types = await self.column_types()
+        alias = self.filter_table_alias
+        exprs = [
+            sort_key_expr(
+                field=k,
+                column_types=types,
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+                table_alias=alias,
+            )
+            for k, _ in normalized
+        ]
+
+        seek_params: list[Any] = []
+        where_fin = where_base
+
+        if use_after or use_before:
+            token = str(c["after" if use_after else "before"])
+            tk, td, tv = decode_keyset_v1(token)
+
+            if tk != sort_keys or len(td) != len(directions):
+                raise CoreError("Cursor does not match current sort keys")
+
+            for i in range(len(directions)):
+                if (td[i] or "").lower() != (directions[i] or "").lower():
+                    raise CoreError("Cursor does not match current sort order")
+
+            seek_sql, seek_params = build_seek_condition(
+                exprs,
+                directions,
+                tv,
+                "before" if use_before else "after",
+            )
+            where_fin = sql.SQL("({} AND ({}))").format(where_base, seek_sql)
+            params = list(params) + seek_params  # type: ignore[operator]
+
+        order_fwd = build_order_by_sql(exprs, directions, flip=False)
+        order_bwd = build_order_by_sql(exprs, directions, flip=True)
+
+        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
+            cols=self.return_clause(return_model, return_fields),
+            table=self.source_qname.ident(),
+            where=where_fin,
+        )
+        o_sql = order_fwd if not use_before else order_bwd
+        stmt = sql.SQL("{} ORDER BY {}").format(stmt, o_sql)  # type: ignore[assignment]
+        plim = int(lim) + 1
+        stmt = sql.SQL("{} LIMIT {}").format(stmt, sql.Placeholder())  # type: ignore[assignment]
+        params = list(params)  # type: ignore[assignment]
+        params.append(plim)
+
+        raw_rows = list(await self.client.fetch_all(stmt, params, row_factory="dict"))
+
+        if use_before:
+            raw_rows = list(reversed(raw_rows))
+
+        # At most *lim* + 1 rows; caller slices and derives ``has_more``.
+        if return_model is not None:
+            return pydantic_validate_many(return_model, raw_rows)
+
+        if return_fields is not None:
+            return [{k: r.get(k, None) for k in return_fields} for r in raw_rows]
+
+        return pydantic_validate_many(self.model_type, raw_rows)
 
     # ....................... #
 

@@ -1040,9 +1040,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
         del query, filters, cursor, sorts, options, return_type, return_fields
-        raise NotImplementedError(
-            "PostgresHubSearchAdapter.search_with_cursor is not implemented yet; "
-            "see forze.application.contracts.search.ports module doc.",
+        raise CoreError(
+            "search_with_cursor is not implemented for hub search; use search() with "
+            "limit/offset, or a single-index Postgres v2 search adapter for filter-only "
+            "keyset on an empty query where supported.",
         )
 
 

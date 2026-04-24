@@ -448,6 +448,174 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def upsert(self, create_dto: C, update_dto: U) -> D:
+        """Insert when the primary key is free; otherwise apply ``update_dto`` like :meth:`update`.
+
+        ``database`` and ``application`` strategies both use the same pattern:
+        attempt ``INSERT ... ON CONFLICT DO NOTHING``; on conflict, load the row
+        and delegate to :meth:`update` with the current revision.
+        """
+
+        model = pydantic_transform(self.model_type, create_dto)
+        insert_data_raw = pydantic_dump(model)
+        insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
+
+        cols = [sql.Identifier(k) for k in insert_data.keys()]
+        vals = [sql.Placeholder() for _ in insert_data.keys()]
+        params = list(insert_data.values())
+
+        stmt = sql.SQL(
+            "INSERT INTO {table} ({cols}) VALUES ({vals}) "
+            "ON CONFLICT ({pk}) DO NOTHING "
+            "RETURNING {ret}"
+        ).format(
+            table=self.source_qname.ident(),
+            cols=sql.SQL(", ").join(cols),
+            vals=sql.SQL(", ").join(vals),
+            pk=self.ident_pk(),
+            ret=self.return_clause(),
+        )
+
+        row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
+
+        if row is not None:
+            res = pydantic_validate(self.model_type, row)
+            await self._write_history(res)
+            return res
+
+        current = await self.read_gw.get(model.id)
+        res, _ = await self.update(model.id, update_dto, rev=current.rev)
+        return res
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        """Bulk :meth:`upsert` using batched insert-then-:meth:`update_many` for conflicts."""
+
+        if not pairs:
+            return []
+
+        creates = [c for c, _ in pairs]
+        models = pydantic_transform_many(self.model_type, creates)
+        insert_data_raw = pydantic_dump_many(models)
+        insert_data = await self.adapt_many_payload_for_write(
+            insert_data_raw,
+            create=True,
+        )
+
+        keys = list(insert_data[0].keys())
+        col_idents = [sql.Identifier(k) for k in keys]
+        row_template = (
+            sql.SQL("(")
+            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+            + sql.SQL(")")
+        )
+
+        def _pk_from_row(r: JsonDict) -> UUID:
+            v = r[ID_FIELD]
+            if isinstance(v, UUID):
+                return v
+            return UUID(str(v))
+
+        u_seq = [u for _, u in pairs]
+
+        async def _upsert_batch(
+            batch: Sequence[JsonDict],
+            model_batch: Sequence[D],
+            u_for_batch: Sequence[U],
+        ) -> list[D]:
+            value_parts = [row_template] * len(batch)
+            params_in = [b[k] for b in batch for k in keys]
+
+            stmt = sql.SQL(
+                "INSERT INTO {table} ({cols}) VALUES {vals} "
+                "ON CONFLICT ({pk}) DO NOTHING "
+                "RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                cols=sql.SQL(", ").join(col_idents),
+                vals=sql.SQL(", ").join(value_parts),
+                pk=self.ident_pk(),
+                ret=self.return_clause(),
+            )
+
+            rows = await self.client.fetch_all(
+                stmt,
+                params_in,
+                row_factory="dict",
+                commit=True,
+            )
+
+            by_returned: dict[UUID, JsonDict] = {
+                _pk_from_row(r): r for r in rows
+            }
+
+            inserted: list[D] = []
+            for m in model_batch:
+                rj = by_returned.get(m.id)
+                if rj is not None:
+                    inserted.append(pydantic_validate(self.model_type, rj))
+
+            if inserted:
+                await self._write_history(*inserted)
+
+            need_u: list[tuple[UUID, U]] = []
+            u_list = list(u_for_batch)
+            for i, m in enumerate(model_batch):
+                if m.id not in by_returned:
+                    need_u.append((m.id, u_list[i]))
+
+            by_updated: dict[UUID, D] = {}
+            if need_u:
+                pks_u = [a[0] for a in need_u]
+                u_dtos = [a[1] for a in need_u]
+                currents = await self.read_gw.get_many(pks_u)
+                by_cur = {c.id: c for c in currents}
+                revs = [by_cur[pk].rev for pk in pks_u]
+                updated, _ = await self.update_many(
+                    pks_u,
+                    u_dtos,
+                    revs=revs,
+                    batch_size=batch_size,
+                )
+                by_updated = {d.id: d for d in updated}
+
+            ordered: list[D] = []
+            for i, m in enumerate(model_batch):
+                rj = by_returned.get(m.id)
+                if rj is not None:
+                    ordered.append(pydantic_validate(self.model_type, rj))
+                else:
+                    u_one = by_updated.get(m.id)
+                    if u_one is None:
+                        raise NotFoundError(
+                            f"Record not found after upsert_many conflict: {m.id!s}",
+                        )
+                    ordered.append(u_one)
+
+            return ordered
+
+        out: list[D] = []
+        for offset in range(0, len(insert_data), batch_size):
+            data_b = insert_data[offset : offset + batch_size]
+            model_b = models[offset : offset + batch_size]
+            u_b = u_seq[offset : offset + batch_size]
+            out.extend(await _upsert_batch(data_b, model_b, u_b))
+
+        if len(out) != len(pairs):
+            raise CoreError("upsert_many result length does not match input")
+
+        return out
+
+    # ....................... #
+
     def __bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
         if self.strategy == "application":
             diff[REV_FIELD] = current.rev + 1

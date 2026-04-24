@@ -562,7 +562,8 @@ class PostgresFTSSearchAdapterV2[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
         del query, filters, cursor, sorts, options, return_type, return_fields
-        raise NotImplementedError(
-            "PostgresFTSSearchAdapterV2.search_with_cursor is not implemented yet; "
-            "see forze.application.contracts.search.ports module doc.",
+        raise CoreError(
+            "search_with_cursor is not implemented for PostgresFTSSearchAdapterV2; use "
+            "search() with limit/offset, or PostgresPGroongaSearchAdapterV2 for filter-only "
+            "keyset on an empty query string.",
         )

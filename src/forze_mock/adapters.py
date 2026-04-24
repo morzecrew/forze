@@ -43,7 +43,9 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
     assert_unique_ensure_ids,
+    assert_unique_upsert_pairs,
     require_create_id_for_ensure,
+    require_create_id_for_upsert,
 )
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.pubsub import (
@@ -929,6 +931,86 @@ class MockDocumentAdapter[
             return [await self.ensure(dto, return_new=True) for dto in dtos]
         for dto in dtos:
             await self.ensure(dto, return_new=False)
+        return None
+
+    # ....................... #
+
+    @overload
+    async def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: bool = True,
+    ) -> R | None:
+        _ = require_create_id_for_upsert(create_dto)
+        domain_model = self._require_domain_model()
+        payload = pydantic_dump(create_dto, exclude={"none": True})
+        domain = pydantic_validate(domain_model, payload)
+        with self.state.lock:
+            if domain.id in self._store():
+                rev = self._to_domain(dict(self._store()[domain.id])).rev
+            else:
+                rev = None
+        if rev is not None:
+            return await self.update(  # type: ignore[call-overload]
+                domain.id,
+                rev,
+                update_dto,
+                return_new=return_new,
+            )
+        return await self.create(create_dto, return_new=return_new)  # type: ignore[call-overload]
+
+    # ....................... #
+
+    @overload
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        if not pairs:
+            if not return_new:
+                return None
+            return []
+        assert_unique_upsert_pairs(pairs)
+        if return_new:
+            return [await self.upsert(c, u, return_new=True) for c, u in pairs]
+        for c, u in pairs:
+            await self.upsert(c, u, return_new=False)
         return None
 
     # ....................... #

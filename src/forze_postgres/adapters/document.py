@@ -8,7 +8,7 @@ require_psycopg()
 
 import asyncio
 from functools import cached_property
-from typing import Literal, Sequence, TypeVar, final, overload
+from typing import Literal, Sequence, TypeVar, cast, final, overload
 from uuid import UUID
 
 import attrs
@@ -25,13 +25,18 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
     assert_unique_ensure_ids,
+    assert_unique_upsert_pairs,
     require_create_id_for_ensure,
+    require_create_id_for_upsert,
 )
 from forze.application.contracts.query import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    encode_keyset_v1,
+    normalize_sorts_with_id,
+    row_value_for_sort_key,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -491,11 +496,80 @@ class PostgresDocumentAdapter(
         *,
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[R] | CursorPage[JsonDict]:
-        del filters, cursor, sorts, return_fields
-        raise NotImplementedError(
-            "PostgresDocumentAdapter.find_many_with_cursor is not implemented yet; "
-            "requires DocumentSpec or gateway support for a stable keyset order and "
-            "encoded cursor (see forze.application.contracts.document.ports module doc).",
+        normalized = normalize_sorts_with_id(sorts)
+        sort_keys = [k for k, _ in normalized]
+        directions = [d for _, d in normalized]
+        if return_fields is not None and not all(f in return_fields for f in sort_keys):
+            raise CoreError(
+                "When using return_fields with cursor list, the projection must include "
+                "all sort and tie-breaker fields (including id).",
+            )
+
+        c = dict(cursor or {})
+        use_after = c.get("after") is not None
+        use_before = c.get("before") is not None
+
+        raw = await self.read_gw.find_many_with_cursor(  # type: ignore[call-overload, misc]
+            filters,
+            cursor=cursor,
+            sorts=sorts,
+            return_model=None,
+            return_fields=return_fields,  # type: ignore[typeddict, arg-type, misc]
+        )
+        c2 = dict(cursor or {})
+        lim: int = int(  # type: ignore[call-overload]
+            (
+                c2.get("limit")  # type: ignore[arg-type]
+                if c2.get("limit") is not None
+                else 10
+            ),
+        )
+        has_more = len(raw) > lim
+        page_raw = list(raw)[:lim]
+
+        def _dump(o: R | JsonDict) -> JsonDict:
+            if isinstance(o, dict):
+                return o
+
+            return o.model_dump(mode="json")  # type: ignore[union-attr, err]
+
+        if has_more and page_raw:
+            last = _dump(page_raw[-1])  # type: ignore[assignment, arg-type]
+            next_tok = encode_keyset_v1(
+                sort_keys=sort_keys,
+                directions=directions,
+                values=[row_value_for_sort_key(last, k) for k in sort_keys],
+            )
+
+        else:
+            next_tok = None
+
+        if page_raw and (use_after or (use_before and has_more)):
+            first = _dump(page_raw[0])  # type: ignore[assignment, arg-type]
+            prev_tok = encode_keyset_v1(
+                sort_keys=sort_keys,
+                directions=directions,
+                values=[row_value_for_sort_key(first, k) for k in sort_keys],
+            )
+
+        else:
+            prev_tok = None
+
+        if return_fields is not None:
+            return CursorPage(
+                hits=cast(list[JsonDict], page_raw),
+                next_cursor=next_tok,
+                prev_cursor=prev_tok,
+                has_more=has_more,
+            )
+
+        out = list(page_raw)  # type: ignore[typeddict, var-annotated]
+
+        return CursorPage(
+            hits=cast(list[R], out),  # type: ignore[redundant-cast]
+            next_cursor=next_tok,
+            prev_cursor=prev_tok,
+            has_more=has_more,
         )
 
     # ....................... #
@@ -666,6 +740,100 @@ class PostgresDocumentAdapter(
         logger.debug("Ensure %s '%s' documents", len(dtos), self.spec.name)
 
         domains = await w.ensure_many(dtos, batch_size=self.eff_batch_size)
+
+        if not return_new:
+            return None
+
+        pks = [x.id for x in domains]
+        res, _ = await asyncio.gather(
+            self.read_gw.get_many(pks),
+            self._clear_cache(*pks),
+        )
+        await self._set_cache_many(res)
+
+        return res
+
+    # ....................... #
+
+    @overload
+    async def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> R: ...
+
+    @overload
+    async def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: bool = True,
+    ) -> R | None:
+        w = self._require_write()
+        _ = require_create_id_for_upsert(create_dto)
+
+        logger.debug("Upsert 1 '%s' document", self.spec.name)
+
+        domain = await w.upsert(create_dto, update_dto)
+
+        if not return_new:
+            return None
+
+        res, _ = await asyncio.gather(
+            self.read_gw.get(domain.id),
+            self._clear_cache(domain.id),
+        )
+        await self._set_cache(res)
+
+        return res
+
+    # ....................... #
+
+    @overload
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: Literal[False],
+    ) -> None: ...
+
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | None:
+        w = self._require_write()
+
+        if not pairs:
+            if not return_new:
+                return None
+            return []
+
+        assert_unique_upsert_pairs(pairs)
+
+        logger.debug("Upsert %s '%s' document pairs", len(pairs), self.spec.name)
+
+        domains = await w.upsert_many(pairs, batch_size=self.eff_batch_size)
 
         if not return_new:
             return None

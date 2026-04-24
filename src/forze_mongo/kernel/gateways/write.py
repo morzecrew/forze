@@ -319,6 +319,95 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def upsert(self, create_dto: C, update_dto: U) -> D:
+        """Insert with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
+
+        model = self._from_cdto(create_dto)
+        data = pydantic_dump(model)
+        data = self.adapt_payload_for_write(data, create=True)
+        storage = self._storage_doc(data)
+        flt: JsonDict = self._add_tenant_filter(
+            {"_id": self._storage_pk(model.id)},
+        )
+        res: Any = await self.client.update_one_upsert(
+            self.coll(),
+            flt,
+            {"$setOnInsert": storage},
+        )
+        if res.upserted_id is not None:
+            created = await self.read_gw.get(model.id)
+            await self._write_history(created)
+            return created
+
+        current = await self.read_gw.get(model.id)
+        u_res, _ = await self.update(model.id, update_dto, rev=current.rev)
+        return u_res
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        """Bulk :meth:`upsert`: ``$setOnInsert`` batch, then :meth:`update_many` for existing."""
+
+        if not pairs:
+            return []
+
+        models = self._from_cdto_many([c for c, _ in pairs])
+        raw_payloads = pydantic_dump_many(models)
+        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        u_all = [u for _, u in pairs]
+        new_indices: list[int] = []
+        for offset in range(0, len(pairs), batch_size):
+            chunk_payloads = payloads[offset : offset + batch_size]
+            chunk_models = models[offset : offset + batch_size]
+            ops: list[UpdateOne] = [
+                UpdateOne(
+                    self._add_tenant_filter(
+                        {"_id": self._storage_pk(m.id)},
+                    ),
+                    {"$setOnInsert": self._storage_doc(p)},
+                    upsert=True,
+                )
+                for m, p in zip(chunk_models, chunk_payloads, strict=True)
+            ]
+            bres: Any = await self.client.bulk_write(
+                self.coll(),
+                ops,
+                ordered=False,
+            )
+            umap = cast(Mapping[int, Any], bres.upserted_ids or {})
+            for idx in umap:
+                new_indices.append(offset + int(idx))
+
+        inserted_idx: set[int] = set(new_indices)
+        if inserted_idx:
+            new_pks = [models[i].id for i in inserted_idx]
+            hist = await self.read_gw.get_many(new_pks)
+            await self._write_history(*hist)
+
+        to_update: list[tuple[UUID, U]] = []
+        for i, m in enumerate(models):
+            if i in inserted_idx:
+                continue
+            to_update.append((m.id, u_all[i]))
+        if to_update:
+            pks = [a[0] for a in to_update]
+            u_dtos = [a[1] for a in to_update]
+            currents = await self.read_gw.get_many(pks)
+            by_c = {c.id: c for c in currents}
+            revs = [by_c[pk].rev for pk in pks]
+            await self.update_many(pks, u_dtos, revs=revs, batch_size=batch_size)
+
+        return await self.read_gw.get_many([m.id for m in models])
+
+    # ....................... #
+
     def _bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
         diff[REV_FIELD] = current.rev + 1
 

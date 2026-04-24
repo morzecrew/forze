@@ -15,6 +15,12 @@ from .internal import (
     QueryValueCaster,
 )
 from .types import QueryOp, QueryValue
+from .pagination import (
+    decode_keyset_v1,
+    encode_keyset_v1,
+    normalize_sorts_with_id,
+    row_value_for_sort_key,
+)
 
 # ----------------------- #
 
@@ -31,4 +37,8 @@ __all__ = [
     "QueryOr",
     "QueryOp",
     "QueryValue",
+    "decode_keyset_v1",
+    "encode_keyset_v1",
+    "normalize_sorts_with_id",
+    "row_value_for_sort_key",
 ]

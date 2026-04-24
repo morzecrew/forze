@@ -6,13 +6,19 @@ require_mongo()
 
 # ....................... #
 
-from typing import Never, Sequence, TypeVar, final, overload
+from typing import Any, Never, Sequence, TypeVar, cast, final, overload
 from uuid import UUID
 
 from pydantic import BaseModel
 
-from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.base.errors import NotFoundError, ValidationError
+from forze.application.contracts.query import (
+    CursorPaginationExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+    decode_keyset_v1,
+    normalize_sorts_with_id,
+)
+from forze.base.errors import CoreError, NotFoundError, ValidationError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -417,6 +423,163 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return [self.return_subset(row, return_fields) for row in normalized]
 
         return pydantic_validate_many(self.model_type, normalized)
+
+    # ....................... #
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: None = ...,
+        return_fields: None = ...,
+    ) -> list[M]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: type[T],
+        return_fields: None = ...,
+    ) -> list[T]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: None = ...,
+        return_fields: Sequence[str],
+    ) -> list[JsonDict]: ...
+
+    @overload
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        return_model: type[T],
+        return_fields: Sequence[str],
+    ) -> Never: ...
+
+    async def find_many_with_cursor(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> list[M] | list[T] | list[JsonDict]:
+        """Keyset on ``_id`` only (Mongo v1: sort must be the default *id* order)."""
+
+        c = dict(cursor or {})
+
+        if c.get("after") and c.get("before"):
+            raise CoreError(
+                "Cursor pagination: pass at most one of 'after' or 'before'"
+            )
+
+        limit_raw = c.get("limit")
+        lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
+
+        if lim < 1:
+            raise CoreError("Cursor pagination 'limit' must be positive")
+
+        use_before = c.get("before") is not None
+        use_after = c.get("after") is not None
+
+        normalized = normalize_sorts_with_id(sorts)
+
+        if [k for k, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
+            raise CoreError(
+                "Mongo find_many_with_cursor (v1) requires sorting only by primary key: "
+                "omit ``sorts`` or pass a single {id: asc|desc}.",
+            )
+        _id_asc = normalized[0][1] == "asc"
+
+        base = self.render_filters(filters)
+        seek: dict[str, Any] = {}
+
+        if use_after or use_before:
+            token = str(c["after" if use_after else "before"])
+            tk, td, tv = decode_keyset_v1(token)
+            if (
+                tk != [ID_FIELD]
+                or len(td) != 1
+                or str(td[0]).lower()
+                not in (
+                    "asc",
+                    "desc",
+                )
+            ):
+                raise CoreError("Invalid cursor for current sort")
+
+            if str(td[0]).lower() != ("asc" if _id_asc else "desc"):
+                raise CoreError("Cursor does not match current sort order")
+
+            _rid = str(tv[0]) if len(tv) == 1 else None
+
+            if not _rid:
+                raise CoreError("Invalid cursor for current sort")
+
+            if use_after and _id_asc:
+                seek = {"_id": {"$gt": _rid}}
+
+            elif use_after and not _id_asc:
+                seek = {"_id": {"$lt": _rid}}
+
+            elif use_before and _id_asc:
+                seek = {"_id": {"$lt": _rid}}
+
+            else:
+                seek = {"_id": {"$gt": _rid}}
+
+        if seek and base:
+            q: dict[str, Any] = {"$and": [base, seek]}
+
+        elif seek:
+            q = seek
+
+        else:
+            q = base
+
+        sort_asc = _id_asc
+
+        if use_before:
+            sort_asc = not sort_asc
+
+        mgo_sort: list[tuple[str, int]] = [("_id", 1 if sort_asc else -1)]
+
+        rows = await self.client.find_many(
+            self.coll(),
+            q,
+            projection=self.render_projection(return_fields),
+            sort=mgo_sort,
+            limit=lim + 1,
+            skip=None,
+        )
+
+        if use_before:
+            rows = list(reversed(rows))
+
+        raw_normalized = [self._from_storage_doc(row) for row in rows]
+
+        if return_model is not None:
+            return pydantic_validate_many(return_model, raw_normalized)
+
+        if return_fields is not None:
+            return [self.return_subset(row, return_fields) for row in raw_normalized]
+
+        return pydantic_validate_many(self.model_type, raw_normalized)
 
     # ....................... #
 

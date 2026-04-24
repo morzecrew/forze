@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze.pagination`: base64-JSON v1 cursors and `normalize_sorts_with_id` (uniform ``asc``/``desc`` with ``id`` tie-break) shared by document adapters. `forze_postgres` adds SQL seek fragments in `forze_postgres.pagination.seek_sql`.
+- `forze_postgres` `PostgresReadGateway` / `PostgresDocumentAdapter` `find_many_with_cursor` with keyset ``WHERE`` + opaque ``next_cursor`` / ``prev_cursor`` (and ``has_more``). `forze_mongo` `MongoReadGateway` / `MongoDocumentAdapter` support the same with **v1** restriction to primary-key ordering only (omit ``sorts`` or ``{id: asc|desc}``); compound sorts are not supported on Mongo in this version.
+- `forze_postgres` `PostgresPGroongaSearchAdapterV2.search_with_cursor` for the **empty query string** (filter-only scan on the projection) using the same keyset rules; a non-empty full-text query raises :class:`forze.base.errors.CoreError` (use :meth:`search` with limit/offset for ranked hits).
 - `forze.application.contracts.document`: `DocumentCommandPort.ensure` and `ensure_many` (insert a row only when the primary key is missing; no updates to existing rows). Requires each `CreateDocumentCmd` to set `id`; `ensure_many` also requires unique ids in the batch. Helpers `require_create_id_for_ensure` and `assert_unique_ensure_ids`. `PostgresWriteGateway` / `PostgresDocumentAdapter` use `INSERT … ON CONFLICT (id) DO NOTHING`; `MongoWriteGateway` / `MongoDocumentAdapter` use `$setOnInsert` upserts; `MockDocumentAdapter` mirrors the semantics in memory.
 - `forze_postgres` hub search: optional `PostgresHubSearchMemberConfig` field `same_heap_as_hub` to run a leg against the hub CTE (no extra heap join) when the leg’s heap matches the hub relation and `hub_fk` is a single column equal to the heap primary key. PGroonga legs require `pgroonga_score_version: "v2"` and are incompatible with `field_map` on that leg. Not supported for `fts` legs.
 - `forze_fastapi`: `attach_http_endpoint` with `body_mode: "form"` binds `UploadFile` and `list[UploadFile]` body fields with FastAPI `File()` and other body fields with `Form()` for multipart requests.
@@ -24,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `forze_postgres` `PostgresFTSSearchAdapterV2`, `PostgresVectorSearchAdapterV2`, `PostgresHubSearchAdapter`, and `PostgresFederatedSearchAdapter` `search_with_cursor` now raise :class:`forze.base.errors.CoreError` with guidance instead of :exc:`NotImplementedError`.
 - `forze_postgres` `PostgresHubSearchAdapter`: hub legs with multiple `hub_fk` columns no longer use a correlated `LATERAL` over the full leg; they use a deduplicated per-leg CTE (``DISTINCT ON (eid)``) and one equi-``LEFT JOIN`` per FK into that set, with ``GREATEST`` / ``OR`` semantics unchanged for merge and combine.
 - `forze_postgres` `PostgresGateway.order_by_clause` is now ``async`` (callers must ``await`` it) so sort keys can use the same nested JSON path resolution as filters.
 - `forze_postgres` `ConfigurablePostgresSearch` with `engine: "fts"` builds `PostgresFTSSearchAdapterV2` (projection + index heap); optional `heap` and `join_pairs` match the PGroonga search config shape.

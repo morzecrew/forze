@@ -2,6 +2,7 @@
 
 from .facades import DocumentDTOs, DocumentUsecasesFacade
 from .factories import (
+    build_default_tx_document_plan,
     build_document_create_mapper,
     build_document_list_cursor_mapper,
     build_document_list_mapper,
@@ -25,4 +26,5 @@ __all__ = [
     "build_document_raw_list_mapper",
     "build_document_list_cursor_mapper",
     "build_document_raw_list_cursor_mapper",
+    "build_default_tx_document_plan",
 ]

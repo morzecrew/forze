@@ -402,6 +402,78 @@ class DocumentCommandPort[
     # ....................... #
 
     @overload
+    def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[R]:
+        """Insert from ``create_dto`` or, if a row with that id exists, apply ``update_dto``."""
+        ...  # pragma: no cover
+
+    @overload
+    def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Insert or update without a follow-up read when ``return_new`` is false."""
+        ...  # pragma: no cover
+
+    def upsert(
+        self,
+        create_dto: C,
+        update_dto: U,
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[R | None]:
+        """Insert when missing; on primary-key conflict, apply ``update_dto`` like :meth:`update`.
+
+        Requires :attr:`~CreateDocumentCmd.id` on ``create_dto``. The update branch
+        uses the current stored revision (same optimistic rules as :meth:`update`).
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
+        """Bulk upsert: each pair is ``(create_cmd, update_cmd)`` for the same id."""
+        ...  # pragma: no cover
+
+    @overload
+    def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[None]:
+        """Bulk upsert without re-reads when ``return_new`` is false."""
+        ...  # pragma: no cover
+
+    def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | None]:
+        """Bulk insert-or-update. Create commands must set ``id`` and ids must be unique.
+
+        Result order matches ``pairs``.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
     def update(
         self,
         pk: UUID,

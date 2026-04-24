@@ -24,6 +24,10 @@ from forze.application.contracts.query import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    decode_keyset_v1,
+    encode_keyset_v1,
+    normalize_sorts_with_id,
+    row_value_for_sort_key,
 )
 from forze.application.contracts.search import (
     SearchOptions,
@@ -37,6 +41,8 @@ from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.query.nested import sort_key_expr
+from forze_postgres.pagination import build_order_by_sql, build_seek_condition
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
@@ -623,8 +629,178 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
-        del query, filters, cursor, sorts, options, return_type, return_fields
-        raise NotImplementedError(
-            "PostgresPGroongaSearchAdapterV2.search_with_cursor is not implemented yet; "
-            "see forze.application.contracts.search.ports module doc.",
+        """Keyset forward/back over the filter-only (empty query) scan on the projection.
+
+        Full-text search with a non-empty query is not supported; use
+        :meth:`search` with limit/offset for ranked PGroonga pages.
+        """
+
+        options = search_options_for_simple_adapter(options)
+        terms = normalize_search_queries(query)
+
+        if terms:
+            raise CoreError(
+                "search_with_cursor does not support a non-empty full-text query for "
+                "PostgresPGroongaSearchAdapterV2; use search() with limit/offset, or an "
+                "empty query for filter-only keyset pagination on the projection.",
+            )
+
+        c = dict(cursor or {})
+
+        if c.get("after") and c.get("before"):
+            raise CoreError(
+                "Cursor pagination: pass at most one of 'after' or 'before'"
+            )
+
+        lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
+
+        if lim < 1:
+            raise CoreError("Cursor pagination 'limit' must be positive")
+
+        use_after = c.get("after") is not None
+        use_before = c.get("before") is not None
+
+        if return_fields is not None:
+            if sorts is None:
+                req = {sorted(self.read_fields)[0], ID_FIELD}
+
+            else:
+                req = {k for k, _ in normalize_sorts_with_id(sorts)}
+
+            if not req.issubset(set(return_fields)):
+                raise CoreError(
+                    "search_with_cursor with return_fields must include all sort and "
+                    "tie-breaker columns used for the cursor (see adapter docs).",
+                )
+
+        if sorts is None:
+            first = sorted(self.read_fields)[0]
+            key_spec: list[tuple[str, str]] = [(first, "asc"), (ID_FIELD, "asc")]
+
+        else:
+            key_spec = list(normalize_sorts_with_id(sorts))
+
+        sort_keys = [k for k, _ in key_spec]
+        directions = [d for _, d in key_spec]
+
+        fw, fp = await self.where_clause(filters)
+        types = await self.column_types()
+
+        exprs = [
+            sort_key_expr(
+                field=k,
+                column_types=types,
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+                table_alias=_PROJECTION_ALIAS,
+            )
+            for k in sort_keys
+        ]
+
+        where_fin: sql.Composable = fw
+        params: list[Any] = list(fp)
+
+        if use_after or use_before:
+            token = str(c["after" if use_after else "before"])
+            tk, td, tv = decode_keyset_v1(token)
+
+            if tk != sort_keys or len(td) != len(directions):
+                raise CoreError("Cursor does not match current search sort")
+
+            for i, di in enumerate(directions):
+                if (td[i] or "").lower() != di:
+                    raise CoreError("Cursor does not match current search sort")
+
+            sk, sp = build_seek_condition(
+                exprs,
+                directions,
+                list(tv),
+                "before" if use_before else "after",
+            )
+
+            where_fin = sql.SQL("({} AND ({}))").format(fw, sk)
+            params = params + sp
+
+        order_sql = build_order_by_sql(exprs, directions, flip=use_before)
+        cols = self.return_clause(
+            return_type,
+            return_fields,
+            table_alias=_PROJECTION_ALIAS,
+        )
+        data_stmt = sql.SQL(
+            """
+            SELECT {cols} FROM {proj} {pa} WHERE {w} ORDER BY {order}
+            """
+        ).format(
+            cols=cols,
+            proj=self.source_qname.ident(),
+            pa=sql.Identifier(_PROJECTION_ALIAS),
+            w=where_fin,
+            order=order_sql,
+        )
+        data_stmt = sql.SQL("{} LIMIT {}").format(
+            data_stmt,
+            sql.Placeholder(),
+        )
+        params.append(lim + 1)
+
+        raw_rows = list(
+            await self.client.fetch_all(data_stmt, params, row_factory="dict")
+        )  # type: ignore[assignment, arg-type]
+
+        if use_before:
+            raw_rows = list(reversed(raw_rows))
+
+        has_more = len(raw_rows) > lim
+        rows = raw_rows[:lim]
+
+        def _row_token_vals(row: JsonDict) -> list[Any]:
+            return [row_value_for_sort_key(row, k) for k in sort_keys]
+
+        if has_more and rows:
+            nxt = encode_keyset_v1(
+                sort_keys=sort_keys,
+                directions=directions,
+                values=_row_token_vals(rows[-1]),
+            )
+
+        else:
+            nxt = None
+
+        if rows and (use_after or (use_before and has_more)):
+            prv = encode_keyset_v1(
+                sort_keys=sort_keys,
+                directions=directions,
+                values=_row_token_vals(rows[0]),
+            )
+
+        else:
+            prv = None
+
+        if return_type is not None:
+            v = pydantic_validate_many(return_type, rows)
+
+            return CursorPage(
+                hits=v,
+                next_cursor=nxt,
+                prev_cursor=prv,
+                has_more=has_more,
+            )
+        if return_fields is not None:
+            rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
+
+            return CursorPage(
+                hits=rj,
+                next_cursor=nxt,
+                prev_cursor=prv,
+                has_more=has_more,
+            )
+
+        m = pydantic_validate_many(self.model_type, rows)
+
+        return CursorPage(
+            hits=m,
+            next_cursor=nxt,
+            prev_cursor=prv,
+            has_more=has_more,
         )

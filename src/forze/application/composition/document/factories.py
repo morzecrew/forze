@@ -1,5 +1,6 @@
 """Factories for document plans, mappers, and registries."""
 
+from enum import StrEnum
 from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
@@ -9,7 +10,7 @@ from forze.application.dto import (
     RawCursorListRequestDTO,
     RawListRequestDTO,
 )
-from forze.application.execution import UsecaseRegistry
+from forze.application.execution import UsecasePlan, UsecaseRegistry
 from forze.application.usecases.document import (
     CreateDocument,
     DeleteDocument,
@@ -293,3 +294,21 @@ def build_document_registry(
             )
 
     return reg
+
+
+# ....................... #
+
+
+def build_default_tx_document_plan(route: str | StrEnum) -> UsecasePlan:
+    """Build a default transaction plan for document operations."""
+
+    return UsecasePlan().tx(
+        [
+            DocumentOperation.CREATE,
+            DocumentOperation.UPDATE,
+            DocumentOperation.DELETE,
+            DocumentOperation.RESTORE,
+            DocumentOperation.KILL,
+        ],
+        route=route,
+    )
