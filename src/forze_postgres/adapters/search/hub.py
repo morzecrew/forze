@@ -594,6 +594,12 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     sql.Identifier(_COMBO_ALIAS, first),
                 ),
             ]
+            if first != ID_FIELD and ID_FIELD in self.read_fields:
+                order_parts.append(
+                    sql.SQL("{} ASC").format(
+                        sql.Identifier(_COMBO_ALIAS, ID_FIELD),
+                    ),
+                )
         return sql.SQL(", ").join(order_parts)
 
     async def _hub_build_with_clause(
@@ -832,6 +838,13 @@ class PostgresHubSearchAdapter[M: BaseModel](
         if not do_legs:
             if not sorts:
                 first = sorted(self.read_fields)[0]
+                if first == ID_FIELD:
+                    return [(ID_FIELD, "asc")]
+                if ID_FIELD not in self.read_fields:
+                    raise CoreError(
+                        "Hub cursor browse (empty query, no sorts) requires "
+                        f"{ID_FIELD!r} on the hub read model for a stable keyset.",
+                    )
                 return [(first, "asc"), (ID_FIELD, "asc")]
             return list(normalize_sorts_with_id(sorts))
 
@@ -1120,10 +1133,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
         """Keyset pagination over the hub ``combo`` row (filter-only or ranked legs).
 
-        When no leg is active (empty query or all member weights zero), ordering matches
-        filter-only :meth:`search`. With active legs and a non-empty query, the cursor
-        orders by merged hub rank (``_hub_rank``) DESC NULLS LAST, then optional sorts,
-        then ``id`` as tie-breaker unless ``id`` is already in ``sorts``.
+        **Browse (empty query, no sorts):** Uses the lexicographically first read-model
+        field ascending, then ``id`` ascending when that field is not ``id`` (same as
+        :meth:`search`). If the only sort column would be ``id`` twice, a single ``id``
+        key is used. The hub read model must include ``id`` whenever a tie-breaker is
+        required.
+
+        **Ranked:** With active legs and a non-empty query, ordering is merged
+        ``_hub_rank`` DESC NULLS LAST, optional ``sorts`` (including ``id`` if given),
+        then an ``id`` tie-breaker when omitted.
 
         With ``return_fields``, include every key column (including ``_hub_rank`` when
         legs are active).

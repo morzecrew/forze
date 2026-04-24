@@ -2081,3 +2081,84 @@ async def test_postgres_hub_search_with_cursor_ranked_id_desc_chains(
 
     assert len(collected) == 12
     assert len({str(x) for x in collected}) == 12
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_search_with_cursor_browse_no_sorts(
+    pg_client: PostgresClient,
+) -> None:
+    """Empty query + no sorts: stable browse uses first read field + id (see hub adapter)."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_browse_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_br ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    uuids = [uuid4() for _ in range(7)]
+    for i, uid in enumerate(uuids):
+        await pg_client.execute(
+            f"INSERT INTO {ht} (id, name, display_name) VALUES (%(id)s, %(n)s, 'tie')",
+            {"id": uid, "n": f"n{i}"},
+        )
+
+    leg_n = f"br_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_browse_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", ht),
+        "members": {
+            leg_n: {
+                "index": ("public", f"idx_{suffix}_br"),
+                "read": ("public", ht),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    collected: list[Any] = []
+    next_c: str | None = None
+    for _ in range(10):
+        cur: dict[str, Any] = {"limit": 3}
+        if next_c is not None:
+            cur["after"] = next_c
+        page = await adapter.search_with_cursor("", cursor=cur)
+        assert len(page.hits) > 0
+        collected.extend(h.id for h in page.hits)
+        if not page.has_more:
+            break
+        assert page.next_cursor is not None
+        next_c = page.next_cursor
+
+    assert len(collected) == 7
+    assert len(set(collected)) == 7
+
+    off = await adapter.search("", pagination={"limit": 100, "offset": 0})
+    assert [r.id for r in off.hits] == collected
