@@ -8,8 +8,17 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal, Protocol, TypeVar, final, overload
+from typing import (
+    Any,
+    Final,
+    Literal,
+    Mapping,
+    Protocol,
+    Sequence,
+    TypeVar,
+    final,
+    overload,
+)
 
 import attrs
 from psycopg import sql
@@ -36,6 +45,8 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchOptions,
     SearchQueryPort,
+    SearchResultSnapshotOptions,
+    SearchResultSnapshotPort,
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
@@ -47,10 +58,10 @@ from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ...kernel.query.nested import sort_key_expr
-from ...pagination import build_seek_condition
 from ...kernel.hub_fk_columns import normalize_hub_fk_columns
 from ...kernel.introspect import PostgresIntrospector
+from ...kernel.query.nested import sort_key_expr
+from ...pagination import build_seek_condition
 from ..txmanager import PostgresTxScopeKey
 from ._fts_sql import (
     FtsGroupLetter,
@@ -75,6 +86,14 @@ from ._vector_sql import (
     vector_knn_multi_score_expr,
     vector_knn_score_expr,
     vector_param_literal,
+)
+from .federated_snapshot import effective_snapshot_max_ids
+from .result_snapshot_ops import (
+    hub_search_fingerprint,
+    put_simple_result_snapshot,
+    read_hub_result_snapshot,
+    should_write_result_snapshot,
+    snapshot_sql_pagination,
 )
 
 # ----------------------- #
@@ -536,6 +555,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
     )
     """Per-leg index → embedder for :attr:`~HubLegRuntime.engine` ``vector`` legs."""
 
+    snapshot_store: SearchResultSnapshotPort | None = None
+    """Optional store for ordered hub row keys to accelerate paged reads."""
+
     combine: Literal["or", "and"] = "or"
     score_merge: Literal["max", "sum"] = "max"
 
@@ -792,9 +814,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
             leg_joins = sql.SQL(" ").join(join_parts)
 
-            leg_null_checks = [
-                _hub_leg_merge_matched(leg, i) for i, leg, _ in active
-            ]
+            leg_null_checks = [_hub_leg_merge_matched(leg, i) for i, leg, _ in active]
 
             if self.combine == "or":
                 combine_sql = sql.SQL(" OR ").join(leg_null_checks)  # type: ignore[assignment]
@@ -848,7 +868,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
             for field, direction in sorts.items():
                 d = str(direction).lower()
                 if d not in ("asc", "desc"):
-                    raise CoreError(f"Invalid sort direction in hub cursor: {direction!r}")
+                    raise CoreError(
+                        f"Invalid sort direction in hub cursor: {direction!r}"
+                    )
                 spec.append((field, d))
         have = {k for k, _ in spec}
         if ID_FIELD not in have:
@@ -993,6 +1015,39 @@ class PostgresHubSearchAdapter[M: BaseModel](
             options,
         )
 
+        snap_raw = (options or {}).get("result_snapshot")
+        snap_opt: SearchResultSnapshotOptions | None = (
+            snap_raw if isinstance(snap_raw, dict) else None
+        )
+        rs_spec = self.hub_spec.result_snapshot
+        members_weighted: list[tuple[str, float]] = [
+            (self.hub_spec.members[i].name, float(member_weights_list[i]))
+            for i in range(len(self.hub_spec.members))
+        ]
+        fp_fingerprint = hub_search_fingerprint(
+            query,
+            filters,
+            sorts,
+            spec_name=self.hub_spec.name,
+            members_weighted=members_weighted,
+            score_merge=str(self.score_merge),
+            combine=str(self.combine),
+        )
+        if self.snapshot_store is not None and rs_spec is not None:
+            read_page = await read_hub_result_snapshot(
+                store=self.snapshot_store,
+                rs_spec=rs_spec,
+                snap_opt=snap_opt,
+                fp_computed=fp_fingerprint,
+                model_type=self.model_type,
+                pagination=dict(pagination or {}),
+                return_type=return_type,
+                return_fields=return_fields,
+                return_count=return_count,
+            )
+            if read_page is not None:
+                return read_page
+
         with_clause, params, do_legs = await self._hub_build_with_clause(
             query_terms=terms,
             filters=filters,
@@ -1044,35 +1099,69 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         pagination = pagination or {}
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-
-        if limit is not None:
+        want_sn = (
+            self.snapshot_store is not None
+            and rs_spec is not None
+            and should_write_result_snapshot(snap_opt, rs_spec)
+        )
+        max_nh = effective_snapshot_max_ids(snap_opt, rs_spec) if want_sn else 0
+        sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
+            want_sn, max_nh, dict(pagination)
+        )
+        if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(limit))
-
-        if offset is not None:
+            params.append(int(sql_limit))
+        if want_sn:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(offset))
+            params.append(int(sql_offset))
+        elif pagination.get("offset") is not None:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(int(pagination.get("offset") or 0))
 
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+        handle_h = None
+        if want_sn and self.snapshot_store is not None and rs_spec is not None:
+            plh = len(rows)
+            handle_h = await put_simple_result_snapshot(
+                self.snapshot_store,
+                pydantic_validate_many(self.model_type, rows),
+                snap_opt=snap_opt,
+                rs_spec=rs_spec,
+                fp_computed=fp_fingerprint,
+                pool_len_before_cap=plh,
+            )
+            u_h = int(pagination.get("offset") or 0)
+            rows = rows[u_h : u_h + page_limit]
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
             if return_count:
-                return page_from_limit_offset(v, pagination, total=total)
-            return page_from_limit_offset(v, pagination, total=None)
+                return page_from_limit_offset(
+                    v, pagination, total=total, result_snapshot=handle_h
+                )
+            return page_from_limit_offset(
+                v, pagination, total=None, result_snapshot=handle_h
+            )
 
         if return_fields is not None:
             raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
             if return_count:
-                return page_from_limit_offset(raw, pagination, total=total)
-            return page_from_limit_offset(raw, pagination, total=None)
+                return page_from_limit_offset(
+                    raw, pagination, total=total, result_snapshot=handle_h
+                )
+            return page_from_limit_offset(
+                raw, pagination, total=None, result_snapshot=handle_h
+            )
 
         m = pydantic_validate_many(self.model_type, rows)
         if return_count:
-            return page_from_limit_offset(m, pagination, total=total)
-        return page_from_limit_offset(m, pagination, total=None)
+            return page_from_limit_offset(
+                m, pagination, total=total, result_snapshot=handle_h
+            )
+        return page_from_limit_offset(
+            m, pagination, total=None, result_snapshot=handle_h
+        )
 
     # ....................... #
 

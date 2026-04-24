@@ -5,6 +5,7 @@ import attrs
 from forze.application.contracts.cache import CacheDepPort, CacheSpec
 from forze.application.contracts.counter import CounterDepPort, CounterSpec
 from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencySpec
+from forze.application.contracts.search import SearchResultSnapshotPort, SearchResultSnapshotSpec
 from forze.application.execution import ExecutionContext
 
 from ...adapters import (
@@ -12,11 +13,13 @@ from ...adapters import (
     RedisCounterAdapter,
     RedisIdempotencyAdapter,
     RedisKeyCodec,
+    RedisSearchResultSnapshotAdapter,
 )
 from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
     RedisIdempotencyConfig,
+    RedisSearchResultSnapshotConfig,
     RedisUniversalConfig,
 )
 from .keys import RedisClientDepKey
@@ -107,6 +110,38 @@ class ConfigurableRedisIdempotency(IdempotencyDepPort):
             client=client,
             key_codec=key_codec,
             ttl=spec.ttl,
+            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_provider=ctx.get_tenant_id,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableRedisSearchResultSnapshot:
+    """Build :class:`RedisSearchResultSnapshotAdapter` from execution context and store spec."""
+
+    config: RedisSearchResultSnapshotConfig | RedisUniversalConfig
+    """Configuration (namespace, optional tenant)."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: SearchResultSnapshotSpec,
+    ) -> SearchResultSnapshotPort:
+        client = ctx.dep(RedisClientDepKey)
+        key_codec = RedisKeyCodec(namespace=str(self.config["namespace"]))
+
+        return RedisSearchResultSnapshotAdapter(
+            client=client,
+            key_codec=key_codec,
+            default_ttl=spec.ttl,
+            default_max_ids=spec.max_ids,
+            default_chunk_size=spec.chunk_size,
             tenant_aware=self.config.get("tenant_aware", False),
             tenant_provider=ctx.get_tenant_id,
         )

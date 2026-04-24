@@ -1,7 +1,6 @@
 """Gateway factory helpers for building Postgres read, write, search, and history gateways."""
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, Mapping
 
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.execution import ExecutionContext

@@ -1,8 +1,6 @@
 """Validation helpers for :func:`DocumentCommandPort.ensure` / ``ensure_many``."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
+from typing import Sequence
 from uuid import UUID
 
 from forze.base.errors import ValidationError

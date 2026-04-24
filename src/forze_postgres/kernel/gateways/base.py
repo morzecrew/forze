@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping
+from typing import Mapping
 from functools import cached_property
 from typing import Any, Self, Sequence, final
 

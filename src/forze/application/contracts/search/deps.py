@@ -4,8 +4,13 @@ from typing import Any
 
 from ..base import BaseDepPort, DepKey
 from .models import FederatedSearchReadModel
-from .ports import SearchCommandPort, SearchQueryPort
-from .specs import FederatedSearchSpec, HubSearchSpec, SearchSpec
+from .ports import SearchCommandPort, SearchQueryPort, SearchResultSnapshotPort
+from .specs import (
+    FederatedSearchSpec,
+    HubSearchSpec,
+    SearchResultSnapshotSpec,
+    SearchSpec,
+)
 
 # ----------------------- #
 
@@ -37,3 +42,11 @@ FederatedSearchQueryDepKey = DepKey[FederatedSearchQueryDepPort](
     "federated_search_query"
 )
 """Key used to register the federated :class:`SearchQueryPort` builder implementation."""
+
+SearchResultSnapshotDepPort = BaseDepPort[SearchResultSnapshotSpec, SearchResultSnapshotPort]
+"""Builder for :class:`SearchResultSnapshotPort` (e.g. Redis KV snapshot store)."""
+
+SearchResultSnapshotDepKey = DepKey[SearchResultSnapshotDepPort](
+    "search_result_snapshot",
+)
+"""Key used to register the :class:`SearchResultSnapshotPort` implementation."""

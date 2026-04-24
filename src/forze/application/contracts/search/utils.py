@@ -1,8 +1,18 @@
-"""Normalize ``search(..., query=...)`` inputs for disjunctive (OR) matching."""
+from typing import Sequence
 
-from __future__ import annotations
+from .types import PhraseCombine, SearchOptions
 
-from collections.abc import Sequence
+# ------------------------ #
+
+
+def effective_phrase_combine(options: SearchOptions | None) -> PhraseCombine:
+    """Return ``phrase_combine``, defaulting to ``any`` (disjunction)."""
+
+    raw = (options or {}).get("phrase_combine", "any")
+    return raw if raw in ("any", "all") else "any"
+
+
+# ....................... #
 
 
 def normalize_search_queries(query: str | Sequence[str]) -> tuple[str, ...]:
@@ -22,8 +32,10 @@ def normalize_search_queries(query: str | Sequence[str]) -> tuple[str, ...]:
         return () if not s else (s,)
 
     parts: list[str] = []
+
     for item in query:
         s = str(item).strip()
         if s:
             parts.append(s)
+
     return tuple(parts)

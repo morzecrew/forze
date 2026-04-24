@@ -7,27 +7,42 @@ from .deps import (
     SearchCommandDepPort,
     SearchQueryDepKey,
     SearchQueryDepPort,
+    SearchResultSnapshotDepKey,
+    SearchResultSnapshotDepPort,
 )
 from .models import FederatedSearchReadModel
-from .ports import SearchCommandPort, SearchQueryPort
+from .ports import SearchCommandPort, SearchQueryPort, SearchResultSnapshotPort
 from .specs import (
     FederatedSearchMemberSpec,
     FederatedSearchSpec,
     HubSearchSpec,
+    SearchResultSnapshotSpec,
     SearchSpec,
 )
-from .phrase_combine import effective_phrase_combine
-from .query_normalization import normalize_search_queries
-from .types import PhraseCombine, SearchOptions
+from .types import (
+    PhraseCombine,
+    ResultSnapshotMode,
+    SearchOptions,
+    SearchResultSnapshotOptions,
+)
+from .utils import effective_phrase_combine, normalize_search_queries
+from .value_objects import SearchResultSnapshotMeta
 
 # ----------------------- #
 
 __all__ = [
     "PhraseCombine",
+    "ResultSnapshotMode",
     "SearchSpec",
     "FederatedSearchMemberSpec",
     "HubSearchSpec",
     "SearchOptions",
+    "SearchResultSnapshotMeta",
+    "SearchResultSnapshotPort",
+    "SearchResultSnapshotSpec",
+    "SearchResultSnapshotOptions",
+    "SearchResultSnapshotDepKey",
+    "SearchResultSnapshotDepPort",
     "effective_phrase_combine",
     "SearchQueryPort",
     "SearchCommandPort",

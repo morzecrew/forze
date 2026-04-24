@@ -20,6 +20,7 @@ from .paginated import (
     Pagination,
     RawCursorPaginated,
     RawPaginated,
+    SearchSnapshotHandleDTO,
 )
 from .search import (
     CursorSearchRequestDTO,
@@ -36,6 +37,7 @@ __all__ = [
     "RawCursorPaginated",
     "Paginated",
     "RawPaginated",
+    "SearchSnapshotHandleDTO",
     "Pagination",
     "SearchRequestDTO",
     "RawSearchRequestDTO",

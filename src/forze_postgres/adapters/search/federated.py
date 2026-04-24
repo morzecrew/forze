@@ -1,12 +1,9 @@
 """Federated multi-index search: per-member adapters merged with weighted RRF."""
 
-from __future__ import annotations
-
 import asyncio
-import json
-from collections.abc import Sequence
+import uuid
 from functools import partial
-from typing import Any, Final, Literal, TypeVar, final, overload
+from typing import Any, Final, Literal, Sequence, TypeVar, final, overload
 
 import attrs
 from pydantic import BaseModel
@@ -15,6 +12,7 @@ from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
+    SearchSnapshotHandle,
     page_from_limit_offset,
 )
 from forze.application.contracts.query import (
@@ -28,6 +26,9 @@ from forze.application.contracts.search import (
     FederatedSearchSpec,
     SearchOptions,
     SearchQueryPort,
+    SearchResultSnapshotOptions,
+    SearchResultSnapshotPort,
+    SearchResultSnapshotSpec,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
@@ -38,6 +39,15 @@ from ...kernel.db_gather import gather_db_work
 from ...kernel.platform.client import PostgresClient
 from ..txmanager import PostgresTxScopeKey
 from ._options import prepare_federated_search_options
+from .federated_snapshot import (
+    effective_snapshot_chunk_size,
+    effective_snapshot_max_ids,
+    effective_snapshot_ttl,
+    federated_fingerprint,
+    federated_row_key_string,
+    hydrate_federated_row_key,
+    should_write_federated_snapshot,
+)
 
 # ----------------------- #
 
@@ -87,8 +97,7 @@ def weighted_rrf_merge_rows(
 
 
 def _federated_row_key(member: str, hit: BaseModel) -> str:
-    payload = json.dumps(hit.model_dump(mode="json"), sort_keys=True)
-    return f"{member}\0{payload}"
+    return federated_row_key_string(member, hit)
 
 
 def _federated_merged_hit_field(
@@ -133,6 +142,9 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     postgres_client: PostgresClient | None = None
     """When set, leg queries respect pool / transaction concurrency rules."""
+
+    snapshot_store: SearchResultSnapshotPort | None = None
+    """Optional store for ordered RRF row keys to accelerate subsequent pages (same search request)."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
@@ -268,6 +280,96 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             options,
         )
 
+        snap_raw = (options or {}).get("result_snapshot")
+        snap_opt: SearchResultSnapshotOptions | None = (
+            snap_raw if isinstance(snap_raw, dict) else None
+        )
+        rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.result_snapshot
+        offset = int((pagination or {}).get("offset") or 0)
+        limit = (pagination or {}).get("limit")
+        page_limit = max(1, int(limit)) if limit is not None else 20
+
+        fp_computed = federated_fingerprint(
+            query,
+            filters,
+            sorts,
+            spec_name=self.federated_spec.name,
+            rrf_k=int(self.rrf_k),
+        )
+
+        if (
+            self.snapshot_store is not None
+            and rs_spec is not None
+            and snap_opt is not None
+            and "id" in snap_opt
+        ):
+            if "fingerprint" in snap_opt:
+                sub_fp = str(snap_opt["fingerprint"])
+
+            else:
+                sub_fp = None
+
+            raw_keys = await self.snapshot_store.get_id_range(
+                str(snap_opt["id"]),
+                offset,
+                page_limit,
+                expected_fingerprint=sub_fp,
+            )
+
+            if raw_keys is not None:
+                sm = await self.snapshot_store.get_meta(str(snap_opt["id"]))
+                total_snap = (
+                    int(sm.total) if sm and sm.complete else offset + len(raw_keys)
+                )
+                fp_h = (sm and sm.fingerprint) or fp_computed
+                handle = SearchSnapshotHandle(
+                    id=str(snap_opt["id"]),
+                    fingerprint=fp_h,
+                    total=total_snap,
+                    capped=False,
+                )
+
+                hydrated = [
+                    hydrate_federated_row_key(k, self.federated_spec) for k in raw_keys
+                ]
+
+                if return_type is not None:
+                    rows2 = [
+                        {
+                            "hit": it.hit.model_dump(mode="json"),
+                            "member": it.member,
+                        }
+                        for it in hydrated
+                    ]
+                    v2 = pydantic_validate_many(return_type, rows2)
+
+                    if return_count:
+                        return page_from_limit_offset(
+                            v2,
+                            pagination,
+                            total=total_snap,
+                            result_snapshot=handle,
+                        )
+
+                    return page_from_limit_offset(
+                        v2,
+                        pagination,
+                        total=None,
+                        result_snapshot=handle,
+                    )
+
+                if return_count:
+                    return page_from_limit_offset(
+                        hydrated,
+                        pagination,
+                        total=total_snap,
+                        result_snapshot=handle,
+                    )
+
+                return page_from_limit_offset(
+                    hydrated, pagination, total=None, result_snapshot=handle
+                )
+
         active = [
             (name, port, member_weights[i])
             for i, (name, port) in enumerate(self.legs)
@@ -281,6 +383,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                     pagination or {},
                     total=0,
                 )
+
             return page_from_limit_offset([], pagination or {}, total=None)
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
@@ -306,6 +409,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 self.postgres_client,
                 [partial(_run_leg, n, p, w) for n, p, w in active],
             )
+
         else:
             leg_results = await asyncio.gather(
                 *(_run_leg(n, p, w) for n, p, w in active),
@@ -323,8 +427,39 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         merged.sort(key=lambda it: -it[1])
 
         total = len(merged)
-        offset = int((pagination or {}).get("offset") or 0)
-        limit = (pagination or {}).get("limit")
+        handle_out: SearchSnapshotHandle | None = None
+
+        if (
+            self.snapshot_store is not None
+            and rs_spec is not None
+            and should_write_federated_snapshot(snap_opt, rs_spec)
+        ):
+            max_n = effective_snapshot_max_ids(snap_opt, rs_spec)
+            to_store = merged[:max_n]
+            capped = total > len(to_store)
+            row_keys = [
+                federated_row_key_string(item[0].member, item[0].hit)
+                for item in to_store
+            ]
+
+            run_id = str(uuid.uuid4())
+            put_ttl = effective_snapshot_ttl(snap_opt, rs_spec)
+            put_chunk = effective_snapshot_chunk_size(snap_opt, rs_spec)
+
+            await self.snapshot_store.put_run(
+                run_id=run_id,
+                fingerprint=fp_computed,
+                ordered_ids=row_keys,
+                ttl=put_ttl,
+                chunk_size=put_chunk,
+            )
+
+            handle_out = SearchSnapshotHandle(
+                id=run_id,
+                fingerprint=fp_computed,
+                total=len(row_keys),
+                capped=capped,
+            )
 
         window = merged[offset:]
 
@@ -341,14 +476,24 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             ]
             v = pydantic_validate_many(return_type, rows)
             if return_count:
-                return page_from_limit_offset(v, pagination, total=total)
-            return page_from_limit_offset(v, pagination, total=None)
+                return page_from_limit_offset(
+                    v, pagination, total=total, result_snapshot=handle_out
+                )
+
+            return page_from_limit_offset(
+                v, pagination, total=None, result_snapshot=handle_out
+            )
 
         out = [it[0] for it in window]
 
         if return_count:
-            return page_from_limit_offset(out, pagination, total=total)
-        return page_from_limit_offset(out, pagination, total=None)
+            return page_from_limit_offset(
+                out, pagination, total=total, result_snapshot=handle_out
+            )
+
+        return page_from_limit_offset(
+            out, pagination, total=None, result_snapshot=handle_out
+        )
 
     # ....................... #
 

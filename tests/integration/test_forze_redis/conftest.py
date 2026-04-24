@@ -17,6 +17,7 @@ from forze_redis.adapters import (
     RedisIdempotencyAdapter,
     RedisPubSubAdapter,
     RedisPubSubCodec,
+    RedisSearchResultSnapshotAdapter,
     RedisStreamAdapter,
     RedisStreamCodec,
     RedisStreamGroupAdapter,
@@ -88,6 +89,18 @@ async def redis_idempotency(redis_client: RedisClient) -> RedisIdempotencyAdapte
     """Provide a RedisIdempotencyAdapter for integration tests."""
     namespace = f"it:idempotency:{uuid4().hex[:12]}"
     return RedisIdempotencyAdapter(
+        client=redis_client,
+        key_codec=RedisKeyCodec(namespace=namespace),
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_search_snapshot(
+    redis_client: RedisClient,
+) -> RedisSearchResultSnapshotAdapter:
+    """Provide a :class:`RedisSearchResultSnapshotAdapter` with a unique namespace per test."""
+    namespace = f"it:search_snapshot:{uuid4().hex[:12]}"
+    return RedisSearchResultSnapshotAdapter(
         client=redis_client,
         key_codec=RedisKeyCodec(namespace=namespace),
     )

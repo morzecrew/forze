@@ -4,8 +4,10 @@ from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
     RedisIdempotencyConfig,
+    RedisSearchResultSnapshotConfig,
     RedisUniversalConfig,
 )
+from .deps import ConfigurableRedisSearchResultSnapshot
 from .keys import RedisClientDepKey
 from .module import RedisDepsModule
 
@@ -17,5 +19,7 @@ __all__ = [
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisIdempotencyConfig",
+    "RedisSearchResultSnapshotConfig",
     "RedisUniversalConfig",
+    "ConfigurableRedisSearchResultSnapshot",
 ]

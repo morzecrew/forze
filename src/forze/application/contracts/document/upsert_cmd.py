@@ -1,9 +1,6 @@
 """Validation helpers for :func:`DocumentCommandPort.upsert` / ``upsert_many``."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 from uuid import UUID
 
 from forze.base.errors import ValidationError

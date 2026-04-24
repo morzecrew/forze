@@ -1,26 +1,26 @@
 """Vector (pgvector) search with projection vs index-heap separation (CTE pipeline)."""
 
-from __future__ import annotations
-
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal, TypeVar, final, overload
+from typing import Any, Final, Literal, Mapping, Sequence, TypeVar, final, overload
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.embeddings import EmbeddingsProviderPort, EmbeddingsSpec
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
     page_from_limit_offset,
+)
+from forze.application.contracts.embeddings import (
+    EmbeddingsProviderPort,
+    EmbeddingsSpec,
 )
 from forze.application.contracts.query import (
     CursorPaginationExpression,
@@ -31,6 +31,8 @@ from forze.application.contracts.query import (
 from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
+    SearchResultSnapshotOptions,
+    SearchResultSnapshotPort,
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
@@ -43,12 +45,21 @@ from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
+from ._options import search_options_for_simple_adapter
 from ._vector_sql import (
     VectorDistanceKind,
     assert_embedding_shape,
     vector_knn_multi_score_expr,
     vector_knn_score_expr,
     vector_param_literal,
+)
+from .federated_snapshot import effective_snapshot_max_ids
+from .result_snapshot_ops import (
+    put_simple_result_snapshot,
+    read_simple_result_snapshot,
+    should_write_result_snapshot,
+    simple_search_fingerprint,
+    snapshot_sql_pagination,
 )
 
 # ----------------------- #
@@ -101,6 +112,9 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
 
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
     """Optional map from :class:`SearchSpec` field names to heap column names (unused in v2)."""
+
+    snapshot_store: SearchResultSnapshotPort | None = None
+    """Optional store for ordered row keys to accelerate paged reads."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
     """Transaction scope."""
@@ -283,6 +297,41 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         | Page[T]
         | Page[JsonDict]
     ):
+        options = search_options_for_simple_adapter(options)
+        snap_raw = (options or {}).get("result_snapshot")
+        snap_opt: SearchResultSnapshotOptions | None = (
+            snap_raw if isinstance(snap_raw, dict) else None
+        )
+        rs_spec = self.spec.result_snapshot
+        fp_fingerprint = simple_search_fingerprint(
+            query,
+            filters,
+            sorts,
+            spec_name=self.spec.name,
+            variant="vector",
+            extras={
+                "phrase_combine": str(effective_phrase_combine(options)),
+                "embeddings": str(self.embeddings_spec.name),
+                "vector_column": str(self.vector_column),
+                "vector_distance": str(self.vector_distance),
+                "embeddings_dim": int(self.embeddings_spec.dimensions),
+            },
+        )
+        if self.snapshot_store is not None and rs_spec is not None:
+            maybe_snap: Any = await read_simple_result_snapshot(
+                store=self.snapshot_store,
+                rs_spec=rs_spec,
+                snap_opt=snap_opt,
+                fp_computed=fp_fingerprint,
+                spec=self.spec,
+                pagination=dict(pagination or {}),
+                return_type=return_type,
+                return_fields=return_fields,
+                return_count=return_count,
+            )
+            if maybe_snap is not None:
+                return maybe_snap
+
         combine = effective_phrase_combine(options)
         fw, fp = await self.where_clause(filters)
 
@@ -434,35 +483,70 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         params = list(params_body)
 
         pagination = pagination or {}
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-
-        if limit is not None:
+        want_sn = (
+            self.snapshot_store is not None
+            and rs_spec is not None
+            and should_write_result_snapshot(snap_opt, rs_spec)
+        )
+        max_nv = effective_snapshot_max_ids(snap_opt, rs_spec) if want_sn else 0
+        sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
+            want_sn, max_nv, dict(pagination)
+        )
+        if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(limit))
-
-        if offset is not None:
+            params.append(int(sql_limit))
+        if want_sn:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(offset))
+            params.append(int(sql_offset))
+        elif pagination.get("offset") is not None:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(int(pagination.get("offset") or 0))
 
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+        handle_out = None
+        if want_sn and self.snapshot_store is not None and rs_spec is not None:
+            pl = len(rows)
+            pool = pydantic_validate_many(self.model_type, rows)
+            handle_out = await put_simple_result_snapshot(
+                self.snapshot_store,
+                pool,
+                snap_opt=snap_opt,
+                rs_spec=rs_spec,
+                fp_computed=fp_fingerprint,
+                pool_len_before_cap=pl,
+            )
+            uo = int(pagination.get("offset") or 0)
+            rows = rows[uo : uo + page_limit]
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
             if return_count:
-                return page_from_limit_offset(v, pagination, total=total)
-            return page_from_limit_offset(v, pagination, total=None)
+                return page_from_limit_offset(
+                    v, pagination, total=total, result_snapshot=handle_out
+                )
+            return page_from_limit_offset(
+                v, pagination, total=None, result_snapshot=handle_out
+            )
 
         if return_fields is not None:
             raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
             if return_count:
-                return page_from_limit_offset(raw, pagination, total=total)
-            return page_from_limit_offset(raw, pagination, total=None)
+                return page_from_limit_offset(
+                    raw, pagination, total=total, result_snapshot=handle_out
+                )
+            return page_from_limit_offset(
+                raw, pagination, total=None, result_snapshot=handle_out
+            )
 
         m = pydantic_validate_many(self.model_type, rows)
         if return_count:
-            return page_from_limit_offset(m, pagination, total=total)
-        return page_from_limit_offset(m, pagination, total=None)
+            return page_from_limit_offset(
+                m, pagination, total=total, result_snapshot=handle_out
+            )
+        return page_from_limit_offset(
+            m, pagination, total=None, result_snapshot=handle_out
+        )
 
     # ....................... #
 

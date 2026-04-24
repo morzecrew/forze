@@ -1,5 +1,6 @@
 """Federated search: RRF merge and PostgresFederatedSearchAdapter behavior."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,12 +11,18 @@ from forze.application.contracts.search import (
     FederatedSearchReadModel,
     FederatedSearchSpec,
     HubSearchSpec,
+    SearchResultSnapshotMeta,
+    SearchResultSnapshotSpec,
     SearchSpec,
 )
 from forze.base.errors import CoreError
 from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
     weighted_rrf_merge_rows,
+)
+from forze_postgres.adapters.search.federated_snapshot import (
+    federated_fingerprint,
+    federated_row_key_string,
 )
 from forze_postgres.execution.deps.configs import validate_postgres_federated_search_conf
 from forze_postgres.execution.deps.deps import ConfigurablePostgresFederatedSearch
@@ -36,6 +43,18 @@ def _fed() -> FederatedSearchSpec[_Hit]:
     return FederatedSearchSpec(
         name="fed",
         members=(_mem("a"), _mem("b")),
+    )
+
+
+def _fed_with_result_snapshot() -> FederatedSearchSpec[_Hit]:
+    return FederatedSearchSpec(
+        name="fed",
+        members=(_mem("a"), _mem("b")),
+        result_snapshot=SearchResultSnapshotSpec(
+            name="snap",
+            enabled=True,
+            ttl=timedelta(minutes=5),
+        ),
     )
 
 
@@ -112,6 +131,93 @@ def test_validate_postgres_federated_search_conf_accepts_embedded_hub_member() -
             },
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_federated_search_reads_snapshot_without_running_legs() -> None:
+    h = _Hit(id=1, label="x")
+    row_key = federated_row_key_string("a", h)
+    fp = federated_fingerprint(
+        "q", None, None, spec_name="fed", rrf_k=60
+    )
+    store = MagicMock()
+    store.get_id_range = AsyncMock(return_value=[row_key])
+    store.get_meta = AsyncMock(
+        return_value=SearchResultSnapshotMeta(
+            run_id="run-1",
+            fingerprint=fp,
+            total=1,
+            chunk_size=100,
+            complete=True,
+        )
+    )
+    pa = MagicMock()
+    pa.search = AsyncMock()
+    pb = MagicMock()
+    pb.search = AsyncMock()
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=_fed_with_result_snapshot(),
+        legs=(("a", pa), ("b", pb)),
+        rrf_per_leg_limit=10,
+        snapshot_store=store,
+    )
+    page = await adapter.search(
+        "q",
+        pagination={"offset": 0, "limit": 5},
+        options={
+            "result_snapshot": {
+                "id": "run-1",
+                "fingerprint": fp,
+            }
+        },
+        return_count=True,
+    )
+    pa.search.assert_not_awaited()
+    pb.search.assert_not_awaited()
+    assert page.count == 1
+    assert len(page.hits) == 1
+    assert page.hits[0].member == "a"
+    assert page.hits[0].hit.id == 1
+    assert page.result_snapshot is not None
+    assert page.result_snapshot.id == "run-1"
+    assert page.result_snapshot.fingerprint == fp
+    store.get_id_range.assert_awaited_once()
+    get_kw = store.get_id_range.call_args[1]
+    assert get_kw.get("expected_fingerprint") == fp
+
+
+@pytest.mark.asyncio
+async def test_federated_search_materializes_snapshot_after_merge() -> None:
+    h = _Hit(id=1, label="x")
+
+    async def one(*_a, **_kw):
+        return page_from_limit_offset([h], {}, total=None)
+
+    pa = MagicMock()
+    pa.search = AsyncMock(side_effect=one)
+    pb = MagicMock()
+    pb.search = AsyncMock(side_effect=one)
+    store = MagicMock()
+    store.put_run = AsyncMock()
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=_fed_with_result_snapshot(),
+        legs=(("a", pa), ("b", pb)),
+        rrf_per_leg_limit=10,
+        snapshot_store=store,
+    )
+    page = await adapter.search(
+        "q",
+        pagination={"offset": 0, "limit": 5},
+        return_count=True,
+    )
+    assert page.result_snapshot is not None
+    run_id = page.result_snapshot.id
+    assert run_id
+    assert page.result_snapshot.capped is False
+    store.put_run.assert_awaited_once()
+    pr_kw = store.put_run.call_args[1]
+    assert pr_kw["run_id"] == run_id
+    assert pr_kw["ordered_ids"]
 
 
 @pytest.mark.asyncio

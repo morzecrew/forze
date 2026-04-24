@@ -1,8 +1,6 @@
 """Hub search: normalize ``hub_fk`` configuration (shared by config validation and runtime)."""
 
-from __future__ import annotations
-
-from collections.abc import Sequence
+from typing import Sequence
 
 from forze.base.errors import CoreError
 

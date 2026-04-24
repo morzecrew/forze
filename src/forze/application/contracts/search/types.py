@@ -1,9 +1,46 @@
-from typing import Literal, Sequence, TypedDict
+from typing import Literal, Sequence, TypedDict, TypeAlias
 
 # ----------------------- #
 
 PhraseCombine = Literal["any", "all"]
 """``any``: at least one list phrase matches (disjunction). ``all``: every phrase must match."""
+
+# ....................... #
+
+ResultSnapshotMode: TypeAlias = bool | Literal["auto"]
+"""Whether to materialize an ordered result snapshot for paged follow-up.
+
+``True`` always (when the adapter supports it), ``False`` never, ``\"auto\"`` defers
+to the search surface defaults (e.g. :class:`~.SearchResultSnapshotSpec`).
+"""
+
+# ....................... #
+
+
+class SearchResultSnapshotOptions(TypedDict, total=False):
+    """Per-request options for result-ID snapshotting.
+
+    Omitted keys fall back to the search surface :class:`.SearchResultSnapshotSpec` where applicable.
+    """
+
+    mode: ResultSnapshotMode
+    """``True`` / ``False`` / ``\"auto\"``; omit defers to the surface :class:`.SearchResultSnapshotSpec` ``enabled``."""
+
+    id: str
+    """Opaque handle; when set, read the next page from a stored ordered ID list."""
+
+    ttl_seconds: int
+    """Override TTL in seconds for the stored ID list and metadata."""
+
+    max_ids: int
+    """Override maximum number of document IDs in this snapshot."""
+
+    chunk_size: int
+    """Override KV chunk size for materializing ``ordered_ids``."""
+
+    fingerprint: str
+    """If set, must match the stored snapshot or the read is treated as a miss."""
+
 
 # ....................... #
 
@@ -40,3 +77,6 @@ class SearchOptions(TypedDict, total=False):
     ``any`` (default): disjunction (match if any phrase matches).
     ``all``: conjunction (match every phrase).
     """
+
+    result_snapshot: SearchResultSnapshotOptions
+    """Result-ID snapshot controls (mode, handle, overrides). Used by the outer search adapter only."""

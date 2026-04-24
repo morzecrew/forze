@@ -6,14 +6,11 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping
-from typing import Any, Literal
-
-from forze.application.contracts.search import PhraseCombine
+from typing import Any, Literal, Mapping
 
 from psycopg import sql
 
-from forze.application.contracts.search import SearchOptions, SearchSpec
+from forze.application.contracts.search import PhraseCombine, SearchOptions, SearchSpec
 from forze.base.errors import CoreError
 
 from ...kernel.gateways import PostgresQualifiedName
@@ -23,7 +20,9 @@ from ._utils import calculate_effective_field_weights
 # ----------------------- #
 
 
-def pgroonga_phrase_match_text(terms: tuple[str, ...], *, combine: PhraseCombine) -> str:
+def pgroonga_phrase_match_text(
+    terms: tuple[str, ...], *, combine: PhraseCombine
+) -> str:
     """Build one PGroonga query string: ``OR`` between phrases, or implicit AND (whitespace) for ``all``."""
 
     if not terms:

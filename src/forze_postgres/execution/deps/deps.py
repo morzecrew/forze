@@ -21,6 +21,9 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchQueryDepPort,
     SearchQueryPort,
+    SearchResultSnapshotDepKey,
+    SearchResultSnapshotPort,
+    SearchResultSnapshotSpec,
     SearchSpec,
 )
 from forze.application.contracts.tx import TxManagerPort
@@ -59,6 +62,20 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 from .utils import doc_write_gw, read_gw
 
 # ----------------------- #
+
+
+def _resolve_result_snapshot(
+    context: ExecutionContext,
+    spec: SearchResultSnapshotSpec | None,
+) -> SearchResultSnapshotPort | None:
+    if spec is None:
+        return None
+    if not (
+        context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
+        or context.deps.exists(SearchResultSnapshotDepKey)
+    ):
+        return None
+    return context.dep(SearchResultSnapshotDepKey, route=spec.name)(context, spec)
 
 
 @final
@@ -301,6 +318,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             tenant_aware=tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.get("nested_field_hints"),
+            snapshot_store=_resolve_result_snapshot(context, spec.result_snapshot),
         )
 
 
@@ -317,6 +335,11 @@ def _postgres_search_port_for_config(
     | PostgresVectorSearchAdapterV2[Any]
 ):
     validate_pg_search_conf(c)
+
+    snapshot_port = _resolve_result_snapshot(
+        context,
+        member_spec.result_snapshot,
+    )
 
     tenant_aware = c.get("tenant_aware", False)
     index_qname = PostgresQualifiedName(*c["index"])
@@ -340,6 +363,7 @@ def _postgres_search_port_for_config(
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
+                snapshot_store=snapshot_port,
             )
 
         case "fts":
@@ -365,6 +389,7 @@ def _postgres_search_port_for_config(
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
+                snapshot_store=snapshot_port,
             )
 
         case "vector":
@@ -397,6 +422,7 @@ def _postgres_search_port_for_config(
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
+                snapshot_store=snapshot_port,
             )
 
 
@@ -483,6 +509,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             rrf_k=int(self.config.get("rrf_k", 60)),
             rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
             postgres_client=context.dep(PostgresClientDepKey),
+            snapshot_store=_resolve_result_snapshot(context, spec.result_snapshot),
         )
 
 

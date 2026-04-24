@@ -6,8 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, Mapping
 
 import attrs
 from psycopg import sql

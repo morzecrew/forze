@@ -2,8 +2,7 @@
 
 import base64
 import json
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 from forze.application.contracts.query import QuerySortExpression
 from forze.base.errors import CoreError

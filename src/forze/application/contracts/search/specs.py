@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from datetime import timedelta
 from typing import Any, Mapping, Sequence, TypeAlias, TypedDict
 
 import attrs
@@ -24,6 +27,26 @@ class SearchFuzzySpec(TypedDict, total=False):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchResultSnapshotSpec(BaseSpec):
+    """Result-ID snapshot: defaults for a search surface, or DI registration for a snapshot port."""
+
+    enabled: bool | None = None
+    """If set, used when a request :class:`.types.SearchResultSnapshotOptions` omits ``mode``."""
+
+    ttl: timedelta = timedelta(minutes=5)
+    """Default time-to-live for a stored ordered-ID snapshot."""
+
+    max_ids: int = 50_000
+    """Upper bound on how many IDs a snapshot may hold (enforced by the search layer)."""
+
+    chunk_size: int = 5_000
+    """Size of each KV chunk when materializing ID lists."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchSpec[M: BaseModel](BaseSpec):
     """Specification for simple search (one index)."""
 
@@ -38,6 +61,9 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     fuzzy: SearchFuzzySpec | None = attrs.field(default=None)
     """Fuzzy matching configuration."""
+
+    result_snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    """Optional defaults for result-ID snapshotting."""
 
     # ....................... #
 
@@ -79,6 +105,9 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_member_weights: Mapping[str, float] | None = attrs.field(default=None)
     """Default weights for hub members."""
 
+    result_snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    """Optional defaults for result-ID snapshotting (outer hub adapter)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -118,6 +147,9 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
         validator=attrs.validators.min_len(2),
     )
     """At least two members, each a :class:`SearchSpec` or :class:`HubSearchSpec`."""
+
+    result_snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    """Optional defaults for result-ID snapshotting (outer federated adapter)."""
 
     # ....................... #
 

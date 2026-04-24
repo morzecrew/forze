@@ -5,6 +5,27 @@ from typing import Any, Mapping
 import attrs
 
 # ----------------------- #
+# Search snapshot (optional metadata on paged search responses)
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class SearchSnapshotHandle:
+    """Opaque handle to continue paged search without re-running the full query (KV snapshot)."""
+
+    id: str
+    """Snapshot run id; send back as :class:`.forze.application.contracts.search.types.SearchResultSnapshotOptions` ``id``."""
+
+    fingerprint: str
+    """Stable request fingerprint; clients should echo for validation."""
+
+    total: int
+    """Number of entries materialized in the snapshot (after cap)."""
+
+    capped: bool = False
+    """``True`` if the result set was truncated to ``max_ids`` when the snapshot was written."""
+
+
+# ----------------------- #
 # Pagination
 
 
@@ -21,13 +42,19 @@ class CountlessPage[T]:
     size: int
     """Page size (number of records per page)."""
 
+    result_snapshot: SearchSnapshotHandle | None = None
+    """When present, a snapshot of ordered ids was used or created for this search."""
+
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class Page[T](CountlessPage[T]):
-    """Value object for pagination result with a total count."""
+    """Value object for pagination result with a total count.
+
+    Inherits optional :attr:`CountlessPage.result_snapshot` for search snapshotting.
+    """
 
     count: int
     """Total number of matching records across all pages."""
@@ -61,6 +88,7 @@ def page_from_limit_offset[T](
     pagination: Mapping[str, Any] | None,
     *,
     total: int | None = None,
+    result_snapshot: SearchSnapshotHandle | None = None,
 ) -> Page[T] | CountlessPage[T]:
     """Build :class:`Page` or :class:`CountlessPage` from offset/limit window params.
 
@@ -81,6 +109,14 @@ def page_from_limit_offset[T](
         page_num = (offset // size) + 1
 
     if total is None:
-        return CountlessPage(hits=hits, page=page_num, size=size)
+        return CountlessPage(
+            hits=hits, page=page_num, size=size, result_snapshot=result_snapshot
+        )
 
-    return Page(hits=hits, page=page_num, size=size, count=int(total))
+    return Page(
+        hits=hits,
+        page=page_num,
+        size=size,
+        count=int(total),
+        result_snapshot=result_snapshot,
+    )

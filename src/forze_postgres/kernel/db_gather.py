@@ -1,10 +1,7 @@
 """Helpers for running multiple DB coroutines without starving the pool or overloading one connection."""
 
-from __future__ import annotations
-
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
-from typing import TypeVar
+from typing import Awaitable, Callable, Sequence, TypeVar
 
 from .platform.client import PostgresClient
 

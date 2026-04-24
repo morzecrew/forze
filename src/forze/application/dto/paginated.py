@@ -10,12 +10,54 @@ from typing import cast
 
 from pydantic import BaseModel, PositiveInt
 
-from forze.application.contracts.base import CursorPage, Page
+from forze.application.contracts.base import CursorPage, Page, SearchSnapshotHandle
 from forze.application.contracts.query import CursorPaginationExpression
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
+
+
+class SearchSnapshotHandleDTO(BaseDTO):
+    """Thin response DTO for :class:`~forze.application.contracts.base.SearchSnapshotHandle`.
+
+    Echo ``id`` and ``fingerprint`` in the next request under
+    ``SearchOptions`` ``result_snapshot`` to continue from the KV snapshot.
+    """
+
+    id: str
+    """Snapshot run id."""
+
+    fingerprint: str
+    """Request fingerprint; echo for :meth:`~forze.application.contracts.search.SearchResultSnapshotPort.get_id_range`."""
+
+    total: int
+    """Number of entries materialized in the snapshot (after cap)."""
+
+    capped: bool = False
+    """Whether the result set was truncated to ``max_ids`` when the snapshot was written."""
+
+    # ....................... #
+
+    @classmethod
+    def from_handle(
+        cls,
+        handle: SearchSnapshotHandle | None,
+    ) -> SearchSnapshotHandleDTO | None:
+        """Map a contract handle to DTO, or ``None``."""
+
+        if handle is None:
+            return None
+
+        return cls(
+            id=handle.id,
+            fingerprint=handle.fingerprint,
+            total=handle.total,
+            capped=handle.capped,
+        )
+
+
+# ....................... #
 
 
 class Pagination(BaseDTO):
@@ -82,6 +124,9 @@ class Paginated[T: BaseModel](BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
+    result_snapshot: SearchSnapshotHandleDTO | None = None
+    """When present, KV result snapshot metadata for paged follow-up (send back in request ``options``)."""
+
     # ....................... #
 
     @classmethod
@@ -93,6 +138,7 @@ class Paginated[T: BaseModel](BaseDTO):
             page=page.page,
             size=page.size,
             count=page.count,
+            result_snapshot=SearchSnapshotHandleDTO.from_handle(page.result_snapshot),
         )
 
 
@@ -118,6 +164,9 @@ class RawPaginated(BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
+    result_snapshot: SearchSnapshotHandleDTO | None = None
+    """When present, KV result snapshot metadata for paged follow-up (send back in request ``options``)."""
+
     # ....................... #
 
     @classmethod
@@ -127,6 +176,7 @@ class RawPaginated(BaseDTO):
             page=page.page,
             size=page.size,
             count=page.count,
+            result_snapshot=SearchSnapshotHandleDTO.from_handle(page.result_snapshot),
         )
 
 

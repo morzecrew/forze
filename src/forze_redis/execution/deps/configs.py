@@ -39,6 +39,14 @@ class RedisIdempotencyConfig(RedisUniversalConfig):
 
 
 # ....................... #
+
+
+@final
+class RedisSearchResultSnapshotConfig(RedisUniversalConfig):
+    """Configuration for the search result snapshot store."""
+
+
+# ....................... #
 #! very questionable to have namespace inside pubsub and streams
 
 # @final

@@ -6,8 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal, TypeVar, final, overload
+from typing import Any, Final, Literal, Mapping, Sequence, TypeVar, final, overload
 
 import attrs
 from psycopg import sql
@@ -32,6 +31,8 @@ from forze.application.contracts.query import (
 from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
+    SearchResultSnapshotOptions,
+    SearchResultSnapshotPort,
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
@@ -51,6 +52,14 @@ from ._pgroonga_sql import (
     pgroonga_match_clause,
     pgroonga_phrase_match_text,
     pgroonga_score_rank_expr,
+)
+from .federated_snapshot import effective_snapshot_max_ids
+from .result_snapshot_ops import (
+    put_simple_result_snapshot,
+    read_simple_result_snapshot,
+    should_write_result_snapshot,
+    simple_search_fingerprint,
+    snapshot_sql_pagination,
 )
 
 # ----------------------- #
@@ -121,6 +130,9 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     ``v2``: ``pgroonga_score(tableoid, ctid)``. ``v1``: ``pgroonga_score(heap alias)`` when the heap
     scan does not support the ``v2`` system columns.
     """
+
+    snapshot_store: SearchResultSnapshotPort | None = None
+    """Optional store for ordered row keys to accelerate paged reads."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
     """Transaction scope."""
@@ -335,6 +347,34 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         | Page[JsonDict]
     ):
         options = search_options_for_simple_adapter(options)
+        snap_raw = (options or {}).get("result_snapshot")
+        snap_opt: SearchResultSnapshotOptions | None = (
+            snap_raw if isinstance(snap_raw, dict) else None
+        )
+        rs_spec = self.spec.result_snapshot
+        fp_fingerprint = simple_search_fingerprint(
+            query,
+            filters,
+            sorts,
+            spec_name=self.spec.name,
+            variant="pgroonga",
+            extras={"phrase_combine": str(effective_phrase_combine(options))},
+        )
+        if self.snapshot_store is not None and rs_spec is not None:
+            maybe_snap: Any = await read_simple_result_snapshot(
+                store=self.snapshot_store,
+                rs_spec=rs_spec,
+                snap_opt=snap_opt,
+                fp_computed=fp_fingerprint,
+                spec=self.spec,
+                pagination=dict(pagination or {}),
+                return_type=return_type,
+                return_fields=return_fields,
+                return_count=return_count,
+            )
+            if maybe_snap is not None:
+                return maybe_snap
+
         fw, fp = await self.where_clause(filters)
         terms = normalize_search_queries(query)
         combine = effective_phrase_combine(options)
@@ -394,41 +434,76 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
             params = params_base
             pagination = pagination or {}
-            limit = pagination.get("limit")
-            offset = pagination.get("offset")
-
-            if limit is not None:
+            want_sn = (
+                self.snapshot_store is not None
+                and rs_spec is not None
+                and should_write_result_snapshot(snap_opt, rs_spec)
+            )
+            max_n0 = effective_snapshot_max_ids(snap_opt, rs_spec) if want_sn else 0
+            sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
+                want_sn, max_n0, dict(pagination)
+            )
+            if sql_limit is not None:
                 data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-                params.append(int(limit))
-
-            if offset is not None:
+                params.append(int(sql_limit))
+            if want_sn:
                 data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-                params.append(int(offset))
+                params.append(int(sql_offset))
+            elif pagination.get("offset") is not None:
+                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+                params.append(int(pagination.get("offset") or 0))
 
             rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+            handle_no = None
+            if want_sn and self.snapshot_store is not None and rs_spec is not None:
+                pool_len = len(rows)
+                pool0 = pydantic_validate_many(self.model_type, rows)
+                handle_no = await put_simple_result_snapshot(
+                    self.snapshot_store,
+                    pool0,
+                    snap_opt=snap_opt,
+                    rs_spec=rs_spec,
+                    fp_computed=fp_fingerprint,
+                    pool_len_before_cap=pool_len,
+                )
+                u_ = int(pagination.get("offset") or 0)
+                rows = rows[u_ : u_ + page_limit]
 
             if return_type is not None:
                 v = pydantic_validate_many(return_type, rows)
 
                 if return_count:
-                    return page_from_limit_offset(v, pagination, total=total)
+                    return page_from_limit_offset(
+                        v, pagination, total=total, result_snapshot=handle_no
+                    )
 
-                return page_from_limit_offset(v, pagination, total=None)
+                return page_from_limit_offset(
+                    v, pagination, total=None, result_snapshot=handle_no
+                )
 
             if return_fields is not None:
                 raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
                 if return_count:
-                    return page_from_limit_offset(raw, pagination, total=total)
+                    return page_from_limit_offset(
+                        raw, pagination, total=total, result_snapshot=handle_no
+                    )
 
-                return page_from_limit_offset(raw, pagination, total=None)
+                return page_from_limit_offset(
+                    raw, pagination, total=None, result_snapshot=handle_no
+                )
 
             m = pydantic_validate_many(self.model_type, rows)
 
             if return_count:
-                return page_from_limit_offset(m, pagination, total=total)
+                return page_from_limit_offset(
+                    m, pagination, total=total, result_snapshot=handle_no
+                )
 
-            return page_from_limit_offset(m, pagination, total=None)
+            return page_from_limit_offset(
+                m, pagination, total=None, result_snapshot=handle_no
+            )
 
         sw, sp = await self._pgroonga_match_combined_query(mq, options=options)
 
@@ -541,41 +616,76 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
         params = [*fp, *sp]
         pagination = pagination or {}
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-
-        if limit is not None:
+        want_s = (
+            self.snapshot_store is not None
+            and rs_spec is not None
+            and should_write_result_snapshot(snap_opt, rs_spec)
+        )
+        max_n1 = effective_snapshot_max_ids(snap_opt, rs_spec) if want_s else 0
+        sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
+            want_s, max_n1, dict(pagination)
+        )
+        if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(limit))
-
-        if offset is not None:
+            params.append(int(sql_limit))
+        if want_s:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(offset))
+            params.append(int(sql_offset))
+        elif pagination.get("offset") is not None:
+            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(int(pagination.get("offset") or 0))
 
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+        handle_sc = None
+        if want_s and self.snapshot_store is not None and rs_spec is not None:
+            pool_len2 = len(rows)
+            pool1 = pydantic_validate_many(self.model_type, rows)
+            handle_sc = await put_simple_result_snapshot(
+                self.snapshot_store,
+                pool1,
+                snap_opt=snap_opt,
+                rs_spec=rs_spec,
+                fp_computed=fp_fingerprint,
+                pool_len_before_cap=pool_len2,
+            )
+            u0 = int(pagination.get("offset") or 0)
+            rows = rows[u0 : u0 + page_limit]
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
 
             if return_count:
-                return page_from_limit_offset(v, pagination, total=total)
+                return page_from_limit_offset(
+                    v, pagination, total=total, result_snapshot=handle_sc
+                )
 
-            return page_from_limit_offset(v, pagination, total=None)
+            return page_from_limit_offset(
+                v, pagination, total=None, result_snapshot=handle_sc
+            )
 
         if return_fields is not None:
             raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
 
             if return_count:
-                return page_from_limit_offset(raw, pagination, total=total)
+                return page_from_limit_offset(
+                    raw, pagination, total=total, result_snapshot=handle_sc
+                )
 
-            return page_from_limit_offset(raw, pagination, total=None)
+            return page_from_limit_offset(
+                raw, pagination, total=None, result_snapshot=handle_sc
+            )
 
         m = pydantic_validate_many(self.model_type, rows)
 
         if return_count:
-            return page_from_limit_offset(m, pagination, total=total)
+            return page_from_limit_offset(
+                m, pagination, total=total, result_snapshot=handle_sc
+            )
 
-        return page_from_limit_offset(m, pagination, total=None)
+        return page_from_limit_offset(
+            m, pagination, total=None, result_snapshot=handle_sc
+        )
 
     # ....................... #
 
