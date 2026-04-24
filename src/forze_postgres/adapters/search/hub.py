@@ -830,7 +830,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> list[tuple[str, str]]:
         if not do_legs:
-            if sorts is None:
+            if not sorts:
                 first = sorted(self.read_fields)[0]
                 return [(first, "asc"), (ID_FIELD, "asc")]
             return list(normalize_sorts_with_id(sorts))
@@ -841,11 +841,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 d = str(direction).lower()
                 if d not in ("asc", "desc"):
                     raise CoreError(f"Invalid sort direction in hub cursor: {direction!r}")
-                if field != ID_FIELD:
-                    spec.append((field, d))
+                spec.append((field, d))
         have = {k for k, _ in spec}
         if ID_FIELD not in have:
-            spec.append((ID_FIELD, "asc"))
+            id_dir = "asc"
+            if sorts:
+                dirs = {str(v).lower() for v in sorts.values()}
+                if len(dirs) == 1:
+                    id_dir = next(iter(dirs))
+            spec.append((ID_FIELD, id_dir))
         return spec
 
     @staticmethod

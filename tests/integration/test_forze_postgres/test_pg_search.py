@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -1997,3 +1998,86 @@ async def test_postgres_hub_search_with_cursor(
     assert len(r1.hits) == 1
     assert r1.hits[0]["name"] == "alpha"
     assert r1.hits[0]["_hub_rank"] is not None
+
+
+@pytest.mark.asyncio
+async def test_postgres_hub_search_with_cursor_ranked_id_desc_chains(
+    pg_client: PostgresClient,
+) -> None:
+    """Regression: ranked keyset must honor ``id`` direction in ``sorts`` (tied scores)."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_cur_id_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_idcur ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    row_ids = [uuid4() for _ in range(12)]
+    for uid in row_ids:
+        await pg_client.execute(
+            f"INSERT INTO {ht} (id, name, display_name) VALUES (%(id)s, 'token', 'x')",
+            {"id": uid},
+        )
+
+    leg_n = f"idcur_{suffix}"
+    doc_leg = SearchSpec(
+        name=leg_n,
+        model_type=_HubLegTxt,
+        fields=["name", "display_name"],
+    )
+    hub_spec = HubSearchSpec(
+        name=f"hub_idcur_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(doc_leg,),
+    )
+    hub_cfg: PostgresHubSearchConfig = {
+        "hub": ("public", ht),
+        "members": {
+            leg_n: {
+                "index": ("public", f"idx_{suffix}_idcur"),
+                "read": ("public", ht),
+                "hub_fk": "id",
+                "same_heap_as_hub": True,
+            },
+        },
+    }
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    collected: list[Any] = []
+    next_c: str | None = None
+    for _ in range(10):
+        cur: dict[str, Any] = {"limit": 5}
+        if next_c is not None:
+            cur["after"] = next_c
+        page = await adapter.search_with_cursor(
+            "token",
+            sorts={"id": "desc"},
+            return_fields=["id", "name", "display_name", "_hub_rank"],
+            cursor=cur,
+        )
+        assert len(page.hits) > 0
+        collected.extend(h["id"] for h in page.hits)
+        if not page.has_more:
+            break
+        assert page.next_cursor is not None
+        next_c = page.next_cursor
+
+    assert len(collected) == 12
+    assert len({str(x) for x in collected}) == 12
