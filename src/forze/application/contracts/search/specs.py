@@ -105,7 +105,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_member_weights: Mapping[str, float] | None = attrs.field(default=None)
     """Default weights for hub members."""
 
-    result_snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
     """Optional defaults for result-ID snapshotting (outer hub adapter)."""
 
     # ....................... #
@@ -148,7 +148,7 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
     )
     """At least two members, each a :class:`SearchSpec` or :class:`HubSearchSpec`."""
 
-    result_snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
     """Optional defaults for result-ID snapshotting (outer federated adapter)."""
 
     # ....................... #

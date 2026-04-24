@@ -52,7 +52,7 @@ def _fed_with_result_snapshot() -> FederatedSearchSpec[_Hit]:
     return FederatedSearchSpec(
         name="fed",
         members=(_mem("a"), _mem("b")),
-        result_snapshot=SearchResultSnapshotSpec(
+        snapshot=SearchResultSnapshotSpec(
             name="snap",
             enabled=True,
             ttl=timedelta(minutes=5),

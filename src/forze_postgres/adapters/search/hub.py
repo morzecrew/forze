@@ -1023,7 +1023,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             options,
         )
 
-        rs_spec = self.hub_spec.result_snapshot
+        rs_spec = self.hub_spec.snapshot
         members_weighted: list[tuple[str, float]] = [
             (self.hub_spec.members[i].name, float(member_weights_list[i]))
             for i in range(len(self.hub_spec.members))

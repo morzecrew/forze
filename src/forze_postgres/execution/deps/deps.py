@@ -320,7 +320,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             tenant_aware=tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.get("nested_field_hints"),
-            snapshot_store=_resolve_result_snapshot(context, spec.result_snapshot),
+            snapshot_store=_resolve_result_snapshot(context, spec.snapshot),
         )
 
 
@@ -511,7 +511,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             rrf_k=int(self.config.get("rrf_k", 60)),
             rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
             postgres_client=context.dep(PostgresClientDepKey),
-            snapshot_store=_resolve_result_snapshot(context, spec.result_snapshot),
+            snapshot_store=_resolve_result_snapshot(context, spec.snapshot),
         )
 
 

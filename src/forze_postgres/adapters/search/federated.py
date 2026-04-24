@@ -287,7 +287,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             options,
         )
 
-        rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.result_snapshot
+        rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
         page_limit = max(1, int(limit)) if limit is not None else 20
