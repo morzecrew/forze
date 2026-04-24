@@ -587,6 +587,12 @@ class PostgresHubSearchAdapter[M: BaseModel](
         ob = await self._hub_order_by(sorts)
         if ob is not None:
             order_parts = [ob]
+        elif ID_FIELD in self.read_fields:
+            order_parts = [
+                sql.SQL("{} ASC").format(
+                    sql.Identifier(_COMBO_ALIAS, ID_FIELD),
+                ),
+            ]
         else:
             first = sorted(self.read_fields)[0]
             order_parts = [
@@ -594,12 +600,6 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     sql.Identifier(_COMBO_ALIAS, first),
                 ),
             ]
-            if first != ID_FIELD and ID_FIELD in self.read_fields:
-                order_parts.append(
-                    sql.SQL("{} ASC").format(
-                        sql.Identifier(_COMBO_ALIAS, ID_FIELD),
-                    ),
-                )
         return sql.SQL(", ").join(order_parts)
 
     async def _hub_build_with_clause(
@@ -837,15 +837,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
     ) -> list[tuple[str, str]]:
         if not do_legs:
             if not sorts:
-                first = sorted(self.read_fields)[0]
-                if first == ID_FIELD:
+                if ID_FIELD in self.read_fields:
                     return [(ID_FIELD, "asc")]
-                if ID_FIELD not in self.read_fields:
-                    raise CoreError(
-                        "Hub cursor browse (empty query, no sorts) requires "
-                        f"{ID_FIELD!r} on the hub read model for a stable keyset.",
-                    )
-                return [(first, "asc"), (ID_FIELD, "asc")]
+                first = sorted(self.read_fields)[0]
+                return [(first, "asc")]
             return list(normalize_sorts_with_id(sorts))
 
         spec: list[tuple[str, str]] = [(_RANK, "desc")]
@@ -1133,11 +1128,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
         """Keyset pagination over the hub ``combo`` row (filter-only or ranked legs).
 
-        **Browse (empty query, no sorts):** Uses the lexicographically first read-model
-        field ascending, then ``id`` ascending when that field is not ``id`` (same as
-        :meth:`search`). If the only sort column would be ``id`` twice, a single ``id``
-        key is used. The hub read model must include ``id`` whenever a tie-breaker is
-        required.
+        **Browse (empty query, no sorts):** Orders by ``id`` ascending when the read
+        model defines that field (same as explicit ``sorts`` with ``id`` ascending and
+        :meth:`search`). Without an ``id`` field, falls back to the lexicographically
+        first read-model field only (ties may be unstable).
 
         **Ranked:** With active legs and a non-empty query, ordering is merged
         ``_hub_rank`` DESC NULLS LAST, optional ``sorts`` (including ``id`` if given),
