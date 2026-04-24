@@ -27,6 +27,10 @@ from forze.application.contracts.query import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    decode_keyset_v1,
+    encode_keyset_v1,
+    normalize_sorts_with_id,
+    row_value_for_sort_key,
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
@@ -40,8 +44,11 @@ from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
+from forze.domain.constants import ID_FIELD
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
+from ...kernel.query.nested import sort_key_expr
+from ...pagination import build_seek_condition
 from ...kernel.hub_fk_columns import normalize_hub_fk_columns
 from ...kernel.introspect import PostgresIntrospector
 from ..txmanager import PostgresTxScopeKey
@@ -561,116 +568,42 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    @overload
-    async def search(
+    async def _hub_order_sql_for_search(
         self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[M]: ...
+        do_legs: bool,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> sql.Composable:
+        if do_legs:
+            order_parts: list[sql.Composable] = [
+                sql.SQL("{} DESC NULLS LAST").format(
+                    sql.Identifier(_COMBO_ALIAS, _RANK),
+                )
+            ]
+            ob = await self._hub_order_by(sorts)
+            if ob is not None:
+                order_parts.append(ob)
+            return sql.SQL(", ").join(order_parts)
 
-    @overload
-    async def search(
+        ob = await self._hub_order_by(sorts)
+        if ob is not None:
+            order_parts = [ob]
+        else:
+            first = sorted(self.read_fields)[0]
+            order_parts = [
+                sql.SQL("{} ASC").format(
+                    sql.Identifier(_COMBO_ALIAS, first),
+                ),
+            ]
+        return sql.SQL(", ").join(order_parts)
+
+    async def _hub_build_with_clause(
         self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        options: SearchOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[M]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[True] = ...,
-    ) -> Page[JsonDict]: ...
-
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-        *,
-        options: SearchOptions | None = None,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> (
-        CountlessPage[M]
-        | CountlessPage[T]
-        | CountlessPage[JsonDict]
-        | Page[M]
-        | Page[T]
-        | Page[JsonDict]
-    ):
-        terms = normalize_search_queries(query)
-
-        leg_options, member_weights_list = prepare_hub_search_options(
-            self.hub_spec,
-            options,
-        )
-
+        query_terms: tuple[str, ...],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        leg_options: SearchOptions | None,
+        member_weights_list: Sequence[float],
+    ) -> tuple[sql.Composable, list[Any], bool]:
         fw, fp = await self.where_clause(filters)
 
         active = [
@@ -679,7 +612,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             if member_weights_list[i] > 0.0
         ]
 
-        do_legs = bool(terms) and bool(active)
+        do_legs = bool(query_terms) and bool(active)
         need_groonga_sys = do_legs and any(
             leg.same_heap_as_hub and leg.engine == "pgroonga" for _, leg, _ in active
         )
@@ -717,13 +650,13 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     leg,
                     introspector=self.introspector,
                     index_alias=t_alias,
-                    queries=terms,
+                    queries=query_terms,
                     options=leg_options,
                     score_column=_LEG_SCORE,
                 )
                 params.extend(sp)
 
-                if leg.same_heap_as_hub and leg.engine == "pgroonga" and terms:
+                if leg.same_heap_as_hub and leg.engine == "pgroonga" and query_terms:
                     rank_expr = sql.SQL("pgroonga_score({}.{}, {}.{}) AS {}").format(
                         sql.Identifier(t_alias),
                         sql.Identifier(_HUB_GROONGA_TABLEOID),
@@ -883,37 +816,179 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 combine=combine_sql,
             )
 
-        if do_legs:
-            order_parts: list[sql.Composable] = [
-                sql.SQL("{} DESC NULLS LAST").format(
-                    sql.Identifier(_COMBO_ALIAS, _RANK),
-                )
-            ]
-            ob = await self._hub_order_by(sorts)
-
-            if ob is not None:
-                order_parts.append(ob)
-
-            order_sql = sql.SQL(", ").join(order_parts)
-
-        else:
-            ob = await self._hub_order_by(sorts)
-            if ob is not None:
-                order_parts = [ob]
-            else:
-                first = sorted(self.read_fields)[0]
-                order_parts = [
-                    sql.SQL("{} ASC").format(
-                        sql.Identifier(_COMBO_ALIAS, first),
-                    ),
-                ]
-            order_sql = sql.SQL(", ").join(order_parts)
-
         with_clause = sql.SQL("WITH {}{}{}").format(
             hub_cte,
             sql.SQL("").join(leg_cte_parts),
             combo_cte,
         )
+        return with_clause, params, do_legs
+
+    def _hub_cursor_key_spec(
+        self,
+        *,
+        do_legs: bool,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+    ) -> list[tuple[str, str]]:
+        if not do_legs:
+            if sorts is None:
+                first = sorted(self.read_fields)[0]
+                return [(first, "asc"), (ID_FIELD, "asc")]
+            return list(normalize_sorts_with_id(sorts))
+
+        spec: list[tuple[str, str]] = [(_RANK, "desc")]
+        if sorts:
+            for field, direction in sorts.items():
+                d = str(direction).lower()
+                if d not in ("asc", "desc"):
+                    raise CoreError(f"Invalid sort direction in hub cursor: {direction!r}")
+                if field != ID_FIELD:
+                    spec.append((field, d))
+        have = {k for k, _ in spec}
+        if ID_FIELD not in have:
+            spec.append((ID_FIELD, "asc"))
+        return spec
+
+    @staticmethod
+    def _hub_cursor_order_sql(
+        exprs: list[sql.Composable],
+        sort_keys: list[str],
+        directions: list[str],
+        *,
+        flip: bool,
+    ) -> sql.Composable:
+        parts: list[sql.Composable] = []
+        for ex, d_raw, sk in zip(exprs, directions, sort_keys, strict=True):
+            d = ("desc" if d_raw == "asc" else "asc") if flip else d_raw
+            if sk == _RANK:
+                if d == "desc":
+                    parts.append(sql.SQL("{} DESC NULLS LAST").format(ex))
+                else:
+                    parts.append(sql.SQL("{} ASC NULLS FIRST").format(ex))
+            else:
+                suf = "ASC" if d == "asc" else "DESC"
+                parts.append(sql.SQL("{} {}").format(ex, sql.SQL(suf)))
+        return sql.SQL(", ").join(parts)
+
+    # ....................... #
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[M]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[M]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True] = ...,
+    ) -> Page[T]: ...
+
+    @overload
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        options: SearchOptions | None = ...,
+        return_type: None = ...,
+        return_fields: Sequence[str],
+        return_count: Literal[True] = ...,
+    ) -> Page[JsonDict]: ...
+
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+        return_count: bool = False,
+    ) -> (
+        CountlessPage[M]
+        | CountlessPage[T]
+        | CountlessPage[JsonDict]
+        | Page[M]
+        | Page[T]
+        | Page[JsonDict]
+    ):
+        terms = normalize_search_queries(query)
+
+        leg_options, member_weights_list = prepare_hub_search_options(
+            self.hub_spec,
+            options,
+        )
+
+        with_clause, params, do_legs = await self._hub_build_with_clause(
+            query_terms=terms,
+            filters=filters,
+            leg_options=leg_options,
+            member_weights_list=member_weights_list,
+        )
+
+        order_sql = await self._hub_order_sql_for_search(do_legs, sorts)
 
         count_stmt = sql.SQL(
             """
@@ -1039,11 +1114,212 @@ class PostgresHubSearchAdapter[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
-        del query, filters, cursor, sorts, options, return_type, return_fields
-        raise CoreError(
-            "search_with_cursor is not implemented for hub search; use search() with "
-            "limit/offset, or a single-index Postgres v2 search adapter for filter-only "
-            "keyset on an empty query where supported.",
+        """Keyset pagination over the hub ``combo`` row (filter-only or ranked legs).
+
+        When no leg is active (empty query or all member weights zero), ordering matches
+        filter-only :meth:`search`. With active legs and a non-empty query, the cursor
+        orders by merged hub rank (``_hub_rank``) DESC NULLS LAST, then optional sorts,
+        then ``id`` as tie-breaker unless ``id`` is already in ``sorts``.
+
+        With ``return_fields``, include every key column (including ``_hub_rank`` when
+        legs are active).
+        """
+
+        terms = normalize_search_queries(query)
+
+        leg_options, member_weights_list = prepare_hub_search_options(
+            self.hub_spec,
+            options,
+        )
+
+        c = dict(cursor or {})
+
+        if c.get("after") and c.get("before"):
+            raise CoreError(
+                "Cursor pagination: pass at most one of 'after' or 'before'",
+            )
+
+        lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
+
+        if lim < 1:
+            raise CoreError("Cursor pagination 'limit' must be positive")
+
+        use_after = c.get("after") is not None
+        use_before = c.get("before") is not None
+
+        with_clause, params, do_legs = await self._hub_build_with_clause(
+            query_terms=terms,
+            filters=filters,
+            leg_options=leg_options,
+            member_weights_list=member_weights_list,
+        )
+
+        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
+        sort_keys = [k for k, _ in key_spec]
+        directions = [d for _, d in key_spec]
+
+        if return_fields is not None:
+            req = set(sort_keys)
+            if not req.issubset(set(return_fields)):
+                raise CoreError(
+                    "search_with_cursor with return_fields must include all sort and "
+                    "tie-breaker columns used for the cursor (see adapter docs).",
+                )
+
+        types = await self.column_types()
+        exprs: list[sql.Composable] = []
+        for k in sort_keys:
+            if k == _RANK:
+                exprs.append(sql.Identifier(_COMBO_ALIAS, _RANK))
+            else:
+                exprs.append(
+                    sort_key_expr(
+                        field=k,
+                        column_types=types,
+                        model_type=self.model_type,
+                        nested_field_hints=self.nested_field_hints,
+                        table_alias=_COMBO_ALIAS,
+                    ),
+                )
+
+        where_fin: sql.Composable = sql.SQL("TRUE")
+
+        if use_after or use_before:
+            token = str(c["after" if use_after else "before"])
+            tk, td, tv = decode_keyset_v1(token)
+
+            if tk != sort_keys or len(td) != len(directions):
+                raise CoreError("Cursor does not match current search sort")
+
+            for i, di in enumerate(directions):
+                if (td[i] or "").lower() != di:
+                    raise CoreError("Cursor does not match current search sort")
+
+            sk, sp = build_seek_condition(
+                exprs,
+                directions,
+                list(tv),
+                "before" if use_before else "after",
+            )
+
+            where_fin = sk
+            params = params + sp
+
+        order_sql = self._hub_cursor_order_sql(
+            exprs,
+            sort_keys,
+            directions,
+            flip=use_before,
+        )
+
+        return_fields_sql: Sequence[str] | None
+        if return_fields is not None and do_legs:
+            return_fields_sql = tuple(f for f in return_fields if f != _RANK)
+            if not return_fields_sql:
+                return_fields_sql = None
+        else:
+            return_fields_sql = return_fields
+
+        base_cols = self.return_clause(
+            return_type,
+            return_fields_sql,
+            table_alias=_COMBO_ALIAS,
+        )
+        cols: sql.Composable
+        if do_legs:
+            cols = sql.SQL("{}, {}").format(
+                base_cols,
+                sql.SQL("{} AS {}").format(
+                    sql.SQL("{}.{}").format(
+                        sql.Identifier(_COMBO_ALIAS),
+                        sql.Identifier(_RANK),
+                    ),
+                    sql.Identifier(_RANK),
+                ),
+            )
+        else:
+            cols = base_cols
+
+        data_stmt = sql.SQL(
+            """
+            {with_clause}
+            SELECT {cols} FROM {combo} {ca}
+            WHERE {w}
+            ORDER BY {order}
+            """
+        ).format(
+            with_clause=with_clause,
+            cols=cols,
+            combo=sql.Identifier("combo"),
+            ca=sql.Identifier(_COMBO_ALIAS),
+            w=where_fin,
+            order=order_sql,
+        )
+        data_stmt = sql.SQL("{} LIMIT {}").format(
+            data_stmt,
+            sql.Placeholder(),
+        )
+        params.append(lim + 1)
+
+        raw_rows = list(
+            await self.client.fetch_all(data_stmt, params, row_factory="dict"),
+        )  # type: ignore[assignment, arg-type]
+
+        if use_before:
+            raw_rows = list(reversed(raw_rows))
+
+        has_more = len(raw_rows) > lim
+        rows = raw_rows[:lim]
+
+        def _row_token_vals(row: JsonDict) -> list[Any]:
+            return [row_value_for_sort_key(row, k) for k in sort_keys]
+
+        if has_more and rows:
+            nxt = encode_keyset_v1(
+                sort_keys=sort_keys,
+                directions=directions,
+                values=_row_token_vals(rows[-1]),
+            )
+
+        else:
+            nxt = None
+
+        if rows and (use_after or (use_before and has_more)):
+            prv = encode_keyset_v1(
+                sort_keys=sort_keys,
+                directions=directions,
+                values=_row_token_vals(rows[0]),
+            )
+
+        else:
+            prv = None
+
+        if return_type is not None:
+            v = pydantic_validate_many(return_type, rows)
+
+            return CursorPage(
+                hits=v,
+                next_cursor=nxt,
+                prev_cursor=prv,
+                has_more=has_more,
+            )
+        if return_fields is not None:
+            rj = [{k: r.get(k, None) for k in return_fields} for r in rows]
+
+            return CursorPage(
+                hits=rj,
+                next_cursor=nxt,
+                prev_cursor=prv,
+                has_more=has_more,
+            )
+
+        m = pydantic_validate_many(self.model_type, rows)
+
+        return CursorPage(
+            hits=m,
+            next_cursor=nxt,
+            prev_cursor=prv,
+            has_more=has_more,
         )
 
 

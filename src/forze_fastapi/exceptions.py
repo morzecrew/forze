@@ -9,7 +9,16 @@ from typing import Any, Final
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from forze.base.errors import ConflictError, CoreError, NotFoundError, ValidationError
+from forze.base.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    ConflictError,
+    CoreError,
+    DomainError,
+    InvalidOperationError,
+    NotFoundError,
+    ValidationError,
+)
 
 # ----------------------- #
 
@@ -31,6 +40,18 @@ def _status_code_mapper(exc: CoreError) -> int:
 
         case ValidationError():
             return 422
+
+        case DomainError():
+            return 400
+
+        case InvalidOperationError():
+            return 400
+
+        case AuthenticationError():
+            return 401
+
+        case AuthorizationError():
+            return 403
 
         case _:
             return 500

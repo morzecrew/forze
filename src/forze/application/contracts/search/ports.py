@@ -4,8 +4,9 @@
 within the same ranked ``ORDER BY`` (score columns + tie-breakers, typically
 ``id``). That implies declaring cursor columns in :class:`.SearchSpec` or
 Postgres search config, reusing the index heap primary key where applicable.
-Federated / hub merges complicate cursors; those adapters may raise
-``NotImplementedError`` until a single merged ordering is defined.
+Postgres hub search supports keyset over the merged ``combo`` row (including
+``_hub_rank`` when legs are active). Federated (RRF) search does not implement
+cursors yet; use :meth:`~SearchQueryPort.search` with limit/offset there.
 """
 
 from collections.abc import Sequence

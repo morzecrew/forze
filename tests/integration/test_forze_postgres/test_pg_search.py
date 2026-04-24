@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, Page
+from forze.application.contracts.base import CountlessPage, CursorPage, Page
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import (
     HubSearchQueryDepKey,
@@ -1892,7 +1892,7 @@ async def test_postgres_hub_browse_empty_query_with_sorts(
 
 
 @pytest.mark.asyncio
-async def test_postgres_hub_search_with_cursor_not_implemented(
+async def test_postgres_hub_search_with_cursor(
     pg_client: PostgresClient,
 ) -> None:
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
@@ -1909,6 +1909,15 @@ async def test_postgres_hub_search_with_cursor_not_implemented(
         CREATE INDEX idx_{suffix}_cur ON {ht}
         USING pgroonga ((ARRAY[name, display_name]));
         """
+    )
+    id_lo = uuid4()
+    id_hi = uuid4()
+    await pg_client.execute(
+        (
+            f"INSERT INTO {ht} (id, name, display_name) VALUES "
+            "(%(a)s, %(na)s, 'A'), (%(b)s, %(nb)s, 'B')"
+        ),
+        {"a": id_lo, "na": "alpha", "b": id_hi, "nb": "beta"},
     )
 
     leg_n = f"cur_{suffix}"
@@ -1944,5 +1953,47 @@ async def test_postgres_hub_search_with_cursor_not_implemented(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    with pytest.raises(CoreError, match="search_with_cursor is not implemented for hub"):
-        await adapter.search_with_cursor("x")
+    with pytest.raises(CoreError, match="at most one"):
+        await adapter.search_with_cursor(
+            "",
+            cursor={"after": "x", "before": "y"},
+        )
+
+    with pytest.raises(CoreError, match="positive"):
+        await adapter.search_with_cursor("", cursor={"limit": 0})
+
+    with pytest.raises(CoreError, match="return_fields"):
+        await adapter.search_with_cursor(
+            "",
+            sorts={"name": "asc"},
+            return_fields=["name"],
+        )
+
+    p1: CursorPage = await adapter.search_with_cursor(
+        "",
+        sorts={"name": "asc"},
+        return_fields=["name", "display_name", "id"],
+        cursor={"limit": 1},
+    )
+    assert len(p1.hits) == 1
+    assert p1.has_more is True
+    assert p1.next_cursor is not None
+    assert p1.hits[0]["name"] == "alpha"
+
+    p2 = await adapter.search_with_cursor(
+        "",
+        sorts={"name": "asc"},
+        return_fields=["name", "display_name", "id"],
+        cursor={"limit": 1, "after": p1.next_cursor},
+    )
+    assert len(p2.hits) == 1
+    assert p2.hits[0]["name"] == "beta"
+
+    r1 = await adapter.search_with_cursor(
+        "alpha",
+        return_fields=["id", "name", "display_name", "_hub_rank"],
+        cursor={"limit": 5},
+    )
+    assert len(r1.hits) == 1
+    assert r1.hits[0]["name"] == "alpha"
+    assert r1.hits[0]["_hub_rank"] is not None
