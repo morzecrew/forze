@@ -1480,21 +1480,20 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
         index_field_map={"title": "doc_title", "content": "doc_body"},
     )
 
-    with pytest.raises(CoreError, match="non-empty full-text query"):
-        await adapter.search_with_cursor("hello")
-
     with pytest.raises(CoreError, match="at most one"):
         await adapter.search_with_cursor("", cursor={"after": "x", "before": "y"})
 
     with pytest.raises(CoreError, match="positive"):
         await adapter.search_with_cursor("", cursor={"limit": 0})
 
-    with pytest.raises(CoreError, match="sort and"):
-        await adapter.search_with_cursor(
-            "",
-            sorts={"title": "asc"},
-            return_fields=["title"],
-        )
+    p0 = await adapter.search_with_cursor(
+        "",
+        sorts={"title": "asc"},
+        return_fields=["title"],
+        cursor={"limit": 2},
+    )
+    assert len(p0.hits) == 2
+    assert set(p0.hits[0].keys()) == {"title"}
 
     p1 = await adapter.search_with_cursor(
         "",
@@ -1526,6 +1525,24 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
     )
     assert len(p3.hits) == 3
     assert isinstance(p3.hits[0], Hit)
+
+    r1 = await adapter.search_with_cursor(
+        "x",
+        sorts={"title": "asc"},
+        return_fields=["title", "content", "id"],
+        cursor={"limit": 2},
+    )
+    assert len(r1.hits) >= 1
+    assert set(r1.hits[0].keys()) == {"title", "content", "id"}
+    if r1.has_more and r1.next_cursor:
+        r2 = await adapter.search_with_cursor(
+            "x",
+            sorts={"title": "asc"},
+            return_fields=["title", "content", "id"],
+            cursor={"limit": 2, "after": r1.next_cursor},
+        )
+        assert len(r2.hits) >= 1
+        assert set(r2.hits[0].keys()) == {"title", "content", "id"}
 
 
 class _MqBody(BaseModel):
@@ -1963,12 +1980,14 @@ async def test_postgres_hub_search_with_cursor(
     with pytest.raises(CoreError, match="positive"):
         await adapter.search_with_cursor("", cursor={"limit": 0})
 
-    with pytest.raises(CoreError, match="return_fields"):
-        await adapter.search_with_cursor(
-            "",
-            sorts={"name": "asc"},
-            return_fields=["name"],
-        )
+    p0 = await adapter.search_with_cursor(
+        "",
+        sorts={"name": "asc"},
+        return_fields=["name"],
+        cursor={"limit": 1},
+    )
+    assert len(p0.hits) == 1
+    assert set(p0.hits[0].keys()) == {"name"}
 
     p1: CursorPage = await adapter.search_with_cursor(
         "",
@@ -1992,12 +2011,12 @@ async def test_postgres_hub_search_with_cursor(
 
     r1 = await adapter.search_with_cursor(
         "alpha",
-        return_fields=["id", "name", "display_name", "_hub_rank"],
+        return_fields=["id", "name", "display_name"],
         cursor={"limit": 5},
     )
     assert len(r1.hits) == 1
     assert r1.hits[0]["name"] == "alpha"
-    assert r1.hits[0]["_hub_rank"] is not None
+    assert set(r1.hits[0].keys()) == {"id", "name", "display_name"}
 
 
 @pytest.mark.asyncio
@@ -2069,7 +2088,7 @@ async def test_postgres_hub_search_with_cursor_ranked_id_desc_chains(
         page = await adapter.search_with_cursor(
             "token",
             sorts={"id": "desc"},
-            return_fields=["id", "name", "display_name", "_hub_rank"],
+            return_fields=["id", "name", "display_name"],
             cursor=cur,
         )
         assert len(page.hits) > 0

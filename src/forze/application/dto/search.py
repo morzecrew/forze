@@ -1,7 +1,10 @@
 from pydantic import Field
 
 from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
-from forze.application.contracts.search import SearchOptions
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchResultSnapshotOptions,
+)
 from forze.domain.models import BaseDTO
 
 from .paginated import CursorPagination, Pagination
@@ -23,6 +26,9 @@ class BaseSearchRequestDTO(BaseDTO):
 
     options: SearchOptions | None = None
     """Optional search options."""
+
+    snapshot: SearchResultSnapshotOptions | None = None
+    """Optional result snapshot options."""
 
 
 # ....................... #

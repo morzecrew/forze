@@ -59,6 +59,7 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
             },
             sorts=body.sorts,
             options=body.options,
+            snapshot=body.snapshot,
             return_count=True,
         )
 
@@ -108,6 +109,7 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
             sorts=body.sorts,
             options=body.options,
             return_fields=tuple(body.return_fields),
+            snapshot=body.snapshot,
             return_count=True,
         )
 

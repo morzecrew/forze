@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -13,6 +13,7 @@ pytest.importorskip("psycopg")
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
+from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.adapters.search import PostgresVectorSearchAdapterV2
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
@@ -26,6 +27,8 @@ def _minimal_vector_port(
     *,
     join_pairs: tuple[tuple[str, str], ...] | None = None,
 ) -> PostgresVectorSearchAdapterV2[_M]:
+    intro = MagicMock()
+    intro.get_column_types = AsyncMock(return_value={})
     return PostgresVectorSearchAdapterV2(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
         index_qname=PostgresQualifiedName("public", "idx"),
@@ -36,7 +39,7 @@ def _minimal_vector_port(
         vector_column="emb",
         client=MagicMock(),
         model_type=_M,
-        introspector=MagicMock(),
+        introspector=intro,
         tenant_aware=False,
         tenant_provider=None,
         filter_table_alias="v",
@@ -52,7 +55,42 @@ def test_join_pairs_must_use_unique_projection_columns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_with_cursor_is_not_implemented() -> None:
+async def test_search_with_cursor_browse_calls_fetch_all() -> None:
+    uid = UUID("00000000-0000-4000-8000-000000000001")
     port = _minimal_vector_port()
-    with pytest.raises(CoreError, match="search_with_cursor is not implemented"):
-        await port.search_with_cursor("q")
+    port.client.fetch_all = AsyncMock(
+        return_value=[{"id": uid, "label": "only"}],
+    )
+    page = await port.search_with_cursor("", cursor={"limit": 5})
+    assert len(page.hits) == 1
+    assert page.hits[0].id == uid
+    port.client.fetch_all.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_with_cursor_ranked_calls_embed_and_fetch() -> None:
+    uid = UUID("00000000-0000-4000-8000-000000000002")
+    port = _minimal_vector_port()
+    qvec = [0.1, 0.2, 0.3]
+    port.embedder.embed_one = AsyncMock(return_value=qvec)
+    port.client.fetch_all = AsyncMock(
+        return_value=[
+            {
+                "id": uid,
+                "label": "hit",
+                "_vector_rank": 0.42,
+            },
+        ],
+    )
+    page = await port.search_with_cursor(
+        "q",
+        return_fields=["id", "label"],
+        cursor={"limit": 3},
+    )
+    assert len(page.hits) == 1
+    assert set(page.hits[0].keys()) == {"id", "label"}
+    port.embedder.embed_one.assert_awaited_once()
+    port.client.fetch_all.assert_awaited_once()
+    call = port.client.fetch_all.call_args
+    params = call[0][1]
+    assert vector_param_literal(qvec) in params

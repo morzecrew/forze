@@ -8,11 +8,10 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
-from forze.application.contracts.base import Page
+from forze.application.contracts.base import CursorPage, Page
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search import PostgresVectorSearchAdapterV2
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
@@ -631,7 +630,7 @@ async def test_vector_search_default_model_countless_page(
 
 
 @pytest.mark.asyncio
-async def test_vector_search_with_cursor_raises_core_error(
+async def test_vector_search_with_cursor_ranked_chains(
     pgvector_client: PostgresClient,
 ) -> None:
     await _ensure_vector_extension(pgvector_client)
@@ -650,8 +649,50 @@ async def test_vector_search_with_cursor_raises_core_error(
         """
     )
 
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    va = vector_param_literal(await prov.embed_one("near-a"))
+    vb = vector_param_literal(await prov.embed_one("near-b"))
+    vc = vector_param_literal(await prov.embed_one("near-c"))
+    id_a, id_b, id_c = uuid4(), uuid4(), uuid4()
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES
+        (%(a)s, 'a', '{va}'::vector),
+        (%(b)s, 'b', '{vb}'::vector),
+        (%(c)s, 'c', '{vc}'::vector)
+        """,
+        {"a": id_a, "b": id_b, "c": id_c},
+    )
+
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    with pytest.raises(CoreError, match="search_with_cursor is not implemented"):
-        await port.search_with_cursor("q")
+
+    p1: CursorPage = await port.search_with_cursor(
+        "near-a",
+        sorts={"label": "asc"},
+        return_fields=["id", "label"],
+        cursor={"limit": 1},
+    )
+    assert len(p1.hits) == 1
+    assert set(p1.hits[0].keys()) == {"id", "label"}
+    assert p1.has_more is True
+    assert p1.next_cursor is not None
+
+    p2 = await port.search_with_cursor(
+        "near-a",
+        sorts={"label": "asc"},
+        return_fields=["id", "label"],
+        cursor={"limit": 5, "after": p1.next_cursor},
+    )
+    assert len(p2.hits) == 2
+    assert {p1.hits[0]["id"], *{r["id"] for r in p2.hits}} == {id_a, id_b, id_c}
+
+    b0 = await port.search_with_cursor(
+        "",
+        sorts={"label": "asc"},
+        return_fields=["id", "label"],
+        cursor={"limit": 2},
+    )
+    assert len(b0.hits) == 2
+    assert b0.has_more is True

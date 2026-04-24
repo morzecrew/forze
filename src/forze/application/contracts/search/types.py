@@ -1,4 +1,4 @@
-from typing import Literal, Sequence, TypedDict, TypeAlias
+from typing import Literal, Sequence, TypeAlias, TypedDict
 
 # ----------------------- #
 
@@ -77,6 +77,3 @@ class SearchOptions(TypedDict, total=False):
     ``any`` (default): disjunction (match if any phrase matches).
     ``all``: conjunction (match every phrase).
     """
-
-    result_snapshot: SearchResultSnapshotOptions
-    """Result-ID snapshot controls (mode, handle, overrides). Used by the outer search adapter only."""

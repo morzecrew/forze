@@ -74,6 +74,7 @@ from ._fts_sql import (
     fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
+from ._cursor_keyset import cursor_return_fields_for_select
 from ._options import prepare_hub_search_options
 from ._pgroonga_sql import (
     pgroonga_match_clause,
@@ -914,6 +915,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = ...,
@@ -928,6 +930,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[False] = ...,
@@ -942,6 +945,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = ...,
@@ -956,6 +960,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True] = ...,
@@ -970,6 +975,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[True] = ...,
@@ -984,6 +990,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True] = ...,
@@ -997,6 +1004,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
@@ -1015,10 +1023,6 @@ class PostgresHubSearchAdapter[M: BaseModel](
             options,
         )
 
-        snap_raw = (options or {}).get("result_snapshot")
-        snap_opt: SearchResultSnapshotOptions | None = (
-            snap_raw if isinstance(snap_raw, dict) else None
-        )
         rs_spec = self.hub_spec.result_snapshot
         members_weighted: list[tuple[str, float]] = [
             (self.hub_spec.members[i].name, float(member_weights_list[i]))
@@ -1037,7 +1041,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             read_page = await read_hub_result_snapshot(
                 store=self.snapshot_store,
                 rs_spec=rs_spec,
-                snap_opt=snap_opt,
+                snap_opt=snapshot,
                 fp_computed=fp_fingerprint,
                 model_type=self.model_type,
                 pagination=dict(pagination or {}),
@@ -1045,6 +1049,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 return_fields=return_fields,
                 return_count=return_count,
             )
+
             if read_page is not None:
                 return read_page
 
@@ -1099,21 +1104,25 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         pagination = pagination or {}
+
         want_sn = (
             self.snapshot_store is not None
             and rs_spec is not None
-            and should_write_result_snapshot(snap_opt, rs_spec)
+            and should_write_result_snapshot(snapshot, rs_spec)
         )
-        max_nh = effective_snapshot_max_ids(snap_opt, rs_spec) if want_sn else 0
+        max_nh = effective_snapshot_max_ids(snapshot, rs_spec) if want_sn else 0
         sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
             want_sn, max_nh, dict(pagination)
         )
+
         if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
             params.append(int(sql_limit))
+
         if want_sn:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(int(sql_offset))
+
         elif pagination.get("offset") is not None:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(int(pagination.get("offset") or 0))
@@ -1126,7 +1135,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             handle_h = await put_simple_result_snapshot(
                 self.snapshot_store,
                 pydantic_validate_many(self.model_type, rows),
-                snap_opt=snap_opt,
+                snap_opt=snapshot,
                 rs_spec=rs_spec,
                 fp_computed=fp_fingerprint,
                 pool_len_before_cap=plh,
@@ -1136,31 +1145,51 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
+
             if return_count:
                 return page_from_limit_offset(
-                    v, pagination, total=total, result_snapshot=handle_h
+                    v,
+                    pagination,
+                    total=total,
+                    result_snapshot=handle_h,
                 )
+
             return page_from_limit_offset(
-                v, pagination, total=None, result_snapshot=handle_h
+                v,
+                pagination,
+                total=None,
+                result_snapshot=handle_h,
             )
 
         if return_fields is not None:
             raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
             if return_count:
                 return page_from_limit_offset(
-                    raw, pagination, total=total, result_snapshot=handle_h
+                    raw,
+                    pagination,
+                    total=total,
+                    result_snapshot=handle_h,
                 )
             return page_from_limit_offset(
-                raw, pagination, total=None, result_snapshot=handle_h
+                raw,
+                pagination,
+                total=None,
+                result_snapshot=handle_h,
             )
 
         m = pydantic_validate_many(self.model_type, rows)
         if return_count:
             return page_from_limit_offset(
-                m, pagination, total=total, result_snapshot=handle_h
+                m,
+                pagination,
+                total=total,
+                result_snapshot=handle_h,
             )
         return page_from_limit_offset(
-            m, pagination, total=None, result_snapshot=handle_h
+            m,
+            pagination,
+            total=None,
+            result_snapshot=handle_h,
         )
 
     # ....................... #
@@ -1226,8 +1255,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
         ``_hub_rank`` DESC NULLS LAST, optional ``sorts`` (including ``id`` if given),
         then an ``id`` tie-breaker when omitted.
 
-        With ``return_fields``, include every key column (including ``_hub_rank`` when
-        legs are active).
+        With ``return_fields``, list only the columns you want in each hit; keyset
+        columns (including ``_hub_rank`` when legs are active) are selected
+        internally and stripped from the response.
         """
 
         terms = normalize_search_queries(query)
@@ -1263,16 +1293,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
         sort_keys = [k for k, _ in key_spec]
         directions = [d for _, d in key_spec]
 
-        if return_fields is not None:
-            req = set(sort_keys)
-            if not req.issubset(set(return_fields)):
-                raise CoreError(
-                    "search_with_cursor with return_fields must include all sort and "
-                    "tie-breaker columns used for the cursor (see adapter docs).",
-                )
-
         types = await self.column_types()
         exprs: list[sql.Composable] = []
+
         for k in sort_keys:
             if k == _RANK:
                 exprs.append(sql.Identifier(_COMBO_ALIAS, _RANK))
@@ -1318,19 +1341,26 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         return_fields_sql: Sequence[str] | None
-        if return_fields is not None and do_legs:
-            return_fields_sql = tuple(f for f in return_fields if f != _RANK)
+
+        if return_fields is not None:
+            return_fields_sql = cursor_return_fields_for_select(
+                sort_keys=sort_keys,
+                rank_field=_RANK if do_legs else None,
+                return_fields=return_fields,
+            )
             if not return_fields_sql:
                 return_fields_sql = None
         else:
-            return_fields_sql = return_fields
+            return_fields_sql = None
 
         base_cols = self.return_clause(
             return_type,
             return_fields_sql,
             table_alias=_COMBO_ALIAS,
         )
+
         cols: sql.Composable
+
         if do_legs:
             cols = sql.SQL("{}, {}").format(
                 base_cols,
@@ -1342,6 +1372,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     sql.Identifier(_RANK),
                 ),
             )
+
         else:
             cols = base_cols
 

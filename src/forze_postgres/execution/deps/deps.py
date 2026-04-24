@@ -70,11 +70,13 @@ def _resolve_result_snapshot(
 ) -> SearchResultSnapshotPort | None:
     if spec is None:
         return None
+
     if not (
         context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
         or context.deps.exists(SearchResultSnapshotDepKey)
     ):
         return None
+
     return context.dep(SearchResultSnapshotDepKey, route=spec.name)(context, spec)
 
 
@@ -338,7 +340,7 @@ def _postgres_search_port_for_config(
 
     snapshot_port = _resolve_result_snapshot(
         context,
-        member_spec.result_snapshot,
+        member_spec.snapshot,
     )
 
     tenant_aware = c.get("tenant_aware", False)

@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CursorPage
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
@@ -345,3 +346,73 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
     n = __p.count
     assert n == 1
     assert rows[0].title == "hello fts"
+
+
+@pytest.mark.asyncio
+async def test_fts_search_with_cursor_ranked_and_browse(
+    pg_client: PostgresClient,
+) -> None:
+    suffix = uuid4().hex[:12]
+    table = f"fts_cur_{suffix}"
+    index_name = f"idx_fts_cur_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """
+    )
+    for t in ("a", "b", "c"):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {table} (id, title, content)
+            VALUES (%(id)s, %(title)s, 'common token')
+            """,
+            {"id": uuid4(), "title": t},
+        )
+
+    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(
+        name="fts_cur",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    adapter = ctx.search_query(spec)
+
+    p1: CursorPage = await adapter.search_with_cursor(
+        "common",
+        sorts={"title": "asc"},
+        return_fields=["title", "content", "id"],
+        cursor={"limit": 1},
+    )
+    assert len(p1.hits) == 1
+    assert set(p1.hits[0].keys()) == {"title", "content", "id"}
+    assert p1.has_more is True
+    assert p1.next_cursor is not None
+
+    p2 = await adapter.search_with_cursor(
+        "common",
+        sorts={"title": "asc"},
+        return_fields=["title", "content", "id"],
+        cursor={"limit": 5, "after": p1.next_cursor},
+    )
+    assert len(p2.hits) == 2
+
+    b0 = await adapter.search_with_cursor(
+        "",
+        sorts={"title": "asc"},
+        return_fields=["title", "content", "id"],
+        cursor={"limit": 2},
+    )
+    assert len(b0.hits) == 2
+    assert b0.has_more is True

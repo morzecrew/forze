@@ -4,9 +4,10 @@
 within the same ranked ``ORDER BY`` (score columns + tie-breakers, typically
 ``id``). That implies declaring cursor columns in :class:`.SearchSpec` or
 Postgres search config, reusing the index heap primary key where applicable.
-Postgres hub search supports keyset over the merged ``combo`` row (including
-``_hub_rank`` when legs are active). Federated (RRF) search does not implement
-cursors yet; use :meth:`~SearchQueryPort.search` with limit/offset there.
+Postgres hub and simple adapters inject keyset columns into the query when
+``return_fields`` is set, then return only the requested fields. Federated (RRF)
+search does not implement cursors yet; use :meth:`~SearchQueryPort.search` with
+limit/offset there.
 """
 
 from datetime import timedelta
@@ -23,7 +24,7 @@ from ..query import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from .types import SearchOptions
+from .types import SearchOptions, SearchResultSnapshotOptions
 from .value_objects import SearchResultSnapshotMeta
 
 # ----------------------- #
@@ -43,6 +44,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = False,
@@ -59,6 +61,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[False] = False,
@@ -73,6 +76,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = False,
@@ -87,6 +91,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True],
@@ -103,6 +108,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[True],
@@ -117,6 +123,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True],
@@ -130,6 +137,7 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,

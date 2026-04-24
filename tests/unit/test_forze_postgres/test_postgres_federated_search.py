@@ -164,11 +164,9 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     page = await adapter.search(
         "q",
         pagination={"offset": 0, "limit": 5},
-        options={
-            "result_snapshot": {
-                "id": "run-1",
-                "fingerprint": fp,
-            }
+        snapshot={
+            "id": "run-1",
+            "fingerprint": fp,
         },
         return_count=True,
     )

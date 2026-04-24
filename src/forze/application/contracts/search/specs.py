@@ -62,7 +62,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
     fuzzy: SearchFuzzySpec | None = attrs.field(default=None)
     """Fuzzy matching configuration."""
 
-    result_snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
+    snapshot: SearchResultSnapshotSpec | None = attrs.field(default=None)
     """Optional defaults for result-ID snapshotting."""
 
     # ....................... #

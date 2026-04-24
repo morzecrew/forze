@@ -175,6 +175,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = ...,
@@ -189,6 +190,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[False] = ...,
@@ -203,6 +205,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = ...,
@@ -217,6 +220,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True] = ...,
@@ -231,6 +235,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[True] = ...,
@@ -245,6 +250,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True] = ...,
@@ -258,6 +264,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
@@ -280,10 +287,6 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             options,
         )
 
-        snap_raw = (options or {}).get("result_snapshot")
-        snap_opt: SearchResultSnapshotOptions | None = (
-            snap_raw if isinstance(snap_raw, dict) else None
-        )
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.result_snapshot
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
@@ -300,30 +303,30 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         if (
             self.snapshot_store is not None
             and rs_spec is not None
-            and snap_opt is not None
-            and "id" in snap_opt
+            and snapshot is not None
+            and "id" in snapshot
         ):
-            if "fingerprint" in snap_opt:
-                sub_fp = str(snap_opt["fingerprint"])
+            if "fingerprint" in snapshot:
+                sub_fp = str(snapshot["fingerprint"])
 
             else:
                 sub_fp = None
 
             raw_keys = await self.snapshot_store.get_id_range(
-                str(snap_opt["id"]),
+                str(snapshot["id"]),
                 offset,
                 page_limit,
                 expected_fingerprint=sub_fp,
             )
 
             if raw_keys is not None:
-                sm = await self.snapshot_store.get_meta(str(snap_opt["id"]))
+                sm = await self.snapshot_store.get_meta(str(snapshot["id"]))
                 total_snap = (
                     int(sm.total) if sm and sm.complete else offset + len(raw_keys)
                 )
                 fp_h = (sm and sm.fingerprint) or fp_computed
                 handle = SearchSnapshotHandle(
-                    id=str(snap_opt["id"]),
+                    id=str(snapshot["id"]),
                     fingerprint=fp_h,
                     total=total_snap,
                     capped=False,
@@ -432,9 +435,9 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         if (
             self.snapshot_store is not None
             and rs_spec is not None
-            and should_write_federated_snapshot(snap_opt, rs_spec)
+            and should_write_federated_snapshot(snapshot, rs_spec)
         ):
-            max_n = effective_snapshot_max_ids(snap_opt, rs_spec)
+            max_n = effective_snapshot_max_ids(snapshot, rs_spec)
             to_store = merged[:max_n]
             capped = total > len(to_store)
             row_keys = [
@@ -443,8 +446,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             ]
 
             run_id = str(uuid.uuid4())
-            put_ttl = effective_snapshot_ttl(snap_opt, rs_spec)
-            put_chunk = effective_snapshot_chunk_size(snap_opt, rs_spec)
+            put_ttl = effective_snapshot_ttl(snapshot, rs_spec)
+            put_chunk = effective_snapshot_chunk_size(snapshot, rs_spec)
 
             await self.snapshot_store.put_run(
                 run_id=run_id,

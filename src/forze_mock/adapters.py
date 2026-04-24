@@ -72,6 +72,7 @@ from forze.application.contracts.search import (
     PhraseCombine,
     SearchOptions,
     SearchQueryPort,
+    SearchResultSnapshotOptions,
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
@@ -1575,6 +1576,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
 
         if sorts:
             ordered = _sort_docs(ordered, sorts)
+
         return ordered
 
     # ....................... #
@@ -1588,6 +1590,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = ...,
@@ -1602,6 +1605,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[False] = ...,
@@ -1616,6 +1620,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = ...,
@@ -1630,6 +1635,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True] = ...,
@@ -1644,6 +1650,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: type[T],
         return_fields: None = ...,
         return_count: Literal[True] = ...,
@@ -1658,6 +1665,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = ...,
         *,
         options: SearchOptions | None = ...,
+        snapshot: SearchResultSnapshotOptions | None = ...,
         return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True] = ...,
@@ -1671,6 +1679,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
@@ -1713,6 +1722,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
         out = pydantic_validate_many(self.spec.model_type, typed_docs)  # type: ignore[arg-type]
+
         if return_count:
             return page_from_limit_offset(  # type: ignore[return-value]
                 out, pagination, total=total

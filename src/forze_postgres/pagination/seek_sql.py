@@ -77,3 +77,26 @@ def build_order_by_sql(
         dir_st = "ASC" if d_out == "asc" else "DESC"
         parts.append(sql.SQL("{} {}").format(ex, sql.SQL(dir_st)))
     return sql.SQL(", ").join(parts)
+
+
+def build_ranked_cursor_order_by_sql(
+    exprs: list[sql.Composable],
+    sort_keys: list[str],
+    directions: list[str],
+    *,
+    rank_key: str,
+    flip: bool = False,
+) -> sql.Composable:
+    """Like :func:`build_order_by_sql` but applies ``NULLS LAST`` / ``NULLS FIRST`` on *rank_key*."""
+    parts: list[sql.Composable] = []
+    for ex, d_raw, sk in zip(exprs, directions, sort_keys, strict=True):
+        d = ("desc" if d_raw == "asc" else "asc") if flip else d_raw
+        if sk == rank_key:
+            if d == "desc":
+                parts.append(sql.SQL("{} DESC NULLS LAST").format(ex))
+            else:
+                parts.append(sql.SQL("{} ASC NULLS FIRST").format(ex))
+        else:
+            suf = "ASC" if d == "asc" else "DESC"
+            parts.append(sql.SQL("{} {}").format(ex, sql.SQL(suf)))
+    return sql.SQL(", ").join(parts)
