@@ -1,6 +1,6 @@
 """Specifications for document models and storage layout."""
 
-from typing import Generic, TypedDict, TypeVar, final
+from typing import Any, Generic, TypedDict, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -19,9 +19,11 @@ from ..cache import CacheSpec
 # ----------------------- #
 
 R = TypeVar("R", bound=BaseModel)
-D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
-U = TypeVar("U", bound=BaseDTO)
+
+# Any is default to avoid separate spec for read-only documents
+D = TypeVar("D", bound=Document, default=Any)
+C = TypeVar("C", bound=CreateDocumentCmd, default=Any)
+U = TypeVar("U", bound=BaseDTO, default=Any)
 
 # ....................... #
 
