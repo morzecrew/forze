@@ -1,17 +1,18 @@
 from typing import Any
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentCommandPort
 from forze.application.contracts.mapping import MapperPort
 from forze.application.execution import Usecase
-from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: ReadDocument](
+class CreateDocument[In: BaseDTO, Cmd: CreateDocumentCmd, Out: BaseModel](
     Usecase[In, Out]
 ):
     """Usecase that creates a new document from a mapped command."""

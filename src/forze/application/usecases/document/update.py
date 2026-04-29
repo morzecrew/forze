@@ -1,18 +1,19 @@
 from typing import Any
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentCommandPort
 from forze.application.contracts.mapping import MapperPort
 from forze.application.dto import DocumentUpdateDTO, DocumentUpdateRes
 from forze.application.execution import Usecase
-from forze.domain.models import BaseDTO, ReadDocument
+from forze.domain.models import BaseDTO
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: ReadDocument](
+class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: BaseModel](
     Usecase[DocumentUpdateDTO[In], DocumentUpdateRes[Out]]
 ):
     """Usecase that updates an existing document from a mapped command and returns a result with diff."""

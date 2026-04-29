@@ -1,17 +1,17 @@
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.dto import DocumentIdDTO, DocumentNumberIdDTO
 from forze.application.execution import Usecase
 from forze.base.errors import NotFoundError
 from forze.domain.constants import NUMBER_ID_FIELD
-from forze.domain.models import ReadDocument
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class GetDocument[R: ReadDocument](Usecase[DocumentIdDTO, R]):
+class GetDocument[R: BaseModel](Usecase[DocumentIdDTO, R]):
     """Usecase that fetches a single document by primary key.
 
     Delegates to :meth:`DocumentReadPort.get`. Read-only; uses the lighter
@@ -37,7 +37,7 @@ class GetDocument[R: ReadDocument](Usecase[DocumentIdDTO, R]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class GetDocumentByNumberId[R: ReadDocument](Usecase[DocumentNumberIdDTO, R]):
+class GetDocumentByNumberId[R: BaseModel](Usecase[DocumentNumberIdDTO, R]):
     """Usecase that fetches a single document by number ID."""
 
     doc: DocumentQueryPort[R]

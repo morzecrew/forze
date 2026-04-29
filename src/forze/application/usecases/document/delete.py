@@ -1,11 +1,11 @@
 from typing import Any
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentCommandPort
 from forze.application.dto import DocumentIdDTO, DocumentIdRevDTO
 from forze.application.execution import Usecase
-from forze.domain.models import ReadDocument
 
 # ----------------------- #
 
@@ -33,7 +33,7 @@ class KillDocument(Usecase[DocumentIdDTO, None]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DeleteDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
+class DeleteDocument[Out: BaseModel](Usecase[DocumentIdRevDTO, Out]):
     """Usecase that soft-deletes a document."""
 
     doc: DocumentCommandPort[Out, Any, Any, Any]
@@ -55,7 +55,7 @@ class DeleteDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RestoreDocument[Out: ReadDocument](Usecase[DocumentIdRevDTO, Out]):
+class RestoreDocument[Out: BaseModel](Usecase[DocumentIdRevDTO, Out]):
     """Usecase that restores a soft-deleted document."""
 
     doc: DocumentCommandPort[Out, Any, Any, Any]

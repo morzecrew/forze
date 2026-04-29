@@ -14,14 +14,14 @@ from forze.application.dto import (
     RawListRequestDTO,
     RawPaginated,
 )
+from pydantic import BaseModel
 from forze.application.execution import Usecase
-from forze.domain.models import ReadDocument
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedListDocuments[Out: ReadDocument](Usecase[ListRequestDTO, Paginated[Out]]):
+class TypedListDocuments[Out: BaseModel](Usecase[ListRequestDTO, Paginated[Out]]):
     """Usecase that fetches multiple documents by filters and sorts."""
 
     doc: DocumentQueryPort[Out]
@@ -113,7 +113,7 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TypedCursorListDocuments[Out: ReadDocument](
+class TypedCursorListDocuments[Out: BaseModel](
     Usecase[CursorListRequestDTO, CursorPaginated[Out]]
 ):
     """Usecase that lists documents with cursor (keyset) pagination."""

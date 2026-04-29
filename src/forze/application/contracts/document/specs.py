@@ -3,6 +3,7 @@
 from typing import Generic, TypedDict, TypeVar, final
 
 import attrs
+from pydantic import BaseModel
 
 from forze.domain.constants import NUMBER_ID_FIELD, SOFT_DELETE_FIELD
 from forze.domain.mixins import NumberMixin, SoftDeletionMixin
@@ -17,7 +18,7 @@ from ..cache import CacheSpec
 
 # ----------------------- #
 
-R = TypeVar("R", bound=BaseDTO)
+R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)

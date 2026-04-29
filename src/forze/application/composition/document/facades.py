@@ -1,6 +1,7 @@
 from typing import Any, Generic, TypeVar
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.execution import UsecasesFacade, facade_op
 from forze.application.usecases.document import (
@@ -16,13 +17,13 @@ from forze.application.usecases.document import (
     TypedListDocuments,
     UpdateDocument,
 )
-from forze.domain.models import BaseDTO, ReadDocument
+from forze.domain.models import BaseDTO
 
 from .operations import DocumentOperation
 
 # ----------------------- #
 
-R = TypeVar("R", bound=ReadDocument)
+R = TypeVar("R", bound=BaseModel)
 C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 

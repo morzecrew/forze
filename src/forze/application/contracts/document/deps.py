@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
+from pydantic import BaseModel
+
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import DepKey
@@ -14,12 +16,13 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-R = TypeVar("R", bound=BaseDTO)
+R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #
+#! TODO: remove cache port from dep factory and use internally in adapter constructors (?)
 
 
 @runtime_checkable
@@ -30,7 +33,9 @@ class DocumentQueryDepPort(Protocol):
         self,
         context: "ExecutionContext",
         spec: DocumentSpec[R, D, C, U],
-        cache: CachePort | None = None,
+        cache: (
+            CachePort | None
+        ) = None,  #! should it be part of internal adapter semantics instead?
     ) -> DocumentQueryPort[R]:
         """Build a document query port, optionally backed by a cache."""
         ...
@@ -47,7 +52,9 @@ class DocumentCommandDepPort(Protocol):
         self,
         context: "ExecutionContext",
         spec: DocumentSpec[R, D, C, U],
-        cache: CachePort | None = None,
+        cache: (
+            CachePort | None
+        ) = None,  #! should it be part of internal adapter semantics instead?
     ) -> DocumentCommandPort[R, D, C, U]:
         """Build a document command port, optionally backed by a cache."""
         ...

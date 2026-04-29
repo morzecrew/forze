@@ -12,7 +12,7 @@ from structlog.contextvars import bound_contextvars
 
 from forze.application._logger import logger
 from forze.base.errors import CoreError
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..contracts.auth import AuthIdentity
 from ..contracts.base import DepKey, DepsPort
@@ -46,10 +46,11 @@ from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 # ----------------------- #
 # TypeVars for consistency
 
-doc_R = TypeVar("doc_R", bound=ReadDocument)
+doc_R = TypeVar("doc_R", bound=BaseModel)
 doc_D = TypeVar("doc_D", bound=Document)
 doc_C = TypeVar("doc_C", bound=CreateDocumentCmd)
 doc_U = TypeVar("doc_U", bound=BaseDTO)
+
 search_M = TypeVar("search_M", bound=BaseModel)
 
 # ....................... #

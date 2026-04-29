@@ -68,7 +68,7 @@ from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
-R = TypeVar("R", bound=BaseDTO)
+R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)

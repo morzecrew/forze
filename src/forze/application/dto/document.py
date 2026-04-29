@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from pydantic import PositiveInt
+from pydantic import BaseModel, PositiveInt
 
 from forze.base.primitives import JsonDict
-from forze.domain.models import BaseDTO, ReadDocument
+from forze.domain.models import BaseDTO
 
 # ----------------------- #
 
@@ -48,7 +48,7 @@ class DocumentNumberIdDTO(BaseDTO):
 # ....................... #
 
 
-class DocumentUpdateRes[Out: ReadDocument](BaseDTO):
+class DocumentUpdateRes[Out: BaseModel](BaseDTO):
     """DTO for the document update response."""
 
     data: Out
