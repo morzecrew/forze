@@ -118,6 +118,56 @@ Supported directions:
 
 If `sorts` is omitted, adapters default to sorting by `id` descending.
 
+## Aggregate syntax
+
+Document `find_many` calls can request aggregate rows with a separate
+`aggregates` expression. Aggregate rows are not document-shaped: without
+`return_type` they are returned as JSON mappings; with `return_type` each row is
+validated against that Pydantic model.
+
+An aggregate expression has two sections:
+
+- `fields`: output aliases mapped to source fields used as grouping keys.
+- `computed_fields`: output aliases mapped to one aggregate function.
+
+Supported functions are `$count`, `$sum`, `$avg`, `$min`, `$max`, and `$median`.
+Use `$count: None` for row counts. Other functions take a source field path.
+Computed fields may also use an object form with `field` and an optional
+`filter`. The filter uses the same query filter syntax as top-level document
+filters, including `$and` and `$or`, but it applies only to that aggregate.
+
+    :::python
+    aggregates = {
+        "fields": {"category": "category"},
+        "computed_fields": {
+            "products": {"$count": None},
+            "revenue": {"$sum": "price"},
+            "median_price": {"$median": "price"},
+            "premium_products": {
+                "$count": {
+                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                },
+            },
+            "premium_revenue": {
+                "$sum": {
+                    "field": "price",
+                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                },
+            },
+        },
+    }
+
+    page = await doc.find_many(
+        filters={"$fields": {"is_deleted": False}},
+        sorts={"revenue": "desc"},
+        aggregates=aggregates,
+        return_count=True,
+    )
+
+When `return_count=True`, aggregate queries count aggregate result groups. Sorts
+for aggregate queries use aggregate output aliases such as `revenue`, not source
+document fields.
+
 ## Where you pass these expressions
 
 ### Document port usage

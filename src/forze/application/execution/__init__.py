@@ -7,7 +7,8 @@ composing usecases with middlewares. Middlewares include guards, effects,
 on-failure and finally hooks, and transaction wrapping.
 """
 
-from .context import CallContext, ExecutionContext, PrincipalContext
+from ..contracts.auth import AuthIdentity
+from .context import CallContext, ExecutionContext
 from .deps import Deps, DepsModule, DepsPlan
 from .facade import FacadeOpRef, UsecasesFacade, facade_call, facade_op
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
@@ -34,7 +35,7 @@ from .usecase import Usecase, UsecaseFactory
 __all__ = [
     "ExecutionContext",
     "CallContext",
-    "PrincipalContext",
+    "AuthIdentity",
     "UsecasePlan",
     "UsecaseRegistry",
     "Usecase",

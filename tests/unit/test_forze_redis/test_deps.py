@@ -39,12 +39,12 @@ def test_redis_counter_factory_tenant_aware_uses_context() -> None:
     )
     counter = factory(context, CounterSpec(name="ns"))
 
-    from forze.application.execution import CallContext, PrincipalContext
+    from forze.application.execution import AuthIdentity, CallContext
 
     call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    principal = PrincipalContext(tenant_id=tid)
+    ident = AuthIdentity(subject_id="test", tenant_id=tid)
 
-    with context.bind_call(call=call, principal=principal):
+    with context.bind_call(call=call, identity=ident):
         assert counter.tenant_provider() == tid
 
 

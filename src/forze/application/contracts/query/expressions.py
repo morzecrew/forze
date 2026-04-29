@@ -1,4 +1,4 @@
-"""Filter and sort expression types for document queries."""
+"""Filter, sort, and aggregate expression types for document queries."""
 
 from __future__ import annotations
 
@@ -74,6 +74,53 @@ QuerySortDirection = Literal["asc", "desc"]
 
 QuerySortExpression = Mapping[str, QuerySortDirection]
 """Map of field names to sort direction (supports dot-separated paths like filters)."""
+
+# ....................... #
+
+AggregateFunction = Literal["$count", "$sum", "$avg", "$min", "$max", "$median"]
+"""Supported aggregate function names."""
+
+AggregateFieldExpression = Mapping[str, str]
+"""Map of aggregate output aliases to source field paths used as group keys."""
+
+
+class AggregateComputedFunctionApplication(TypedDict, total=False):
+    """Detailed aggregate function application with an optional row filter."""
+
+    field: str
+    """Source field path for value-based aggregate functions."""
+
+    filter: QueryFilterExpression
+    """Optional row filter applied only to this computed aggregate."""
+
+
+AggregateComputedFunctionExpression = TypedDict(
+    "AggregateComputedFunctionExpression",
+    {
+        "$count": str | None | AggregateComputedFunctionApplication,
+        "$sum": str | AggregateComputedFunctionApplication,
+        "$avg": str | AggregateComputedFunctionApplication,
+        "$min": str | AggregateComputedFunctionApplication,
+        "$max": str | AggregateComputedFunctionApplication,
+        "$median": str | AggregateComputedFunctionApplication,
+    },
+    total=False,
+)
+"""Single aggregate function application keyed by function name."""
+
+AggregateComputedFieldExpression = Mapping[str, AggregateComputedFunctionExpression]
+"""Map of aggregate output aliases to computed aggregate function specs."""
+
+
+class AggregatesExpression(TypedDict, total=False):
+    """Aggregate result shape: group fields plus computed aggregate fields."""
+
+    fields: AggregateFieldExpression
+    """Group key output aliases mapped to source field paths."""
+
+    computed_fields: AggregateComputedFieldExpression
+    """Computed output aliases mapped to aggregate function applications."""
+
 
 # ....................... #
 

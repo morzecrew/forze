@@ -416,3 +416,244 @@ async def test_fts_search_with_cursor_ranked_and_browse(
     )
     assert len(b0.hits) == 2
     assert b0.has_more is True
+
+
+@pytest.mark.asyncio
+async def test_fts_phrase_combine_any_vs_all_multi_term(
+    pg_client: PostgresClient,
+) -> None:
+    """List query with ``phrase_combine: "any"`` is broader than ``\"all"`` (disjunction vs conjunction)."""
+    suffix = uuid4().hex[:12]
+    table = f"fts_pc_{suffix}"
+    index_name = f"idx_fts_pc_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO {table} (id, title, content) VALUES
+        (%(a)s, 'a', 'giraffe only here'),
+        (%(b)s, 'b', 'zebra only there'),
+        (%(c)s, 'c', 'giraffe and zebra both');
+        """,
+        {"a": uuid4(), "b": uuid4(), "c": uuid4()},
+    )
+    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(
+        name="fts_pc",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    adapter = ctx.search_query(spec)
+    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    p_any = await adapter.search(
+        ["giraffe", "zebra"],
+        options={"phrase_combine": "any"},
+        return_count=True,
+    )
+    p_all = await adapter.search(
+        ["giraffe", "zebra"],
+        options={"phrase_combine": "all"},
+        return_count=True,
+    )
+    assert p_any.count == 3
+    assert p_all.count == 1
+    assert p_all.hits[0].title == "c"
+
+
+@pytest.mark.asyncio
+async def test_fts_search_with_cursor_return_type_and_before(
+    pg_client: PostgresClient,
+) -> None:
+    """Ranked FTS cursor: ``return_type`` and backward ``before`` keyset (same query + sorts)."""
+    suffix = uuid4().hex[:12]
+    table = f"fts_cb_{suffix}"
+    index_name = f"idx_fts_cb_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """
+    )
+    for t in ("a", "b", "c"):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {table} (id, title, content)
+            VALUES (%(id)s, %(t)s, 'curtok shared for cursor');
+            """,
+            {"id": uuid4(), "t": t},
+        )
+    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(
+        name="fts_cb",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    adapter = ctx.search_query(spec)
+    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+
+    class FtsTitleId(BaseModel):
+        id: UUID
+        title: str
+
+    p0: CursorPage = await adapter.search_with_cursor(
+        "curtok",
+        sorts={"title": "asc"},
+        return_type=FtsTitleId,
+        cursor={"limit": 1},
+    )
+    assert len(p0.hits) == 1
+    assert isinstance(p0.hits[0], FtsTitleId)
+    assert p0.hits[0].title == "a"
+    assert p0.has_more is True
+    assert p0.next_cursor is not None
+
+    p1 = await adapter.search_with_cursor(
+        "curtok",
+        sorts={"title": "asc"},
+        return_type=FtsTitleId,
+        cursor={"limit": 1, "after": p0.next_cursor},
+    )
+    assert len(p1.hits) == 1
+    assert p1.hits[0].title == "b"
+    assert p1.next_cursor is not None
+
+    p_back: CursorPage = await adapter.search_with_cursor(
+        "curtok",
+        sorts={"title": "asc"},
+        return_type=FtsTitleId,
+        cursor={"limit": 2, "before": p1.next_cursor},
+    )
+    assert len(p_back.hits) >= 1
+    assert p_back.hits[0].title == "a"
+
+
+@pytest.mark.asyncio
+async def test_fts_v2_ranked_count_zero_short_circuits(
+    pg_client: PostgresClient,
+) -> None:
+    """``return_count`` with a token that never matches: early empty page (no data query)."""
+    suffix = uuid4().hex[:12]
+    table = f"fts_zc_{suffix}"
+    index_name = f"idx_fts_zc_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """,
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO {table} (id, title, content) VALUES
+        (%(id)s, 'x', 'only zzyxxy token');
+        """,
+        {"id": uuid4()},
+    )
+    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(
+        name="fts_zc",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    adapter = ctx.search_query(spec)
+    p = await adapter.search("zzznotokenmatchunique123", return_count=True)
+    assert p.count == 0
+    assert p.hits == []
+
+
+@pytest.mark.asyncio
+async def test_fts_v2_search_with_cursor_ranked_return_type_and_fields(
+    pg_client: PostgresClient,
+) -> None:
+    """Ranked FTS: ``return_type`` and ``return_fields`` on keyset (non-default model / dict)."""
+    suffix = uuid4().hex[:12]
+    table = f"fts_rtf_{suffix}"
+    index_name = f"idx_fts_rtf_{suffix}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name}
+        ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+        """,
+    )
+    for t in ("a", "b"):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {table} (id, title, content)
+            VALUES (%(id)s, %(t)s, 'sharedtok');
+            """,
+            {"id": uuid4(), "t": t},
+        )
+    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(
+        name="fts_rtf",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+    )
+    adapter = ctx.search_query(spec)
+    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+
+    class TitleOnly(BaseModel):
+        title: str
+
+    p1: CursorPage = await adapter.search_with_cursor(
+        "sharedtok",
+        sorts={"title": "asc"},
+        return_type=TitleOnly,
+        cursor={"limit": 1},
+    )
+    assert len(p1.hits) == 1
+    assert isinstance(p1.hits[0], TitleOnly)
+
+    p2: CursorPage = await adapter.search_with_cursor(
+        "sharedtok",
+        sorts={"title": "asc"},
+        return_fields=["title", "id"],
+        cursor={"limit": 2},
+    )
+    assert len(p2.hits) == 2
+    assert set(p2.hits[0].keys()) == {"title", "id"}

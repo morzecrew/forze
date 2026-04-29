@@ -298,3 +298,82 @@ class TestPsycopgQueryRenderer:
         r = PsycopgQueryRenderer(types=types, model_type=_Outer)
         with pytest.raises(CoreError, match="json or jsonb"):
             r.render(QueryField("meta.score", "$eq", 1))
+
+
+class _OrderRow(BaseModel):
+    category: str
+    price: float
+
+
+class TestPostgresAggregateRendering:
+    def test_renders_grouped_aggregate_select_and_sort(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+
+        parsed, select_clause, group_clause, params = renderer.render_aggregates(
+            {
+                "fields": {"category": "category"},
+                "computed_fields": {
+                    "orders": {"$count": None},
+                    "revenue": {"$sum": "price"},
+                    "median_price": {"$median": "price"},
+                },
+            },
+        )
+        sort_clause = renderer.render_aggregate_order_by(parsed, {"revenue": "desc"})
+
+        select_sql = select_clause.as_bytes()
+        assert b"COUNT(*) AS" in select_sql
+        assert b"SUM" in select_sql
+        assert b"percentile_cont(0.5)" in select_sql
+        assert group_clause is not None
+        assert b"category" in group_clause.as_bytes()
+        assert sort_clause is not None
+        assert b"revenue" in sort_clause.as_bytes()
+        assert params == []
+
+    def test_renders_conditional_aggregate_filters(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+
+        _parsed, select_clause, _group_clause, params = renderer.render_aggregates(
+            {
+                "computed_fields": {
+                    "mid_count": {
+                        "$count": {
+                            "filter": {
+                                "$fields": {"price": {"$gte": 10, "$lte": 20}},
+                            },
+                        },
+                    },
+                    "book_revenue": {
+                        "$sum": {
+                            "field": "price",
+                            "filter": {"$fields": {"category": "books"}},
+                        },
+                    },
+                },
+            },
+        )
+
+        select_sql = select_clause.as_bytes()
+        assert b"FILTER (WHERE" in select_sql
+        assert b"COUNT(*) FILTER" in select_sql
+        assert b"SUM" in select_sql
+        assert params == [10, 20, "books"]
+
+    def test_rejects_unknown_aggregate_sort_alias(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={"category": _t("text"), "price": _t("numeric")},
+            model_type=_OrderRow,
+        )
+        parsed, _select_clause, _group_clause, _params = renderer.render_aggregates(
+            {"computed_fields": {"orders": {"$count": None}}},
+        )
+
+        with pytest.raises(CoreError, match="Invalid aggregate sort fields"):
+            renderer.render_aggregate_order_by(parsed, {"missing": "asc"})

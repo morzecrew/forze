@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import attrs
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.query import (
     QueryAnd,
@@ -122,3 +123,202 @@ class TestMongoQueryRenderer:
         u = uuid4()
         r = MongoQueryRenderer()
         assert r.render(QueryField("id", "$eq", u)) == {"id": u}
+
+
+class _OrderRow(BaseModel):
+    category: str
+    price: float
+
+
+class TestMongoAggregateRendering:
+    def test_renders_grouped_aggregate_pipeline(self) -> None:
+        renderer = MongoQueryRenderer()
+
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "fields": {"category": "category"},
+                "computed_fields": {
+                    "orders": {"$count": None},
+                    "revenue": {"$sum": "price"},
+                    "median_price": {"$median": "price"},
+                },
+            },
+            match={"category": "books"},
+            sorts={"revenue": "desc"},
+            limit=10,
+            skip=5,
+        )
+
+        assert pipeline == [
+            {"$match": {"category": "books"}},
+            {
+                "$group": {
+                    "_id": {"category": "$category"},
+                    "orders": {"$sum": 1},
+                    "revenue": {"$sum": "$price"},
+                    "median_price": {
+                        "$median": {"input": "$price", "method": "approximate"},
+                    },
+                },
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "category": "$_id.category",
+                    "orders": 1,
+                    "revenue": 1,
+                    "median_price": 1,
+                },
+            },
+            {"$sort": {"revenue": -1}},
+            {"$skip": 5},
+            {"$limit": 10},
+        ]
+
+    def test_renders_conditional_aggregate_pipeline(self) -> None:
+        renderer = MongoQueryRenderer()
+
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "computed_fields": {
+                    "mid_rows": {
+                        "$count": {
+                            "filter": {
+                                "$fields": {"price": {"$gte": 10, "$lte": 20}},
+                            },
+                        },
+                    },
+                    "book_revenue": {
+                        "$sum": {
+                            "field": "price",
+                            "filter": {"$fields": {"category": "books"}},
+                        },
+                    },
+                },
+            },
+        )
+
+        assert pipeline[0] == {
+            "$group": {
+                "_id": None,
+                "mid_rows": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$gte": ["$price", 10]},
+                                    {"$lte": ["$price", 20]},
+                                ],
+                            },
+                            1,
+                            0,
+                        ],
+                    },
+                },
+                "book_revenue": {
+                    "$sum": {
+                        "$cond": [
+                            {"$eq": ["$category", "books"]},
+                            "$price",
+                            0,
+                        ],
+                    },
+                },
+            },
+        }
+
+    def test_rejects_unknown_aggregate_sort_alias(self) -> None:
+        renderer = MongoQueryRenderer()
+
+        with pytest.raises(CoreError, match="Invalid aggregate sort fields"):
+            renderer.render_aggregates(
+                {"computed_fields": {"orders": {"$count": None}}},
+                sorts={"missing": "asc"},
+            )
+
+    def test_renders_avg_min_max_median_aggregates(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "fields": {"cat": "category"},
+                "computed_fields": {
+                    "avg_p": {"$avg": "price"},
+                    "lo": {"$min": "price"},
+                    "hi": {"$max": "price"},
+                },
+            },
+        )
+        group = pipeline[0]["$group"]
+        assert group["avg_p"] == {"$avg": "$price"}
+        assert group["lo"] == {"$min": "$price"}
+        assert group["hi"] == {"$max": "$price"}
+        _p2, pl2 = renderer.render_aggregates(
+            {"computed_fields": {"md": {"$median": "p"}}},
+        )
+        assert pl2[0]["$group"]["md"] == {
+            "$median": {"input": "$p", "method": "approximate"},
+        }
+
+
+class TestMongoQueryRendererExprPredicate:
+    """Tests for :meth:`~MongoQueryRenderer.render_expr_predicate` (aggregation filters)."""
+
+    def test_and_or_short_circuit(self) -> None:
+        r = MongoQueryRenderer()
+        e1 = r.render_expr_predicate(
+            QueryAnd(
+                (QueryField("a", "$eq", 1), QueryField("b", "$eq", 2)),
+            ),
+        )
+        assert e1 == {"$and": [{"$eq": ["$a", 1]}, {"$eq": ["$b", 2]}]}
+        one = r.render_expr_predicate(
+            QueryAnd((QueryField("a", "$eq", 1),)),
+        )
+        assert one == {"$eq": ["$a", 1]}
+
+    def test_or_multi_and_empty(self) -> None:
+        r = MongoQueryRenderer()
+        empty = r.render_expr_predicate(QueryOr(()))
+        assert empty == {"$const": False}
+        two = r.render_expr_predicate(
+            QueryOr(
+                (QueryField("a", "$eq", 1), QueryField("b", "$eq", 2)),
+            ),
+        )
+        assert two == {"$or": [{"$eq": ["$a", 1]}, {"$eq": ["$b", 2]}]}
+
+    def test_field_predicate_comparators_and_null_empty(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryField("n", "$gt", 1)) == {
+            "$gt": ["$n", 1],
+        }
+        assert r.render_expr_predicate(QueryField("n", "$null", True)) == {
+            "$eq": ["$n", None],
+        }
+        assert r.render_expr_predicate(QueryField("e", "$empty", False)) == {
+            "$not": [{"$eq": ["$e", []]}],
+        }
+
+    def test_field_predicate_in_and_set_ops(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render_expr_predicate(QueryField("t", "$in", [1, 2])) == {
+            "$in": ["$t", [1, 2]],
+        }
+        assert r.render_expr_predicate(QueryField("s", "$overlaps", [1, 2])) == {
+            "$gt": [
+                {
+                    "$size": {
+                        "$setIntersection": [
+                            "$s",
+                            [1, 2],
+                        ],
+                    },
+                },
+                0,
+            ],
+        }
+        assert r.render_expr_predicate(QueryField("s", "$disjoint", [1])) == {
+            "$eq": [{"$size": {"$setIntersection": ["$s", [1]]}}, 0],
+        }
+        with pytest.raises(CoreError, match="expects list"):
+            r.render_expr_predicate(QueryField("t", "$in", 1))

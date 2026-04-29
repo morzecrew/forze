@@ -11,7 +11,7 @@ pytest.importorskip("redis")
 from forze.application.contracts.cache import CacheDepKey, CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterSpec
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
-from forze.application.execution import CallContext, Deps, ExecutionContext, PrincipalContext
+from forze.application.execution import AuthIdentity, CallContext, Deps, ExecutionContext
 from forze_redis.adapters import RedisCacheAdapter, RedisCounterAdapter, RedisIdempotencyAdapter
 from forze_redis.execution.deps.deps import (
     ConfigurableRedisCache,
@@ -55,7 +55,7 @@ class TestConfigurableRedisFactories:
         tid = uuid4()
         with ctx.bind_call(
             call=CallContext(execution_id=uuid4(), correlation_id=uuid4()),
-            principal=PrincipalContext(tenant_id=tid),
+            identity=AuthIdentity(subject_id="test", tenant_id=tid),
         ):
             spec = CacheSpec(name="cache")
             adapter = factory(ctx, spec)

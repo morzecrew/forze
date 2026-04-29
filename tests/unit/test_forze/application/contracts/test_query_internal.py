@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from forze.application.contracts.query import AggregatesExpressionParser
 from forze.application.contracts.query.internal import (
     QueryAnd,
     QueryExpr,
@@ -13,6 +14,83 @@ from forze.application.contracts.query.internal import (
     QueryOr,
     QueryValueCaster,
 )
+
+# ----------------------- #
+
+
+class TestAggregatesExpressionParser:
+    def test_parses_group_fields_and_computed_fields(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "fields": {"category": "category"},
+                "computed_fields": {
+                    "rows": {"$count": None},
+                    "revenue": {"$sum": "price"},
+                },
+            },
+        )
+
+        assert parsed.aliases == {"category", "rows", "revenue"}
+        assert parsed.fields[0].field == "category"
+        assert parsed.computed_fields[0].function == "$count"
+
+    def test_rejects_invalid_count_argument(self) -> None:
+        with pytest.raises(ValueError, match="expects no field"):
+            AggregatesExpressionParser.parse(
+                {"computed_fields": {"rows": {"$count": "id"}}},
+            )
+
+    def test_parses_conditional_computed_fields(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "computed_fields": {
+                    "mid_rows": {
+                        "$count": {
+                            "filter": {
+                                "$and": [
+                                    {"$fields": {"price": {"$gte": 10}}},
+                                    {"$fields": {"price": {"$lte": 20}}},
+                                ],
+                            },
+                        },
+                    },
+                    "book_revenue": {
+                        "$sum": {
+                            "field": "price",
+                            "filter": {"$fields": {"category": "books"}},
+                        },
+                    },
+                },
+            },
+        )
+
+        assert parsed.computed_fields[0].filter is not None
+        assert parsed.computed_fields[1].field == "price"
+        assert parsed.computed_fields[1].filter == {
+            "$fields": {"category": "books"},
+        }
+
+    def test_rejects_conditional_value_aggregate_without_field(self) -> None:
+        with pytest.raises(ValueError, match="requires a field"):
+            AggregatesExpressionParser.parse(
+                {
+                    "computed_fields": {
+                        "revenue": {
+                            "$sum": {"filter": {"$fields": {"category": "books"}}},
+                        },
+                    },
+                },
+            )
+
+    def test_rejects_duplicate_aliases(self) -> None:
+        with pytest.raises(ValueError, match="Duplicate aggregate aliases"):
+            AggregatesExpressionParser.parse(
+                {
+                    "fields": {"total": "category"},
+                    "computed_fields": {"total": {"$sum": "price"}},
+                },
+            )
+
 
 # ----------------------- #
 

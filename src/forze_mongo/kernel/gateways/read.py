@@ -12,7 +12,9 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from forze.application.contracts.query import (
+    AggregatesExpression,
     CursorPaginationExpression,
+    ParsedAggregates,
     QueryFilterExpression,
     QuerySortExpression,
     decode_keyset_v1,
@@ -28,6 +30,16 @@ from .base import MongoGateway
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+# ....................... #
+
+
+def _empty_global_aggregate_row(parsed: ParsedAggregates) -> JsonDict:
+    return {
+        computed.alias: 0 if computed.function == "$count" else None
+        for computed in parsed.computed_fields
+    }
+
 
 # ....................... #
 
@@ -330,6 +342,37 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
+        return_model: None = ...,
+        return_fields: None = ...,
+    ) -> list[JsonDict]:
+        """Find aggregate rows as JSON mappings."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_model: type[T],
+        return_fields: None = ...,
+    ) -> list[T]:
+        """Find aggregate rows validated against *return_model*."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> list[M]:
@@ -344,6 +387,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> list[T]:
@@ -358,6 +402,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> list[JsonDict]:
@@ -372,6 +417,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never:
@@ -385,6 +431,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         offset: int | None = None,
         sorts: QuerySortExpression | None = None,
         *,
+        aggregates: AggregatesExpression | None = None,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
@@ -401,6 +448,17 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         :param return_fields: Optional field subset to project.
         :raises ValidationError: If neither *filters* nor *limit* is provided.
         """
+
+        if aggregates is not None:
+            return await self.find_many_aggregates(
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                aggregates=aggregates,
+                return_model=return_model,
+                return_fields=return_fields,
+            )
 
         if not filters and limit is None:
             raise ValidationError("Filters or limit must be provided")
@@ -423,6 +481,73 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             return [self.return_subset(row, return_fields) for row in normalized]
 
         return pydantic_validate_many(self.model_type, normalized)
+
+    # ....................... #
+
+    async def find_many_aggregates(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        aggregates: AggregatesExpression,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> list[T] | list[JsonDict]:
+        """Find aggregate rows."""
+
+        if return_fields is not None:
+            raise CoreError("Aggregates cannot be combined with return_fields")
+
+        match = self.render_filters(filters)
+        parsed, pipeline = self.renderer.render_aggregates(
+            aggregates,
+            match=match or None,
+            sorts=sorts,
+            limit=limit,
+            skip=offset,
+        )
+        rows = await self.client.aggregate(self.coll(), pipeline, limit=limit)
+
+        if (
+            not rows
+            and not parsed.fields
+            and (offset is None or offset == 0)
+            and (limit is None or limit > 0)
+        ):
+            rows = [_empty_global_aggregate_row(parsed)]
+
+        if return_model is not None:
+            return pydantic_validate_many(return_model, rows)
+
+        return rows
+
+    # ....................... #
+
+    async def count_aggregates(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        aggregates: AggregatesExpression,
+    ) -> int:
+        """Count aggregate result groups."""
+
+        match = self.render_filters(filters)
+        parsed, pipeline = self.renderer.render_aggregates(
+            aggregates,
+            match=match or None,
+        )
+        pipeline.append({"$count": "count"})
+        rows = await self.client.aggregate(self.coll(), pipeline, limit=1)
+
+        if not rows and not parsed.fields:
+            return 1
+
+        if not rows:
+            return 0
+
+        return int(rows[0].get("count", 0))
 
     # ....................... #
 

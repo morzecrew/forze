@@ -14,6 +14,7 @@ from forze.application._logger import logger
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
+from ..contracts.auth import AuthIdentity
 from ..contracts.base import DepKey, DepsPort
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort, CounterSpec
@@ -24,7 +25,11 @@ from ..contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
-from ..contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsProviderPort, EmbeddingsSpec
+from ..contracts.embeddings import (
+    EmbeddingsProviderDepKey,
+    EmbeddingsProviderPort,
+    EmbeddingsSpec,
+)
 from ..contracts.search import (
     FederatedSearchQueryDepKey,
     FederatedSearchReadModel,
@@ -62,21 +67,6 @@ class CallContext:
 
     causation_id: UUID | None = attrs.field(default=None)
     """The causation id of the call."""
-
-
-# ....................... #
-#! TODO: replace with forze.application.contracts.auth
-
-
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class PrincipalContext:
-    """Context for a principal on behalf of which the call is being executed."""
-
-    tenant_id: UUID | None = attrs.field(default=None)
-    """The id of the tenant on behalf of which the call is being executed."""
-
-    actor_id: UUID | None = attrs.field(default=None)
-    """The id of the actor on behalf of which the call is being executed."""
 
 
 # ....................... #
@@ -123,12 +113,12 @@ class ExecutionContext:
     )
     """Current call context."""
 
-    __principal_context: ContextVar[PrincipalContext | None] = attrs.field(
-        factory=lambda: ContextVar("principal_context", default=None),
+    __auth_identity: ContextVar[AuthIdentity | None] = attrs.field(
+        factory=lambda: ContextVar("auth_identity", default=None),
         init=False,
         repr=False,
     )
-    """Current principal context."""
+    """Current authenticated identity (auth contract)."""
 
     # ....................... #
 
@@ -142,28 +132,28 @@ class ExecutionContext:
 
     # ....................... #
 
-    def get_principal_ctx(self) -> PrincipalContext | None:
-        """Return the current principal context.
+    def get_auth_identity(self) -> AuthIdentity | None:
+        """Return the current :class:`~forze.application.contracts.auth.AuthIdentity`.
 
-        :returns: Principal context.
+        :returns: Bound identity, if any.
         """
 
-        return self.__principal_context.get()
+        return self.__auth_identity.get()
 
     # ....................... #
 
     def get_tenant_id(self) -> UUID | None:
-        """Return the current tenant ID.
+        """Return the current tenant ID from :meth:`get_auth_identity`.
 
         :returns: Tenant ID.
         """
 
-        principal = self.get_principal_ctx()
+        identity = self.get_auth_identity()
 
-        if principal is None:
+        if identity is None:
             return None
 
-        return principal.tenant_id
+        return identity.tenant_id
 
     # ....................... #
 
@@ -172,19 +162,19 @@ class ExecutionContext:
         self,
         *,
         call: CallContext,
-        principal: PrincipalContext | None = None,
+        identity: AuthIdentity | None = None,
     ) -> Iterator[None]:
-        """Bind a call and principal context to the execution context.
+        """Bind a call and optional auth identity to the execution context.
 
         NEVER call this inside a usecase or factory, only on the application boundary.
 
         :param call: Call context to bind.
-        :param principal: Principal context to bind.
+        :param identity: Authenticated identity from auth contracts.
         :returns: Context manager that binds the call context to the execution context.
         """
 
         call_token = self.__call_context.set(call)
-        principal_token = self.__principal_context.set(principal)
+        identity_token = self.__auth_identity.set(identity)
 
         bound: dict[str, Any] = {
             "execution_id": str(call.execution_id),
@@ -194,12 +184,14 @@ class ExecutionContext:
         if call.causation_id is not None:
             bound["causation_id"] = str(call.causation_id)
 
-        if principal is not None:
-            if principal.tenant_id is not None:
-                bound["tenant_id"] = str(principal.tenant_id)
+        if identity is not None:
+            bound["subject_id"] = identity.subject_id
 
-            if principal.actor_id is not None:
-                bound["actor_id"] = str(principal.actor_id)
+            if identity.tenant_id is not None:
+                bound["tenant_id"] = str(identity.tenant_id)
+
+            if identity.actor_id is not None:
+                bound["actor_id"] = str(identity.actor_id)
 
         try:
             with bound_contextvars(**bound):
@@ -207,7 +199,7 @@ class ExecutionContext:
 
         finally:
             self.__call_context.reset(call_token)
-            self.__principal_context.reset(principal_token)
+            self.__auth_identity.reset(identity_token)
 
     # ....................... #
 
@@ -292,7 +284,7 @@ class ExecutionContext:
         :param key: Dependency key.
         :param route: Optional route for routed dependencies.
         :returns: Resolved instance.
-        :raises CoreError: If the dependency is not registered or a cycle is detected.
+        :raises CoreError: If the dependency is not registered.
         """
 
         return self.deps.provide(key, route=route)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -47,10 +48,12 @@ class TestAuthIdentity:
         assert ident.is_active is True
 
     def test_with_roles_and_claims(self) -> None:
+        aid = uuid4()
+        tid = uuid4()
         ident = AuthIdentity(
             subject_id="u1",
-            actor_id="a1",
-            tenant_id="t1",
+            actor_id=aid,
+            tenant_id=tid,
             claims={"scope": "read"},
             roles=frozenset({"admin"}),
             permissions=frozenset({"doc:read"}),

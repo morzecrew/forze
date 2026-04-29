@@ -459,3 +459,39 @@ async def test_postgres_write_gateway_kill_many_empty_is_noop(
     )
 
     await write.kill_many([])
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_write_gateway_create_many_empty_is_noop(
+    pg_client: PostgresClient,
+) -> None:
+    table = f"pg_gw_cme_{uuid4().hex[:8]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    write = doc_write_gw(
+        ctx,
+        write_types=_write_types(),
+        write_relation=("public", table),
+        bookkeeping_strategy="application",
+        tenant_aware=False,
+    )
+    assert await write.create_many(()) == []
+    assert await write.create_many([]) == []

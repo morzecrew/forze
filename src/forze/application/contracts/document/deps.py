@@ -1,16 +1,25 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import DepKey
 from ..cache import CachePort
-from .ports import C, D, DocumentCommandPort, DocumentQueryPort, R, U
+from .ports import DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
+
+R = TypeVar("R", bound=BaseDTO)
+D = TypeVar("D", bound=Document)
+C = TypeVar("C", bound=CreateDocumentCmd)
+U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
 
 
 @runtime_checkable

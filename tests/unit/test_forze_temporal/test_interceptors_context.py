@@ -14,7 +14,8 @@ from temporalio.worker import (
     WorkflowInterceptorClassInput,
 )
 
-from forze.application.execution import CallContext, ExecutionContext, PrincipalContext
+from forze.application.contracts.auth.value_objects import AuthIdentity
+from forze.application.execution import CallContext, ExecutionContext
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
 from forze_temporal.interceptors.codecs import TemporalContextCodec
@@ -30,6 +31,7 @@ _EXEC_HEADER = "Forze-Execution-ID"
 _CORR_HEADER = "Forze-Correlation-ID"
 _TENANT_HEADER = "Forze-Tenant-ID"
 _ACTOR_HEADER = "Forze-Actor-ID"
+_SUBJECT_HEADER = "Forze-Subject-ID"
 
 
 def _exec_ctx() -> ExecutionContext:
@@ -48,7 +50,11 @@ class TestExecutionContextInterceptorChains:
         actor = uuid7()
         with ctx.bind_call(
             call=CallContext(execution_id=eid, correlation_id=cid, causation_id=None),
-            principal=PrincipalContext(tenant_id=tenant, actor_id=actor),
+            identity=AuthIdentity(
+                subject_id="sub",
+                tenant_id=tenant,
+                actor_id=actor,
+            ),
         ):
             eci = ExecutionContextInterceptor(ctx_dep=lambda: ctx)
             inner = MagicMock(spec=OutboundInterceptor)
@@ -67,6 +73,7 @@ class TestExecutionContextInterceptorChains:
             passed = inner.start_workflow.await_args.args[0]
             assert bytes(passed.headers[_EXEC_HEADER].data) == str(eid).encode("utf-8")
             assert bytes(passed.headers[_CORR_HEADER].data) == str(cid).encode("utf-8")
+            assert bytes(passed.headers[_SUBJECT_HEADER].data) == b"sub"
             assert bytes(passed.headers[_TENANT_HEADER].data) == str(tenant).encode("utf-8")
             assert bytes(passed.headers[_ACTOR_HEADER].data) == str(actor).encode("utf-8")
 

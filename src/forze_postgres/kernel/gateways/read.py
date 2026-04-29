@@ -13,6 +13,7 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import (
+    AggregatesExpression,
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -21,6 +22,7 @@ from forze.base.errors import CoreError, NotFoundError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
+from forze_postgres.kernel.query import PsycopgQueryRenderer
 from forze_postgres.kernel.query.nested import sort_key_expr
 from forze_postgres.pagination import (
     build_order_by_sql,
@@ -286,9 +288,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
         return_model: None = ...,
         return_fields: None = ...,
-    ) -> list[M]: ...
+    ) -> list[JsonDict]: ...
 
     @overload
     async def find_many(
@@ -298,6 +301,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
         return_model: type[T],
         return_fields: None = ...,
     ) -> list[T]: ...
@@ -310,6 +314,33 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_model: None = ...,
+        return_fields: None = ...,
+    ) -> list[M]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_model: type[T],
+        return_fields: None = ...,
+    ) -> list[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        limit: int | None = ...,
+        offset: int | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> list[JsonDict]: ...
@@ -322,6 +353,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         offset: int | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never: ...
@@ -333,9 +365,21 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         offset: int | None = None,
         sorts: QuerySortExpression | None = None,
         *,
+        aggregates: AggregatesExpression | None = None,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
+        if aggregates is not None:
+            return await self.find_many_aggregates(
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                aggregates=aggregates,
+                return_model=return_model,
+                return_fields=return_fields,
+            )
+
         # tenant id supplied by where clause
         where, params = await self.where_clause(filters)
         sort_clause = await self.order_by_clause(sorts)
@@ -366,6 +410,100 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             return [{k: row.get(k, None) for k in return_fields} for row in rows]
 
         return pydantic_validate_many(self.model_type, rows)
+
+    # ....................... #
+
+    async def find_many_aggregates(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        aggregates: AggregatesExpression,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> list[T] | list[JsonDict]:
+        """Find aggregate rows."""
+
+        if return_fields is not None:
+            raise CoreError("Aggregates cannot be combined with return_fields")
+
+        where, params = await self.where_clause(filters)
+        types = await self.column_types()
+        renderer = PsycopgQueryRenderer(
+            types=types,
+            model_type=self.model_type,
+            nested_field_hints=self.nested_field_hints,
+        )
+        parsed, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
+            aggregates,
+        )
+        params = list(aggregate_params) + list(params)
+        sort_clause = renderer.render_aggregate_order_by(parsed, sorts)
+
+        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
+            cols=select_clause,
+            table=self.source_qname.ident(),
+            where=where,
+        )
+
+        if group_clause is not None:
+            stmt += sql.SQL(" GROUP BY {group}").format(group=group_clause)
+
+        if sort_clause is not None:
+            stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
+
+        if limit is not None:
+            stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+            params.append(limit)
+
+        if offset is not None:
+            stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(offset)
+
+        rows = await self.client.fetch_all(stmt, params, row_factory="dict")
+
+        if return_model is not None:
+            return pydantic_validate_many(return_model, rows)
+
+        return list(rows)
+
+    # ....................... #
+
+    async def count_aggregates(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        aggregates: AggregatesExpression,
+    ) -> int:
+        """Count aggregate result groups."""
+
+        where, params = await self.where_clause(filters)
+        types = await self.column_types()
+        renderer = PsycopgQueryRenderer(
+            types=types,
+            model_type=self.model_type,
+            nested_field_hints=self.nested_field_hints,
+        )
+        _parsed, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
+            aggregates,
+        )
+        params = list(aggregate_params) + list(params)
+
+        inner = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
+            cols=select_clause,
+            table=self.source_qname.ident(),
+            where=where,
+        )
+
+        if group_clause is not None:
+            inner += sql.SQL(" GROUP BY {group}").format(group=group_clause)
+
+        stmt = sql.SQL("SELECT COUNT(*) FROM ({inner}) AS agg").format(inner=inner)
+        res = await self.client.fetch_value(stmt, params, default=0)
+
+        return int(res)
 
     # ....................... #
 

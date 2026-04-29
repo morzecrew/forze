@@ -1,16 +1,16 @@
-"""Tests for principal / tenant / actor context on ExecutionContext."""
+"""Tests for auth identity and tenant context on ExecutionContext."""
 
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from forze.application.execution import (
+    AuthIdentity,
     CallContext,
     Deps,
     ExecutionContext,
-    PrincipalContext,
 )
 
 
-def test_get_tenant_id_without_principal_returns_none() -> None:
+def test_get_tenant_id_without_identity_returns_none() -> None:
     ctx = ExecutionContext(deps=Deps())
     assert ctx.get_tenant_id() is None
 
@@ -19,32 +19,42 @@ def test_get_tenant_id_returns_bound_tenant() -> None:
     ctx = ExecutionContext(deps=Deps())
     tid = uuid4()
     call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    principal = PrincipalContext(tenant_id=tid)
+    ident = AuthIdentity(subject_id="sub", tenant_id=tid)
 
-    with ctx.bind_call(call=call, principal=principal):
+    with ctx.bind_call(call=call, identity=ident):
         assert ctx.get_tenant_id() == tid
 
 
-def test_get_principal_ctx_roundtrip() -> None:
+def test_get_auth_identity_roundtrip() -> None:
     ctx = ExecutionContext(deps=Deps())
     tid = uuid4()
     aid = uuid4()
     call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    principal = PrincipalContext(tenant_id=tid, actor_id=aid)
+    ident = AuthIdentity(subject_id="s", tenant_id=tid, actor_id=aid)
 
-    with ctx.bind_call(call=call, principal=principal):
-        p = ctx.get_principal_ctx()
-        assert p is not None
-        assert p.tenant_id == tid
-        assert p.actor_id == aid
+    with ctx.bind_call(call=call, identity=ident):
+        got = ctx.get_auth_identity()
+        assert got is not None
+        assert got.subject_id == "s"
+        assert got.tenant_id == tid
+        assert got.actor_id == aid
 
 
-def test_bind_call_clears_principal_after_exit() -> None:
+def test_bind_call_clears_identity_after_exit() -> None:
     ctx = ExecutionContext(deps=Deps())
     call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    principal = PrincipalContext(tenant_id=uuid4())
+    ident = AuthIdentity(subject_id="x", tenant_id=uuid4())
 
-    with ctx.bind_call(call=call, principal=principal):
-        assert ctx.get_principal_ctx() is not None
+    with ctx.bind_call(call=call, identity=ident):
+        assert ctx.get_auth_identity() is not None
 
-    assert ctx.get_principal_ctx() is None
+    assert ctx.get_auth_identity() is None
+
+
+def test_identity_without_tenant_yields_no_tenant_id() -> None:
+    ctx = ExecutionContext(deps=Deps())
+    call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
+    ident = AuthIdentity(subject_id="sub")
+
+    with ctx.bind_call(call=call, identity=ident):
+        assert ctx.get_tenant_id() is None

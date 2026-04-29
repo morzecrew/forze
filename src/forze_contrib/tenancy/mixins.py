@@ -2,8 +2,10 @@ from typing import Callable
 from uuid import UUID
 
 import attrs
+from pydantic import Field
 
 from forze.base.errors import CoreError
+from forze.domain.models import CoreModel
 
 # ----------------------- #
 
@@ -33,3 +35,13 @@ class MultiTenancyMixin:
             raise CoreError("Tenant ID is required")
 
         return tenant_id
+
+
+# ....................... #
+
+
+class DomainTenantIdMixin(CoreModel):
+    """Mixin adding an optional tenant ID field."""
+
+    tenant_id: UUID | None = Field(default=None, frozen=True)
+    """Tenant ID."""

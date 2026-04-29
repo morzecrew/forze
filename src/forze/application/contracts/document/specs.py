@@ -10,7 +10,6 @@ from forze.domain.models import (
     BaseDTO,
     CreateDocumentCmd,
     Document,
-    ReadDocument,
 )
 
 from ..base import BaseSpec
@@ -18,7 +17,7 @@ from ..cache import CacheSpec
 
 # ----------------------- #
 
-R = TypeVar("R", bound=ReadDocument)  #! Arbitrary read model (CoreModel or so)
+R = TypeVar("R", bound=BaseDTO)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)

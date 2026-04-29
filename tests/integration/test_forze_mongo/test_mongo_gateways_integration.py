@@ -26,12 +26,27 @@ class GwDoc(Document):
     name: str
 
 
+class GwOrderDoc(Document):
+    category: str
+    price: float
+
+
 class GwCreate(CreateDocumentCmd):
     name: str
 
 
+class GwOrderCreate(CreateDocumentCmd):
+    category: str
+    price: float
+
+
 class GwUpdate(BaseDTO):
     name: str | None = None
+
+
+class GwOrderUpdate(BaseDTO):
+    category: str | None = None
+    price: float | None = None
 
 
 class GwProj(BaseModel):
@@ -39,11 +54,32 @@ class GwProj(BaseModel):
     name: str
 
 
+class GwCategoryStats(BaseModel):
+    category: str
+    orders: int
+    revenue: float
+    median_price: float
+    premium_orders: int
+    premium_revenue: float | None
+
+
 def _gw_write_types() -> DocumentWriteTypes[GwDoc, GwCreate, GwUpdate]:
     return DocumentWriteTypes(
         domain=GwDoc,
         create_cmd=GwCreate,
         update_cmd=GwUpdate,
+    )
+
+
+def _gw_order_write_types() -> DocumentWriteTypes[
+    GwOrderDoc,
+    GwOrderCreate,
+    GwOrderUpdate,
+]:
+    return DocumentWriteTypes(
+        domain=GwOrderDoc,
+        create_cmd=GwOrderCreate,
+        update_cmd=GwOrderUpdate,
     )
 
 
@@ -104,6 +140,84 @@ async def test_mongo_gateways_create_read_projections_and_list(
 
     updated, _ = await write.update(created.id, GwUpdate(name="patched"))
     assert updated.name == "patched"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_mongo_read_gateway_aggregate_expressions(
+    mongo_client: MongoClient,
+    mongo_gw_ctx: ExecutionContext,
+) -> None:
+    """Aggregate expressions group, compute values, sort by aliases, and count groups."""
+    db_name = mongo_client.db().name
+    collection = f"mongo_gw_agg_{uuid4().hex[:8]}"
+    relation = (db_name, collection)
+    write = doc_write_gw(
+        mongo_gw_ctx,
+        write_types=_gw_order_write_types(),
+        write_relation=relation,
+        history_enabled=False,
+        tenant_aware=False,
+    )
+    read = write.read_gw
+
+    await write.create(GwOrderCreate(category="books", price=10.0))
+    await write.create(GwOrderCreate(category="books", price=20.0))
+    await write.create(GwOrderCreate(category="books", price=30.0))
+    await write.create(GwOrderCreate(category="hardware", price=50.0))
+    await write.create(GwOrderCreate(category="hardware", price=60.0))
+    await write.create(GwOrderCreate(category="hardware", price=70.0))
+    await write.create(GwOrderCreate(category="software", price=90.0))
+
+    aggregates = {
+        "fields": {"category": "category"},
+        "computed_fields": {
+            "orders": {"$count": None},
+            "revenue": {"$sum": "price"},
+            "median_price": {"$median": "price"},
+            "premium_orders": {
+                "$count": {"filter": {"$fields": {"price": {"$gte": 20}}}},
+            },
+            "premium_revenue": {
+                "$sum": {
+                    "field": "price",
+                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                },
+            },
+        },
+    }
+
+    rows = await read.find_many_aggregates(
+        filters={"$fields": {"category": {"$in": ["books", "hardware"]}}},
+        limit=10,
+        offset=0,
+        sorts={"revenue": "desc"},
+        aggregates=aggregates,
+        return_model=GwCategoryStats,
+    )
+
+    assert rows == [
+        GwCategoryStats(
+            category="hardware",
+            orders=3,
+            revenue=180.0,
+            median_price=60.0,
+            premium_orders=3,
+            premium_revenue=180.0,
+        ),
+        GwCategoryStats(
+            category="books",
+            orders=3,
+            revenue=60.0,
+            median_price=20.0,
+            premium_orders=2,
+            premium_revenue=50.0,
+        ),
+    ]
+    assert await read.count_aggregates(
+        {"$fields": {"category": {"$in": ["books", "hardware"]}}},
+        aggregates=aggregates,
+    ) == 2
 
 
 @pytest.mark.integration

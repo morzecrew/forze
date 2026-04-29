@@ -50,6 +50,7 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthIdentity,  # noqa: F841
     ) -> Awaitable[OAuth2TokensResponse | None]: ...
 
+    #! Should be identity only (?) ...
     def refresh_tokens(
         self,
         credentials: OAuth2Tokens,  # noqa: F841
@@ -66,6 +67,19 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
 # ....................... #
 
 
+class PasswordLifecyclePort(Protocol):  # pragma: no cover
+    """Port for managing the lifecycle of password accounts."""
+
+    def change_password(
+        self,
+        identity: AuthIdentity,  # noqa: F841
+        new_password: str,  # noqa: F841
+    ) -> Awaitable[None]: ...
+
+
+# ....................... #
+
+
 class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
     """Port for managing the lifecycle of API keys."""
 
@@ -74,6 +88,7 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthIdentity,  # noqa: F841
     ) -> Awaitable[ApiKeyResponse | None]: ...
 
+    #! Should be identity only (?) ...
     def refresh_api_key(
         self,
         credentials: ApiKeyCredentials,  # noqa: F841

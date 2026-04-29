@@ -54,6 +54,8 @@ from forze.application.contracts.pubsub import (
     PubSubQueryPort,
 )
 from forze.application.contracts.query import (
+    AggregatesExpression,
+    AggregatesExpressionParser,
     CursorPaginationExpression,
     PaginationExpression,
     QueryExpr,
@@ -422,6 +424,108 @@ def _sort_docs(
     return out
 
 
+def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise CoreError(
+            f"Aggregate {function} expects numeric values for field {field!r}",
+        )
+    return value
+
+
+def _aggregate_docs(
+    docs: Sequence[JsonDict], aggregates: AggregatesExpression
+) -> list[JsonDict]:
+    parsed = AggregatesExpressionParser.parse(aggregates)
+    grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
+
+    for doc in docs:
+        key = tuple(
+            None if (value := _path_get(doc, field.field)) is _MISSING else value
+            for field in parsed.fields
+        )
+        grouped.setdefault(key, []).append(doc)
+
+    if not parsed.fields and not grouped:
+        grouped[()] = []
+
+    rows: list[JsonDict] = []
+    for key, items in grouped.items():
+        row: JsonDict = {
+            field.alias: key[index] for index, field in enumerate(parsed.fields)
+        }
+
+        for computed in parsed.computed_fields:
+            computed_items = (
+                [doc for doc in items if _match_filters(doc, computed.filter)]
+                if computed.filter is not None
+                else items
+            )
+
+            if computed.function == "$count":
+                row[computed.alias] = len(computed_items)
+                continue
+
+            if computed.field is None:
+                raise CoreError("Computed field has no field path")
+
+            raw_values = [_path_get(doc, computed.field) for doc in computed_items]
+            values = [
+                value
+                for value in raw_values
+                if value is not _MISSING and value is not None
+            ]
+
+            match computed.function:
+                case "$sum":
+                    nums = [
+                        _require_numeric(
+                            value,
+                            function=computed.function,
+                            field=computed.field,
+                        )
+                        for value in values
+                    ]
+                    row[computed.alias] = sum(nums) if nums else None
+
+                case "$avg":
+                    nums = [
+                        _require_numeric(
+                            value,
+                            function=computed.function,
+                            field=computed.field,
+                        )
+                        for value in values
+                    ]
+                    row[computed.alias] = (sum(nums) / len(nums)) if nums else None
+
+                case "$median":
+                    nums = sorted(
+                        _require_numeric(
+                            value,
+                            function=computed.function,
+                            field=computed.field,
+                        )
+                        for value in values
+                    )
+                    if not nums:
+                        row[computed.alias] = None
+                    elif len(nums) % 2:
+                        row[computed.alias] = nums[len(nums) // 2]
+                    else:
+                        hi = len(nums) // 2
+                        row[computed.alias] = (nums[hi - 1] + nums[hi]) / 2
+
+                case "$min":
+                    row[computed.alias] = min(values) if values else None
+
+                case "$max":
+                    row[computed.alias] = max(values) if values else None
+
+        rows.append(row)
+
+    return rows
+
+
 # ....................... #
 
 
@@ -672,6 +776,60 @@ class MockDocumentAdapter[
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = ...,
     ) -> CountlessPage[JsonDict]: ...
@@ -683,6 +841,8 @@ class MockDocumentAdapter[
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = ...,
     ) -> CountlessPage[R]: ...
@@ -694,6 +854,8 @@ class MockDocumentAdapter[
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True],
     ) -> Page[JsonDict]: ...
@@ -705,6 +867,8 @@ class MockDocumentAdapter[
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True],
     ) -> Page[R]: ...
@@ -715,35 +879,63 @@ class MockDocumentAdapter[
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
+        aggregates: AggregatesExpression | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
-    ) -> Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]:
+    ) -> (
+        Page[R]
+        | CountlessPage[R]
+        | Page[T]
+        | CountlessPage[T]
+        | Page[JsonDict]
+        | CountlessPage[JsonDict]
+    ):
+        if aggregates is not None and return_fields is not None:
+            raise CoreError("Aggregates cannot be combined with return_fields")
+
+        if aggregates is None and return_type is not None:
+            raise CoreError("return_type requires aggregates")
+
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
 
         filtered = [doc for doc in docs if _match_filters(doc, filters)]
-        total = len(filtered)
-        ordered = _sort_docs(filtered, sorts)
+        rows: list[Any]
+
+        if aggregates is not None:
+            aggregate_rows = _aggregate_docs(filtered, aggregates)
+            total = len(aggregate_rows)
+            ordered_rows = _sort_docs(aggregate_rows, sorts)
+            rows = (
+                pydantic_validate_many(return_type, ordered_rows)
+                if return_type is not None
+                else ordered_rows
+            )
+        else:
+            total = len(filtered)
+            ordered_docs = _sort_docs(filtered, sorts)
+            rows = [
+                self._to_read_or_projection(doc, return_fields) for doc in ordered_docs
+            ]
 
         pagination = pagination or {}
         limit = pagination.get("limit")
         offset = pagination.get("offset")
 
         if offset:
-            ordered = ordered[offset:]
+            rows = rows[offset:]
 
         if limit is not None:
-            ordered = ordered[:limit]
-
-        out = [self._to_read_or_projection(doc, return_fields) for doc in ordered]
+            rows = rows[:limit]
 
         if return_count:
             return page_from_limit_offset(  # type: ignore[return-value]
-                out,
+                cast(Any, rows),
                 pagination,
                 total=total,
             )
-        return page_from_limit_offset(out, pagination, total=None)  # type: ignore[return-value]
+        return page_from_limit_offset(cast(Any, rows), pagination, total=None)  # type: ignore[return-value]
 
     # ....................... #
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.base import Page
 from forze.application.contracts.cache import CacheDepKey, CacheSpec
@@ -442,3 +443,308 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
 
     assert await cmd.delete_many([], return_new=True) == []
     assert await cmd.restore_many([], return_new=True) == []
+
+
+# ....................... #
+# Deeper :class:`PostgresDocumentAdapter` surface (read projections, aggregates, cache bypass).
+# ....................... #
+
+
+class _SkuGroup(BaseModel):
+    cat: str
+    n: int
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
+    pg_client: PostgresClient,
+) -> None:
+    """``return_fields`` forces the read path that skips cache (adapter lines ~211, ~281)."""
+    t = f"pg_rf_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+
+    doc = await cmd.create(_CxCreate(sku="rf"))
+    prj = await q.get(doc.id, return_fields=["sku", "rev"])
+    assert prj == {"sku": "rf", "rev": 1}
+    b = await cmd.create(_CxCreate(sku="rf2"))
+    prjs = await q.get_many([doc.id, b.id], return_fields=["id", "sku"])
+    assert len(prjs) == 2
+    assert {r["sku"] for r in prjs} == {"rf", "rf2"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_find_many_aggregates_with_typed_page(
+    pg_client: PostgresClient,
+) -> None:
+    """``find_many`` with ``aggregates``, ``return_type``, and ``return_count``."""
+    t = f"pg_ag_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+
+    await cmd.create(_CxCreate(sku="g1"))
+    await cmd.create(_CxCreate(sku="g1"))
+    await cmd.create(_CxCreate(sku="g2"))
+
+    agg = {
+        "fields": {"cat": "sku"},
+        "computed_fields": {"n": {"$count": None}},
+    }
+    p = await q.find_many(
+        None,
+        pagination={"limit": 10, "offset": 0},
+        sorts={"cat": "asc"},
+        aggregates=agg,
+        return_type=_SkuGroup,
+        return_count=True,
+    )
+    assert isinstance(p, Page)
+    assert p.count == 2
+    assert {r.cat for r in p.hits} == {"g1", "g2"}
+    assert {r.n for r in p.hits} == {1, 2}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_find_many_rejects_conflicting_args(
+    pg_client: PostgresClient,
+) -> None:
+    t = f"pg_inv_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached(pg_client, t)
+    q = ctx.doc_query(spec)
+
+    agg = {
+        "fields": {"c": "sku"},
+        "computed_fields": {"n": {"$count": None}},
+    }
+    with pytest.raises(CoreError, match="Aggregates cannot be combined with return_fields"):
+        await q.find_many(
+            None,
+            aggregates=agg,
+            return_fields=["sku"],
+        )
+
+    with pytest.raises(CoreError, match="return_type requires aggregates"):
+        await q.find_many(
+            None,
+            return_type=_SkuGroup,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_count_method(
+    pg_client: PostgresClient,
+) -> None:
+    t = f"pg_cnt_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+    await cmd.create(_CxCreate(sku="cnt-a"))
+    await cmd.create(_CxCreate(sku="cnt-b"))
+    n = await q.count({"$fields": {"sku": {"$in": ["cnt-a", "cnt-b"]}}})
+    assert n == 2
+    assert await q.count({"$fields": {"sku": "missing"}}) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_create_return_new_false(
+    pg_client: PostgresClient,
+) -> None:
+    t = f"pg_cnf_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+    uid = uuid4()
+    out = await cmd.create(_CxCreate(id=uid, sku="no-ret"), return_new=False)
+    assert out is None
+    loaded = await q.get(uid)
+    assert loaded.sku == "no-ret"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_update_many_return_new_with_diffs(
+    pg_client: PostgresClient,
+) -> None:
+    """``update_many`` with ``return_new=True`` and ``return_diff=True`` returns (row, diff) pairs."""
+    t = f"pg_ud_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+
+    a = await cmd.create(_CxCreate(sku="u1"))
+    b = await cmd.create(_CxCreate(sku="u2"))
+    pairs = await cmd.update_many(
+        [
+            (a.id, a.rev, _CxUpdate(sku="u1x")),
+            (b.id, b.rev, _CxUpdate(sku="u2x")),
+        ],
+        return_new=True,
+        return_diff=True,
+    )
+    assert pairs is not None
+    assert len(pairs) == 2
+    d0, diff0 = pairs[0]
+    assert d0.sku in ("u1x", "u2x")
+    assert "sku" in diff0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_touch_many_return_new_true(
+    pg_client: PostgresClient,
+) -> None:
+    t = f"pg_tm_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    a = await cmd.create(_CxCreate(sku="t1"))
+    b = await cmd.create(_CxCreate(sku="t2"))
+    out = await cmd.touch_many([a.id, b.id], return_new=True)
+    assert out is not None
+    assert len(out) == 2
+    revs = {x.rev for x in out}
+    assert 2 in revs
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
+    pg_client: PostgresClient,
+) -> None:
+    t = f"pg_sdm_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_soft(t))
+
+    cache_spec = CacheSpec(name=f"cache_{t}")
+    spec = DocumentSpec(
+        name=f"doc_sdm_{t}",
+        read=_SoftRead,
+        write={
+            "domain": _SoftDoc,
+            "create_cmd": _SoftCreate,
+            "update_cmd": _SoftUpdate,
+        },
+        cache=cache_spec,
+    )
+    fac = ConfigurablePostgresDocument(
+        config={
+            "read": ("public", t),
+            "write": ("public", t),
+            "bookkeeping_strategy": "application",
+        }
+    )
+    state = MockState()
+
+    def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
+        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                MockStateDepKey: state,
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: fac,
+                DocumentCommandDepKey: fac,
+                CacheDepKey: _cache_factory,
+            }
+        )
+    )
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+
+    d1 = await cmd.create(_SoftCreate(label="a"))
+    d2 = await cmd.create(_SoftCreate(label="b"))
+    del_rows = await cmd.delete_many(
+        [(d1.id, d1.rev), (d2.id, d2.rev)],
+        return_new=True,
+    )
+    assert del_rows is not None
+    assert len(del_rows) == 2
+    assert {x.is_deleted for x in del_rows} == {True}
+    r1, r2 = del_rows[0], del_rows[1]
+    rest = await cmd.restore_many(
+        [(r1.id, r1.rev), (r2.id, r2.rev)],
+        return_new=True,
+    )
+    assert rest is not None
+    assert len(rest) == 2
+    assert {x.is_deleted for x in rest} == {False}
+    for row in rest:
+        ok = await q.get(row.id)
+        assert ok.is_deleted is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_find_for_update_in_transaction(
+    pg_client: PostgresClient,
+) -> None:
+    t = f"pg_fuf_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+    await cmd.create(_CxCreate(sku="lockme"))
+    async with pg_client.transaction():
+        found = await q.find({"$fields": {"sku": "lockme"}}, for_update=True)
+        assert found is not None
+        assert found.sku == "lockme"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_uses_clamped_batch_size(
+    pg_client: PostgresClient,
+) -> None:
+    """Config ``batch_size`` below minimum is clamped (``eff_batch_size`` in adapter)."""
+    t = f"pg_bs_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    spec = DocumentSpec(
+        name=f"doc_bs_{t}",
+        read=_CxRead,
+        write={
+            "domain": _CxDoc,
+            "create_cmd": _CxCreate,
+            "update_cmd": _CxUpdate,
+        },
+    )
+    fac = ConfigurablePostgresDocument(
+        config={
+            "read": ("public", t),
+            "write": ("public", t),
+            "bookkeeping_strategy": "application",
+            "batch_size": 3,
+        }
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: fac,
+                DocumentCommandDepKey: fac,
+            }
+        )
+    )
+    ad = ctx.doc_command(spec)
+    assert ad.eff_batch_size == 200
+    await ad.create_many(
+        [
+            _CxCreate(sku="b1"),
+            _CxCreate(sku="b2"),
+        ],
+    )

@@ -5,11 +5,17 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.query import (
+    AggregateComputedField,
+    AggregatesExpression,
+    AggregatesExpressionParser,
+    ParsedAggregates,
     QueryAnd,
     QueryExpr,
     QueryField,
+    QueryFilterExpressionParser,
     QueryOp,
     QueryOr,
+    QuerySortExpression,
     QueryValue,
     QueryValueCaster,
 )
@@ -48,6 +54,247 @@ class MongoQueryRenderer:
         """
 
         return self._render_expr(expr)
+
+    # ....................... #
+
+    def render_aggregates(
+        self,
+        aggregates: AggregatesExpression,
+        *,
+        match: JsonDict | None = None,
+        sorts: QuerySortExpression | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+    ) -> tuple[ParsedAggregates, list[JsonDict]]:
+        """Render an aggregate expression into a Mongo aggregation pipeline."""
+
+        parsed = AggregatesExpressionParser.parse(aggregates)
+        pipeline: list[JsonDict] = []
+
+        if match:
+            pipeline.append({"$match": match})
+
+        group_id: JsonDict | None = (
+            {field.alias: f"${field.field}" for field in parsed.fields}
+            if parsed.fields
+            else None
+        )
+        group: JsonDict = {"_id": group_id}
+
+        for computed in parsed.computed_fields:
+            group[computed.alias] = self._render_aggregate_function(computed)
+
+        pipeline.append({"$group": group})
+
+        project: JsonDict = {"_id": 0}
+        for field in parsed.fields:
+            project[field.alias] = f"$_id.{field.alias}"
+        for computed in parsed.computed_fields:
+            project[computed.alias] = 1
+        pipeline.append({"$project": project})
+
+        sort = self.render_aggregate_sorts(parsed, sorts)
+        if sort:
+            pipeline.append({"$sort": dict(sort)})
+
+        if skip is not None:
+            pipeline.append({"$skip": skip})
+
+        if limit is not None:
+            pipeline.append({"$limit": limit})
+
+        return parsed, pipeline
+
+    # ....................... #
+
+    @staticmethod
+    def render_aggregate_sorts(
+        parsed: ParsedAggregates,
+        sorts: QuerySortExpression | None,
+    ) -> list[tuple[str, int]] | None:
+        """Convert aggregate-row sorts to Mongo sort pairs."""
+
+        if not sorts:
+            return None
+
+        aliases = parsed.aliases
+        bad = [field for field in sorts if field not in aliases]
+
+        if bad:
+            raise CoreError(f"Invalid aggregate sort fields: {bad}")
+
+        return [
+            (field, 1 if direction == "asc" else -1)
+            for field, direction in sorts.items()
+        ]
+
+    # ....................... #
+
+    def _render_aggregate_function(self, computed: AggregateComputedField) -> JsonDict:
+        if computed.function == "$count":
+            value: Any = 1
+            return {"$sum": self._conditional_value(computed, value, 0)}
+
+        if computed.field is None:
+            raise CoreError("Computed field has no field path")
+
+        field_ref = f"${computed.field}"
+        match computed.function:
+            case "$sum":
+                return {"$sum": self._conditional_value(computed, field_ref, 0)}
+
+            case "$avg":
+                return {"$avg": self._conditional_value(computed, field_ref, None)}
+
+            case "$min":
+                return {"$min": self._conditional_value(computed, field_ref, None)}
+
+            case "$max":
+                return {"$max": self._conditional_value(computed, field_ref, None)}
+
+            case "$median":
+                return {
+                    "$median": {
+                        "input": self._conditional_value(computed, field_ref, None),
+                        "method": "approximate",
+                    },
+                }
+
+    # ....................... #
+
+    def _conditional_value(
+        self,
+        computed: AggregateComputedField,
+        value: Any,
+        otherwise: Any,
+    ) -> Any:
+        if computed.filter is None:
+            return value
+
+        expr = QueryFilterExpressionParser.parse(computed.filter)
+        return {"$cond": [self.render_expr_predicate(expr), value, otherwise]}
+
+    # ....................... #
+
+    def render_expr_predicate(self, expr: QueryExpr) -> JsonDict:
+        """Render a parsed query expression as a Mongo aggregation predicate."""
+
+        match expr:
+            case QueryField(name, op, value):
+                return self._render_field_predicate(name, op, value)
+
+            case QueryAnd(items):
+                if not items:
+                    return {"$const": True}
+                parts = [self.render_expr_predicate(item) for item in items]
+                return parts[0] if len(parts) == 1 else {"$and": parts}
+
+            case QueryOr(items):
+                if not items:
+                    return {"$const": False}
+                parts = [self.render_expr_predicate(item) for item in items]
+                return parts[0] if len(parts) == 1 else {"$or": parts}
+
+            case _:
+                raise CoreError(f"Unknown expression: {expr!r}")
+
+    # ....................... #
+
+    def _render_field_predicate(
+        self,
+        field: str,
+        op: QueryOp.All,  # type: ignore[valid-type]
+        value: Any,
+    ) -> JsonDict:
+        ref = f"${field}"
+
+        match op:
+            case "$eq":
+                return {"$eq": [ref, self.caster.pass_through(value)]}
+
+            case "$neq":
+                return {"$ne": [ref, self.caster.pass_through(value)]}
+
+            case "$gt" | "$gte" | "$lt" | "$lte":
+                return {op: [ref, self.caster.pass_through(value)]}
+
+            case "$null":
+                null_check: JsonDict = {"$eq": [ref, None]}
+                return (
+                    null_check
+                    if self.caster.as_bool(value)
+                    else {"$not": [null_check]}
+                )
+
+            case "$empty":
+                empty_check: JsonDict = {"$eq": [ref, []]}
+                return (
+                    empty_check
+                    if self.caster.as_bool(value)
+                    else {"$not": [empty_check]}
+                )
+
+            case "$in":
+                if isinstance(value, QueryValue.Scalar | None):
+                    raise CoreError(f"{field}: {op} expects list")
+                values = [self.caster.pass_through(v) for v in value]
+                return {"$in": [ref, values]}
+
+            case "$nin":
+                if isinstance(value, QueryValue.Scalar | None):
+                    raise CoreError(f"{field}: {op} expects list")
+                values = [self.caster.pass_through(v) for v in value]
+                return {
+                    "$not": [
+                        {"$in": [ref, values]},
+                    ],
+                }
+
+            case "$superset":
+                if isinstance(value, QueryValue.Scalar | None):
+                    raise CoreError(f"{field}: {op} expects list")
+                values = [self.caster.pass_through(v) for v in value]
+                return {"$setIsSubset": [values, ref]}
+
+            case "$subset":
+                if isinstance(value, QueryValue.Scalar | None):
+                    raise CoreError(f"{field}: {op} expects list")
+                values = [self.caster.pass_through(v) for v in value]
+                return {"$setIsSubset": [ref, values]}
+
+            case "$overlaps":
+                if isinstance(value, QueryValue.Scalar | None):
+                    raise CoreError(f"{field}: {op} expects list")
+                return {
+                    "$gt": [
+                        {
+                            "$size": {
+                                "$setIntersection": [
+                                    ref,
+                                    [self.caster.pass_through(v) for v in value],
+                                ],
+                            },
+                        },
+                        0,
+                    ],
+                }
+
+            case "$disjoint":
+                if isinstance(value, QueryValue.Scalar | None):
+                    raise CoreError(f"{field}: {op} expects list")
+                return {
+                    "$eq": [
+                        {
+                            "$size": {
+                                "$setIntersection": [
+                                    ref,
+                                    [self.caster.pass_through(v) for v in value],
+                                ],
+                            },
+                        },
+                        0,
+                    ],
+                }
 
     # ....................... #
 

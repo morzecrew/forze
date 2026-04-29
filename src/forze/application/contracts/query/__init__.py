@@ -1,12 +1,22 @@
 """Basic query contracts."""
 
 from .expressions import (
+    AggregateComputedFieldExpression,
+    AggregateComputedFunctionApplication,
+    AggregateComputedFunctionExpression,
+    AggregateFieldExpression,
+    AggregateFunction,
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
 )
 from .internal import (
+    AggregateComputedField,
+    AggregateField,
+    AggregatesExpressionParser,
+    ParsedAggregates,
     QueryAnd,
     QueryExpr,
     QueryField,
@@ -25,6 +35,16 @@ from .pagination import (
 # ----------------------- #
 
 __all__ = [
+    "AggregateComputedField",
+    "AggregateComputedFieldExpression",
+    "AggregateComputedFunctionApplication",
+    "AggregateComputedFunctionExpression",
+    "AggregateField",
+    "AggregateFieldExpression",
+    "AggregateFunction",
+    "AggregatesExpression",
+    "AggregatesExpressionParser",
+    "ParsedAggregates",
     "QueryFilterExpression",
     "QuerySortExpression",
     "PaginationExpression",

@@ -1,7 +1,5 @@
 """PostgreSQL keyset seek fragments (psycopg :mod:`sql`)."""
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from psycopg import sql

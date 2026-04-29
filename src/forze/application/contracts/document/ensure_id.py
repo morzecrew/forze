@@ -21,13 +21,18 @@ def require_create_id_for_ensure(dto: CreateDocumentCmd) -> UUID:
             "ensure and ensure_many require CreateDocumentCmd.id to be set",
             code="ensure_missing_id",
         )
+
     return dto.id
+
+
+# ....................... #
 
 
 def assert_unique_ensure_ids(dtos: Sequence[CreateDocumentCmd]) -> None:
     """Require every DTO to have an id and ids to be unique within the batch."""
 
     seen: set[UUID] = set()
+
     for d in dtos:
         uid = require_create_id_for_ensure(d)
         if uid in seen:

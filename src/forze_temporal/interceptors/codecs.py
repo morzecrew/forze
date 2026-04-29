@@ -10,7 +10,8 @@ from uuid import UUID
 import attrs
 from temporalio.api.common.v1 import Payload
 
-from forze.application.execution import CallContext, PrincipalContext
+from forze.application.contracts.auth.value_objects import AuthIdentity
+from forze.application.execution import CallContext
 from forze.base.primitives import uuid7
 
 # ----------------------- #
@@ -19,7 +20,11 @@ _EXEC_HEADER: Final[str] = "Forze-Execution-ID"
 _CORR_HEADER: Final[str] = "Forze-Correlation-ID"
 _TENANT_HEADER: Final[str] = "Forze-Tenant-ID"
 _ACTOR_HEADER: Final[str] = "Forze-Actor-ID"
+_SUBJECT_HEADER: Final[str] = "Forze-Subject-ID"
 _ENCODING: Final[str] = "utf-8"
+
+# Subject when headers carry tenant/actor but no explicit subject (legacy workers).
+DEFAULT_TEMPORAL_SUBJECT: Final[str] = "forze.temporal"
 
 # ....................... #
 
@@ -30,6 +35,7 @@ class TemporalDecodedContext:
     correlation_id: UUID | None = attrs.field(default=None)
     tenant_id: UUID | None = attrs.field(default=None)
     actor_id: UUID | None = attrs.field(default=None)
+    subject_id: str | None = attrs.field(default=None)
 
 
 # ....................... #
@@ -43,7 +49,7 @@ class TemporalContextCodec:
         self,
         *,
         call: CallContext | None = None,
-        principal: PrincipalContext | None = None,
+        identity: AuthIdentity | None = None,
     ) -> Mapping[str, Payload]:
         headers: dict[str, Payload] = {}
 
@@ -57,15 +63,19 @@ class TemporalContextCodec:
 
             # We don't encode causation id here
 
-        if principal is not None:
-            if principal.tenant_id is not None:
+        if identity is not None:
+            headers[_SUBJECT_HEADER] = Payload(
+                data=identity.subject_id.encode(_ENCODING)
+            )
+
+            if identity.tenant_id is not None:
                 headers[_TENANT_HEADER] = Payload(
-                    data=str(principal.tenant_id).encode(_ENCODING)
+                    data=str(identity.tenant_id).encode(_ENCODING)
                 )
 
-            if principal.actor_id is not None:
+            if identity.actor_id is not None:
                 headers[_ACTOR_HEADER] = Payload(
-                    data=str(principal.actor_id).encode(_ENCODING)
+                    data=str(identity.actor_id).encode(_ENCODING)
                 )
 
         return headers
@@ -80,12 +90,14 @@ class TemporalContextCodec:
         corr_raw = headers.get(_CORR_HEADER)
         tenant_raw = headers.get(_TENANT_HEADER)
         actor_raw = headers.get(_ACTOR_HEADER)
+        subject_raw = headers.get(_SUBJECT_HEADER)
 
         return TemporalDecodedContext(
             execution_id=UUID(exec_raw.data.decode(_ENCODING)) if exec_raw else None,
             correlation_id=UUID(corr_raw.data.decode(_ENCODING)) if corr_raw else None,
             tenant_id=UUID(tenant_raw.data.decode(_ENCODING)) if tenant_raw else None,
             actor_id=UUID(actor_raw.data.decode(_ENCODING)) if actor_raw else None,
+            subject_id=subject_raw.data.decode(_ENCODING) if subject_raw else None,
         )
 
 
@@ -103,7 +115,7 @@ class TemporalContextBinder:
     def bind(
         self,
         decoded: TemporalDecodedContext,
-    ) -> tuple[CallContext, PrincipalContext]:
+    ) -> tuple[CallContext, AuthIdentity]:
         execution_id = self.execution_id_factory()
         correlation_id = decoded.correlation_id or execution_id
 
@@ -113,9 +125,14 @@ class TemporalContextBinder:
             causation_id=decoded.execution_id,
         )
 
-        principal = PrincipalContext(
+        subject_id = (
+            decoded.subject_id if decoded.subject_id is not None else DEFAULT_TEMPORAL_SUBJECT
+        )
+
+        identity = AuthIdentity(
+            subject_id=subject_id,
             tenant_id=decoded.tenant_id,
             actor_id=decoded.actor_id,
         )
 
-        return call, principal
+        return call, identity

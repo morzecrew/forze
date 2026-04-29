@@ -40,7 +40,6 @@ dependencies = [
     "rich>=14.0.0",
     "structlog>=25.0.0",
     "tenacity>=9.1.4",
-    "types-colorama>=0.4.15.20250801",
 ]
 
 [dependency-groups]
@@ -107,7 +106,9 @@ socketio = [
     "python-socketio>=5.16.1",
     "python-socketio-stubs>=5.16.1.0.20260211",
 ]
-auth = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
+neo4j = ["neo4j>=6.1.0"]
+arango = ["python-arango-async>=1.2.2"]
+contrib = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
 
 # ....................... #
 
@@ -351,8 +352,10 @@ DEP002 = [
     "httpx",                 # required by starlette.testclient.TestClient
     "python-socketio-stubs",
     "python-multipart",
-    "types-colorama",
     "email-validator",       # required for pydantic.EmailStr
+    #! Added temporarily
+    "neo4j",
+    "python-arango-async",
 ]
 DEP003 = [
     "types_aiobotocore_s3",

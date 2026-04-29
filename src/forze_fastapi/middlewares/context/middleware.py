@@ -13,7 +13,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from forze.application.execution import ExecutionContext
 
 from .defaults import DefaultCallContextCodec
-from .ports import CallContextCodecPort, PrincipalContextCodecPort
+from .ports import AuthIdentityCodecPort, AuthIdentityResolverPort, CallContextCodecPort
 
 # ----------------------- #
 
@@ -21,7 +21,7 @@ from .ports import CallContextCodecPort, PrincipalContextCodecPort
 @attrs.define(slots=True, frozen=True)
 class ContextBindingMiddleware:
     """
-    Middleware that binds the call and principal context to the request
+    Middleware that binds the call context and optional auth identity to the request
     and injects the call context headers into the response.
     """
 
@@ -37,11 +37,17 @@ class ContextBindingMiddleware:
     )
     """The codec to encode and decode the call context."""
 
-    principal_ctx_codec: PrincipalContextCodecPort | None = attrs.field(
+    auth_identity_codec: AuthIdentityCodecPort | None = attrs.field(
         kw_only=True,
         default=None,
     )
-    """The codec to encode and decode the principal context."""
+    """The codec to decode :class:`~forze.application.execution.AuthIdentity`."""
+
+    auth_identity_resolver: AuthIdentityResolverPort | None = attrs.field(
+        kw_only=True,
+        default=None,
+    )
+    """Async resolver that authenticates the request into an auth identity."""
 
     # ....................... #
 
@@ -53,10 +59,13 @@ class ContextBindingMiddleware:
         request = Request(scope, receive)
         ctx = self.ctx_dep()
         call_ctx = self.call_ctx_codec.decode(request)
-        principal_ctx = None
+        identity = None
 
-        if self.principal_ctx_codec is not None:
-            principal_ctx = self.principal_ctx_codec.decode(request)
+        if self.auth_identity_resolver is not None:
+            identity = await self.auth_identity_resolver.resolve(request, ctx)
+
+        elif self.auth_identity_codec is not None:
+            identity = self.auth_identity_codec.decode(request)
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -66,5 +75,5 @@ class ContextBindingMiddleware:
 
             await send(message)
 
-        with ctx.bind_call(call=call_ctx, principal=principal_ctx):
+        with ctx.bind_call(call=call_ctx, identity=identity):
             await self.app(scope, receive, send_wrapper)

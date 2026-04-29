@@ -445,8 +445,13 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 
 ## Context handling
 
-Execution identity is represented by `CallContext` and `PrincipalContext` on `ExecutionContext`.
-`PrincipalContext` contains optional `tenant_id` and `actor_id`, bound at the boundary via `ctx.bind_call(...)`.
+Execution identity is represented by `CallContext` and optional `AuthIdentity` on `ExecutionContext`.
+`AuthIdentity` carries `subject_id` plus optional `tenant_id`, `actor_id`, claims, roles, and permissions; bind at the boundary via `ctx.bind_call(..., identity=...)`.
+
+`forze_auth` provides a document-backed auth provider around these contracts:
+`DocumentAuthSpec`, `DocumentAuthDepsModule`, and adapters for authentication,
+authorization, token lifecycle, and API-key lifecycle. The provider uses regular
+document ports, so storage is selected by the existing document adapter wiring.
 
 ## Resolving ports
 

@@ -27,6 +27,20 @@ class RdNameOnly(BaseModel):
     name: str
 
 
+class RdOrder(Document):
+    category: str
+    price: float
+
+
+class RdCategoryStats(BaseModel):
+    category: str
+    orders: int
+    revenue: float
+    median_price: float
+    premium_orders: int
+    premium_revenue: float | None
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_postgres_read_gateway_get_find_and_projections(
@@ -94,6 +108,114 @@ async def test_postgres_read_gateway_get_find_and_projections(
         return_fields=["name"],
     )
     assert [r["name"] for r in many] == ["alpha", "beta"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_aggregate_expressions(
+    pg_client: PostgresClient,
+) -> None:
+    table = f"pg_rd_agg_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            category text NOT NULL,
+            price double precision NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO public.{table}
+        (id, rev, created_at, last_update_at, category, price)
+        VALUES
+        (%(a)s, 1, now(), now(), 'books', 10.0),
+        (%(b)s, 1, now(), now(), 'books', 20.0),
+        (%(c)s, 1, now(), now(), 'books', 30.0),
+        (%(d)s, 1, now(), now(), 'hardware', 50.0),
+        (%(e)s, 1, now(), now(), 'hardware', 60.0),
+        (%(f)s, 1, now(), now(), 'hardware', 70.0),
+        (%(g)s, 1, now(), now(), 'software', 90.0);
+        """,
+        {
+            "a": uuid4(),
+            "b": uuid4(),
+            "c": uuid4(),
+            "d": uuid4(),
+            "e": uuid4(),
+            "f": uuid4(),
+            "g": uuid4(),
+        },
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdOrder,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+
+    aggregates = {
+        "fields": {"category": "category"},
+        "computed_fields": {
+            "orders": {"$count": None},
+            "revenue": {"$sum": "price"},
+            "median_price": {"$median": "price"},
+            "premium_orders": {
+                "$count": {"filter": {"$fields": {"price": {"$gte": 20}}}},
+            },
+            "premium_revenue": {
+                "$sum": {
+                    "field": "price",
+                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                },
+            },
+        },
+    }
+
+    rows = await gw.find_many_aggregates(
+        filters={"$fields": {"category": {"$in": ["books", "hardware"]}}},
+        limit=10,
+        offset=0,
+        sorts={"revenue": "desc"},
+        aggregates=aggregates,
+        return_model=RdCategoryStats,
+    )
+
+    assert rows == [
+        RdCategoryStats(
+            category="hardware",
+            orders=3,
+            revenue=180.0,
+            median_price=60.0,
+            premium_orders=3,
+            premium_revenue=180.0,
+        ),
+        RdCategoryStats(
+            category="books",
+            orders=3,
+            revenue=60.0,
+            median_price=20.0,
+            premium_orders=2,
+            premium_revenue=50.0,
+        ),
+    ]
+    assert await gw.count_aggregates(
+        {"$fields": {"category": {"$in": ["books", "hardware"]}}},
+        aggregates=aggregates,
+    ) == 2
 
 
 @pytest.mark.integration
@@ -306,3 +428,195 @@ async def test_postgres_read_gateway_for_update_requires_transaction(
 
     with pytest.raises(InfrastructureError, match="Transactional context"):
         await gw.find({"$fields": {"name": "x"}}, for_update=True)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_get_many_empty_sequence(
+    pg_client: PostgresClient,
+) -> None:
+    table = f"pg_rd_empty_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdDoc,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+    assert await gw.get_many([]) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_find_many_aggregates_raw_rows(
+    pg_client: PostgresClient,
+) -> None:
+    """``find_many_aggregates`` without ``return_model`` returns query rows as ``dict``."""
+    table = f"pg_rd_ag_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            category text NOT NULL,
+            price double precision NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO public.{table}
+        (id, rev, created_at, last_update_at, category, price)
+        VALUES
+        (%(a)s, 1, now(), now(), 'a', 1.0),
+        (%(b)s, 1, now(), now(), 'a', 2.0);
+        """,
+        {"a": uuid4(), "b": uuid4()},
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdOrder,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+    raw = await gw.find_many_aggregates(
+        aggregates={
+            "fields": {"c": "category"},
+            "computed_fields": {"n": {"$count": None}},
+        },
+    )
+    assert len(raw) == 1
+    assert raw[0]["c"] == "a"
+    assert int(raw[0]["n"]) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_find_many_with_cursor_return_model(
+    pg_client: PostgresClient,
+) -> None:
+    table = f"pg_rd_curm_{uuid4().hex[:10]}"
+    id_a, id_b = uuid4(), uuid4()
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO public.{table}
+        (id, rev, created_at, last_update_at, name)
+        VALUES
+        (%(a)s, 1, now(), now(), 'z'),
+        (%(b)s, 1, now(), now(), 'y');
+        """,
+        {"a": id_a, "b": id_b},
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdDoc,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+    rows = await gw.find_many_with_cursor(
+        None,
+        cursor={"limit": 2},
+        sorts={"name": "asc"},
+        return_model=RdNameOnly,
+    )
+    assert len(rows) == 2
+    assert isinstance(rows[0], RdNameOnly)
+    assert [r.id for r in rows] == [id_b, id_a]
+    assert [r.name for r in rows] == ["y", "z"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_aggregates_reject_return_fields(
+    pg_client: PostgresClient,
+) -> None:
+    table = f"pg_rd_agf_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            category text NOT NULL,
+            price double precision NOT NULL
+        );
+        """
+    )
+    await pg_client.execute(
+        f"""
+        INSERT INTO public.{table}
+        (id, rev, created_at, last_update_at, category, price)
+        VALUES (%(a)s, 1, now(), now(), 'c', 1.0);
+        """,
+        {"a": uuid4()},
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdOrder,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+    with pytest.raises(CoreError, match="Aggregates cannot be combined"):
+        await gw.find_many_aggregates(
+            aggregates={
+                "fields": {"c": "category"},
+                "computed_fields": {"n": {"$count": None}},
+            },
+            return_fields=["c"],
+        )

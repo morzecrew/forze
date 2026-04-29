@@ -1,15 +1,4 @@
-"""Ports for document storage and retrieval.
-
-**Cursor pagination (``find_many_with_cursor``):** Production adapters need a
-defined total order (sort keys + disambiguator, usually primary key) and
-encoding rules for opaque cursors. Typical additions: optional
-``cursor_sort_keys`` / ``cursor_tiebreak`` on :class:`.DocumentSpec` or
-per-relation config; read gateways then emit ``WHERE (k1, k2) > (:v1, :v2)``
-for forward pages. SQL search adapters need the same relative to the ranked
-``ORDER BY``. Until configured, RDBMS / Mongo adapters may raise
-``NotImplementedError``; the in-memory mock implements index-based cursors for
-tests.
-"""
+"""Ports for document storage and retrieval."""
 
 from typing import (
     Any,
@@ -23,11 +12,14 @@ from typing import (
 )
 from uuid import UUID
 
+from pydantic import BaseModel
+
 from forze.base.primitives import JsonDict
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import CountlessPage, CursorPage, Page
 from ..query import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -37,16 +29,14 @@ from .specs import DocumentSpec
 
 # ----------------------- #
 
-R = TypeVar("R", bound=ReadDocument)
-D = TypeVar("D", bound=Document)
-C = TypeVar("C", bound=CreateDocumentCmd)
-U = TypeVar("U", bound=BaseDTO)
+
+T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
 
 
 class BaseDocumentPort[
-    R: ReadDocument,
+    R: BaseDTO,
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,
@@ -61,7 +51,7 @@ class BaseDocumentPort[
 
 
 @runtime_checkable
-class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Protocol):
+class DocumentQueryPort[R: BaseDTO](BaseDocumentPort[R, Any, Any, Any], Protocol):
     """Query operations for document aggregates."""
 
     @overload
@@ -176,6 +166,68 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[False] = False,
+    ) -> Awaitable[CountlessPage[JsonDict]]:
+        """Find many aggregate rows as JSON mappings (no count query)."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = False,
+    ) -> Awaitable[CountlessPage[T]]:
+        """Find many aggregate rows and validate them against ``return_type``."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Awaitable[Page[JsonDict]]:
+        """Find many aggregate rows as JSON mappings and return the total groups."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Awaitable[Page[T]]:
+        """Find many typed aggregate rows and return the total groups."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = False,
     ) -> Awaitable[CountlessPage[JsonDict]]:
@@ -189,6 +241,8 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = False,
     ) -> Awaitable[CountlessPage[R]]:
@@ -202,6 +256,8 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True],
     ) -> Awaitable[Page[JsonDict]]:
@@ -215,6 +271,8 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True],
     ) -> Awaitable[Page[R]]:
@@ -227,15 +285,23 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
+        aggregates: AggregatesExpression | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
     ) -> Awaitable[
-        Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]
+        Page[R]
+        | CountlessPage[R]
+        | Page[T]
+        | CountlessPage[T]
+        | Page[JsonDict]
+        | CountlessPage[JsonDict]
     ]:
         """Find many documents, optionally paginated and sorted.
 
         When ``return_count`` is ``True``, runs a count query and returns
         ``(results, total)``. Otherwise returns only ``results`` (default).
+        When ``aggregates`` is set, the total counts result groups.
         """
         ...  # pragma: no cover
 
@@ -291,7 +357,7 @@ class DocumentQueryPort[R: ReadDocument](BaseDocumentPort[R, Any, Any, Any], Pro
 
 @runtime_checkable
 class DocumentCommandPort[
-    R: ReadDocument,
+    R: BaseDTO,
     D: Document,
     C: CreateDocumentCmd,
     U: BaseDTO,

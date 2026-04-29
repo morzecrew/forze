@@ -71,6 +71,9 @@ class ReadPasswordAccount(
 ):
     """Read password-based authentication account model."""
 
+    password_hash: str
+    """Hashed password."""
+
 
 # ....................... #
 
@@ -106,6 +109,12 @@ class CreateApiKeyAccountCmd(CreateDocumentCmd, ApiKeyAccountImmutableFields):
 class UpdateApiKeyAccountCmd(BaseDTO):
     """Update API key-based authentication account command."""
 
+    is_active: bool | None = None
+    """Whether the API key account is active."""
+
 
 class ReadApiKeyAccount(ReadDocument, ApiKeyAccountImmutableFields, IsActiveMixin):
     """Read API key-based authentication account model."""
+
+    key_hash: str
+    """Hashed API key."""

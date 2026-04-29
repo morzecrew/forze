@@ -36,7 +36,8 @@ from temporalio.worker import (
 )
 from temporalio.worker import Interceptor as WorkerInterceptor
 
-from forze.application.execution import CallContext, ExecutionContext, PrincipalContext
+from forze.application.contracts.auth.value_objects import AuthIdentity
+from forze.application.execution import CallContext, ExecutionContext
 
 from .codecs import TemporalContextBinder, TemporalContextCodec
 
@@ -118,7 +119,7 @@ class BaseContextInterceptor:
         ctx = self.ctx_dep()
         context_headers = self.codec.encode(
             call=ctx.get_call_ctx(),
-            principal=ctx.get_principal_ctx(),
+            identity=ctx.get_auth_identity(),
         )
         headers = dict(input.headers or {})
 
@@ -132,7 +133,7 @@ class BaseContextInterceptor:
     def bind_headers(
         self,
         headers: Mapping[str, Payload],
-    ) -> tuple[CallContext, PrincipalContext]:
+    ) -> tuple[CallContext, AuthIdentity]:
         decoded = self.codec.decode(headers)
         return self.binder.bind(decoded)
 
@@ -144,9 +145,9 @@ class BaseContextInterceptor:
         next: Callable[[], Awaitable[Any]],
     ) -> Any:
         ctx = self.ctx_dep()
-        call_ctx, principal_ctx = self.bind_headers(headers)
+        call_ctx, identity = self.bind_headers(headers)
 
-        with ctx.bind_call(call=call_ctx, principal=principal_ctx):
+        with ctx.bind_call(call=call_ctx, identity=identity):
             return await next()
 
     # ....................... #
@@ -157,9 +158,9 @@ class BaseContextInterceptor:
         next: Callable[[], Any],
     ) -> Any:
         ctx = self.ctx_dep()
-        call_ctx, principal_ctx = self.bind_headers(headers)
+        call_ctx, identity = self.bind_headers(headers)
 
-        with ctx.bind_call(call=call_ctx, principal=principal_ctx):
+        with ctx.bind_call(call=call_ctx, identity=identity):
             return next()
 
 

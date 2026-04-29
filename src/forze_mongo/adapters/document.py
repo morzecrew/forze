@@ -8,10 +8,11 @@ require_mongo()
 
 import asyncio
 from functools import cached_property
-from typing import Literal, Sequence, TypeVar, cast, final, overload
+from typing import Any, Literal, Sequence, TypeVar, cast, final, overload
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.base import (
     CountlessPage,
@@ -30,6 +31,7 @@ from forze.application.contracts.document import (
     require_create_id_for_upsert,
 )
 from forze.application.contracts.query import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -60,6 +62,7 @@ R = TypeVar("R", bound=ReadDocument)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
+T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
 #! Consider adding a method to bound or bind contextvars with 'name' as namespace or so
@@ -361,6 +364,68 @@ class MongoDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]:
+        """Find aggregate rows as JSON mappings (no count query)."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]:
+        """Find aggregate rows validated against ``return_type``."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[JsonDict]:
+        """Find aggregate rows with total group count."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[T]:
+        """Find typed aggregate rows with total group count."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = ...,
     ) -> CountlessPage[JsonDict]:
@@ -374,6 +439,8 @@ class MongoDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = ...,
     ) -> CountlessPage[R]:
@@ -387,6 +454,8 @@ class MongoDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True],
     ) -> Page[JsonDict]:
@@ -400,6 +469,8 @@ class MongoDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True],
     ) -> Page[R]:
@@ -412,15 +483,33 @@ class MongoDocumentAdapter(
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
+        aggregates: AggregatesExpression | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
-    ) -> Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]:
+    ) -> (
+        Page[R]
+        | CountlessPage[R]
+        | Page[T]
+        | CountlessPage[T]
+        | Page[JsonDict]
+        | CountlessPage[JsonDict]
+    ):
         """Find documents with optional pagination, sort, and total count."""
+
+        if aggregates is not None and return_fields is not None:
+            raise CoreError("Aggregates cannot be combined with return_fields")
+        if aggregates is None and return_type is not None:
+            raise CoreError("return_type requires aggregates")
 
         pagination = pagination or {}
         cnt = 0
         if return_count:
-            cnt = await self.read_gw.count(filters)
+            cnt = (
+                await self.read_gw.count_aggregates(filters, aggregates=aggregates)
+                if aggregates is not None
+                else await self.read_gw.count(filters)
+            )
             if not cnt:
                 return page_from_limit_offset(
                     [],
@@ -431,13 +520,25 @@ class MongoDocumentAdapter(
         limit = pagination.get("limit")
         offset = pagination.get("offset")
 
-        res = await self.read_gw.find_many(  # type: ignore[misc]
-            filters=filters,
-            limit=limit,
-            offset=offset,
-            sorts=sorts,
-            return_fields=return_fields,  # type: ignore[arg-type]
-        )
+        res: list[Any]
+
+        if aggregates is not None:
+            res = await self.read_gw.find_many_aggregates(
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                aggregates=aggregates,
+                return_model=return_type,
+            )
+        else:
+            res = await self.read_gw.find_many(  # type: ignore[misc]
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                return_fields=return_fields,  # type: ignore[arg-type]
+            )
 
         if return_count:
             return page_from_limit_offset(  # type: ignore[return-value]

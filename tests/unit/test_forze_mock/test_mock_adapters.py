@@ -24,12 +24,14 @@ from forze_mock.adapters import (
 class _ProductDoc(Document, SoftDeletionMixin):
     title: str
     category: str
+    price: float = 0.0
     tags: list[str] = []
 
 
 class _ProductCreate(CreateDocumentCmd):
     title: str
     category: str
+    price: float = 0.0
     tags: list[str] = []
 
 
@@ -42,6 +44,7 @@ class _ProductUpdate(BaseDTO):
 class _ProductRead(ReadDocument):
     title: str
     category: str
+    price: float = 0.0
     tags: list[str] = []
     is_deleted: bool = False
 
@@ -50,7 +53,17 @@ class _ProductSearch(BaseModel):
     id: UUID
     title: str
     category: str
+    price: float = 0.0
     tags: list[str] = []
+
+
+class _CategoryStats(BaseModel):
+    category: str
+    products: int
+    revenue: float
+    median_price: float
+    expensive_products: int
+    expensive_revenue: float | None
 
 
 def _document_adapter(
@@ -153,6 +166,64 @@ async def test_document_filter_sort_projection_and_search() -> None:
     assert deleted.is_deleted is True
     restored = await doc.restore(created.id, deleted.rev)
     assert restored.is_deleted is False
+
+
+@pytest.mark.asyncio
+async def test_document_aggregates_group_and_validate_return_type() -> None:
+    state = MockState()
+    doc = _document_adapter(state)
+
+    await doc.create(_ProductCreate(title="Rust Book", category="books", price=10.0))
+    await doc.create(
+        _ProductCreate(title="TypeScript Guide", category="books", price=30.0),
+    )
+    await doc.create(
+        _ProductCreate(title="Gaming Mouse", category="hardware", price=50.0),
+    )
+
+    page = await doc.find_many(
+        filters=None,
+        sorts={"revenue": "desc"},
+        aggregates={
+            "fields": {"category": "category"},
+            "computed_fields": {
+                "products": {"$count": None},
+                "revenue": {"$sum": "price"},
+                "median_price": {"$median": "price"},
+                "expensive_products": {
+                    "$count": {"filter": {"$fields": {"price": {"$gte": 30}}}},
+                },
+                "expensive_revenue": {
+                    "$sum": {
+                        "field": "price",
+                        "filter": {"$fields": {"price": {"$gte": 30}}},
+                    },
+                },
+            },
+        },
+        return_type=_CategoryStats,
+        return_count=True,
+    )
+
+    assert page.count == 2
+    assert page.hits == [
+        _CategoryStats(
+            category="hardware",
+            products=1,
+            revenue=50.0,
+            median_price=50.0,
+            expensive_products=1,
+            expensive_revenue=50.0,
+        ),
+        _CategoryStats(
+            category="books",
+            products=2,
+            revenue=40.0,
+            median_price=20.0,
+            expensive_products=1,
+            expensive_revenue=30.0,
+        ),
+    ]
 
 
 @pytest.mark.asyncio

@@ -8,10 +8,21 @@ require_psycopg()
 
 import asyncio
 from functools import cached_property
-from typing import Literal, Sequence, TypeVar, cast, final, overload
+from typing import (
+    Any,
+    Literal,
+    Protocol,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+    overload,
+    runtime_checkable,
+)
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.base import (
     CountlessPage,
@@ -30,6 +41,7 @@ from forze.application.contracts.document import (
     require_create_id_for_upsert,
 )
 from forze.application.contracts.query import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -39,7 +51,7 @@ from forze.application.contracts.query import (
     row_value_for_sort_key,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
-from forze.base.errors import CoreError
+from forze.base.errors import CoreError, InvalidOperationError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_cache_dump,
@@ -47,7 +59,8 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 from ._logger import logger
@@ -55,14 +68,24 @@ from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
-R = TypeVar("R", bound=ReadDocument)
+R = TypeVar("R", bound=BaseDTO)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
+T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
 #! Consider adding a method to bound or bind contextvars with 'name' as namespace or so
 #! the above is related to logging
+
+
+@runtime_checkable
+class ReadModelWithIdAndRev(Protocol):
+    id: UUID
+    rev: int
+
+
+# ....................... #
 
 
 @final
@@ -130,51 +153,92 @@ class PostgresDocumentAdapter(
 
     # ....................... #
 
+    def _check_id_rev_capability(self) -> bool:
+        read_model = self.read_gw.model_type
+        fields = set(read_model.model_fields.keys())
+        required_fields = {ID_FIELD, REV_FIELD}
+
+        return required_fields.issubset(fields)
+
+    # ....................... #
+
     async def _set_cache(self, doc: R) -> None:
-        if self.cache is not None:
+        if self.cache is None:
+            return
 
-            try:
-                dump = pydantic_cache_dump(doc)
-                await self.cache.set_versioned(str(doc.id), str(doc.rev), dump)
+        if not self._check_id_rev_capability():
+            logger.warning(
+                "Cannot cache document of type '%s' as it does not have an id and rev",
+                type(self.read_gw.model_type).__name__,
+            )
+            return
 
-                logger.trace("Cache set successfully")
+        try:
+            casted_doc = cast(ReadModelWithIdAndRev, doc)
+            dump = pydantic_cache_dump(doc)
+            await self.cache.set_versioned(
+                str(casted_doc.id), str(casted_doc.rev), dump
+            )
 
-            except Exception:
-                logger.exception("Cache set failed, continuing")
+            logger.trace("Cache set successfully")
+
+        except Exception:
+            logger.exception("Cache set failed, continuing")
 
     # ....................... #
 
     async def _set_cache_many(self, docs: Sequence[R]) -> None:
-        if self.cache is not None:
-            try:
-                dumps = pydantic_cache_dump_many(docs)
-                res_cache_map = {
-                    (str(x.id), str(x.rev)): y for x, y in zip(docs, dumps, strict=True)
-                }
-                await self.cache.set_many_versioned(res_cache_map)
+        if self.cache is None or not docs:
+            return
 
-            except Exception:
-                logger.debug(
-                    "Cache set failed for %s '%s' document(s), continuing",
-                    len(docs),
-                    self.spec.name,
-                    exc_info=True,
-                )
+        if not self._check_id_rev_capability():
+            logger.warning(
+                "Cannot cache documents of type '%s' as they do not have an id and rev",
+                type(self.read_gw.model_type).__name__,
+            )
+            return
+
+        docs_casted = [cast(ReadModelWithIdAndRev, x) for x in docs]
+
+        try:
+            dumps = pydantic_cache_dump_many(docs)
+            res_cache_map = {
+                (str(x.id), str(x.rev)): y
+                for x, y in zip(docs_casted, dumps, strict=True)
+            }
+            await self.cache.set_many_versioned(res_cache_map)
+
+        except Exception:
+            logger.debug(
+                "Cache set failed for %s '%s' document(s), continuing",
+                len(docs),
+                self.spec.name,
+                exc_info=True,
+            )
 
     # ....................... #
 
     async def _clear_cache(self, *pks: UUID) -> None:
-        if self.cache is not None:
-            try:
-                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+        if self.cache is None:
+            return
 
-            except Exception:
-                logger.debug(
-                    "Cache clear failed for %s '%s' document(s), continuing",
-                    len(pks),
-                    self.spec.name,
-                    exc_info=True,
-                )
+        if not self._check_id_rev_capability():
+            logger.warning(
+                "Cannot clear cache for documents of type '%s' as they do not have an id and rev",
+                type(self.read_gw.model_type).__name__,
+            )
+            return
+
+        try:
+            await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+
+        except Exception:
+            logger.debug(
+                "Cache clear failed for %s '%s' document(s), continuing",
+                len(pks),
+                self.spec.name,
+                exc_info=True,
+            )
 
     # ....................... #
 
@@ -203,6 +267,11 @@ class PostgresDocumentAdapter(
         for_update: bool = False,
         return_fields: Sequence[str] | None = None,
     ) -> R | JsonDict:
+        if not self._check_id_rev_capability():
+            raise InvalidOperationError(
+                f"Cannot get document of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
+            )
+
         logger.debug("Fetching 1 '%s' document (pk=%s)", self.spec.name, pk)
 
         if return_fields is not None or self.cache is None:
@@ -268,6 +337,11 @@ class PostgresDocumentAdapter(
         if not pks:
             return []
 
+        if not self._check_id_rev_capability():
+            raise InvalidOperationError(
+                f"Cannot get many documents of type '{type(self.read_gw.model_type).__name__}' as they do not have defined id field"
+            )
+
         logger.debug(
             "Fetching %s '%s' document(s) (first_pk=%s)",
             len(pks),
@@ -315,10 +389,15 @@ class PostgresDocumentAdapter(
         hits_validated = pydantic_validate_many(
             self.read_gw.model_type, list(hits.values())
         )
-        by_pk = {x.id: x for x in hits_validated}
-        by_pk.update({x.id: x for x in miss_res})
+        hits_validated_cast = [cast(ReadModelWithIdAndRev, x) for x in hits_validated]
+        miss_res_cast = [cast(ReadModelWithIdAndRev, x) for x in miss_res]
 
-        return [by_pk[pk] for pk in pks]
+        by_pk = {x.id: x for x in hits_validated_cast}
+        by_pk.update({x.id: x for x in miss_res_cast})
+
+        results = [cast(R, by_pk[pk]) for pk in pks]
+
+        return results
 
     # ....................... #
 
@@ -369,6 +448,60 @@ class PostgresDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: None = ...,
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[False] = ...,
     ) -> CountlessPage[JsonDict]: ...
@@ -380,6 +513,8 @@ class PostgresDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[False] = ...,
     ) -> CountlessPage[R]: ...
@@ -391,6 +526,8 @@ class PostgresDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: Sequence[str],
         return_count: Literal[True],
     ) -> Page[JsonDict]: ...
@@ -402,6 +539,8 @@ class PostgresDocumentAdapter(
         pagination: PaginationExpression | None = ...,
         sorts: QuerySortExpression | None = ...,
         *,
+        aggregates: None = ...,
+        return_type: None = ...,
         return_fields: None = ...,
         return_count: Literal[True],
     ) -> Page[R]: ...
@@ -412,9 +551,23 @@ class PostgresDocumentAdapter(
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
         *,
+        aggregates: AggregatesExpression | None = None,
+        return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
         return_count: bool = False,
-    ) -> Page[R] | CountlessPage[R] | Page[JsonDict] | CountlessPage[JsonDict]:
+    ) -> (
+        Page[R]
+        | CountlessPage[R]
+        | Page[T]
+        | CountlessPage[T]
+        | Page[JsonDict]
+        | CountlessPage[JsonDict]
+    ):
+        if aggregates is not None and return_fields is not None:
+            raise CoreError("Aggregates cannot be combined with return_fields")
+        if aggregates is None and return_type is not None:
+            raise CoreError("return_type requires aggregates")
+
         pagination = pagination or {}
         limit = pagination.get("limit")
         offset = pagination.get("offset")
@@ -432,7 +585,11 @@ class PostgresDocumentAdapter(
         cnt = 0
 
         if return_count:
-            cnt = await self.read_gw.count(filters)
+            cnt = (
+                await self.read_gw.count_aggregates(filters, aggregates=aggregates)
+                if aggregates is not None
+                else await self.read_gw.count(filters)
+            )
             if not cnt:
                 logger.debug(
                     "No '%s' documents matching filters",
@@ -449,13 +606,25 @@ class PostgresDocumentAdapter(
                 self.spec.name,
             )
 
-        res = await self.read_gw.find_many(  # type: ignore[misc]
-            filters=filters,
-            limit=limit,
-            offset=offset,
-            sorts=sorts,
-            return_fields=return_fields,  # type: ignore[arg-type]
-        )
+        res: list[Any]
+
+        if aggregates is not None:
+            res = await self.read_gw.find_many_aggregates(
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                aggregates=aggregates,
+                return_model=return_type,
+            )
+        else:
+            res = await self.read_gw.find_many(  # type: ignore[misc]
+                filters=filters,
+                limit=limit,
+                offset=offset,
+                sorts=sorts,
+                return_fields=return_fields,  # type: ignore[arg-type]
+            )
 
         if return_count:
             return page_from_limit_offset(  # type: ignore[return-value]

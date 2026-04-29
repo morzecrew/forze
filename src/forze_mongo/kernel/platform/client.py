@@ -353,6 +353,23 @@ class MongoClient:
 
     # ....................... #
 
+    @mongo_handled("mongo.aggregate")  # type: ignore[untyped-decorator]
+    async def aggregate(
+        self,
+        coll: AsyncCollection[JsonDict],
+        pipeline: Sequence[Mapping[str, Any]],
+        *,
+        limit: int | None = None,
+    ) -> list[JsonDict]:
+        """Run an aggregation pipeline and return documents as a list."""
+
+        session = self.__current_session()
+        cur = await coll.aggregate(list(pipeline), session=session)
+        docs = await cur.to_list(length=limit)
+        return list(docs)
+
+    # ....................... #
+
     @mongo_handled("mongo.insert_one")  # type: ignore[untyped-decorator]
     async def insert_one(
         self,

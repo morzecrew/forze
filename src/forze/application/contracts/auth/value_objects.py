@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
+from uuid import UUID
 
 import attrs
 
@@ -13,10 +14,10 @@ class AuthIdentity:
     subject_id: str
     """Subject identifier."""
 
-    actor_id: str | None = attrs.field(default=None)
+    actor_id: UUID | None = attrs.field(default=None)
     """Actor identifier."""
 
-    tenant_id: str | None = attrs.field(default=None)
+    tenant_id: UUID | None = attrs.field(default=None)
     """Tenant identifier."""
 
     claims: Mapping[str, Any] | None = attrs.field(default=None)
@@ -93,8 +94,14 @@ class ApiKeyResponse:
     key: ApiKeyCredentials
     """API key."""
 
+    key_id: str | None = attrs.field(default=None)
+    """Identifier of the issued API key, when the provider exposes one."""
+
     expires_in: timedelta | None = attrs.field(default=None)
     """Time until the API key expires if applicable."""
+
+    expires_at: datetime | None = attrs.field(default=None)
+    """Absolute expiration time if known."""
 
     scopes: Sequence[str] | None = attrs.field(default=None)
     """Scope of the API key."""
@@ -127,8 +134,17 @@ class TokenResponse:
     token: TokenCredentials
     """Token."""
 
+    token_id: str | None = attrs.field(default=None)
+    """Identifier of the token or grant, when the provider exposes one."""
+
     expires_in: timedelta | None = attrs.field(default=None)
     """Time until the token expires if applicable."""
+
+    issued_at: datetime | None = attrs.field(default=None)
+    """Absolute issue time if known."""
+
+    expires_at: datetime | None = attrs.field(default=None)
+    """Absolute expiration time if known."""
 
     scopes: Sequence[str] | None = attrs.field(default=None)
     """Scope of the token."""

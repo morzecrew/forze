@@ -13,18 +13,23 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.query import (
+    AggregateComputedField,
+    AggregatesExpression,
+    AggregatesExpressionParser,
+    ParsedAggregates,
     QueryAnd,
     QueryExpr,
     QueryField,
     QueryOp,
     QueryOr,
+    QueryFilterExpressionParser,
     QueryValue,
     QueryValueCaster,
 )
 from forze.base.errors import CoreError
 
 from ..introspect import PostgresColumnTypes, PostgresType
-from .nested import build_nested_json_scalar_expr
+from .nested import build_nested_json_scalar_expr, sort_key_expr
 from .utils import PsycopgPositionalBinder
 
 # ----------------------- #
@@ -150,6 +155,130 @@ class PsycopgQueryRenderer:
         params = self.binder.values()
 
         return query, params
+
+    # ....................... #
+
+    def render_aggregates(
+        self,
+        aggregates: AggregatesExpression,
+    ) -> tuple[ParsedAggregates, sql.Composable, sql.Composable | None, list[Any]]:
+        """Render aggregate SELECT and GROUP BY clauses."""
+
+        parsed = AggregatesExpressionParser.parse(aggregates)
+        select_parts: list[sql.Composable] = []
+        group_parts: list[sql.Composable] = []
+
+        for field in parsed.fields:
+            expr = self._render_source_expr(field.field)
+            select_parts.append(
+                sql.SQL("{} AS {}").format(expr, sql.Identifier(field.alias)),
+            )
+            group_parts.append(expr)
+
+        for computed in parsed.computed_fields:
+            expr = self._render_aggregate_function(computed)
+            select_parts.append(
+                sql.SQL("{} AS {}").format(expr, sql.Identifier(computed.alias)),
+            )
+
+        group_clause = sql.SQL(", ").join(group_parts) if group_parts else None
+        return parsed, sql.SQL(", ").join(select_parts), group_clause, self.binder.values()
+
+    # ....................... #
+
+    @staticmethod
+    def render_aggregate_order_by(
+        parsed: ParsedAggregates,
+        sorts: Mapping[str, str] | None,
+    ) -> sql.Composable | None:
+        """Render ORDER BY for aggregate result aliases."""
+
+        if not sorts:
+            return None
+
+        aliases = parsed.aliases
+        bad = [field for field in sorts if field not in aliases]
+
+        if bad:
+            raise CoreError(f"Invalid aggregate sort fields: {bad}")
+
+        parts: list[sql.Composable] = []
+        for field, order in sorts.items():
+            direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
+            parts.append(sql.SQL("{} {}").format(sql.Identifier(field), direction))
+
+        return sql.SQL(", ").join(parts)
+
+    # ....................... #
+
+    def _render_aggregate_function(
+        self,
+        computed: AggregateComputedField,
+    ) -> sql.Composable:
+        function = computed.function
+        field = computed.field
+
+        if function == "$count":
+            count_expr = sql.SQL("COUNT(*)")
+            return self._render_aggregate_filter(count_expr, computed)
+
+        if field is None:
+            raise CoreError("Computed field has no field path")
+
+        field_expr = self._render_source_expr(field)
+        agg_expr: sql.Composable
+
+        match function:
+            case "$sum":
+                agg_expr = sql.SQL("SUM({})").format(field_expr)
+
+            case "$avg":
+                agg_expr = sql.SQL("AVG({})").format(field_expr)
+
+            case "$min":
+                agg_expr = sql.SQL("MIN({})").format(field_expr)
+
+            case "$max":
+                agg_expr = sql.SQL("MAX({})").format(field_expr)
+
+            case "$median":
+                agg_expr = sql.SQL(
+                    "percentile_cont(0.5) WITHIN GROUP (ORDER BY {})",
+                ).format(field_expr)
+
+        return self._render_aggregate_filter(agg_expr, computed)
+
+    # ....................... #
+
+    def _render_aggregate_filter(
+        self,
+        expr: sql.Composable,
+        computed: AggregateComputedField,
+    ) -> sql.Composable:
+        if computed.filter is None:
+            return expr
+
+        filter_expr = QueryFilterExpressionParser.parse(computed.filter)
+        filter_sql = self._render_expr(filter_expr)
+
+        return sql.SQL("{} FILTER (WHERE {})").format(expr, filter_sql)
+
+    # ....................... #
+
+    def _render_source_expr(self, field: str) -> sql.Composable:
+        if self.types is None:
+            raise CoreError("Aggregate rendering requires column type metadata")
+
+        if self.model_type is None:
+            raise CoreError("Aggregate rendering requires gateway model_type")
+
+        return sort_key_expr(
+            field=field,
+            column_types=self.types,
+            model_type=self.model_type,
+            nested_field_hints=self.nested_field_hints,
+            table_alias=self.table_alias,
+        )
 
     # ....................... #
 

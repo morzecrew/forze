@@ -7,9 +7,13 @@ import pytest
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from forze.application.execution import CallContext, ExecutionContext, PrincipalContext
+from forze.application.contracts.auth import AuthSpec, TokenCredentials
+from forze.application.contracts.auth.deps import AuthenticationDepKey
+from forze.application.execution import Deps
+from forze.application.execution import AuthIdentity, CallContext, ExecutionContext
 from forze_mock import MockDepsModule, MockState
 
+from forze_fastapi.middlewares.context.auth import HeaderAuthIdentityResolver
 from forze_fastapi.middlewares.context.defaults import DefaultCallContextCodec
 from forze_fastapi.middlewares.context.middleware import ContextBindingMiddleware
 
@@ -18,6 +22,25 @@ from forze_fastapi.middlewares.context.middleware import ContextBindingMiddlewar
 
 def _execution_ctx() -> ExecutionContext:
     return ExecutionContext(deps=MockDepsModule(state=MockState())())
+
+
+class _TokenAuthPort:
+    async def authenticate_with_password(self, credentials: object) -> AuthIdentity | None:
+        return None
+
+    async def authenticate_with_token(
+        self,
+        credentials: TokenCredentials,
+    ) -> AuthIdentity | None:
+        return AuthIdentity(subject_id=credentials.token)
+
+    async def authenticate_with_api_key(self, credentials: object) -> AuthIdentity | None:
+        return None
+
+
+class _TokenAuthFactory:
+    def __call__(self, ctx: ExecutionContext, spec: AuthSpec) -> _TokenAuthPort:
+        return _TokenAuthPort()
 
 
 class TestDefaultCallContextCodec:
@@ -116,27 +139,75 @@ class TestContextBindingMiddleware:
         assert "x-request-id" in response.headers
         assert "x-correlation-id" in response.headers
 
-    def test_principal_codec_invoked_when_configured(self) -> None:
-        """Optional principal codec is called for HTTP requests."""
+    def test_auth_identity_codec_invoked_when_configured(self) -> None:
+        """Optional auth identity codec is called for HTTP requests."""
 
-        class _PrincipalCodec:
+        class _IdentityCodec:
             called = False
 
-            def decode(self, request: Request) -> PrincipalContext | None:
+            def decode(self, request: Request) -> AuthIdentity | None:
                 self.called = True
                 return None
 
-        principal_codec = _PrincipalCodec()
+        identity_codec = _IdentityCodec()
         ctx = _execution_ctx()
         mw = ContextBindingMiddleware(
             self._ok_app,
             ctx_dep=lambda: ctx,
-            principal_ctx_codec=principal_codec,
+            auth_identity_codec=identity_codec,
         )
         client = TestClient(mw)
         client.get("/")
 
-        assert principal_codec.called is True
+        assert identity_codec.called is True
+
+    def test_auth_identity_resolver_invoked_when_configured(self) -> None:
+        """Async auth identity resolver is called for HTTP requests."""
+
+        class _IdentityResolver:
+            called = False
+
+            async def resolve(
+                self,
+                request: Request,
+                ctx: ExecutionContext,
+            ) -> AuthIdentity | None:
+                self.called = True
+                return AuthIdentity(subject_id="sub")
+
+        identity_resolver = _IdentityResolver()
+        ctx = _execution_ctx()
+        mw = ContextBindingMiddleware(
+            self._ok_app,
+            ctx_dep=lambda: ctx,
+            auth_identity_resolver=identity_resolver,
+        )
+        client = TestClient(mw)
+        client.get("/")
+
+        assert identity_resolver.called is True
+
+    @pytest.mark.asyncio
+    async def test_header_auth_identity_resolver_uses_authentication_port(self) -> None:
+        """Header resolver extracts bearer tokens and calls the auth contract."""
+
+        ctx = ExecutionContext(
+            deps=Deps.plain({AuthenticationDepKey: _TokenAuthFactory()})
+        )
+        resolver = HeaderAuthIdentityResolver(spec=AuthSpec(name="auth"))
+        req = Request(
+            {
+                "type": "http",
+                "path": "/",
+                "method": "GET",
+                "headers": [(b"authorization", b"Bearer token-1")],
+            }
+        )
+
+        identity = await resolver.resolve(req, ctx)
+
+        assert identity is not None
+        assert identity.subject_id == "token-1"
 
     @pytest.mark.asyncio
     async def test_non_http_scope_passthrough(self) -> None:

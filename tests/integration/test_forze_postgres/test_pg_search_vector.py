@@ -696,3 +696,185 @@ async def test_vector_search_with_cursor_ranked_chains(
     )
     assert len(b0.hits) == 2
     assert b0.has_more is True
+
+
+@pytest.mark.asyncio
+async def test_vector_search_three_term_query_multi_embed(
+    pgvector_client: PostgresClient,
+) -> None:
+    """Three sub-queries use ``embed`` (not ``embed_one``) and multi-rank KNN SQL."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_3q_{suffix}"
+    index_name = f"idx_vec_3q_{suffix}"
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    v0 = await prov.embed_one("q0")
+    v1 = await prov.embed_one("q1")
+    await prov.embed_one("q2")
+    v_sum = [v0[i] + v1[i] for i in range(3)]
+    a_id, b_id, c_id = uuid4(), uuid4(), uuid4()
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES
+        (%(a)s, 'one', '{vector_param_literal(v0)}'::vector),
+        (%(b)s, 'two', '{vector_param_literal(v1)}'::vector),
+        (%(c)s, 'sum', '{vector_param_literal(v_sum)}'::vector);
+        """,
+        {"a": a_id, "b": b_id, "c": c_id},
+    )
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    p = await port.search(
+        ["q0", "q1", "q2"],
+        options={"phrase_combine": "all"},
+        return_count=True,
+    )
+    assert p.count == 3
+    assert {r.label for r in p.hits} == {"one", "two", "sum"}
+
+
+@pytest.mark.asyncio
+async def test_vector_search_with_cursor_browse_before(
+    pgvector_client: PostgresClient,
+) -> None:
+    """No-query keyset: ``after`` + ``before`` on the same sort order (tie-break on ``id``)."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_bef_{suffix}"
+    index_name = f"idx_vec_bef_{suffix}"
+    a_id, b_id, c_id = uuid4(), uuid4(), uuid4()
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    z = vector_param_literal(await prov.embed_one("browse-tie"))
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES
+        (%(c)s, 'c', '{z}'::vector),
+        (%(a)s, 'a', '{z}'::vector),
+        (%(b)s, 'b', '{z}'::vector);
+        """,
+        {"a": a_id, "b": b_id, "c": c_id},
+    )
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+    p0: CursorPage = await port.search_with_cursor(
+        "",
+        sorts={"label": "asc"},
+        return_fields=["id", "label"],
+        cursor={"limit": 1},
+    )
+    assert len(p0.hits) == 1
+    assert p0.hits[0]["label"] == "a"
+    assert p0.has_more is True
+    assert p0.next_cursor is not None
+
+    p1 = await port.search_with_cursor(
+        "",
+        sorts={"label": "asc"},
+        return_fields=["id", "label"],
+        cursor={"limit": 1, "after": p0.next_cursor},
+    )
+    assert len(p1.hits) == 1
+    assert p1.hits[0]["label"] == "b"
+    assert p1.next_cursor is not None
+
+    p_back: CursorPage = await port.search_with_cursor(
+        "",
+        sorts={"label": "asc"},
+        return_fields=["id", "label"],
+        cursor={"limit": 2, "before": p1.next_cursor},
+    )
+    assert len(p_back.hits) >= 1
+    assert p_back.hits[0]["label"] == "a"
+
+
+@pytest.mark.asyncio
+async def test_vector_search_with_cursor_ranked_return_type_and_before(
+    pgvector_client: PostgresClient,
+) -> None:
+    """KNN + secondary sort: ``return_type`` on cursor rows and a backward ``before`` page."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_rtb_{suffix}"
+    index_name = f"idx_vec_rtb_{suffix}"
+    a_id, b_id, c_id = uuid4(), uuid4(), uuid4()
+
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    va = vector_param_literal(await prov.embed_one("knn-a"))
+    vb = vector_param_literal(await prov.embed_one("knn-b"))
+    vc = vector_param_literal(await prov.embed_one("knn-c"))
+    await pgvector_client.execute(
+        f"""
+        INSERT INTO {table} (id, label, emb) VALUES
+        (%(a)s, 'a', '{va}'::vector),
+        (%(b)s, 'b', '{vb}'::vector),
+        (%(c)s, 'c', '{vc}'::vector);
+        """,
+        {"a": a_id, "b": b_id, "c": c_id},
+    )
+    spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
+    port = ctx.search_query(spec)
+
+    p0: CursorPage = await port.search_with_cursor(
+        "knn-a",
+        sorts={"label": "asc"},
+        return_type=VecDocView,
+        cursor={"limit": 1},
+    )
+    assert len(p0.hits) == 1
+    assert isinstance(p0.hits[0], VecDocView)
+    assert p0.hits[0].id in {a_id, b_id, c_id}
+    assert p0.has_more is True
+    assert p0.next_cursor is not None
+
+    p1 = await port.search_with_cursor(
+        "knn-a",
+        sorts={"label": "asc"},
+        return_type=VecDocView,
+        cursor={"limit": 1, "after": p0.next_cursor},
+    )
+    assert len(p1.hits) == 1
+    assert p1.next_cursor is not None
+
+    p_back: CursorPage = await port.search_with_cursor(
+        "knn-a",
+        sorts={"label": "asc"},
+        return_type=VecDocView,
+        cursor={"limit": 2, "before": p1.next_cursor},
+    )
+    assert len(p_back.hits) >= 1
+    assert p_back.hits[0].id == p0.hits[0].id

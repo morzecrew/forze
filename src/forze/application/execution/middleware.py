@@ -7,7 +7,7 @@ Middlewares wrap usecases in a chain; guards run before, effects after.
 """
 
 from enum import StrEnum
-from typing import Awaitable, Callable, Generic, Protocol, Self, TypeVar, final
+from typing import Awaitable, Callable, Protocol, Self, final
 
 import attrs
 
@@ -66,14 +66,14 @@ class Guard[Args](Protocol):  # pragma: no cover
 # ....................... #
 
 
-R_co = TypeVar("R_co", covariant=True)
-
-
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class Successful(Generic[R_co]):
+class Successful[R_co]:
     """Successful usecase outcome passed to :class:`Finally` hooks."""
 
     value: R_co
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -83,8 +83,12 @@ class Failed:
     exc: Exception
 
 
+# ....................... #
+
 type UsecaseOutcome[R] = Successful[R] | Failed
 """Discriminated outcome for :class:`Finally` middleware."""
+
+# ....................... #
 
 
 class OnFailure[Args](Protocol):  # pragma: no cover
@@ -98,6 +102,9 @@ class OnFailure[Args](Protocol):  # pragma: no cover
     async def __call__(self, args: Args, exc: Exception) -> None:
         """Handle failure; may raise to replace the error."""
         ...
+
+
+# ....................... #
 
 
 class Finally[Args, R](Protocol):  # pragma: no cover

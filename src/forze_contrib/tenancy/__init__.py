@@ -1,5 +1,5 @@
-from .mixins import MultiTenancyMixin
+from .mixins import DomainTenantIdMixin, MultiTenancyMixin
 
 # ----------------------- #
 
-__all__ = ["MultiTenancyMixin"]
+__all__ = ["MultiTenancyMixin", "DomainTenantIdMixin"]

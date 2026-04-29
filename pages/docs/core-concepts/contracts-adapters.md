@@ -168,9 +168,9 @@ Both ports also have `*_many` batch variants for all applicable operations.
 Forze tracks request identity through `ExecutionContext`:
 
 - `CallContext` (`execution_id`, `correlation_id`, optional `causation_id`)
-- `PrincipalContext` (optional `tenant_id`, `actor_id`)
+- `AuthIdentity` (required `subject_id`; optional `tenant_id`, `actor_id`, etc.)
 
-These are bound at the application boundary (for example, in HTTP middleware) via `ctx.bind_call(...)`.
+These are bound at the application boundary (for example, in HTTP middleware) via `ctx.bind_call(..., identity=...)`.
 
 ## Dependency keys
 

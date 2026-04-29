@@ -5,12 +5,15 @@ from .deps import (
     AuthenticationDepPort,
     AuthorizationDepKey,
     AuthorizationDepPort,
+    PasswordLifecycleDepKey,
+    PasswordLifecycleDepPort,
     TokenLifecycleDepKey,
     TokenLifecycleDepPort,
 )
 from .ports import (
     ApiKeyLifecyclePort,
     AuthenticationPort,
+    PasswordLifecyclePort,
     TokenLifecyclePort,
 )
 from .specs import AuthSpec
@@ -50,4 +53,7 @@ __all__ = [
     "OAuth2TokensResponse",
     "AuthorizationDepKey",
     "AuthorizationDepPort",
+    "PasswordLifecycleDepKey",
+    "PasswordLifecycleDepPort",
+    "PasswordLifecyclePort",
 ]

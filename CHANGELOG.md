@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze.application.contracts.authz`: `AuthzSpec`, `PrincipalRef` / `PrincipalKind`, `PrincipalRegistryPort`, `RoleAssignmentPort`, `AuthorizationPort`, and dependency keys for principal registry, role assignment, and permission checks (string `PermissionName` / `RoleName` at the boundary; no domain leakage).
+- `forze.application.contracts.graph`: bounded graph module specs (`GraphModuleSpec`, `GraphNodeSpec`, `GraphEdgeSpec` with :class:`GraphEdgeEndpoint` / :class:`GraphEdgeDirectionality`), `VertexRef` / `EdgeRef`, read-oriented value objects, `validate_graph_module_spec` / `graph_node_by_kind` / `graph_edge_by_kind`, and `GraphQueryPort` / `GraphCommandPort` with dependency keys (no Cypher or AQL on the public surface).
+- `forze.application.contracts.query`: aggregate expressions for document `find_many` calls, with grouped fields and computed `$count`, `$sum`, `$avg`, `$min`, `$max`, and `$median` values across mock, Postgres, and Mongo document adapters.
+- `forze.application.contracts.query`: computed aggregate functions can now include a `filter` expression, enabling conditional aggregates such as filtered counts and sums.
+- `forze_auth`: document-backed auth provider surface (`DocumentAuthSpec`, default IAM/account/session document specs, `DocumentAuthDepsModule`) with `AuthenticationPort`, `AuthorizationPort`, `TokenLifecyclePort`, and `ApiKeyLifecyclePort` adapters built on abstract document ports; `forze_fastapi` adds `AuthIdentityResolverPort` and `HeaderAuthIdentityResolver` for async request authentication before `ExecutionContext` binding.
 - `forze.pagination`: base64-JSON v1 cursors and `normalize_sorts_with_id` (uniform ``asc``/``desc`` with ``id`` tie-break) shared by document adapters. `forze_postgres` adds SQL seek fragments in `forze_postgres.pagination.seek_sql`.
 - `forze_postgres` `PostgresReadGateway` / `PostgresDocumentAdapter` `find_many_with_cursor` with keyset ``WHERE`` + opaque ``next_cursor`` / ``prev_cursor`` (and ``has_more``). `forze_mongo` `MongoReadGateway` / `MongoDocumentAdapter` support the same with **v1** restriction to primary-key ordering only (omit ``sorts`` or ``{id: asc|desc}``); compound sorts are not supported on Mongo in this version.
 - `forze_postgres` `PostgresPGroongaSearchAdapterV2.search_with_cursor` for the **empty query string** (filter-only scan on the projection) using the same keyset rules; a non-empty full-text query raises :class:`forze.base.errors.CoreError` (use :meth:`search` with limit/offset for ranked hits).
@@ -27,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** Caller identity on :class:`forze.application.execution.ExecutionContext` is :class:`forze.application.contracts.auth.AuthIdentity` only. Use ``bind_call(..., identity=...)``; :meth:`~forze.application.execution.ExecutionContext.get_tenant_id` reads ``identity.tenant_id``. FastAPI :class:`forze_fastapi.middlewares.context.ContextBindingMiddleware` takes ``auth_identity_codec`` (:class:`forze_fastapi.middlewares.context.AuthIdentityCodecPort`) instead of ``principal_ctx_codec``. Temporal :class:`forze_temporal.interceptors.codecs.TemporalContextCodec` encodes/decodes ``identity=`` and adds header ``Forze-Subject-ID`` (payloads without it decode to subject ``forze.temporal`` for backward compatibility).
 - `forze_postgres` `PostgresFTSSearchAdapterV2`, `PostgresVectorSearchAdapterV2`, `PostgresHubSearchAdapter`, and `PostgresFederatedSearchAdapter` `search_with_cursor` now raise :class:`forze.base.errors.CoreError` with guidance instead of :exc:`NotImplementedError`.
 - `forze_postgres` `PostgresHubSearchAdapter`: hub legs with multiple `hub_fk` columns no longer use a correlated `LATERAL` over the full leg; they use a deduplicated per-leg CTE (``DISTINCT ON (eid)``) and one equi-``LEFT JOIN`` per FK into that set, with ``GREATEST`` / ``OR`` semantics unchanged for merge and combine.
 - `forze_postgres` `PostgresGateway.order_by_clause` is now ``async`` (callers must ``await`` it) so sort keys can use the same nested JSON path resolution as filters.
@@ -39,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Breaking:** ``PrincipalContext``, ``ExecutionContext.get_principal_ctx``, ``PrincipalContextCodecPort``, and ``principal_ctx_codec`` (replaced by ``AuthIdentity`` / ``AuthIdentityCodecPort`` / ``auth_identity_codec`` as above).
 - `forze_postgres.adapters.search.hub_pgroonga` module (logic moved to `hub.py`).
 - `forze_postgres`: legacy single-relation search adapters `PostgresFTSSearchAdapter` and `PostgresPGroongaSearchAdapter` (`fts.py`, `pgroonga.py`); use `PostgresFTSSearchAdapterV2`, `PostgresPGroongaSearchAdapterV2`, or hub search instead.
 
@@ -56,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Temporal integration docs (`pages/docs/integrations/temporal.md`) and workflow sections in `pages/docs/core-package/contracts.md` and `pages/docs/core-concepts/contracts-adapters.md` now describe `WorkflowCommandPort` / `WorkflowQueryPort`, `TemporalDepsModule`, and related keys instead of the removed `WorkflowPort` API.
 
-- Documentation in `pages/` was realigned with the current API: removed stale `tx_document_plan`, migrated examples to `UsecasePlan.tx(..., route="default")`, replaced deprecated `forze.application.contracts.deps` imports with `forze.application.contracts.base`, updated context docs from legacy tenant/actor ports to `PrincipalContext`/`CallContext`, and fixed examples for `ctx.transaction("default")` and `ctx.storage(StorageSpec(...))`.
+- Documentation in `pages/` was realigned with the current API: removed stale `tx_document_plan`, migrated examples to `UsecasePlan.tx(..., route="default")`, replaced deprecated `forze.application.contracts.deps` imports with `forze.application.contracts.base`, updated context docs from legacy tenant/actor ports to `AuthIdentity`/`CallContext`, and fixed examples for `ctx.transaction("default")` and `ctx.storage(StorageSpec(...))`.
 
 ## [0.1.14] - 2026-04-08
 
@@ -86,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`DepRouter`** and the **`forze.application.contracts.deps`** package (keys/ports/router split); use **`Deps`** routing and **`forze.application.contracts.base`** for **`DepKey` / `DepsPort`**.
 - **`TenantContextPort`** and **`forze.application.contracts.tenant`**.
-- **`ActorContextPort`** and **`forze.application.contracts.actor`** (caller identity is modeled via **`ExecutionContext`** / **`PrincipalContext`** and related codecs—see FastAPI **`ContextBindingMiddleware`**).
+- **`ActorContextPort`** and **`forze.application.contracts.actor`** (caller identity is modeled via **`ExecutionContext`** / **`AuthIdentity`** and related codecs—see FastAPI **`ContextBindingMiddleware`**).
 - Loguru-based implementation and the `loguru` dependency; removed helpers such as `configure(prefixes=...)`, `render_message`, and `safe_preview` in favor of the structlog pipeline and `Logger`.
 
 ### Fixed

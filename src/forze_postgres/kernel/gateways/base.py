@@ -6,9 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Mapping
 from functools import cached_property
-from typing import Any, Self, Sequence, final
+from typing import Any, Mapping, Self, Sequence, final
 
 import attrs
 import orjson
