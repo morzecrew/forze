@@ -6,8 +6,10 @@ require_socketio()
 
 from typing import Any
 
-import socketio as socketio
+from socketio.asgi import ASGIApp
 from socketio.async_manager import AsyncManager
+from socketio.async_redis_manager import AsyncRedisManager
+from socketio.async_server import AsyncServer
 
 from forze.base.errors import CoreError
 
@@ -21,7 +23,7 @@ def build_socketio_server(
     redis_write_only: bool = False,
     client_manager: AsyncManager | None = None,
     **kwargs: Any,
-) -> socketio.AsyncServer:
+) -> AsyncServer:
     """Build an :class:`socketio.AsyncServer` with optional Redis backplane.
 
     Uses the official Socket.IO Redis manager when ``redis_url`` is provided.
@@ -39,13 +41,13 @@ def build_socketio_server(
         raise CoreError("Pass either `redis_url` or `client_manager`, not both")
 
     if redis_url is not None:
-        client_manager = socketio.AsyncRedisManager(
+        client_manager = AsyncRedisManager(
             redis_url,
             channel=redis_channel,
             write_only=redis_write_only,
         )
 
-    return socketio.AsyncServer(
+    return AsyncServer(
         client_manager=client_manager,
         **kwargs,
     )
@@ -55,11 +57,11 @@ def build_socketio_server(
 
 
 def build_socketio_asgi_app(
-    server: socketio.AsyncServer,
+    server: AsyncServer,
     *,
     other_asgi_app: Any = None,
     socketio_path: str = "socket.io",
-) -> socketio.ASGIApp:
+) -> ASGIApp:
     """Wrap a Socket.IO server into an ASGI app.
 
     :param server: Socket.IO async server instance.
@@ -67,7 +69,8 @@ def build_socketio_asgi_app(
     :param socketio_path: Socket.IO endpoint path.
     :returns: Socket.IO ASGI application wrapper.
     """
-    return socketio.ASGIApp(
+
+    return ASGIApp(
         server,
         other_asgi_app=other_asgi_app,
         socketio_path=socketio_path,

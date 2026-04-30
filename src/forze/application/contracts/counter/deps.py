@@ -9,4 +9,4 @@ CounterDepPort = BaseDepPort[CounterSpec, CounterPort]
 """Counter dependency port."""
 
 CounterDepKey = DepKey[CounterDepPort]("counter")
-"""Key used to register the :class:`CounterPort` builder implementation."""
+"""Key used to register the ``CounterPort`` builder implementation."""

@@ -15,7 +15,7 @@ GraphCommandDepPort = BaseDepPort[GraphModuleSpec, GraphCommandPort]
 # ....................... #
 
 GraphQueryDepKey = DepKey[GraphQueryDepPort]("graph_query")
-"""Key to register a :class:`GraphQueryDepPort` implementation."""
+"""Key to register a ``GraphQueryDepPort`` implementation."""
 
 GraphCommandDepKey = DepKey[GraphCommandDepPort]("graph_command")
-"""Key to register a :class:`GraphCommandDepPort` implementation."""
+"""Key to register a ``GraphCommandDepPort`` implementation."""

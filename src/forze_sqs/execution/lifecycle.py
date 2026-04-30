@@ -42,6 +42,38 @@ class SQSStartupHook(LifecycleHook):
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedSQSStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedSQSClient` as ready."""
+
+    client: RoutedSQSClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedSQSShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant SQS sessions."""
+
+    client: RoutedSQSClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class SQSShutdownHook(LifecycleHook):
     """Shutdown hook that closes the SQS session (await :meth:`SQSClient.close`)."""
 
@@ -78,36 +110,8 @@ def sqs_lifecycle_step(
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedSQSStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedSQSClient` as ready."""
-
-    client: RoutedSQSClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedSQSShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant SQS sessions."""
-
-    client: RoutedSQSClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def routed_sqs_lifecycle_step(
-    name: str = "sqs_routed_lifecycle",
+    name: str = "routed_sqs_lifecycle",
     *,
     client: RoutedSQSClient,
 ) -> LifecycleStep:

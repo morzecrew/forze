@@ -35,7 +35,7 @@ class DocumentDTOs(Generic[R, C, U]):
     """DTO type mapping for a document aggregate."""
 
     read: type[R]
-    """Get command type (e.g. :class:`ReadDocument`)."""
+    """Get command type."""
 
     create: type[C] | None = attrs.field(default=None)
     """Create command type; optional when create is not supported."""

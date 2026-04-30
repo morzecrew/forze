@@ -51,6 +51,38 @@ class MongoShutdownHook(LifecycleHook):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedMongoStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedMongoClient` as ready."""
+
+    client: RoutedMongoClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedMongoShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant Mongo clients."""
+
+    client: RoutedMongoClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
 def mongo_lifecycle_step(
     name: str = "mongo_lifecycle",
     *,
@@ -68,36 +100,8 @@ def mongo_lifecycle_step(
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedMongoStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedMongoClient` as ready."""
-
-    client: RoutedMongoClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedMongoShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant Mongo clients."""
-
-    client: RoutedMongoClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def routed_mongo_lifecycle_step(
-    name: str = "mongo_routed_lifecycle",
+    name: str = "routed_mongo_lifecycle",
     *,
     client: RoutedMongoClient,
 ) -> LifecycleStep:

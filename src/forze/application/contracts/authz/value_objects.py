@@ -18,7 +18,7 @@ class PrincipalRef:
     """Stable anchor for principals that receive roles and permission checks."""
 
     principal_id: UUID
-    """Identifier shared with authentication (see :attr:`AuthnIdentity.principal_id`)."""
+    """Identifier shared with authentication."""
 
     kind: PrincipalKind
     """Rough class of actor; adapters may map this to storage or naming."""

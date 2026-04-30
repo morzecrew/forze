@@ -27,7 +27,7 @@ class EmbeddingsProviderPort(Protocol):
 
         :param texts: Input strings to embed. Implementations may reject empty sequences depending on the backend.
         :param input_kind: ``"query"`` for search-time strings, ``"document"`` for indexable text; providers that do not distinguish may ignore this.
-        :returns: Embeddings; each row length should match the configured :class:`EmbeddingsSpec` dimensions for this port instance.
+        :returns: Embeddings; each row length should match the configured ``EmbeddingsSpec`` dimensions for this port instance.
         """
         ...  # pragma: no cover
 
@@ -41,6 +41,6 @@ class EmbeddingsProviderPort(Protocol):
 
         :param text: Input string to embed.
         :param input_kind: ``"query"`` for search-time strings, ``"document"`` for indexable text; providers that do not distinguish may ignore this.
-        :returns: Embedding vector; length should match the configured :class:`EmbeddingsSpec` dimensions for this port instance.
+        :returns: Embedding vector; length should match the configured ``EmbeddingsSpec`` dimensions for this port instance.
         """
         ...  # pragma: no cover

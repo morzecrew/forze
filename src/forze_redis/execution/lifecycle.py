@@ -53,6 +53,38 @@ class RedisShutdownHook(LifecycleHook):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRedisStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedRedisClient` as ready."""
+
+    client: RoutedRedisClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRedisShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant Redis clients."""
+
+    client: RoutedRedisClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
 def redis_lifecycle_step(
     name: str = "redis_lifecycle",
     *,
@@ -75,36 +107,8 @@ def redis_lifecycle_step(
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRedisStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedRedisClient` as ready."""
-
-    client: RoutedRedisClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRedisShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant Redis clients."""
-
-    client: RoutedRedisClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def routed_redis_lifecycle_step(
-    name: str = "redis_routed_lifecycle",
+    name: str = "routed_redis_lifecycle",
     *,
     client: RoutedRedisClient,
 ) -> LifecycleStep:

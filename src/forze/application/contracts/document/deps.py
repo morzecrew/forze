@@ -27,7 +27,7 @@ U = TypeVar("U", bound=BaseDTO)
 
 @runtime_checkable
 class DocumentQueryDepPort(Protocol):
-    """Factory protocol for building :class:`DocumentQueryPort` instances."""
+    """Factory protocol for building ``DocumentQueryPort`` instances."""
 
     def __call__(
         self,
@@ -46,7 +46,7 @@ class DocumentQueryDepPort(Protocol):
 
 @runtime_checkable
 class DocumentCommandDepPort(Protocol):
-    """Factory protocol for building :class:`DocumentCommandPort` instances."""
+    """Factory protocol for building ``DocumentCommandPort`` instances."""
 
     def __call__(
         self,
@@ -63,7 +63,7 @@ class DocumentCommandDepPort(Protocol):
 # ....................... #
 
 DocumentQueryDepKey = DepKey[DocumentQueryDepPort]("document_query")
-"""Key used to register the :class:`DocumentQueryDepPort` implementation."""
+"""Key used to register the ``DocumentQueryDepPort`` implementation."""
 
 DocumentCommandDepKey = DepKey[DocumentCommandDepPort]("document_command")
-"""Key used to register the :class:`DocumentCommandDepPort` implementation."""
+"""Key used to register the ``DocumentCommandDepPort`` implementation."""

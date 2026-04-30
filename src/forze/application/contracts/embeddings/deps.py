@@ -7,7 +7,7 @@ from .specs import EmbeddingsSpec
 # ----------------------- #
 
 EmbeddingsProviderDepPort = BaseDepPort[EmbeddingsSpec, EmbeddingsProviderPort]
-"""Build an :class:`EmbeddingsProviderPort` for a given :class:`EmbeddingsSpec`."""
+"""Build an ``EmbeddingsProviderPort`` for a given ``EmbeddingsSpec``."""
 
 EmbeddingsProviderDepKey = DepKey[EmbeddingsProviderDepPort]("embeddings_provider")
-"""Key for registering the :class:`EmbeddingsProviderPort` builder implementation."""
+"""Key for registering the ``EmbeddingsProviderPort`` builder implementation."""

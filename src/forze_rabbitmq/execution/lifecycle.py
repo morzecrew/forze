@@ -43,6 +43,38 @@ class RabbitMQShutdownHook(LifecycleHook):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRabbitMQStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedRabbitMQClient` as ready."""
+
+    client: RoutedRabbitMQClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRabbitMQShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant RabbitMQ connections."""
+
+    client: RoutedRabbitMQClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
 def rabbitmq_lifecycle_step(
     name: str = "rabbitmq_lifecycle",
     *,
@@ -59,36 +91,8 @@ def rabbitmq_lifecycle_step(
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRabbitMQStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedRabbitMQClient` as ready."""
-
-    client: RoutedRabbitMQClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedRabbitMQShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant RabbitMQ connections."""
-
-    client: RoutedRabbitMQClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def routed_rabbitmq_lifecycle_step(
-    name: str = "rabbitmq_routed_lifecycle",
+    name: str = "routed_rabbitmq_lifecycle",
     *,
     client: RoutedRabbitMQClient,
 ) -> LifecycleStep:

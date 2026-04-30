@@ -1,21 +1,22 @@
-from functools import lru_cache
-from typing import Any, final
-
-import attrs
-from pydantic import TypeAdapter
-
 from ._compat import require_socketio
 
 require_socketio()
 
 # ....................... #
 
-import socketio as socketio
+from functools import lru_cache
+from typing import Any, final
+
+import attrs
+from pydantic import TypeAdapter
+from socketio.async_server import AsyncServer
 
 # ----------------------- #
 
 SocketIOSkipSid = str | list[str] | None
 """Socket.IO recipient exclusion selector passed as ``skip_sid``."""
+
+# ....................... #
 
 
 @lru_cache(maxsize=128)
@@ -49,7 +50,7 @@ class SocketIOServerEvent[Payload]:
 class SocketIOEventEmitter:
     """Typed emitter for outbound Socket.IO server events."""
 
-    sio: socketio.AsyncServer
+    sio: AsyncServer
     """Socket.IO async server used for message delivery."""
 
     # ....................... #

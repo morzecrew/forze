@@ -3,15 +3,16 @@ from typing import final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.counter import CounterSpec
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.domain.constants import NUMBER_ID_FIELD
-from forze.application.contracts.counter import CounterSpec
 
 from .dto import DTOMapperStep
 
 # ----------------------- #
+#! Maybe to contrib
 
 
 @final

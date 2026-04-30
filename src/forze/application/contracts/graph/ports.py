@@ -28,10 +28,10 @@ from .value_objects import (
 
 @runtime_checkable
 class BaseGraphModulePort(Protocol):
-    """Shared :attr:`spec` binding for graph module adapters."""
+    """Shared ``spec`` binding for graph module adapters."""
 
     spec: GraphModuleSpec
-    """:class:`GraphModuleSpec` for this port instance."""
+    """``GraphModuleSpec`` for this port instance."""
 
 
 # ....................... #
@@ -39,7 +39,7 @@ class BaseGraphModulePort(Protocol):
 
 @runtime_checkable
 class GraphQueryPort(BaseGraphModulePort, Protocol):
-    """Read-only operations for a single :class:`GraphModuleSpec`."""
+    """Read-only operations for a single ``GraphModuleSpec``."""
 
     def get_vertex(self, ref: VertexRef) -> Awaitable[BaseModel | None]:
         """Load one vertex by ref; return type matches the node kind’s ``read`` model."""
@@ -144,7 +144,7 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         List vertices of *node_kind* with a simple property filter and offset pagination.
 
         *property_filter* is an adapter-defined equality (or best-effort) map; it is
-        not a full :class:`forze.application.contracts.query.QueryFilterExpression` tree.
+        not a full ``forze.application.contracts.query.QueryFilterExpression`` tree.
         """
         ...  # pragma: no cover
 
@@ -185,7 +185,7 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
 @runtime_checkable
 class GraphCommandPort(BaseGraphModulePort, Protocol):
-    """Write operations for a single :class:`GraphModuleSpec` (no raw query strings)."""
+    """Write operations for a single ``GraphModuleSpec`` (no raw query strings)."""
 
     def create_vertex(
         self,
@@ -195,7 +195,7 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
         return_new: bool = True,
     ) -> Awaitable[BaseModel | None]:
         """
-        :param node_kind: Must match a :class:`GraphNodeSpec` ``name`` in :attr:`spec`.
+        :param node_kind: Must match a ``GraphNodeSpec`` ``name`` in ``spec``.
         :param cmd: Create payload; *node_kind* must match the spec’s create model when
             a ``create`` DTO is declared on that node spec.
         """

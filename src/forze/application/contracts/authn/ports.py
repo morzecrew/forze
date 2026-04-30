@@ -61,7 +61,6 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthnIdentity,  # noqa: F841
     ) -> Awaitable[OAuth2TokensResponse]: ...
 
-    #! Should be identity only (?) ...
     def refresh_tokens(
         self,
         credentials: OAuth2Tokens,  # noqa: F841

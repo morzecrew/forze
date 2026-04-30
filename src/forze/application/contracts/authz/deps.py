@@ -16,10 +16,10 @@ AuthorizationDepPort = BaseDepPort[AuthzSpec, AuthorizationPort]
 # ....................... #
 
 PrincipalRegistryDepKey = DepKey[PrincipalRegistryDepPort]("authz_principal_registry")
-"""Key used to register the :class:`PrincipalRegistryPort` builder implementation."""
+"""Key used to register the ``PrincipalRegistryPort`` builder implementation."""
 
 RoleAssignmentDepKey = DepKey[RoleAssignmentDepPort]("authz_role_assignment")
-"""Key used to register the :class:`RoleAssignmentPort` builder implementation."""
+"""Key used to register the ``RoleAssignmentPort`` builder implementation."""
 
 AuthorizationDepKey = DepKey[AuthorizationDepPort]("authz_authorization")
-"""Key used to register the :class:`AuthorizationPort` builder implementation."""
+"""Key used to register the ``AuthorizationPort`` builder implementation."""

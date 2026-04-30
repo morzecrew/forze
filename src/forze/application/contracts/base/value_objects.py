@@ -13,7 +13,7 @@ class SearchSnapshotHandle:
     """Opaque handle to continue paged search without re-running the full query (KV snapshot)."""
 
     id: str
-    """Snapshot run id; send back as :class:`.forze.application.contracts.search.types.SearchResultSnapshotOptions` ``id``."""
+    """Snapshot run id; send back as ``forze.application.contracts.search.types.SearchResultSnapshotOptions.id``."""
 
     fingerprint: str
     """Stable request fingerprint; clients should echo for validation."""
@@ -90,7 +90,7 @@ def page_from_limit_offset[T](
     total: int | None = None,
     snapshot: SearchSnapshotHandle | None = None,
 ) -> Page[T] | CountlessPage[T]:
-    """Build :class:`Page` or :class:`CountlessPage` from offset/limit window params.
+    """Build ``Page`` or ``CountlessPage`` from offset/limit window params.
 
     Used by adapters that run a single ``SELECT … LIMIT/OFFSET`` (no separate
     page number in the storage API). ``page`` is one-based: ``(offset // size) + 1``.

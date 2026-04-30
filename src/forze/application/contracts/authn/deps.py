@@ -16,10 +16,10 @@ TokenLifecycleDepPort = BaseDepPort[AuthnSpec, TokenLifecyclePort]
 # ....................... #
 
 AuthnDepKey = DepKey[AuthnDepPort]("authn")
-"""Key used to register the :class:`AuthnPort` builder implementation."""
+"""Key used to register the `AuthnPort` builder implementation."""
 
 PasswordLifecycleDepKey = DepKey[PasswordLifecycleDepPort]("authn_password_lifecycle")
-"""Key used to register the :class:`PasswordLifecyclePort` builder implementation."""
+"""Key used to register the `PasswordLifecyclePort` builder implementation."""
 
 TokenLifecycleDepKey = DepKey[TokenLifecycleDepPort]("authn_token_lifecycle")
-"""Key used to register the :class:`TokenLifecyclePort` builder implementation."""
+"""Key used to register the `TokenLifecyclePort` builder implementation."""

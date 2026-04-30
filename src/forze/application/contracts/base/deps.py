@@ -36,7 +36,7 @@ class DepKey[T]:
 class DepsPort[K: str | StrEnum](Protocol):
     """Abstract access to dependency resolution.
 
-    Implementations provide a registry of dependencies keyed by :class:`DepKey`.
+    Implementations provide a registry of dependencies keyed by ``DepKey``.
     Merging is used when combining multiple modules; ``without`` supports
     routers that extract a dependency from a container.
     """

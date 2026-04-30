@@ -1,10 +1,15 @@
-from __future__ import annotations
+from ._compat import require_socketio
+
+require_socketio()
+
+# ....................... #
 
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable, final
 
 import attrs
 from pydantic import TypeAdapter
+from socketio.async_server import AsyncServer
 
 from forze.application.execution import (
     ExecutionContext,
@@ -14,14 +19,6 @@ from forze.application.execution import (
 )
 from forze.application.execution.plan import OpKey
 from forze.base.errors import CoreError
-
-from ._compat import require_socketio
-
-require_socketio()
-
-# ....................... #
-
-import socketio as socketio
 
 # ----------------------- #
 
@@ -176,7 +173,7 @@ class SocketIONamespaceRouter:
 
     def bind(
         self,
-        sio: socketio.AsyncServer,
+        sio: AsyncServer,
         *,
         context_factory: ExecutionContextFactoryPort,
         usecase_resolver: UsecaseResolverPort,
@@ -224,7 +221,7 @@ class SocketIONamespaceRouter:
 class ForzeSocketIOAdapter:
     """Socket.IO transport adapter for routing command events to usecases."""
 
-    sio: socketio.AsyncServer
+    sio: AsyncServer
     """Bound Socket.IO server instance."""
 
     context_factory: ExecutionContextFactoryPort

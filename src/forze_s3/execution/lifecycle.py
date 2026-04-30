@@ -67,6 +67,38 @@ class S3ShutdownHook(LifecycleHook):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedS3StartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedS3Client` as ready."""
+
+    client: RoutedS3Client
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedS3ShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant S3 sessions."""
+
+    client: RoutedS3Client
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
 def s3_lifecycle_step(
     name: str = "s3_lifecycle",
     *,
@@ -97,36 +129,8 @@ def s3_lifecycle_step(
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedS3StartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedS3Client` as ready."""
-
-    client: RoutedS3Client
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedS3ShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant S3 sessions."""
-
-    client: RoutedS3Client
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def routed_s3_lifecycle_step(
-    name: str = "s3_routed_lifecycle",
+    name: str = "routed_s3_lifecycle",
     *,
     client: RoutedS3Client,
 ) -> LifecycleStep:

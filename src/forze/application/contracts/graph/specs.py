@@ -14,7 +14,7 @@ from .value_objects import GraphEdgeEndpoint
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GraphNodeSpec[R: BaseModel](BaseSpec):
-    """One vertex (node) kind in a :class:`GraphModuleSpec`."""
+    """One vertex (node) kind in a ``GraphModuleSpec``."""
 
     read: type[R]
     """Read DTO for vertices of this kind."""
@@ -39,22 +39,22 @@ class GraphEdgeSpec[R: BaseModel](BaseSpec):
     endpoints: tuple[GraphEdgeEndpoint, ...]
     """
     Allowed tail/head node kind pairs. Logical names must match
-    :attr:`GraphNodeSpec.name` entries in the same :class:`GraphModuleSpec`.
+    ``GraphNodeSpec.name`` entries in the same ``GraphModuleSpec``.
     Use more than one pair when a single logical edge kind links different
     node kinds (e.g. one ``TAGGED`` kind from ``Post``→``Tag`` and ``Note``→``Tag``).
     """
 
     directionality: GraphEdgeDirectionality
-    """:data:`~GraphEdgeDirectionality.DIRECTED` for a canonical tail→head edge;
-    :data:`~GraphEdgeDirectionality.SYMMETRIC` for semantically undirected links."""
+    """``~GraphEdgeDirectionality.DIRECTED`` for a canonical tail→head edge;
+    ``GraphEdgeDirectionality.SYMMETRIC`` for semantically undirected links."""
 
     query_directions: frozenset[GraphDirection] | None = attrs.field(default=None)
     """
     Allowed directions for neighborhood and walk queries over this kind.
 
     If ``None``, adapters derive defaults (e.g. both ``OUT`` and ``IN`` for
-    :data:`~GraphEdgeDirectionality.DIRECTED`, and :attr:`~GraphDirection.BOTH`
-    for :data:`~GraphEdgeDirectionality.SYMMETRIC`).
+    ``GraphEdgeDirectionality.DIRECTED``, and ``GraphDirection.BOTH``
+    for ``GraphEdgeDirectionality.SYMMETRIC``).
     """
 
 
@@ -66,8 +66,8 @@ class GraphEdgeSpec[R: BaseModel](BaseSpec):
 class GraphModuleSpec(BaseSpec):
     """Bounded-context graph: a module-level bundle of node and edge kinds.
 
-    The module :attr:`name` identifies this graph area in the application; each
-    :class:`GraphNodeSpec` / :class:`GraphEdgeSpec` :attr:`~BaseSpec.name` is a
+    The module ``name`` identifies this graph area in the application; each
+    ``GraphNodeSpec`` / ``GraphEdgeSpec`` ``BaseSpec.name`` is a
     logical *kind* name used by refs and port methods.
     """
 
@@ -80,7 +80,7 @@ class GraphModuleSpec(BaseSpec):
     # ....................... #
 
     def graph_node_by_kind(self, kind: str) -> GraphNodeSpec[BaseModel] | None:
-        """Return the :class:`GraphNodeSpec` whose name matches *kind*, or ``None``."""
+        """Return the ``GraphNodeSpec`` whose name matches *kind*, or ``None``."""
 
         for n in self.nodes:
             if _kind_key(n.name) == kind:
@@ -91,7 +91,7 @@ class GraphModuleSpec(BaseSpec):
     # ....................... #
 
     def graph_edge_by_kind(self, kind: str) -> GraphEdgeSpec[BaseModel] | None:
-        """Return the :class:`GraphEdgeSpec` whose name matches *kind*, or ``None``."""
+        """Return the ``GraphEdgeSpec`` whose name matches *kind*, or ``None``."""
 
         for e in self.edges:
             if _kind_key(e.name) == kind:
@@ -101,6 +101,7 @@ class GraphModuleSpec(BaseSpec):
 
 
 # ....................... #
+#! TODO: replace value errors with core errors or so
 
 
 def _kind_key(name: object) -> str:
@@ -112,7 +113,7 @@ def validate_graph_module_spec(
     *,
     require_non_empty_nodes: bool = True,
 ) -> None:
-    """Check internal consistency; raise :exc:`ValueError` on violation.
+    """Check internal consistency; raise ``ValueError`` on violation.
 
     :param spec: Module to validate.
     :param require_non_empty_nodes: When ``True``, ``spec.nodes`` must be non-empty.
@@ -127,6 +128,7 @@ def validate_graph_module_spec(
 
     for n in spec.nodes:
         k = _kind_key(n.name)
+
         if k in node_kinds:
             msg = f"Duplicate graph node kind name: {k!r}"
             raise ValueError(msg)
@@ -136,6 +138,7 @@ def validate_graph_module_spec(
 
     for e in spec.edges:
         ek = _kind_key(e.name)
+
         if ek in edge_kinds:
             msg = f"Duplicate graph edge kind name: {ek!r}"
             raise ValueError(msg)

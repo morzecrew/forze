@@ -46,6 +46,38 @@ class TemporalShutdownHook(LifecycleHook):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedTemporalStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedTemporalClient` as ready."""
+
+    client: RoutedTemporalClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedTemporalShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant Temporal clients."""
+
+    client: RoutedTemporalClient
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
 def temporal_lifecycle_step(
     name: str = "temporal_lifecycle",
     *,
@@ -65,36 +97,8 @@ def temporal_lifecycle_step(
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedTemporalStartupHook(LifecycleHook):
-    """Startup hook that marks a :class:`RoutedTemporalClient` as ready."""
-
-    client: RoutedTemporalClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.startup()
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class RoutedTemporalShutdownHook(LifecycleHook):
-    """Shutdown hook that closes all per-tenant Temporal clients."""
-
-    client: RoutedTemporalClient
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        await self.client.close()
-
-
-# ....................... #
-
-
 def routed_temporal_lifecycle_step(
-    name: str = "temporal_routed_lifecycle",
+    name: str = "routed_temporal_lifecycle",
     *,
     client: RoutedTemporalClient,
 ) -> LifecycleStep:

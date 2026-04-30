@@ -10,4 +10,4 @@ CacheDepPort = BaseDepPort[CacheSpec, CachePort]
 """Cache dependency port."""
 
 CacheDepKey = DepKey[CacheDepPort]("cache")
-"""Key used to register the :class:`CachePort` builder implementation."""
+"""Key used to register the ``CachePort`` builder implementation."""
