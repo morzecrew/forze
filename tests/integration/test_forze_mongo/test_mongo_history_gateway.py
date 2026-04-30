@@ -35,13 +35,13 @@ def _doc(pk: UUID, rev: int, title: str) -> HistDoc:
     )
 
 
-def _gw(
+async def _gw(
     client: MongoClient,
     *,
     hist_coll: str,
     target_coll: str,
 ) -> MongoHistoryGateway[HistDoc]:
-    db_name = client.db().name
+    db_name = (await client.db()).name
     return MongoHistoryGateway(
         database=db_name,
         collection=hist_coll,
@@ -55,7 +55,7 @@ def _gw(
 
 @pytest.mark.asyncio
 async def test_history_read_not_found(mongo_client: MongoClient) -> None:
-    gw = _gw(
+    gw = await _gw(
         mongo_client,
         hist_coll=f"h_{uuid4().hex[:8]}",
         target_coll=f"t_{uuid4().hex[:8]}",
@@ -68,11 +68,11 @@ async def test_history_read_not_found(mongo_client: MongoClient) -> None:
 async def test_history_read_missing_payload(mongo_client: MongoClient) -> None:
     hist_coll = f"h_{uuid4().hex[:8]}"
     target_coll = f"t_{uuid4().hex[:8]}"
-    gw = _gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll)
-    db_name = mongo_client.db().name
+    gw = await _gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll)
+    db_name = (await mongo_client.db()).name
     full_target = f"{db_name}.{target_coll}"
     pk = uuid4()
-    coll = mongo_client.collection(hist_coll, db_name=db_name)
+    coll = await mongo_client.collection(hist_coll, db_name=db_name)
     await coll.insert_one(
         {
             HISTORY_SOURCE_FIELD: full_target,
@@ -86,7 +86,7 @@ async def test_history_read_missing_payload(mongo_client: MongoClient) -> None:
 
 @pytest.mark.asyncio
 async def test_history_read_many_length_mismatch(mongo_client: MongoClient) -> None:
-    gw = _gw(
+    gw = await _gw(
         mongo_client,
         hist_coll=f"h_{uuid4().hex[:8]}",
         target_coll=f"t_{uuid4().hex[:8]}",
@@ -97,7 +97,7 @@ async def test_history_read_many_length_mismatch(mongo_client: MongoClient) -> N
 
 @pytest.mark.asyncio
 async def test_history_read_many_empty(mongo_client: MongoClient) -> None:
-    gw = _gw(
+    gw = await _gw(
         mongo_client,
         hist_coll=f"h_{uuid4().hex[:8]}",
         target_coll=f"t_{uuid4().hex[:8]}",
@@ -111,10 +111,10 @@ async def test_history_read_many_skips_missing_and_bad_payload(
 ) -> None:
     hist_coll = f"h_{uuid4().hex[:8]}"
     target_coll = f"t_{uuid4().hex[:8]}"
-    gw = _gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll)
-    db_name = mongo_client.db().name
+    gw = await _gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll)
+    db_name = (await mongo_client.db()).name
     full_target = f"{db_name}.{target_coll}"
-    coll = mongo_client.collection(hist_coll, db_name=db_name)
+    coll = await mongo_client.collection(hist_coll, db_name=db_name)
 
     pk_ok = uuid4()
     pk_bad = uuid4()
@@ -145,7 +145,7 @@ async def test_history_read_many_skips_missing_and_bad_payload(
 
 @pytest.mark.asyncio
 async def test_history_write_read_roundtrip(mongo_client: MongoClient) -> None:
-    gw = _gw(
+    gw = await _gw(
         mongo_client,
         hist_coll=f"h_{uuid4().hex[:8]}",
         target_coll=f"t_{uuid4().hex[:8]}",
@@ -159,10 +159,12 @@ async def test_history_write_read_roundtrip(mongo_client: MongoClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_history_write_many_bulk_and_empty_noop(mongo_client: MongoClient) -> None:
+async def test_history_write_many_bulk_and_empty_noop(
+    mongo_client: MongoClient,
+) -> None:
     hist_coll = f"h_{uuid4().hex[:8]}"
     target_coll = f"t_{uuid4().hex[:8]}"
-    gw = _gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll)
+    gw = await _gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll)
     await gw.write_many([])
 
     pk = uuid4()

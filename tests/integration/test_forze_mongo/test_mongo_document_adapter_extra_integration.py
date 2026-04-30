@@ -13,10 +13,10 @@ from forze.application.contracts.document import (
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
-from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 
 
 class _CxDoc(Document):
@@ -35,11 +35,11 @@ class _CxRead(ReadDocument):
     sku: str
 
 
-def _ctx_cached(
+async def _ctx_cached(
     mongo_client: MongoClient,
     collection: str,
 ) -> tuple[ExecutionContext, DocumentSpec]:
-    db = mongo_client.db().name
+    db = (await mongo_client.db()).name
     cache_spec = CacheSpec(name=f"cache_{collection}")
     spec = DocumentSpec(
         name=f"doc_{collection}",
@@ -80,7 +80,7 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
 ) -> None:
     """Second page with ``after`` exposes ``prev_cursor``; ``id`` desc ordering."""
     col = f"m_cx_{uuid4().hex[:8]}"
-    db = mongo_client.db().name
+    db = (await mongo_client.db()).name
     spec = DocumentSpec(
         name="cursor_extra_ns",
         read=_CxRead,
@@ -90,9 +90,7 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
             "update_cmd": _CxUpdate,
         },
     )
-    fac = ConfigurableMongoDocument(
-        config={"read": (db, col), "write": (db, col)}
-    )
+    fac = ConfigurableMongoDocument(config={"read": (db, col), "write": (db, col)})
     ctx = ExecutionContext(
         deps=Deps.plain(
             {
@@ -148,7 +146,7 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
 ) -> None:
     """``find`` / ``find_many`` with ``return_fields`` and counted page."""
     col = f"m_pr_{uuid4().hex[:8]}"
-    db = mongo_client.db().name
+    db = (await mongo_client.db()).name
     spec = DocumentSpec(
         name="proj_ns",
         read=_CxRead,
@@ -158,9 +156,7 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
             "update_cmd": _CxUpdate,
         },
     )
-    fac = ConfigurableMongoDocument(
-        config={"read": (db, col), "write": (db, col)}
-    )
+    fac = ConfigurableMongoDocument(config={"read": (db, col), "write": (db, col)})
     ctx = ExecutionContext(
         deps=Deps.plain(
             {
@@ -203,7 +199,7 @@ async def test_mongo_adapter_read_through_cache_get_and_get_many(
 ) -> None:
     """DocumentSpec cache: miss populates versioned cache; hit avoids Mongo; update evicts."""
     col = f"m_cc_{uuid4().hex[:8]}"
-    ctx, spec = _ctx_cached(mongo_client, col)
+    ctx, spec = await _ctx_cached(mongo_client, col)
     cmd = ctx.doc_command(spec)
     q = ctx.doc_query(spec)
     state = ctx.dep(MockStateDepKey)

@@ -127,7 +127,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         filters = self._add_tenant_filter(filters)
 
         raw = await self.client.find_one(
-            self.coll(),
+            await self.coll(),
             filters,
             projection=self.render_projection(return_fields),
         )
@@ -214,7 +214,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         filters = self._add_tenant_filter(filters)
 
         rows = await self.client.find_many(
-            self.coll(),
+            await self.coll(),
             filters,
             projection=self.render_projection(return_fields),
         )
@@ -314,7 +314,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         query = self.render_filters(filters)
 
         raw = await self.client.find_one(
-            self.coll(),
+            await self.coll(),
             query,
             projection=self.render_projection(return_fields),
         )
@@ -465,7 +465,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
         query = self.render_filters(filters)
         rows = await self.client.find_many(
-            self.coll(),
+            await self.coll(),
             query,
             projection=self.render_projection(return_fields),
             sort=self.render_sorts(sorts),
@@ -508,7 +508,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             limit=limit,
             skip=offset,
         )
-        rows = await self.client.aggregate(self.coll(), pipeline, limit=limit)
+        rows = await self.client.aggregate(await self.coll(), pipeline, limit=limit)
 
         if (
             not rows
@@ -539,7 +539,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             match=match or None,
         )
         pipeline.append({"$count": "count"})
-        rows = await self.client.aggregate(self.coll(), pipeline, limit=1)
+        rows = await self.client.aggregate(await self.coll(), pipeline, limit=1)
 
         if not rows and not parsed.fields:
             return 1
@@ -685,7 +685,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         mgo_sort: list[tuple[str, int]] = [("_id", 1 if sort_asc else -1)]
 
         rows = await self.client.find_many(
-            self.coll(),
+            await self.coll(),
             q,
             projection=self.render_projection(return_fields),
             sort=mgo_sort,
@@ -717,4 +717,4 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
         query = self.render_filters(filters)
 
-        return await self.client.count(self.coll(), query)
+        return await self.client.count(await self.coll(), query)

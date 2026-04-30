@@ -10,16 +10,32 @@ require_s3()
 
 # ....................... #
 
-from .execution import S3ClientDepKey, S3DepsModule, S3StorageConfig, s3_lifecycle_step
-from .kernel.platform import S3Client, S3Config
+from .execution import (
+    S3ClientDepKey,
+    S3DepsModule,
+    S3StorageConfig,
+    routed_s3_lifecycle_step,
+    s3_lifecycle_step,
+)
+from .kernel.platform import (
+    RoutedS3Client,
+    S3Client,
+    S3ClientPort,
+    S3Config,
+    S3RoutingCredentials,
+)
 
 # ----------------------- #
 
 __all__ = [
     "S3DepsModule",
     "S3Client",
+    "S3ClientPort",
     "S3Config",
+    "RoutedS3Client",
+    "S3RoutingCredentials",
     "S3ClientDepKey",
     "s3_lifecycle_step",
+    "routed_s3_lifecycle_step",
     "S3StorageConfig",
 ]

@@ -1,12 +1,12 @@
 """Lifecycle hooks for Redis client initialization and shutdown."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 
 from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
 
-from ..kernel.platform import RedisConfig
+from ..kernel.platform import RedisClient, RedisConfig, RoutedRedisClient
 from .deps import RedisClientDepKey
 
 # ----------------------- #
@@ -30,7 +30,7 @@ class RedisStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        redis_client = ctx.dep(RedisClientDepKey)
+        redis_client = cast(RedisClient, ctx.dep(RedisClientDepKey))
         await redis_client.initialize(self.dsn, config=self.config)
 
 
@@ -70,3 +70,51 @@ def redis_lifecycle_step(
     shutdown_hook = RedisShutdownHook()
 
     return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRedisStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedRedisClient` as ready."""
+
+    client: RoutedRedisClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRedisShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant Redis clients."""
+
+    client: RoutedRedisClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
+def routed_redis_lifecycle_step(
+    name: str = "redis_routed_lifecycle",
+    *,
+    client: RoutedRedisClient,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedRedisClient` registered as :data:`RedisClientDepKey`.
+
+    Do not combine with :func:`redis_lifecycle_step` on the same instance.
+    """
+
+    return LifecycleStep(
+        name=name,
+        startup=RoutedRedisStartupHook(client=client),
+        shutdown=RoutedRedisShutdownHook(client=client),
+    )

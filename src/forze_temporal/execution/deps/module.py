@@ -9,7 +9,7 @@ from forze.application.contracts.workflow import (
 )
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import TemporalClient
+from ...kernel.platform import TemporalClientPort
 from .configs import TemporalWorkflowConfig
 from .deps import ConfigurableTemporalWorkflowCommand, ConfigurableTemporalWorkflowQuery
 from .keys import TemporalClientDepKey
@@ -22,8 +22,8 @@ from .keys import TemporalClientDepKey
 class TemporalDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Temporal clients and adapters."""
 
-    client: TemporalClient
-    """Pre-constructed Temporal client (connection not yet initialized)."""
+    client: TemporalClientPort
+    """Pre-constructed Temporal client (single cluster or routed, not connected until lifecycle)."""
 
     workflows: Mapping[K, TemporalWorkflowConfig] | None = attrs.field(default=None)
     """Mapping from workflow names to their Temporal-specific configurations."""

@@ -11,7 +11,7 @@ from .deps import (
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
 )
-from .lifecycle import postgres_lifecycle_step
+from .lifecycle import postgres_lifecycle_step, routed_postgres_lifecycle_step
 
 # ----------------------- #
 
@@ -19,6 +19,7 @@ __all__ = [
     "PostgresDepsModule",
     "PostgresClientDepKey",
     "postgres_lifecycle_step",
+    "routed_postgres_lifecycle_step",
     "PgroongaScoreVersion",
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",

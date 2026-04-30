@@ -65,7 +65,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         """
 
         raw = await self.client.find_one(
-            self.coll(),
+            await self.coll(),
             {
                 HISTORY_SOURCE_FIELD: self._full_target,
                 ID_FIELD: self._storage_pk(pk),
@@ -106,7 +106,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             for pk, rev in zip(pks, revs, strict=True)
         ]
         rows = await self.client.find_many(
-            self.coll(),
+            await self.coll(),
             {
                 HISTORY_SOURCE_FIELD: self._full_target,
                 "$or": lookup,
@@ -156,7 +156,7 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
         record = self._from_data(data)
         payload = pydantic_dump(record)
-        await self.client.insert_one(self.coll(), self._coerce_query_value(payload))
+        await self.client.insert_one(await self.coll(), self._coerce_query_value(payload))
 
     # ....................... #
 
@@ -173,4 +173,4 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         raw_payloads = pydantic_dump_many(records)
         payloads = list(map(self._coerce_query_value, raw_payloads))
 
-        await self.client.insert_many(self.coll(), payloads)
+        await self.client.insert_many(await self.coll(), payloads)

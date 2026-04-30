@@ -96,7 +96,7 @@ async def test_mongo_gateways_create_read_projections_and_list(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """Exercise read/write gateways: create, projections, find, bounded list, count."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     ctx = mongo_gw_ctx
@@ -149,7 +149,7 @@ async def test_mongo_read_gateway_aggregate_expressions(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """Aggregate expressions group, compute values, sort by aliases, and count groups."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_agg_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     write = doc_write_gw(
@@ -227,7 +227,7 @@ async def test_mongo_write_gateway_upsert_insert_then_update_path(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """``upsert`` uses ``$setOnInsert`` on first write and :meth:`update` when the doc exists."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_up_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     write = doc_write_gw(
@@ -263,7 +263,7 @@ async def test_mongo_write_gateway_upsert_many_mixed_batch(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """``upsert_many`` bulk-inserts new docs and applies updates to keys that already exist."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_um_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     write = doc_write_gw(
@@ -297,7 +297,7 @@ async def test_mongo_read_gateway_for_update_requires_transaction(
     mongo_client_replica: MongoClient,
 ) -> None:
     """``for_update=True`` uses :meth:`MongoClient.require_transaction` (replica set)."""
-    db_name = mongo_client_replica.db().name
+    db_name = (await mongo_client_replica.db()).name
     collection = f"mongo_gw_tx_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     ctx = ExecutionContext(deps=Deps.plain({MongoClientDepKey: mongo_client_replica}))
@@ -335,7 +335,7 @@ async def test_mongo_read_gateway_return_model_and_find_many_validation(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """``return_model`` / ``return_fields`` on get, get_many, find, find_many; unbounded list guard."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_rm_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     write = doc_write_gw(
@@ -387,7 +387,7 @@ async def test_mongo_read_gateway_find_many_with_cursor(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """Keyset on ``_id`` only: ``after`` / ``before``, asc/desc, validation errors."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_cur_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     write = doc_write_gw(
@@ -459,7 +459,7 @@ async def test_mongo_write_gateway_create_ensure_and_batch_validation(
     mongo_gw_ctx: ExecutionContext,
 ) -> None:
     """``create_many``, ``ensure``, ``ensure_many``; ``update_many`` argument validation."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     collection = f"mongo_gw_w_{uuid4().hex[:8]}"
     relation = (db_name, collection)
     write = doc_write_gw(

@@ -1,12 +1,12 @@
 """Lifecycle hooks for S3 client initialization and shutdown."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 
 from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
 
-from ..kernel.platform import S3Config
+from ..kernel.platform import RoutedS3Client, S3Client, S3Config
 from .deps import S3ClientDepKey
 
 # ----------------------- #
@@ -38,7 +38,7 @@ class S3StartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        s3_client = ctx.dep(S3ClientDepKey)
+        s3_client = cast(S3Client, ctx.dep(S3ClientDepKey))
 
         await s3_client.initialize(
             self.endpoint,
@@ -56,12 +56,12 @@ class S3StartupHook(LifecycleHook):
 class S3ShutdownHook(LifecycleHook):
     """Shutdown hook that closes the S3 client session.
 
-    Resolves :data:`S3ClientDepKey` and calls :meth:`S3Client.close`.
+    Resolves :data:`S3ClientDepKey` and awaits :meth:`S3Client.close`.
     """
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         s3_client = ctx.dep(S3ClientDepKey)
-        s3_client.close()
+        await s3_client.close()
 
 
 # ....................... #
@@ -92,3 +92,51 @@ def s3_lifecycle_step(
     )
     shutdown_hook = S3ShutdownHook()
     return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedS3StartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedS3Client` as ready."""
+
+    client: RoutedS3Client
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedS3ShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant S3 sessions."""
+
+    client: RoutedS3Client
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
+def routed_s3_lifecycle_step(
+    name: str = "s3_routed_lifecycle",
+    *,
+    client: RoutedS3Client,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedS3Client` registered as :data:`S3ClientDepKey`.
+
+    Do not combine with :func:`s3_lifecycle_step` on the same instance.
+    """
+
+    return LifecycleStep(
+        name=name,
+        startup=RoutedS3StartupHook(client=client),
+        shutdown=RoutedS3ShutdownHook(client=client),
+    )

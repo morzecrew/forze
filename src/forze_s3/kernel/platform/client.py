@@ -161,7 +161,7 @@ class S3Client:
 
     # ....................... #
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Release the session and connection options."""
 
         self.__session = None

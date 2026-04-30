@@ -33,11 +33,11 @@ class _ListRead(ReadDocument):
     label: str
 
 
-def _ctx_spec(
+async def _ctx_spec(
     mongo_client: MongoClient,
     collection: str,
 ) -> tuple[ExecutionContext, DocumentSpec]:
-    db = mongo_client.db().name
+    db = (await mongo_client.db()).name
     spec = DocumentSpec(
         name="mongo_list_ns",
         read=_ListRead,
@@ -69,7 +69,7 @@ async def test_mongo_adapter_find_many_return_count_zero_short_circuit(
 ) -> None:
     """``return_count`` with no matches returns an empty page without listing."""
     col = f"m_lc_{uuid4().hex[:8]}"
-    ctx, spec = _ctx_spec(mongo_client, col)
+    ctx, spec = await _ctx_spec(mongo_client, col)
     q = ctx.doc_query(spec)
     page = await q.find_many(
         {"$fields": {"label": "___none___"}},
@@ -87,7 +87,7 @@ async def test_mongo_adapter_find_many_with_cursor_tokens(
 ) -> None:
     """Adapter wraps gateway keyset results and builds next/prev cursor tokens."""
     col = f"m_lcc_{uuid4().hex[:8]}"
-    ctx, spec = _ctx_spec(mongo_client, col)
+    ctx, spec = await _ctx_spec(mongo_client, col)
     cmd = ctx.doc_command(spec)
     q = ctx.doc_query(spec)
 

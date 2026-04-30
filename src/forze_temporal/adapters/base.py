@@ -11,7 +11,7 @@ import attrs
 from forze.base.primitives import uuid4
 from forze_contrib.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import TemporalClient
+from ..kernel.platform import TemporalClientPort
 
 # ----------------------- #
 
@@ -20,7 +20,7 @@ from ..kernel.platform import TemporalClient
 class TemporalBaseAdapter(MultiTenancyMixin):
     """Base adapter for Temporal integration."""
 
-    client: TemporalClient
+    client: TemporalClientPort
     """Temporal client."""
 
     workflow_id_factory: Callable[[], str] = attrs.field(default=lambda: str(uuid4))

@@ -2,9 +2,9 @@
 
 from forze.application.contracts.base import DepKey
 
-from ...kernel.platform import MongoClient
+from ...kernel.platform import MongoClientPort
 
 # ----------------------- #
 
-MongoClientDepKey: DepKey[MongoClient] = DepKey("mongo_client")
-"""Key used to register the :class:`MongoClient` in the deps container."""
+MongoClientDepKey: DepKey[MongoClientPort] = DepKey("mongo_client")
+"""Key used to register a Mongo client (single-URI or routed) in the deps container."""

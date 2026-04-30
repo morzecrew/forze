@@ -51,6 +51,21 @@ class TestMiddlewareSpec:
             MiddlewareSpec(priority=int(1e6), factory=factory)
 
 
+class TestDerivedDispatchEdges:
+    """Dispatch edges derived from :class:`UsecaseDelegate` on plan builders."""
+
+    def test_after_with_delegate_records_edge(self) -> None:
+        from forze.application.execution import UsecaseDelegate, UsecaseRegistry
+
+        reg = UsecaseRegistry()
+        fac = UsecaseDelegate[str, str, str, str](
+            target_op="child",
+            map_in=lambda x, y: x,
+        ).effect_factory(reg)
+        plan = UsecasePlan().after("parent", fac)
+        assert ("parent", "child") in plan.derived_dispatch_edges()
+
+
 class TestOperationPlan:
     """Tests for OperationPlan."""
 

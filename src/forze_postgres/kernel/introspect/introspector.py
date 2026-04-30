@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import Callable
 from typing import Any, cast, final
 
 import attrs
@@ -13,7 +14,7 @@ from psycopg import sql
 
 from forze.base.errors import CoreError
 
-from ..platform import PostgresClient
+from ..platform import PostgresClientPort
 from .types import (
     PostgresColumnCache,
     PostgresColumnTypes,
@@ -40,7 +41,16 @@ class PostgresIntrospector:
     :meth:`invalidate_index`, or fully cleared with :meth:`clear`.
     """
 
-    client: PostgresClient = attrs.field(on_setattr=attrs.setters.frozen)
+    client: PostgresClientPort = attrs.field(on_setattr=attrs.setters.frozen)
+    """Database client used for catalog queries."""
+
+    cache_partition_key: Callable[[], str | None] | None = None
+    """When set, scope cache keys by the returned string (e.g. current tenant id).
+
+    Use with database-per-tenant routing so relation and index metadata cached
+    for one tenant are not reused for another. If this is set and the callable
+    returns ``None``, introspection raises :class:`CoreError`.
+    """
 
     # Non initable fields
     __column_cache: PostgresColumnCache = attrs.field(factory=dict, init=False)
@@ -52,6 +62,30 @@ class PostgresIntrospector:
 
     def __normalize_schema(self, schema: str | None) -> str:
         return schema or "public"
+
+    # ....................... #
+
+    def _partition(self) -> str:
+        if self.cache_partition_key is None:
+            return ""
+
+        p = self.cache_partition_key()
+
+        if p is None:
+            raise CoreError(
+                "Postgres introspection requires a cache partition (e.g. tenant id)",
+                code="introspection_partition_required",
+            )
+
+        return p
+
+    # ....................... #
+
+    def _rel_key(self, schema: str, relation: str) -> tuple[str, str, str]:
+        return (self._partition(), schema, relation)
+
+    def _idx_key(self, schema: str, index: str) -> tuple[str, str, str]:
+        return (self._partition(), schema, index)
 
     # ....................... #
 
@@ -70,7 +104,7 @@ class PostgresIntrospector:
         """
 
         schema = self.__normalize_schema(schema)
-        key = (schema, relation)
+        key = self._rel_key(schema, relation)
 
         if key in self.__relation_cache:
             return self.__relation_cache[key]
@@ -164,7 +198,7 @@ class PostgresIntrospector:
         """
 
         schema = self.__normalize_schema(schema)
-        key = (schema, relation)
+        key = self._rel_key(schema, relation)
 
         if key in self.__column_cache:
             return self.__column_cache[key]
@@ -247,7 +281,7 @@ class PostgresIntrospector:
         """
 
         schema = self.__normalize_schema(schema)
-        key = (schema, index)
+        key = self._idx_key(schema, index)
 
         if key in self.__index_def_cache:
             return self.__index_def_cache[key]
@@ -292,7 +326,7 @@ class PostgresIntrospector:
         """
 
         schema = self.__normalize_schema(schema)
-        key = (schema, index)
+        key = self._idx_key(schema, index)
 
         if key in self.__index_cache:
             return self.__index_cache[key]
@@ -391,8 +425,8 @@ class PostgresIntrospector:
         """Evict cached relation kind and column types for a specific relation."""
 
         schema = self.__normalize_schema(schema)
-        self.__relation_cache.pop((schema, relation), None)
-        self.__column_cache.pop((schema, relation), None)
+        self.__relation_cache.pop(self._rel_key(schema, relation), None)
+        self.__column_cache.pop(self._rel_key(schema, relation), None)
 
     # ....................... #
 
@@ -400,9 +434,9 @@ class PostgresIntrospector:
         """Evict cached index info and definition for a specific index."""
 
         schema = self.__normalize_schema(schema)
-        key = (schema, index)
-        self.__index_cache.pop(key, None)
-        self.__index_def_cache.pop(key, None)
+        idx_key = self._idx_key(schema, index)
+        self.__index_cache.pop(idx_key, None)
+        self.__index_def_cache.pop(idx_key, None)
 
     # ....................... #
 

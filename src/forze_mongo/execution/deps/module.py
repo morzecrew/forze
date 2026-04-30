@@ -12,7 +12,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import MongoClient
+from ...kernel.platform import MongoClientPort
 from .configs import MongoDocumentConfig, MongoReadOnlyDocumentConfig
 from .deps import (
     ConfigurableMongoDocument,
@@ -45,8 +45,8 @@ def _document_config_to_read_only(
 class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Mongo client, tx manager, and document port."""
 
-    client: MongoClient
-    """Pre-constructed Mongo client (not yet initialized)."""
+    client: MongoClientPort
+    """Pre-constructed Mongo client (single-URI or routed)."""
 
     ro_documents: Mapping[K, MongoReadOnlyDocumentConfig] | None = attrs.field(
         default=None

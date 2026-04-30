@@ -2,9 +2,9 @@
 
 from forze.application.contracts.base import DepKey
 
-from ...kernel.platform import SQSClient
+from ...kernel.platform import SQSClientPort
 
 # ----------------------- #
 
-SQSClientDepKey: DepKey[SQSClient] = DepKey("sqs_client")
-"""Key used to register the :class:`SQSClient` in the deps container."""
+SQSClientDepKey: DepKey[SQSClientPort] = DepKey("sqs_client")
+"""Key used to register an SQS client (single endpoint or routed) in the deps container."""

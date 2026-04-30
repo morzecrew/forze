@@ -8,7 +8,7 @@ import attrs
 from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import SQSClient
+from ...kernel.platform import SQSClientPort
 from .configs import SQSQueueConfig
 from .deps import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
 from .keys import SQSClientDepKey
@@ -21,8 +21,8 @@ from .keys import SQSClientDepKey
 class SQSDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers SQS client and queue ports."""
 
-    client: SQSClient
-    """Pre-constructed SQS client (session not yet initialized)."""
+    client: SQSClientPort
+    """Pre-constructed SQS client (single endpoint or routed, session not initialized until lifecycle)."""
 
     queue_readers: Mapping[K, SQSQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their SQS-specific configurations."""

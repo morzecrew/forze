@@ -24,7 +24,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
 
-from ..platform import MongoClient
+from ..platform import MongoClientPort
 from ..query import MongoQueryRenderer
 
 # ----------------------- #
@@ -49,8 +49,8 @@ class MongoGateway[M: BaseModel]:
     collection: str
     """Mongo collection name."""
 
-    client: MongoClient
-    """Shared :class:`MongoClient` instance."""
+    client: MongoClientPort
+    """Shared Mongo client (single-URI or tenant-routed)."""
 
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
     """Query expression renderer."""
@@ -71,10 +71,10 @@ class MongoGateway[M: BaseModel]:
 
     # ....................... #
 
-    def coll(self) -> AsyncCollection[JsonDict]:
+    async def coll(self) -> AsyncCollection[JsonDict]:
         """Return the async Mongo collection handle for this gateway's source."""
 
-        return self.client.collection(self.collection, db_name=self.database)
+        return await self.client.collection(self.collection, db_name=self.database)
 
     # ....................... #
 

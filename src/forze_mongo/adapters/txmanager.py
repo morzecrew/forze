@@ -13,7 +13,7 @@ import attrs
 
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 
-from ..kernel.platform import MongoClient, MongoTransactionOptions
+from ..kernel.platform import MongoClientPort, MongoTransactionOptions
 from ._logger import logger
 
 # ----------------------- #
@@ -29,7 +29,7 @@ MongoTxScopeKey = TxScopeKey("mongo")
 class MongoTxManagerAdapter(TxManagerPort):
     """Mongo-backed :class:`TxManagerPort` that delegates to :meth:`MongoClient.transaction`."""
 
-    client: MongoClient
+    client: MongoClientPort
     """Client instance instance."""
 
     options: MongoTransactionOptions = attrs.field(factory=MongoTransactionOptions)

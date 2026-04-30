@@ -211,7 +211,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         data = pydantic_dump(model)
         data = self.adapt_payload_for_write(data, create=True)
 
-        await self.client.insert_one(self.coll(), self._storage_doc(data))
+        await self.client.insert_one(await self.coll(), self._storage_doc(data))
 
         created = await self.read_gw.get(model.id)
         await self._write_history(created)
@@ -240,7 +240,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         payloads = list(map(self._storage_doc, payloads))
 
-        await self.client.insert_many(self.coll(), payloads, batch_size=batch_size)
+        await self.client.insert_many(await self.coll(), payloads, batch_size=batch_size)
 
         created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -261,7 +261,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             {"_id": self._storage_pk(model.id)},
         )
         res: Any = await self.client.update_one_upsert(
-            self.coll(),
+            await self.coll(),
             flt,
             {"$setOnInsert": storage},
         )
@@ -302,7 +302,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 for m, p in zip(chunk_models, chunk_payloads, strict=True)
             ]
             bres: Any = await self.client.bulk_write(
-                self.coll(),
+                await self.coll(),
                 ops,
                 ordered=False,
             )
@@ -331,7 +331,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             {"_id": self._storage_pk(model.id)},
         )
         res: Any = await self.client.update_one_upsert(
-            self.coll(),
+            await self.coll(),
             flt,
             {"$setOnInsert": storage},
         )
@@ -377,7 +377,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 for m, p in zip(chunk_models, chunk_payloads, strict=True)
             ]
             bres: Any = await self.client.bulk_write(
-                self.coll(),
+                await self.coll(),
                 ops,
                 ordered=False,
             )
@@ -444,7 +444,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
         )
         matched = await self.client.update_one(
-            self.coll(),
+            await self.coll(),
             flt,
             {"$set": self._coerce_query_value(diff)},
         )
@@ -516,7 +516,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             )
 
         matched = await self.client.bulk_update(
-            self.coll(), operations, batch_size=batch_size
+            await self.coll(), operations, batch_size=batch_size
         )
         if matched != len(to_patch):
             raise ConcurrencyError("Failed to update one or more records")
@@ -619,7 +619,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         """
 
         await self.client.delete_one(
-            self.coll(),
+            await self.coll(),
             self._add_tenant_filter({"_id": self._storage_pk(pk)}),
         )
 
@@ -639,7 +639,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             raise ValidationError("Primary keys must be unique")
 
         await self.client.delete_many(
-            self.coll(),
+            await self.coll(),
             self._add_tenant_filter(
                 {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}}
             ),

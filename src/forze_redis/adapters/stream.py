@@ -19,7 +19,7 @@ from forze.application.contracts.stream import (
     StreamQueryPort,
 )
 
-from ..kernel.platform import RedisClient
+from ..kernel.platform import RedisClientPort
 from .codecs import RedisStreamCodec
 
 # ----------------------- #
@@ -35,7 +35,7 @@ class RedisStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M])
     continuously, advancing the per-stream cursor after each message.
     """
 
-    client: RedisClient
+    client: RedisClientPort
     codec: RedisStreamCodec[M]
 
     # ....................... #
@@ -107,7 +107,7 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
     advancing the per-stream cursor after each message.
     """
 
-    client: RedisClient
+    client: RedisClientPort
     codec: RedisStreamCodec[M]
 
     # ....................... #

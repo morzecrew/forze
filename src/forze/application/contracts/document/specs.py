@@ -38,7 +38,7 @@ class DocumentWriteTypes(TypedDict, Generic[D, C, U]):
     create_cmd: type[C]
     """Model type for the create command."""
 
-    update_cmd: type[U]  #! not required ?
+    update_cmd: type[U]
     """Model type for the update command."""
 
 

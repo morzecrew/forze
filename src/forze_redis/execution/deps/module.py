@@ -12,7 +12,7 @@ from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import RedisClient
+from ...kernel.platform import RedisClientPort
 from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
@@ -57,8 +57,8 @@ def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
 class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Redis clients and adapters."""
 
-    client: RedisClient
-    """Pre-constructed Redis client (pool not yet initialized)."""
+    client: RedisClientPort
+    """Pre-constructed Redis client (single-DSN or routed, not initialized until lifecycle)."""
 
     caches: Mapping[K, RedisCacheConfig | RedisUniversalConfig] | None = attrs.field(
         default=None

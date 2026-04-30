@@ -47,7 +47,7 @@ IsolationLevel = Literal["read committed", "repeatable read", "serializable"]
 # ....................... #
 
 
-@final  #! very questionable thing ... and we need to move tx options to the tx manager (?)
+@final
 class PostgresTransactionOptions(TypedDict, total=False):
     """Options for :meth:`PostgresClient.transaction`."""
 
@@ -56,6 +56,9 @@ class PostgresTransactionOptions(TypedDict, total=False):
 
     isolation: IsolationLevel
     """Transaction isolation level. Omitted means default (read committed)."""
+
+
+# ....................... #
 
 
 def _isolation_level_sql_fragment(isolation: str) -> sql.Composable:
@@ -78,7 +81,6 @@ def _isolation_level_sql_fragment(isolation: str) -> sql.Composable:
 
 
 # ....................... #
-#! TypedDict instead ? or typed dict adapter with cast to dataclass (attrs)
 
 
 @final
@@ -209,7 +211,9 @@ class PostgresClient:
         if config.max_concurrent_queries is not None:
             self.__max_concurrent_queries = config.max_concurrent_queries
         else:
-            self.__max_concurrent_queries = max(1, config.max_size - config.pool_headroom)
+            self.__max_concurrent_queries = max(
+                1, config.max_size - config.pool_headroom
+            )
 
         self.__pool = AsyncConnectionPool(
             conninfo=dsn,

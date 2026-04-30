@@ -27,7 +27,7 @@ from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
 from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
-from ..platform import PostgresClient
+from ..platform import PostgresClientPort
 from ..query import PsycopgQueryRenderer
 from ..query.nested import sort_key_expr
 
@@ -100,8 +100,8 @@ class PostgresGateway[M: BaseModel](MultiTenancyMixin):
     source_qname: PostgresQualifiedName
     """Source Postgres qualified name (schema, relation)."""
 
-    client: PostgresClient
-    """Shared :class:`PostgresClient` instance."""
+    client: PostgresClientPort
+    """Shared :class:`~forze_postgres.kernel.platform.port.PostgresClientPort` instance."""
 
     model_type: type[M]
     """Pydantic model used for deserialization."""

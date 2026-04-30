@@ -23,7 +23,7 @@ async def test_mongo_insert_one_benchmark(
 ) -> None:
     """Benchmark single document insert."""
     coll_name = _perf_collection("insert")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
 
     async def run() -> None:
         await mongo_client.insert_one(coll, {"value": "bench", "idx": 1})
@@ -39,7 +39,7 @@ async def test_mongo_insert_many_benchmark(
 ) -> None:
     """Benchmark batch insert of 20 documents."""
     coll_name = _perf_collection("insert_many")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
 
     async def run() -> None:
         docs = [{"value": f"bench-{i}", "idx": i} for i in range(20)]
@@ -56,7 +56,7 @@ async def test_mongo_insert_many_large_benchmark(
 ) -> None:
     """Benchmark batch insert of 500 documents (high volume)."""
     coll_name = _perf_collection("insert_many_lg")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
 
     async def run() -> None:
         docs = [{"value": f"bench-lg-{i}", "idx": i} for i in range(_MONGO_INSERT_MANY_LARGE)]
@@ -71,7 +71,7 @@ async def test_mongo_insert_many_large_benchmark(
 async def test_mongo_find_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark find_one (document pre-seeded)."""
     coll_name = _perf_collection("find_one")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
     await mongo_client.insert_one(coll, {"value": "bench", "idx": 42})
 
     async def run() -> None:
@@ -91,7 +91,7 @@ async def test_mongo_find_many_small_benchmark(
 ) -> None:
     """Benchmark find_many with a small result set (10 docs)."""
     coll_name = _perf_collection("find_many")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
     await mongo_client.insert_many(
         coll, [{"value": f"v{i}", "idx": i} for i in range(10)]
     )
@@ -112,7 +112,7 @@ async def test_mongo_find_many_medium_benchmark(
 ) -> None:
     """Benchmark find_many with a medium result set (100 docs)."""
     coll_name = _perf_collection("find_many_med")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
     await mongo_client.insert_many(
         coll, [{"value": f"v{i}", "idx": i} for i in range(100)]
     )
@@ -133,7 +133,7 @@ async def test_mongo_find_many_large_benchmark(
 ) -> None:
     """Benchmark find_many with a large result set (2k docs)."""
     coll_name = _perf_collection("find_many_lg")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
     await mongo_client.insert_many(
         coll, [{"value": f"v{i}", "idx": i} for i in range(_MONGO_FIND_MANY_LARGE)]
     )
@@ -152,7 +152,7 @@ async def test_mongo_find_many_large_benchmark(
 async def test_mongo_update_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark update_one."""
     coll_name = _perf_collection("update")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
     await mongo_client.insert_one(coll, {"value": "old", "idx": 1})
 
     async def run() -> None:
@@ -168,7 +168,7 @@ async def test_mongo_update_one_benchmark(async_benchmark, mongo_client: MongoCl
 async def test_mongo_delete_one_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark delete_one (document pre-seeded each iteration via insert)."""
     coll_name = _perf_collection("delete")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
 
     async def run() -> None:
         await mongo_client.insert_one(coll, {"value": "to_delete", "idx": 1})
@@ -182,7 +182,7 @@ async def test_mongo_delete_one_benchmark(async_benchmark, mongo_client: MongoCl
 async def test_mongo_count_benchmark(async_benchmark, mongo_client: MongoClient) -> None:
     """Benchmark count_documents."""
     coll_name = _perf_collection("count")
-    coll = mongo_client.collection(coll_name)
+    coll = await mongo_client.collection(coll_name)
     await mongo_client.insert_many(
         coll, [{"value": f"v{i}", "idx": i} for i in range(50)]
     )

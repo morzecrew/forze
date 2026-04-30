@@ -44,8 +44,10 @@ class RowRead(ReadDocument):
     meta: Meta
 
 
-def _setup(mongo_client: MongoClient, collection: str) -> tuple[ExecutionContext, DocumentSpec]:
-    db = mongo_client.db().name
+async def _setup(
+    mongo_client: MongoClient, collection: str
+) -> tuple[ExecutionContext, DocumentSpec]:
+    db = (await mongo_client.db()).name
     spec = DocumentSpec(
         name="nested_mongo_ns",
         read=RowRead,
@@ -69,7 +71,7 @@ def _setup(mongo_client: MongoClient, collection: str) -> tuple[ExecutionContext
 @pytest.mark.asyncio
 async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
     col = f"mn_sort_{uuid4().hex[:8]}"
-    ctx, spec = _setup(mongo_client, col)
+    ctx, spec = await _setup(mongo_client, col)
     cmd = ctx.doc_command(spec)
     query = ctx.doc_query(spec)
 
@@ -92,7 +94,7 @@ async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
 @pytest.mark.asyncio
 async def test_filter_nested_numeric_operator(mongo_client: MongoClient) -> None:
     col = f"mn_filt_{uuid4().hex[:8]}"
-    ctx, spec = _setup(mongo_client, col)
+    ctx, spec = await _setup(mongo_client, col)
     cmd = ctx.doc_command(spec)
     query = ctx.doc_query(spec)
 
@@ -115,7 +117,7 @@ async def test_and_or_combinators_with_nested_paths(
     mongo_client: MongoClient,
 ) -> None:
     col = f"mn_log_{uuid4().hex[:8]}"
-    ctx, spec = _setup(mongo_client, col)
+    ctx, spec = await _setup(mongo_client, col)
     cmd = ctx.doc_command(spec)
     query = ctx.doc_query(spec)
 
@@ -154,7 +156,7 @@ async def test_and_or_combinators_with_nested_paths(
 async def test_multi_field_sort_including_nested(mongo_client: MongoClient) -> None:
     """Stable ordering: nested score first, then top-level title."""
     col = f"mn_msort_{uuid4().hex[:8]}"
-    ctx, spec = _setup(mongo_client, col)
+    ctx, spec = await _setup(mongo_client, col)
     cmd = ctx.doc_command(spec)
     query = ctx.doc_query(spec)
 

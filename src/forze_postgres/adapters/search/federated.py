@@ -36,7 +36,7 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
 from ...kernel.db_gather import gather_db_work
-from ...kernel.platform.client import PostgresClient
+from ...kernel.platform import PostgresClientPort
 from ..txmanager import PostgresTxScopeKey
 from ._options import prepare_federated_search_options
 from .federated_snapshot import (
@@ -140,7 +140,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     rrf_per_leg_limit: int = _DEFAULT_PER_LEG_LIMIT
     """Maximum hits pulled per member for merging (truncation bounds :meth:`search` totals)."""
 
-    postgres_client: PostgresClient | None = None
+    postgres_client: PostgresClientPort | None = None
     """When set, leg queries respect pool / transaction concurrency rules."""
 
     snapshot_store: SearchResultSnapshotPort | None = None

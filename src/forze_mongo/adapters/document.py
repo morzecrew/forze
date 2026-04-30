@@ -25,10 +25,8 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
-    assert_unique_ensure_ids,
-    assert_unique_upsert_pairs,
-    require_create_id_for_ensure,
-    require_create_id_for_upsert,
+    require_create_id,
+    require_create_id_for_many,
 )
 from forze.application.contracts.query import (
     AggregatesExpression,
@@ -775,7 +773,8 @@ class MongoDocumentAdapter(
 
     async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
         w = self._require_write()
-        _ = require_create_id_for_ensure(dto)
+        require_create_id(dto)
+
         domain = await w.ensure(dto)
 
         if not return_new:
@@ -813,21 +812,28 @@ class MongoDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | None:
         w = self._require_write()
+
         if not dtos:
             if not return_new:
                 return None
             return []
-        assert_unique_ensure_ids(dtos)
+
+        require_create_id_for_many(dtos)
+
         domains = await w.ensure_many(dtos, batch_size=self.eff_batch_size)
+
         if not return_new:
             await self._clear_cache(*[x.id for x in domains])
             return None
+
         pks = [x.id for x in domains]
+
         res, _ = await asyncio.gather(
             self.read_gw.get_many(pks),
             self._clear_cache(*pks),
         )
         await self._set_cache_many(res)
+
         return res
 
     # ....................... #
@@ -858,17 +864,21 @@ class MongoDocumentAdapter(
         return_new: bool = True,
     ) -> R | None:
         w = self._require_write()
-        _ = require_create_id_for_upsert(create_dto)
+        require_create_id(create_dto)
+
         domain = await w.upsert(create_dto, update_dto)
 
         if not return_new:
             await self._clear_cache(domain.id)
             return None
+
         res, _ = await asyncio.gather(
             self.read_gw.get(domain.id),
             self._clear_cache(domain.id),
         )
+
         await self._set_cache(res)
+
         return res
 
     # ....................... #
@@ -896,21 +906,28 @@ class MongoDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | None:
         w = self._require_write()
+
         if not pairs:
             if not return_new:
                 return None
             return []
-        assert_unique_upsert_pairs(pairs)
+
+        require_create_id_for_many(pairs)
+
         domains = await w.upsert_many(pairs, batch_size=self.eff_batch_size)
+
         if not return_new:
             await self._clear_cache(*[x.id for x in domains])
             return None
+
         pks = [x.id for x in domains]
+
         res, _ = await asyncio.gather(
             self.read_gw.get_many(pks),
             self._clear_cache(*pks),
         )
         await self._set_cache_many(res)
+
         return res
 
     # ....................... #

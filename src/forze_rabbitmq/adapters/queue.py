@@ -17,7 +17,7 @@ from forze.application.contracts.queue import (
 )
 from forze_contrib.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import RabbitMQClient
+from ..kernel.platform import RabbitMQClientPort
 from .codecs import RabbitMQQueueCodec
 
 # ----------------------- #
@@ -32,7 +32,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
 ):
     """RabbitMQ queue adapter."""
 
-    client: RabbitMQClient
+    client: RabbitMQClientPort
     """RabbitMQ client instance."""
 
     codec: RabbitMQQueueCodec[M]

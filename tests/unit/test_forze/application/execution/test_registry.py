@@ -286,3 +286,25 @@ class TestUsecaseRegistryMerge:
         merged = reg.merge()
         assert merged is not reg
         assert merged.exists("get")
+
+    def test_merge_unions_dispatch_edges(self) -> None:
+        reg_a = (
+            UsecaseRegistry()
+            .register("get", _stub_factory)
+            .add_dispatch_edge("get", "create")
+        )
+        reg_b = (
+            UsecaseRegistry()
+            .register("create", _stub_factory)
+            .add_dispatch_edge("create", "get")
+        )
+        merged = UsecaseRegistry.merge(reg_a, reg_b, on_conflict="overwrite")
+        assert ("get", "create") in merged._dispatch_edges
+        assert ("create", "get") in merged._dispatch_edges
+
+    def test_add_dispatch_edge_returns_new_registry_by_default(self) -> None:
+        reg = UsecaseRegistry().register("a", _stub_factory)
+        reg2 = reg.add_dispatch_edge("a", "b")
+        assert reg2 is not reg
+        assert reg._dispatch_edges == frozenset()
+        assert ("a", "b") in reg2._dispatch_edges

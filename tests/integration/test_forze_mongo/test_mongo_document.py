@@ -38,7 +38,7 @@ class MyReadDoc(ReadDocument):
 async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> None:
     collection = f"docs_{uuid4().hex[:8]}"
     history_collection = f"{collection}_history"
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
 
     spec = DocumentSpec(
         name="my_docs_ns",
@@ -114,7 +114,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert await adapter.count() == 1
 
     history_rows = await mongo_client.find_many(
-        mongo_client.collection(history_collection),
+        await mongo_client.collection(history_collection),
         {"source": f"{db_name}.{collection}", "id": str(created.id)},
     )
     assert len(history_rows) >= 3
@@ -128,7 +128,7 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
     """find_many honours sort order on the read model field."""
     collection = f"docs_sort_{uuid4().hex[:8]}"
     history_collection = f"{collection}_history"
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
 
     spec = DocumentSpec(
         name="mongo_sort_ns",

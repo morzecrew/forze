@@ -41,7 +41,7 @@ async def test_mongo_document_without_history_roundtrip(
 ) -> None:
     """``history_enabled=False`` and no ``history`` in config skips history gateway."""
     collection = f"plain_{uuid4().hex[:8]}"
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
 
     spec = DocumentSpec(
         name="plain_ns",
@@ -90,7 +90,7 @@ async def test_mongo_no_history_revision_conflict_still_enforced(
 ) -> None:
     """Without history, stale ``rev`` on update still fails (in-memory consistency check)."""
     collection = f"plain_rev_{uuid4().hex[:8]}"
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
 
     spec = DocumentSpec(
         name="plain_rev_ns",

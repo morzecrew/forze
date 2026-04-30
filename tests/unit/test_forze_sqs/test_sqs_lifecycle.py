@@ -40,12 +40,13 @@ async def test_sqs_startup_hook_initializes_client() -> None:
 @pytest.mark.asyncio
 async def test_sqs_shutdown_hook_closes_client() -> None:
     client = Mock(spec=SQSClient)
+    client.close = AsyncMock(return_value=None)
     ctx = ExecutionContext(deps=Deps.plain({SQSClientDepKey: client}))
     hook = SQSShutdownHook()
 
     await hook(ctx)
 
-    client.close.assert_called_once()
+    client.close.assert_awaited_once()
 
 
 def test_sqs_lifecycle_step_builds_hooks() -> None:

@@ -13,7 +13,7 @@ import attrs
 
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 
-from ..kernel.platform import PostgresClient, PostgresTransactionOptions
+from ..kernel.platform import PostgresClientPort, PostgresTransactionOptions
 from ._logger import logger
 
 # ----------------------- #
@@ -29,8 +29,8 @@ PostgresTxScopeKey = TxScopeKey("postgres")
 class PostgresTxManagerAdapter(TxManagerPort):
     """Postgres-backed :class:`TxManagerPort` that delegates to :meth:`PostgresClient.transaction`."""
 
-    client: PostgresClient
-    """Client instance instance."""
+    client: PostgresClientPort
+    """Client instance."""
 
     options: PostgresTransactionOptions = attrs.field(
         factory=PostgresTransactionOptions

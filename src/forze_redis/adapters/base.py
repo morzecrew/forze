@@ -10,7 +10,7 @@ import attrs
 
 from forze_contrib.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import RedisClient
+from ..kernel.platform import RedisClientPort
 from .codecs import RedisKeyCodec
 
 # ----------------------- #
@@ -20,7 +20,7 @@ from .codecs import RedisKeyCodec
 class RedisBaseAdapter(MultiTenancyMixin):
     """Base adapter class for Redis integration."""
 
-    client: RedisClient
+    client: RedisClientPort
     """Redis client instance."""
 
     key_codec: RedisKeyCodec

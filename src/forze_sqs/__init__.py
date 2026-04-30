@@ -14,17 +14,30 @@ from .execution import (
     SQSClientDepKey,
     SQSDepsModule,
     SQSQueueConfig,
+    routed_sqs_lifecycle_step,
     sqs_lifecycle_step,
 )
-from .kernel.platform import SQSClient, SQSConfig
+from .kernel.platform import (
+    RoutedSQSClient,
+    SQSClient,
+    SQSClientPort,
+    SQSConfig,
+    SQSQueueMessage,
+    SQSRoutingCredentials,
+)
 
 # ----------------------- #
 
 __all__ = [
     "SQSClient",
+    "SQSClientPort",
     "SQSConfig",
-    "SQSClientDepKey",
+    "RoutedSQSClient",
+    "SQSRoutingCredentials",
+    "SQSQueueMessage",
     "SQSDepsModule",
+    "SQSClientDepKey",
     "sqs_lifecycle_step",
+    "routed_sqs_lifecycle_step",
     "SQSQueueConfig",
 ]

@@ -40,13 +40,13 @@ class BatchRead(ReadDocument):
     is_deleted: bool = False
 
 
-def _setup(
+async def _setup(
     mongo_client: MongoClient,
     *,
     collection: str,
     history_collection: str,
 ) -> tuple[ExecutionContext, DocumentSpec]:
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     spec = DocumentSpec(
         name="batch_ns",
         read=BatchRead,
@@ -80,7 +80,7 @@ def _setup(
 async def test_get_many_and_field_projection(mongo_client: MongoClient) -> None:
     col = f"batch_proj_{uuid4().hex[:8]}"
     hist = f"{col}_history"
-    ctx, spec = _setup(mongo_client, collection=col, history_collection=hist)
+    ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
     cmd = ctx.doc_command(spec)
 
     a = await cmd.create(BatchCreate(name="one", tag="x"))
@@ -97,7 +97,7 @@ async def test_get_many_and_field_projection(mongo_client: MongoClient) -> None:
 async def test_create_many_delete_many_restore_many(mongo_client: MongoClient) -> None:
     col = f"batch_soft_{uuid4().hex[:8]}"
     hist = f"{col}_history"
-    ctx, spec = _setup(mongo_client, collection=col, history_collection=hist)
+    ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
     cmd = ctx.doc_command(spec)
 
     created = await cmd.create_many(
@@ -122,7 +122,7 @@ async def test_create_many_delete_many_restore_many(mongo_client: MongoClient) -
 async def test_kill_many_removes_documents(mongo_client: MongoClient) -> None:
     col = f"batch_kill_{uuid4().hex[:8]}"
     hist = f"{col}_history"
-    ctx, spec = _setup(mongo_client, collection=col, history_collection=hist)
+    ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
     cmd = ctx.doc_command(spec)
 
     a = await cmd.create(BatchCreate(name="a"))
@@ -135,6 +135,6 @@ async def test_kill_many_removes_documents(mongo_client: MongoClient) -> None:
 async def test_get_many_empty_returns_empty(mongo_client: MongoClient) -> None:
     col = f"batch_empty_{uuid4().hex[:8]}"
     hist = f"{col}_history"
-    ctx, spec = _setup(mongo_client, collection=col, history_collection=hist)
+    ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
     cmd = ctx.doc_command(spec)
     assert await cmd.get_many([]) == []

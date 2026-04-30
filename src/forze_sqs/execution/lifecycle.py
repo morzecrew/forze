@@ -1,12 +1,12 @@
 """Lifecycle hooks for SQS client initialization and shutdown."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 
 from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
 
-from ..kernel.platform import SQSConfig
+from ..kernel.platform import RoutedSQSClient, SQSClient, SQSConfig
 from .deps import SQSClientDepKey
 
 # ----------------------- #
@@ -26,7 +26,7 @@ class SQSStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        sqs_client = ctx.dep(SQSClientDepKey)
+        sqs_client = cast(SQSClient, ctx.dep(SQSClientDepKey))
 
         await sqs_client.initialize(
             endpoint=self.endpoint,
@@ -43,11 +43,11 @@ class SQSStartupHook(LifecycleHook):
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class SQSShutdownHook(LifecycleHook):
-    """Shutdown hook that closes the SQS session."""
+    """Shutdown hook that closes the SQS session (await :meth:`SQSClient.close`)."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         sqs_client = ctx.dep(SQSClientDepKey)
-        sqs_client.close()
+        await sqs_client.close()
 
 
 # ....................... #
@@ -73,3 +73,51 @@ def sqs_lifecycle_step(
     shutdown_hook = SQSShutdownHook()
 
     return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedSQSStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedSQSClient` as ready."""
+
+    client: RoutedSQSClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedSQSShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant SQS sessions."""
+
+    client: RoutedSQSClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
+def routed_sqs_lifecycle_step(
+    name: str = "sqs_routed_lifecycle",
+    *,
+    client: RoutedSQSClient,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedSQSClient` registered as :data:`SQSClientDepKey`.
+
+    Do not combine with :func:`sqs_lifecycle_step` on the same instance.
+    """
+
+    return LifecycleStep(
+        name=name,
+        startup=RoutedSQSStartupHook(client=client),
+        shutdown=RoutedSQSShutdownHook(client=client),
+    )

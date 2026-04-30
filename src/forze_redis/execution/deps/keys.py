@@ -2,9 +2,9 @@
 
 from forze.application.contracts.base import DepKey
 
-from ...kernel.platform import RedisClient
+from ...kernel.platform import RedisClientPort
 
 # ----------------------- #
 
-RedisClientDepKey: DepKey[RedisClient] = DepKey("redis_client")
-"""Key used to register the :class:`RedisClient` in the deps container."""
+RedisClientDepKey: DepKey[RedisClientPort] = DepKey("redis_client")
+"""Key used to register a Redis client (single-DSN or routed) in the deps container."""

@@ -35,10 +35,8 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
-    assert_unique_ensure_ids,
-    assert_unique_upsert_pairs,
-    require_create_id_for_ensure,
-    require_create_id_for_upsert,
+    require_create_id,
+    require_create_id_for_many,
 )
 from forze.application.contracts.query import (
     AggregatesExpression,
@@ -858,7 +856,7 @@ class PostgresDocumentAdapter(
 
     async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
         w = self._require_write()
-        _ = require_create_id_for_ensure(dto)
+        require_create_id(dto)
 
         logger.debug("Ensure 1 '%s' document", self.spec.name)
 
@@ -907,7 +905,7 @@ class PostgresDocumentAdapter(
                 return None
             return []
 
-        assert_unique_ensure_ids(dtos)
+        require_create_id_for_many(dtos)
 
         logger.debug("Ensure %s '%s' documents", len(dtos), self.spec.name)
 
@@ -954,7 +952,7 @@ class PostgresDocumentAdapter(
         return_new: bool = True,
     ) -> R | None:
         w = self._require_write()
-        _ = require_create_id_for_upsert(create_dto)
+        require_create_id(create_dto)
 
         logger.debug("Upsert 1 '%s' document", self.spec.name)
 
@@ -1003,7 +1001,7 @@ class PostgresDocumentAdapter(
                 return None
             return []
 
-        assert_unique_upsert_pairs(pairs)
+        require_create_id_for_many(pairs)
 
         logger.debug("Upsert %s '%s' document pairs", len(pairs), self.spec.name)
 

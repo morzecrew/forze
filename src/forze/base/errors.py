@@ -81,6 +81,17 @@ class NotFoundError(CoreError):
 
 
 @attrs.define(slots=True, eq=False)
+class SecretNotFoundError(NotFoundError):
+    """Error raised when a requested secret cannot be resolved."""
+
+    code: str = attrs.field(default="secret_not_found", kw_only=True)
+    message: str = "Secret not found"
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, eq=False)
 class ConflictError(CoreError):
     """Error raised when an operation encounters a conflicting state."""
 

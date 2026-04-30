@@ -54,10 +54,11 @@ def test_require_client_raises_when_no_context() -> None:
         client._SQSClient__require_client()
 
 
-def test_close_clears_state() -> None:
+@pytest.mark.asyncio
+async def test_close_clears_state() -> None:
     client = SQSClient()
     client._SQSClient__queue_url_cache["k"] = "v"  # type: ignore[attr-defined]
-    client.close()
+    await client.close()
     assert client._SQSClient__session is None  # type: ignore[attr-defined]
     assert client._SQSClient__opts is None  # type: ignore[attr-defined]
     assert client._SQSClient__queue_url_cache == {}  # type: ignore[attr-defined]
@@ -81,7 +82,7 @@ async def test_initialize_converts_timedelta_in_config() -> None:
     assert opts.config is not None
     assert opts.config.connect_timeout == 5
     assert opts.config.read_timeout == 2
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -101,7 +102,7 @@ async def test_initialize_is_idempotent() -> None:
         region_name="eu-west-1",
     )
     assert client._SQSClient__session is first_session  # type: ignore[attr-defined]
-    client.close()
+    await client.close()
 
 
 def test_build_message_attributes_partial() -> None:
@@ -182,7 +183,7 @@ async def test_client_nested_reuses_bound_client() -> None:
         client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
         client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
 
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -207,7 +208,7 @@ async def test_health_returns_error_on_list_failure() -> None:
     finally:
         client._SQSClient__ctx_client.reset(tok)  # type: ignore[attr-defined]
 
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -222,7 +223,7 @@ async def test_queue_url_uses_in_memory_cache() -> None:
     client._SQSClient__queue_url_cache["my-queue"] = "https://x/y/my-queue"  # type: ignore[attr-defined]
     url = await client.queue_url("my-queue")
     assert url == "https://x/y/my-queue"
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -238,7 +239,7 @@ async def test_initialize_without_config_leaves_opts_config_none() -> None:
     assert opts is not None
     assert opts.config is None
     assert client._SQSClient__enqueue_batch_concurrency == 10  # type: ignore[attr-defined]
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -252,7 +253,7 @@ async def test_initialize_sets_enqueue_concurrency_from_max_pool_connections() -
         config={"max_pool_connections": 3},
     )
     assert client._SQSClient__enqueue_batch_concurrency == 3  # type: ignore[attr-defined]
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -296,7 +297,7 @@ async def test_enqueue_many_parallel_batches_respects_concurrency_cap() -> None:
         client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
         client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
 
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -322,4 +323,4 @@ async def test_enqueue_many_single_chunk_no_task_group_path() -> None:
         client._SQSClient__ctx_depth.reset(tok_d)  # type: ignore[attr-defined]
         client._SQSClient__ctx_client.reset(tok_c)  # type: ignore[attr-defined]
 
-    client.close()
+    await client.close()

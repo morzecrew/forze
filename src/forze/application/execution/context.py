@@ -1,7 +1,7 @@
 """Execution context for dependency resolution and transactions."""
 
 from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from enum import StrEnum
 from typing import Any, AsyncIterator, Iterator, TypeVar, final
 from uuid import UUID
@@ -92,6 +92,13 @@ class ExecutionContext:
         repr=False,
     )
     """Per-task dependency resolution stack used to detect cycles."""
+
+    __usecase_dispatch_stack: ContextVar[tuple[str, ...]] = attrs.field(
+        factory=lambda: ContextVar("usecase_dispatch_stack", default=()),
+        init=False,
+        repr=False,
+    )
+    """Qualified operation ids for nested :meth:`Usecase.__call__` (cycle detection)."""
 
     __tx_handle: ContextVar[TxHandle | None] = attrs.field(
         factory=lambda: ContextVar("tx_handle", default=None),
@@ -201,6 +208,41 @@ class ExecutionContext:
         finally:
             self.__call_context.reset(call_token)
             self.__auth_identity.reset(identity_token)
+
+    # ....................... #
+
+    def push_usecase_dispatch(self, operation_id: str) -> Token[tuple[str, ...]]:
+        """Push ``operation_id`` onto the usecase dispatch stack for this context.
+
+        Used by :class:`~forze.application.execution.usecase.Usecase` to detect
+        re-entrant dispatch cycles at runtime. Call
+        :meth:`pop_usecase_dispatch` with the returned token when the usecase
+        finishes.
+
+        :param operation_id: Qualified operation id (see :meth:`UsecaseRegistry.qualify_operation`).
+        :returns: Opaque token for :meth:`pop_usecase_dispatch`.
+        :raises CoreError: When ``operation_id`` is already on the stack.
+        """
+
+        if not operation_id:
+            raise CoreError("operation_id for usecase dispatch cannot be empty")
+
+        stack = self.__usecase_dispatch_stack.get()
+
+        if operation_id in stack:
+            raise CoreError(
+                "Usecase dispatch cycle detected: "
+                f"{' -> '.join((*stack, operation_id))}"
+            )
+
+        return self.__usecase_dispatch_stack.set((*stack, operation_id))
+
+    # ....................... #
+
+    def pop_usecase_dispatch(self, token: Token[tuple[str, ...]]) -> None:
+        """Restore the usecase dispatch stack after :meth:`push_usecase_dispatch`."""
+
+        self.__usecase_dispatch_stack.reset(token)
 
     # ....................... #
 

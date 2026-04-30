@@ -31,7 +31,7 @@ async def test_transaction_commit(
 ) -> None:
     """Transaction commits when block exits normally."""
     coll_name = f"txmanager_commit_{uuid4().hex[:8]}"
-    coll = mongo_client_replica.collection(coll_name)
+    coll = await mongo_client_replica.collection(coll_name)
 
     async with mongo_txmanager.transaction():
         await mongo_client_replica.insert_one(coll, {"value": 42})
@@ -50,7 +50,7 @@ async def test_transaction_rollback(
 ) -> None:
     """Transaction rolls back when block raises."""
     coll_name = f"txmanager_rollback_{uuid4().hex[:8]}"
-    coll = mongo_client_replica.collection(coll_name)
+    coll = await mongo_client_replica.collection(coll_name)
 
     try:
         async with mongo_txmanager.transaction():
@@ -69,7 +69,7 @@ async def test_transaction_nested_reuses_session(
 ) -> None:
     """Nested transaction blocks reuse the same session; both levels commit together."""
     coll_name = f"txmanager_nested_{uuid4().hex[:8]}"
-    coll = mongo_client_replica.collection(coll_name)
+    coll = await mongo_client_replica.collection(coll_name)
 
     async with mongo_txmanager.transaction():
         await mongo_client_replica.insert_one(coll, {"value": 1})
@@ -89,7 +89,7 @@ async def test_transaction_rollback_from_nested(
 ) -> None:
     """Exception in nested block aborts the whole transaction (MongoDB has no savepoints)."""
     coll_name = f"txmanager_nested_rollback_{uuid4().hex[:8]}"
-    coll = mongo_client_replica.collection(coll_name)
+    coll = await mongo_client_replica.collection(coll_name)
 
     try:
         async with mongo_txmanager.transaction():

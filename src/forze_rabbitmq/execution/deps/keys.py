@@ -2,9 +2,9 @@
 
 from forze.application.contracts.base import DepKey
 
-from ...kernel.platform import RabbitMQClient
+from ...kernel.platform import RabbitMQClientPort
 
 # ----------------------- #
 
-RabbitMQClientDepKey: DepKey[RabbitMQClient] = DepKey("rabbitmq_client")
-"""Key used to register the :class:`RabbitMQClient` in the deps container."""
+RabbitMQClientDepKey: DepKey[RabbitMQClientPort] = DepKey("rabbitmq_client")
+"""Key used to register a RabbitMQ client (single-DSN or routed) in the deps container."""

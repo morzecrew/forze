@@ -77,6 +77,21 @@ PlanBucket = Literal[
 ]
 """Bucket names for middleware placement in the chain."""
 
+_OPERATION_PLAN_BUCKETS: Final[tuple[PlanBucket, ...]] = (
+    "outer_before",
+    "outer_wrap",
+    "outer_finally",
+    "outer_on_failure",
+    "outer_after",
+    "in_tx_before",
+    "in_tx_finally",
+    "in_tx_on_failure",
+    "in_tx_wrap",
+    "in_tx_after",
+    "after_commit",
+)
+"""All :class:`OperationPlan` middleware buckets (for dispatch edge collection)."""
+
 _EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE: Final[frozenset[PlanBucket]] = (
     frozenset(
         {
@@ -101,6 +116,46 @@ innermost. ``after_commit`` is not included; it runs in ``build`` order (see
 # ....................... #
 
 
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DispatchDeclaringEffectFactory:
+    """Wraps an :class:`EffectFactory` and declares child op keys for dispatch graphs.
+
+    Returned by :meth:`UsecaseDelegate.effect_factory` so :class:`UsecasePlan`
+    builders can attach ``(source_op, target_op)`` edges to middleware specs.
+    """
+
+    inner: EffectFactory
+    """Factory returning :class:`Effect`."""
+
+    dispatch_targets: frozenset[str]
+    """Logical child operation keys (same strings as registry registration)."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext) -> Effect[Any, Any]:
+        return self.inner(ctx)
+
+
+# ....................... #
+
+
+def dispatch_edges_for_delegate_effect(
+    source_ops: Sequence[str],
+    effect: EffectFactory,
+) -> frozenset[tuple[str, str]]:
+    """Build dispatch edge tuples when ``effect`` declares delegate targets."""
+
+    if isinstance(effect, DispatchDeclaringEffectFactory):
+        return frozenset(
+            (src, t) for src in source_ops for t in effect.dispatch_targets
+        )
+
+    return frozenset()
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MiddlewareSpec:
@@ -117,6 +172,13 @@ class MiddlewareSpec:
         ]
     )
     factory: MiddlewareFactory
+    """Callable returning middleware; effect buckets may use :class:`DispatchDeclaringEffectFactory`."""
+
+    dispatch_edges: frozenset[tuple[str, str]] = attrs.field(
+        factory=frozenset,
+        repr=False,
+    )
+    """Edges ``(source_op, target_op)`` derived for registry dispatch validation."""
 
 
 # ....................... #
@@ -149,7 +211,9 @@ class OperationPlan:
     tx: TransactionSpec | None = attrs.field(default=None)
     """Transaction spec for the operation. None means non-transactional."""
 
+    # ....................... #
     # outer
+
     outer_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Guards/effects before the transaction (if any)."""
 
@@ -165,7 +229,9 @@ class OperationPlan:
     outer_after: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Guards/effects after the transaction."""
 
+    # ....................... #
     # in tx
+
     in_tx_before: tuple[MiddlewareSpec, ...] = attrs.field(factory=tuple)
     """Guards/effects inside the transaction, before the usecase."""
 
@@ -247,6 +313,7 @@ class OperationPlan:
 
         for s in specs:
             k = s.priority
+
             if k in used:
                 raise CoreError(
                     f"Priority collision in bucket '{bucket}': {s.priority}"
@@ -413,6 +480,20 @@ class UsecasePlan:
 
     # ....................... #
 
+    def derived_dispatch_edges(self) -> frozenset[tuple[str, str]]:
+        """Collect ``dispatch_edges`` from every middleware spec in this plan."""
+
+        acc: set[tuple[str, str]] = set()
+
+        for oplan in self.ops.values():
+            for bucket in _OPERATION_PLAN_BUCKETS:
+                for spec in getattr(oplan, bucket):
+                    acc.update(spec.dispatch_edges)
+
+        return frozenset(acc)
+
+    # ....................... #
+
     def tx(self, op: OpKey | list[OpKey], *, route: str | StrEnum) -> Self:
         """Enable transaction wrapping for the operation.
 
@@ -502,17 +583,26 @@ class UsecasePlan:
     def after(
         self, op: OpKey | list[OpKey], effect: EffectFactory, *, priority: int = 0
     ) -> Self:
-        def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
-            return EffectMiddleware[Any, Any](effect=effect(ctx))
-
         out: Self = self
 
         if not isinstance(op, list):
             op = [op]
 
         for o in op:
+            o_s = str(o)
+            d_edges = dispatch_edges_for_delegate_effect((o_s,), effect)
+
+            def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
+                return EffectMiddleware[Any, Any](effect=effect(ctx))
+
             out = out._add(
-                o, "outer_after", MiddlewareSpec(factory=factory, priority=priority)
+                o,
+                "outer_after",
+                MiddlewareSpec(
+                    factory=factory,
+                    priority=priority,
+                    dispatch_edges=d_edges,
+                ),
             )
 
         return out
@@ -798,17 +888,26 @@ class UsecasePlan:
         *,
         priority: int = 0,
     ) -> Self:
-        def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
-            return EffectMiddleware[Any, Any](effect=effect(ctx))
-
         out: Self = self
 
         if not isinstance(op, list):
             op = [op]
 
         for o in op:
+            o_s = str(o)
+            d_edges = dispatch_edges_for_delegate_effect((o_s,), effect)
+
+            def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
+                return EffectMiddleware[Any, Any](effect=effect(ctx))
+
             out = out._add(
-                o, "in_tx_after", MiddlewareSpec(factory=factory, priority=priority)
+                o,
+                "in_tx_after",
+                MiddlewareSpec(
+                    factory=factory,
+                    priority=priority,
+                    dispatch_edges=d_edges,
+                ),
             )
 
         return out
@@ -878,17 +977,26 @@ class UsecasePlan:
         *,
         priority: int = 0,
     ) -> Self:
-        def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
-            return EffectMiddleware[Any, Any](effect=effect(ctx))
-
         out: Self = self
 
         if not isinstance(op, list):
             op = [op]
 
         for o in op:
+            o_s = str(o)
+            d_edges = dispatch_edges_for_delegate_effect((o_s,), effect)
+
+            def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
+                return EffectMiddleware[Any, Any](effect=effect(ctx))
+
             out = out._add(
-                o, "after_commit", MiddlewareSpec(factory=factory, priority=priority)
+                o,
+                "after_commit",
+                MiddlewareSpec(
+                    factory=factory,
+                    priority=priority,
+                    dispatch_edges=d_edges,
+                ),
             )
 
         return out

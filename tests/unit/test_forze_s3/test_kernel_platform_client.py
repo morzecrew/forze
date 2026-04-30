@@ -172,7 +172,7 @@ async def test_initialize_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None
         secret_access_key="y",
     )
     assert client._S3Client__session is first
-    client.close()
+    await client.close()
 
 
 class _ClientError(Exception):
@@ -253,7 +253,7 @@ async def test_client_nested_reuses_context_client(
         client._S3Client__ctx_depth.reset(tok_d)
         client._S3Client__ctx_client.reset(tok_c)
 
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -282,7 +282,7 @@ async def test_client_unwraps_secret_access_key(monkeypatch: pytest.MonkeyPatch)
     async with client.client() as _:
         pass
     assert created[0]["aws_secret_access_key"] == "sekret"
-    client.close()
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -402,4 +402,4 @@ async def test_initialize_injects_retries_when_config_has_no_retries(
     assert opts is not None
     assert isinstance(opts.config, _FakeAioConfig)
     assert opts.config.kwargs["retries"] == {"max_attempts": 3, "mode": "adaptive"}
-    client.close()
+    await client.close()

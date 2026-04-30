@@ -48,9 +48,9 @@ class PerfReadDoc(ReadDocument):
 
 
 @pytest.fixture
-def execution_context(mongo_client: MongoClient) -> ExecutionContext:
+async def execution_context(mongo_client: MongoClient) -> ExecutionContext:
     """Build execution context with Mongo deps."""
-    db_name = mongo_client.db().name
+    db_name = (await mongo_client.db()).name
     configurable = ConfigurableMongoDocument(
         config={
             "read": (db_name, "perf_docs"),
@@ -89,7 +89,9 @@ async def document_adapter(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_mongo_document_create_benchmark(async_benchmark, document_adapter) -> None:
+async def test_mongo_document_create_benchmark(
+    async_benchmark, document_adapter
+) -> None:
     """Benchmark document create."""
 
     async def run() -> None:
@@ -115,7 +117,9 @@ async def test_mongo_document_get_benchmark(async_benchmark, document_adapter) -
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_mongo_document_get_many_benchmark(async_benchmark, document_adapter) -> None:
+async def test_mongo_document_get_many_benchmark(
+    async_benchmark, document_adapter
+) -> None:
     """Benchmark document get_many with 10 ids."""
     docs = [
         await document_adapter.create(PerfCreateDoc(name=f"item {i}"))
@@ -174,7 +178,10 @@ async def test_mongo_document_create_many_large_benchmark(
     """Benchmark document create_many with a large batch (500 items)."""
 
     async def run() -> None:
-        dtos = [PerfCreateDoc(name=f"batch-lg {i}") for i in range(_MONGO_DOC_CREATE_MANY_LARGE)]
+        dtos = [
+            PerfCreateDoc(name=f"batch-lg {i}")
+            for i in range(_MONGO_DOC_CREATE_MANY_LARGE)
+        ]
         result = await document_adapter.create_many(dtos)
         await document_adapter.kill_many([doc.id for doc in result])
 
@@ -183,7 +190,9 @@ async def test_mongo_document_create_many_large_benchmark(
 
 @pytest.mark.perf
 @pytest.mark.asyncio
-async def test_mongo_document_find_many_benchmark(async_benchmark, document_adapter) -> None:
+async def test_mongo_document_find_many_benchmark(
+    async_benchmark, document_adapter
+) -> None:
     """Benchmark document find_many with 50 pre-inserted rows."""
     for i in range(50):
         await document_adapter.create(PerfCreateDoc(name=f"find {i}"))

@@ -1,10 +1,12 @@
-from typing import final
+"""Lifecycle hooks for Temporal client initialization and shutdown."""
+
+from typing import cast, final
 
 import attrs
 
 from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
 
-from ..kernel.platform import TemporalConfig
+from ..kernel.platform import RoutedTemporalClient, TemporalClient, TemporalConfig
 from .deps import TemporalClientDepKey
 
 # ----------------------- #
@@ -24,8 +26,21 @@ class TemporalStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        temporal_client = ctx.dep(TemporalClientDepKey)
+        temporal_client = cast(TemporalClient, ctx.dep(TemporalClientDepKey))
         await temporal_client.initialize(self.host, config=self.config)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class TemporalShutdownHook(LifecycleHook):
+    """Shutdown hook that releases the Temporal client reference."""
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        temporal_client = ctx.dep(TemporalClientDepKey)
+        await temporal_client.close()
 
 
 # ....................... #
@@ -38,7 +53,58 @@ def temporal_lifecycle_step(
     config: TemporalConfig = TemporalConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for Temporal client init and shutdown."""
-
     startup_hook = TemporalStartupHook(host=host, config=config)
 
-    return LifecycleStep(name=name, startup=startup_hook)
+    return LifecycleStep(
+        name=name,
+        startup=startup_hook,
+        shutdown=TemporalShutdownHook(),
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedTemporalStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedTemporalClient` as ready."""
+
+    client: RoutedTemporalClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedTemporalShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant Temporal clients."""
+
+    client: RoutedTemporalClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
+def routed_temporal_lifecycle_step(
+    name: str = "temporal_routed_lifecycle",
+    *,
+    client: RoutedTemporalClient,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedTemporalClient` registered as :data:`TemporalClientDepKey`.
+
+    Do not combine with :func:`temporal_lifecycle_step` on the same instance.
+    """
+
+    return LifecycleStep(
+        name=name,
+        startup=RoutedTemporalStartupHook(client=client),
+        shutdown=RoutedTemporalShutdownHook(client=client),
+    )

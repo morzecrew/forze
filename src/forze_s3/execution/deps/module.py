@@ -8,7 +8,7 @@ import attrs
 from forze.application.contracts.storage import StorageDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import S3Client
+from ...kernel.platform import S3ClientPort
 from .configs import S3StorageConfig
 from .deps import ConfigurableS3Storage
 from .keys import S3ClientDepKey
@@ -26,8 +26,8 @@ class S3DepsModule[K: str | StrEnum](DepsModule[K]):
     :func:`s3_lifecycle_step`) before usecases run.
     """
 
-    client: S3Client
-    """Pre-constructed S3 client (session not yet initialized)."""
+    client: S3ClientPort
+    """Pre-constructed S3 client (single endpoint or routed, session not initialized until lifecycle)."""
 
     storages: Mapping[K, S3StorageConfig] | None = attrs.field(default=None)
     """Mapping from storage names to their S3-specific configurations."""

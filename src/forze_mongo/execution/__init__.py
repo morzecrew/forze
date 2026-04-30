@@ -6,7 +6,7 @@ from .deps import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
 )
-from .lifecycle import mongo_lifecycle_step
+from .lifecycle import mongo_lifecycle_step, routed_mongo_lifecycle_step
 
 # ----------------------- #
 
@@ -14,6 +14,7 @@ __all__ = [
     "MongoDepsModule",
     "MongoClientDepKey",
     "mongo_lifecycle_step",
+    "routed_mongo_lifecycle_step",
     "MongoDocumentConfig",
     "MongoReadOnlyDocumentConfig",
 ]

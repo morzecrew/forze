@@ -17,7 +17,7 @@ from forze.application.contracts.queue import (
 )
 from forze_contrib.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import SQSClient
+from ..kernel.platform import SQSClientPort
 from .codecs import SQSQueueCodec
 
 # ----------------------- #
@@ -32,7 +32,7 @@ class SQSQueueAdapter[M: BaseModel](
 ):
     """SQS queue adapter."""
 
-    client: SQSClient
+    client: SQSClientPort
     """SQS client instance."""
 
     codec: SQSQueueCodec[M]

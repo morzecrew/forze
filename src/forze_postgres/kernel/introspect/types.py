@@ -29,8 +29,8 @@ class PostgresType:
 PostgresColumnTypes = dict[str, PostgresType]
 """Column name to :class:`PostgresType` mapping for one relation."""
 
-PostgresColumnCache = dict[tuple[str, str], PostgresColumnTypes]
-"""Cache keyed by ``(schema, relation)`` holding column type maps."""
+PostgresColumnCache = dict[tuple[str, str, str], PostgresColumnTypes]
+"""Cache keyed by ``(partition, schema, relation)`` holding column type maps."""
 
 # ....................... #
 
@@ -67,11 +67,11 @@ class PostgresIndexInfo:
 PostgresIndexEngine = Literal["pgroonga", "fts", "unknown"]
 """Classified search engine for an index."""
 
-PostgresIndexCache = dict[tuple[str, str], PostgresIndexInfo]
-"""Cache keyed by ``(schema, index)`` holding index metadata."""
+PostgresIndexCache = dict[tuple[str, str, str], PostgresIndexInfo]
+"""Cache keyed by ``(partition, schema, index)`` holding index metadata."""
 
-PostgresIndexDefCache = dict[tuple[str, str], str]
-"""Cache keyed by ``(schema, index)`` holding raw index definitions."""
+PostgresIndexDefCache = dict[tuple[str, str, str], str]
+"""Cache keyed by ``(partition, schema, index)`` holding raw index definitions."""
 
 # ....................... #
 
@@ -80,5 +80,5 @@ PostgresRelationKind = Literal[
 ]
 """Kind of a Postgres relation (table, view, etc.)."""
 
-PostgresRelationCache = dict[tuple[str, str], PostgresRelationKind]
-"""Cache keyed by ``(schema, relation)`` holding relation kinds."""
+PostgresRelationCache = dict[tuple[str, str, str], PostgresRelationKind]
+"""Cache keyed by ``(partition, schema, relation)`` holding relation kinds."""

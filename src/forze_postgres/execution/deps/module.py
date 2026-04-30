@@ -1,5 +1,6 @@
 """Postgres dependency module for the application kernel."""
 
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Mapping, final
 
@@ -18,7 +19,7 @@ from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.introspect import PostgresIntrospector
-from ...kernel.platform import PostgresClient
+from ...kernel.platform import PostgresClientPort
 from .configs import (
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
@@ -46,8 +47,16 @@ from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers Postgres clients and adapters."""
 
-    client: PostgresClient
-    """Pre-constructed Postgres client (pool not yet initialized)."""
+    client: PostgresClientPort
+    """Pre-constructed Postgres client (single-DSN or routed). For :class:`~forze_postgres.kernel.platform.RoutedPostgresClient`, set :attr:`introspector_cache_partition_key` to match tenant routing."""
+
+    introspector_cache_partition_key: Callable[[], str | None] | None = attrs.field(
+        default=None,
+    )
+    """When set, :class:`PostgresIntrospector` cache keys include this partition (e.g. tenant id).
+
+    Required for correct catalog caching with database-per-tenant routing.
+    """
 
     ro_documents: Mapping[K, PostgresReadOnlyDocumentConfig] | None = attrs.field(
         default=None
@@ -79,7 +88,10 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
         plain_deps = Deps[K].plain(
             {
                 PostgresClientDepKey: self.client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=self.client),
+                PostgresIntrospectorDepKey: PostgresIntrospector(
+                    client=self.client,
+                    cache_partition_key=self.introspector_cache_partition_key,
+                ),
             }
         )
 

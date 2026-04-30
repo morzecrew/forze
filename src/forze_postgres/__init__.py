@@ -17,17 +17,21 @@ from .execution import (
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     postgres_lifecycle_step,
+    routed_postgres_lifecycle_step,
 )
-from .kernel.platform import PostgresClient, PostgresConfig
+from .kernel.platform import PostgresClient, PostgresClientPort, PostgresConfig, RoutedPostgresClient
 
 # ----------------------- #
 
 __all__ = [
     "PostgresDepsModule",
     "PostgresClient",
+    "PostgresClientPort",
     "PostgresConfig",
+    "RoutedPostgresClient",
     "PostgresClientDepKey",
     "postgres_lifecycle_step",
+    "routed_postgres_lifecycle_step",
     "PgroongaScoreVersion",
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",

@@ -42,10 +42,8 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
-    assert_unique_ensure_ids,
-    assert_unique_upsert_pairs,
-    require_create_id_for_ensure,
-    require_create_id_for_upsert,
+    require_create_id,
+    require_create_id_for_many,
 )
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
 from forze.application.contracts.pubsub import (
@@ -1075,10 +1073,12 @@ class MockDocumentAdapter[
     ) -> None: ...
 
     async def ensure(self, dto: C, *, return_new: bool = True) -> R | None:
-        _ = require_create_id_for_ensure(dto)
+        require_create_id(dto)
+
         domain_model = self._require_domain_model()
         payload = pydantic_dump(dto, exclude={"none": True})
         domain = pydantic_validate(domain_model, payload)
+
         with self.state.lock:
             store = self._store()
             if domain.id in store:
@@ -1119,7 +1119,9 @@ class MockDocumentAdapter[
             if not return_new:
                 return None
             return []
-        assert_unique_ensure_ids(dtos)
+
+        require_create_id_for_many(dtos)
+
         if return_new:
             return [await self.ensure(dto, return_new=True) for dto in dtos]
         for dto in dtos:
@@ -1153,7 +1155,8 @@ class MockDocumentAdapter[
         *,
         return_new: bool = True,
     ) -> R | None:
-        _ = require_create_id_for_upsert(create_dto)
+        require_create_id(create_dto)
+
         domain_model = self._require_domain_model()
         payload = pydantic_dump(create_dto, exclude={"none": True})
         domain = pydantic_validate(domain_model, payload)
@@ -1199,11 +1202,15 @@ class MockDocumentAdapter[
             if not return_new:
                 return None
             return []
-        assert_unique_upsert_pairs(pairs)
+
+        require_create_id_for_many(pairs)
+
         if return_new:
             return [await self.upsert(c, u, return_new=True) for c, u in pairs]
+
         for c, u in pairs:
             await self.upsert(c, u, return_new=False)
+
         return None
 
     # ....................... #

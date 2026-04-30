@@ -3,12 +3,12 @@
 from forze.application.contracts.base import DepKey
 
 from ...kernel.introspect import PostgresIntrospector
-from ...kernel.platform import PostgresClient
+from ...kernel.platform import PostgresClientPort
 
 # ----------------------- #
 
-PostgresClientDepKey: DepKey[PostgresClient] = DepKey("postgres_client")
-"""Key used to register the :class:`PostgresClient` in the deps container."""
+PostgresClientDepKey: DepKey[PostgresClientPort] = DepKey("postgres_client")
+"""Key used to register a Postgres client (single-DSN or routed) in the deps container."""
 
 PostgresIntrospectorDepKey: DepKey[PostgresIntrospector] = DepKey(
     "postgres_introspector"

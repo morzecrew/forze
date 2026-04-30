@@ -179,13 +179,14 @@ class MongoClient:
     # ....................... #
     # DB/collection helpers
 
-    def db(self, name: str | None = None) -> AsyncDatabase[JsonDict]:
+    async def db(self, name: str | None = None) -> AsyncDatabase[JsonDict]:
         """Return an async database handle.
 
         :param name: Database name. Defaults to the name passed to :meth:`initialize`.
         """
 
         db_name = name or self.__db_name
+
         if not db_name:
             raise InfrastructureError("Mongo database name is not configured")
 
@@ -193,7 +194,7 @@ class MongoClient:
 
     # ....................... #
 
-    def collection(
+    async def collection(
         self,
         name: str,
         *,
@@ -201,7 +202,8 @@ class MongoClient:
     ) -> AsyncCollection[JsonDict]:
         """Return an async collection handle bound to :meth:`db`."""
 
-        return self.db(db_name).get_collection(name)
+        d = await self.db(db_name)
+        return d.get_collection(name)
 
     # ....................... #
     # Context helpers

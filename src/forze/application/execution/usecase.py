@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import Token
 from typing import Any, Protocol, Self, final, runtime_checkable
 
 import attrs
@@ -159,8 +160,18 @@ class Usecase[Args, R]:
 
         logger.debug("Starting usecase execution")
 
-        chain = self._build_chain()
-        result = await chain(args)
+        dispatch_token: Token[tuple[str, ...]] | None = None
+
+        if self.operation_id is not None:
+            dispatch_token = self.ctx.push_usecase_dispatch(self.operation_id)
+
+        try:
+            chain = self._build_chain()
+            result = await chain(args)
+
+        finally:
+            if dispatch_token is not None:
+                self.ctx.pop_usecase_dispatch(dispatch_token)
 
         logger.debug("Usecase execution completed")
 

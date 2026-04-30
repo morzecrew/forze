@@ -12,17 +12,27 @@ from .execution import (
     MongoDocumentConfig,
     MongoReadOnlyDocumentConfig,
     mongo_lifecycle_step,
+    routed_mongo_lifecycle_step,
 )
-from .kernel.platform import MongoClient, MongoConfig, mongo_handled
+from .kernel.platform import (
+    MongoClient,
+    MongoClientPort,
+    MongoConfig,
+    RoutedMongoClient,
+    mongo_handled,
+)
 
 # ----------------------- #
 
 __all__ = [
     "MongoDepsModule",
     "MongoClient",
+    "MongoClientPort",
     "MongoConfig",
+    "RoutedMongoClient",
     "MongoClientDepKey",
     "mongo_lifecycle_step",
+    "routed_mongo_lifecycle_step",
     "mongo_handled",
     "MongoDocumentConfig",
     "MongoReadOnlyDocumentConfig",

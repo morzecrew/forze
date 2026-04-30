@@ -25,7 +25,7 @@ from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
 from forze_contrib.tenancy import MultiTenancyMixin
 
-from ..kernel.platform import S3Client
+from ..kernel.platform import S3ClientPort
 from .codecs import default_b64_codec, default_path_codec
 
 # ----------------------- #
@@ -43,7 +43,7 @@ class S3StorageAdapter(StoragePort, MultiTenancyMixin):
     round-trips through S3 ``HeadObject``.
     """
 
-    client: S3Client
+    client: S3ClientPort
     """S3 client."""
 
     bucket: str
@@ -216,7 +216,7 @@ class S3StorageAdapter(StoragePort, MultiTenancyMixin):
     ) -> tuple[list[StoredObject], int]:
         """List stored objects with pagination.
 
-        Fetches object keys via :meth:`S3Client.list_objects` and enriches each
+        Fetches object keys via :meth:`S3ClientPort.list_objects` and enriches each
         entry with head metadata in parallel.
 
         :param limit: Maximum number of objects to return.

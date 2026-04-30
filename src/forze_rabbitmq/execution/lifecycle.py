@@ -1,12 +1,12 @@
 """Lifecycle hooks for RabbitMQ client initialization and shutdown."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 
 from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
 
-from ..kernel.platform import RabbitMQConfig
+from ..kernel.platform import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
 from .deps import RabbitMQClientDepKey
 
 # ----------------------- #
@@ -23,7 +23,7 @@ class RabbitMQStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        rabbitmq_client = ctx.dep(RabbitMQClientDepKey)
+        rabbitmq_client = cast(RabbitMQClient, ctx.dep(RabbitMQClientDepKey))
         await rabbitmq_client.initialize(self.dsn, config=self.config)
 
 
@@ -54,3 +54,51 @@ def rabbitmq_lifecycle_step(
     shutdown_hook = RabbitMQShutdownHook()
 
     return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRabbitMQStartupHook(LifecycleHook):
+    """Startup hook that marks a :class:`RoutedRabbitMQClient` as ready."""
+
+    client: RoutedRabbitMQClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.startup()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RoutedRabbitMQShutdownHook(LifecycleHook):
+    """Shutdown hook that closes all per-tenant RabbitMQ connections."""
+
+    client: RoutedRabbitMQClient
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        await self.client.close()
+
+
+# ....................... #
+
+
+def routed_rabbitmq_lifecycle_step(
+    name: str = "rabbitmq_routed_lifecycle",
+    *,
+    client: RoutedRabbitMQClient,
+) -> LifecycleStep:
+    """Lifecycle for :class:`RoutedRabbitMQClient` registered as :data:`RabbitMQClientDepKey`.
+
+    Do not combine with :func:`rabbitmq_lifecycle_step` on the same instance.
+    """
+
+    return LifecycleStep(
+        name=name,
+        startup=RoutedRabbitMQStartupHook(client=client),
+        shutdown=RoutedRabbitMQShutdownHook(client=client),
+    )

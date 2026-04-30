@@ -8,7 +8,7 @@ import attrs
 from forze.application.contracts.queue import QueueCommandDepKey, QueueQueryDepKey
 from forze.application.execution import Deps, DepsModule
 
-from ...kernel.platform import RabbitMQClient
+from ...kernel.platform import RabbitMQClientPort
 from .configs import RabbitMQQueueConfig
 from .deps import ConfigurableRabbitMQQueueRead, ConfigurableRabbitMQQueueWrite
 from .keys import RabbitMQClientDepKey
@@ -21,8 +21,8 @@ from .keys import RabbitMQClientDepKey
 class RabbitMQDepsModule[K: str | StrEnum](DepsModule[K]):
     """Dependency module that registers RabbitMQ client and queue ports."""
 
-    client: RabbitMQClient
-    """Pre-constructed RabbitMQ client (connection not yet initialized)."""
+    client: RabbitMQClientPort
+    """Pre-constructed RabbitMQ client (single-DSN or routed, not connected until lifecycle)."""
 
     queue_readers: Mapping[K, RabbitMQQueueConfig] | None = attrs.field(default=None)
     """Mapping from queue names to their RabbitMQ-specific configurations."""

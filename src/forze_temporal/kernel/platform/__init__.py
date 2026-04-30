@@ -1,5 +1,12 @@
 from .client import TemporalClient, TemporalConfig
+from .port import TemporalClientPort
+from .routed_client import RoutedTemporalClient
 
 # ----------------------- #
 
-__all__ = ["TemporalClient", "TemporalConfig"]
+__all__ = [
+    "RoutedTemporalClient",
+    "TemporalClient",
+    "TemporalClientPort",
+    "TemporalConfig",
+]

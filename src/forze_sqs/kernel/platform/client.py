@@ -158,8 +158,9 @@ class SQSClient:
 
     # ....................... #
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Drop the current session and queue URL cache."""
+
         self.__session = None
         self.__opts = None
         self.__queue_url_cache.clear()

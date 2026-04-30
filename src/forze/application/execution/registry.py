@@ -15,7 +15,12 @@ from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 
 from .context import ExecutionContext
-from .plan import OpKey, UsecasePlan
+from .dispatch import (
+    assert_dispatch_edges_reference_registered_ops,
+    assert_dispatch_graph_acyclic,
+    expand_wildcard_dispatch_sources,
+)
+from .plan import WILDCARD, OpKey, UsecasePlan
 from .usecase import Usecase, UsecaseFactory
 
 # ----------------------- #
@@ -44,6 +49,13 @@ class UsecaseRegistry:
     _finalized: bool = attrs.field(default=False, init=False, repr=False)
     """Whether the registry is finalized and immutable."""
 
+    _dispatch_edges: frozenset[tuple[str, str]] = attrs.field(
+        factory=frozenset,
+        init=False,
+        repr=False,
+    )
+    """Directed edges ``(from_op, to_op)`` for static dispatch cycle validation."""
+
     # ....................... #
 
     def _raise_if_finalized(self) -> None:
@@ -51,6 +63,22 @@ class UsecaseRegistry:
 
         if self._finalized:
             raise CoreError("Registry is finalized")
+
+    # ....................... #
+
+    def _validate_dispatch_graph_for_finalize(self) -> None:
+        """Ensure declared and plan-derived dispatch edges form a DAG."""
+
+        derived = self._plan.derived_dispatch_edges()
+        combined = self._dispatch_edges | derived
+        registered = set(self.defaults.keys())
+        expanded = expand_wildcard_dispatch_sources(
+            combined,
+            registered,
+            wildcard=WILDCARD,
+        )
+        assert_dispatch_graph_acyclic(expanded)
+        assert_dispatch_edges_reference_registered_ops(expanded, registered)
 
     # ....................... #
 
@@ -85,6 +113,8 @@ class UsecaseRegistry:
         if not registry_id:
             raise CoreError("Registry id cannot be empty")
 
+        self._validate_dispatch_graph_for_finalize()
+
         if inplace:
             self._finalized = True
             self._registry_id = registry_id
@@ -95,6 +125,7 @@ class UsecaseRegistry:
             new._finalized = True
             new._registry_id = registry_id
             new._plan = self._plan
+            new._dispatch_edges = self._dispatch_edges
 
             return new
 
@@ -112,6 +143,68 @@ class UsecaseRegistry:
             raise CoreError("Registry id is not set")
 
         return f"{self._registry_id}.{op}"
+
+    # ....................... #
+
+    @overload
+    def add_dispatch_edge(
+        self,
+        from_op: OpKey,
+        to_op: OpKey,
+        *,
+        inplace: Literal[True],
+    ) -> None:
+        """Record a dispatch edge and mutate the registry in place."""
+        ...
+
+    @overload
+    def add_dispatch_edge(
+        self,
+        from_op: OpKey,
+        to_op: OpKey,
+        *,
+        inplace: Literal[False] = False,
+    ) -> Self:
+        """Record a dispatch edge and return a new registry."""
+        ...
+
+    def add_dispatch_edge(
+        self,
+        from_op: OpKey,
+        to_op: OpKey,
+        *,
+        inplace: bool = False,
+    ) -> Self | None:
+        """Declare that ``from_op`` may synchronously dispatch ``to_op`` (e.g. via an effect).
+
+        Used for static cycle detection at :meth:`finalize`. Runtime re-entrancy
+        is still guarded by :meth:`ExecutionContext.push_usecase_dispatch`.
+
+        :param from_op: Parent logical operation key.
+        :param to_op: Child logical operation key.
+        :param inplace: When ``True``, mutate this registry.
+        """
+
+        self._raise_if_finalized()
+
+        edge = (str(from_op), str(to_op))
+        new_edges = self._dispatch_edges | frozenset({edge})
+
+        logger.trace(
+            "Adding dispatch edge %s -> %s (inplace=%s)",
+            edge[0],
+            edge[1],
+            inplace,
+        )
+
+        if inplace:
+            self._dispatch_edges = new_edges
+            return None
+
+        new = attrs.evolve(self)
+        new._dispatch_edges = new_edges
+
+        return new
 
     # ....................... #
 
@@ -590,6 +683,13 @@ class UsecaseRegistry:
             len(registries),
             len(acc.defaults),
             len(acc._plan.ops),
+        )
+
+        acc._dispatch_edges = frozenset(
+            {
+                *acc._dispatch_edges,
+                *[e for reg in registries for e in reg._dispatch_edges],
+            }
         )
 
         return acc
