@@ -53,12 +53,12 @@ jobs:
           python-version: "3.13"
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@0b7b740d4cd9b44f80c907b666497564df09d1d9 # v4.32.6
+        uses: github/codeql-action/init@19b3a84f58f551a99396341585444cb37be03324 # v4.32.6
         with:
           languages: ${{ matrix.language }}
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@0b7b740d4cd9b44f80c907b666497564df09d1d9 # v4.32.6
+        uses: github/codeql-action/autobuild@19b3a84f58f551a99396341585444cb37be03324 # v4.32.6
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@0b7b740d4cd9b44f80c907b666497564df09d1d9 # v4.32.6
+        uses: github/codeql-action/analyze@19b3a84f58f551a99396341585444cb37be03324 # v4.32.6
