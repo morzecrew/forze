@@ -1,9 +1,7 @@
 """Structural protocol for RabbitMQ clients (single DSN or tenant-routed)."""
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, AsyncIterator, Protocol, Sequence
+from typing import AsyncContextManager, AsyncIterator, Awaitable, Protocol, Sequence
 
 from aio_pika.abc import AbstractChannel
 
@@ -15,16 +13,13 @@ from .types import RabbitMQQueueMessage
 class RabbitMQClientPort(Protocol):
     """Operations implemented by :class:`RabbitMQClient` and routed variants."""
 
-    async def close(self) -> None:
-        ...  # pragma: no cover
+    def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    async def health(self) -> tuple[str, bool]:
-        ...  # pragma: no cover
+    def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
-    def channel(self) -> AsyncContextManager[AbstractChannel]:
-        ...  # pragma: no cover
+    def channel(self) -> AsyncContextManager[AbstractChannel]: ...  # pragma: no cover
 
-    async def enqueue(
+    def enqueue(
         self,
         queue: str,
         body: bytes,
@@ -33,10 +28,9 @@ class RabbitMQClientPort(Protocol):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_id: str | None = None,
-    ) -> str:
-        ...  # pragma: no cover
+    ) -> Awaitable[str]: ...  # pragma: no cover
 
-    async def enqueue_many(
+    def enqueue_many(
         self,
         queue: str,
         bodies: Sequence[bytes],
@@ -45,17 +39,15 @@ class RabbitMQClientPort(Protocol):
         key: str | None = None,
         enqueued_at: datetime | None = None,
         message_ids: Sequence[str] | None = None,
-    ) -> list[str]:
-        ...  # pragma: no cover
+    ) -> Awaitable[list[str]]: ...  # pragma: no cover
 
-    async def receive(
+    def receive(
         self,
         queue: str,
         *,
         limit: int | None = None,
         timeout: timedelta | None = None,
-    ) -> list[RabbitMQQueueMessage]:
-        ...  # pragma: no cover
+    ) -> Awaitable[list[RabbitMQQueueMessage]]: ...  # pragma: no cover
 
     def consume(
         self,
@@ -66,14 +58,16 @@ class RabbitMQClientPort(Protocol):
         """Async iterator of queue messages (async generator on implementations)."""
         ...  # pragma: no cover
 
-    async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        ...  # pragma: no cover
+    def ack(
+        self,
+        queue: str,
+        ids: Sequence[str],
+    ) -> Awaitable[int]: ...  # pragma: no cover
 
-    async def nack(
+    def nack(
         self,
         queue: str,
         ids: Sequence[str],
         *,
         requeue: bool = True,
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover

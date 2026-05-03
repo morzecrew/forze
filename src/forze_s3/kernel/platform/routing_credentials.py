@@ -1,7 +1,5 @@
 """Structured secret payload for per-tenant S3-compatible storage credentials."""
 
-from __future__ import annotations
-
 from pydantic import BaseModel, Field
 
 # ----------------------- #

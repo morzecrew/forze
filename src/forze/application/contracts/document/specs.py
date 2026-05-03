@@ -1,6 +1,6 @@
 """Specifications for document models and storage layout."""
 
-from typing import Any, Generic, TypedDict, TypeVar, final
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -38,7 +38,7 @@ class DocumentWriteTypes(TypedDict, Generic[D, C, U]):
     create_cmd: type[C]
     """Model type for the create command."""
 
-    update_cmd: type[U]
+    update_cmd: NotRequired[type[U]]
     """Model type for the update command."""
 
 
@@ -83,6 +83,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         """Return ``True`` when the update command exposes writable fields."""
 
         if self.write is None:
+            return False
+
+        if "update_cmd" not in self.write:
             return False
 
         return self.write["update_cmd"].model_fields != {}

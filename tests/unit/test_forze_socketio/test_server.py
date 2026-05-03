@@ -38,10 +38,8 @@ class TestSocketIOServerBuilders:
     def test_build_server_configures_redis_manager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            server_module.socketio, "AsyncRedisManager", StubRedisManager
-        )
-        monkeypatch.setattr(server_module.socketio, "AsyncServer", StubAsyncServer)
+        monkeypatch.setattr(server_module, "AsyncRedisManager", StubRedisManager)
+        monkeypatch.setattr(server_module, "AsyncServer", StubAsyncServer)
 
         server = server_module.build_socketio_server(
             redis_url="redis://localhost:6379/0",
@@ -63,7 +61,7 @@ class TestSocketIOServerBuilders:
             )
 
     def test_build_asgi_app_wraps_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(server_module.socketio, "ASGIApp", StubASGIApp)
+        monkeypatch.setattr(server_module, "ASGIApp", StubASGIApp)
 
         server = object()
         app = server_module.build_socketio_asgi_app(
@@ -79,6 +77,6 @@ class TestSocketIOServerBuilders:
     def test_build_server_without_redis_url(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(server_module.socketio, "AsyncServer", StubAsyncServer)
+        monkeypatch.setattr(server_module, "AsyncServer", StubAsyncServer)
         server = server_module.build_socketio_server()
         assert server.kwargs.get("client_manager") is None

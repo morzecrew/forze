@@ -1,7 +1,8 @@
-from .client import S3Client, S3Config
+from .client import S3Client
 from .port import S3ClientPort
-from .routing_credentials import S3RoutingCredentials
 from .routed_client import RoutedS3Client
+from .routing_credentials import S3RoutingCredentials
+from .value_objects import S3Config
 
 # ----------------------- #
 

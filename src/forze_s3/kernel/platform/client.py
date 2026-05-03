@@ -7,8 +7,8 @@ require_s3()
 import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import datetime, timedelta
-from typing import Any, AsyncIterator, TypedDict, cast, final
+from datetime import timedelta
+from typing import Any, AsyncIterator, cast, final
 
 import aioboto3
 import attrs
@@ -20,78 +20,15 @@ from types_aiobotocore_s3.type_defs import ObjectTypeDef
 from forze.base.errors import CoreError, NotFoundError
 
 from .errors import s3_handled
+from .port import S3ClientPort
+from .value_objects import S3Config, S3ConnectionOpts, S3Head
 
 # ----------------------- #
 
 
 @final
-class S3Config(TypedDict, total=False):
-    """S3 optional configuration (botocore config)."""
-
-    region_name: str
-    signature_version: str
-    user_agent: str
-    user_agent_extra: str
-    connect_timeout: timedelta
-    read_timeout: timedelta
-    parameter_validation: bool
-    max_pool_connections: int
-    proxies: dict[str, str]
-    proxies_config: dict[str, Any]
-    s3: dict[str, Any]
-    retries: dict[str, Any]
-    client_cert: str | tuple[str, str]
-    inject_host_prefix: bool
-    use_dualstack_endpoint: bool
-    use_fips_endpoint: bool
-    ignore_configured_endpoint_urls: bool
-    tcp_keepalive: bool
-    request_min_compression_size_bytes: int
-
-
-# ....................... #
-
-
-@final
-class S3Head(TypedDict, total=False):
-    """Metadata returned by an S3 ``HeadObject`` call."""
-
-    content_type: str
-    """MIME type of the object."""
-
-    metadata: dict[str, str]
-    """User-defined metadata key-value pairs."""
-
-    size: int
-    """Content length in bytes."""
-
-    last_modified: datetime
-    """Timestamp of the last modification."""
-
-    etag: str
-    """Entity tag with surrounding quotes stripped."""
-
-
-# ....................... #
-
-
-@final
-@attrs.define(frozen=True, slots=True, kw_only=True)
-class _S3ConnectionOpts:
-    """S3 connection options."""
-
-    endpoint: str
-    access_key_id: str
-    secret_access_key: str | SecretStr
-    config: AioConfig | None = attrs.field(default=None)
-
-
-# ....................... #
-
-
-@final
 @attrs.define(slots=True)
-class S3Client:
+class S3Client(S3ClientPort):
     """Async S3 client with context-scoped connection reuse.
 
     Must be :meth:`initialize`d with endpoint credentials before use. The
@@ -99,7 +36,7 @@ class S3Client:
     current context; nested entries reuse the same client via context variables.
     """
 
-    __opts: _S3ConnectionOpts | None = attrs.field(default=None, init=False)
+    __opts: S3ConnectionOpts | None = attrs.field(default=None, init=False)
     __session: aioboto3.Session | None = attrs.field(default=None, init=False)
 
     __ctx_client: ContextVar[AsyncS3Client | None] = attrs.field(
@@ -151,7 +88,7 @@ class S3Client:
 
         aio_config = AioConfig(**aio_params)  # type: ignore
 
-        self.__opts = _S3ConnectionOpts(
+        self.__opts = S3ConnectionOpts(
             endpoint=endpoint,
             access_key_id=access_key_id,
             secret_access_key=secret_access_key,

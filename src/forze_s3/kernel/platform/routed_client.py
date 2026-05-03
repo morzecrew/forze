@@ -1,12 +1,10 @@
 """S3 client that resolves credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, final
 from uuid import UUID
 
 import attrs
@@ -20,14 +18,17 @@ from forze.application.contracts.secrets import (
 )
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 
-from .client import S3Client, S3Config, S3Head
+from .client import S3Client
+from .port import S3ClientPort
 from .routing_credentials import S3RoutingCredentials
+from .value_objects import S3Config, S3Head
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True)
-class RoutedS3Client:
+class RoutedS3Client(S3ClientPort):
     """Routes each operation to a lazily created :class:`S3Client` for the current tenant.
 
     Credentials are JSON secrets (see :class:`S3RoutingCredentials`) resolved via

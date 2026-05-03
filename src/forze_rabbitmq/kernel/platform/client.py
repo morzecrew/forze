@@ -23,7 +23,9 @@ from aio_pika.abc import (
 from forze.base.errors import InfrastructureError
 
 from .errors import rabbitmq_handled
+from .port import RabbitMQClientPort
 from .types import RabbitMQQueueMessage
+from .value_objects import RabbitMQConfig
 
 # ----------------------- #
 
@@ -33,22 +35,8 @@ _KEY_HEADER = "forze_key"
 
 
 @final
-@attrs.define(frozen=True, slots=True, kw_only=True)
-class RabbitMQConfig:
-    heartbeat: int = 60
-    connect_timeout: float | None = attrs.field(default=5.0)
-    queue_durable: bool = attrs.field(default=True)
-    persistent_messages: bool = attrs.field(default=True)
-    publisher_confirms: bool = attrs.field(default=True)
-    prefetch_count: int = 100
-
-
-# ....................... #
-
-
-@final
 @attrs.define(slots=True)
-class RabbitMQClient:
+class RabbitMQClient(RabbitMQClientPort):
     __connection: AbstractRobustConnection | None = attrs.field(
         default=None, init=False
     )
@@ -92,8 +80,8 @@ class RabbitMQClient:
         self.__config = config
         self.__connection = await connect_robust(
             dsn,
-            timeout=config.connect_timeout,
-            heartbeat=config.heartbeat,
+            timeout=config.connect_timeout.total_seconds(),
+            heartbeat=config.heartbeat.total_seconds(),
         )
 
     # ....................... #

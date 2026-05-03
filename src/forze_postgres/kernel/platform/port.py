@@ -6,14 +6,23 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, AsyncContextManager, Literal, Protocol, Sequence, overload
+from typing import (
+    Any,
+    AsyncContextManager,
+    Awaitable,
+    Literal,
+    Protocol,
+    Sequence,
+    overload,
+)
 
 from psycopg import AsyncConnection
 from psycopg.abc import Params, QueryNoTemplate
 
 from forze.base.primitives import JsonDict
 
-from .client import PostgresTransactionOptions, RowFactory
+from .types import RowFactory
+from .value_objects import PostgresTransactionOptions
 
 # ----------------------- #
 
@@ -44,101 +53,103 @@ class PostgresClientPort(Protocol):
     def transaction(
         self,
         *,
-        options: PostgresTransactionOptions = ...,
+        options: PostgresTransactionOptions | None = None,
     ) -> AsyncContextManager[AsyncConnection]: ...  # pragma: no cover
 
     @overload
-    async def execute(
+    def execute(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         return_rowcount: Literal[False] = False,
-    ) -> None: ...
+    ) -> Awaitable[None]: ...
 
     @overload
-    async def execute(
+    def execute(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         return_rowcount: Literal[True],
-    ) -> int: ...
+    ) -> Awaitable[int]: ...
 
-    async def execute(
+    def execute(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         return_rowcount: bool = False,
-    ) -> int | None: ...  # pragma: no cover
+    ) -> Awaitable[int | None]: ...  # pragma: no cover
 
-    async def execute_many(
-        self, query: QueryNoTemplate, params: Sequence[Params]
-    ) -> None: ...  # pragma: no cover
+    def execute_many(
+        self,
+        query: QueryNoTemplate,
+        params: Sequence[Params],
+    ) -> Awaitable[None]: ...  # pragma: no cover
 
     @overload
-    async def fetch_all(
+    def fetch_all(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
-    ) -> list[JsonDict]: ...
+    ) -> Awaitable[list[JsonDict]]: ...
 
     @overload
-    async def fetch_all(
+    def fetch_all(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
-        row_factory: Literal["tuple"] = "tuple",
+        row_factory: Literal["tuple"],
         commit: bool = False,
-    ) -> list[tuple[Any, ...]]: ...
+    ) -> Awaitable[list[tuple[Any, ...]]]: ...
 
-    async def fetch_all(
+    def fetch_all(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> list[JsonDict] | list[tuple[Any, ...]]: ...  # pragma: no cover
+    ) -> Awaitable[list[JsonDict] | list[tuple[Any, ...]]]: ...  # pragma: no cover
 
     @overload
-    async def fetch_one(
+    def fetch_one(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
-    ) -> JsonDict | None: ...
+    ) -> Awaitable[JsonDict | None]: ...
 
     @overload
-    async def fetch_one(
+    def fetch_one(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
-        row_factory: Literal["tuple"] = "tuple",
+        row_factory: Literal["tuple"],
         commit: bool = False,
-    ) -> tuple[Any, ...] | None: ...
+    ) -> Awaitable[tuple[Any, ...] | None]: ...
 
-    async def fetch_one(
+    def fetch_one(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> JsonDict | tuple[Any, ...] | None: ...  # pragma: no cover
+    ) -> Awaitable[JsonDict | tuple[Any, ...] | None]: ...  # pragma: no cover
 
-    async def fetch_value(
+    def fetch_value(
         self,
         query: QueryNoTemplate,
         params: Params | None = None,
         *,
         default: Any = None,
-    ) -> Any: ...  # pragma: no cover
+    ) -> Awaitable[Any]: ...  # pragma: no cover

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from re import Pattern
-from typing import Any, AsyncIterator, Final, Sequence, TypedDict, cast, final
+from typing import Any, AsyncIterator, Final, Sequence, cast, final
 from uuid import uuid4
 
 import aioboto3
@@ -23,9 +23,12 @@ from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 from forze.base.errors import CoreError, InfrastructureError
 
 from .errors import sqs_handled
+from .port import SQSClientPort
 from .types import SQSQueueMessage
+from .value_objects import SQSConfig, SQSConnectionOpts
 
 # ----------------------- #
+#! TODO: Move to constants
 
 _TYPE_ATTR = "forze_type"
 _KEY_ATTR = "forze_key"
@@ -49,48 +52,9 @@ _RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
 
 
 @final
-class SQSConfig(TypedDict, total=False):
-    """SQS optional configuration (botocore config)."""
-
-    region_name: str
-    signature_version: str
-    user_agent: str
-    user_agent_extra: str
-    connect_timeout: timedelta
-    read_timeout: timedelta
-    parameter_validation: bool
-    max_pool_connections: int
-    proxies: dict[str, str]
-    client_cert: str | tuple[str, str]
-    inject_host_prefix: bool
-    use_dualstack_endpoint: bool
-    use_fips_endpoint: bool
-    tcp_keepalive: bool
-    request_min_compression_size_bytes: int
-
-
-# ....................... #
-
-
-@final
-@attrs.define(frozen=True, slots=True, kw_only=True)
-class _SQSConnectionOpts:
-    """SQS connection options."""
-
-    endpoint: str
-    region_name: str  #! Should NOT be required
-    access_key_id: str
-    secret_access_key: str | SecretStr
-    config: AioConfig | None = attrs.field(default=None)
-
-
-# ....................... #
-
-
-@final
 @attrs.define(slots=True)
-class SQSClient:
-    __opts: _SQSConnectionOpts | None = attrs.field(default=None, init=False)
+class SQSClient(SQSClientPort):
+    __opts: SQSConnectionOpts | None = attrs.field(default=None, init=False)
     __session: aioboto3.Session | None = attrs.field(default=None, init=False)
 
     __ctx_client: ContextVar[AsyncSQSClient | None] = attrs.field(
@@ -147,7 +111,7 @@ class SQSClient:
             min(pool_cap, _MAX_ENQUEUE_BATCH_CONCURRENCY),
         )
 
-        self.__opts = _SQSConnectionOpts(
+        self.__opts = SQSConnectionOpts(
             endpoint=endpoint,
             region_name=region_name,
             access_key_id=access_key_id,

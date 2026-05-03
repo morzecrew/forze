@@ -145,7 +145,7 @@ def doc_write_gw(
         read_gw=read,
         model_type=write_types["domain"],
         create_cmd_type=write_types["create_cmd"],
-        update_cmd_type=write_types["update_cmd"],
+        update_cmd_type=write_types.get("update_cmd"),
         history_gw=hist,
         strategy=bookkeeping_strategy,
         tenant_provider=ctx.get_tenant_id,

@@ -13,8 +13,7 @@ require_mongo()
 
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import timedelta
-from typing import Any, AsyncIterator, Mapping, Sequence, TypedDict, final
+from typing import Any, AsyncIterator, Mapping, Sequence, final
 
 import attrs
 from bson import ObjectId
@@ -23,62 +22,20 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.asynchronous.mongo_client import AsyncMongoClient
-from pymongo.read_concern import ReadConcern
-from pymongo.read_preferences import _ServerMode  # pyright: ignore[reportPrivateUsage]
-from pymongo.write_concern import WriteConcern
 
 from forze.base.errors import InfrastructureError
 from forze.base.primitives import JsonDict
 
 from .errors import mongo_handled
+from .port import MongoClientPort
+from .value_objects import MongoConfig, MongoTransactionOptions
 
 # ----------------------- #
 
 
 @final
-class MongoTransactionOptions(TypedDict, total=False):
-    """Options for :meth:`MongoClient.transaction`."""
-
-    read_concern: ReadConcern
-    """Read concern for the transaction. Omitted means driver default."""
-
-    write_concern: WriteConcern
-    """Write concern for the transaction. Omitted means driver default."""
-
-    read_preference: _ServerMode
-    """Read preference for the transaction. Omitted means primary."""
-
-
-# ....................... #
-
-
-@final
-@attrs.define(frozen=True, slots=True, kw_only=True)
-class MongoConfig:
-    """Client configuration for :class:`MongoClient`."""
-
-    appname: str = "forze"
-    """App name for driver metadata."""
-
-    connect_timeout: timedelta = timedelta(seconds=10)
-    """Connection timeout."""
-
-    server_selection_timeout: timedelta = timedelta(seconds=10)
-    """Server selection timeout."""
-
-    max_pool_size: int = 100
-    """Maximum pool size."""
-
-    min_pool_size: int = 0
-    """Minimum pool size."""
-
-
-# ....................... #
-
-
-@final
 @attrs.define(slots=True)
-class MongoClient:
+class MongoClient(MongoClientPort):
     """Async Mongo client with context-bound sessions and optional transactions.
 
     Must be initialized with a URI via :meth:`initialize` before use. Uses
@@ -256,7 +213,7 @@ class MongoClient:
     async def transaction(
         self,
         *,
-        options: MongoTransactionOptions = MongoTransactionOptions(),
+        options: MongoTransactionOptions | None = None,
     ) -> AsyncIterator[AsyncClientSession]:
         """Enter a transaction scope, yielding the active session.
 
@@ -269,6 +226,8 @@ class MongoClient:
 
         depth = self.__ctx_depth.get()
         parent = self.__current_session()
+
+        options = options if options is not None else MongoTransactionOptions()
 
         # Nested: just bump depth and reuse session/transaction.
         if depth > 0 and parent is not None:
@@ -289,9 +248,9 @@ class MongoClient:
 
             try:
                 async with await session.start_transaction(
-                    read_concern=options.get("read_concern"),
-                    write_concern=options.get("write_concern"),
-                    read_preference=options.get("read_preference"),
+                    read_concern=options.read_concern,
+                    write_concern=options.write_concern,
+                    read_preference=options.read_preference,
                     # max_commit_time_ms=options.get("max_commit_time_ms")
                 ):
                     yield session

@@ -4,43 +4,25 @@ require_temporal()
 
 # ....................... #
 
-from typing import Any, Final, final
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
-from temporalio.client import Client, Interceptor, WorkflowHandle
+from temporalio.client import Client, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from forze.base.errors import InfrastructureError
 
+from .port import TemporalClientPort
+from .value_objects import TemporalConfig
+
 # ----------------------- #
-
-_DEFAULT_NAMESPACE: Final[str] = "default"
-
-# ....................... #
-
-
-@attrs.define(frozen=True, slots=True, kw_only=True)
-class TemporalConfig:
-    """Temporal configuration."""
-
-    namespace: str = _DEFAULT_NAMESPACE
-    """Namespace to use for the client."""
-
-    lazy: bool = False
-    """Whether to lazy initialize the client."""
-
-    interceptors: list[Interceptor] | None = attrs.field(default=None)
-    """Interceptors to apply to the client."""
-
-
-# ....................... #
 
 
 @final
 @attrs.define(slots=True)
-class TemporalClient:
+class TemporalClient(TemporalClientPort):
     """Low level client for temporal.io."""
 
     __client: Client | None = attrs.field(default=None, init=False)

@@ -81,7 +81,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     create_cmd_type: type[C]
     """Pydantic model for creation payloads."""
 
-    update_cmd_type: type[U]
+    update_cmd_type: type[U] | None = attrs.field(default=None)
     """Pydantic model for update payloads."""
 
     history_gw: MongoHistoryGateway[D] | None = attrs.field(default=None)
@@ -130,6 +130,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 raise CoreError(
                     "Tenant awareness mismatch. Write gateway and nested history gateway must have the same tenant awareness."
                 )
+
+    # ....................... #
+
+    def _require_update_cmd(self) -> None:
+        if self.update_cmd_type is None:
+            raise CoreError("Update command type is not supported for this model")
 
     # ....................... #
 
@@ -240,7 +246,9 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         payloads = list(map(self._storage_doc, payloads))
 
-        await self.client.insert_many(await self.coll(), payloads, batch_size=batch_size)
+        await self.client.insert_many(
+            await self.coll(), payloads, batch_size=batch_size
+        )
 
         created = await self.read_gw.get_many([model.id for model in models])
         await self._write_history(*created)
@@ -323,6 +331,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
     async def upsert(self, create_dto: C, update_dto: U) -> D:
         """Insert with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
 
+        self._require_update_cmd()
+
         model = self._from_cdto(create_dto)
         data = pydantic_dump(model)
         data = self.adapt_payload_for_write(data, create=True)
@@ -354,6 +364,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk :meth:`upsert`: ``$setOnInsert`` batch, then :meth:`update_many` for existing."""
+
+        self._require_update_cmd()
 
         if not pairs:
             return []
@@ -541,6 +553,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         :returns: The updated domain document and the adapted write payload (diff).
         """
 
+        self._require_update_cmd()
+
         update_data = pydantic_dump(dto, exclude={"unset": True})
         return await self._patch(pk, update_data, rev=rev)
 
@@ -563,6 +577,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         :raises CoreError: If lengths of *pks* and *dtos* (or *revs*) differ.
         :raises ValidationError: If *pks* contains duplicates.
         """
+
+        self._require_update_cmd()
 
         if len(pks) != len(dtos):
             raise CoreError("Length mismatch between primary keys and updates")

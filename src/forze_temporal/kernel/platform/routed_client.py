@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -15,13 +15,16 @@ from temporalio.client import WorkflowHandle
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 
-from .client import TemporalClient, TemporalConfig
+from .client import TemporalClient
+from .port import TemporalClientPort
+from .value_objects import TemporalConfig
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True)
-class RoutedTemporalClient:
+class RoutedTemporalClient(TemporalClientPort):
     """Routes each call to a lazily created :class:`TemporalClient` for the current tenant.
 
     Host strings (for example ``localhost:7233``) are resolved via

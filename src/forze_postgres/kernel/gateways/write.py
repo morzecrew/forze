@@ -82,7 +82,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     read_gw: PostgresReadGateway[D]
     create_cmd_type: type[C]
-    update_cmd_type: type[U]
+    update_cmd_type: type[U] | None = attrs.field(default=None)
     history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)
     strategy: PostgresBookkeepingStrategy
 
@@ -122,6 +122,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         if self.strategy not in get_args(PostgresBookkeepingStrategy):
             raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
+
+    # ....................... #
+
+    def _require_update_cmd(self) -> None:
+        if self.update_cmd_type is None:
+            raise CoreError("Update command type is not supported for this model")
 
     # ....................... #
 
@@ -459,6 +465,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         and delegate to :meth:`update` with the current revision.
         """
 
+        self._require_update_cmd()
+
         model = pydantic_transform(self.model_type, create_dto)
         insert_data_raw = pydantic_dump(model)
         insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
@@ -500,6 +508,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bulk :meth:`upsert` using batched insert-then-:meth:`update_many` for conflicts."""
+
+        self._require_update_cmd()
 
         if not pairs:
             return []
@@ -686,8 +696,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     async def update(
-        self, pk: UUID, dto: U, *, rev: int | None = None
+        self,
+        pk: UUID,
+        dto: U,
+        *,
+        rev: int | None = None,
     ) -> tuple[D, JsonDict]:
+        self._require_update_cmd()
+
         update_data = pydantic_dump(dto, exclude={"unset": True})
 
         return await self.__patch(pk, update_data, rev=rev)
@@ -910,6 +926,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         revs: Sequence[int] | None = None,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
+        self._require_update_cmd()
+
         updates = pydantic_dump_many(dtos, exclude={"unset": True})
 
         res, res_diffs = await self.__patch_many(
@@ -1050,8 +1068,10 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         async def _delete_batch(batch: list[UUID]) -> None:
             params: list[Any] = [list(batch), *trailing_params]
+
             if self.tenant_aware:
                 n = await self.client.execute(stmt, params, return_rowcount=True)
+
                 if n != len(batch):
                     raise NotFoundError(
                         "Some records not found or not accessible in this tenant scope"
@@ -1063,6 +1083,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             list(pks[start : start + batch_size])
             for start in range(0, len(pks), batch_size)
         ]
+
         await gather_db_work(
             self.client,
             [partial(_delete_batch, b) for b in batches],

@@ -6,7 +6,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, AsyncContextManager, AsyncIterator, Mapping, Sequence
+from typing import Any, AsyncContextManager, AsyncIterator, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -19,13 +19,16 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 from forze.base.primitives import JsonDict
 
-from .client import MongoClient, MongoConfig, MongoTransactionOptions
+from .client import MongoClient
+from .port import MongoClientPort
+from .value_objects import MongoConfig, MongoTransactionOptions
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True)
-class RoutedMongoClient:
+class RoutedMongoClient(MongoClientPort):
     """Routes each call to a lazily created :class:`MongoClient` for the current tenant.
 
     Connection URIs are loaded via :meth:`AsyncSecretsPort.resolve_str` using
@@ -207,9 +210,8 @@ class RoutedMongoClient:
         @asynccontextmanager
         async def _cm() -> AsyncIterator[AsyncClientSession]:
             inner = await self._get_client()
-            opts = options if options is not None else MongoTransactionOptions()
 
-            async with inner.transaction(options=opts) as session:
+            async with inner.transaction(options=options) as session:
                 yield session
 
         return _cm()
@@ -225,9 +227,7 @@ class RoutedMongoClient:
         sort: Sequence[tuple[str, int]] | None = None,
     ) -> JsonDict | None:
         inner = await self._get_client()
-        return await inner.find_one(
-            coll, filter, projection=projection, sort=sort
-        )
+        return await inner.find_one(coll, filter, projection=projection, sort=sort)
 
     async def find_many(
         self,

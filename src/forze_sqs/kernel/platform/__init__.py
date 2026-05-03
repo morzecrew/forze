@@ -1,8 +1,9 @@
-from .client import SQSClient, SQSConfig
+from .client import SQSClient
 from .port import SQSClientPort
-from .routing_credentials import SQSRoutingCredentials
 from .routed_client import RoutedSQSClient
+from .routing_credentials import SQSRoutingCredentials
 from .types import SQSQueueMessage
+from .value_objects import SQSConfig
 
 # ----------------------- #
 

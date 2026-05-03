@@ -1,13 +1,11 @@
 """SQS client that resolves credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence
+from typing import AsyncIterator, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -20,15 +18,18 @@ from forze.application.contracts.secrets import (
 )
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 
-from .client import SQSClient, SQSConfig
+from .client import SQSClient
+from .port import SQSClientPort
 from .routing_credentials import SQSRoutingCredentials
 from .types import SQSQueueMessage
+from .value_objects import SQSConfig
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True)
-class RoutedSQSClient:
+class RoutedSQSClient(SQSClientPort):
     """Routes each operation to a lazily created :class:`SQSClient` for the current tenant.
 
     Credentials are JSON secrets (see :class:`SQSRoutingCredentials`) resolved via

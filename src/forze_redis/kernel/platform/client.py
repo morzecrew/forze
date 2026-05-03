@@ -18,28 +18,17 @@ from forze.base.primitives import JsonDict
 from forze_redis.kernel._logger import logger
 
 from .errors import redis_handled
+from .port import RedisClientPort
 from .types import RedisPubSubMessage, RedisStreamResponse
 from .utils import parse_pubsub_message, parse_stream_entries
+from .value_objects import RedisConfig
 
 # ----------------------- #
 
 
 @final
-@attrs.define(frozen=True, slots=True, kw_only=True)
-class RedisConfig:
-    """Redis configuration."""
-
-    max_size: int = 20
-    socket_timeout: float | None = attrs.field(default=None)
-    connect_timeout: float | None = attrs.field(default=None)
-
-
-# ....................... #
-
-
-@final
 @attrs.define(slots=True)
-class RedisClient:
+class RedisClient(RedisClientPort):
     """Async Redis client with connection pooling and context-bound pipelines.
 
     Must be initialised via :meth:`initialize` with a DSN before use.  Uses
@@ -73,12 +62,19 @@ class RedisClient:
             logger.trace("Client already initialized, skipping")
             return
 
+        socket_timeout = (
+            config.socket_timeout.total_seconds() if config.socket_timeout else None
+        )
+        connect_timeout = (
+            config.connect_timeout.total_seconds() if config.connect_timeout else None
+        )
+
         self.__pool = (
             ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
                 dsn,
                 max_connections=config.max_size,
-                socket_timeout=config.socket_timeout,
-                socket_connect_timeout=config.connect_timeout,
+                socket_timeout=socket_timeout,
+                socket_connect_timeout=connect_timeout,
                 decode_responses=False,
                 encoding="utf-8",
             )

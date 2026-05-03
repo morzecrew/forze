@@ -1,13 +1,11 @@
 """RabbitMQ client that resolves a DSN per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence
+from typing import AsyncIterator, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -16,14 +14,17 @@ from aio_pika.abc import AbstractChannel
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 
-from .client import RabbitMQClient, RabbitMQConfig
+from .client import RabbitMQClient
+from .port import RabbitMQClientPort
 from .types import RabbitMQQueueMessage
+from .value_objects import RabbitMQConfig
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True)
-class RoutedRabbitMQClient:
+class RoutedRabbitMQClient(RabbitMQClientPort):
     """Routes each call to a lazily created :class:`RabbitMQClient` for the current tenant.
 
     DSN strings are resolved via :meth:`SecretsPort.resolve_str` and

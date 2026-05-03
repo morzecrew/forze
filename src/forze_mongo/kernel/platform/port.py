@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import (
     Any,
     AsyncContextManager,
+    Awaitable,
     Mapping,
     Protocol,
     Sequence,
@@ -17,7 +18,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from forze.base.primitives import JsonDict
 
-from .client import MongoTransactionOptions
+from .value_objects import MongoTransactionOptions
 
 # ----------------------- #
 
@@ -25,47 +26,41 @@ from .client import MongoTransactionOptions
 class MongoClientPort(Protocol):
     """Operations implemented by :class:`MongoClient` and routed variants."""
 
-    async def close(self) -> None:
-        ...  # pragma: no cover
+    def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    async def health(self) -> tuple[str, bool]:
-        ...  # pragma: no cover
+    def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
-    async def db(self, name: str | None = None) -> AsyncDatabase[JsonDict]:
-        ...  # pragma: no cover
+    def db(
+        self, name: str | None = None
+    ) -> Awaitable[AsyncDatabase[JsonDict]]: ...  # pragma: no cover
 
-    async def collection(
+    def collection(
         self,
         name: str,
         *,
         db_name: str | None = None,
-    ) -> AsyncCollection[JsonDict]:
-        ...  # pragma: no cover
+    ) -> Awaitable[AsyncCollection[JsonDict]]: ...  # pragma: no cover
 
-    def is_in_transaction(self) -> bool:
-        ...  # pragma: no cover
+    def is_in_transaction(self) -> bool: ...  # pragma: no cover
 
-    def require_transaction(self) -> None:
-        ...  # pragma: no cover
+    def require_transaction(self) -> None: ...  # pragma: no cover
 
     def transaction(
         self,
         *,
-        options: MongoTransactionOptions = ...,
-    ) -> AsyncContextManager[AsyncClientSession]:
-        ...  # pragma: no cover
+        options: MongoTransactionOptions | None = None,
+    ) -> AsyncContextManager[AsyncClientSession]: ...  # pragma: no cover
 
-    async def find_one(
+    def find_one(
         self,
         coll: AsyncCollection[JsonDict],
         filter: Mapping[str, Any],
         *,
         projection: Mapping[str, Any] | None = None,
         sort: Sequence[tuple[str, int]] | None = None,
-    ) -> JsonDict | None:
-        ...  # pragma: no cover
+    ) -> Awaitable[JsonDict | None]: ...  # pragma: no cover
 
-    async def find_many(
+    def find_many(
         self,
         coll: AsyncCollection[JsonDict],
         filter: Mapping[str, Any],
@@ -74,99 +69,87 @@ class MongoClientPort(Protocol):
         sort: Sequence[tuple[str, int]] | None = None,
         limit: int | None = None,
         skip: int | None = None,
-    ) -> list[JsonDict]:
-        ...  # pragma: no cover
+    ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
 
-    async def aggregate(
+    def aggregate(
         self,
         coll: AsyncCollection[JsonDict],
         pipeline: Sequence[Mapping[str, Any]],
         *,
         limit: int | None = None,
-    ) -> list[JsonDict]:
-        ...  # pragma: no cover
+    ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
 
-    async def insert_one(
+    def insert_one(
         self,
         coll: AsyncCollection[Any],
         document: Mapping[str, Any],
-    ) -> ObjectId:
-        ...  # pragma: no cover
+    ) -> Awaitable[ObjectId]: ...  # pragma: no cover
 
-    async def insert_many(
+    def insert_many(
         self,
         coll: AsyncCollection[Any],
         documents: Sequence[Mapping[str, Any]],
         *,
         ordered: bool = True,
         batch_size: int = 200,
-    ) -> list[ObjectId]:
-        ...  # pragma: no cover
+    ) -> Awaitable[list[ObjectId]]: ...  # pragma: no cover
 
-    async def bulk_write(
+    def bulk_write(
         self,
         coll: AsyncCollection[Any],
         operations: Sequence[Any],
         *,
         ordered: bool = True,
-    ) -> Any:
-        ...  # pragma: no cover
+    ) -> Awaitable[Any]: ...  # pragma: no cover
 
-    async def update_one_upsert(
+    def update_one_upsert(
         self,
         coll: AsyncCollection[Any],
         flt: Mapping[str, Any],
         update: Mapping[str, Any],
-    ) -> Any:
-        ...  # pragma: no cover
+    ) -> Awaitable[Any]: ...  # pragma: no cover
 
-    async def update_one(
+    def update_one(
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
         update: Mapping[str, Any],
         *,
         upsert: bool = False,
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover
 
-    async def bulk_update(
+    def bulk_update(
         self,
         coll: AsyncCollection[Any],
         operations: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]],
         *,
         ordered: bool = True,
         batch_size: int = 200,
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover
 
-    async def update_many(
+    def update_many(
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
         update: Mapping[str, Any],
         *,
         upsert: bool = False,
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover
 
-    async def delete_one(
+    def delete_one(
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover
 
-    async def delete_many(
+    def delete_many(
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover
 
-    async def count(
+    def count(
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-    ) -> int:
-        ...  # pragma: no cover
+    ) -> Awaitable[int]: ...  # pragma: no cover

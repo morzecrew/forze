@@ -10,9 +10,8 @@ from forze.base.errors import CoreError
 from forze_postgres.kernel.platform.client import (
     PostgresClient,
     PostgresConfig,
-    _isolation_level_sql_fragment,
 )
-
+from forze_postgres.kernel.platform.helpers import isolation_level_sql_fragment
 
 # ----------------------- #
 
@@ -40,8 +39,13 @@ class TestPostgresConfig:
 
     def test_warns_on_large_min_and_max_pool_size(self) -> None:
         mock_logger = MagicMock()
-        with patch("forze_postgres.kernel.platform.client.logger", mock_logger):
+
+        with patch(
+            "forze_postgres.kernel.platform.value_objects.logger",
+            mock_logger,
+        ):
             PostgresConfig(min_size=11, max_size=101)
+
         assert mock_logger.warning.call_count == 2
         joined = " ".join(str(c) for c in mock_logger.warning.call_args_list)
         assert "Minimum size is greater than 10" in joined
@@ -51,7 +55,7 @@ class TestPostgresConfig:
 class TestIsolationLevelSql:
     def test_rejects_unknown_level(self) -> None:
         with pytest.raises(CoreError, match="Unsupported transaction isolation"):
-            _isolation_level_sql_fragment("phantom")
+            isolation_level_sql_fragment("phantom")
 
 
 class TestPostgresClientRowHelpers:

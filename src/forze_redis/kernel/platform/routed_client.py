@@ -1,13 +1,11 @@
 """Redis client that resolves a DSN per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import AsyncContextManager, AsyncIterator, Mapping, Sequence
+from typing import AsyncContextManager, AsyncIterator, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -17,14 +15,17 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 from forze.base.primitives import JsonDict
 
-from .client import RedisClient, RedisConfig
+from .client import RedisClient
+from .port import RedisClientPort
 from .types import RedisPubSubMessage, RedisStreamResponse
+from .value_objects import RedisConfig
 
 # ----------------------- #
 
 
+@final
 @attrs.define(slots=True)
-class RoutedRedisClient:
+class RoutedRedisClient(RedisClientPort):
     """Routes each call to a lazily created :class:`RedisClient` for the current tenant.
 
     DSN strings are resolved via :meth:`SecretsPort.resolve_str` and

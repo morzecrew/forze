@@ -16,18 +16,16 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 from forze.base.primitives import JsonDict
 
-from .client import (
-    PostgresClient,
-    PostgresConfig,
-    PostgresTransactionOptions,
-    RowFactory,
-)
+from .client import PostgresClient
+from .port import PostgresClientPort
+from .types import RowFactory
+from .value_objects import PostgresConfig, PostgresTransactionOptions
 
 # ----------------------- #
 
 
 @attrs.define(slots=True)
-class RoutedPostgresClient:
+class RoutedPostgresClient(PostgresClientPort):
     """Routes each call to a lazily created :class:`PostgresClient` for the current tenant.
 
     The tenant is read from ``tenant_provider`` (typically
@@ -238,9 +236,8 @@ class RoutedPostgresClient:
         options: PostgresTransactionOptions | None = None,
     ) -> AsyncIterator[AsyncConnection]:
         inner = await self._get_client()
-        opts = options if options is not None else PostgresTransactionOptions()
 
-        async with inner.transaction(options=opts) as conn:
+        async with inner.transaction(options=options) as conn:
             yield conn
 
     # ....................... #

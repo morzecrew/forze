@@ -82,7 +82,7 @@ def build_document_update_mapper(
 
     update_dto = dtos.update
 
-    if update_dto is None:
+    if update_dto is None or "update_cmd" not in spec.write:
         raise CoreError("Document specification does not support update operations")
 
     mapper = DTOMapper(in_=update_dto, out=spec.write["update_cmd"])

@@ -1,5 +1,6 @@
 """Pytest configuration for forze_rabbitmq integration tests."""
 
+from datetime import timedelta
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -54,7 +55,10 @@ async def rabbitmq_client(rabbitmq_container: RabbitMqContainer) -> RabbitMQClie
     client = RabbitMQClient()
     await client.initialize(
         dsn=dsn,
-        config=RabbitMQConfig(prefetch_count=20, connect_timeout=10.0),
+        config=RabbitMQConfig(
+            prefetch_count=20,
+            connect_timeout=timedelta(seconds=10.0),
+        ),
     )
 
     yield client

@@ -1,7 +1,11 @@
 import pytest
 
 from forze.base.errors import InfrastructureError
-from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
+from forze_postgres.kernel.platform.client import (
+    PostgresClient,
+    PostgresConfig,
+    PostgresTransactionOptions,
+)
 
 
 @pytest.mark.asyncio
@@ -287,7 +291,9 @@ async def test_nested_transaction_inner_success_releases_savepoint(
 
 @pytest.mark.asyncio
 async def test_transaction_read_only(pg_client: PostgresClient) -> None:
-    async with pg_client.transaction(options={"read_only": True}):
+    async with pg_client.transaction(
+        options=PostgresTransactionOptions(read_only=True)
+    ):
         rows = await pg_client.fetch_all("SELECT 1 AS n")
         assert rows[0]["n"] == 1
 
@@ -295,7 +301,10 @@ async def test_transaction_read_only(pg_client: PostgresClient) -> None:
 @pytest.mark.asyncio
 async def test_transaction_serializable_read_only(pg_client: PostgresClient) -> None:
     async with pg_client.transaction(
-        options={"isolation": "serializable", "read_only": True},
+        options=PostgresTransactionOptions(
+            isolation="serializable",
+            read_only=True,
+        ),
     ):
         rows = await pg_client.fetch_all("SELECT 1 AS n")
         assert rows[0]["n"] == 1
@@ -308,7 +317,10 @@ async def test_transaction_on_bound_connection_serializable(
     """Top-level :meth:`transaction` on a pre-bound pool connection (UoW-style)."""
     async with pg_client.bound_connection():
         async with pg_client.transaction(
-            options={"isolation": "serializable", "read_only": True},
+            options=PostgresTransactionOptions(
+                isolation="serializable",
+                read_only=True,
+            ),
         ):
             rows = await pg_client.fetch_all("SELECT 1 AS n")
             assert rows[0]["n"] == 1

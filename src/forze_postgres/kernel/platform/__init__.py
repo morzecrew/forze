@@ -1,6 +1,7 @@
-from .client import PostgresClient, PostgresConfig, PostgresTransactionOptions
+from .client import PostgresClient
 from .port import PostgresClientPort
 from .routed_client import RoutedPostgresClient
+from .value_objects import PostgresConfig, PostgresTransactionOptions
 
 # ----------------------- #
 
