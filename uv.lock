@@ -1882,14 +1882,14 @@ wheels = [
 
 [[package]]
 name = "psycopg-pool"
-version = "3.3.0"
+version = "3.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/9a/9470d013d0d50af0da9c4251614aeb3c1823635cab3edc211e3839db0bcf/psycopg_pool-3.3.0.tar.gz", hash = "sha256:fa115eb2860bd88fce1717d75611f41490dec6135efb619611142b24da3f6db5", size = 31606, upload-time = "2025-12-01T11:34:33.11Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/82/7a23d26039827ecd4ebe93905651029ddd307c5182ad59296dfb6f67b528/psycopg_pool-3.3.1.tar.gz", hash = "sha256:b10b10b7a175d5cc1592147dc5b7eec8a9e0834eb3ed2c4a92c858e2f51eb63c", size = 31661, upload-time = "2026-05-01T23:31:59.809Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/c3/26b8a0908a9db249de3b4169692e1c7c19048a9bc41a4d3209cee7dbb758/psycopg_pool-3.3.0-py3-none-any.whl", hash = "sha256:2e44329155c410b5e8666372db44276a8b1ebd8c90f1c3026ebba40d4bc81063", size = 39995, upload-time = "2025-12-01T11:34:29.761Z" },
+    { url = "https://files.pythonhosted.org/packages/37/ed/89c2c620af0e1660354cd8aabf9f5b21f911597ce22acb37c805d6c86bc8/psycopg_pool-3.3.1-py3-none-any.whl", hash = "sha256:2af5b432941c4c9ad5c87b3fa410aec910ec8f7c122855897983a06c45f2e4b5", size = 40023, upload-time = "2026-05-01T23:31:53.136Z" },
 ]
 
 [[package]]
@@ -2248,11 +2248,11 @@ wheels = [
 
 [[package]]
 name = "python-multipart"
-version = "0.0.26"
+version = "0.0.27"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/88/71/b145a380824a960ebd60e1014256dbb7d2253f2316ff2d73dfd8928ec2c3/python_multipart-0.0.26.tar.gz", hash = "sha256:08fadc45918cd615e26846437f50c5d6d23304da32c341f289a617127b081f17", size = 43501, upload-time = "2026-04-10T14:09:59.473Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/9b/f23807317a113dc36e74e75eb265a02dd1a4d9082abc3c1064acd22997c4/python_multipart-0.0.27.tar.gz", hash = "sha256:9870a6a8c5a20a5bf4f07c017bd1489006ff8836cff097b6933355ee2b49b602", size = 44043, upload-time = "2026-04-27T10:51:26.649Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/22/f1925cdda983ab66fc8ec6ec8014b959262747e58bdca26a4e3d1da29d56/python_multipart-0.0.26-py3-none-any.whl", hash = "sha256:c0b169f8c4484c13b0dcf2ef0ec3a4adb255c4b7d18d8e420477d2b1dd03f185", size = 28847, upload-time = "2026-04-10T14:09:58.131Z" },
+    { url = "https://files.pythonhosted.org/packages/99/78/4126abcbdbd3c559d43e0db7f7b9173fc6befe45d39a2856cc0b8ec2a5a6/python_multipart-0.0.27-py3-none-any.whl", hash = "sha256:6fccfad17a27334bd0193681b369f476eda3409f17381a2d65aa7df3f7275645", size = 29254, upload-time = "2026-04-27T10:51:24.997Z" },
 ]
 
 [[package]]
@@ -2521,7 +2521,7 @@ wheels = [
 
 [[package]]
 name = "temporalio"
-version = "1.26.0"
+version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nexus-rpc" },
@@ -2529,13 +2529,13 @@ dependencies = [
     { name = "types-protobuf" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ae/d4/fa21150a225393f87732ed6fef3cc9735d9e751edc6be415fe6e375105c6/temporalio-1.26.0.tar.gz", hash = "sha256:f4bfb35125e6f5e8c7f7ed1277c7354d812c6fac7ed5f8dbd50536cf289aaaa7", size = 2388994, upload-time = "2026-04-15T23:43:00.911Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/a1/6d59768d97ebb03676a33d10fec22a12ba6e7062801adc5946aa99138431/temporalio-1.27.0.tar.gz", hash = "sha256:fb92ae1077967ec626375a034af7e7108fe65f7b4ab1d98798ac2eecab247a65", size = 2497835, upload-time = "2026-04-30T22:39:56.305Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/27/8c421c622d18cc8e034247d5d72b89e6456937344b5bec1de40abef3c085/temporalio-1.26.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:5489040c0cf621edeb36984199dd9e4fbd2b3a07d61a4f2a8da1f2cb9820ef26", size = 14221070, upload-time = "2026-04-15T23:42:26.21Z" },
-    { url = "https://files.pythonhosted.org/packages/49/7c/d2b691d16ec5db87198c2e08dbfba58e286c096faee15753613a581abdce/temporalio-1.26.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:b18dd85771509c19ef059a31908bcd4e6130d1f67037c4db519702f3f2ad6d4a", size = 13583991, upload-time = "2026-04-15T23:42:34.357Z" },
-    { url = "https://files.pythonhosted.org/packages/05/ca/b8728451320ca9d8bb6e1680b9bd23767118f86d5b8644edf2304d533f1b/temporalio-1.26.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:46187d5f82ca2ae81f35ea5916a76db0e2f067210dc6b1852c3749475721946e", size = 13808036, upload-time = "2026-04-15T23:42:42.757Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/54/3113f5e0ac58655790abac64656373e06191b351d74bfb94692e81bd6784/temporalio-1.26.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:03300c3e5237443367ac61bb20bd726c656b3daa50310bdd436599d5bdc7cf97", size = 14336604, upload-time = "2026-04-15T23:42:49.851Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/9b/c50840a26af3587c0c8d9af04d9976743e22496996dc1a377efc75dcd316/temporalio-1.26.0-cp310-abi3-win_amd64.whl", hash = "sha256:1c4a0d82f0a3796cbf78864c799f8dca0b94cdaec68e7b8b224c859005686ec4", size = 14525849, upload-time = "2026-04-15T23:42:57.589Z" },
+    { url = "https://files.pythonhosted.org/packages/60/07/6f2a59c250b1383f7da1a607cb03a9e7bc9bd9811ce8a4fdd4e951a334b4/temporalio-1.27.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7daa4345b377b74602626326357c49ea1864bf1277fb7cb0b9f659f505c3dfb5", size = 14594920, upload-time = "2026-04-30T22:40:25.778Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/e2/16d881961ff4a8f64ab4205e5519ac6330e1cccc8c50808884e649bfc487/temporalio-1.27.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:17bed16eaf340dd48ad59178c3928ecf848674bce31f80529ea057848a29399b", size = 13940741, upload-time = "2026-04-30T22:40:35.578Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/bf/33c66ef5dcd5a63e5d4d171660e81302e4909545e6400e531d7d609d0a62/temporalio-1.27.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:449c1e4c0d4f4d6545442060b74760f491b67c075ebde6765be16468454e2874", size = 14238127, upload-time = "2026-04-30T22:40:46.198Z" },
+    { url = "https://files.pythonhosted.org/packages/db/5f/a8b7f9e26e6b7a1d0fa8e5e9e280fac3439114318fc0e65ae4c97905ebee/temporalio-1.27.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5302035f8c2fdadd69a1362309ea5514bb4129bd4e494e6b69f9a5bb85e8cb85", size = 14782764, upload-time = "2026-04-30T22:40:05.627Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/ba/9428864f1d79c92b1a2f987aab5ab8f57911c0deb8dcf738cb0d89556ed6/temporalio-1.27.0-cp310-abi3-win_amd64.whl", hash = "sha256:0f125e82ff616dd46fb45ac4d253319e989bf3734a4eb25af703d5bc27147af9", size = 14974832, upload-time = "2026-04-30T22:40:14.921Z" },
 ]
 
 [[package]]
@@ -2631,14 +2631,14 @@ sqs = [
 
 [[package]]
 name = "types-aiobotocore"
-version = "3.5.0"
+version = "3.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/99/3863acdc373aa621cf56634bb08145fb54f2213e647d893c1ac7b2636c11/types_aiobotocore-3.5.0.tar.gz", hash = "sha256:8636c9e5a9837d41e45264570349d98c0cdad51fe7961ee19664a11094bb2262", size = 87983, upload-time = "2026-04-23T02:57:02.576Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/e4/5dd83c879eff726931ef222d3ae27f67999c3bc33dfae1ca8237ebccdf17/types_aiobotocore-3.6.0.tar.gz", hash = "sha256:e990056ce9d19094a9d9b36008ca0b2a4d69948ff58f50868dd159a81f6ad69c", size = 87978, upload-time = "2026-05-02T03:05:30.694Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/d7/2b2d4d5b64b81149b08cc3fde6e826788c703c012b687cd4cc4d83742afd/types_aiobotocore-3.5.0-py3-none-any.whl", hash = "sha256:7c75ff73c10098d1d885e5b061f05945afdc4e9d0d5b573274292c329abe8a62", size = 54805, upload-time = "2026-04-23T02:56:59.721Z" },
+    { url = "https://files.pythonhosted.org/packages/19/7c/cadd4b4d0bdd6f1cbc601177a115966dabd9afa022287f3f25423274ab97/types_aiobotocore-3.6.0-py3-none-any.whl", hash = "sha256:e38d5340bfb7ecc17a40acfd1043f4ed91af9f8189daa5e438bda2e7d276d406", size = 54805, upload-time = "2026-05-02T03:05:27.911Z" },
 ]
 
 [[package]]
