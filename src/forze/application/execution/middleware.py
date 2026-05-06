@@ -3,7 +3,10 @@
 Provides :class:`Middleware`, :class:`Guard`, :class:`Effect` protocols and
 concrete implementations: :class:`GuardMiddleware`, :class:`EffectMiddleware`,
 :class:`OnFailureMiddleware`, :class:`FinallyMiddleware`, :class:`TxMiddleware`.
-Middlewares wrap usecases in a chain; guards run before, effects after.
+Conditional helpers :class:`ConditionalGuard`, :class:`ConditionalEffect`,
+:class:`WhenGuard`, and :class:`WhenEffect` implement optional predicates without
+changing the middleware chain. Middlewares wrap usecases in a chain; guards
+run before, effects after.
 """
 
 from enum import StrEnum
@@ -61,6 +64,108 @@ class Guard[Args](Protocol):  # pragma: no cover
     async def __call__(self, args: Args) -> None:
         """Validate or authorize; raises to abort the chain."""
         ...
+
+
+# ....................... #
+
+
+class ConditionalGuard[Args](Guard[Args]):
+    """Guard that runs :meth:`main` only when :meth:`condition` is true.
+
+    For a cheap synchronous predicate on *args*, override :meth:`condition`.
+    Implement :meth:`main` with the real validation or authorization logic.
+
+    Satisfies :class:`Guard` structurally via :meth:`__call__`.
+    """
+
+    def condition(self, args: Args) -> bool:
+        return True
+
+    # ....................... #
+
+    async def main(self, args: Args) -> None:
+        """Run when :meth:`condition` is true; may raise to abort."""
+
+        raise NotImplementedError
+
+    # ....................... #
+
+    async def __call__(self, args: Args) -> None:
+        if self.condition(args):
+            await self.main(args)
+
+
+# ....................... #
+
+
+class ConditionalEffect[Args, R](Effect[Args, R]):
+    """Effect that runs :meth:`main` only when :meth:`condition` is true.
+
+    When the condition is false, the incoming result is returned unchanged.
+
+    Satisfies :class:`Effect` structurally via :meth:`__call__`.
+    """
+
+    def condition(self, args: Args, res: R) -> bool:
+        return True
+
+    # ....................... #
+
+    async def main(self, args: Args, res: R) -> R:
+        """Run when :meth:`condition` is true; return the (possibly updated) result."""
+
+        raise NotImplementedError
+
+    # ....................... #
+
+    async def __call__(self, args: Args, res: R) -> R:
+        if self.condition(args, res):
+            return await self.main(args, res)
+        return res
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class WhenGuard[Args](Guard[Args]):
+    """Wrap a :class:`Guard` and invoke it only when ``when(args)`` is true.
+
+    Use this at wiring time to reuse an existing guard under a predicate.
+    Subclass :class:`ConditionalGuard` when the condition is intrinsic to one
+    guard type.
+    """
+
+    guard: Guard[Args]
+    when: Callable[[Args], bool]
+
+    # ....................... #
+
+    async def __call__(self, args: Args) -> None:
+        if self.when(args):
+            await self.guard(args)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class WhenEffect[Args, R](Effect[Args, R]):
+    """Wrap an :class:`Effect` and invoke it only when ``when(args, res)`` is true.
+
+    When the predicate is false, *res* is returned unchanged.
+    """
+
+    effect: Effect[Args, R]
+    when: Callable[[Args, R], bool]
+
+    # ....................... #
+
+    async def __call__(self, args: Args, res: R) -> R:
+        if self.when(args, res):
+            return await self.effect(args, res)
+
+        return res
 
 
 # ....................... #

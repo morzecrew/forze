@@ -8,6 +8,7 @@ from .document import (
     DocumentUpdateRes,
 )
 from .list_ import (
+    AggregatedListRequestDTO,
     CursorListRequestDTO,
     ListRequestDTO,
     RawCursorListRequestDTO,
@@ -55,4 +56,5 @@ __all__ = [
     "DocumentNumberIdDTO",
     "DocumentUpdateRes",
     "CursorPagination",
+    "AggregatedListRequestDTO",
 ]

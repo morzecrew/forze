@@ -17,6 +17,7 @@ from forze.application.execution import ExecutionContext, UsecaseRegistry
 from .._logger import logger
 from ..http import SimpleHttpEndpointSpec, attach_http_endpoint
 from .endpoints import (
+    build_document_aggregated_list_endpoint_spec,
     build_document_create_endpoint_spec,
     build_document_delete_endpoint_spec,
     build_document_get_by_number_id_endpoint_spec,
@@ -54,6 +55,7 @@ def attach_document_endpoints(
     raw_list_endpoint = endpoints.get("raw_list", False)
     list_cursor_endpoint = endpoints.get("list_cursor", False)
     raw_list_cursor_endpoint = endpoints.get("raw_list_cursor", False)
+    aggregated_list_endpoint = endpoints.get("aggregated_list", False)
     create_endpoint = endpoints.get("create", False)
     update_endpoint = endpoints.get("update", False)
     kill_endpoint = endpoints.get("kill", False)
@@ -140,6 +142,26 @@ def attach_document_endpoints(
         attach_http_endpoint(
             router=router,
             spec=raw_list_endpoint_spec,
+            registry=registry,
+            ctx_dep=ctx_dep,
+            exclude_none=exclude_none,
+        )
+
+    if aggregated_list_endpoint is not False:
+        _aggregated_list = (
+            aggregated_list_endpoint
+            if aggregated_list_endpoint is not True
+            else SimpleHttpEndpointSpec()
+        )
+
+        aggregated_list_endpoint_spec = build_document_aggregated_list_endpoint_spec(
+            dtos=dtos,
+            path_override=_aggregated_list.get("path_override"),
+            metadata=_aggregated_list.get("metadata"),
+        )
+        attach_http_endpoint(
+            router=router,
+            spec=aggregated_list_endpoint_spec,
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,

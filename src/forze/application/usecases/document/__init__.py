@@ -9,6 +9,7 @@ from .create import CreateDocument
 from .delete import DeleteDocument, KillDocument, RestoreDocument
 from .get import GetDocument, GetDocumentByNumberId
 from .list_ import (
+    AggregatedListDocuments,
     RawCursorListDocuments,
     RawListDocuments,
     TypedCursorListDocuments,
@@ -30,4 +31,5 @@ __all__ = [
     "RawListDocuments",
     "TypedCursorListDocuments",
     "RawCursorListDocuments",
+    "AggregatedListDocuments",
 ]

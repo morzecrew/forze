@@ -1,10 +1,12 @@
 from typing import Any
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.mapping import MapperPort
 from forze.application.dto import (
+    AggregatedListRequestDTO,
     CursorListRequestDTO,
     CursorPaginated,
     ListRequestDTO,
@@ -14,7 +16,6 @@ from forze.application.dto import (
     RawListRequestDTO,
     RawPaginated,
 )
-from pydantic import BaseModel
 from forze.application.execution import Usecase
 
 # ----------------------- #
@@ -40,6 +41,7 @@ class TypedListDocuments[Out: BaseModel](Usecase[ListRequestDTO, Paginated[Out]]
         :param args: List arguments (body, page, size).
         :returns: Paginated list of read models.
         """
+
         page = args.page
         size = args.size
         limit = size
@@ -174,3 +176,44 @@ class RawCursorListDocuments(Usecase[RawCursorListRequestDTO, RawCursorPaginated
         )
 
         return RawCursorPaginated.from_page(res)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AggregatedListDocuments(Usecase[AggregatedListRequestDTO, RawPaginated]):
+    """Usecase that fetches multiple documents by filters and sorts with aggregates."""
+
+    doc: DocumentQueryPort[Any]
+    """Document port for list operations."""
+
+    mapper: MapperPort[AggregatedListRequestDTO, AggregatedListRequestDTO] | None = (
+        attrs.field(default=None)
+    )
+    """Optional mapper to transform incoming request DTO"""
+
+    # ....................... #
+
+    async def main(self, args: AggregatedListRequestDTO) -> RawPaginated:
+        page = args.page
+        size = args.size
+        limit = size
+        offset = (page - 1) * limit
+        body = args
+
+        if self.mapper:
+            body = await self.mapper(body, ctx=self.ctx)
+
+        res = await self.doc.find_many(
+            filters=body.filters,
+            aggregates=body.aggregates,
+            sorts=body.sorts,
+            pagination={
+                "limit": limit,
+                "offset": offset,
+            },
+            return_count=True,
+        )
+
+        return RawPaginated.from_page(res)

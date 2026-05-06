@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze.application.execution`: `ConditionalGuard`, `ConditionalEffect` (template `condition` + `main` with unified `__call__`), and composable `WhenGuard` / `WhenEffect` wrappers for predicates at wiring time.
 - `forze.application.contracts.secrets`: `SecretRef`, `AsyncSecretsPort`, `AsyncSecretsDepKey`, and `resolve_structured` for KV-style secret strings and optional JSON validation into Pydantic models.
 - `forze.base.errors.SecretNotFoundError` for missing secret resolution.
 - `forze_postgres.kernel.platform.PostgresClientPort` structural protocol, `RoutedPostgresClient` (per-tenant DSN via `AsyncSecretsPort`, LRU pool cache), and `routed_postgres_lifecycle_step`.

@@ -23,6 +23,7 @@ class DocumentEndpointsSpec(TypedDict, total=False):
     raw_list: SimpleHttpEndpointSpec | bool
     list_cursor: SimpleHttpEndpointSpec | bool
     raw_list_cursor: SimpleHttpEndpointSpec | bool
+    aggregated_list: SimpleHttpEndpointSpec | bool
     create: SimpleHttpEndpointSpec | bool
     update: SimpleHttpEndpointSpec | bool
     kill: SimpleHttpEndpointSpec | bool

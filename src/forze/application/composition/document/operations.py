@@ -43,3 +43,6 @@ class DocumentOperation(StrEnum):
 
     RAW_LIST_CURSOR = "document.raw_list_cursor"
     """List documents with cursor-based pagination and raw results."""
+
+    AGG_LIST = "document.agg_list"
+    """List documents with aggregates."""

@@ -57,6 +57,32 @@ Runs **after** the usecase returns. May inspect or transform the result:
             logger.info("Created project %s", res.id)
             return res
 
+### Conditional guards and effects
+
+Run validation or post-processing only when a **synchronous** predicate holds.
+
+Subclass **`ConditionalGuard`** or **`ConditionalEffect`** when the skip logic belongs to one type. Implement **`main`**; override **`condition`** (default is always run):
+
+    :::python
+    from forze.application.execution import ConditionalGuard
+
+    class MaybeRequireFoo(ConditionalGuard[MyArgs]):
+        def condition(self, args: MyArgs) -> bool:
+            return args.mode == "strict"
+
+        async def main(self, args: MyArgs) -> None:
+            ...
+
+Use **`WhenGuard`** / **`WhenEffect`** to wrap an existing guard or effect with a predicate at composition time (no subclass):
+
+    :::python
+    from forze.application.execution import WhenGuard, WhenEffect
+
+    guard = WhenGuard(guard=existing, when=lambda a: a.tenant_id is not None)
+    effect = WhenEffect(effect=existing, when=lambda a, r: r.is_draft)
+
+Skipped **`WhenEffect`** calls return the incoming result unchanged.
+
 ### Middleware
 
 Full control over the chain — receives `next` and `args`:
@@ -72,6 +98,13 @@ Full control over the chain — receives `next` and `args`:
             return result
 
 `NextCall[Args, R]` is a type alias for `Callable[[Args], Awaitable[R]]`.
+
+| Helper | Role |
+|--------|------|
+| `ConditionalGuard[Args]` | Abstract base: `condition` + `main`, unified `__call__` |
+| `ConditionalEffect[Args, R]` | Abstract base: same pattern; skip returns `res` |
+| `WhenGuard[Args]` | Wraps a `Guard`; runs inner guard when `when(args)` |
+| `WhenEffect[Args, R]` | Wraps an `Effect`; runs inner effect when `when(args, res)` |
 
 ## Built-in middleware implementations
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.dto import (
+    AggregatedListRequestDTO,
     CursorListRequestDTO,
     ListRequestDTO,
     RawCursorListRequestDTO,
@@ -12,6 +13,7 @@ from forze.application.dto import (
 )
 from forze.application.execution import UsecasePlan, UsecaseRegistry
 from forze.application.usecases.document import (
+    AggregatedListDocuments,
     CreateDocument,
     DeleteDocument,
     GetDocument,
@@ -110,6 +112,22 @@ def build_document_list_mapper(
 # ....................... #
 
 
+def build_document_aggregated_list_mapper(
+    *,
+    steps: tuple[DTOMapperStep[Any], ...] = (),
+) -> DTOMapper[Any, Any]:
+    """Build a DTO mapper for aggregated list requests."""
+
+    mapper = DTOMapper(
+        in_=AggregatedListRequestDTO,
+        out=AggregatedListRequestDTO,
+    )
+    return mapper.with_steps(*steps)
+
+
+# ....................... #
+
+
 def build_document_raw_list_mapper(
     *,
     steps: tuple[DTOMapperStep[Any], ...] = (),
@@ -173,6 +191,7 @@ def build_document_registry(
     update_steps: tuple[DTOMapperStep[Any], ...] = (),
     list_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_list_steps: tuple[DTOMapperStep[Any], ...] = (),
+    aggregated_list_steps: tuple[DTOMapperStep[Any], ...] = (),
     list_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_list_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
@@ -184,6 +203,7 @@ def build_document_registry(
     :param update_steps: Optional mapping steps to append to the update mapper.
     :param list_steps: Optional mapping steps to append to the list mapper.
     :param raw_list_steps: Optional mapping steps to append to the raw list mapper.
+    :param aggregated_list_steps: Optional mapping steps to append to the aggregated list mapper.
     :param list_cursor_steps: Optional mapping steps for cursor list requests.
     :param raw_list_cursor_steps: Optional mapping steps for raw cursor list requests.
     :returns: Usecase registry with all supported operations.
@@ -194,6 +214,9 @@ def build_document_registry(
     list_cursor_mapper = build_document_list_cursor_mapper(steps=list_cursor_steps)
     raw_list_cursor_mapper = build_document_raw_list_cursor_mapper(
         steps=raw_list_cursor_steps,
+    )
+    aggregated_list_mapper = build_document_aggregated_list_mapper(
+        steps=aggregated_list_steps
     )
 
     reg = UsecaseRegistry(
@@ -221,6 +244,11 @@ def build_document_registry(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=raw_list_cursor_mapper,
+            ),
+            DocumentOperation.AGG_LIST: lambda ctx: AggregatedListDocuments(
+                ctx=ctx,
+                doc=ctx.doc_query(spec),
+                mapper=aggregated_list_mapper,
             ),
         }
     )

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from forze.application.execution import UsecasesFacade, facade_op
 from forze.application.usecases.document import (
+    AggregatedListDocuments,
     CreateDocument,
     DeleteDocument,
     GetDocument,
@@ -86,6 +87,12 @@ class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
         uc=RawCursorListDocuments,
     )
     """Raw list with cursor (keyset) pagination."""
+
+    agg_list = facade_op(
+        DocumentOperation.AGG_LIST,
+        uc=AggregatedListDocuments,
+    )
+    """List documents with aggregates."""
 
     create = facade_op(
         DocumentOperation.CREATE,

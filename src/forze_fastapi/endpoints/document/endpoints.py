@@ -9,6 +9,7 @@ from typing import Any
 from forze.application.composition.document import DocumentDTOs, DocumentUsecasesFacade
 from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.dto import (
+    AggregatedListRequestDTO,
     CursorListRequestDTO,
     CursorPaginated,
     DocumentIdDTO,
@@ -78,7 +79,12 @@ def build_document_get_endpoint_spec[R: ReadDocument](
         "query_type": DocumentIdDTO,
     }
 
-    features: list[ETagFeature[DocumentIdDTO, Any, Any, Any, Any, DocumentIdDTO, R, R, Facade]] | None
+    features: (
+        list[
+            ETagFeature[DocumentIdDTO, Any, Any, Any, Any, DocumentIdDTO, R, R, Facade]
+        ]
+        | None
+    )
     if etag:
         features = [
             ETagFeature(
@@ -133,7 +139,22 @@ def build_document_get_by_number_id_endpoint_spec[R: ReadDocument](
         "query_type": DocumentNumberIdDTO,
     }
 
-    features: list[ETagFeature[DocumentNumberIdDTO, Any, Any, Any, Any, DocumentNumberIdDTO, R, R, Facade]] | None
+    features: (
+        list[
+            ETagFeature[
+                DocumentNumberIdDTO,
+                Any,
+                Any,
+                Any,
+                Any,
+                DocumentNumberIdDTO,
+                R,
+                R,
+                Facade,
+            ]
+        ]
+        | None
+    )
     if etag:
         features = [
             ETagFeature(
@@ -317,6 +338,47 @@ def build_document_raw_list_cursor_endpoint_spec[R: ReadDocument](
         metadata=metadata,
         response=RawCursorPaginated,
         mapper=BodyAsIsMapper(RawCursorListRequestDTO),
+    )
+
+
+# ....................... #
+
+type AggregatedListDTOs[R: ReadDocument] = DocumentDTOs[R, Any, Any]
+type AggregatedListEndpointSpec[R: ReadDocument] = HttpEndpointSpec[
+    Any,
+    Any,
+    Any,
+    Any,
+    AggregatedListRequestDTO,
+    AggregatedListRequestDTO,
+    RawPaginated,
+    RawPaginated,
+    Facade,
+]
+
+
+def build_document_aggregated_list_endpoint_spec[R: ReadDocument](
+    dtos: AggregatedListDTOs[R],
+    *,
+    path_override: str | None = None,
+    metadata: HttpMetadataSpec | None = None,
+) -> AggregatedListEndpointSpec[R]:
+    path = path_override or "/aggregated-list"
+    path = path_coerce(path)
+
+    http_spec: HttpSpec = {"method": "POST", "path": path}
+    request_spec: HttpRequestSpec[Any, Any, Any, Any, AggregatedListRequestDTO] = {
+        "body_type": AggregatedListRequestDTO,
+    }
+
+    return build_http_endpoint_spec(
+        Facade,
+        Facade.agg_list,  # type: ignore[misc]
+        http=http_spec,
+        request=request_spec,
+        metadata=metadata,
+        response=RawPaginated,
+        mapper=BodyAsIsMapper(AggregatedListRequestDTO),
     )
 
 

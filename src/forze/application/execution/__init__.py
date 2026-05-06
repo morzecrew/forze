@@ -15,6 +15,8 @@ from .dispatch import expand_wildcard_dispatch_sources, find_dispatch_cycle, for
 from .facade import FacadeOpRef, UsecasesFacade, facade_call, facade_op
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
 from .middleware import (
+    ConditionalEffect,
+    ConditionalGuard,
     Effect,
     Failed,
     Finally,
@@ -26,6 +28,8 @@ from .middleware import (
     OnFailureMiddleware,
     Successful,
     UsecaseOutcome,
+    WhenEffect,
+    WhenGuard,
 )
 from .plan import DispatchDeclaringEffectFactory, UsecasePlan
 from .registry import UsecaseRegistry
@@ -48,6 +52,8 @@ __all__ = [
     "expand_wildcard_dispatch_sources",
     "Usecase",
     "UsecaseFactory",
+    "ConditionalEffect",
+    "ConditionalGuard",
     "Effect",
     "Failed",
     "Finally",
@@ -59,6 +65,8 @@ __all__ = [
     "OnFailureMiddleware",
     "Successful",
     "UsecaseOutcome",
+    "WhenEffect",
+    "WhenGuard",
     "ExecutionRuntime",
     "LifecyclePlan",
     "DepsPlan",

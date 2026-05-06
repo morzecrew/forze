@@ -4,6 +4,8 @@ import pytest
 
 from forze.application.execution import ExecutionContext, Usecase
 from forze.application.execution.middleware import (
+    ConditionalEffect,
+    ConditionalGuard,
     EffectMiddleware,
     Failed,
     FinallyMiddleware,
@@ -11,6 +13,8 @@ from forze.application.execution.middleware import (
     OnFailureMiddleware,
     Successful,
     TxMiddleware,
+    WhenEffect,
+    WhenGuard,
 )
 
 # ----------------------- #
@@ -187,3 +191,148 @@ class TestFinallyMiddleware:
             await mw(next_fn, "a")
 
         assert seen == ["err:RuntimeError"]
+
+
+class _SampleConditionalGuard(ConditionalGuard[str]):
+    def __init__(self) -> None:
+        self.main_ran = False
+
+    def condition(self, args: str) -> bool:
+        return args == "yes"
+
+    async def main(self, args: str) -> None:
+        self.main_ran = True
+
+
+class _SampleConditionalEffect(ConditionalEffect[str, int]):
+    def condition(self, args: str, res: int) -> bool:
+        return res < 10
+
+    async def main(self, args: str, res: int) -> int:
+        return res * 2
+
+
+class TestConditionalGuard:
+    """Tests for :class:`ConditionalGuard`."""
+
+    @pytest.mark.asyncio
+    async def test_skips_main_when_condition_false(self) -> None:
+        g = _SampleConditionalGuard()
+        await g("no")
+        assert g.main_ran is False
+
+    @pytest.mark.asyncio
+    async def test_runs_main_when_condition_true(self) -> None:
+        g = _SampleConditionalGuard()
+        await g("yes")
+        assert g.main_ran is True
+
+    @pytest.mark.asyncio
+    async def test_main_may_raise(self) -> None:
+        class _Raiser(ConditionalGuard[str]):
+            def condition(self, args: str) -> bool:
+                return True
+
+            async def main(self, args: str) -> None:
+                raise ValueError("nope")
+
+        with pytest.raises(ValueError, match="nope"):
+            await _Raiser()("x")
+
+
+class TestWhenGuard:
+    """Tests for :class:`WhenGuard`."""
+
+    @pytest.mark.asyncio
+    async def test_skips_inner_when_predicate_false(self) -> None:
+        seen: list[str] = []
+
+        async def inner(args: str) -> None:
+            seen.append("inner")
+
+        g = WhenGuard(guard=inner, when=lambda a: a == "go")
+        await g("stop")
+        assert seen == []
+
+    @pytest.mark.asyncio
+    async def test_invokes_inner_when_predicate_true(self) -> None:
+        seen: list[str] = []
+
+        async def inner(args: str) -> None:
+            seen.append(args)
+
+        g = WhenGuard(guard=inner, when=lambda a: a == "go")
+        await g("go")
+        assert seen == ["go"]
+
+    @pytest.mark.asyncio
+    async def test_works_inside_guard_middleware(self) -> None:
+        seen: list[str] = []
+
+        async def inner_guard(args: str) -> None:
+            seen.append(f"guard:{args}")
+
+        wrapped = WhenGuard(guard=inner_guard, when=lambda a: len(a) > 1)
+
+        async def next_fn(args: str) -> str:
+            return "ok"
+
+        mw = GuardMiddleware(guard=wrapped)
+        assert await mw(next_fn, "ab") == "ok"
+        assert seen == ["guard:ab"]
+
+        seen.clear()
+        assert await mw(next_fn, "x") == "ok"
+        assert seen == []
+
+
+class TestConditionalEffect:
+    """Tests for :class:`ConditionalEffect`."""
+
+    @pytest.mark.asyncio
+    async def test_skips_main_returns_res_when_condition_false(self) -> None:
+        e = _SampleConditionalEffect()
+        out = await e("x", 20)
+        assert out == 20
+
+    @pytest.mark.asyncio
+    async def test_runs_main_when_condition_true(self) -> None:
+        e = _SampleConditionalEffect()
+        out = await e("x", 3)
+        assert out == 6
+
+
+class TestWhenEffect:
+    """Tests for :class:`WhenEffect`."""
+
+    @pytest.mark.asyncio
+    async def test_skips_effect_returns_res_when_false(self) -> None:
+        async def inner(args: str, res: int) -> int:
+            return res + 100
+
+        e = WhenEffect(effect=inner, when=lambda a, r: False)
+        assert await e("a", 5) == 5
+
+    @pytest.mark.asyncio
+    async def test_invokes_effect_when_true(self) -> None:
+        async def inner(args: str, res: int) -> int:
+            return res + len(args)
+
+        e = WhenEffect(effect=inner, when=lambda a, r: r < 10)
+        assert await e("hi", 3) == 5
+
+    @pytest.mark.asyncio
+    async def test_works_inside_effect_middleware(self) -> None:
+        async def inner(args: str, res: str) -> str:
+            return f"{res}!"
+
+        wrapped = WhenEffect(
+            effect=inner, when=lambda a, r: a.startswith("x")
+        )
+
+        async def next_fn(args: str) -> str:
+            return "done"
+
+        mw = EffectMiddleware(effect=wrapped)
+        assert await mw(next_fn, "x1") == "done!"
+        assert await mw(next_fn, "y") == "done"
