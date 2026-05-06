@@ -185,8 +185,8 @@ async def test_document_aggregates_group_and_validate_return_type() -> None:
         filters=None,
         sorts={"revenue": "desc"},
         aggregates={
-            "fields": {"category": "category"},
-            "computed_fields": {
+            "$fields": {"category": "category"},
+            "$computed": {
                 "products": {"$count": None},
                 "revenue": {"$sum": "price"},
                 "median_price": {"$median": "price"},

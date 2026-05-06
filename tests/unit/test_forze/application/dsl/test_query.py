@@ -6,6 +6,7 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QueryValueCaster,
 )
+from forze.base.errors import ValidationError
 
 # ----------------------- #
 
@@ -24,7 +25,7 @@ class TestValueCaster:
         assert QueryValueCaster.as_bool("false") is False
 
     def test_as_bool_invalid_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid boolean"):
+        with pytest.raises(ValidationError, match="Invalid boolean"):
             QueryValueCaster.as_bool("invalid")
 
     def test_as_int(self) -> None:

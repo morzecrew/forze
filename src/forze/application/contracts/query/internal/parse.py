@@ -1,5 +1,7 @@
 from typing import Any, get_args
 
+from forze.base.errors import ValidationError
+
 from ..expressions import QueryFieldMapValue, QueryFilterExpression, QueryPredicate
 from ..guards import (
     is_query_conjunction,
@@ -50,7 +52,7 @@ class QueryFilterExpressionParser:
 
             return QueryOr(tuple(nodes))
 
-        raise ValueError(f"Invalid filter expression: {expr!r}")
+        raise ValidationError(f"Invalid filter expression: {expr!r}")
 
     # ....................... #
 
@@ -83,7 +85,7 @@ class QueryFilterExpressionParser:
 
         elif is_query_field_conjunction(raw):
             if not raw:
-                raise ValueError("Empty field map is not allowed")
+                raise ValidationError("Empty field map is not allowed")
 
             nodes: list[QueryExpr] = []
 
@@ -94,7 +96,7 @@ class QueryFilterExpressionParser:
 
             return nodes
 
-        raise ValueError(f"Invalid field map: {raw!r}")
+        raise ValidationError(f"Invalid field map: {raw!r}")
 
     # ....................... #
 
@@ -108,7 +110,7 @@ class QueryFilterExpressionParser:
             )
 
             if null_node.value is True and len(ops) > 1:
-                raise ValueError(
+                raise ValidationError(
                     f"Field {field} cannot be null and have other operators"
                 )
 
@@ -118,7 +120,7 @@ class QueryFilterExpressionParser:
             )
 
             if empty_node.value is True and len(ops) > 1:
-                raise ValueError(
+                raise ValidationError(
                     f"Field {field} cannot be empty and have other operators"
                 )
 
@@ -129,25 +131,25 @@ class QueryFilterExpressionParser:
     def _validate_op(field: str, op: str, value: Any) -> QueryField:
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
-                raise ValueError(f"Invalid value for {op} operator: {value!r}")
+                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
-                raise ValueError(f"Invalid value for {op} operator: {value!r}")
+                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _MEMB_OPS:
             if not isinstance(value, list | tuple | set):
-                raise ValueError(f"Invalid value for {op} operator: {value!r}")
+                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _UNARY_OPS:
             if not isinstance(value, bool):
-                raise ValueError(f"Invalid value for {op} operator: {value!r}")
+                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _SET_REL_OPS:
             if not isinstance(value, list | tuple | set):
-                raise ValueError(f"Invalid value for {op} operator: {value!r}")
+                raise ValidationError(f"Invalid value for {op} operator: {value!r}")
 
         else:
-            raise ValueError(f"Invalid operator: {op!r}")
+            raise ValidationError(f"Invalid operator: {op!r}")
 
         return QueryField(field, op, value)  # type: ignore[arg-type]

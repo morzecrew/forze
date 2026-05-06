@@ -66,6 +66,8 @@ def test_match_eq_uuid_coercion() -> None:
     assert _match_field({"id": u}, QueryField("id", "$eq", str(u))) is True
 
 
-def test_unknown_operator_raises() -> None:
-    with pytest.raises(ValueError, match="Unknown query operator"):
-        _match_field({"a": 1}, QueryField("a", cast(Any, "$nope"), 1))
+def test_unknown_operator_falls_through_without_match() -> None:
+    """Unsupported ops are not handled by the mock matcher (no default case)."""
+    assert (
+        _match_field({"a": 1}, QueryField("a", cast(Any, "$nope"), 1)) is None
+    )

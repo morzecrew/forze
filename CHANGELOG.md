@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** :class:`~forze.application.contracts.query.AggregatesExpression` (document ``find_many`` / aggregate list APIs) uses wire keys ``"$fields"`` (group keys) and ``"$computed"`` (aggregates) instead of ``fields`` and ``computed_fields``. ``"$fields"`` may be a list or tuple of field paths when each output alias matches the path. ``fields`` / ``computed_fields`` are no longer read.
 - **Breaking:** `forze_mongo.kernel.platform.MongoClient` `db` and `collection` are async; `MongoGateway.coll` is async (`await self.coll()` at call sites). Integration or custom code using the raw client must await these methods.
 - `forze_mongo` gateways, transaction manager adapter, and `MongoClientDepKey` use the structural `MongoClientPort` protocol (implemented by `MongoClient` and `RoutedMongoClient`). `MongoStartupHook`/`mongo_lifecycle_step` still initialize a concrete `MongoClient`; use `RoutedMongoClient` with `routed_mongo_lifecycle_step` for tenant-routed clusters.
 - `forze_postgres` gateways, introspector, transaction manager adapter, `gather_db_work`, and `PostgresClientDepKey` use the structural `PostgresClientPort` protocol (implemented by `PostgresClient` and `RoutedPostgresClient`). `PostgresStartupHook`/`postgres_lifecycle_step` still initialize a concrete `PostgresClient` via `initialize(dsn=...)`; use `RoutedPostgresClient` with `routed_postgres_lifecycle_step` for tenant-routed pools.

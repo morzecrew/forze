@@ -2,6 +2,8 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from forze.base.errors import ValidationError
+
 from ..types import Scalar
 
 # ----------------------- #
@@ -17,6 +19,7 @@ class QueryValueCaster:
     @staticmethod
     def as_bool(v: Any) -> bool:
         """Cast a value to bool; accepts ``"true"``, ``"1"``, etc."""
+
         if isinstance(v, bool):
             return v
 
@@ -32,7 +35,7 @@ class QueryValueCaster:
             if s in {"false", "f", "0", "no", "n", "off"}:
                 return False
 
-        raise ValueError(f"Invalid boolean value: {v!r}")
+        raise ValidationError(f"Invalid boolean value: {v!r}")
 
     # ....................... #
 
@@ -47,9 +50,9 @@ class QueryValueCaster:
                 return UUID(v)
 
             except Exception as e:
-                raise ValueError(f"Invalid UUID value: {v!r}") from e
+                raise ValidationError(f"Invalid UUID value: {v!r}") from e
 
-        raise ValueError(f"Invalid UUID value: {v!r}")
+        raise ValidationError(f"Invalid UUID value: {v!r}")
 
     # ....................... #
 
@@ -57,7 +60,7 @@ class QueryValueCaster:
     def as_int(v: Any) -> int:
         """Cast a value to int; rejects bool."""
         if isinstance(v, bool):
-            raise ValueError("Expected int, got bool")
+            raise ValidationError("Expected int, got bool")
 
         if isinstance(v, int):
             return v
@@ -72,9 +75,9 @@ class QueryValueCaster:
                 return int(s, 10)
 
             except Exception as e:
-                raise ValueError(f"Invalid int: {v!r}") from e
+                raise ValidationError(f"Invalid int: {v!r}") from e
 
-        raise ValueError(f"Invalid int: {v!r}")
+        raise ValidationError(f"Invalid int: {v!r}")
 
     # ....................... #
 
@@ -82,7 +85,7 @@ class QueryValueCaster:
     def as_float(v: Any) -> float:
         """Cast a value to float; rejects bool."""
         if isinstance(v, bool):
-            raise ValueError("Expected float, got bool")
+            raise ValidationError("Expected float, got bool")
 
         if isinstance(v, (int, float)):
             return float(v)
@@ -94,9 +97,9 @@ class QueryValueCaster:
                 return float(s)
 
             except Exception as e:
-                raise ValueError(f"Invalid float: {v!r}") from e
+                raise ValidationError(f"Invalid float: {v!r}") from e
 
-        raise ValueError(f"Invalid float: {v!r}")
+        raise ValidationError(f"Invalid float: {v!r}")
 
     # ....................... #
 
@@ -156,7 +159,7 @@ class QueryValueCaster:
                 dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
 
             except Exception as e:
-                raise ValueError(f"Invalid datetime timestamp: {v!r}") from e
+                raise ValidationError(f"Invalid datetime timestamp: {v!r}") from e
 
         elif isinstance(v, str):
             s = v.strip()
@@ -165,10 +168,10 @@ class QueryValueCaster:
                 dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
 
             except Exception as e:
-                raise ValueError(f"Invalid datetime: {v!r}") from e
+                raise ValidationError(f"Invalid datetime: {v!r}") from e
 
         else:
-            raise ValueError(f"Invalid datetime: {v!r}")
+            raise ValidationError(f"Invalid datetime: {v!r}")
 
         if force_tz:
             if dt.tzinfo is None:
@@ -201,15 +204,16 @@ class QueryValueCaster:
                 return date.fromisoformat(s)
 
             except Exception as e:
-                raise ValueError(f"Invalid date: {v!r}") from e
+                raise ValidationError(f"Invalid date: {v!r}") from e
 
-        raise ValueError(f"Invalid date: {v!r}")
+        raise ValidationError(f"Invalid date: {v!r}")
 
     # ....................... #
 
     @staticmethod
     def pass_through(v: Any) -> Any:
         """Return scalar as-is; coerce other values to string."""
+
         if v is None or isinstance(v, Scalar):
             return v
 

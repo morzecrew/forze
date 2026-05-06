@@ -14,6 +14,7 @@ from forze.application.contracts.query.internal import (
     QueryOr,
     QueryValueCaster,
 )
+from forze.base.errors import CoreError, ValidationError
 
 # ----------------------- #
 
@@ -22,8 +23,8 @@ class TestAggregatesExpressionParser:
     def test_parses_group_fields_and_computed_fields(self) -> None:
         parsed = AggregatesExpressionParser.parse(
             {
-                "fields": {"category": "category"},
-                "computed_fields": {
+                "$fields": {"category": "category"},
+                "$computed": {
                     "rows": {"$count": None},
                     "revenue": {"$sum": "price"},
                 },
@@ -34,16 +35,26 @@ class TestAggregatesExpressionParser:
         assert parsed.fields[0].field == "category"
         assert parsed.computed_fields[0].function == "$count"
 
+    def test_parses_group_fields_as_name_sequence(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$fields": ["detail_id", "warehouse_id"],
+                "$computed": {"n": {"$count": None}},
+            },
+        )
+        assert [f.alias for f in parsed.fields] == ["detail_id", "warehouse_id"]
+        assert [f.field for f in parsed.fields] == ["detail_id", "warehouse_id"]
+
     def test_rejects_invalid_count_argument(self) -> None:
-        with pytest.raises(ValueError, match="expects no field"):
+        with pytest.raises(CoreError, match="expects no field"):
             AggregatesExpressionParser.parse(
-                {"computed_fields": {"rows": {"$count": "id"}}},
+                {"$computed": {"rows": {"$count": "id"}}},
             )
 
     def test_parses_conditional_computed_fields(self) -> None:
         parsed = AggregatesExpressionParser.parse(
             {
-                "computed_fields": {
+                "$computed": {
                     "mid_rows": {
                         "$count": {
                             "filter": {
@@ -71,10 +82,10 @@ class TestAggregatesExpressionParser:
         }
 
     def test_rejects_conditional_value_aggregate_without_field(self) -> None:
-        with pytest.raises(ValueError, match="requires a field"):
+        with pytest.raises(CoreError, match="requires a field"):
             AggregatesExpressionParser.parse(
                 {
-                    "computed_fields": {
+                    "$computed": {
                         "revenue": {
                             "$sum": {"filter": {"$fields": {"category": "books"}}},
                         },
@@ -83,11 +94,20 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_duplicate_aliases(self) -> None:
-        with pytest.raises(ValueError, match="Duplicate aggregate aliases"):
+        with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
-                    "fields": {"total": "category"},
-                    "computed_fields": {"total": {"$sum": "price"}},
+                    "$fields": {"total": "category"},
+                    "$computed": {"total": {"$sum": "price"}},
+                },
+            )
+
+    def test_rejects_invalid_group_keys_type(self) -> None:
+        with pytest.raises(CoreError, match=r"Invalid aggregate \$fields"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$fields": "category",
+                    "$computed": {"n": {"$count": None}},
                 },
             )
 
@@ -137,15 +157,15 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_bool("  false  ") is False
 
     def test_as_bool_invalid_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid boolean"):
+        with pytest.raises(ValidationError, match="Invalid boolean"):
             QueryValueCaster.as_bool("maybe")
 
     def test_as_bool_invalid_int_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid boolean"):
+        with pytest.raises(ValidationError, match="Invalid boolean"):
             QueryValueCaster.as_bool(42)
 
     def test_as_bool_invalid_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid boolean"):
+        with pytest.raises(ValidationError, match="Invalid boolean"):
             QueryValueCaster.as_bool(3.14)
 
     # as_uuid
@@ -158,11 +178,11 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_uuid(s) == UUID(s)
 
     def test_as_uuid_invalid_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid UUID"):
+        with pytest.raises(ValidationError, match="Invalid UUID"):
             QueryValueCaster.as_uuid("not-a-uuid")
 
     def test_as_uuid_invalid_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid UUID"):
+        with pytest.raises(ValidationError, match="Invalid UUID"):
             QueryValueCaster.as_uuid(42)
 
     # as_int
@@ -177,19 +197,19 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_int(42.0) == 42
 
     def test_as_int_bool_raises(self) -> None:
-        with pytest.raises(ValueError, match="got bool"):
+        with pytest.raises(ValidationError, match="got bool"):
             QueryValueCaster.as_int(True)
 
     def test_as_int_invalid_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid int"):
+        with pytest.raises(ValidationError, match="Invalid int"):
             QueryValueCaster.as_int("abc")
 
     def test_as_int_invalid_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid int"):
+        with pytest.raises(ValidationError, match="Invalid int"):
             QueryValueCaster.as_int([1])
 
     def test_as_int_non_integer_float_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid int"):
+        with pytest.raises(ValidationError, match="Invalid int"):
             QueryValueCaster.as_int(3.14)
 
     # as_float
@@ -206,15 +226,15 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_float("3,14") == 3.14
 
     def test_as_float_bool_raises(self) -> None:
-        with pytest.raises(ValueError, match="got bool"):
+        with pytest.raises(ValidationError, match="got bool"):
             QueryValueCaster.as_float(True)
 
     def test_as_float_invalid_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid float"):
+        with pytest.raises(ValidationError, match="Invalid float"):
             QueryValueCaster.as_float("abc")
 
     def test_as_float_invalid_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid float"):
+        with pytest.raises(ValidationError, match="Invalid float"):
             QueryValueCaster.as_float([1.0])
 
     # _to_seconds
@@ -276,11 +296,11 @@ class TestQueryValueCaster:
         assert result.tzinfo is None
 
     def test_as_datetime_invalid_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid datetime"):
+        with pytest.raises(ValidationError, match="Invalid datetime"):
             QueryValueCaster.as_datetime("not-a-date", force_tz=True)
 
     def test_as_datetime_invalid_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid datetime"):
+        with pytest.raises(ValidationError, match="Invalid datetime"):
             QueryValueCaster.as_datetime([2024], force_tz=True)
 
     def test_as_datetime_from_milliseconds(self) -> None:
@@ -304,11 +324,11 @@ class TestQueryValueCaster:
         assert isinstance(result, date)
 
     def test_as_date_invalid_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid date"):
+        with pytest.raises(ValidationError, match="Invalid date"):
             QueryValueCaster.as_date("not-a-date")
 
     def test_as_date_invalid_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid date"):
+        with pytest.raises(ValidationError, match="Invalid date"):
             QueryValueCaster.as_date([2024])
 
     # pass_through
@@ -444,48 +464,48 @@ class TestQueryFilterExpressionParser:
 
     # Validation errors
     def test_parse_invalid_expression_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid filter expression"):
+        with pytest.raises(ValidationError, match="Invalid filter expression"):
             QueryFilterExpressionParser.parse({})
 
     def test_parse_unknown_key_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid filter expression"):
+        with pytest.raises(ValidationError, match="Invalid filter expression"):
             QueryFilterExpressionParser.parse({"$unknown": []})
 
     def test_parse_empty_field_map_raises(self) -> None:
-        with pytest.raises(ValueError, match="Empty field map"):
+        with pytest.raises(ValidationError, match="Empty field map"):
             QueryFilterExpressionParser.parse({"$fields": {"x": {}}})
 
     def test_parse_eq_invalid_value_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid value for"):
+        with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$fields": {"x": {"$eq": [1, 2]}}})
 
     def test_parse_ord_invalid_value_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid value for"):
+        with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"x": {"$gte": "not-numeric"}}}
             )
 
     def test_parse_in_invalid_value_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid value for"):
+        with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$fields": {"x": {"$in": "not-a-list"}}})
 
     def test_parse_null_invalid_value_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid value for"):
+        with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$fields": {"x": {"$null": "not-bool"}}})
 
     def test_parse_invalid_operator_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid operator"):
+        with pytest.raises(ValidationError, match="Invalid operator"):
             QueryFilterExpressionParser.parse({"$fields": {"x": {"$unknown": 1}}})
 
     def test_parse_set_rel_invalid_value_raises(self) -> None:
-        with pytest.raises(ValueError, match="Invalid value for"):
+        with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"x": {"$superset": "not-list"}}}
             )
 
     # Validate null=True with other ops
     def test_null_true_with_other_ops_raises(self) -> None:
-        with pytest.raises(ValueError, match="cannot be null"):
+        with pytest.raises(ValidationError, match="cannot be null"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"x": {"$null": True, "$eq": 1}}}
             )
@@ -498,7 +518,7 @@ class TestQueryFilterExpressionParser:
 
     # Validate empty=True with other ops
     def test_empty_true_with_other_ops_raises(self) -> None:
-        with pytest.raises(ValueError, match="cannot be empty"):
+        with pytest.raises(ValidationError, match="cannot be empty"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"x": {"$empty": True, "$eq": 1}}}
             )

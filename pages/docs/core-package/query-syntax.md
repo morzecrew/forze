@@ -127,8 +127,9 @@ validated against that Pydantic model.
 
 An aggregate expression has two sections:
 
-- `fields`: output aliases mapped to source fields used as grouping keys.
-- `computed_fields`: output aliases mapped to one aggregate function.
+- `$fields`: group keys — either a map of output alias → source field path, or a
+  list/tuple of field paths (each path is used as both alias and source).
+- `$computed`: output aliases mapped to one aggregate function.
 
 Supported functions are `$count`, `$sum`, `$avg`, `$min`, `$max`, and `$median`.
 Use `$count: None` for row counts. Other functions take a source field path.
@@ -138,8 +139,8 @@ filters, including `$and` and `$or`, but it applies only to that aggregate.
 
     :::python
     aggregates = {
-        "fields": {"category": "category"},
-        "computed_fields": {
+        "$fields": {"category": "category"},
+        "$computed": {
             "products": {"$count": None},
             "revenue": {"$sum": "price"},
             "median_price": {"$median": "price"},
@@ -155,6 +156,12 @@ filters, including `$and` and `$or`, but it applies only to that aggregate.
                 },
             },
         },
+    }
+
+    # Same group keys when alias equals source path:
+    aggregates = {
+        "$fields": ["detail_id", "revision_id", "warehouse_id"],
+        "$computed": {"rows": {"$count": None}},
     }
 
     page = await doc.find_many(

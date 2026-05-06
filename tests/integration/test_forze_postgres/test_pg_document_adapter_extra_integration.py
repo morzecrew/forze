@@ -495,8 +495,8 @@ async def test_pg_adapter_find_many_aggregates_with_typed_page(
     await cmd.create(_CxCreate(sku="g2"))
 
     agg = {
-        "fields": {"cat": "sku"},
-        "computed_fields": {"n": {"$count": None}},
+        "$fields": {"cat": "sku"},
+        "$computed": {"n": {"$count": None}},
     }
     p = await q.find_many(
         None,
@@ -523,8 +523,8 @@ async def test_pg_adapter_find_many_rejects_conflicting_args(
     q = ctx.doc_query(spec)
 
     agg = {
-        "fields": {"c": "sku"},
-        "computed_fields": {"n": {"$count": None}},
+        "$fields": {"c": "sku"},
+        "$computed": {"n": {"$count": None}},
     }
     with pytest.raises(CoreError, match="Aggregates cannot be combined with return_fields"):
         await q.find_many(

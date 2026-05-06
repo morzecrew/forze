@@ -83,6 +83,11 @@ AggregateFunction = Literal["$count", "$sum", "$avg", "$min", "$max", "$median"]
 AggregateFieldExpression = Mapping[str, str]
 """Map of aggregate output aliases to source field paths used as group keys."""
 
+AggregateGroupKeysExpression: TypeAlias = (
+    AggregateFieldExpression | list[str] | tuple[str, ...]
+)
+"""Group keys: alias→path map, or a list/tuple of names (alias and path are the same)."""
+
 
 class AggregateComputedFunctionApplication(TypedDict, total=False):
     """Detailed aggregate function application with an optional row filter."""
@@ -111,15 +116,20 @@ AggregateComputedFunctionExpression = TypedDict(
 AggregateComputedFieldExpression = Mapping[str, AggregateComputedFunctionExpression]
 """Map of aggregate output aliases to computed aggregate function specs."""
 
+AggregatesExpression = TypedDict(
+    "AggregatesExpression",
+    {
+        "$fields": AggregateGroupKeysExpression,
+        "$computed": AggregateComputedFieldExpression,
+    },
+    total=False,
+)
+"""Aggregate result shape: ``$fields`` (group keys) plus ``$computed`` (aggregates).
 
-class AggregatesExpression(TypedDict, total=False):
-    """Aggregate result shape: group fields plus computed aggregate fields."""
-
-    fields: AggregateFieldExpression
-    """Group key output aliases mapped to source field paths."""
-
-    computed_fields: AggregateComputedFieldExpression
-    """Computed output aliases mapped to aggregate function applications."""
+``$fields`` is either a map of output alias to source path or a homogeneous list
+or tuple of field paths (each path is both alias and source). ``$computed`` maps
+output aliases to aggregate function applications.
+"""
 
 
 # ....................... #

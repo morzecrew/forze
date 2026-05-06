@@ -314,8 +314,8 @@ class TestPostgresAggregateRendering:
 
         parsed, select_clause, group_clause, params = renderer.render_aggregates(
             {
-                "fields": {"category": "category"},
-                "computed_fields": {
+                "$fields": {"category": "category"},
+                "$computed": {
                     "orders": {"$count": None},
                     "revenue": {"$sum": "price"},
                     "median_price": {"$median": "price"},
@@ -342,7 +342,7 @@ class TestPostgresAggregateRendering:
 
         _parsed, select_clause, _group_clause, params = renderer.render_aggregates(
             {
-                "computed_fields": {
+                "$computed": {
                     "mid_count": {
                         "$count": {
                             "filter": {
@@ -372,7 +372,7 @@ class TestPostgresAggregateRendering:
             model_type=_OrderRow,
         )
         parsed, _select_clause, _group_clause, _params = renderer.render_aggregates(
-            {"computed_fields": {"orders": {"$count": None}}},
+            {"$computed": {"orders": {"$count": None}}},
         )
 
         with pytest.raises(CoreError, match="Invalid aggregate sort fields"):

@@ -168,8 +168,8 @@ async def test_postgres_read_gateway_aggregate_expressions(
     )
 
     aggregates = {
-        "fields": {"category": "category"},
-        "computed_fields": {
+        "$fields": {"category": "category"},
+        "$computed": {
             "orders": {"$count": None},
             "revenue": {"$sum": "price"},
             "median_price": {"$median": "price"},
@@ -509,8 +509,8 @@ async def test_postgres_read_gateway_find_many_aggregates_raw_rows(
     )
     raw = await gw.find_many_aggregates(
         aggregates={
-            "fields": {"c": "category"},
-            "computed_fields": {"n": {"$count": None}},
+            "$fields": {"c": "category"},
+            "$computed": {"n": {"$count": None}},
         },
     )
     assert len(raw) == 1
@@ -615,8 +615,8 @@ async def test_postgres_read_gateway_aggregates_reject_return_fields(
     with pytest.raises(CoreError, match="Aggregates cannot be combined"):
         await gw.find_many_aggregates(
             aggregates={
-                "fields": {"c": "category"},
-                "computed_fields": {"n": {"$count": None}},
+                "$fields": {"c": "category"},
+                "$computed": {"n": {"$count": None}},
             },
             return_fields=["c"],
         )

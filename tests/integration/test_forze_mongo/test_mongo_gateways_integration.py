@@ -170,8 +170,8 @@ async def test_mongo_read_gateway_aggregate_expressions(
     await write.create(GwOrderCreate(category="software", price=90.0))
 
     aggregates = {
-        "fields": {"category": "category"},
-        "computed_fields": {
+        "$fields": {"category": "category"},
+        "$computed": {
             "orders": {"$count": None},
             "revenue": {"$sum": "price"},
             "median_price": {"$median": "price"},

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 import attrs
+
+from forze.base.errors import CoreError
 
 from ..expressions import AggregateFunction, AggregatesExpression, QueryFilterExpression
 from .parse import QueryFilterExpressionParser
@@ -72,19 +74,21 @@ class AggregatesExpressionParser:
     def parse(cls, expr: AggregatesExpression) -> ParsedAggregates:
         """Validate and parse an aggregate expression."""
 
-        raw_fields = expr.get("fields", {})
-        raw_computed_fields = expr.get("computed_fields", {})
+        raw_computed_obj: object = expr.get("$computed", {})
 
-        fields = tuple(
-            AggregateField(alias=cls._alias(alias), field=cls._field(field))
-            for alias, field in raw_fields.items()
-        )
+        if not isinstance(raw_computed_obj, Mapping):
+            raise CoreError(f"Invalid aggregate $computed: {raw_computed_obj!r}")
+
+        raw_computed = cast(Mapping[Any, Any], raw_computed_obj)  # type: ignore[redundant-cast]
+
+        fields_obj: object = expr.get("$fields", {})
+        fields = cls._group_keys(fields_obj)
         computed_fields = tuple(
-            cls._computed(alias, spec) for alias, spec in raw_computed_fields.items()
+            cls._computed(alias, spec) for alias, spec in raw_computed.items()
         )
 
         if not computed_fields:
-            raise ValueError("Aggregates expression requires computed_fields")
+            raise CoreError("Aggregates expression requires $computed")
 
         aliases = [field.alias for field in fields] + [
             field.alias for field in computed_fields
@@ -92,16 +96,39 @@ class AggregatesExpressionParser:
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:
-            raise ValueError(f"Duplicate aggregate aliases: {duplicates}")
+            raise CoreError(f"Duplicate aggregate aliases: {duplicates}")
 
         return ParsedAggregates(fields=fields, computed_fields=computed_fields)
+
+    # ....................... #
+
+    @classmethod
+    def _group_keys(cls, raw: object) -> tuple[AggregateField, ...]:
+        if isinstance(raw, Mapping):
+            mapping = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
+
+            return tuple(
+                AggregateField(alias=cls._alias(alias), field=cls._field(field))
+                for alias, field in mapping.items()
+            )
+
+        if isinstance(raw, (list, tuple)):
+            seq = cast(list[Any] | tuple[Any, ...], raw)  # type: ignore[redundant-cast]
+
+            return tuple(
+                AggregateField(alias=cls._alias(name), field=cls._field(name))
+                for name in seq
+            )
+
+        raise CoreError(f"Invalid aggregate $fields: {raw!r}")
 
     # ....................... #
 
     @staticmethod
     def _alias(alias: object) -> str:
         if not isinstance(alias, str) or not _ALIAS_RE.fullmatch(alias):
-            raise ValueError(f"Invalid aggregate alias: {alias!r}")
+            raise CoreError(f"Invalid aggregate alias: {alias!r}")
+
         return alias
 
     # ....................... #
@@ -109,7 +136,8 @@ class AggregatesExpressionParser:
     @staticmethod
     def _field(field: object) -> str:
         if not isinstance(field, str) or not field.strip():
-            raise ValueError(f"Invalid aggregate field path: {field!r}")
+            raise CoreError(f"Invalid aggregate field path: {field!r}")
+
         return field
 
     # ....................... #
@@ -119,25 +147,26 @@ class AggregatesExpressionParser:
         alias = cls._alias(alias)
 
         if not isinstance(spec, Mapping):
-            raise ValueError(f"Invalid aggregate computed field spec: {spec!r}")
+            raise CoreError(f"Invalid aggregate computed field spec: {spec!r}")
 
         raw_spec: Mapping[Any, Any] = spec  # type: ignore[assignment]
 
         if len(raw_spec) != 1:
-            raise ValueError(
+            raise CoreError(
                 f"Aggregate computed field {alias!r} must declare exactly one function",
             )
 
         function, field = next(iter(raw_spec.items()))
 
         if function not in _FUNCTIONS:
-            raise ValueError(f"Invalid aggregate function: {function!r}")
+            raise CoreError(f"Invalid aggregate function: {function!r}")
 
         field_path, filter_expr = cls._function_arg(function, field)
 
         if function == "$count":
             if field_path is not None:
-                raise ValueError("$count aggregate expects no field")
+                raise CoreError("$count aggregate expects no field")
+
             return AggregateComputedField(
                 alias=alias,
                 function=function,
@@ -170,13 +199,13 @@ class AggregatesExpressionParser:
         extra = sorted(str(key) for key in set(raw_spec) - allowed)
 
         if extra:
-            raise ValueError(f"Invalid aggregate function keys: {extra}")
+            raise CoreError(f"Invalid aggregate function keys: {extra}")
 
         if function == "$count" and field is not None:
-            raise ValueError("$count aggregate expects no field")
+            raise CoreError("$count aggregate expects no field")
 
         if function != "$count" and field is None:
-            raise ValueError(f"{function} aggregate requires a field")
+            raise CoreError(f"{function} aggregate requires a field")
 
         if filter_expr is not None:
             QueryFilterExpressionParser.parse(filter_expr)  # type: ignore[arg-type]

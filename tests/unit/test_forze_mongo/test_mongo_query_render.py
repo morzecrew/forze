@@ -136,8 +136,8 @@ class TestMongoAggregateRendering:
 
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "fields": {"category": "category"},
-                "computed_fields": {
+                "$fields": {"category": "category"},
+                "$computed": {
                     "orders": {"$count": None},
                     "revenue": {"$sum": "price"},
                     "median_price": {"$median": "price"},
@@ -180,7 +180,7 @@ class TestMongoAggregateRendering:
 
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "computed_fields": {
+                "$computed": {
                     "mid_rows": {
                         "$count": {
                             "filter": {
@@ -232,7 +232,7 @@ class TestMongoAggregateRendering:
 
         with pytest.raises(CoreError, match="Invalid aggregate sort fields"):
             renderer.render_aggregates(
-                {"computed_fields": {"orders": {"$count": None}}},
+                {"$computed": {"orders": {"$count": None}}},
                 sorts={"missing": "asc"},
             )
 
@@ -240,8 +240,8 @@ class TestMongoAggregateRendering:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "fields": {"cat": "category"},
-                "computed_fields": {
+                "$fields": {"cat": "category"},
+                "$computed": {
                     "avg_p": {"$avg": "price"},
                     "lo": {"$min": "price"},
                     "hi": {"$max": "price"},
@@ -253,7 +253,7 @@ class TestMongoAggregateRendering:
         assert group["lo"] == {"$min": "$price"}
         assert group["hi"] == {"$max": "$price"}
         _p2, pl2 = renderer.render_aggregates(
-            {"computed_fields": {"md": {"$median": "p"}}},
+            {"$computed": {"md": {"$median": "p"}}},
         )
         assert pl2[0]["$group"]["md"] == {
             "$median": {"input": "$p", "method": "approximate"},
