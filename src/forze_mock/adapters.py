@@ -13,7 +13,7 @@ import json
 import mimetypes
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import (
     Any,
     AsyncIterator,
@@ -62,6 +62,10 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QueryOr,
     QuerySortExpression,
+)
+from forze.application.contracts.query.internal.time_bucket import (
+    floor_to_time_bucket,
+    tzinfo_from_resolved,
 )
 from forze.application.contracts.queue import (
     QueueCommandPort,
@@ -428,27 +432,67 @@ def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
     return value
 
 
+def _coerce_datetime_for_bucket(raw: Any) -> datetime:
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+
+    if isinstance(raw, str):
+        s = raw.strip().replace("Z", "+00:00")
+
+        return datetime.fromisoformat(s)
+
+    if isinstance(raw, (int, float)):
+        return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+
+    raise CoreError(f"Invalid timestamp for $time_bucket: {raw!r}")
+
+
 def _aggregate_docs(
     docs: Sequence[JsonDict], aggregates: AggregatesExpression
 ) -> list[JsonDict]:
     parsed = AggregatesExpressionParser.parse(aggregates)
+    tb_tz = (
+        tzinfo_from_resolved(parsed.time_bucket.timezone)
+        if parsed.time_bucket is not None
+        else None
+    )
+
     grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
 
     for doc in docs:
-        key = tuple(
+        parts: list[Any] = []
+        if parsed.time_bucket is not None and tb_tz is not None:
+            raw_ts = _path_get(doc, parsed.time_bucket.field)
+            if raw_ts is _MISSING:
+                parts.append(None)
+            else:
+                floored = floor_to_time_bucket(
+                    _coerce_datetime_for_bucket(raw_ts),
+                    unit=parsed.time_bucket.unit,
+                    tz=tb_tz,
+                )
+                parts.append(floored.isoformat())
+
+        parts.extend(
             None if (value := _path_get(doc, field.field)) is _MISSING else value
             for field in parsed.fields
         )
+        key = tuple(parts)
         grouped.setdefault(key, []).append(doc)
 
-    if not parsed.fields and not grouped:
+    if not parsed.fields and parsed.time_bucket is None and not grouped:
         grouped[()] = []
 
     rows: list[JsonDict] = []
     for key, items in grouped.items():
-        row: JsonDict = {
-            field.alias: key[index] for index, field in enumerate(parsed.fields)
-        }
+        row: JsonDict = {}
+        idx = 0
+        if parsed.time_bucket is not None:
+            row[parsed.time_bucket.alias] = key[idx]
+            idx += 1
+        for field in parsed.fields:
+            row[field.alias] = key[idx]
+            idx += 1
 
         for computed in parsed.computed_fields:
             computed_items = (
@@ -885,6 +929,32 @@ class MockDocumentAdapter[
         return_count: Literal[True],
     ) -> Page[R]: ...
 
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[T]: ...
+
     async def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -906,9 +976,6 @@ class MockDocumentAdapter[
         if aggregates is not None and return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
 
-        if aggregates is None and return_type is not None:
-            raise CoreError("return_type requires aggregates")
-
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
 
@@ -927,9 +994,25 @@ class MockDocumentAdapter[
         else:
             total = len(filtered)
             ordered_docs = _sort_docs(filtered, sorts)
-            rows = [
-                self._to_read_or_projection(doc, return_fields) for doc in ordered_docs
-            ]
+            if return_type is not None:
+                projected = [
+                    self._to_read_or_projection(doc, return_fields)
+                    for doc in ordered_docs
+                ]
+                dict_rows: list[dict[str, Any]] = []
+
+                for row in projected:
+                    if isinstance(row, BaseModel):
+                        dict_rows.append(row.model_dump(mode="python"))
+                    else:
+                        dict_rows.append(dict(row))
+
+                rows = pydantic_validate_many(return_type, dict_rows)
+            else:
+                rows = [
+                    self._to_read_or_projection(doc, return_fields)
+                    for doc in ordered_docs
+                ]
 
         pagination = pagination or {}
         limit = pagination.get("limit")

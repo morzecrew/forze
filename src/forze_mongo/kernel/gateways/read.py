@@ -513,6 +513,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         if (
             not rows
             and not parsed.fields
+            and parsed.time_bucket is None
             and (offset is None or offset == 0)
             and (limit is None or limit > 0)
         ):
@@ -541,7 +542,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         pipeline.append({"$count": "count"})
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=1)
 
-        if not rows and not parsed.fields:
+        if not rows and not parsed.fields and parsed.time_bucket is None:
             return 1
 
         if not rows:

@@ -68,7 +68,7 @@ Each config requires a `namespace` string used as a Redis key prefix.
 
 ## Document cache
 
-When `DocumentSpec.cache` is set, `doc_query` / `doc_command` resolve `ctx.cache(spec.cache)` and pass the port into the document adapter. Register a cache route whose **key matches `CacheSpec.name`**:
+When `DocumentSpec.cache` is set, the document dep factory resolves `ctx.cache(spec.cache)` while building the adapter. Register a cache route whose **key matches `CacheSpec.name`**:
 
     :::python
     from datetime import timedelta

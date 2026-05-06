@@ -8,7 +8,17 @@ require_mongo()
 
 import asyncio
 from functools import cached_property
-from typing import Any, Literal, Sequence, TypeVar, cast, final, overload
+from typing import (
+    Any,
+    Literal,
+    Protocol,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+    overload,
+    runtime_checkable,
+)
 from uuid import UUID
 
 import attrs
@@ -47,8 +57,9 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.constants import ID_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.base.errors import InvalidOperationError
+from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..kernel.gateways import MongoReadGateway, MongoWriteGateway
 from ._logger import logger
@@ -56,7 +67,7 @@ from .txmanager import MongoTxScopeKey
 
 # ----------------------- #
 
-R = TypeVar("R", bound=ReadDocument)
+R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
 C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
@@ -65,6 +76,15 @@ T = TypeVar("T", bound=BaseModel)
 # ....................... #
 #! Consider adding a method to bound or bind contextvars with 'name' as namespace or so
 #! the above is related to logging
+
+
+@runtime_checkable
+class ReadModelWithIdAndRev(Protocol):
+    id: UUID
+    rev: int
+
+
+# ....................... #
 
 
 @final
@@ -132,51 +152,93 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
+    def _check_id_rev_capability(self) -> bool:
+        read_model = self.read_gw.model_type
+        fields = set(read_model.model_fields.keys())
+        required_fields = {ID_FIELD, REV_FIELD}
+
+        return required_fields.issubset(fields)
+
+    # ....................... #
+
     async def _set_cache(self, doc: R) -> None:
-        if self.cache is not None:
+        if self.cache is None:
+            return
 
-            try:
-                dump = pydantic_cache_dump(doc)
-                await self.cache.set_versioned(str(doc.id), str(doc.rev), dump)
+        if not self._check_id_rev_capability():
+            logger.warning(
+                "Cannot cache document of type '%s' as it does not have an id and rev",
+                type(self.read_gw.model_type).__name__,
+            )
+            return
 
-                logger.trace("Cache set successfully")
+        casted_doc = cast(ReadModelWithIdAndRev, doc)
 
-            except Exception:
-                logger.exception("Cache set failed, continuing")
+        try:
+            dump = pydantic_cache_dump(doc)
+            await self.cache.set_versioned(
+                str(casted_doc.id), str(casted_doc.rev), dump
+            )
+
+            logger.trace("Cache set successfully")
+
+        except Exception:
+            logger.exception("Cache set failed, continuing")
 
     # ....................... #
 
     async def _set_cache_many(self, docs: Sequence[R]) -> None:
-        if self.cache is not None:
-            try:
-                dumps = pydantic_cache_dump_many(docs)
-                res_cache_map = {
-                    (str(x.id), str(x.rev)): y for x, y in zip(docs, dumps, strict=True)
-                }
-                await self.cache.set_many_versioned(res_cache_map)
+        if self.cache is None or not docs:
+            return
 
-            except Exception:
-                logger.debug(
-                    "Cache set failed for %s '%s' document(s), continuing",
-                    len(docs),
-                    self.spec.name,
-                    exc_info=True,
-                )
+        if not self._check_id_rev_capability():
+            logger.warning(
+                "Cannot cache documents of type '%s' as they do not have an id and rev",
+                type(self.read_gw.model_type).__name__,
+            )
+            return
+
+        docs_casted = [cast(ReadModelWithIdAndRev, x) for x in docs]
+
+        try:
+            dumps = pydantic_cache_dump_many(docs)
+            res_cache_map = {
+                (str(x.id), str(x.rev)): y
+                for x, y in zip(docs_casted, dumps, strict=True)
+            }
+            await self.cache.set_many_versioned(res_cache_map)
+
+        except Exception:
+            logger.debug(
+                "Cache set failed for %s '%s' document(s), continuing",
+                len(docs),
+                self.spec.name,
+                exc_info=True,
+            )
 
     # ....................... #
 
     async def _clear_cache(self, *pks: UUID) -> None:
-        if self.cache is not None:
-            try:
-                await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+        if self.cache is None:
+            return
 
-            except Exception:
-                logger.debug(
-                    "Cache clear failed for %s '%s' document(s), continuing",
-                    len(pks),
-                    self.spec.name,
-                    exc_info=True,
-                )
+        if not self._check_id_rev_capability():
+            logger.warning(
+                "Cannot clear cache for documents of type '%s' as they do not have an id and rev",
+                type(self.read_gw.model_type).__name__,
+            )
+            return
+
+        try:
+            await self.cache.delete_many([str(pk) for pk in pks], hard=True)
+
+        except Exception:
+            logger.debug(
+                "Cache clear failed for %s '%s' document(s), continuing",
+                len(pks),
+                self.spec.name,
+                exc_info=True,
+            )
 
     # ....................... #
 
@@ -219,6 +281,11 @@ class MongoDocumentAdapter(
         :param for_update: Require a transaction context.
         :param return_fields: Optional field subset to project.
         """
+
+        if not self._check_id_rev_capability():
+            raise InvalidOperationError(
+                f"Cannot get document of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
+            )
 
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get(
@@ -285,6 +352,11 @@ class MongoDocumentAdapter(
         if not pks:
             return []
 
+        if not self._check_id_rev_capability():
+            raise InvalidOperationError(
+                f"Cannot get many documents of type '{type(self.read_gw.model_type).__name__}' as they do not have defined id field"
+            )
+
         if return_fields is not None or self.cache is None:
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
@@ -303,10 +375,15 @@ class MongoDocumentAdapter(
         hits_validated = pydantic_validate_many(
             self.read_gw.model_type, list(hits.values())
         )
-        by_pk = {x.id: x for x in hits_validated}
-        by_pk.update({x.id: x for x in miss_res})
+        hits_validated_cast = [cast(ReadModelWithIdAndRev, x) for x in hits_validated]
+        miss_res_cast = [cast(ReadModelWithIdAndRev, x) for x in miss_res]
 
-        return [by_pk[pk] for pk in pks]
+        by_pk = {x.id: x for x in hits_validated_cast}
+        by_pk.update({x.id: x for x in miss_res_cast})
+
+        results = [cast(R, by_pk[pk]) for pk in pks]
+
+        return results
 
     # ....................... #
 
@@ -475,6 +552,36 @@ class MongoDocumentAdapter(
         """Find documents as the read model with total count."""
         ...
 
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]:
+        """Find documents validated against ``return_type`` (non-aggregate)."""
+        ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[T]:
+        """Find documents as ``return_type`` with total document count."""
+        ...
+
     async def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -497,8 +604,6 @@ class MongoDocumentAdapter(
 
         if aggregates is not None and return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
-        if aggregates is None and return_type is not None:
-            raise CoreError("return_type requires aggregates")
 
         pagination = pagination or {}
         cnt = 0
@@ -535,6 +640,7 @@ class MongoDocumentAdapter(
                 limit=limit,
                 offset=offset,
                 sorts=sorts,
+                return_model=return_type,  # type: ignore[arg-type]
                 return_fields=return_fields,  # type: ignore[arg-type]
             )
 

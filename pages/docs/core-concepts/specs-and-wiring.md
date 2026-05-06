@@ -26,7 +26,7 @@ Use the **same string** for:
 | `read` | Read model type (`ReadDocument` subclass) |
 | `write` | `{"domain", "create_cmd", "update_cmd"}` or `None` for read-only |
 | `history_enabled` | Whether revision history is active |
-| `cache` | Optional `CacheSpec` — if set, query/command ports get a cache port |
+| `cache` | Optional `CacheSpec` — if set, document factories resolve a cache port while building query/command adapters |
 
 It does **not** embed SQL table names or Mongo collections. Those belong in `PostgresDocumentConfig`, `MongoDocumentConfig`, etc.
 

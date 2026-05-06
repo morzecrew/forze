@@ -85,9 +85,7 @@ MockStateDepKey: DepKey[MockState] = DepKey("mock_state")
 def mock_document(
     context: ExecutionContext,
     spec: DocSpec,
-    cache: CachePort | None = None,
 ) -> MockDocumentAdapter[Any, Any, Any, Any]:
-    del cache
     state = context.dep(MockStateDepKey)
     domain_model = None
     if spec.write is not None:

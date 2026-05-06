@@ -228,7 +228,7 @@ You can also build a `Deps` container manually with only the ports your test nee
 
     :::python
     deps = Deps({
-        DocumentQueryDepKey: lambda ctx, spec, cache=None: FakeDocQueryAdapter(),
+        DocumentQueryDepKey: lambda ctx, spec: FakeDocQueryAdapter(),
     })
     ctx = ExecutionContext(deps=deps)
 

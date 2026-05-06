@@ -171,9 +171,37 @@ filters, including `$and` and `$or`, but it applies only to that aggregate.
         return_count=True,
     )
 
-When `return_count=True`, aggregate queries count aggregate result groups. Sorts
-for aggregate queries use aggregate output aliases such as `revenue`, not source
-document fields.
+When `return_count=True` **with** `aggregates`, the total counts **aggregate
+groups**. Sorts for aggregate queries use aggregate output aliases such as
+`revenue`, not source document fields.
+
+Optional **`$time_bucket`** adds another group key: the **start instant** of a
+calendar period for a timestamp field. It composes with `$fields` and all
+`$computed` functions (for example average price per item per day). Units:
+`hour`, `day`, `week` (Monday start, aligned with Postgres `date_trunc` / Mongo
+`$dateTrunc`), `month`. Default timezone is `UTC`. You may pass an **IANA** name
+(`Europe/Berlin`) or a **fixed offset** (`+3`, `+03:00`). Default output alias is
+`bucket`; override with `alias`.
+
+MongoDB **5.0+** is required for `$dateTrunc` bucketing.
+
+Non-aggregate **`find_many`**: you may pass `return_type` **without** `aggregates`
+to validate each **document** row against a Pydantic model (same as the list read
+model shape). `return_count` then counts documents, not groups.
+
+    :::python
+    aggregates = {
+        "$fields": {"item_id": "item_id"},
+        "$time_bucket": {"field": "ts", "unit": "day", "timezone": "+3"},
+        "$computed": {"avg_price": {"$avg": "price"}},
+    }
+
+    :::python
+    page = await doc.find_many(
+        filters=filters,
+        pagination={"limit": 20, "offset": 0},
+        return_type=MyRowDto,
+    )
 
 ## Where you pass these expressions
 

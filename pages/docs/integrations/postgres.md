@@ -338,4 +338,4 @@ Typical stack: Postgres for persistence, Redis for cache and idempotency. Use th
         redis_lifecycle_step(dsn="redis://...", config=RedisConfig()),
     )
 
-When `DocumentSpec.cache` is set, `doc_query` / `doc_command` resolve a cache port for that `CacheSpec.name` and pass it into the Postgres adapter.
+When `DocumentSpec.cache` is set, the Postgres document dep factory resolves `ctx.cache(spec.cache)` (same `CacheSpec.name` as your cache route) while constructing the adapter.

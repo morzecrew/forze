@@ -259,6 +259,26 @@ class TestMongoAggregateRendering:
             "$median": {"input": "$p", "method": "approximate"},
         }
 
+    def test_renders_time_bucket_in_group_id(self) -> None:
+        renderer = MongoQueryRenderer()
+        _parsed, pipeline = renderer.render_aggregates(
+            {
+                "$fields": {"cat": "category"},
+                "$time_bucket": {"field": "created_at", "unit": "week", "timezone": "+03:00"},
+                "$computed": {"n": {"$count": None}},
+            },
+        )
+        group = pipeline[0]["$group"]
+        assert group["_id"]["bucket"] == {
+            "$dateTrunc": {
+                "date": "$created_at",
+                "unit": "week",
+                "timezone": "+03:00",
+                "startOfWeek": "monday",
+            },
+        }
+        assert group["_id"]["cat"] == "$category"
+
 
 class TestMongoQueryRendererExprPredicate:
     """Tests for :meth:`~MongoQueryRenderer.render_expr_predicate` (aggregation filters)."""

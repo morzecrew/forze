@@ -1,10 +1,10 @@
 """Factory functions for Mongo document and tx manager adapters."""
 
-from typing import Any, final
+from typing import Any, TypeVar, final
 
 import attrs
+from pydantic import BaseModel
 
-from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
     DocumentCommandDepPort,
     DocumentQueryDepPort,
@@ -13,6 +13,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.tx import TxManagerPort
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ...adapters import MongoDocumentAdapter, MongoTxManagerAdapter
 from .._logger import logger
@@ -22,10 +23,17 @@ from .utils import doc_write_gw, read_gw
 
 # ----------------------- #
 
+R = TypeVar("R", bound=BaseModel)
+D = TypeVar("D", bound=Document)
+C = TypeVar("C", bound=CreateDocumentCmd)
+U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort):
+class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
     """Configurable Mongo read-only document adapter."""
 
     config: MongoReadOnlyDocumentConfig
@@ -35,12 +43,13 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort):
 
     def __call__(
         self,
-        context: ExecutionContext,
-        spec: DocumentSpec[Any, Any, Any, Any],
-        cache: CachePort | None = None,
-    ) -> MongoDocumentAdapter[Any, Any, Any, Any]:
+        ctx: ExecutionContext,
+        spec: DocumentSpec[R, Any, Any, Any],
+    ) -> MongoDocumentAdapter[R, Any, Any, Any]:
+        cache = ctx.cache(spec.cache) if spec.cache is not None else None
+
         read = read_gw(
-            context,
+            ctx,
             read_type=spec.read,
             read_relation=self.config["read"],
             tenant_aware=self.config.get("tenant_aware", False),
@@ -58,7 +67,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableMongoDocument(DocumentCommandDepPort):
+class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
     """Configurable Mongo document adapter."""
 
     config: MongoDocumentConfig
@@ -68,10 +77,10 @@ class ConfigurableMongoDocument(DocumentCommandDepPort):
 
     def __call__(
         self,
-        context: ExecutionContext,
-        spec: DocumentSpec[Any, Any, Any, Any],
-        cache: CachePort | None = None,
-    ) -> MongoDocumentAdapter[Any, Any, Any, Any]:
+        ctx: ExecutionContext,
+        spec: DocumentSpec[R, D, C, U],
+    ) -> MongoDocumentAdapter[R, D, C, U]:
+        cache = ctx.cache(spec.cache) if spec.cache is not None else None
         config = self.config
         tenant_aware = config.get("tenant_aware", False)
 
@@ -79,7 +88,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort):
             raise CoreError("Write relation is required for non read-only documents.")
 
         read = read_gw(
-            context,
+            ctx,
             read_type=spec.read,
             read_relation=config["read"],
             tenant_aware=tenant_aware,
@@ -100,7 +109,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort):
             )
 
         write = doc_write_gw(
-            context,
+            ctx,
             write_types=spec.write,
             write_relation=write_relation,
             history_relation=history_relation,

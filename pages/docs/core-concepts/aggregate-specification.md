@@ -33,7 +33,7 @@ Specifications are the bridge between your domain models and infrastructure adap
 | `read` | `type[R]` | `ReadDocument` subclass for query results |
 | `write` | `DocumentWriteTypes \| None` | Domain + command types; `None` for read-only aggregates |
 | `history_enabled` | `bool` | When `True`, infra may persist revision history if configured |
-| `cache` | `CacheSpec \| None` | When set, `doc_query` / `doc_command` resolve a cache port for read-through caching |
+| `cache` | `CacheSpec \| None` | When set, the document adapter factory resolves `ctx.cache(...)` for read-through caching |
 
 ### Write types
 

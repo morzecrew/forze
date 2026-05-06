@@ -111,6 +111,36 @@ class TestAggregatesExpressionParser:
                 },
             )
 
+    def test_parses_time_bucket(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$fields": {"item": "item_id"},
+                "$time_bucket": {
+                    "field": "ts",
+                    "unit": "day",
+                    "timezone": "+3",
+                    "alias": "day_start",
+                },
+                "$computed": {"avg_p": {"$avg": "price"}},
+            },
+        )
+        assert parsed.time_bucket is not None
+        assert parsed.time_bucket.field == "ts"
+        assert parsed.time_bucket.unit == "day"
+        assert parsed.time_bucket.alias == "day_start"
+        assert parsed.time_bucket.timezone.mode == "fixed"
+        assert "day_start" in parsed.aliases
+
+    def test_rejects_duplicate_time_bucket_alias(self) -> None:
+        with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$fields": {"bucket": "item_id"},
+                    "$time_bucket": {"field": "ts", "unit": "hour"},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
 
 # ----------------------- #
 

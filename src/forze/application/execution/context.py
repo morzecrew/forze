@@ -348,13 +348,8 @@ class ExecutionContext:
         :returns: Document query port instance.
         """
 
-        cache = None
-
-        if spec.cache is not None:
-            cache = self.cache(spec.cache)
-
         dep = self.dep(DocumentQueryDepKey, route=spec.name)
-        doc = dep(self, spec, cache=cache)
+        doc = dep(self, spec)
 
         logger.trace(
             "Resolved document query port for name '%s' -> %s",
@@ -376,13 +371,8 @@ class ExecutionContext:
         :returns: Document command port instance.
         """
 
-        cache = None
-
-        if spec.cache is not None:
-            cache = self.cache(spec.cache)
-
         dep = self.dep(DocumentCommandDepKey, route=spec.name)
-        doc = dep(self, spec, cache=cache)
+        doc = dep(self, spec)
 
         logger.trace(
             "Resolved document command port for name '%s' -> %s",

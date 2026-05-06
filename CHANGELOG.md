@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `forze.application.contracts.query`: optional aggregate **`$time_bucket`** (`hour` / `day` / `week` / `month`) with **`timezone`** (IANA or fixed offset such as `+3` / `+03:00`, default UTC). Composes with `$fields` and `$computed`. Mock, Postgres (`date_trunc` + `AT TIME ZONE`), and Mongo (**`$dateTrunc`**, MongoDB 5.0+).
+- `DocumentQueryPort.find_many`: **`return_type` without `aggregates`** validates each document row against a Pydantic model; Postgres, Mongo, and mock adapters support it via read gateways.
 - `forze.application.execution`: `ConditionalGuard`, `ConditionalEffect` (template `condition` + `main` with unified `__call__`), and composable `WhenGuard` / `WhenEffect` wrappers for predicates at wiring time.
 - `forze.application.contracts.secrets`: `SecretRef`, `AsyncSecretsPort`, `AsyncSecretsDepKey`, and `resolve_structured` for KV-style secret strings and optional JSON validation into Pydantic models.
 - `forze.base.errors.SecretNotFoundError` for missing secret resolution.
@@ -44,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** :class:`~forze.application.contracts.document.DocumentQueryDepPort` and :class:`~forze.application.contracts.document.DocumentCommandDepPort` no longer take a ``cache`` argument; ``ExecutionContext.doc_query`` / ``doc_command`` call factories as ``factory(ctx, spec)``. Implementations (e.g. Postgres, Mongo configurable document deps) resolve :class:`~forze.application.contracts.cache.CachePort` via ``context.cache(spec.cache)`` when ``spec.cache`` is set. Custom document dep factories must be updated accordingly.
 - **Breaking:** :class:`~forze.application.contracts.query.AggregatesExpression` (document ``find_many`` / aggregate list APIs) uses wire keys ``"$fields"`` (group keys) and ``"$computed"`` (aggregates) instead of ``fields`` and ``computed_fields``. ``"$fields"`` may be a list or tuple of field paths when each output alias matches the path. ``fields`` / ``computed_fields`` are no longer read.
 - **Breaking:** `forze_mongo.kernel.platform.MongoClient` `db` and `collection` are async; `MongoGateway.coll` is async (`await self.coll()` at call sites). Integration or custom code using the raw client must await these methods.
 - `forze_mongo` gateways, transaction manager adapter, and `MongoClientDepKey` use the structural `MongoClientPort` protocol (implemented by `MongoClient` and `RoutedMongoClient`). `MongoStartupHook`/`mongo_lifecycle_step` still initialize a concrete `MongoClient`; use `RoutedMongoClient` with `routed_mongo_lifecycle_step` for tenant-routed clusters.

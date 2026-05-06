@@ -278,6 +278,36 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         """Find many documents and return typed read models and total count."""
         ...  # pragma: no cover
 
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = False,
+    ) -> Awaitable[CountlessPage[T]]:
+        """Find many documents and validate hits against ``return_type`` (no aggregates)."""
+        ...  # pragma: no cover
+
+    @overload
+    def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Awaitable[Page[T]]:
+        """Find many documents as ``return_type`` with total row count."""
+        ...  # pragma: no cover
+
     def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -300,7 +330,10 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
 
         When ``return_count`` is ``True``, runs a count query and returns
         ``(results, total)``. Otherwise returns only ``results`` (default).
-        When ``aggregates`` is set, the total counts result groups.
+        When ``aggregates`` is set, the total counts aggregate groups; otherwise it
+        counts matching documents. ``return_type`` without ``aggregates`` maps each
+        document row through the model (same shape as the list read model, optional
+        projection) without an aggregate query.
         """
         ...  # pragma: no cover
 

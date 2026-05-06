@@ -25,7 +25,7 @@ The central dependency resolution point. Every usecase and factory receives an `
 | `storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
 | `search_query(spec)` | `SearchQueryPort` | Full-text search port |
 
-When `DocumentSpec.cache` is set, `doc_query()` and `doc_command()` resolve `ctx.cache(spec.cache)` and pass the port into the document adapter. TTL defaults come from `CacheSpec`.
+When `DocumentSpec.cache` is set, the document dep factory resolves `ctx.cache(spec.cache)` while building the adapter. TTL defaults come from `CacheSpec`.
 
 ### Transactions
 

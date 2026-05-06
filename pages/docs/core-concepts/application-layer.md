@@ -34,7 +34,7 @@ Together these ensure that business logic remains independent of infrastructure 
 | `search_query(spec)` | `SearchQueryPort` | Full-text search port |
 | `transaction()` | async context manager | Enter a transaction scope |
 
-When `DocumentSpec.cache` is set, `doc_query()` and `doc_command()` resolve a cache port and pass it to the document adapter.
+When `DocumentSpec.cache` is set, the registered document query/command factory resolves `ctx.cache(spec.cache)` while building the adapter.
 
 Nested `transaction()` calls reuse the same transaction with savepoints when the backend supports them.
 

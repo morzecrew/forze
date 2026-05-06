@@ -1,18 +1,14 @@
 """Document dependency keys and routers."""
 
-from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
-from ..base import DepKey
-from ..cache import CachePort
+from ..base import BaseDepPort, DepKey
 from .ports import DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec
-
-if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 
@@ -22,48 +18,23 @@ C = TypeVar("C", bound=CreateDocumentCmd)
 U = TypeVar("U", bound=BaseDTO)
 
 # ....................... #
-#! TODO: remove cache port from dep factory and use internally in adapter constructors (?)
 
+DocumentQueryDepPort = BaseDepPort[
+    DocumentSpec[R, Any, Any, Any],
+    DocumentQueryPort[R],
+]
 
-@runtime_checkable
-class DocumentQueryDepPort(Protocol):
-    """Factory protocol for building ``DocumentQueryPort`` instances."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: DocumentSpec[R, D, C, U],
-        cache: (
-            CachePort | None
-        ) = None,  #! should it be part of internal adapter semantics instead?
-    ) -> DocumentQueryPort[R]:
-        """Build a document query port, optionally backed by a cache."""
-        ...
-
+DocumentCommandDepPort = BaseDepPort[
+    DocumentSpec[R, D, C, U],
+    DocumentCommandPort[R, D, C, U],
+]
 
 # ....................... #
 
-
-@runtime_checkable
-class DocumentCommandDepPort(Protocol):
-    """Factory protocol for building ``DocumentCommandPort`` instances."""
-
-    def __call__(
-        self,
-        context: "ExecutionContext",
-        spec: DocumentSpec[R, D, C, U],
-        cache: (
-            CachePort | None
-        ) = None,  #! should it be part of internal adapter semantics instead?
-    ) -> DocumentCommandPort[R, D, C, U]:
-        """Build a document command port, optionally backed by a cache."""
-        ...
-
-
-# ....................... #
-
-DocumentQueryDepKey = DepKey[DocumentQueryDepPort]("document_query")
+DocumentQueryDepKey = DepKey[DocumentQueryDepPort[Any]]("document_query")
 """Key used to register the ``DocumentQueryDepPort`` implementation."""
 
-DocumentCommandDepKey = DepKey[DocumentCommandDepPort]("document_command")
+DocumentCommandDepKey = DepKey[DocumentCommandDepPort[Any, Any, Any, Any]](
+    "document_command"
+)
 """Key used to register the ``DocumentCommandDepPort`` implementation."""

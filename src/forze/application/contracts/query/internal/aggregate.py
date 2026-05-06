@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, cast, get_args
+from typing import Any, Literal, cast, get_args
 
 import attrs
 
@@ -12,11 +12,13 @@ from forze.base.errors import CoreError
 
 from ..expressions import AggregateFunction, AggregatesExpression, QueryFilterExpression
 from .parse import QueryFilterExpressionParser
+from .time_bucket import ResolvedTimeBucketTimezone, parse_aggregate_timezone
 
 # ----------------------- #
 
 _ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
+_UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
@@ -48,6 +50,23 @@ class AggregateComputedField:
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
+class AggregateTimeBucket:
+    """Calendar bucket dimension derived from a timestamp field."""
+
+    field: str
+    """Source field path."""
+
+    unit: Literal["hour", "day", "week", "month"]
+    """Bucket width."""
+
+    alias: str
+    """Output alias (default ``bucket`` on the wire)."""
+
+    timezone: ResolvedTimeBucketTimezone
+    """Resolved IANA or fixed-offset timezone."""
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
 class ParsedAggregates:
     """Validated aggregate expression."""
 
@@ -57,14 +76,20 @@ class ParsedAggregates:
     computed_fields: tuple[AggregateComputedField, ...]
     """Computed aggregate fields."""
 
+    time_bucket: AggregateTimeBucket | None = None
+    """Optional calendar bucket group key."""
+
     @property
     def aliases(self) -> frozenset[str]:
         """All output aliases declared by the expression."""
 
-        return frozenset(
-            [field.alias for field in self.fields]
-            + [field.alias for field in self.computed_fields],
-        )
+        keys = [field.alias for field in self.fields] + [
+            field.alias for field in self.computed_fields
+        ]
+        if self.time_bucket is not None:
+            keys.append(self.time_bucket.alias)
+
+        return frozenset(keys)
 
 
 class AggregatesExpressionParser:
@@ -83,6 +108,7 @@ class AggregatesExpressionParser:
 
         fields_obj: object = expr.get("$fields", {})
         fields = cls._group_keys(fields_obj)
+        time_bucket = cls._time_bucket(expr.get("$time_bucket"))
         computed_fields = tuple(
             cls._computed(alias, spec) for alias, spec in raw_computed.items()
         )
@@ -93,12 +119,18 @@ class AggregatesExpressionParser:
         aliases = [field.alias for field in fields] + [
             field.alias for field in computed_fields
         ]
+        if time_bucket is not None:
+            aliases.append(time_bucket.alias)
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:
             raise CoreError(f"Duplicate aggregate aliases: {duplicates}")
 
-        return ParsedAggregates(fields=fields, computed_fields=computed_fields)
+        return ParsedAggregates(
+            fields=fields,
+            computed_fields=computed_fields,
+            time_bucket=time_bucket,
+        )
 
     # ....................... #
 
@@ -121,6 +153,50 @@ class AggregatesExpressionParser:
             )
 
         raise CoreError(f"Invalid aggregate $fields: {raw!r}")
+
+    # ....................... #
+
+    @classmethod
+    def _time_bucket(cls, raw: object) -> AggregateTimeBucket | None:
+        if raw is None:
+            return None
+
+        if not isinstance(raw, Mapping):
+            raise CoreError(f"Invalid aggregate $time_bucket: {raw!r}")
+
+        spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
+        allowed = {"field", "unit", "timezone", "alias"}
+        extra = set(spec) - allowed
+
+        if extra:
+            raise CoreError(f"Invalid $time_bucket keys: {sorted(extra)}")
+
+        field = spec.get("field")
+        unit = spec.get("unit")
+
+        if not isinstance(field, str) or not field.strip():
+            raise CoreError("$time_bucket.field must be a non-empty string")
+
+        if not isinstance(unit, str) or unit not in _UNITS:
+            raise CoreError(
+                f"$time_bucket.unit must be one of {sorted(_UNITS)}",
+            )
+
+        alias_raw = spec.get("alias", "bucket")
+        alias = cls._alias(alias_raw)
+
+        tz_raw = spec.get("timezone")
+        if tz_raw is not None and not isinstance(tz_raw, str):
+            raise CoreError(f"$time_bucket.timezone must be a string, got {tz_raw!r}")
+
+        resolved = parse_aggregate_timezone(tz_raw)
+
+        return AggregateTimeBucket(
+            field=cls._field(field),
+            unit=cast(Literal["hour", "day", "week", "month"], unit),
+            alias=alias,
+            timezone=resolved,
+        )
 
     # ....................... #
 

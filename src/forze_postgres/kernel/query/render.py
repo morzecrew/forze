@@ -7,6 +7,7 @@ require_psycopg()
 # ....................... #
 
 from typing import Any, Mapping
+from datetime import timedelta
 
 import attrs
 from psycopg import sql
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.query import (
     AggregateComputedField,
+    AggregateTimeBucket,
     AggregatesExpression,
     AggregatesExpressionParser,
     ParsedAggregates,
@@ -168,6 +170,12 @@ class PsycopgQueryRenderer:
         select_parts: list[sql.Composable] = []
         group_parts: list[sql.Composable] = []
 
+        if parsed.time_bucket is not None:
+            tb_expr = self._render_time_bucket_expr(parsed.time_bucket)
+            tb_ident = sql.Identifier(parsed.time_bucket.alias)
+            select_parts.append(sql.SQL("{} AS {}").format(tb_expr, tb_ident))
+            group_parts.append(tb_expr)
+
         for field in parsed.fields:
             expr = self._render_source_expr(field.field)
             select_parts.append(
@@ -183,6 +191,27 @@ class PsycopgQueryRenderer:
 
         group_clause = sql.SQL(", ").join(group_parts) if group_parts else None
         return parsed, sql.SQL(", ").join(select_parts), group_clause, self.binder.values()
+
+    # ....................... #
+
+    def _render_time_bucket_expr(self, tb: AggregateTimeBucket) -> sql.Composable:
+        col = self._render_source_expr(tb.field)
+        unit = tb.unit
+        tz = tb.timezone
+
+        if tz.mode == "iana":
+            return sql.SQL("date_trunc({}, {} AT TIME ZONE {})").format(
+                sql.Literal(unit),
+                col,
+                sql.Literal(tz.iana),
+            )
+
+        offset = tz.offset if tz.offset is not None else timedelta(0)
+        return sql.SQL("date_trunc({}, {} AT TIME ZONE 'UTC' + {})").format(
+            sql.Literal(unit),
+            col,
+            sql.Literal(offset),
+        )
 
     # ....................... #
 

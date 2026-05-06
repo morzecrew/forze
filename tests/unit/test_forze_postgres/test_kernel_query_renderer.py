@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, cast
 from uuid import uuid4
 
@@ -305,6 +306,12 @@ class _OrderRow(BaseModel):
     price: float
 
 
+class _TsRow(BaseModel):
+    item_id: str
+    ts: datetime
+    price: float
+
+
 class TestPostgresAggregateRendering:
     def test_renders_grouped_aggregate_select_and_sort(self) -> None:
         renderer = PsycopgQueryRenderer(
@@ -365,6 +372,29 @@ class TestPostgresAggregateRendering:
         assert b"COUNT(*) FILTER" in select_sql
         assert b"SUM" in select_sql
         assert params == [10, 20, "books"]
+
+    def test_renders_time_bucket_with_field_group(self) -> None:
+        renderer = PsycopgQueryRenderer(
+            types={
+                "item_id": _t("text"),
+                "ts": _t("timestamptz"),
+                "price": _t("numeric"),
+            },
+            model_type=_TsRow,
+        )
+        parsed, select_clause, group_clause, params = renderer.render_aggregates(
+            {
+                "$fields": {"item": "item_id"},
+                "$time_bucket": {"field": "ts", "unit": "day", "timezone": "UTC"},
+                "$computed": {"avg_p": {"$avg": "price"}},
+            },
+        )
+        sel = select_clause.as_bytes()
+        gro = group_clause.as_bytes() if group_clause else b""
+        assert b"date_trunc" in sel
+        assert b"item_id" in gro
+        assert parsed.time_bucket is not None
+        assert params == []
 
     def test_rejects_unknown_aggregate_sort_alias(self) -> None:
         renderer = PsycopgQueryRenderer(

@@ -3,6 +3,7 @@
 from .aggregate import (
     AggregateComputedField,
     AggregateField,
+    AggregateTimeBucket,
     AggregatesExpressionParser,
     ParsedAggregates,
 )
@@ -15,6 +16,7 @@ from .parse import QueryFilterExpressionParser
 __all__ = [
     "AggregateComputedField",
     "AggregateField",
+    "AggregateTimeBucket",
     "AggregatesExpressionParser",
     "ParsedAggregates",
     "QueryFilterExpressionParser",

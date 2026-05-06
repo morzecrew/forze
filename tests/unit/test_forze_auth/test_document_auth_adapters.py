@@ -47,7 +47,7 @@ class _MemoryDocumentProvider:
     def __init__(self) -> None:
         self.rows: dict[str, dict[UUID, Any]] = {}
 
-    def __call__(self, _ctx: ExecutionContext, spec: Any, cache: Any = None) -> Any:
+    def __call__(self, _ctx: ExecutionContext, spec: Any) -> Any:
         self.rows.setdefault(spec.name, {})
         return _MemoryDocumentPort(self, spec)
 

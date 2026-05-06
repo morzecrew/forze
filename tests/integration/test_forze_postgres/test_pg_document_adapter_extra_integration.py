@@ -533,11 +533,17 @@ async def test_pg_adapter_find_many_rejects_conflicting_args(
             return_fields=["sku"],
         )
 
-    with pytest.raises(CoreError, match="return_type requires aggregates"):
-        await q.find_many(
-            None,
-            return_type=_SkuGroup,
-        )
+    cmd = ctx.doc_command(spec)
+    await cmd.create(_CxCreate(sku="rt-single"))
+    page = await q.find_many(
+        {"$fields": {"sku": "rt-single"}},
+        pagination={"limit": 10},
+        return_type=_CxRead,
+        return_count=False,
+    )
+    assert len(page.hits) == 1
+    assert isinstance(page.hits[0], _CxRead)
+    assert page.hits[0].sku == "rt-single"
 
 
 @pytest.mark.integration

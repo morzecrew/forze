@@ -1,10 +1,10 @@
 """Factory functions for Postgres document and tx manager adapters."""
 
-from typing import Any, Literal, Sequence, cast, final
+from typing import Any, Literal, Sequence, TypeVar, cast, final
 
 import attrs
+from pydantic import BaseModel
 
-from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
     DocumentCommandDepPort,
     DocumentQueryDepPort,
@@ -31,6 +31,7 @@ from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ...adapters import (
     FtsGroupLetter,
@@ -63,6 +64,13 @@ from .utils import doc_write_gw, read_gw
 
 # ----------------------- #
 
+R = TypeVar("R", bound=BaseModel)
+D = TypeVar("D", bound=Document)
+C = TypeVar("C", bound=CreateDocumentCmd)
+U = TypeVar("U", bound=BaseDTO)
+
+# ....................... #
+
 
 def _resolve_result_snapshot(
     context: ExecutionContext,
@@ -82,7 +90,7 @@ def _resolve_result_snapshot(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort):
+class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
     """Configurable Postgres read-only document adapter."""
 
     config: PostgresReadOnlyDocumentConfig
@@ -92,12 +100,13 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort):
 
     def __call__(
         self,
-        context: ExecutionContext,
-        spec: DocumentSpec[Any, Any, Any, Any],
-        cache: CachePort | None = None,
-    ) -> PostgresDocumentAdapter[Any, Any, Any, Any]:
+        ctx: ExecutionContext,
+        spec: DocumentSpec[R, Any, Any, Any],
+    ) -> PostgresDocumentAdapter[R, Any, Any, Any]:
+        cache = ctx.cache(spec.cache) if spec.cache is not None else None
+
         read = read_gw(
-            context,
+            ctx,
             read_type=spec.read,
             read_relation=self.config["read"],
             tenant_aware=self.config.get("tenant_aware", False),
@@ -117,7 +126,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurablePostgresDocument(DocumentCommandDepPort):
+class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
     """Configurable Postgres document adapter."""
 
     config: PostgresDocumentConfig
@@ -127,17 +136,17 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
 
     def __call__(
         self,
-        context: ExecutionContext,
-        spec: DocumentSpec[Any, Any, Any, Any],
-        cache: CachePort | None = None,
-    ) -> PostgresDocumentAdapter[Any, Any, Any, Any]:
+        ctx: ExecutionContext,
+        spec: DocumentSpec[R, D, C, U],
+    ) -> PostgresDocumentAdapter[R, D, C, U]:
+        cache = ctx.cache(spec.cache) if spec.cache is not None else None
         tenant_aware = self.config.get("tenant_aware", False)
 
         if spec.write is None:
             raise CoreError("Write relation is required for non read-only documents.")
 
         read = read_gw(
-            context,
+            ctx,
             read_type=spec.read,
             read_relation=self.config["read"],
             tenant_aware=tenant_aware,
@@ -160,7 +169,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort):
             )
 
         write = doc_write_gw(
-            context,
+            ctx,
             write_types=spec.write,
             write_relation=write_relation,
             history_relation=history_relation,

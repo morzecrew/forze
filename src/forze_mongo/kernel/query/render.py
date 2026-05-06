@@ -1,11 +1,13 @@
 """Renderer that translates abstract query expressions into Mongo filter dicts."""
 
+from datetime import timedelta
 from typing import Any
 
 import attrs
 
 from forze.application.contracts.query import (
     AggregateComputedField,
+    AggregateTimeBucket,
     AggregatesExpression,
     AggregatesExpressionParser,
     ParsedAggregates,
@@ -74,11 +76,23 @@ class MongoQueryRenderer:
         if match:
             pipeline.append({"$match": match})
 
-        group_id: JsonDict | None = (
-            {field.alias: f"${field.field}" for field in parsed.fields}
-            if parsed.fields
-            else None
+        group_id_el: JsonDict = {}
+
+        if parsed.time_bucket is not None:
+            tb = parsed.time_bucket
+            group_id_el[tb.alias] = {
+                "$dateTrunc": {
+                    "date": f"${tb.field}",
+                    "unit": tb.unit,
+                    "timezone": self._mongo_date_trunc_timezone(tb),
+                    "startOfWeek": "monday",
+                },
+            }
+
+        group_id_el.update(
+            {field.alias: f"${field.field}" for field in parsed.fields},
         )
+        group_id: JsonDict | None = group_id_el if group_id_el else None
         group: JsonDict = {"_id": group_id}
 
         for computed in parsed.computed_fields:
@@ -87,6 +101,8 @@ class MongoQueryRenderer:
         pipeline.append({"$group": group})
 
         project: JsonDict = {"_id": 0}
+        if parsed.time_bucket is not None:
+            project[parsed.time_bucket.alias] = f"$_id.{parsed.time_bucket.alias}"
         for field in parsed.fields:
             project[field.alias] = f"$_id.{field.alias}"
         for computed in parsed.computed_fields:
@@ -127,6 +143,22 @@ class MongoQueryRenderer:
             (field, 1 if direction == "asc" else -1)
             for field, direction in sorts.items()
         ]
+
+    # ....................... #
+
+    @staticmethod
+    def _mongo_date_trunc_timezone(tb: AggregateTimeBucket) -> str:
+        tz = tb.timezone
+        if tz.mode == "iana":
+            return tz.iana
+
+        off = tz.offset if tz.offset is not None else timedelta(0)
+        total_sec = int(off.total_seconds())
+        sign = "+" if total_sec >= 0 else "-"
+        total_sec = abs(total_sec)
+        h, rem = divmod(total_sec, 3600)
+        m = rem // 60
+        return f"{sign}{h:02d}:{m:02d}"
 
     # ....................... #
 

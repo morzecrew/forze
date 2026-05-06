@@ -543,6 +543,32 @@ class PostgresDocumentAdapter(
         return_count: Literal[True],
     ) -> Page[R]: ...
 
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[False] = ...,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = ...,
+        sorts: QuerySortExpression | None = ...,
+        *,
+        aggregates: None = ...,
+        return_type: type[T],
+        return_fields: None = ...,
+        return_count: Literal[True],
+    ) -> Page[T]: ...
+
     async def find_many(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -563,8 +589,6 @@ class PostgresDocumentAdapter(
     ):
         if aggregates is not None and return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
-        if aggregates is None and return_type is not None:
-            raise CoreError("return_type requires aggregates")
 
         pagination = pagination or {}
         limit = pagination.get("limit")
@@ -621,6 +645,7 @@ class PostgresDocumentAdapter(
                 limit=limit,
                 offset=offset,
                 sorts=sorts,
+                return_model=return_type,  # type: ignore[arg-type]
                 return_fields=return_fields,  # type: ignore[arg-type]
             )
 

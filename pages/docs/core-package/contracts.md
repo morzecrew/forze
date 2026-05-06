@@ -106,7 +106,7 @@ Kernel specification: model types, logical `name`, optional `history_enabled`, o
 | `read` | `type[R]` | Read model (`ReadDocument`) |
 | `write` | `DocumentWriteTypes \| None` | Domain + commands, or `None` for read-only |
 | `history_enabled` | `bool` | Whether history is active when infra provides it |
-| `cache` | `CacheSpec \| None` | Enables read-through cache on query/command ports |
+| `cache` | `CacheSpec \| None` | When set, document dep factories resolve `ctx.cache(...)` while building query/command ports |
 
 Helper methods:
 

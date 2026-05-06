@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, Sequence, TypeAlias, TypedDict
+from typing import Literal, Mapping, NotRequired, Sequence, TypeAlias, TypedDict
 
 from .types import Array, Numeric, Scalar
 
@@ -80,6 +80,10 @@ QuerySortExpression = Mapping[str, QuerySortDirection]
 AggregateFunction = Literal["$count", "$sum", "$avg", "$min", "$max", "$median"]
 """Supported aggregate function names."""
 
+AggregateTimeBucketUnit = Literal["hour", "day", "week", "month"]
+"""Calendar bucketing unit for ``$time_bucket``."""
+
+
 AggregateFieldExpression = Mapping[str, str]
 """Map of aggregate output aliases to source field paths used as group keys."""
 
@@ -116,15 +120,37 @@ AggregateComputedFunctionExpression = TypedDict(
 AggregateComputedFieldExpression = Mapping[str, AggregateComputedFunctionExpression]
 """Map of aggregate output aliases to computed aggregate function specs."""
 
+
+class AggregateTimeBucketExpression(TypedDict):
+    """Optional calendar bucket on a timestamp field (``$time_bucket``)."""
+
+    field: str
+    """Source field path (typically a ``timestamptz`` / ISO datetime)."""
+
+    unit: AggregateTimeBucketUnit
+    """Bucket width: hour, day, week (Monday start), or month."""
+
+    timezone: NotRequired[str]
+    """IANA name (e.g. ``Europe/Paris``) or fixed offset ``+3``, ``+03:00``. Defaults to ``UTC``."""
+
+    alias: NotRequired[str]
+    """Output column alias; defaults to ``bucket``."""
+
+
 AggregatesExpression = TypedDict(
     "AggregatesExpression",
     {
         "$fields": AggregateGroupKeysExpression,
         "$computed": AggregateComputedFieldExpression,
+        "$time_bucket": AggregateTimeBucketExpression,
     },
     total=False,
 )
 """Aggregate result shape: ``$fields`` (group keys) plus ``$computed`` (aggregates).
+
+Optional ``$time_bucket`` adds a derived group key: the start of a calendar period
+for a timestamp field in the given timezone. It can be combined with other group
+fields and any computed aggregates.
 
 ``$fields`` is either a map of output alias to source path or a homogeneous list
 or tuple of field paths (each path is both alias and source). ``$computed`` maps
