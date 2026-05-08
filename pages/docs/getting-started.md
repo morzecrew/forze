@@ -40,6 +40,15 @@ If you already know what you need, jump straight to a recipe:
 - [Add idempotency](recipes/add-idempotency.md)
 - [Background workflow](recipes/background-workflow.md)
 
+## Troubleshooting
+
+| Symptom | Likely cause | Fix | See also |
+|---------|--------------|-----|----------|
+| A document, cache, or search call fails because the spec name cannot be resolved. | The logical `spec.name` does not match the route key registered by the dependency module. | Use the same name in the spec and the integration module route, for example `DocumentSpec(name="projects")` and `rw_documents={"projects": ...}`. | [Specs and wiring](concepts/specs-and-wiring.md) |
+| `runtime.get_context()` fails, or a route runs without an execution context. | The runtime scope was not entered before resolving dependencies. | Wrap the app in `async with runtime.scope()` or wire `runtime.startup()`/`runtime.shutdown()` into the framework lifespan before handling requests. | [Execution](reference/execution.md) |
+| Postgres-backed document calls fail because tables or history relations are missing. | Forze expects application tables to exist; it does not create database schema during startup. | Create read, write, history, and search tables with your migration tool before enabling the Postgres deps module. | [PostgreSQL integration](integrations/postgres.md) |
+| A document with `cache=CacheSpec(...)` still cannot resolve a cache dependency. | The Redis cache route was not registered under the `CacheSpec.name`. | Add the matching route to `RedisDepsModule.caches` and include that module in the `DepsPlan`. | [Redis / Valkey integration](integrations/redis.md) |
+
 ## Keep API inventories for later
 
 Beginner pages avoid long tables and signatures. When you need exact contracts, dependency keys, or operation signatures, use the [Reference](reference/index.md).
