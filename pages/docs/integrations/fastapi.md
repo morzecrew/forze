@@ -1,343 +1,142 @@
 # FastAPI Integration
 
-## What this integration provides
+## Page opening
 
-Expose Forze usecases and document/search contracts as typed HTTP routes without making domain or application code depend on FastAPI.
+`forze_fastapi` exposes Forze application contracts over typed FastAPI routes without making domain code depend on HTTP. It provides route attach helpers for document CRUD, search, custom usecase endpoints, request context middleware, exception handlers, and Scalar API docs integration.
 
-## When to use it
-
-Use this when HTTP is your interface layer, when you need generated CRUD/search endpoints, or when you want custom route helpers backed by `ExecutionRuntime`.
-
-## Standard setup checklist
-
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
-
-
-`forze_fastapi` connects Forze usecases to HTTP routes. It attaches typed endpoints to a standard FastAPI `APIRouter`: document CRUD (`attach_document_endpoints`), full-text search (`attach_search_endpoints`), and lower-level helpers in `forze_fastapi.endpoints.http` for custom operations. Optional middleware binds call context to requests; `register_exception_handlers` and `register_scalar_docs` integrate errors and API docs.
-
-## Package layout
-
-| Area | Import path | Role |
-|------|-------------|------|
-| Document HTTP | `forze_fastapi.endpoints.document` | `attach_document_endpoints` — CRUD and list routes from `DocumentSpec` + `DocumentDTOs` |
-| Search HTTP | `forze_fastapi.endpoints.search` | `attach_search_endpoints` — typed and raw search routes |
-| HTTP primitives | `forze_fastapi.endpoints.http` | `attach_http_endpoint`, `build_http_endpoint_spec`, idempotency and ETag features |
-| Middleware | `forze_fastapi.middlewares` | `ContextBindingMiddleware`, `LoggingMiddleware` |
-| OpenAPI | `forze_fastapi.openapi` | `register_scalar_docs` |
-| Errors | `forze_fastapi.exceptions` | `register_exception_handlers` |
-
-Integration packages are separate wheels (`forze_fastapi`, `forze_postgres`, …) but ship in the same repository; optional extras in `pyproject.toml` pull them in (see [Installation](../installation.md)).
+| Topic | Details |
+|------|---------|
+| What it provides | FastAPI routers and middleware that resolve Forze dependencies from `ExecutionContext` and call registered usecases. |
+| Supported Forze contracts | `DocumentSpec` and `SearchSpec` through generated endpoints; arbitrary `Usecase` classes through HTTP endpoint specs; optional ETag and idempotency behaviors through endpoint features. |
+| When to use it | Use this integration when FastAPI is the delivery layer for a Forze service, when you want generated CRUD/search routes, or when custom HTTP operations should still run through `ExecutionRuntime`. |
 
 ## Installation
 
-    :::bash
-    uv add 'forze[fastapi]'
+```bash
+uv add 'forze[fastapi]'
+```
 
-## Execution context dependency
+| Requirement | Notes |
+|-------------|-------|
+| Package extra | `fastapi` installs FastAPI, Starlette, Uvicorn, python-multipart, httpx, and Scalar docs dependencies. |
+| Required service | None. FastAPI is an in-process web framework. |
+| Local development dependency | Uvicorn is included by the extra for local ASGI serving. Use your normal test client for route tests. |
 
-All Forze routes resolve ports through `ExecutionContext`. Provide a callable dependency that returns the current context:
+## Minimal setup
 
-    :::python
-    from fastapi import FastAPI
-    from forze.application.execution import ExecutionRuntime
+### Client
 
-    runtime = ExecutionRuntime(...)
-    app = FastAPI()
+FastAPI does not require a network client. The Forze runtime is the object that routes requests to dependency ports and usecases.
 
+```python
+from fastapi import FastAPI
+from forze.application.execution import ExecutionRuntime
 
-    def context_dependency():
-        return runtime.get_context()
+runtime = ExecutionRuntime(...)
+app = FastAPI(title="Projects API")
+```
 
-Pass this as `ctx_dep=` to `attach_document_endpoints`, `attach_search_endpoints`, and `attach_http_endpoint`.
+### Config
 
-## Document endpoints
+Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, and endpoint options. Keep HTTP DTOs at the edge and keep domain/application code framework-independent.
 
-`attach_document_endpoints` registers routes on an existing `APIRouter`. It builds FastAPI handlers from a `UsecaseRegistry`, `DocumentSpec`, and `DocumentDTOs`, resolving `DocumentUsecasesFacade` per request.
+```python
+from fastapi import APIRouter
+from forze.application.composition.document import DocumentDTOs, build_document_registry
+from forze_fastapi.endpoints.document import attach_document_endpoints
 
-### Generated routes
+projects = APIRouter(prefix="/projects", tags=["projects"])
+project_dtos = DocumentDTOs(read=ProjectReadModel, create=CreateProjectCmd, update=UpdateProjectCmd)
+registry = build_document_registry(project_spec, project_dtos)
+```
 
-Default paths (each can be overridden or disabled via the `endpoints` argument; see `DocumentEndpointsSpec` in the source):
+### Deps module
 
-| Path | Method | Description |
-|------|--------|-------------|
-| `/get` | GET | Fetch one document by ID (optional ETag / 304) |
-| `/list` | POST | Typed list with pagination body |
-| `/raw-list` | POST | Raw JSON list |
-| `/create` | POST | Create (optional idempotency via `Idempotency-Key`) |
-| `/update` | PATCH | Partial update (`id`, `rev`, body DTO) |
-| `/delete` | PATCH | Soft delete when supported |
-| `/restore` | PATCH | Restore when soft delete is enabled |
-| `/kill` | DELETE | Hard delete (204) |
+FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the usecases in your normal `DepsPlan` and expose the current context as a FastAPI dependency.
 
-### Setup
+```python
+def context_dependency():
+    return runtime.get_context()
 
-    :::python
-    from fastapi import APIRouter, FastAPI
+attach_document_endpoints(
+    projects,
+    document=project_spec,
+    dtos=project_dtos,
+    registry=registry,
+    ctx_dep=context_dependency,
+)
+app.include_router(projects)
+```
 
-    from forze.application.composition.document import (
-        DocumentDTOs,
-        build_document_registry,
-    )
-    from forze_fastapi.endpoints.document import attach_document_endpoints
+### Lifecycle step
 
-    app = FastAPI(title="Projects API")
-    projects_router = APIRouter(prefix="/projects", tags=["projects"])
+There is no FastAPI-specific lifecycle step. Start and stop the `ExecutionRuntime` lifecycle from FastAPI lifespan so database, cache, queue, and workflow clients open before requests are served and close on shutdown.
 
-    project_dtos = DocumentDTOs(
-        read=ProjectReadModel,
-        create=CreateProjectCmd,
-        update=UpdateProjectCmd,
-    )
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 
-    registry = build_document_registry(project_spec, project_dtos)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await runtime.startup()
+    try:
+        yield
+    finally:
+        await runtime.shutdown()
 
-    attach_document_endpoints(
-        projects_router,
-        document=project_spec,
-        dtos=project_dtos,
-        registry=registry,
-        ctx_dep=context_dependency,
-    )
+app = FastAPI(lifespan=lifespan)
+```
 
-    app.include_router(projects_router)
+## Contract coverage table
 
-Endpoints are attached only when the spec and DTOs support them (for example, list routes are skipped if disabled in `endpoints`, soft-delete routes require `SoftDeletionMixin`, and so on).
-
-## Search endpoints
-
-`attach_search_endpoints` adds typed and raw full-text search routes:
-
-| Path | Method | Description |
-|------|--------|-------------|
-| `/search` | POST | Typed search with paginated `read` model |
-| `/raw-search` | POST | Raw search rows |
-
-### Setup
-
-    :::python
-    from fastapi import APIRouter
-
-    from forze.application.composition.search import (
-        SearchDTOs,
-        build_search_registry,
-    )
-    from forze_fastapi.endpoints.search import attach_search_endpoints
-
-    search_router = APIRouter(prefix="/projects", tags=["projects-search"])
-
-    search_dtos = SearchDTOs(read=ProjectReadModel)
-    search_registry = build_search_registry(project_search_spec, search_dtos)
-
-    attach_search_endpoints(
-        search_router,
-        dtos=search_dtos,
-        registry=search_registry,
-        ctx_dep=context_dependency,
-    )
-
-    app.include_router(search_router)
-
-Use separate routers or prefixes when combining document and search routes on the same URL prefix so paths do not collide.
-
-## Custom HTTP endpoints
-
-For routes that are not covered by the document or search attach helpers, use `attach_http_endpoint` with a spec from `build_http_endpoint_spec` (`forze_fastapi.endpoints.http`). Document and search attach functions are implemented on top of these primitives.
-
-When `body_mode` is `form` (multipart), declare `UploadFile` or `list[UploadFile]` on the Pydantic body model. The adapter binds file fields with FastAPI’s `File()` and other body fields with `Form()`. Pairing parallel lists of files and metadata (for example) is your mapper’s responsibility.
-
-Idempotency and ETag are implemented as endpoint features (`IdempotencyFeature`, `ETagFeature`); POST routes with idempotency require the `Idempotency-Key` header and a registered idempotency adapter (for example via `RedisDepsModule`). The idempotency feature hashes the mapped use case input, not the raw request; avoid storing `UploadFile` in that input and prefer bytes or a stable id after reading the stream if you use idempotency on upload routes.
+| Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
+|----------------|------------------------|--------------------------|-------------|
+| `DocumentSpec` | `attach_document_endpoints` creates CRUD/list HTTP handlers backed by a `DocumentUsecasesFacade`. | Uses the `DocumentSpec.name` and the storage dependency keys configured by the runtime, commonly `DocumentQueryDepKey` and `DocumentCommandDepKey`. | Routes are generated only for supported DTO/spec features; soft-delete routes require a soft-deletion-capable document spec. |
+| `SearchSpec` | `attach_search_endpoints` creates typed and raw search routes. | Uses the `SearchSpec.name` and runtime search dependencies, commonly `SearchQueryDepKey`. | Search execution still depends on a search adapter such as Postgres; FastAPI only exposes the route. |
+| `Usecase` | `attach_http_endpoint` with `build_http_endpoint_spec`. | The endpoint spec identifies the usecase, request/response DTOs, and context dependency. | You own request/response mapping and status-code choices for custom endpoints. |
+| Idempotency feature | HTTP idempotency feature for mutating endpoints. | Requires an idempotency dependency such as `IdempotencyDepKey` when enabled. | Requires clients to send stable idempotency keys; storage and TTL behavior come from the configured idempotency adapter. |
+| ETag feature | HTTP ETag handling for reads. | Uses document revision/version data exposed by the document usecase. | Only useful when the read model exposes stable revision metadata. |
 
 ## Idempotency
 
-The document **create** route can attach idempotency (enabled by default in `attach_document_endpoints` when `document.write` and `dtos.create` are set). Requirements:
+FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it on the endpoint spec or generated document create endpoint, require clients to send a stable `Idempotency-Key`, and register an idempotency dependency such as Redis under `IdempotencyDepKey`. The stored response is keyed by the operation, idempotency key, and mapped usecase input, so avoid using one key for different payloads.
 
-1. `IdempotencyPort` registered in the dependency container (for example `RedisDepsModule`)
-2. Client sends `Idempotency-Key` with a unique value per logical operation
-3. The feature hashes the request body and replays stored responses for duplicate keys
+## Complete recipe link
 
-Tune TTL and toggles via `endpoints["config"]` on `attach_document_endpoints` (`enable_idempotency`, `idempotency_ttl`, etc.).
+See [CRUD with FastAPI, Postgres, and Redis](../recipes/crud-fastapi-postgres-redis.md) for a complete application-shaped recipe. Keep this page as the integration reference and put long end-to-end examples in recipe pages.
 
-### How it works
+## Configuration reference
 
-1. Before the handler runs, `IdempotencyPort.begin()` checks for a stored snapshot for the operation ID, key, and payload hash
-2. If found, the cached response is returned
-3. Otherwise the usecase runs; on success `commit()` stores the response snapshot
+### Connection settings
 
-## Exception handlers
+FastAPI itself has no Forze connection settings. Configure host, port, workers, TLS, and proxy headers in your ASGI server and deployment platform.
 
-Register built-in handlers to map Forze errors to HTTP status codes:
+### Pool settings
 
-    :::python
-    from forze_fastapi.exceptions import register_exception_handlers
+FastAPI does not own adapter pools. Configure pools on backing integrations such as Postgres, Redis, SQS, RabbitMQ, or Temporal.
 
-    register_exception_handlers(app)
+### Serialization settings
 
-| Forze error | HTTP status | When |
-|-------------|-------------|------|
-| `NotFoundError` | 404 | Document or resource not found |
-| `ConflictError` | 409 | Revision conflict, duplicate key |
-| `ValidationError` | 422 | Domain validation failure |
-| `CoreError` | 500 | Unexpected framework error |
+Use Pydantic DTOs for request and response bodies. `DocumentDTOs`, `SearchDTOs`, and HTTP endpoint specs control which models are accepted and returned. Avoid exposing domain entities directly when a public API shape should be stable.
 
-The response body includes the error message and, when available, a machine-readable `code` in the `X-Error-Code` header.
+### Retry/timeout behavior
 
-## Scalar API reference
+HTTP server timeouts are owned by the ASGI server or ingress. Use Forze adapter retry/timeout settings on backing services; avoid adding route-level retries around non-idempotent operations unless idempotency is enabled.
 
-Register Scalar docs for interactive API exploration:
+## Operational notes
 
-    :::python
-    from forze_fastapi.openapi import register_scalar_docs
+| Concern | Notes |
+|---------|-------|
+| Migrations/schema requirements | None for FastAPI. Migrations belong to persistence integrations such as Postgres. |
+| Cleanup/shutdown | Wire runtime startup/shutdown into FastAPI lifespan so integration clients close cleanly. |
+| Idempotency/caching behavior | FastAPI can expose idempotency and ETag features, but storage is provided by configured Forze idempotency/cache adapters. |
+| Production caveats | Run behind a production ASGI server setup, configure trusted proxy headers carefully, and keep error handlers registered so domain/application errors map to consistent HTTP responses. |
 
-    register_scalar_docs(app, path="/docs", scalar_version="1.41.0")
+## Troubleshooting
 
-The page title is derived from `app.title`. The Scalar docs page replaces the default Swagger UI with a more modern interface.
-
-## Request shapes
-
-Prebuilt routes take parameters from typed DTOs in `forze.application.dto` (for example `DocumentIdDTO` on the query string for `/get`, `DocumentIdRevDTO` for `/update`, list bodies for `/list`). Prefer these DTOs when calling facades from custom code so behavior matches HTTP.
-
-## Call context middleware
-
-`ContextBindingMiddleware` (`forze_fastapi.middlewares`) binds call context plus `AuthnIdentity` and `TenantIdentity` to each request, and can echo call context in response headers. Use `authn_identity_codec` / `tenant_identity_codec` for already-trusted identity headers, or `authn_identity_resolver` / `tenant_identity_resolver` for async resolution before binding.
-
-`HeaderAuthIdentityResolver` extracts bearer tokens from `Authorization` and API keys from `X-API-Key`, resolves `AuthnDepKey` for the configured `AuthnSpec`, and binds the returned `AuthnIdentity` through the middleware.
-
-## Runtime scope with FastAPI lifespan
-
-Use the runtime scope as a FastAPI lifespan context manager:
-
-    :::python
-    from contextlib import asynccontextmanager
-    from fastapi import FastAPI
-
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        async with runtime.scope():
-            yield
-
-
-    app = FastAPI(title="My API", lifespan=lifespan)
-
-This ensures infrastructure clients are connected during the application lifetime and properly shut down when the application stops.
-
-## Complete example
-
-/// details | Complete example
-    type: note
-
-    :::python
-    import asyncio
-    from contextlib import asynccontextmanager
-
-    import uvicorn
-    from fastapi import APIRouter, FastAPI
-
-    from forze.application.composition.document import (
-        DocumentDTOs,
-        build_document_registry,
-    )
-    from forze.application.composition.search import (
-        SearchDTOs,
-        build_search_registry,
-    )
-    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_fastapi.endpoints.document import attach_document_endpoints
-    from forze_fastapi.endpoints.search import attach_search_endpoints
-    from forze_fastapi.exceptions import register_exception_handlers
-    from forze_fastapi.openapi import register_scalar_docs
-    from forze_postgres import (
-        PostgresClient,
-        PostgresConfig,
-        PostgresDepsModule,
-        postgres_lifecycle_step,
-    )
-    from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
-
-    # Runtime setup
-    pg = PostgresClient()
-    redis = RedisClient()
-
-    runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(
-            lambda: Deps.merge(
-                PostgresDepsModule(
-                    client=pg,
-                    rw_documents={
-                        "projects": {
-                            "read": ("public", "projects"),
-                            "write": ("public", "projects"),
-                            "bookkeeping_strategy": "database",
-                        },
-                    },
-                    tx={"default"},
-                )(),
-                RedisDepsModule(
-                    client=redis,
-                    caches={"projects": {"namespace": "app:projects"}},
-                    idempotency={"default": {"namespace": "app:idempotency"}},
-                )(),
-            ),
-        ),
-        lifecycle=LifecyclePlan.from_steps(
-            postgres_lifecycle_step(dsn="postgresql://app:app@localhost:5432/app", config=PostgresConfig()),
-            redis_lifecycle_step(dsn="redis://localhost:6379/0", config=RedisConfig()),
-        ),
-    )
-
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        async with runtime.scope():
-            yield
-
-
-    app = FastAPI(title="Projects API", lifespan=lifespan)
-    register_exception_handlers(app)
-    register_scalar_docs(app)
-
-    ctx_dep = lambda: runtime.get_context()
-
-    # Document routes
-    project_dtos = DocumentDTOs(
-        read=ProjectReadModel,
-        create=CreateProjectCmd,
-        update=UpdateProjectCmd,
-    )
-    doc_registry = build_document_registry(project_spec, project_dtos)
-
-    doc_router = APIRouter(prefix="/projects", tags=["projects"])
-    attach_document_endpoints(
-        doc_router,
-        document=project_spec,
-        dtos=project_dtos,
-        registry=doc_registry,
-        ctx_dep=ctx_dep,
-    )
-    app.include_router(doc_router)
-
-    # Search routes
-    search_dtos = SearchDTOs(read=ProjectReadModel)
-    search_registry = build_search_registry(project_search_spec, search_dtos)
-    search_router = APIRouter(prefix="/projects", tags=["search"])
-    attach_search_endpoints(
-        search_router,
-        dtos=search_dtos,
-        registry=search_registry,
-        ctx_dep=ctx_dep,
-    )
-    app.include_router(search_router)
-
-
-    async def main():
-        server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000))
-        await server.serve()
-
-
-    if __name__ == "__main__":
-        asyncio.run(main())
-///
+| Common error | Likely cause | Fix |
+|--------------|--------------|-----|
+| `DepKey` resolution fails inside a route | The FastAPI dependency returned a context whose `DepsPlan` does not contain the needed adapter route. | Register the backing integration module and ensure the route/spec name matches. |
+| Endpoint returns 422 for a valid business command | The request DTO does not match the endpoint body mode or Pydantic model. | Check the `DocumentDTOs`, `SearchDTOs`, or custom endpoint spec and align the client payload. |
+| Generated soft-delete/restore routes are missing | The document spec does not advertise soft-deletion support or the endpoint was disabled. | Enable the feature in the document spec/endpoint spec or remove the route from docs/clients. |
+| Idempotency headers are ignored | The endpoint feature is not enabled or no idempotency adapter is registered. | Enable the idempotency feature and register an adapter such as Redis idempotency. |

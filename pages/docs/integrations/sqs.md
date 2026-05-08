@@ -1,228 +1,138 @@
 # SQS Integration
 
-## What this integration provides
+## Page opening
 
-Send and receive typed queue messages through SQS-compatible queues.
+`forze_sqs` provides Amazon SQS-compatible queue ports for Forze. It supports AWS SQS and compatible endpoints such as LocalStack by wrapping async AWS clients, queue URL resolution, message encoding, batch operations, acknowledgement, and dependency registration behind queue contracts.
 
-## When to use it
-
-Use this when you need managed queue delivery, LocalStack/Yandex Message Queue compatibility, or worker handoff through SQS.
-
-## Standard setup checklist
-
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
-
-
-`forze_sqs` provides message queue adapters backed by Amazon SQS or any SQS-compatible service (Yandex Message Queue, LocalStack, etc.). It implements `QueueReadPort` and `QueueWritePort` using `aioboto3`.
+| Topic | Details |
+|------|---------|
+| What it provides | `SQSClient`, optional routed client, queue read/write adapters, lifecycle hooks, SQS config, and queue dependency registration. |
+| Supported Forze contracts | `QueueQueryDepKey` and `QueueCommandDepKey`, plus `SQSClientDepKey` for infrastructure access. |
+| When to use it | Use this integration when queue workloads should run on AWS SQS or SQS-compatible infrastructure, especially for managed at-least-once delivery and serverless/background workers. |
 
 ## Installation
 
-    :::bash
-    uv add 'forze[sqs]'
+```bash
+uv add 'forze[sqs]'
+```
 
-## Runtime wiring
+| Requirement | Notes |
+|-------------|-------|
+| Package extra | `sqs` installs `aioboto3`, `aiobotocore`, `botocore`, and SQS type stubs. |
+| Required service | AWS SQS or an SQS-compatible endpoint. |
+| Local development dependency | LocalStack is the usual local SQS-compatible service. Integration tests normally use testcontainers. |
 
-Create a client, register it via the dependency module, and add a lifecycle step for session management:
+## Minimal setup
 
-    :::python
-    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_sqs import SQSClient, SQSConfig, SQSDepsModule, sqs_lifecycle_step
+### Client
 
-    client = SQSClient()
-    module = SQSDepsModule(client=client)
+```python
+from forze_sqs import SQSClient
 
-    runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
-        lifecycle=LifecyclePlan.from_steps(
-            sqs_lifecycle_step(
-                endpoint="https://sqs.us-east-1.amazonaws.com",
-                region_name="us-east-1",
-                access_key_id="your-access-key",
-                secret_access_key="your-secret-key",
-            )
-        ),
-    )
+sqs = SQSClient()
+```
 
-### LocalStack / Yandex Message Queue configuration
+Use `RoutedSQSClient` when tenant or route identity selects AWS credentials, endpoint, or region.
 
-    :::python
+### Config
+
+```python
+from datetime import timedelta
+from forze_sqs import SQSConfig
+
+sqs_config = SQSConfig(
+    region_name="us-east-1",
+    connect_timeout=timedelta(seconds=5),
+    read_timeout=timedelta(seconds=20),
+    max_pool_connections=50,
+    tcp_keepalive=True,
+)
+```
+
+Queue-level config uses `SQSQueueConfig` with `namespace` and optional `tenant_aware`.
+
+### Deps module
+
+```python
+from forze.application.execution import DepsPlan
+from forze_sqs import SQSDepsModule
+
+queue_config = {"namespace": "orders", "tenant_aware": True}
+
+sqs_module = SQSDepsModule(
+    client=sqs,
+    queue_readers={"orders": queue_config},
+    queue_writers={"orders": queue_config},
+)
+
+deps_plan = DepsPlan.from_modules(sqs_module)
+```
+
+The route key should match your `QueueSpec.name`.
+
+### Lifecycle step
+
+```python
+from forze.application.execution import LifecyclePlan
+from forze_sqs import sqs_lifecycle_step
+
+lifecycle = LifecyclePlan.from_steps(
     sqs_lifecycle_step(
         endpoint="http://localhost:4566",
         region_name="us-east-1",
         access_key_id="test",
         secret_access_key="test",
+        config=sqs_config,
     )
+)
+```
 
-### SQSConfig options
+Use `routed_sqs_lifecycle_step(client=routed_sqs)` with `RoutedSQSClient` and do not combine routed and non-routed lifecycle steps for the same client.
 
-Optional tuning can be passed via `SQSConfig` (botocore `Config`-compatible):
+## Contract coverage table
 
-| Option | Type | Purpose |
-|--------|------|---------|
-| `region_name` | `str` | AWS region |
-| `connect_timeout` | `int \| float` | Connection timeout (seconds) |
-| `read_timeout` | `int \| float` | Read timeout (seconds) |
-| `max_pool_connections` | `int` | HTTP connection pool size |
-| `tcp_keepalive` | `bool` | Enable TCP keepalive |
+| Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
+|----------------|------------------------|--------------------------|-------------|
+| Queue reads | `ConfigurableSQSQueueRead` / SQS queue adapter. | `QueueQueryDepKey`, route usually equal to `QueueSpec.name`. | SQS is at-least-once; consumers must ack/delete after successful processing and handle duplicates. |
+| Queue writes | `ConfigurableSQSQueueWrite` / SQS queue adapter. | `QueueCommandDepKey`, route usually equal to `QueueSpec.name`. | FIFO ordering requires `.fifo` queues and a message group key. Standard queues do not guarantee order. |
+| Raw client | `SQSClient` or `RoutedSQSClient`. | `SQSClientDepKey`. | Prefer queue contracts in usecases unless AWS-specific APIs are required. |
 
-### What gets registered
+## Complete recipe link
 
-`SQSDepsModule` registers these dependency keys:
+See [Background Workflow](../recipes/background-workflow.md) for the long-form background-processing recipe pattern. Use this page for SQS-specific adapter and operations reference.
 
-| Key | Capability |
-|-----|-----------|
-| `SQSClientDepKey` | Raw SQS client for direct operations |
-| `QueueReadDepKey` | Queue read adapter factory |
-| `QueueWriteDepKey` | Queue write adapter factory |
+## Configuration reference
 
-## Queue specification
+### Connection settings
 
-A `QueueSpec` binds a queue namespace to a Pydantic message model:
+`sqs_lifecycle_step` requires `endpoint`, `region_name`, `access_key_id`, and `secret_access_key`. Use the AWS endpoint for production and an endpoint such as `http://localhost:4566` for LocalStack.
 
-    :::python
-    from pydantic import BaseModel
-    from forze.application.contracts.queue import QueueSpec
+### Pool settings
 
+`SQSConfig` accepts botocore-compatible options including `max_pool_connections`, `tcp_keepalive`, proxy settings, dualstack/FIPS endpoint toggles, and client certificate options.
 
-    class OrderPayload(BaseModel):
-        order_id: str
-        customer_id: str
-        total: float
+### Serialization settings
 
+The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Use Pydantic models in `QueueSpec` to validate payloads after receive.
 
-    order_queue = QueueSpec(name="orders", model=OrderPayload)
+### Retry/timeout behavior
 
-## Producing messages
+`SQSConfig` controls `connect_timeout` and `read_timeout`. `receive(timeout=...)` enables long polling up to the SQS service limit. Visibility timeout, redrive policy, and DLQ settings are queue attributes managed outside Forze.
 
-Resolve the write port via dependency key and send messages:
+## Operational notes
 
-    :::python
-    from forze.application.contracts.queue import QueueWriteDepKey
+| Concern | Notes |
+|---------|-------|
+| Migrations/schema requirements | Create queues, FIFO queues, redrive policies, visibility timeouts, and IAM permissions outside Forze with AWS console, Terraform, CloudFormation, or LocalStack setup scripts. |
+| Cleanup/shutdown | Register `sqs_lifecycle_step` or `routed_sqs_lifecycle_step` so async AWS sessions close cleanly. |
+| Idempotency/caching behavior | Standard queues can deliver duplicates. Use FIFO deduplication where appropriate and make consumers idempotent for all side effects. |
+| Production caveats | Monitor approximate queue depth/age, configure DLQs, choose visibility timeout longer than handler work, and avoid assuming exact ordering on standard queues. |
 
-    writer = ctx.dep(QueueWriteDepKey)(ctx, order_queue)
+## Troubleshooting
 
-    message_id = await writer.enqueue(
-        "orders",
-        OrderPayload(order_id="abc-123", customer_id="cust-1", total=99.99),
-        type="order.created",
-    )
-
-### Queue name resolution
-
-The adapter handles queue name resolution automatically:
-
-- **Queue URLs** (starting with `http://` or `https://`) are used directly
-- **Queue names** are resolved to URLs via the SQS `GetQueueUrl` API and cached
-
-### FIFO queue support
-
-Pass `key` to set the `MessageGroupId` for FIFO queues. The adapter generates a `MessageDeduplicationId` automatically:
-
-    :::python
-    await writer.enqueue(
-        "orders.fifo",
-        payload,
-        key="customer-42",
-        type="order.created",
-    )
-
-## Consuming messages
-
-### Receive a batch
-
-    :::python
-    from forze.application.contracts.queue import QueueReadDepKey
-    from datetime import timedelta
-
-    reader = ctx.dep(QueueReadDepKey)(ctx, order_queue)
-
-    messages = await reader.receive(
-        "orders",
-        limit=10,
-        timeout=timedelta(seconds=20),
-    )
-
-    for msg in messages:
-        print(f"Order: {msg['payload'].order_id}")
-
-    await reader.ack("orders", [msg["id"] for msg in messages])
-
-### Continuous consumption
-
-    :::python
-    async for msg in reader.consume("orders", timeout=timedelta(seconds=20)):
-        try:
-            await process_order(msg["payload"])
-            await reader.ack("orders", [msg["id"]])
-        except Exception:
-            await reader.nack("orders", [msg["id"]], requeue=True)
-
-### Negative acknowledgement
-
-    :::python
-    await reader.nack("orders", [msg["id"]], requeue=True)
-    await reader.nack("orders", [msg["id"]], requeue=False)
-
-When `requeue=True`, the adapter resets the visibility timeout to 0 so the message is immediately available for other consumers. When `requeue=False`, the message is deleted.
-
-## QueueMessage fields
-
-Each message is a `QueueMessage[M]` TypedDict:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `queue` | `str` | Queue name or URL |
-| `id` | `str` | SQS receipt handle (used for ack/nack) |
-| `payload` | `M` | Deserialized Pydantic model |
-| `type` | `str \| None` | Message type attribute |
-| `enqueued_at` | `datetime \| None` | Timestamp from message attributes or SentTimestamp |
-| `key` | `str \| None` | Message group ID (FIFO queues) |
-
-## Using in usecases
-
-    :::python
-    from forze.application.contracts.queue import QueueWriteDepKey
-    from forze.application.execution import Usecase
-
-
-    class EnqueueOrder(Usecase[OrderPayload, str]):
-        async def main(self, args: OrderPayload) -> str:
-            writer = self.ctx.dep(QueueWriteDepKey)(self.ctx, order_queue)
-            return await writer.enqueue("orders", args, type="order.created")
-
-## SQS-specific behavior
-
-### Message encoding
-
-The adapter encodes message bodies as base64 to safely handle binary payloads in SQS (which only supports UTF-8 strings). A `forze_encoding=b64` message attribute is set so the decoder knows to base64-decode on receipt.
-
-### Batch chunking
-
-SQS limits batch operations to 10 messages. The adapter automatically chunks larger batches into multiple API calls. Failed entries within a batch raise `InfrastructureError`.
-
-### Long polling
-
-Pass `timeout` to `receive()` to enable SQS long polling. The maximum wait time is 20 seconds (SQS limit). Long polling reduces empty responses and API costs.
-
-### Queue name sanitization
-
-Queue names are automatically sanitized: unsupported characters are replaced with `_`, and the `.fifo` suffix is preserved for FIFO queues. Maximum name length is 80 characters.
-
-### Dead letter queues
-
-DLQ configuration is managed outside Forze via AWS console, CloudFormation, or Terraform. Messages that exceed `maxReceiveCount` are automatically moved to the DLQ by SQS.
-
-## Combining with other modules
-
-    :::python
-    deps_plan = DepsPlan.from_modules(
-        lambda: Deps.merge(
-            PostgresDepsModule(client=pg, rw_documents={...})(),
-            RedisDepsModule(client=redis, caches={...})(),
-            SQSDepsModule(client=sqs)(),
-        ),
-    )
+| Common error | Likely cause | Fix |
+|--------------|--------------|-----|
+| `QueueDoesNotExist` or missing queue URL | Queue name is wrong, namespace changed, region differs, or queue was not created. | Verify queue creation, region, namespace, and whether you passed a queue URL or name. |
+| Messages return to the queue after processing | Consumer did not ack/delete before visibility timeout expired. | Ack after success and set visibility timeout longer than processing time. |
+| FIFO messages are rejected | Queue name or message parameters do not match FIFO requirements. | Use a `.fifo` queue name and provide a stable `key` for `MessageGroupId`. |
+| LocalStack works but AWS fails | Endpoint/region/credentials or IAM permissions differ. | Use the AWS endpoint, correct region, real credentials/role, and grant SQS permissions. |
