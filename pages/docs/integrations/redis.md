@@ -1,8 +1,25 @@
 # Redis / Valkey Integration
 
+## What this integration provides
+
+Provide cache, counter, idempotency, pub/sub, stream, and distributed-lock capabilities through Redis or Valkey adapters.
+
+## When to use it
+
+Use this when you need fast ephemeral state, request idempotency, read-through caching, or Redis-native messaging primitives.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_redis` provides cache, counters, and idempotency adapters backed by Redis or Valkey. It implements `CachePort`, `CounterPort`, and `IdempotencyPort`.
 
-Kernel specs use logical names (`CacheSpec.name`, document cache on `DocumentSpec`). **`RedisDepsModule` maps each name to a `RedisCacheConfig`** (namespace prefix, optional `tenant_aware`). See [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md).
+Kernel specs use logical names (`CacheSpec.name`, document cache on `DocumentSpec`). **`RedisDepsModule` maps each name to a `RedisCacheConfig`** (namespace prefix, optional `tenant_aware`). See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
 
 ## Installation
 

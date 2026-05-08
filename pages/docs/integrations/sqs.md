@@ -1,5 +1,22 @@
 # SQS Integration
 
+## What this integration provides
+
+Send and receive typed queue messages through SQS-compatible queues.
+
+## When to use it
+
+Use this when you need managed queue delivery, LocalStack/Yandex Message Queue compatibility, or worker handoff through SQS.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_sqs` provides message queue adapters backed by Amazon SQS or any SQS-compatible service (Yandex Message Queue, LocalStack, etc.). It implements `QueueReadPort` and `QueueWritePort` using `aioboto3`.
 
 ## Installation

@@ -10,7 +10,8 @@ If you are new to the package, start with:
 
 1. [Installation](installation.md)
 2. [Getting Started](getting-started.md)
-3. [Concepts](core-concepts/index.md)
+3. [First Project Walkthrough](first-project-walkthrough.md)
+4. [Concepts](concepts/index.md)
 
 ## Why use Forze?
 
@@ -37,11 +38,11 @@ Forze organizes code into four layers. Dependencies flow **inward**: the interfa
 | **Infrastructure** | Concrete adapter implementations | Postgres, Redis, S3, MongoDB |
 | **Interface** | User-facing entry points | FastAPI routes, Socket.IO handlers |
 
-Read more in [Layered Architecture](core-concepts/layered-architecture.md).
+Read more in [Layered Architecture](concepts/layered-architecture.md).
 
 ## Package layout
 
-Integration code lives in separate **distribution packages** (separate import roots) published from this repository. Install the core with `uv add forze` and add integrations via optional extras (for example `forze[fastapi,postgres]`) — see [Installation](installation.md). How kernel specs map to infra configs is described in [Specs and infrastructure wiring](core-concepts/specs-and-wiring.md).
+Integration code lives in separate **distribution packages** (separate import roots) published from this repository. Install the core with `uv add forze` and add integrations via optional extras (for example `forze[fastapi,postgres]`) — see [Installation](installation.md). How kernel specs map to infra configs is described in [Specs and infrastructure wiring](concepts/specs-and-wiring.md).
 
 | Package | Purpose |
 |---------|---------|
