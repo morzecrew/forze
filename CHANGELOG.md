@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docs:** Added D2 diagrams for dependency resolution, FastAPI requests, document CRUD, cache fallback, and adapter boundaries.
 - **Redis:** `RedisDepsModule.dlocks` registers `DistributedLockQueryDepKey` / `DistributedLockCommandDepKey` via `ConfigurableRedisDistributedLock` (`RedisDistributedLockConfig` or `RedisUniversalConfig`). Structural `RedisClientPort`, `RoutedRedisClient`, and `routed_redis_lifecycle_step` (per-tenant DSN via `SecretsPort`, LRU pools).
 - **Document:** `DocumentCommandPort.update_matching` / `update_matching_strict` (Postgres fast `UPDATE … RETURNING`, Mongo batched updates + `$inc` on `rev`, strict chunked path); `ensure` / `ensure_many`; `get` / `get_many` optional `skip_cache`; `find_many` with `return_type` (no aggregates) validates rows via read gateways (Postgres, Mongo, mock).
 - **Query:** UUID operands on `$gt` / `$gte` / `$lt` / `$lte`; document aggregates with `$fields` / `$computed` (`$count`, `$sum`, `$avg`, `$min`, `$max`, `$median`) and optional `filter` on computed fields; `$time_bucket` with `timezone` (mock, Postgres, Mongo `$dateTrunc` 5.0+); keyset helpers `assert_cursor_projection_includes_sort_keys`, `resolved_cursor_limit`, `assemble_keyset_cursor_page`.

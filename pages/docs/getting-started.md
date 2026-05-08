@@ -9,6 +9,11 @@ Forze is easiest to learn in two passes: first understand the shape of a Forze p
 
 A Forze backend keeps business rules in the domain layer and puts infrastructure behind application contracts.
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/document-crud-flow.svg" alt="Document CRUD flow from command DTO to domain model, document port, and read model">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/document-crud-flow.svg" alt="Document CRUD flow from command DTO to domain model, document port, and read model">
+</div>
+
 | Piece | What you write first | Where to read next |
 |-------|----------------------|--------------------|
 | Domain models | `Document`, create command, update DTO, read model | [Domain Layer](concepts/domain-layer.md) |

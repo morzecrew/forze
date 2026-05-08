@@ -10,6 +10,11 @@
 | Supported Forze contracts | `DocumentQueryDepKey`, `DocumentCommandDepKey`, `SearchQueryDepKey`, `HubSearchQueryDepKey`, `FederatedSearchQueryDepKey`, and `TxManagerDepKey`. |
 | When to use it | Use this integration when PostgreSQL is the system of record, when projections/search indexes live in PostgreSQL, or when usecases need transaction boundaries around Postgres-backed adapters. |
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/document-cache-flow.svg" alt="Document read path with cache hit, cache miss, and database fallback">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/document-cache-flow.svg" alt="Document read path with cache hit, cache miss, and database fallback">
+</div>
+
 ## Installation
 
 ```bash

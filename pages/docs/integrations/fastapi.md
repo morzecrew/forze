@@ -4,6 +4,11 @@
 
 `forze_fastapi` exposes Forze application contracts over typed FastAPI routes without making domain code depend on HTTP. It provides route attach helpers for document CRUD, search, custom usecase endpoints, request context middleware, exception handlers, and Scalar API docs integration.
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, usecase, port, and adapter">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, usecase, port, and adapter">
+</div>
+
 | Topic | Details |
 |------|---------|
 | What it provides | FastAPI routers and middleware that resolve Forze dependencies from `ExecutionContext` and call registered usecases. |

@@ -1,0 +1,48 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 42
+    }
+}
+
+direction: right
+
+Application: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: Application boundary
+
+    Usecase: Usecase
+    Contract: |md
+        ### Contract / port
+        DocumentQueryPort
+    |
+}
+
+AdapterPackage: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: Integration package
+
+    Module: DepsModule
+    Adapter: |md
+        ### Adapter implementation
+        PostgresDocumentAdapter
+    |
+    Client: Database / service client
+}
+
+Application.Usecase -> Application.Contract: depends on protocol
+AdapterPackage.Adapter -> Application.Contract: implements
+AdapterPackage.Module -> AdapterPackage.Adapter: registers factory
+AdapterPackage.Adapter -> AdapterPackage.Client: uses concrete driver
+Application.Usecase -> AdapterPackage.Adapter: no direct import {
+    style.stroke-dash: 4
+}

@@ -2,6 +2,11 @@
 
 This page moved to [Execution](../reference/execution.md).
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/deps-resolution.svg" alt="Dependency resolution from DepsPlan through modules, Deps, keys, and ports">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/deps-resolution.svg" alt="Dependency resolution from DepsPlan through modules, Deps, keys, and ports">
+</div>
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix | See also |

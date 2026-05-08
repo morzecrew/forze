@@ -10,6 +10,11 @@
 | Supported Forze contracts | `CacheDepKey`, `CounterDepKey`, `IdempotencyDepKey`, `SearchResultSnapshotDepKey`, `DistributedLockQueryDepKey`, and `DistributedLockCommandDepKey`. |
 | When to use it | Use this integration for low-latency caching, duplicate request protection, counters, search pagination snapshots, or distributed locking with Redis-compatible infrastructure. |
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/document-cache-flow.svg" alt="Document read path with cache hit, cache miss, and database fallback">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/document-cache-flow.svg" alt="Document read path with cache hit, cache miss, and database fallback">
+</div>
+
 ## Installation
 
 ```bash
