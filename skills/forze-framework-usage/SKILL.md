@@ -9,7 +9,7 @@ description: >-
 
 # Forze Framework Usage
 
-Use when writing code that **consumes** Forze (not when authoring new adapters). Pair with [`forze-domain-aggregates`](forze-domain-aggregates/SKILL.md) for models/specs, [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md) for `StrEnum` route names, and [`forze-wiring`](forze-wiring/SKILL.md) for runtime and composition.
+Use when writing code that **consumes** Forze (not when authoring new adapters). Pair with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for models/specs, [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) for `StrEnum` route names, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime and composition.
 
 ## Core concepts
 
@@ -94,7 +94,7 @@ async with self.ctx.transaction(TxRoute.DEFAULT):
 
 ### Identity and tenancy
 
-Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary when needed. Usecases may read `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()` but should not call `ctx.bind_call(...)` themselves. See [`forze-auth-tenancy-secrets`](forze-auth-tenancy-secrets/SKILL.md).
+Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary when needed. Usecases may read `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()` but should not call `ctx.bind_call(...)` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
 
 ## Query syntax
 
@@ -166,7 +166,7 @@ stored = await storage.upload("file.pdf", data, description="Contract")
 downloaded = await storage.download(stored.key)
 ```
 
-See [`forze-storage-s3`](forze-storage-s3/SKILL.md) for S3 wiring and tenant-aware bucket behavior.
+See [`forze-storage-s3`](../forze-storage-s3/SKILL.md) for S3 wiring and tenant-aware bucket behavior.
 
 ### Queue, pub/sub, stream, and workflow ports
 
@@ -186,7 +186,7 @@ workflow = self.ctx.dep(
 handle = await workflow.start(StartOnboarding(project_id=args.project_id))
 ```
 
-See [`forze-messaging-streaming`](forze-messaging-streaming/SKILL.md) and [`forze-temporal-workflows`](forze-temporal-workflows/SKILL.md).
+See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`forze-temporal-workflows`](../forze-temporal-workflows/SKILL.md).
 
 ## Gotchas
 

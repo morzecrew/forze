@@ -8,7 +8,7 @@ description: >-
 
 # Forze documents and search
 
-Use when implementing document persistence, filtered listings, cursor pagination, text search, hub search, or federated search. Pair with [`forze-domain-aggregates`](forze-domain-aggregates/SKILL.md) for aggregate models.
+Use when implementing document persistence, filtered listings, cursor pagination, text search, hub search, or federated search. Pair with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for aggregate models.
 
 ## Document ports
 

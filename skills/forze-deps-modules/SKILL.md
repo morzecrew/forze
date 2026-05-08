@@ -9,7 +9,7 @@ description: >-
 
 # Forze dependency modules
 
-Use when authoring or reviewing infrastructure wiring. For application bootstrap, see [`forze-wiring`](forze-wiring/SKILL.md). For logical names and `StrEnum` route values, see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md).
+Use when authoring or reviewing infrastructure wiring. For application bootstrap, see [`forze-wiring`](../forze-wiring/SKILL.md). For logical names and `StrEnum` route values, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md).
 
 ## Container model
 

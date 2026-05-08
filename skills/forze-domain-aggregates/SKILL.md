@@ -9,9 +9,9 @@ description: >-
 
 # Forze Domain Aggregates
 
-Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md) and [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md).
+Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md).
 
-Pair with [`forze-framework-usage`](forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](forze-wiring/SKILL.md) for composition and HTTP.
+Pair with [`forze-framework-usage`](../forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](../forze-wiring/SKILL.md) for composition and HTTP.
 
 ## Document aggregate structure
 

@@ -8,7 +8,7 @@ description: >-
 
 # Forze FastAPI interface
 
-Use when connecting Forze usecases to HTTP. Pair with [`forze-wiring`](forze-wiring/SKILL.md) for runtime/lifecycle and [`forze-auth-tenancy-secrets`](forze-auth-tenancy-secrets/SKILL.md) for identity binding.
+Use when connecting Forze usecases to HTTP. Pair with [`forze-wiring`](../forze-wiring/SKILL.md) for runtime/lifecycle and [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md) for identity binding.
 
 ## Context dependency and lifespan
 

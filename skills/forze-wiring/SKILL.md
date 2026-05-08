@@ -9,7 +9,7 @@ description: >-
 
 # Forze Wiring
 
-Use when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](forze-fastapi-interface/SKILL.md). For day-to-day usecase code, see [`forze-framework-usage`](forze-framework-usage/SKILL.md).
+Use when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](../forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day usecase code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
 ## Runtime setup
 

@@ -8,7 +8,7 @@ description: >-
 
 # Forze storage and S3
 
-Use when adding blob storage to usecases or wiring S3-compatible infrastructure. For general usecase patterns, see [`forze-framework-usage`](forze-framework-usage/SKILL.md).
+Use when adding blob storage to usecases or wiring S3-compatible infrastructure. For general usecase patterns, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
 ## Spec and deps route
 
