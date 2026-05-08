@@ -14,6 +14,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
@@ -21,8 +22,9 @@ from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters import (
     PostgresDocumentAdapter,
-    PostgresFTSSearchAdapterV2,
-    PostgresPGroongaSearchAdapterV2,
+    PostgresFTSSearchAdapter,
+    PostgresPGroongaSearchAdapter,
+    PostgresVectorSearchAdapter,
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import (
@@ -30,7 +32,6 @@ from forze_postgres.execution.deps.configs import (
     validate_pg_search_conf,
     validate_postgres_hub_search_conf,
 )
-from forze_postgres.kernel.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.execution.deps.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
@@ -44,6 +45,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.execution.deps.module import PostgresDepsModule
 from forze_postgres.execution.deps.utils import doc_write_gw, read_gw
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
+from forze_postgres.kernel.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
@@ -85,6 +87,7 @@ def _ctx() -> ExecutionContext:
             {
                 PostgresClientDepKey: client,
                 PostgresIntrospectorDepKey: intro,
+                EmbeddingsProviderDepKey: lambda _c, _s: MagicMock(),
             }
         )
     )
@@ -268,7 +271,7 @@ class TestConfigurablePostgresSearch:
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
 
-        assert isinstance(out, PostgresPGroongaSearchAdapterV2)
+        assert isinstance(out, PostgresPGroongaSearchAdapter)
 
     def test_fts_branch(self) -> None:
         factory = ConfigurablePostgresSearch(
@@ -282,7 +285,23 @@ class TestConfigurablePostgresSearch:
         ctx = _ctx()
         out = factory(ctx, self._search_spec())
 
-        assert isinstance(out, PostgresFTSSearchAdapterV2)
+        assert isinstance(out, PostgresFTSSearchAdapter)
+
+    def test_vector_branch(self) -> None:
+        factory = ConfigurablePostgresSearch(
+            config={
+                "engine": "vector",
+                "index": ("public", "vi"),
+                "read": ("public", "vs"),
+                "vector_column": "vector_column",
+                "embedding_dimensions": 1234,
+                "embeddings_name": "embeddings_name",
+            }
+        )
+        ctx = _ctx()
+        out = factory(ctx, self._search_spec())
+
+        assert isinstance(out, PostgresVectorSearchAdapter)
 
     def test_fts_missing_groups_in_call_raises(self) -> None:
         factory = ConfigurablePostgresSearch(

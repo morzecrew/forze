@@ -16,9 +16,12 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.adapters.search import PostgresPGroongaSearchAdapterV2
+from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
+from forze_postgres.execution.deps.keys import (
+    PostgresClientDepKey,
+    PostgresIntrospectorDepKey,
+)
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
@@ -97,8 +100,12 @@ async def test_pgroonga_v2_result_snapshot_reread(
         ),
     )
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresPGroongaSearchAdapterV2)
-    p1 = await adapter.search("hello", return_count=True, pagination={"limit": 5, "offset": 0})
+    assert isinstance(adapter, PostgresPGroongaSearchAdapter)
+    p1 = await adapter.search(
+        "hello",
+        return_count=True,
+        pagination={"limit": 5, "offset": 0},
+    )
     assert p1.snapshot is not None
     p2 = await adapter.search(
         "hello",

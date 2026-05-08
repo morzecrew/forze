@@ -10,12 +10,23 @@ pytest.importorskip("redis")
 
 from forze.application.contracts.cache import CacheDepKey, CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterSpec
+from forze.application.contracts.dlock import (
+    DistributedLockCommandDepKey,
+    DistributedLockQueryDepKey,
+    DistributedLockSpec,
+)
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.application.execution import AuthIdentity, CallContext, Deps, ExecutionContext
-from forze_redis.adapters import RedisCacheAdapter, RedisCounterAdapter, RedisIdempotencyAdapter
+from forze_redis.adapters import (
+    RedisCacheAdapter,
+    RedisCounterAdapter,
+    RedisDistributedLockAdapter,
+    RedisIdempotencyAdapter,
+)
 from forze_redis.execution.deps.deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
+    ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
 )
 from forze_redis.execution.deps.keys import RedisClientDepKey
@@ -35,6 +46,7 @@ class TestRedisDepsModule:
             caches={"c1": {"namespace": "ns1"}},
             counters={"n1": {"namespace": "ctr1"}},
             idempotency={"idem1": {"namespace": "id1"}},
+            dlocks={"dl1": {"namespace": "dlock1"}},
         )
 
         deps = module()
@@ -44,6 +56,8 @@ class TestRedisDepsModule:
         assert deps.exists(CacheDepKey, route="c1")
         assert deps.exists(CounterDepKey, route="n1")
         assert deps.exists(IdempotencyDepKey, route="idem1")
+        assert deps.exists(DistributedLockQueryDepKey, route="dl1")
+        assert deps.exists(DistributedLockCommandDepKey, route="dl1")
 
 
 class TestConfigurableRedisFactories:
@@ -85,3 +99,22 @@ class TestConfigurableRedisFactories:
 
         assert isinstance(adapter, RedisIdempotencyAdapter)
         assert adapter.ttl == timedelta(minutes=5)
+
+    def test_distributed_lock_adapter(self) -> None:
+        factory = ConfigurableRedisDistributedLock(config={"namespace": "dl"})
+        ctx = _ctx()
+        spec = DistributedLockSpec(name="dl", ttl=timedelta(seconds=30))
+        cmd = factory(ctx, spec)
+        query = factory(ctx, spec)
+
+        assert isinstance(cmd, RedisDistributedLockAdapter)
+        assert isinstance(query, RedisDistributedLockAdapter)
+        assert cmd.spec is spec
+        assert cmd.tenant_aware is False
+
+        deps = RedisDepsModule(client=MagicMock(spec=RedisClient), dlocks={"dl": {"namespace": "x"}})()
+        ctx2 = ExecutionContext(deps=deps)
+        q = ctx2.dlock_query(spec)
+        c = ctx2.dlock_command(spec)
+        assert isinstance(q, RedisDistributedLockAdapter)
+        assert isinstance(c, RedisDistributedLockAdapter)

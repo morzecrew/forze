@@ -1,4 +1,4 @@
-"""PGroonga search with projection vs index-heap separation (CTE pipeline)."""
+"""FTS search with projection vs index-heap separation (CTE pipeline)."""
 
 from forze_postgres._compat import require_psycopg
 
@@ -32,12 +32,15 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
-    SearchResultSnapshotPort,
     SearchSpec,
+    cursor_return_fields_for_select,
     effective_phrase_combine,
     normalize_search_queries,
+    ranked_search_cursor_key_spec,
+    search_options_for_simple_adapter,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
+from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
@@ -51,28 +54,23 @@ from forze_postgres.pagination import (
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
-from ._cursor_keyset import (
-    cursor_return_fields_for_select,
-    ranked_search_cursor_key_spec,
-)
-from ._options import search_options_for_simple_adapter
-from ._pgroonga_sql import (
-    pgroonga_match_clause,
-    pgroonga_phrase_match_text,
-    pgroonga_score_rank_expr,
-)
-from .federated_snapshot import effective_snapshot_max_ids
-from .result_snapshot_ops import (
-    put_simple_result_snapshot,
-    read_simple_result_snapshot,
-    should_write_result_snapshot,
-    simple_search_fingerprint,
-    snapshot_sql_pagination,
+from ._fts_sql import (
+    FtsGroupLetter,
+    fts_effective_group_weights,
+    fts_match_predicate,
+    fts_rank_cd_expr,
+    fts_rank_cd_weight_array,
+    fts_resolve_tsvector_expr,
+    fts_tsquery_expr,
+    fts_tsquery_expr_conjunction,
+    fts_tsquery_expr_disjunction,
 )
 
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+# ....................... #
 
 _DEFAULT_JOIN: Final[tuple[tuple[str, str], ...]] = ((ID_FIELD, ID_FIELD),)
 
@@ -80,24 +78,25 @@ _FILTERED_CTE_ALIAS: Final[str] = "f"
 _INDEX_ALIAS: Final[str] = "t"
 _PROJECTION_ALIAS: Final[str] = "v"
 _SCORED_CTE_ALIAS: Final[str] = "s"
-_RANK_COLUMN: Final[str] = "_pgroonga_rank"
+_RANK_COLUMN: Final[str] = "_fts_rank"
 
 # ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresPGroongaSearchAdapterV2[M: BaseModel](
+class PostgresFTSSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
     TxScopedPort,
 ):
-    """PGroonga :class:`SearchQueryPort` using a projection relation and index heap.
+    """FTS :class:`SearchQueryPort` using a projection relation and index heap.
 
     Structured filters (and tenant scope) apply on the **projection** relation
-    (:attr:`~PostgresGateway.qname`), typically a view. Full-text matching and
-    ``pgroonga_score`` run on the **index heap** (:attr:`index_heap_qname`) so the
-    index can live on a base table while rows are shaped by the view.
+    (:attr:`~PostgresGateway.qname`), typically a view. Matching and
+    ``ts_rank_cd`` use the **index heap** (:attr:`index_heap_qname`) and the
+    ``tsvector`` expression from :attr:`index_qname`, mirroring
+    :class:`PostgresPGroongaSearchAdapterV2`.
 
     Query shape (simplified)::
 
@@ -108,7 +107,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             SELECT t.<heap cols> AS <proj keys>, <rank>
             FROM <index heap> t
             INNER JOIN filtered f ON <join>
-            WHERE <pgroonga match or TRUE>
+            WHERE <fts match or TRUE>
         )
         SELECT v.<read fields>
         FROM <projection> v
@@ -120,27 +119,22 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
     """Search specification."""
 
     index_qname: PostgresQualifiedName
-    """Index qualified name."""
+    """Qualified name of the FTS index (resolves the ``tsvector`` expression)."""
 
     index_heap_qname: PostgresQualifiedName
-    """Index heap qualified name (relation which index is built on)."""
+    """Index heap qualified name (relation the index is built on)."""
+
+    fts_groups: dict[FtsGroupLetter, Sequence[str]]
+    """Mapping of FTS weight letters to field names."""
 
     join_pairs: Sequence[tuple[str, str]] | None = attrs.field(default=None)
     """Join pairs (projection column, index heap column)."""
 
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
-    """Index field map (projection column -> index heap column)."""
+    """Reserved for API symmetry with PGroonga v2; FTS uses the catalog ``tsvector``."""
 
-    pgroonga_score_version: Literal["v1", "v2"] = "v2"
-    """
-    Which ``pgroonga_score`` form to emit (from :attr:`PostgresSearchConfig.pgroonga_score_version`).
-
-    ``v2``: ``pgroonga_score(tableoid, ctid)``. ``v1``: ``pgroonga_score(heap alias)`` when the heap
-    scan does not support the ``v2`` system columns.
-    """
-
-    snapshot_store: SearchResultSnapshotPort | None = None
-    """Optional store for ordered row keys to accelerate paged reads."""
+    snapshot_coord: SearchResultSnapshotCoordinator | None = None
+    """Coordinator for KV ordered-ID snapshots (same request surface as before)."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
     """Transaction scope."""
@@ -166,27 +160,6 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
         return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
-
-    # ....................... #
-
-    async def _pgroonga_match_combined_query(
-        self,
-        mq: str,
-        *,
-        options: SearchOptions | None = None,
-    ) -> tuple[sql.Composable, list[Any]]:
-        if not mq:
-            return sql.SQL("TRUE"), []
-
-        return await pgroonga_match_clause(
-            search=self.spec,
-            index_field_map=self.index_field_map,
-            index_qname=self.index_qname,
-            introspector=self.introspector,
-            index_alias=_INDEX_ALIAS,
-            query=mq,
-            options=options,
-        )
 
     # ....................... #
 
@@ -229,25 +202,48 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
     # ....................... #
 
-    def _scored_select_keys_and_rank(
-        self,
-        *,
-        query: str,
-    ) -> tuple[sql.Composable, sql.Composable]:
-        key_cols = sql.SQL(", ").join(
+    def _scored_key_columns(self) -> sql.Composable:
+        return sql.SQL(", ").join(
             sql.SQL("{} AS {}").format(
                 sql.Identifier(_INDEX_ALIAS, ic),
                 sql.Identifier(pc),
             )
             for pc, ic in self._safe_join_pairs
         )
-        rank = pgroonga_score_rank_expr(
-            index_alias=_INDEX_ALIAS,
-            rank_column=_RANK_COLUMN,
-            query=query,
-            score_version=self.pgroonga_score_version,
+
+    # ....................... #
+
+    def _scored_select_empty_query(
+        self,
+    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        """Keys, zero rank, no extra rank parameters."""
+
+        key_cols = self._scored_key_columns()
+        rank = sql.SQL("(0)::double precision AS {}").format(
+            sql.Identifier(_RANK_COLUMN),
         )
-        return key_cols, rank
+        return key_cols, rank, []
+
+    # ....................... #
+
+    def _scored_select_with_rank(
+        self,
+        *,
+        tsv: sql.Composable,
+        tsw_rank: sql.Composable,
+        options: SearchOptions | None,
+    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
+        """Keys, ``ts_rank_cd`` column, parameters for rank (weights + tsquery)."""
+
+        key_cols = self._scored_key_columns()
+        gw = fts_effective_group_weights(self.spec, self.fts_groups, options)
+        fts_weights = fts_rank_cd_weight_array(gw)
+        rank_expr = sql.SQL("{} AS {}").format(
+            fts_rank_cd_expr(tsv=tsv, tsw=tsw_rank),
+            sql.Identifier(_RANK_COLUMN),
+        )
+
+        return key_cols, rank_expr, [fts_weights]
 
     # ....................... #
 
@@ -364,18 +360,17 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         options = search_options_for_simple_adapter(options)
 
         rs_spec = self.spec.snapshot
-        fp_fingerprint = simple_search_fingerprint(
+        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
             query,
             filters,
             sorts,
             spec_name=self.spec.name,
-            variant="pgroonga",
+            variant="fts",
             extras={"phrase_combine": str(effective_phrase_combine(options))},
         )
 
-        if self.snapshot_store is not None and rs_spec is not None:
-            maybe_snap: Any = await read_simple_result_snapshot(
-                store=self.snapshot_store,
+        if self.snapshot_coord is not None and rs_spec is not None:
+            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
                 fp_computed=fp_fingerprint,
@@ -385,167 +380,47 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                 return_fields=return_fields,
                 return_count=return_count,
             )
-
             if maybe_snap is not None:
                 return maybe_snap
 
         fw, fp = await self.where_clause(filters)
+
         terms = normalize_search_queries(query)
-        combine = effective_phrase_combine(options)
-        mq = pgroonga_phrase_match_text(terms, combine=combine)
 
+        params_body: list[Any]
         if not terms:
-            extra_ob = await self._projection_order_by_clause(sorts)
-            order_parts: list[sql.Composable] = (  # type: ignore[assignment]
-                [extra_ob]
-                if extra_ob is not None
-                else [
-                    sql.SQL("{} ASC").format(
-                        sql.Identifier(_PROJECTION_ALIAS, sorted(self.read_fields)[0]),
-                    ),
-                ]
-            )
-            order_sql = sql.SQL(", ").join(order_parts)
-            count_stmt = sql.SQL(
-                """
-                SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
-                """
-            ).format(
-                proj=self.source_qname.ident(),
-                pa=sql.Identifier(_PROJECTION_ALIAS),
-                fw=fw,
-            )
-            params_base = list(fp)
-            total = 0
+            sw = sql.SQL("TRUE")  # type: ignore[assignment]
+            scored_keys, scored_rank, _rank_extra = self._scored_select_empty_query()
+            params_body = []
 
-            if return_count:
-                total = int(
-                    await self.client.fetch_value(count_stmt, params_base, default=0),
+        else:
+            tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
+
+            if len(terms) == 1:
+                tsw_where, tsp_w = fts_tsquery_expr(terms[0], options=options)
+                tsw_rank = tsw_where
+                tsp_r = tsp_w
+            else:
+                fn = (
+                    fts_tsquery_expr_disjunction
+                    if effective_phrase_combine(options) == "any"
+                    else fts_tsquery_expr_conjunction
                 )
-
-                if total == 0:
-                    return page_from_limit_offset(
-                        [],
-                        pagination or {},
-                        total=0,
-                    )
-
-            cols = self.return_clause(
-                return_type,
-                return_fields,
-                table_alias=_PROJECTION_ALIAS,
+                tsw_where, tsp_w = fn(terms, options=options)
+                tsw_rank, tsp_r = fn(terms, options=options)
+            sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)  # type: ignore[assignment]
+            scored_keys, scored_rank, rank_w = self._scored_select_with_rank(
+                tsv=tsv,
+                tsw_rank=tsw_rank,
+                options=options,
             )
-            data_stmt = sql.SQL(
-                """
-                SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
-                """
-            ).format(
-                cols=cols,
-                proj=self.source_qname.ident(),
-                pa=sql.Identifier(_PROJECTION_ALIAS),
-                fw=fw,
-                order=order_sql,
-            )
-
-            params = params_base
-            pagination = pagination or {}
-
-            want_sn = (
-                self.snapshot_store is not None
-                and rs_spec is not None
-                and should_write_result_snapshot(snapshot, rs_spec)
-            )
-            max_n0 = effective_snapshot_max_ids(snapshot, rs_spec) if want_sn else 0
-            sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
-                want_sn, max_n0, dict(pagination)
-            )
-            if sql_limit is not None:
-                data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-                params.append(int(sql_limit))
-
-            if want_sn:
-                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-                params.append(int(sql_offset))
-
-            elif pagination.get("offset") is not None:
-                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-                params.append(int(pagination.get("offset") or 0))
-
-            rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-            handle_no = None
-
-            if want_sn and self.snapshot_store is not None and rs_spec is not None:
-                pool_len = len(rows)
-                pool0 = pydantic_validate_many(self.model_type, rows)
-                handle_no = await put_simple_result_snapshot(
-                    self.snapshot_store,
-                    pool0,
-                    snap_opt=snapshot,
-                    rs_spec=rs_spec,
-                    fp_computed=fp_fingerprint,
-                    pool_len_before_cap=pool_len,
-                )
-                u_ = int(pagination.get("offset") or 0)
-                rows = rows[u_ : u_ + page_limit]
-
-            if return_type is not None:
-                v = pydantic_validate_many(return_type, rows)
-
-                if return_count:
-                    return page_from_limit_offset(
-                        v,
-                        pagination,
-                        total=total,
-                        snapshot=handle_no,
-                    )
-
-                return page_from_limit_offset(
-                    v,
-                    pagination,
-                    total=None,
-                    snapshot=handle_no,
-                )
-
-            if return_fields is not None:
-                raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
-
-                if return_count:
-                    return page_from_limit_offset(
-                        raw,
-                        pagination,
-                        total=total,
-                        snapshot=handle_no,
-                    )
-
-                return page_from_limit_offset(
-                    raw,
-                    pagination,
-                    total=None,
-                    snapshot=handle_no,
-                )
-
-            m = pydantic_validate_many(self.model_type, rows)
-
-            if return_count:
-                return page_from_limit_offset(
-                    m,
-                    pagination,
-                    total=total,
-                    snapshot=handle_no,
-                )
-
-            return page_from_limit_offset(
-                m,
-                pagination,
-                total=None,
-                snapshot=handle_no,
-            )
-
-        sw, sp = await self._pgroonga_match_combined_query(mq, options=options)
+            # ``WITH filtered`` uses ``fp``; ``scored`` SELECT lists ``ts_rank_cd`` before
+            # ``WHERE``, so: ``fp``, ``weights``, rank ``tsquery``, where ``tsquery``.
+            # Single term: one ``fts_tsquery_expr``; ``tsw_rank``/``tsp`` match ``tsw_where``;
+            # params still list the tsquery twice (two ``Placeholder``\ s in the SQL).
+            params_body = [*fp, *rank_w, *tsp_r, *tsp_w]
 
         key_sel = self._filtered_select_list()
-        scored_keys, scored_rank = self._scored_select_keys_and_rank(query=mq)
 
         filtered_cte = sql.SQL(
             """
@@ -598,7 +473,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             join_vs=join_vs,
         )
 
-        order_parts: list[sql.Composable] = [  # type: ignore[no-redef]
+        order_parts: list[sql.Composable] = [
             sql.SQL("{} DESC NULLS LAST").format(
                 sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
             )
@@ -611,6 +486,8 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         order_sql = sql.SQL(", ").join(order_parts)
         with_clause = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
 
+        params_count = [*fp] if not terms else params_body
+
         count_stmt = sql.SQL(
             """
             {with_clause}
@@ -618,9 +495,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             """
         ).format(with_clause=with_clause, from_outer=from_outer)
 
-        params_count = [*fp, *sp]
         total = 0
-
         if return_count:
             total = int(
                 await self.client.fetch_value(count_stmt, params_count, default=0),
@@ -651,22 +526,30 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             order=order_sql,
         )
 
-        params = [*fp, *sp]
+        params = [*fp] if not terms else params_body
+
         pagination = pagination or {}
-        want_s = (
-            self.snapshot_store is not None
+        want_snap = (
+            self.snapshot_coord is not None
             and rs_spec is not None
-            and should_write_result_snapshot(snapshot, rs_spec)
+            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
         )
-        max_n1 = effective_snapshot_max_ids(snapshot, rs_spec) if want_s else 0
-        sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
-            want_s, max_n1, dict(pagination)
+
+        max_nw = (
+            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+            if want_snap and self.snapshot_coord is not None
+            else 0
+        )
+        sql_limit, sql_offset, page_limit = (
+            SearchResultSnapshotCoordinator.snapshot_pagination(
+                want_snap, max_nw, dict(pagination)
+            )
         )
         if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
             params.append(int(sql_limit))
 
-        if want_s:
+        if want_snap:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(int(sql_offset))
 
@@ -676,73 +559,65 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
 
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
 
-        handle_sc = None
-
-        if want_s and self.snapshot_store is not None and rs_spec is not None:
-            pool_len2 = len(rows)
-            pool1 = pydantic_validate_many(self.model_type, rows)
-            handle_sc = await put_simple_result_snapshot(
-                self.snapshot_store,
-                pool1,
+        handle_out = None
+        if want_snap and self.snapshot_coord is not None and rs_spec is not None:
+            pool_len = len(rows)
+            pool = pydantic_validate_many(self.model_type, rows)
+            handle_out = await self.snapshot_coord.put_simple_ordered_hits(
+                pool,
                 snap_opt=snapshot,
                 rs_spec=rs_spec,
                 fp_computed=fp_fingerprint,
-                pool_len_before_cap=pool_len2,
+                pool_len_before_cap=pool_len,
             )
-            u0 = int(pagination.get("offset") or 0)
-            rows = rows[u0 : u0 + page_limit]
+            u_off = int(pagination.get("offset") or 0)
+            rows = rows[u_off : u_off + page_limit]
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
-
             if return_count:
                 return page_from_limit_offset(
                     v,
                     pagination,
                     total=total,
-                    snapshot=handle_sc,
+                    snapshot=handle_out,
                 )
-
             return page_from_limit_offset(
                 v,
                 pagination,
                 total=None,
-                snapshot=handle_sc,
+                snapshot=handle_out,
             )
 
         if return_fields is not None:
             raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
-
             if return_count:
                 return page_from_limit_offset(
                     raw,
                     pagination,
                     total=total,
-                    snapshot=handle_sc,
+                    snapshot=handle_out,
                 )
-
             return page_from_limit_offset(
                 raw,
                 pagination,
                 total=None,
-                snapshot=handle_sc,
+                snapshot=handle_out,
             )
 
         m = pydantic_validate_many(self.model_type, rows)
-
         if return_count:
             return page_from_limit_offset(
                 m,
                 pagination,
                 total=total,
-                snapshot=handle_sc,
+                snapshot=handle_out,
             )
-
         return page_from_limit_offset(
             m,
             pagination,
             total=None,
-            snapshot=handle_sc,
+            snapshot=handle_out,
         )
 
     # ....................... #
@@ -797,14 +672,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
-        """Keyset pagination on the projection (empty query) or ranked PGroonga matches.
-
-        **Browse (empty query):** Same ordering rules as :meth:`search` without a query.
-
-        **Ranked:** Orders by ``_pgroonga_rank`` DESC NULLS LAST, optional ``sorts``, then
-        ``id``. With ``return_fields``, list only the columns you want in each hit; rank
-        and other keyset columns are selected internally and omitted from the response.
-        """
+        """Keyset on the projection (empty query) or ranked ``ts_rank_cd`` matches."""
 
         options = search_options_for_simple_adapter(options)
         terms = normalize_search_queries(query)
@@ -966,17 +834,37 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                 has_more=has_more,
             )
 
+        fw_r, fp_r = await self.where_clause(filters)
+        tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
+
+        if len(terms) == 1:
+            tsw_where, tsp_w = fts_tsquery_expr(terms[0], options=options)
+            tsw_rank = tsw_where
+            tsp_r = tsp_w
+
+        else:
+            fn = (
+                fts_tsquery_expr_disjunction
+                if effective_phrase_combine(options) == "any"
+                else fts_tsquery_expr_conjunction
+            )
+            tsw_where, tsp_w = fn(terms, options=options)
+            tsw_rank, tsp_r = fn(terms, options=options)
+
+        sw_r = fts_match_predicate(tsv=tsv, tsw=tsw_where)
+        scored_keys_r, scored_rank_r, rank_w = self._scored_select_with_rank(
+            tsv=tsv,
+            tsw_rank=tsw_rank,
+            options=options,
+        )
+        params_base_r = [*fp_r, *rank_w, *tsp_r, *tsp_w]
+
         key_spec_r = ranked_search_cursor_key_spec(
             rank_field=_RANK_COLUMN,
             sorts=sorts,
         )
         sort_keys_r = [k for k, _ in key_spec_r]
         directions_r = [d for _, d in key_spec_r]
-
-        fw_r, fp_r = await self.where_clause(filters)
-        combine = effective_phrase_combine(options)
-        mq = pgroonga_phrase_match_text(terms, combine=combine)
-        sw_r, sp_r = await self._pgroonga_match_combined_query(mq, options=options)
 
         filtered_cte = sql.SQL(
             """
@@ -993,7 +881,6 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
             fw=fw_r,
         )
 
-        scored_keys_r, scored_rank_r = self._scored_select_keys_and_rank(query=mq)
         join_sf_r = self._scored_join_on_filtered()
         scored_cte = sql.SQL(
             """
@@ -1049,7 +936,7 @@ class PostgresPGroongaSearchAdapterV2[M: BaseModel](
                 )
 
         where_fin_r: sql.Composable = sql.SQL("TRUE")
-        params_r: list[Any] = [*fp_r, *sp_r]
+        params_r: list[Any] = list(params_base_r)
 
         if use_after or use_before:
             token_r = str(c["after" if use_after else "before"])

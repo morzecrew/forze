@@ -14,13 +14,17 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
-from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.deps import (
+    ConfigurablePostgresDocument,
+    postgres_txmanager,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -101,6 +105,50 @@ def _ctx_cached(
             }
         )
     )
+    return ctx, spec
+
+
+def _ctx_cached_tx(
+    pg_client: PostgresClient,
+    table: str,
+) -> tuple[ExecutionContext, DocumentSpec]:
+    """Like :func:`_ctx_cached` but registers ``TxManagerDepKey`` route ``main`` for :meth:`ExecutionContext.transaction`."""
+
+    cache_spec = CacheSpec(name=f"cache_{table}")
+    spec = DocumentSpec(
+        name=f"doc_{table}",
+        read=_CxRead,
+        write={
+            "domain": _CxDoc,
+            "create_cmd": _CxCreate,
+            "update_cmd": _CxUpdate,
+        },
+        cache=cache_spec,
+    )
+    fac = ConfigurablePostgresDocument(
+        config={
+            "read": ("public", table),
+            "write": ("public", table),
+            "bookkeeping_strategy": "application",
+        }
+    )
+    state = MockState()
+
+    def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
+        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+
+    plain = Deps.plain(
+        {
+            MockStateDepKey: state,
+            PostgresClientDepKey: pg_client,
+            PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            DocumentQueryDepKey: fac,
+            DocumentCommandDepKey: fac,
+            CacheDepKey: _cache_factory,
+        }
+    )
+    routed = Deps.routed({TxManagerDepKey: {"main": postgres_txmanager}})
+    ctx = ExecutionContext(deps=plain.merge(routed))
     return ctx, spec
 
 
@@ -754,3 +802,67 @@ async def test_pg_adapter_uses_clamped_batch_size(
             _CxCreate(sku="b2"),
         ],
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_cache_tx_commit_deferred_warm(
+    pg_client: PostgresClient,
+) -> None:
+    """After a successful ``ExecutionContext`` transaction, deferred cache warm matches committed DB state."""
+
+    t = f"pg_cc_tx_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached_tx(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+
+    doc = await cmd.create(_CxCreate(sku="baseline"))
+    await q.get(doc.id)
+
+    async with ctx.transaction("main"):
+        patched = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="committed"))
+        assert patched.sku == "committed"
+        in_tx = await q.get(doc.id)
+        assert in_tx.sku == "committed"
+
+    out = await q.get(doc.id)
+    assert out.sku == "committed"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
+    pg_client: PostgresClient,
+) -> None:
+    """On rollback, eager cache eviction stands; deferred warm is not run; reads match rolled-back DB."""
+
+    t = f"pg_rb_tx_{uuid4().hex[:12]}"
+    await pg_client.execute(_ddl_main(t))
+    ctx, spec = _ctx_cached_tx(pg_client, t)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+    state = ctx.dep(MockStateDepKey)
+    assert spec.cache is not None
+
+    doc = await cmd.create(_CxCreate(sku="baseline"))
+    await q.get(doc.id)
+    pointers = state.cache_pointers.setdefault(spec.cache.name, {})
+
+    assert str(doc.id) in pointers
+
+    with pytest.raises(RuntimeError, match="intentional rollback"):
+        async with ctx.transaction("main"):
+            upd = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="lost"))
+            assert upd.sku == "lost"
+            in_tx = await q.get(doc.id)
+            assert in_tx.sku == "lost"
+            raise RuntimeError("intentional rollback")
+
+    assert str(doc.id) not in pointers
+
+    restored = await q.get(doc.id)
+    assert restored.sku == "baseline"
+    assert restored.rev == doc.rev
+
+    assert str(restored.id) in pointers

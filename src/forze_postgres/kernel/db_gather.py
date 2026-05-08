@@ -9,6 +9,8 @@ from .platform import PostgresClientPort
 
 T = TypeVar("T")
 
+# ....................... #
+
 
 async def gather_db_work(
     client: PostgresClientPort,
@@ -32,6 +34,7 @@ async def gather_db_work(
         return [await m() for m in makers]
 
     limit = client.query_concurrency_limit()
+
     if limit <= 1:
         return [await m() for m in makers]
 

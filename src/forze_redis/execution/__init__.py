@@ -5,6 +5,7 @@ from .deps import (
     RedisClientDepKey,
     RedisCounterConfig,
     RedisDepsModule,
+    RedisDistributedLockConfig,
     RedisIdempotencyConfig,
     RedisUniversalConfig,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "routed_redis_lifecycle_step",
     "RedisCacheConfig",
     "RedisCounterConfig",
+    "RedisDistributedLockConfig",
     "RedisIdempotencyConfig",
     "RedisUniversalConfig",
 ]

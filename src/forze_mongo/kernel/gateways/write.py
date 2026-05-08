@@ -18,6 +18,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from forze.application.contracts.query import QueryFilterExpression
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
@@ -32,7 +33,7 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.constants import REV_FIELD, SOFT_DELETE_FIELD
+from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -594,6 +595,86 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        batch_size: int = 200,
+    ) -> tuple[int, Sequence[D]]:
+        """Bulk-update documents matching *filters* using batched ``update_many``.
+
+        Each batch targets primary keys from a keyset page (``id`` ascending)
+        so cache and history can use stable identities. Revisions are bumped with
+        ``$inc`` (no per-row expected ``rev`` in the filter).
+        """
+
+        self._require_update_cmd()
+
+        update_data = pydantic_dump(dto, exclude={"unset": True})
+
+        if not update_data:
+            return 0, []
+
+        adapted = dict(self.adapt_payload_for_write(update_data, create=False))
+        adapted.pop(REV_FIELD, None)
+
+        if not adapted:
+            return 0, []
+
+        to_set = self._coerce_query_value(adapted)
+        update_doc = {"$set": to_set, "$inc": {REV_FIELD: 1}}
+
+        total = 0
+        out_domains: list[D] = []
+        last_id: UUID | None = None
+
+        while True:
+            chunk_filter: QueryFilterExpression = (  # type: ignore[valid-type]
+                filters
+                if last_id is None
+                else {
+                    "$and": [
+                        filters,
+                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                    ]
+                }
+            )
+            id_rows = await self.read_gw.find_many(
+                filters=chunk_filter,
+                limit=batch_size,
+                sorts={ID_FIELD: "asc"},
+                return_fields=[ID_FIELD],
+            )
+            if not id_rows:
+                break
+
+            pks = [UUID(str(row[ID_FIELD])) for row in id_rows]
+            flt = self._add_tenant_filter(
+                {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}},
+            )
+
+            matched = await self.client.update_many(
+                await self.coll(),
+                flt,
+                update_doc,
+            )
+            total += matched
+
+            chunk_domains = await self.read_gw.get_many(pks)
+            await self._write_history(*chunk_domains)
+            out_domains.extend(chunk_domains)
+
+            last_id = pks[-1]
+
+            if len(pks) < batch_size:
+                break
+
+        return total, out_domains
+
+    # ....................... #
+
     async def touch(self, pk: UUID) -> D:
         """Bump a document's revision without changing its data.
 
@@ -641,7 +722,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
 
     # ....................... #
 
-    async def kill_many(self, pks: Sequence[UUID]) -> None:
+    async def kill_many(self, pks: Sequence[UUID], *, batch_size: int = 200) -> None:
         """Hard-delete multiple documents from the collection.
 
         :param pks: Document primary keys (must be unique). No-ops when empty.

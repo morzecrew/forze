@@ -1,4 +1,4 @@
-"""Integration tests for native Postgres FTS (``ConfigurablePostgresSearch`` → ``PostgresFTSSearchAdapterV2``)."""
+"""Integration tests for native Postgres FTS (``ConfigurablePostgresSearch`` → ``PostgresFTSSearchAdapter``)."""
 
 from uuid import UUID, uuid4
 
@@ -9,7 +9,7 @@ from forze.application.contracts.base import CursorPage
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.adapters.search import PostgresFTSSearchAdapterV2
+from forze_postgres.adapters.search import PostgresFTSSearchAdapter
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -107,7 +107,7 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     )
     adapter = ctx.search_query(spec)
 
-    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     __p = await adapter.search("postgres OR search", return_count=True)
     res = __p.hits
@@ -120,7 +120,9 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
         "text",
         pagination={"limit": 1, "offset": 0},
         sorts={"title": "asc"},
-        options={"weights": {"title": 0.6, "content": 0.4}}, return_count=True)
+        options={"weights": {"title": 0.6, "content": 0.4}},
+        return_count=True,
+    )
     page = __p.hits
     n_total = __p.count
     assert n_total >= 1
@@ -141,7 +143,9 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     class TitleSlice(BaseModel):
         title: str
 
-    __p = await adapter.search("postgres OR search", return_type=TitleSlice, return_count=True)
+    __p = await adapter.search(
+        "postgres OR search", return_type=TitleSlice, return_count=True
+    )
     slim = __p.hits
     n_slim = __p.count
     assert n_slim == 1
@@ -160,8 +164,8 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     assert {r.title for r in str_or} == {r.title for r in multi}
 
     __p = await adapter.search(
-        ["search", "full"],
-        options={"phrase_combine": "all"}, return_count=True)
+        ["search", "full"], options={"phrase_combine": "all"}, return_count=True
+    )
     and_hits = __p.hits
     n_and = __p.count
     assert n_and == 1
@@ -282,7 +286,7 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
     )
     adapter = ctx.search_query(spec)
 
-    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     __p = await adapter.search("fts", return_count=True)
     res = __p.hits
@@ -296,7 +300,7 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
 async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
     pg_client: PostgresClient,
 ) -> None:
-    """Instantiate :class:`PostgresFTSSearchAdapterV2` with view, heap, and ``index_field_map``."""
+    """Instantiate :class:`PostgresFTSSearchAdapter` with view, heap, and ``index_field_map``."""
 
     suffix = uuid4().hex[:12]
     heap = f"fts_heap_fm_{suffix}"
@@ -327,7 +331,7 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = PostgresFTSSearchAdapterV2(
+    adapter = PostgresFTSSearchAdapter(
         spec=spec,
         index_qname=PostgresQualifiedName("public", idx),
         source_qname=PostgresQualifiedName("public", proj),
@@ -459,7 +463,7 @@ async def test_fts_phrase_combine_any_vs_all_multi_term(
         fields=["title", "content"],
     )
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    assert isinstance(adapter, PostgresFTSSearchAdapter)
     p_any = await adapter.search(
         ["giraffe", "zebra"],
         options={"phrase_combine": "any"},
@@ -515,7 +519,7 @@ async def test_fts_search_with_cursor_return_type_and_before(
         fields=["title", "content"],
     )
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     class FtsTitleId(BaseModel):
         id: UUID
@@ -635,7 +639,7 @@ async def test_fts_v2_search_with_cursor_ranked_return_type_and_fields(
         fields=["title", "content"],
     )
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     class TitleOnly(BaseModel):
         title: str

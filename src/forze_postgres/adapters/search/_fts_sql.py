@@ -11,12 +11,15 @@ from typing import Any, Literal, Sequence
 
 from psycopg import sql
 
-from forze.application.contracts.search import SearchOptions, SearchSpec
+from forze.application.contracts.search import (
+    SearchOptions,
+    SearchSpec,
+    calculate_effective_field_weights,
+)
 from forze.base.errors import CoreError
 
 from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.introspect import PostgresIntrospector
-from ._utils import calculate_effective_field_weights
 
 # ----------------------- #
 
@@ -77,12 +80,17 @@ def fts_tsquery_expr_disjunction(
 
     parts = [q.strip() for q in queries if q.strip()]
     if not parts:
-        raise CoreError("fts_tsquery_expr_disjunction requires at least one non-empty query.")
+        raise CoreError(
+            "fts_tsquery_expr_disjunction requires at least one non-empty query."
+        )
     if len(parts) == 1:
         return fts_tsquery_expr(parts[0], options=options)
 
     combined = " OR ".join(parts)
     return fts_tsquery_expr(combined, options=options)
+
+
+# ....................... #
 
 
 def fts_tsquery_expr_conjunction(
@@ -94,7 +102,9 @@ def fts_tsquery_expr_conjunction(
 
     parts = [q.strip() for q in queries if q.strip()]
     if not parts:
-        raise CoreError("fts_tsquery_expr_conjunction requires at least one non-empty query.")
+        raise CoreError(
+            "fts_tsquery_expr_conjunction requires at least one non-empty query."
+        )
     if len(parts) == 1:
         return fts_tsquery_expr(parts[0], options=options)
 

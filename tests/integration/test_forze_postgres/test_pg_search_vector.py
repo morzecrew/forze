@@ -7,12 +7,16 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
 from forze.application.contracts.base import CursorPage, Page
+from forze.application.contracts.embeddings import (
+    EmbeddingsProviderDepKey,
+    EmbeddingsSpec,
+)
 from forze.application.contracts.query import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.adapters.search import PostgresVectorSearchAdapterV2
+from forze_mock import MockHashEmbeddingsProvider
+from forze_postgres.adapters.search import PostgresVectorSearchAdapter
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.keys import (
@@ -22,7 +26,6 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
-from forze_mock import MockHashEmbeddingsProvider
 
 # ----------------------- #
 
@@ -126,7 +129,7 @@ async def test_vector_l2_knn_orders_by_nearest(pgvector_client: PostgresClient) 
         pgvector_client, table=table, index_name=index_name, vector_distance="l2"
     )
     port = ctx.search_query(spec)
-    assert isinstance(port, PostgresVectorSearchAdapterV2)
+    assert isinstance(port, PostgresVectorSearchAdapter)
     _ = port.index_qname, PostgresQualifiedName("public", index_name)
 
     __p = await port.search("alpha", return_count=True)
@@ -144,8 +147,8 @@ async def test_vector_l2_knn_orders_by_nearest(pgvector_client: PostgresClient) 
     assert disj[0].id == a_id
 
     __p = await port.search(
-        ["alpha", "beta"],
-        options={"phrase_combine": "all"}, return_count=True)
+        ["alpha", "beta"], options={"phrase_combine": "all"}, return_count=True
+    )
     conj = __p.hits
     n_conj = __p.count
     assert n_conj == 2
@@ -199,7 +202,9 @@ async def test_vector_l2_with_hnsw_index(pgvector_client: PostgresClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_vector_cosine_knn_orders_by_nearest(pgvector_client: PostgresClient) -> None:
+async def test_vector_cosine_knn_orders_by_nearest(
+    pgvector_client: PostgresClient,
+) -> None:
     await _ensure_vector_extension(pgvector_client)
 
     suffix = uuid4().hex[:12]
@@ -330,7 +335,9 @@ async def test_vector_empty_query_zero_rank_includes_all_filtered_rows(
 
 
 @pytest.mark.asyncio
-async def test_vector_respects_eq_filter_on_projection(pgvector_client: PostgresClient) -> None:
+async def test_vector_respects_eq_filter_on_projection(
+    pgvector_client: PostgresClient,
+) -> None:
     await _ensure_vector_extension(pgvector_client)
 
     suffix = uuid4().hex[:12]

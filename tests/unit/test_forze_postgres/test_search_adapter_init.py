@@ -8,7 +8,10 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
-from forze_postgres.adapters.search import PostgresFTSSearchAdapterV2, PostgresPGroongaSearchAdapterV2
+from forze_postgres.adapters.search import (
+    PostgresFTSSearchAdapter,
+    PostgresPGroongaSearchAdapter,
+)
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
@@ -27,7 +30,7 @@ def _spec() -> SearchSpec[_Entity]:
 @pytest.mark.asyncio
 async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> None:
     """Empty match text skips PGroonga clause construction (filter-only path uses ``TRUE`` elsewhere)."""
-    adapter = PostgresPGroongaSearchAdapterV2(
+    adapter = PostgresPGroongaSearchAdapter(
         spec=_spec(),
         source_qname=PostgresQualifiedName("public", "v"),
         index_qname=PostgresQualifiedName("public", "i"),
@@ -45,7 +48,7 @@ async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> No
 
 def test_pgroonga_v2_rejects_duplicate_projection_join_columns() -> None:
     with pytest.raises(CoreError, match="unique"):
-        PostgresPGroongaSearchAdapterV2(
+        PostgresPGroongaSearchAdapter(
             spec=_spec(),
             source_qname=PostgresQualifiedName("public", "v"),
             index_qname=PostgresQualifiedName("public", "i"),
@@ -61,7 +64,7 @@ def test_pgroonga_v2_rejects_duplicate_projection_join_columns() -> None:
 
 def test_fts_v2_rejects_duplicate_projection_join_columns() -> None:
     with pytest.raises(CoreError, match="unique"):
-        PostgresFTSSearchAdapterV2(
+        PostgresFTSSearchAdapter(
             spec=_spec(),
             index_qname=PostgresQualifiedName("public", "i"),
             source_qname=PostgresQualifiedName("public", "v"),

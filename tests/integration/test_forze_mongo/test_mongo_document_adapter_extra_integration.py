@@ -10,11 +10,12 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.tx import TxManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
-from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
+from forze_mongo.execution.deps.deps import ConfigurableMongoDocument, mongo_txmanager
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
@@ -70,6 +71,46 @@ async def _ctx_cached(
             }
         )
     )
+    return ctx, spec
+
+
+async def _ctx_cached_tx(
+    mongo_client: MongoClient,
+    collection: str,
+) -> tuple[ExecutionContext, DocumentSpec]:
+    """Like :func:`_ctx_cached` but registers ``TxManagerDepKey`` route ``main``."""
+
+    db = (await mongo_client.db()).name
+    cache_spec = CacheSpec(name=f"cache_{collection}")
+    spec = DocumentSpec(
+        name=f"doc_{collection}",
+        read=_CxRead,
+        write={
+            "domain": _CxDoc,
+            "create_cmd": _CxCreate,
+            "update_cmd": _CxUpdate,
+        },
+        cache=cache_spec,
+    )
+    fac = ConfigurableMongoDocument(
+        config={"read": (db, collection), "write": (db, collection)}
+    )
+    state = MockState()
+
+    def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
+        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+
+    plain = Deps.plain(
+        {
+            MockStateDepKey: state,
+            MongoClientDepKey: mongo_client,
+            DocumentQueryDepKey: fac,
+            DocumentCommandDepKey: fac,
+            CacheDepKey: _cache_factory,
+        }
+    )
+    routed = Deps.routed({TxManagerDepKey: {"main": mongo_txmanager}})
+    ctx = ExecutionContext(deps=plain.merge(routed))
     return ctx, spec
 
 
@@ -227,3 +268,65 @@ async def test_mongo_adapter_read_through_cache_get_and_get_many(
     await cmd.update(doc.id, doc.rev, _CxUpdate(sku="patched"))
     third = await q.get(doc.id)
     assert third.sku == "patched"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_mongo_adapter_cache_tx_commit_deferred_warm(
+    mongo_client_replica: MongoClient,
+) -> None:
+    """After a successful ``ExecutionContext`` transaction, deferred cache warm matches committed DB state."""
+
+    col = f"m_cc_tx_{uuid4().hex[:8]}"
+    ctx, spec = await _ctx_cached_tx(mongo_client_replica, col)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+
+    doc = await cmd.create(_CxCreate(sku="baseline"))
+    await q.get(doc.id)
+
+    async with ctx.transaction("main"):
+        patched = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="committed"))
+        assert patched.sku == "committed"
+        in_tx = await q.get(doc.id)
+        assert in_tx.sku == "committed"
+
+    out = await q.get(doc.id)
+    assert out.sku == "committed"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_mongo_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
+    mongo_client_replica: MongoClient,
+) -> None:
+    """On rollback, eager cache eviction stands; deferred warm is not run; reads match rolled-back DB."""
+
+    col = f"m_rb_tx_{uuid4().hex[:8]}"
+    ctx, spec = await _ctx_cached_tx(mongo_client_replica, col)
+    cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
+    state = ctx.dep(MockStateDepKey)
+    assert spec.cache is not None
+
+    doc = await cmd.create(_CxCreate(sku="baseline"))
+    await q.get(doc.id)
+    pointers = state.cache_pointers.setdefault(spec.cache.name, {})
+
+    assert str(doc.id) in pointers
+
+    with pytest.raises(RuntimeError, match="intentional rollback"):
+        async with ctx.transaction("main"):
+            upd = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="lost"))
+            assert upd.sku == "lost"
+            in_tx = await q.get(doc.id)
+            assert in_tx.sku == "lost"
+            raise RuntimeError("intentional rollback")
+
+    assert str(doc.id) not in pointers
+
+    restored = await q.get(doc.id)
+    assert restored.sku == "baseline"
+    assert restored.rev == doc.rev
+
+    assert str(restored.id) in pointers

@@ -46,12 +46,14 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
-    SearchResultSnapshotPort,
     SearchSpec,
+    cursor_return_fields_for_select,
     effective_phrase_combine,
     normalize_search_queries,
+    prepare_hub_search_options,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
+from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
@@ -63,7 +65,6 @@ from ...kernel.introspect import PostgresIntrospector
 from ...kernel.query.nested import sort_key_expr
 from ...pagination import build_seek_condition
 from ..txmanager import PostgresTxScopeKey
-from ._cursor_keyset import cursor_return_fields_for_select
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,
@@ -75,7 +76,6 @@ from ._fts_sql import (
     fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
-from ._options import prepare_hub_search_options
 from ._pgroonga_sql import (
     pgroonga_match_clause,
     pgroonga_phrase_match_text,
@@ -88,18 +88,12 @@ from ._vector_sql import (
     vector_knn_score_expr,
     vector_param_literal,
 )
-from .federated_snapshot import effective_snapshot_max_ids
-from .result_snapshot_ops import (
-    hub_search_fingerprint,
-    put_simple_result_snapshot,
-    read_hub_result_snapshot,
-    should_write_result_snapshot,
-    snapshot_sql_pagination,
-)
 
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+# ....................... #
 
 _HUB_CTE: Final[str] = "hf"
 _HUB_ROW_ALIAS: Final[str] = "h"
@@ -107,177 +101,10 @@ _COMBO_ALIAS: Final[str] = "comb"
 _RANK: Final[str] = "_hub_rank"
 _LEG_SCORE: Final[str] = "s"
 _LEG_EID: Final[str] = "eid"
+
 # Groonga v2 needs physical row ids: projected when a pgroonga leg uses same_heap_as_hub.
 _HUB_GROONGA_TABLEOID: Final[str] = "_hub_groonga_tableoid"
 _HUB_GROONGA_CTID: Final[str] = "_hub_groonga_ctid"
-
-# ....................... #
-
-
-def _empty_vector_embedders() -> dict[int, EmbeddingsProviderPort]:
-    return {}
-
-
-# ....................... #
-
-
-def _hub_leg_candidate_subquery(leg: HubLegRuntime, csub_alias: str) -> sql.Composable:
-    """Distinct heap PK candidates from the hub CTE (UNION when multiple hub FKs)."""
-
-    cols = leg.hub_fk_columns
-    hf = sql.Identifier(_HUB_CTE)
-    csub = sql.Identifier(csub_alias)
-
-    if len(cols) == 1:
-        fk = sql.Identifier(_HUB_CTE, cols[0])
-        return sql.SQL(
-            "( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL ) {csub}",
-        ).format(fk=fk, hf=hf, csub=csub)
-
-    branches = [
-        sql.SQL(
-            "( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL )",
-        ).format(fk=sql.Identifier(_HUB_CTE, col), hf=hf)
-        for col in cols
-    ]
-    unioned = sql.SQL(" UNION ").join(branches)
-    return sql.SQL("({u}) {csub}").format(u=unioned, csub=csub)
-
-
-def _hub_leg_equi_pick_join(
-    leg: HubLegRuntime,
-    leg_cte_alias: str,
-    pick_alias: str,
-) -> sql.Composable:
-    """Equi-join the single hub FK to the leg (``eid``, ``s``).
-
-    Inlines ``LEFT JOIN (SELECT DISTINCT ON (eid) …) … ON (hf.fk = eid)`` so the
-    planner can use a hash/merge plan. For multiple hub FKs, use
-    :func:`_hub_leg_leg_u_cte` and :func:`_hub_leg_multi_equi_pick_join`.
-    """
-
-    (col,) = leg.hub_fk_columns
-
-    lr = sql.Identifier(leg_cte_alias)
-    pick = sql.Identifier(pick_alias)
-    t = sql.Identifier("t")
-    t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
-    t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
-    hf_fk = sql.Identifier(_HUB_CTE, col)
-
-    return sql.SQL(
-        "LEFT JOIN ( "
-        "SELECT DISTINCT ON ({t_eid}) {t_eid} AS {eid}, {t_s} AS {sc} "
-        "FROM {lr} {t} "
-        "ORDER BY {t_eid}, {t_s} DESC NULLS LAST"
-        ") {pick} ON ({hf_fk} = {t_eid_qualified})"
-    ).format(
-        t_eid=t_eid,
-        eid=sql.Identifier(_LEG_EID),
-        t_s=t_s,
-        sc=sql.Identifier(_LEG_SCORE),
-        lr=lr,
-        t=t,
-        pick=pick,
-        hf_fk=hf_fk,
-        t_eid_qualified=sql.SQL("{}.{}").format(
-            pick,
-            sql.Identifier(_LEG_EID),
-        ),
-    )
-
-
-def _hub_leg_leg_u_cte(leg_cte_alias: str, u_cte_name: str) -> sql.Composable:
-    """Deduplicate a leg to one ``(eid, s)`` per ``eid`` (best ``s``), for multi-FK joins."""
-
-    lr = sql.Identifier(leg_cte_alias)
-    lr_u = sql.Identifier(u_cte_name)
-    t = sql.Identifier("t")
-    t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
-    t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
-    return sql.SQL(
-        """
-        ,
-        {lr_u} AS (
-            SELECT DISTINCT ON ({t_eid}) {t_eid} AS {eid}, {t_s} AS {sc}
-            FROM {lr} {t}
-            ORDER BY {t_eid}, {t_s} DESC NULLS LAST
-        )
-        """
-    ).format(
-        lr_u=lr_u,
-        lr=lr,
-        t=t,
-        t_eid=t_eid,
-        t_s=t_s,
-        eid=sql.Identifier(_LEG_EID),
-        sc=sql.Identifier(_LEG_SCORE),
-    )
-
-
-def _hub_leg_multi_equi_pick_join(
-    leg: HubLegRuntime,
-    leg_u_cte: str,
-    base_pick_prefix: str,
-) -> sql.Composable:
-    """K ``LEFT JOIN``s from hub FK columns to deduplicated ``leg_u`` (OR + best score in SELECT)."""
-
-    leg_u = sql.Identifier(leg_u_cte)
-    parts: list[sql.Composable] = []
-    for j, col in enumerate(leg.hub_fk_columns):
-        pick = sql.Identifier(f"{base_pick_prefix}_{j}")
-        hf_fk = sql.Identifier(_HUB_CTE, col)
-        t_eid_q = sql.SQL("{}.{}").format(pick, sql.Identifier(_LEG_EID))
-        parts.append(
-            sql.SQL("LEFT JOIN {leg_u} {pick} ON ({hf_fk} = {eid})").format(
-                leg_u=leg_u,
-                pick=pick,
-                hf_fk=hf_fk,
-                eid=t_eid_q,
-            ),
-        )
-    return sql.SQL(" ").join(parts)
-
-
-def _hub_leg_merge_coalesce(leg: HubLegRuntime, leg_index: int) -> sql.Composable:
-    """Per-leg match score: single FK uses one join; multi-FK uses ``GREATEST`` of K joins."""
-
-    if len(leg.hub_fk_columns) == 1:
-        return sql.SQL("COALESCE({}.{}, 0)").format(
-            sql.Identifier(f"lp{leg_index}"),
-            sql.Identifier(_LEG_SCORE),
-        )
-    br = [
-        sql.SQL("COALESCE({}.{}, 0)").format(
-            sql.Identifier(f"lp{leg_index}_{j}"),
-            sql.Identifier(_LEG_SCORE),
-        )
-        for j in range(len(leg.hub_fk_columns))
-    ]
-    return sql.SQL("GREATEST({})").format(sql.SQL(", ").join(br))
-
-
-def _hub_leg_merge_matched(leg: HubLegRuntime, leg_index: int) -> sql.Composable:
-    """Whether this leg matched: non-null leg ``eid`` on any FK join branch."""
-
-    if len(leg.hub_fk_columns) == 1:
-        return sql.SQL("{} IS NOT NULL").format(
-            sql.SQL("{}.{}").format(
-                sql.Identifier(f"lp{leg_index}"),
-                sql.Identifier(_LEG_EID),
-            ),
-        )
-    eid_null = [
-        sql.SQL("{} IS NOT NULL").format(
-            sql.SQL("{}.{}").format(
-                sql.Identifier(f"lp{leg_index}_{j}"),
-                sql.Identifier(_LEG_EID),
-            ),
-        )
-        for j in range(len(leg.hub_fk_columns))
-    ]
-    return sql.SQL("({})").format(sql.SQL(" OR ").join(eid_null))
-
 
 # ....................... #
 
@@ -287,15 +114,29 @@ class HubLegRuntime:
     """Resolved leg: :class:`SearchSpec` plus Postgres index/heap wiring."""
 
     search: SearchSpec[Any]
+    """Search specification."""
+
     index_qname: PostgresQualifiedName
+    """Qualified name for configuration symmetry (index object); not read at query time."""
+
     index_heap_qname: PostgresQualifiedName
+    """Heap that holds the ``vector`` column used for distance scoring."""
+
     hub_fk_columns: tuple[str, ...] = attrs.field(converter=normalize_hub_fk_columns)
+    """Foreign key columns used to join the leg to the hub."""
+
     heap_pk_column: str
+    """Primary key column of the heap."""
+
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
+    """Optional map from :class:`SearchSpec` field names to heap column names (unused in v2)."""
+
     pgroonga_score_version: Literal["v1", "v2"] | None = attrs.field(default=None)
     """``v1`` / ``v2`` :func:`pgroonga_score` form when :attr:`engine` is ``pgroonga``; else ``None``."""
 
     engine: Literal["pgroonga", "fts", "vector"] = "pgroonga"
+    """Engine for the hub leg."""
+
     fts_groups: dict[FtsGroupLetter, Sequence[str]] | None = attrs.field(default=None)
     """Required when :attr:`engine` is ``fts`` (same semantics as :class:`PostgresFTSSearchAdapterV2`)."""
 
@@ -311,12 +152,182 @@ class HubLegRuntime:
     same_heap_as_hub: bool = False
     """If True, the leg is evaluated on the hub CTE (``hf``) without joining the heap again."""
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         if self.engine == "vector":
             if not self.vector_column or self.embedding_dimensions is None:
                 raise CoreError(
                     "Vector hub leg requires vector_column and embedding_dimensions.",
                 )
+
+    # ....................... #
+
+    def candidate_subquery(self, *, csub_alias: str) -> sql.Composable:
+        """Distinct heap PK candidates from the hub CTE (UNION when multiple hub FKs)."""
+
+        cols = self.hub_fk_columns
+        hf = sql.Identifier(_HUB_CTE)
+        csub = sql.Identifier(csub_alias)
+
+        if len(cols) == 1:
+            fk = sql.Identifier(_HUB_CTE, cols[0])
+            return sql.SQL(
+                "( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL ) {csub}",
+            ).format(fk=fk, hf=hf, csub=csub)
+
+        branches = [
+            sql.SQL(
+                "( SELECT DISTINCT {fk} AS cand_id FROM {hf} WHERE {fk} IS NOT NULL )",
+            ).format(fk=sql.Identifier(_HUB_CTE, col), hf=hf)
+            for col in cols
+        ]
+        unioned = sql.SQL(" UNION ").join(branches)
+
+        return sql.SQL("({u}) {csub}").format(u=unioned, csub=csub)
+
+    # ....................... #
+
+    def equi_pick_join(self, *, leg_cte_alias: str, pick_alias: str) -> sql.Composable:
+        """Equi-join the single hub FK to the leg (``eid``, ``s``).
+
+        Inlines ``LEFT JOIN (SELECT DISTINCT ON (eid) …) … ON (hf.fk = eid)`` so the
+        planner can use a hash/merge plan. For multiple hub FKs, use
+        :func:`_hub_leg_leg_u_cte` and :func:`_hub_leg_multi_equi_pick_join`.
+        """
+
+        (col,) = self.hub_fk_columns
+
+        lr = sql.Identifier(leg_cte_alias)
+        pick = sql.Identifier(pick_alias)
+        t = sql.Identifier("t")
+        t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
+        t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
+        hf_fk = sql.Identifier(_HUB_CTE, col)
+
+        return sql.SQL(
+            "LEFT JOIN ( "
+            "SELECT DISTINCT ON ({t_eid}) {t_eid} AS {eid}, {t_s} AS {sc} "
+            "FROM {lr} {t} "
+            "ORDER BY {t_eid}, {t_s} DESC NULLS LAST"
+            ") {pick} ON ({hf_fk} = {t_eid_qualified})"
+        ).format(
+            t_eid=t_eid,
+            eid=sql.Identifier(_LEG_EID),
+            t_s=t_s,
+            sc=sql.Identifier(_LEG_SCORE),
+            lr=lr,
+            t=t,
+            pick=pick,
+            hf_fk=hf_fk,
+            t_eid_qualified=sql.SQL("{}.{}").format(
+                pick,
+                sql.Identifier(_LEG_EID),
+            ),
+        )
+
+    # ....................... #
+
+    @staticmethod
+    def leg_u_cte(*, leg_cte_alias: str, u_cte_name: str) -> sql.Composable:
+        """Deduplicate a leg to one ``(eid, s)`` per ``eid`` (best ``s``), for multi-FK joins."""
+
+        lr = sql.Identifier(leg_cte_alias)
+        lr_u = sql.Identifier(u_cte_name)
+        t = sql.Identifier("t")
+        t_eid = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_EID))
+        t_s = sql.SQL("{}.{}").format(t, sql.Identifier(_LEG_SCORE))
+
+        return sql.SQL(
+            """
+            ,
+            {lr_u} AS (
+                SELECT DISTINCT ON ({t_eid}) {t_eid} AS {eid}, {t_s} AS {sc}
+                FROM {lr} {t}
+                ORDER BY {t_eid}, {t_s} DESC NULLS LAST
+            )
+            """
+        ).format(
+            lr_u=lr_u,
+            lr=lr,
+            t=t,
+            t_eid=t_eid,
+            t_s=t_s,
+            eid=sql.Identifier(_LEG_EID),
+            sc=sql.Identifier(_LEG_SCORE),
+        )
+
+    # ....................... #
+
+    def multi_equi_pick_join(
+        self,
+        leg_u_cte: str,
+        base_pick_prefix: str,
+    ) -> sql.Composable:
+        """K ``LEFT JOIN``s from hub FK columns to deduplicated ``leg_u`` (OR + best score in SELECT)."""
+
+        leg_u = sql.Identifier(leg_u_cte)
+        parts: list[sql.Composable] = []
+
+        for j, col in enumerate(self.hub_fk_columns):
+            pick = sql.Identifier(f"{base_pick_prefix}_{j}")
+            hf_fk = sql.Identifier(_HUB_CTE, col)
+            t_eid_q = sql.SQL("{}.{}").format(pick, sql.Identifier(_LEG_EID))
+
+            parts.append(
+                sql.SQL("LEFT JOIN {leg_u} {pick} ON ({hf_fk} = {eid})").format(
+                    leg_u=leg_u,
+                    pick=pick,
+                    hf_fk=hf_fk,
+                    eid=t_eid_q,
+                ),
+            )
+
+        return sql.SQL(" ").join(parts)
+
+    # ....................... #
+
+    def merge_coalesce(self, leg_index: int) -> sql.Composable:
+        """Per-leg match score: single FK uses one join; multi-FK uses ``GREATEST`` of K joins."""
+
+        if len(self.hub_fk_columns) == 1:
+            return sql.SQL("COALESCE({}.{}, 0)").format(
+                sql.Identifier(f"lp{leg_index}"),
+                sql.Identifier(_LEG_SCORE),
+            )
+
+        br = [
+            sql.SQL("COALESCE({}.{}, 0)").format(
+                sql.Identifier(f"lp{leg_index}_{j}"),
+                sql.Identifier(_LEG_SCORE),
+            )
+            for j in range(len(self.hub_fk_columns))
+        ]
+
+        return sql.SQL("GREATEST({})").format(sql.SQL(", ").join(br))
+
+    # ....................... #
+
+    def merge_matched(self, leg_index: int) -> sql.Composable:
+        """Whether this leg matched: non-null leg ``eid`` on any FK join branch."""
+
+        if len(self.hub_fk_columns) == 1:
+            return sql.SQL("{} IS NOT NULL").format(
+                sql.SQL("{}.{}").format(
+                    sql.Identifier(f"lp{leg_index}"),
+                    sql.Identifier(_LEG_EID),
+                ),
+            )
+        eid_null = [
+            sql.SQL("{} IS NOT NULL").format(
+                sql.SQL("{}.{}").format(
+                    sql.Identifier(f"lp{leg_index}_{j}"),
+                    sql.Identifier(_LEG_EID),
+                ),
+            )
+            for j in range(len(self.hub_fk_columns))
+        ]
+        return sql.SQL("({})").format(sql.SQL(" OR ").join(eid_null))
 
 
 # ....................... #
@@ -388,6 +399,9 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
         return sw, rank, sp
 
 
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FtsHubLegEngine(HubSearchLegEngine):
@@ -419,9 +433,11 @@ class FtsHubLegEngine(HubSearchLegEngine):
             )
 
         tsv = await fts_resolve_tsvector_expr(introspector, leg.index_qname)
+
         if len(queries) == 1:
             tsw_where, tsp_w = fts_tsquery_expr(queries[0], options=options)
             tsw_rank, tsp_r = fts_tsquery_expr(queries[0], options=options)
+
         else:
             fn = (
                 fts_tsquery_expr_disjunction
@@ -430,6 +446,7 @@ class FtsHubLegEngine(HubSearchLegEngine):
             )
             tsw_where, tsp_w = fn(queries, options=options)
             tsw_rank, tsp_r = fn(queries, options=options)
+
         sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)
         gw = fts_effective_group_weights(leg.search, groups, options)
         fts_weights = fts_rank_cd_weight_array(gw)
@@ -443,12 +460,18 @@ class FtsHubLegEngine(HubSearchLegEngine):
         return sw, rank_expr, sp
 
 
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class VectorHubLegEngine(HubSearchLegEngine):
     """Vector hub legs: KNN score on a ``vector`` heap column."""
 
     embedder: EmbeddingsProviderPort
+    """Embedder for vector queries."""
+
+    # ....................... #
 
     async def build_leg(
         self,
@@ -462,8 +485,10 @@ class VectorHubLegEngine(HubSearchLegEngine):
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
         _ = introspector
         combine = effective_phrase_combine(options)
+
         if leg.engine != "vector" or leg.vector_column is None:
             raise CoreError("VectorHubLegEngine requires a vector hub leg.")
+
         if not queries:
             return (
                 sql.SQL("TRUE"),
@@ -479,9 +504,11 @@ class VectorHubLegEngine(HubSearchLegEngine):
             raise CoreError("embedding_dimensions is required for vector engine.")
 
         sw = sql.SQL("TRUE")
+
         if len(queries) == 1:
             one = await self.embedder.embed_one(queries[0], input_kind="query")
             assert_embedding_shape(one, expect_dim=edim)
+
             rank = vector_knn_score_expr(
                 index_alias=index_alias,
                 column=leg.vector_column,
@@ -489,10 +516,13 @@ class VectorHubLegEngine(HubSearchLegEngine):
                 score_name=score_column,
             )
             sp = [vector_param_literal(one)]
+
         else:
             vecs = await self.embedder.embed(queries, input_kind="query")
+
             for vec in vecs:
                 assert_embedding_shape(vec, expect_dim=edim)
+
             rank = vector_knn_multi_score_expr(
                 index_alias=index_alias,
                 column=leg.vector_column,
@@ -502,11 +532,16 @@ class VectorHubLegEngine(HubSearchLegEngine):
                 phrase_combine=combine,
             )
             sp = [vector_param_literal(v) for v in vecs]
+
         return sw, rank, sp
 
 
+# ....................... #
+
 _PGROONGA_HUB_LEG_ENGINE: Final[PgroongaHubLegEngine] = PgroongaHubLegEngine()
 _FTS_HUB_LEG_ENGINE: Final[FtsHubLegEngine] = FtsHubLegEngine()
+
+# ....................... #
 
 
 def hub_leg_engine_for(
@@ -527,6 +562,7 @@ def hub_leg_engine_for(
     if eng == "vector":
         if vector_embedder is None:
             raise CoreError("Vector hub leg requires an embeddings provider.")
+
         return VectorHubLegEngine(embedder=vector_embedder)
 
     raise CoreError(f"Unsupported hub search leg engine: {eng!r}.")
@@ -552,15 +588,18 @@ class PostgresHubSearchAdapter[M: BaseModel](
     hub_spec: HubSearchSpec[M]
     members: Sequence[HubLegRuntime]
     vector_embedders: Mapping[int, EmbeddingsProviderPort] = attrs.field(
-        factory=_empty_vector_embedders,
+        factory=dict[int, EmbeddingsProviderPort],
     )
     """Per-leg index → embedder for :attr:`~HubLegRuntime.engine` ``vector`` legs."""
 
-    snapshot_store: SearchResultSnapshotPort | None = None
-    """Optional store for ordered hub row keys to accelerate paged reads."""
+    snapshot_coord: SearchResultSnapshotCoordinator | None = None
+    """Coordinator for KV ordered-ID snapshots."""
 
     combine: Literal["or", "and"] = "or"
+    """Combine mode for leg scores."""
+
     score_merge: Literal["max", "sum"] = "max"
+    """Score merge mode for leg scores."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
@@ -624,6 +663,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
                 ),
             ]
         return sql.SQL(", ").join(order_parts)
+
+    # ....................... #
 
     async def _hub_build_with_clause(
         self,
@@ -720,8 +761,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
                         t=sql.Identifier(t_alias),
                         sw=sw,
                     )
+
                 else:
-                    cand_sub = _hub_leg_candidate_subquery(leg, f"csub{i}")
+                    cand_sub = leg.candidate_subquery(csub_alias=f"csub{i}")
                     join_on = sql.SQL("{} = {}").format(
                         sql.Identifier(t_alias, leg.heap_pk_column),
                         sql.Identifier(f"csub{i}", "cand_id"),
@@ -746,10 +788,15 @@ class PostgresHubSearchAdapter[M: BaseModel](
                         cand=cand_sub,
                         join_on=join_on,
                     )
+
                 leg_cte_parts.append(leg_cte)
+
                 if len(leg.hub_fk_columns) > 1:
                     leg_cte_parts.append(
-                        _hub_leg_leg_u_cte(lr_alias, f"{lr_alias}_u"),
+                        leg.leg_u_cte(
+                            leg_cte_alias=lr_alias,
+                            u_cte_name=f"{lr_alias}_u",
+                        ),
                     )
 
         hf_cols = sql.SQL(", ").join(
@@ -758,6 +805,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         )
 
         merge_expr: sql.Composable
+
         if not do_legs:
             merge_expr = sql.SQL("(0)::double precision")
             combine_sql = sql.SQL("TRUE")
@@ -783,7 +831,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
         else:
             score_terms = [
                 sql.SQL("({}) * {}").format(
-                    _hub_leg_merge_coalesce(leg, i),
+                    leg.merge_coalesce(i),
                     sql.Literal(float(w)),
                 )
                 for i, leg, w in active
@@ -802,20 +850,22 @@ class PostgresHubSearchAdapter[M: BaseModel](
             for i, leg, _ in active:
                 if len(leg.hub_fk_columns) == 1:
                     join_parts.append(
-                        _hub_leg_equi_pick_join(leg, leg_aliases[i], f"lp{i}"),
+                        leg.equi_pick_join(
+                            leg_cte_alias=leg_aliases[i],
+                            pick_alias=f"lp{i}",
+                        ),
                     )
+
                 else:
                     join_parts.append(
-                        _hub_leg_multi_equi_pick_join(
-                            leg,
-                            f"{leg_aliases[i]}_u",
-                            f"lp{i}",
+                        leg.multi_equi_pick_join(
+                            leg_u_cte=f"{leg_aliases[i]}_u",
+                            base_pick_prefix=f"lp{i}",
                         ),
                     )
 
             leg_joins = sql.SQL(" ").join(join_parts)
-
-            leg_null_checks = [_hub_leg_merge_matched(leg, i) for i, leg, _ in active]
+            leg_null_checks = [leg.merge_matched(i) for i, leg, _ in active]
 
             if self.combine == "or":
                 combine_sql = sql.SQL(" OR ").join(leg_null_checks)  # type: ignore[assignment]
@@ -848,7 +898,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
             sql.SQL("").join(leg_cte_parts),
             combo_cte,
         )
+
         return with_clause, params, do_legs
+
+    # ....................... #
 
     def _hub_cursor_key_spec(
         self,
@@ -860,28 +913,40 @@ class PostgresHubSearchAdapter[M: BaseModel](
             if not sorts:
                 if ID_FIELD in self.read_fields:
                     return [(ID_FIELD, "asc")]
+
                 first = sorted(self.read_fields)[0]
                 return [(first, "asc")]
+
             return list(normalize_sorts_with_id(sorts))
 
         spec: list[tuple[str, str]] = [(_RANK, "desc")]
+
         if sorts:
             for field, direction in sorts.items():
                 d = str(direction).lower()
+
                 if d not in ("asc", "desc"):
                     raise CoreError(
                         f"Invalid sort direction in hub cursor: {direction!r}"
                     )
                 spec.append((field, d))
+
         have = {k for k, _ in spec}
+
         if ID_FIELD not in have:
             id_dir = "asc"
+
             if sorts:
                 dirs = {str(v).lower() for v in sorts.values()}
+
                 if len(dirs) == 1:
                     id_dir = next(iter(dirs))
+
             spec.append((ID_FIELD, id_dir))
+
         return spec
+
+    # ....................... #
 
     @staticmethod
     def _hub_cursor_order_sql(
@@ -1028,7 +1093,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             (self.hub_spec.members[i].name, float(member_weights_list[i]))
             for i in range(len(self.hub_spec.members))
         ]
-        fp_fingerprint = hub_search_fingerprint(
+        fp_fingerprint = SearchResultSnapshotCoordinator.hub_search_fingerprint(
             query,
             filters,
             sorts,
@@ -1037,9 +1102,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             score_merge=str(self.score_merge),
             combine=str(self.combine),
         )
-        if self.snapshot_store is not None and rs_spec is not None:
-            read_page = await read_hub_result_snapshot(
-                store=self.snapshot_store,
+        if self.snapshot_coord is not None and rs_spec is not None:
+            read_page = await self.snapshot_coord.read_hub_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
                 fp_computed=fp_fingerprint,
@@ -1106,13 +1170,19 @@ class PostgresHubSearchAdapter[M: BaseModel](
         pagination = pagination or {}
 
         want_sn = (
-            self.snapshot_store is not None
+            self.snapshot_coord is not None
             and rs_spec is not None
-            and should_write_result_snapshot(snapshot, rs_spec)
+            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
         )
-        max_nh = effective_snapshot_max_ids(snapshot, rs_spec) if want_sn else 0
-        sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
-            want_sn, max_nh, dict(pagination)
+        max_nh = (
+            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+            if want_sn and self.snapshot_coord is not None
+            else 0
+        )
+        sql_limit, sql_offset, page_limit = (
+            SearchResultSnapshotCoordinator.snapshot_pagination(
+                want_sn, max_nh, dict(pagination)
+            )
         )
 
         if sql_limit is not None:
@@ -1130,10 +1200,9 @@ class PostgresHubSearchAdapter[M: BaseModel](
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
 
         handle_h = None
-        if want_sn and self.snapshot_store is not None and rs_spec is not None:
+        if want_sn and self.snapshot_coord is not None and rs_spec is not None:
             plh = len(rows)
-            handle_h = await put_simple_result_snapshot(
-                self.snapshot_store,
+            handle_h = await self.snapshot_coord.put_simple_ordered_hits(
                 pydantic_validate_many(self.model_type, rows),
                 snap_opt=snapshot,
                 rs_spec=rs_spec,

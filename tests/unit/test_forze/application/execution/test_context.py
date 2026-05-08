@@ -12,8 +12,8 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.errors import CoreError
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
 from forze_mock.execution import MockStateDepKey
@@ -113,6 +113,68 @@ class TestExecutionContextTransaction:
             async with ctx.transaction("mock"):
                 raise RuntimeError("fail")
 
+    def test_defer_after_commit_outside_transaction_raises(
+        self, ctx: ExecutionContext
+    ) -> None:
+        async def _cb() -> None:
+            pass
+
+        with pytest.raises(CoreError, match="defer_after_commit"):
+            ctx.defer_after_commit(_cb)
+
+    @pytest.mark.asyncio
+    async def test_defer_after_commit_runs_fifo_on_success(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+
+        async def _a() -> None:
+            order.append("a")
+
+        async def _b() -> None:
+            order.append("b")
+
+        async with ctx.transaction("mock"):
+            ctx.defer_after_commit(_a)
+            ctx.defer_after_commit(_b)
+
+        assert order == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_defer_after_commit_skipped_on_error(
+        self, ctx: ExecutionContext
+    ) -> None:
+        ran: list[int] = []
+
+        async def _cb() -> None:
+            ran.append(1)
+
+        with pytest.raises(RuntimeError, match="fail"):
+            async with ctx.transaction("mock"):
+                ctx.defer_after_commit(_cb)
+                raise RuntimeError("fail")
+
+        assert ran == []
+
+    @pytest.mark.asyncio
+    async def test_defer_after_commit_nested_fifo_after_outer_commit(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order: list[str] = []
+
+        async def _outer() -> None:
+            order.append("outer")
+
+        async def _inner() -> None:
+            order.append("inner")
+
+        async with ctx.transaction("mock"):
+            ctx.defer_after_commit(_outer)
+            async with ctx.transaction("mock"):
+                ctx.defer_after_commit(_inner)
+
+        assert order == ["outer", "inner"]
+
 
 class TestExecutionContextPorts:
     def test_doc_query(self, ctx: ExecutionContext) -> None:
@@ -208,7 +270,9 @@ class TestExecutionContextStrEnumNames:
 
 class TestExecutionContextStrEnumTransactionRoute:
     @pytest.mark.asyncio
-    async def test_transaction_accepts_str_enum_route(self, ctx: ExecutionContext) -> None:
+    async def test_transaction_accepts_str_enum_route(
+        self, ctx: ExecutionContext
+    ) -> None:
         class TxRoute(StrEnum):
             MOCK = "mock"
 

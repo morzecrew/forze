@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from typing import (
+    Any,
     AsyncContextManager,
     AsyncIterator,
     Awaitable,
@@ -27,8 +28,21 @@ class RedisClientPort(Protocol):
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
     def pipeline(
-        self, *, transaction: bool = True
+        self,
+        *,
+        transaction: bool = True,
     ) -> AsyncContextManager[Pipeline]: ...  # pragma: no cover
+
+    def exists(self, key: str) -> Awaitable[bool]: ...  # pragma: no cover
+
+    def pttl(self, key: str) -> Awaitable[int | None]: ...  # pragma: no cover
+
+    def run_script(
+        self,
+        script: str,
+        keys: Sequence[str],
+        args: Sequence[Any],
+    ) -> Awaitable[str]: ...  # pragma: no cover
 
     def get(self, key: str) -> Awaitable[bytes | str | None]: ...  # pragma: no cover
 

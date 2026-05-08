@@ -6,18 +6,17 @@ require_mongo()
 
 # ....................... #
 
+
 import asyncio
 from functools import cached_property
 from typing import (
     Any,
     Literal,
-    Protocol,
     Sequence,
     TypeVar,
     cast,
     final,
     overload,
-    runtime_checkable,
 )
 from uuid import UUID
 
@@ -30,7 +29,6 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
-from forze.application.contracts.cache import CachePort
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
@@ -44,20 +42,14 @@ from forze.application.contracts.query import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    encode_keyset_v1,
+    assemble_keyset_cursor_page,
+    assert_cursor_projection_includes_sort_keys,
     normalize_sorts_with_id,
-    row_value_for_sort_key,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
-from forze.base.errors import CoreError
+from forze.application.coordinators import DocumentCacheCoordinator
+from forze.base.errors import CoreError, InvalidOperationError
 from forze.base.primitives import JsonDict
-from forze.base.serialization import (
-    pydantic_cache_dump,
-    pydantic_cache_dump_many,
-    pydantic_validate,
-    pydantic_validate_many,
-)
-from forze.base.errors import InvalidOperationError
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -78,15 +70,6 @@ T = TypeVar("T", bound=BaseModel)
 #! the above is related to logging
 
 
-@runtime_checkable
-class ReadModelWithIdAndRev(Protocol):
-    id: UUID
-    rev: int
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MongoDocumentAdapter(
@@ -105,8 +88,8 @@ class MongoDocumentAdapter(
     write_gw: MongoWriteGateway[D, C, U] | None = attrs.field(default=None)
     """Optional gateway for mutations; ``None`` disables write operations."""
 
-    cache: CachePort | None = attrs.field(default=None)
-    """Optional cache layer for read-through caching."""
+    cache_coord: DocumentCacheCoordinator[R]
+    """Unified read/write cache semantics for documents."""
 
     batch_size: int = 200
     """Batch size for writing."""
@@ -117,6 +100,16 @@ class MongoDocumentAdapter(
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.cache_coord.read_model_type is not self.read_gw.model_type:
+            raise CoreError(
+                "Document cache coordinator read model type mismatches read gateway model type."
+            )
+
+        if self.cache_coord.document_name != self.spec.name:
+            raise CoreError(
+                "Document cache coordinator name mismatches document specification name."
+            )
+
         if self.write_gw is not None:
             if self.write_gw.client is not self.read_gw.client:
                 raise CoreError("Write and read gateways must use the same client")
@@ -152,96 +145,6 @@ class MongoDocumentAdapter(
 
     # ....................... #
 
-    def _check_id_rev_capability(self) -> bool:
-        read_model = self.read_gw.model_type
-        fields = set(read_model.model_fields.keys())
-        required_fields = {ID_FIELD, REV_FIELD}
-
-        return required_fields.issubset(fields)
-
-    # ....................... #
-
-    async def _set_cache(self, doc: R) -> None:
-        if self.cache is None:
-            return
-
-        if not self._check_id_rev_capability():
-            logger.warning(
-                "Cannot cache document of type '%s' as it does not have an id and rev",
-                type(self.read_gw.model_type).__name__,
-            )
-            return
-
-        casted_doc = cast(ReadModelWithIdAndRev, doc)
-
-        try:
-            dump = pydantic_cache_dump(doc)
-            await self.cache.set_versioned(
-                str(casted_doc.id), str(casted_doc.rev), dump
-            )
-
-            logger.trace("Cache set successfully")
-
-        except Exception:
-            logger.exception("Cache set failed, continuing")
-
-    # ....................... #
-
-    async def _set_cache_many(self, docs: Sequence[R]) -> None:
-        if self.cache is None or not docs:
-            return
-
-        if not self._check_id_rev_capability():
-            logger.warning(
-                "Cannot cache documents of type '%s' as they do not have an id and rev",
-                type(self.read_gw.model_type).__name__,
-            )
-            return
-
-        docs_casted = [cast(ReadModelWithIdAndRev, x) for x in docs]
-
-        try:
-            dumps = pydantic_cache_dump_many(docs)
-            res_cache_map = {
-                (str(x.id), str(x.rev)): y
-                for x, y in zip(docs_casted, dumps, strict=True)
-            }
-            await self.cache.set_many_versioned(res_cache_map)
-
-        except Exception:
-            logger.debug(
-                "Cache set failed for %s '%s' document(s), continuing",
-                len(docs),
-                self.spec.name,
-                exc_info=True,
-            )
-
-    # ....................... #
-
-    async def _clear_cache(self, *pks: UUID) -> None:
-        if self.cache is None:
-            return
-
-        if not self._check_id_rev_capability():
-            logger.warning(
-                "Cannot clear cache for documents of type '%s' as they do not have an id and rev",
-                type(self.read_gw.model_type).__name__,
-            )
-            return
-
-        try:
-            await self.cache.delete_many([str(pk) for pk in pks], hard=True)
-
-        except Exception:
-            logger.debug(
-                "Cache clear failed for %s '%s' document(s), continuing",
-                len(pks),
-                self.spec.name,
-                exc_info=True,
-            )
-
-    # ....................... #
-
     @overload
     async def get(
         self,
@@ -249,6 +152,7 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
+        skip_cache: bool = ...,
     ) -> JsonDict:
         """Fetch a document projected to *return_fields*."""
         ...
@@ -260,6 +164,7 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = ...,
         return_fields: None = ...,
+        skip_cache: bool = ...,
     ) -> R:
         """Fetch a document as the read model."""
         ...
@@ -270,47 +175,46 @@ class MongoDocumentAdapter(
         *,
         for_update: bool = False,
         return_fields: Sequence[str] | None = None,
+        skip_cache: bool = False,
     ) -> R | JsonDict:
         """Fetch a single document by primary key, using the cache when available.
 
-        Cache is bypassed when *return_fields* is set or when no cache is
-        configured.  On a cache miss the result is fetched from Mongo and
-        written back to the cache with versioned invalidation.
+        Cache is bypassed when *return_fields* is set, when *skip_cache* is
+        ``True``, or when no cache is configured. Miss warm-up uses
+        :class:`~forze.application.coordinators.DocumentCacheCoordinator`, including
+        post-commit deferral when configured.
 
         :param pk: Document primary key.
         :param for_update: Require a transaction context.
         :param return_fields: Optional field subset to project.
+        :param skip_cache: When ``True``, read only from Mongo; do not read or
+            write the read-through cache.
         """
 
-        if not self._check_id_rev_capability():
+        if not self.cache_coord.id_rev_capable():
             raise InvalidOperationError(
                 f"Cannot get document of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
             )
 
-        if return_fields is not None or self.cache is None:
+        if not self.cache_coord.read_through_eligible(
+            skip_cache=skip_cache,
+            return_fields=return_fields,
+        ):
             return await self.read_gw.get(
                 pk,
                 for_update=for_update,
                 return_fields=return_fields,
             )
 
-        try:
-            cached = await self.cache.get(str(pk))
-
-        except Exception:
-            return await self.read_gw.get(
+        return await self.cache_coord.get_read_through(
+            pk,
+            fetch_on_cache_fault=lambda: self.read_gw.get(
                 pk,
                 for_update=for_update,
                 return_fields=return_fields,
-            )
-
-        if cached is not None:
-            return pydantic_validate(self.read_gw.model_type, cached)
-
-        res = await self.read_gw.get(pk)
-        await self._set_cache(res)
-
-        return res
+            ),
+            fetch_on_miss_without_lock=lambda: self.read_gw.get(pk),
+        )
 
     # ....................... #
 
@@ -320,6 +224,7 @@ class MongoDocumentAdapter(
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str],
+        skip_cache: bool = ...,
     ) -> Sequence[JsonDict]:
         """Fetch multiple documents projected to *return_fields*."""
         ...
@@ -330,6 +235,7 @@ class MongoDocumentAdapter(
         pks: Sequence[UUID],
         *,
         return_fields: None = ...,
+        skip_cache: bool = ...,
     ) -> Sequence[R]:
         """Fetch multiple documents as the read model."""
         ...
@@ -339,51 +245,43 @@ class MongoDocumentAdapter(
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str] | None = None,
+        skip_cache: bool = False,
     ) -> Sequence[R] | Sequence[JsonDict]:
         """Fetch multiple documents by primary key with cache-aware batching.
 
-        Cached entries are returned from the cache; misses are fetched from
-        Mongo and back-filled into the cache.
+        Cached entries are returned from the cache; misses are fetched from Mongo
+        and warmed through :class:`~forze.application.coordinators.DocumentCacheCoordinator`.
+        Use *skip_cache* to read only from Mongo.
 
         :param pks: Primary keys to fetch.
         :param return_fields: Optional field subset to project.
+        :param skip_cache: When ``True``, read only from Mongo; do not read or
+            write the read-through cache.
         """
 
         if not pks:
             return []
 
-        if not self._check_id_rev_capability():
+        if not self.cache_coord.id_rev_capable():
             raise InvalidOperationError(
                 f"Cannot get many documents of type '{type(self.read_gw.model_type).__name__}' as they do not have defined id field"
             )
 
-        if return_fields is not None or self.cache is None:
+        if not self.cache_coord.read_through_eligible(
+            skip_cache=skip_cache,
+            return_fields=return_fields,
+        ):
             return await self.read_gw.get_many(pks, return_fields=return_fields)
 
-        try:
-            hits, misses = await self.cache.get_many([str(pk) for pk in pks])
-
-        except Exception:
-            return await self.read_gw.get_many(pks, return_fields=return_fields)
-
-        miss_res: list[R] = []
-
-        if misses:
-            miss_res = await self.read_gw.get_many([UUID(x) for x in misses])
-            await self._set_cache_many(miss_res)
-
-        hits_validated = pydantic_validate_many(
-            self.read_gw.model_type, list(hits.values())
+        return await self.cache_coord.get_many_read_through(
+            pks,
+            fetch_many_on_cache_fault=lambda: self.read_gw.get_many(
+                pks, return_fields=return_fields
+            ),
+            fetch_misses_many=lambda misses: self.read_gw.get_many(
+                [UUID(x) for x in misses]
+            ),
         )
-        hits_validated_cast = [cast(ReadModelWithIdAndRev, x) for x in hits_validated]
-        miss_res_cast = [cast(ReadModelWithIdAndRev, x) for x in miss_res]
-
-        by_pk = {x.id: x for x in hits_validated_cast}
-        by_pk.update({x.id: x for x in miss_res_cast})
-
-        results = [cast(R, by_pk[pk]) for pk in pks]
-
-        return results
 
     # ....................... #
 
@@ -687,15 +585,10 @@ class MongoDocumentAdapter(
         sort_keys = [k for k, _ in normalized]
         directions = [d for _, d in normalized]
 
-        if return_fields is not None and not all(f in return_fields for f in sort_keys):
-            raise CoreError(
-                "When using return_fields with cursor list, the projection must include "
-                "all sort and tie-breaker fields (including id).",
-            )
-
-        c = dict(cursor or {})
-        use_after = c.get("after") is not None
-        use_before = c.get("before") is not None
+        assert_cursor_projection_includes_sort_keys(
+            return_fields=return_fields,
+            sort_keys=sort_keys,
+        )
 
         if sort_keys != [ID_FIELD] or len(sort_keys) != 1:
             raise CoreError(
@@ -711,44 +604,19 @@ class MongoDocumentAdapter(
             return_fields=return_fields,  # type: ignore[typeddict, arg-type, misc]
         )
 
-        c2 = dict(cursor or {})
-        lim: int = int(  # type: ignore[call-overload]
-            (
-                c2.get("limit")  # type: ignore[arg-type]
-                if c2.get("limit") is not None
-                else 10
-            ),
-        )
-        has_more = len(raw) > lim
-        page_raw = list(raw)[:lim]
-
         def _dump(o: R | JsonDict) -> JsonDict:
             if isinstance(o, dict):
                 return o
 
             return o.model_dump(mode="json")  # type: ignore[union-attr, err]
 
-        if has_more and page_raw:
-            last = _dump(page_raw[-1])  # type: ignore[assignment, arg-type]
-            next_tok = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=[row_value_for_sort_key(last, k) for k in sort_keys],
-            )
-
-        else:
-            next_tok = None
-
-        if page_raw and (use_after or (use_before and has_more)):
-            first = _dump(page_raw[0])  # type: ignore[assignment, arg-type]
-            prev_tok = encode_keyset_v1(
-                sort_keys=sort_keys,
-                directions=directions,
-                values=[row_value_for_sort_key(first, k) for k in sort_keys],
-            )
-
-        else:
-            prev_tok = None
+        page_raw, has_more, next_tok, prev_tok = assemble_keyset_cursor_page(
+            raw,
+            cursor=cursor,
+            sort_keys=sort_keys,
+            directions=directions,
+            dump_row=_dump,
+        )
 
         if return_fields is not None:
             return CursorPage(
@@ -791,19 +659,17 @@ class MongoDocumentAdapter(
         """
 
         w = self._require_write()
+
         domain = await w.create(dto)
+        await self.cache_coord.invalidate_keys_now(domain.id)
 
         if not return_new:
-            await self._clear_cache(domain.id)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        res, _ = await asyncio.gather(
-            self.read_gw.get(domain.id),
-            self._clear_cache(domain.id),
+        res = await self.read_gw.get(domain.id)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-        await self._set_cache(res)
 
         return res
 
@@ -843,19 +709,16 @@ class MongoDocumentAdapter(
 
         domains = await w.create_many(dtos, batch_size=self.eff_batch_size)
 
+        pks_new = [x.id for x in domains]
+        await self.cache_coord.invalidate_keys_now(*pks_new)
+
         if not return_new:
-            await self._clear_cache(*[x.id for x in domains])
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        pks_new = [x.id for x in domains]
-
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks_new),
-            self._clear_cache(*pks_new),
+        res = await self.read_gw.get_many(pks_new)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         return res
 
@@ -882,15 +745,16 @@ class MongoDocumentAdapter(
         require_create_id(dto)
 
         domain = await w.ensure(dto)
+        await self.cache_coord.invalidate_keys_now(domain.id)
 
         if not return_new:
-            await self._clear_cache(domain.id)
             return None
-        res, _ = await asyncio.gather(
-            self.read_gw.get(domain.id),
-            self._clear_cache(domain.id),
+
+        res = await self.read_gw.get(domain.id)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-        await self._set_cache(res)
+
         return res
 
     # ....................... #
@@ -927,18 +791,16 @@ class MongoDocumentAdapter(
         require_create_id_for_many(dtos)
 
         domains = await w.ensure_many(dtos, batch_size=self.eff_batch_size)
+        pks = [x.id for x in domains]
+        await self.cache_coord.invalidate_keys_now(*pks)
 
         if not return_new:
-            await self._clear_cache(*[x.id for x in domains])
             return None
 
-        pks = [x.id for x in domains]
-
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks),
-            self._clear_cache(*pks),
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         return res
 
@@ -973,17 +835,15 @@ class MongoDocumentAdapter(
         require_create_id(create_dto)
 
         domain = await w.upsert(create_dto, update_dto)
+        await self.cache_coord.invalidate_keys_now(domain.id)
 
         if not return_new:
-            await self._clear_cache(domain.id)
             return None
 
-        res, _ = await asyncio.gather(
-            self.read_gw.get(domain.id),
-            self._clear_cache(domain.id),
+        res = await self.read_gw.get(domain.id)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-
-        await self._set_cache(res)
 
         return res
 
@@ -1022,17 +882,16 @@ class MongoDocumentAdapter(
 
         domains = await w.upsert_many(pairs, batch_size=self.eff_batch_size)
 
+        pks = [x.id for x in domains]
+        await self.cache_coord.invalidate_keys_now(*pks)
+
         if not return_new:
-            await self._clear_cache(*[x.id for x in domains])
             return None
 
-        pks = [x.id for x in domains]
-
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks),
-            self._clear_cache(*pks),
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         return res
 
@@ -1100,23 +959,21 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        _, diff = await w.update(pk, dto, rev=rev)
+        (_, diff), _ = await asyncio.gather(
+            w.update(pk, dto, rev=rev),
+            self.cache_coord.invalidate_keys_now(pk),
+        )
 
         if not return_new:
-            await self._clear_cache(pk)
-
             if return_diff:
                 return diff
 
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        res, _ = await asyncio.gather(
-            self.read_gw.get(pk),
-            self._clear_cache(pk),
+        res = await self.read_gw.get(pk)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-        await self._set_cache(res)
 
         if return_diff:
             return res, diff
@@ -1192,33 +1049,174 @@ class MongoDocumentAdapter(
         revs = [x[1] for x in updates]
         dtos = [x[2] for x in updates]
 
-        _, diffs = await w.update_many(
-            pks,
-            dtos,
-            revs=revs,
-            batch_size=self.eff_batch_size,
+        (_, diffs), _ = await asyncio.gather(
+            w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size),
+            self.cache_coord.invalidate_keys_now(*pks),
         )
 
         if not return_new:
-            await self._clear_cache(*pks)
-
             if return_diff:
                 return diffs
 
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks),
-            self._clear_cache(*pks),
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         if return_diff:
             return list(zip(res, diffs, strict=True))
 
         return res
+
+    # ....................... #
+
+    @overload
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> int: ...
+
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | int:
+        w = self._require_write()
+
+        logger.debug("update_matching (fast) on '%s'", self.spec.name)
+
+        count, domains = await w.update_matching(
+            filters,
+            dto,
+            batch_size=self.eff_batch_size,
+        )
+        pks = [d.id for d in domains]
+
+        if pks:
+            await self.cache_coord.invalidate_keys_now(*pks)
+
+        if not return_new:
+            return count
+
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
+        )
+
+        return res
+
+    # ....................... #
+
+    @overload
+    async def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+        chunk_size: int | None = ...,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[False],
+        chunk_size: int | None = ...,
+    ) -> int: ...
+
+    async def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: bool = True,
+        chunk_size: int | None = None,
+    ) -> Sequence[R] | int:
+        self._require_write()
+
+        eff_chunk = self.eff_batch_size if chunk_size is None else chunk_size
+        if eff_chunk < 1:
+            raise CoreError("chunk_size must be positive")
+
+        logger.debug(
+            "update_matching_strict on '%s' (chunk=%s)",
+            self.spec.name,
+            eff_chunk,
+        )
+
+        n_total = 0
+        out: list[R] = []
+        last_id: UUID | None = None
+
+        while True:
+            chunk_filter: QueryFilterExpression = (  # type: ignore[valid-type]
+                filters
+                if last_id is None
+                else {
+                    "$and": [
+                        filters,
+                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                    ]
+                }
+            )
+
+            page = (
+                await self.find_many(
+                    filters=chunk_filter,
+                    pagination={"limit": eff_chunk},
+                    sorts={ID_FIELD: "asc"},
+                    return_count=False,
+                    return_fields=[ID_FIELD, REV_FIELD],
+                )
+            ).hits
+
+            if not page:
+                break
+
+            page_ids = [UUID(str(r[ID_FIELD])) for r in page]
+            page_revs = [int(r[REV_FIELD]) for r in page]
+
+            updates = list(zip(page_ids, page_revs, [dto] * len(page)))
+
+            if return_new:
+                got = await self.update_many(
+                    updates,
+                    return_new=True,
+                )
+                out.extend(got)
+
+            else:
+                await self.update_many(updates, return_new=False)
+
+            n_total += len(page)
+            last_id = page_ids[-1]
+
+            if len(page) < eff_chunk:
+                break
+
+        if return_new:
+            return out
+
+        return n_total
 
     # ....................... #
 
@@ -1236,19 +1234,18 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.touch(pk)
+        await asyncio.gather(
+            w.touch(pk),
+            self.cache_coord.invalidate_keys_now(pk),
+        )
 
         if not return_new:
-            await self._clear_cache(pk)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        res, _ = await asyncio.gather(
-            self.read_gw.get(pk),
-            self._clear_cache(pk),
+        res = await self.read_gw.get(pk)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-        await self._set_cache(res)
 
         return res
 
@@ -1283,19 +1280,18 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.touch_many(pks, batch_size=self.eff_batch_size)
+        await asyncio.gather(
+            w.touch_many(pks, batch_size=self.eff_batch_size),
+            self.cache_coord.invalidate_keys_now(*pks),
+        )
 
         if not return_new:
-            await self._clear_cache(*pks)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # touch_many + _clear_cache are independent of the subsequent read.
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks),
-            self._clear_cache(*pks),
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         return res
 
@@ -1311,7 +1307,7 @@ class MongoDocumentAdapter(
 
         await asyncio.gather(
             w.kill(pk),
-            self._clear_cache(pk),
+            self.cache_coord.invalidate_keys_now(pk),
         )
 
     # ....................... #
@@ -1325,8 +1321,8 @@ class MongoDocumentAdapter(
         w = self._require_write()
 
         await asyncio.gather(
-            w.kill_many(pks),
-            self._clear_cache(*pks),
+            w.kill_many(pks, batch_size=self.eff_batch_size),
+            self.cache_coord.invalidate_keys_now(*pks),
         )
 
     # ....................... #
@@ -1358,19 +1354,18 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.delete(pk, rev=rev)
+        await asyncio.gather(
+            w.delete(pk, rev=rev),
+            self.cache_coord.invalidate_keys_now(pk),
+        )
 
         if not return_new:
-            await self._clear_cache(pk)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        res, _ = await asyncio.gather(
-            self.read_gw.get(pk),
-            self._clear_cache(pk),
+        res = await self.read_gw.get(pk)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-        await self._set_cache(res)
 
         return res
 
@@ -1409,19 +1404,18 @@ class MongoDocumentAdapter(
         pks = [x[0] for x in deletes]
         revs = [x[1] for x in deletes]
 
-        await w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size)
+        await asyncio.gather(
+            w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size),
+            self.cache_coord.invalidate_keys_now(*pks),
+        )
 
         if not return_new:
-            await self._clear_cache(*pks)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # delete_many + _clear_cache are independent of the subsequent read.
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks),
-            self._clear_cache(*pks),
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         return res
 
@@ -1454,19 +1448,18 @@ class MongoDocumentAdapter(
 
         w = self._require_write()
 
-        await w.restore(pk, rev=rev)
+        await asyncio.gather(
+            w.restore(pk, rev=rev),
+            self.cache_coord.invalidate_keys_now(pk),
+        )
 
         if not return_new:
-            await self._clear_cache(pk)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # _clear_cache and the DB read are independent; run them concurrently.
-        res, _ = await asyncio.gather(
-            self.read_gw.get(pk),
-            self._clear_cache(pk),
+        res = await self.read_gw.get(pk)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_one(res)
         )
-        await self._set_cache(res)
 
         return res
 
@@ -1505,18 +1498,17 @@ class MongoDocumentAdapter(
         pks = [x[0] for x in restores]
         revs = [x[1] for x in restores]
 
-        await w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size)
+        await asyncio.gather(
+            w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size),
+            self.cache_coord.invalidate_keys_now(*pks),
+        )
 
         if not return_new:
-            await self._clear_cache(*pks)
             return None
 
-        # Repeat read is required to meet criteria for diverse read and write sources
-        # restore_many + _clear_cache are independent of the subsequent read.
-        res, _ = await asyncio.gather(
-            self.read_gw.get_many(pks),
-            self._clear_cache(*pks),
+        res = await self.read_gw.get_many(pks)
+        await self.cache_coord.after_commit_or_now(
+            lambda: self.cache_coord.set_many(res)
         )
-        await self._set_cache_many(res)
 
         return res

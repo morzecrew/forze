@@ -13,7 +13,7 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchSpec,
 )
-from forze_postgres.adapters.search._options import (
+from forze.application.contracts.search import (
     prepare_federated_search_options,
     prepare_hub_search_options,
 )

@@ -2,18 +2,17 @@ from .document import PostgresDocumentAdapter
 from .search import (
     FtsGroupLetter,
     FtsHubLegEngine,
-    PostgresFTSSearchAdapterV2,
     HubLegRuntime,
     HubSearchLegEngine,
     PgroongaHubLegEngine,
     PostgresFederatedSearchAdapter,
+    PostgresFTSSearchAdapter,
     PostgresHubPGroongaSearchAdapter,
     PostgresHubSearchAdapter,
-    PostgresPGroongaSearchAdapterV2,
-    PostgresVectorSearchAdapterV2,
+    PostgresPGroongaSearchAdapter,
+    PostgresVectorSearchAdapter,
     VectorHubLegEngine,
     hub_leg_engine_for,
-    weighted_rrf_merge_rows,
 )
 from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
@@ -29,12 +28,11 @@ __all__ = [
     "hub_leg_engine_for",
     "PostgresHubPGroongaSearchAdapter",
     "PostgresHubSearchAdapter",
-    "PostgresPGroongaSearchAdapterV2",
-    "PostgresFTSSearchAdapterV2",
-    "PostgresVectorSearchAdapterV2",
+    "PostgresPGroongaSearchAdapter",
+    "PostgresFTSSearchAdapter",
+    "PostgresVectorSearchAdapter",
     "VectorHubLegEngine",
     "PostgresTxManagerAdapter",
     "PostgresTxScopeKey",
     "FtsGroupLetter",
-    "weighted_rrf_merge_rows",
 ]

@@ -20,6 +20,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from forze.application.contracts.query import QueryFilterExpression
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
@@ -81,10 +82,19 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     """
 
     read_gw: PostgresReadGateway[D]
+    """Read gateway for the same document type."""
+
     create_cmd_type: type[C]
+    """Pydantic model for creation payloads."""
+
     update_cmd_type: type[U] | None = attrs.field(default=None)
+    """Pydantic model for update payloads."""
+
     history_gw: PostgresHistoryGateway[D] | None = attrs.field(default=None)
+    """Optional history gateway for revision snapshots."""
+
     strategy: PostgresBookkeepingStrategy
+    """Bookkeeping strategy."""
 
     # ....................... #
 
@@ -938,6 +948,74 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         )
 
         return res, res_diffs
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+    ) -> tuple[int, Sequence[D]]:
+        """Bulk-update rows matching *filters* in a single ``UPDATE … RETURNING``.
+
+        Revision is bumped with ``rev = rev + 1`` when :attr:`strategy` is
+        ``"application"``; for ``"database"`` the revision is left to triggers.
+        """
+
+        self._require_update_cmd()
+
+        update_data = pydantic_dump(dto, exclude={"unset": True})
+
+        if not update_data:
+            return 0, []
+
+        adapted = dict(await self.adapt_payload_for_write(update_data, create=False))
+        adapted.pop(REV_FIELD, None)
+
+        if not adapted:
+            return 0, []
+
+        set_parts: list[sql.Composable] = []
+        params: list[Any] = []
+
+        for k, v in adapted.items():
+            set_parts.append(
+                sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
+            )
+            params.append(v)
+
+        if self.strategy == "application":
+            set_parts.append(
+                sql.SQL("{} = {} + 1").format(
+                    self._ident_rev(),
+                    self._ident_rev(),
+                )
+            )
+
+        where_sql, where_params = await self.where_clause(filters)
+        params.extend(where_params)
+
+        stmt = sql.SQL(
+            "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
+        ).format(
+            table=self.source_qname.ident(),
+            sets=sql.SQL(", ").join(set_parts),
+            where=where_sql,
+            ret=self.return_clause(),
+        )
+
+        rows = await self.client.fetch_all(
+            stmt,
+            params,
+            row_factory="dict",
+            commit=True,
+        )
+
+        doms = pydantic_validate_many(self.model_type, rows)
+        await self._write_history(*doms)
+
+        return len(doms), doms
 
     # ....................... #
 

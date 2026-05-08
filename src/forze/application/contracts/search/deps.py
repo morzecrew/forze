@@ -14,13 +14,22 @@ from .specs import (
 
 # ----------------------- #
 
-SearchQueryDepPort = BaseDepPort[SearchSpec[Any], SearchQueryPort[Any]]
+SearchQueryDepPort = BaseDepPort[
+    SearchSpec[Any],
+    SearchQueryPort[Any],
+]
 """Search query dependency port."""
 
-SearchCommandDepPort = BaseDepPort[SearchSpec[Any], SearchCommandPort[Any]]
+SearchCommandDepPort = BaseDepPort[
+    SearchSpec[Any],
+    SearchCommandPort[Any],
+]
 """Search command dependency port."""
 
-HubSearchQueryDepPort = BaseDepPort[HubSearchSpec[Any], SearchQueryPort[Any]]
+HubSearchQueryDepPort = BaseDepPort[
+    HubSearchSpec[Any],
+    SearchQueryPort[Any],
+]
 """Hub (multi-leg) search query dependency port."""
 
 FederatedSearchQueryDepPort = BaseDepPort[
@@ -28,6 +37,14 @@ FederatedSearchQueryDepPort = BaseDepPort[
     SearchQueryPort[FederatedSearchReadModel[Any]],
 ]
 """Federated search query dependency port."""
+
+SearchResultSnapshotDepPort = BaseDepPort[
+    SearchResultSnapshotSpec,
+    SearchResultSnapshotPort,
+]
+"""Builder for :class:`SearchResultSnapshotPort` (e.g. Redis KV snapshot store)."""
+
+# ....................... #
 
 SearchQueryDepKey = DepKey[SearchQueryDepPort]("search_query")
 """Key used to register the :class:`SearchQueryPort` builder implementation."""
@@ -42,9 +59,6 @@ FederatedSearchQueryDepKey = DepKey[FederatedSearchQueryDepPort](
     "federated_search_query"
 )
 """Key used to register the federated :class:`SearchQueryPort` builder implementation."""
-
-SearchResultSnapshotDepPort = BaseDepPort[SearchResultSnapshotSpec, SearchResultSnapshotPort]
-"""Builder for :class:`SearchResultSnapshotPort` (e.g. Redis KV snapshot store)."""
 
 SearchResultSnapshotDepKey = DepKey[SearchResultSnapshotDepPort](
     "search_result_snapshot",

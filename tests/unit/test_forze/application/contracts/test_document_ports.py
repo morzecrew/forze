@@ -566,3 +566,65 @@ class TestDocumentCommandReturnNewViaMock:
             )
             is None
         )
+
+
+class TestUpdateMatchingViaMock:
+    """Bulk updates by filter via :meth:`DocumentCommandPort.update_matching`."""
+
+    @pytest.mark.asyncio
+    async def test_update_matching_fast_return_new_false(self) -> None:
+        port = _document_adapter_with_title()
+        await port.create(_CreateWithTitle(title="keep"))
+        await port.create(_CreateWithTitle(title="keep"))
+        await port.create(_CreateWithTitle(title="drop"))
+
+        flt: QueryFilterExpression = {"$fields": {"title": "keep"}}
+        n = await port.update_matching(
+            flt,
+            _UpdateTitle(title="done"),
+            return_new=False,
+        )
+        assert n == 2
+
+        remaining = await port.find_many(
+            filters={"$fields": {"title": "keep"}},
+            return_count=False,
+        )
+        assert len(remaining.hits) == 0
+
+        done_hits = await port.find_many(
+            filters={"$fields": {"title": "done"}},
+            return_count=False,
+        )
+        assert len(done_hits.hits) == 2
+
+    @pytest.mark.asyncio
+    async def test_update_matching_fast_return_new_true(self) -> None:
+        port = _document_adapter_with_title()
+        await port.create(_CreateWithTitle(title="x"))
+        flt: QueryFilterExpression = {"$fields": {"title": "x"}}
+        out = await port.update_matching(flt, _UpdateTitle(title="y"), return_new=True)
+        assert len(out) == 1
+        assert out[0].title == "y"
+
+    @pytest.mark.asyncio
+    async def test_update_matching_strict_chunked(self) -> None:
+        port = _document_adapter_with_title()
+        await port.create(_CreateWithTitle(title="batch"))
+        await port.create(_CreateWithTitle(title="batch"))
+        await port.create(_CreateWithTitle(title="batch"))
+
+        flt: QueryFilterExpression = {"$fields": {"title": "batch"}}
+        n = await port.update_matching_strict(
+            flt,
+            _UpdateTitle(title="z"),
+            return_new=False,
+            chunk_size=1,
+        )
+        assert n == 3
+
+        z_page = await port.find_many(
+            filters={"$fields": {"title": "z"}},
+            return_count=False,
+        )
+        assert len(z_page.hits) == 3

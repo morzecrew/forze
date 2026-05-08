@@ -1,5 +1,6 @@
 """Execution context for dependency resolution and transactions."""
 
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from enum import StrEnum
@@ -18,6 +19,13 @@ from ..contracts.auth import AuthIdentity
 from ..contracts.base import DepKey, DepsPort
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort, CounterSpec
+from ..contracts.dlock import (
+    DistributedLockCommandDepKey,
+    DistributedLockCommandPort,
+    DistributedLockQueryDepKey,
+    DistributedLockQueryPort,
+    DistributedLockSpec,
+)
 from ..contracts.document import (
     DocumentCommandDepKey,
     DocumentCommandPort,
@@ -128,6 +136,15 @@ class ExecutionContext:
     )
     """Current authenticated identity (auth contract)."""
 
+    __after_commit_callbacks: ContextVar[list[Callable[[], Awaitable[None]]] | None] = (
+        attrs.field(
+            factory=lambda: ContextVar("after_commit_callbacks", default=None),
+            init=False,
+            repr=False,
+        )
+    )
+    """Queued async callables run after a successful root transaction exit."""
+
     # ....................... #
 
     def get_call_ctx(self) -> CallContext | None:
@@ -183,6 +200,8 @@ class ExecutionContext:
 
         call_token = self.__call_context.set(call)
         identity_token = self.__auth_identity.set(identity)
+
+        #! Maybe move string keys to constants above
 
         bound: dict[str, Any] = {
             "execution_id": str(call.execution_id),
@@ -246,9 +265,51 @@ class ExecutionContext:
 
     # ....................... #
 
+    def transaction_depth(self) -> int:
+        """Return transaction nesting depth (``0`` outside any transaction)."""
+
+        return self.__tx_depth.get()
+
+    # ....................... #
+
+    def defer_after_commit(self, fn: Callable[[], Awaitable[None]]) -> None:
+        """Schedule *fn* to run after the current root transaction commits successfully.
+
+        Callbacks run in registration order before :class:`TxMiddleware` ``after_commit``
+        effects. If the transaction rolls back or raises, queued callbacks are discarded.
+
+        :param fn: Zero-argument async callable (each invocation may create a new coroutine).
+        :raises CoreError: When called outside :meth:`transaction`.
+        """
+
+        q = self.__after_commit_callbacks.get()
+
+        if q is None:
+            raise CoreError(
+                "defer_after_commit requires an active ExecutionContext.transaction scope"
+            )
+
+        q.append(fn)
+
+    # ....................... #
+
+    async def run_after_commit_or_now(self, fn: Callable[[], Awaitable[None]]) -> None:
+        """Run *fn* immediately when outside a transaction; else defer the execution of the callback."""
+
+        if self.transaction_depth() == 0:
+            await fn()
+            return
+
+        self.defer_after_commit(fn)
+
+    # ....................... #
+
     @asynccontextmanager
     async def transaction(self, route: str | StrEnum) -> AsyncIterator[None]:
         """Enter a transaction scope.
+
+        On the **root** scope, after a successful commit, runs callbacks queued
+        via :meth:`defer_after_commit` (FIFO) before returning.
 
         Nested calls reuse the same transaction (savepoints when supported).
         Raises :exc:`CoreError` on scope mismatch (different tx manager).
@@ -299,6 +360,9 @@ class ExecutionContext:
 
         token_h = self.__tx_handle.set(TxHandle(scope=scope))
         token_d = self.__tx_depth.set(1)
+        token_cb = self.__after_commit_callbacks.set([])
+
+        deferred: list[Callable[[], Awaitable[None]]] | None = None
 
         try:
             logger.trace(
@@ -309,13 +373,24 @@ class ExecutionContext:
             async with tx.transaction():
                 yield
 
+        except BaseException:
+            raise
+
+        else:
+            deferred = self.__after_commit_callbacks.get()
+
         finally:
             logger.trace(
                 "Leaving root transaction scope '%s'",
                 scope.name,
             )
+            self.__after_commit_callbacks.reset(token_cb)
             self.__tx_handle.reset(token_h)
             self.__tx_depth.reset(token_d)
+
+        if deferred is not None:
+            for cb in deferred:
+                await cb()
 
         logger.debug("Transaction scope exited")
 
@@ -334,9 +409,6 @@ class ExecutionContext:
 
     # ....................... #
     # Convenient namespace methods for resolving ports
-
-    #! transactional: bool ? how to forward it through ?
-    #! if we add this key then it forces extra complexity...
 
     def doc_query(
         self,
@@ -545,3 +617,35 @@ class ExecutionContext:
         )
 
         return se
+
+    # ....................... #
+
+    def dlock_query(self, spec: DistributedLockSpec) -> DistributedLockQueryPort:
+        """Resolve a distributed lock query port for the given spec."""
+
+        dep = self.dep(DistributedLockQueryDepKey, route=spec.name)
+        dq = dep(self, spec)
+
+        logger.trace(
+            "Resolved distributed lock query port '%s' -> %s",
+            str(spec.name),
+            type(dq).__qualname__,
+        )
+
+        return dq
+
+    # ....................... #
+
+    def dlock_command(self, spec: DistributedLockSpec) -> DistributedLockCommandPort:
+        """Resolve a distributed lock command port for the given spec."""
+
+        dep = self.dep(DistributedLockCommandDepKey, route=spec.name)
+        dc = dep(self, spec)
+
+        logger.trace(
+            "Resolved distributed lock command port '%s' -> %s",
+            str(spec.name),
+            type(dc).__qualname__,
+        )
+
+        return dc

@@ -10,7 +10,8 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
     DocumentSpec,
 )
-from forze.application.contracts.tx import TxManagerPort
+from forze.application.contracts.tx import AfterCommitPort, TxManagerPort
+from forze.application.coordinators import DocumentCacheCoordinator
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -54,11 +55,24 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             read_relation=self.config["read"],
             tenant_aware=self.config.get("tenant_aware", False),
         )
+
+        after_commit: AfterCommitPort | None = None
+
+        if cache is not None:
+            after_commit = ctx.run_after_commit_or_now
+
+        cc = DocumentCacheCoordinator[R](
+            read_model_type=read.model_type,
+            document_name=spec.name,
+            cache=cache,
+            after_commit=after_commit,
+        )
+
         return MongoDocumentAdapter(
             spec=spec,
             read_gw=read,
             write_gw=None,
-            cache=cache,
+            cache_coord=cc,
         )
 
 
@@ -117,11 +131,23 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             tenant_aware=tenant_aware,
         )
 
+        after_commit: AfterCommitPort | None = None
+
+        if cache is not None:
+            after_commit = ctx.run_after_commit_or_now
+
+        cc = DocumentCacheCoordinator[R](
+            read_model_type=read.model_type,
+            document_name=spec.name,
+            cache=cache,
+            after_commit=after_commit,
+        )
+
         return MongoDocumentAdapter(
             spec=spec,
             read_gw=read,
             write_gw=write,
-            cache=cache,
+            cache_coord=cc,
             batch_size=config.get("batch_size", 200),
         )
 

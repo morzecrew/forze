@@ -337,8 +337,10 @@ class FinallyMiddleware[Args, R](Middleware[Args, R]):
 class TxMiddleware[Args, R](Middleware[Args, R]):
     """Middleware that wraps the next call in a transaction.
 
-    Enters :meth:`ExecutionContext.transaction` before invoking next; runs
-    :attr:`after_commit` effects after a successful commit.
+    Enters :meth:`ExecutionContext.transaction` before invoking next. After a
+    successful root commit, callbacks queued via :meth:`~ExecutionContext.defer_after_commit`
+    run (inside :meth:`~ExecutionContext.transaction`, FIFO) before this
+    middleware runs :attr:`after_commit` effects.
     """
 
     ctx: ExecutionContext

@@ -26,7 +26,11 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.application.contracts.tx import TxManagerPort
+from forze.application.contracts.tx import AfterCommitPort, TxManagerPort
+from forze.application.coordinators import (
+    DocumentCacheCoordinator,
+    SearchResultSnapshotCoordinator,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
@@ -38,11 +42,11 @@ from ...adapters import (
     HubLegRuntime,
     PostgresDocumentAdapter,
     PostgresFederatedSearchAdapter,
-    PostgresFTSSearchAdapterV2,
+    PostgresFTSSearchAdapter,
     PostgresHubSearchAdapter,
-    PostgresPGroongaSearchAdapterV2,
+    PostgresPGroongaSearchAdapter,
     PostgresTxManagerAdapter,
-    PostgresVectorSearchAdapterV2,
+    PostgresVectorSearchAdapter,
 )
 from ...kernel.gateways import PostgresQualifiedName
 from .._logger import logger
@@ -88,6 +92,21 @@ def _resolve_result_snapshot(
     return context.dep(SearchResultSnapshotDepKey, route=spec.name)(context, spec)
 
 
+def _snapshot_coord(
+    context: ExecutionContext,
+    spec: SearchResultSnapshotSpec | None,
+) -> SearchResultSnapshotCoordinator | None:
+    port = _resolve_result_snapshot(context, spec)
+
+    if port is None:
+        return None
+
+    return SearchResultSnapshotCoordinator(store=port)
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
@@ -113,11 +132,23 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             nested_field_hints=self.config.get("nested_field_hints"),
         )
 
+        after_commit: AfterCommitPort | None = None
+
+        if cache is not None:
+            after_commit = ctx.run_after_commit_or_now
+
+        cc = DocumentCacheCoordinator[R](
+            read_model_type=read.model_type,
+            document_name=spec.name,
+            cache=cache,
+            after_commit=after_commit,
+        )
+
         return PostgresDocumentAdapter(
             spec=spec,
             read_gw=read,
             write_gw=None,
-            cache=cache,
+            cache_coord=cc,
         )
 
 
@@ -179,11 +210,23 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             nested_field_hints=self.config.get("nested_field_hints"),
         )
 
+        after_commit: AfterCommitPort | None = None
+
+        if cache is not None:
+            after_commit = ctx.run_after_commit_or_now
+
+        cc = DocumentCacheCoordinator[R](
+            read_model_type=read.model_type,
+            document_name=spec.name,
+            cache=cache,
+            after_commit=after_commit,
+        )
+
         return PostgresDocumentAdapter(
             spec=spec,
             read_gw=read,
             write_gw=write,
-            cache=cache,
+            cache_coord=cc,
             batch_size=self.config.get("batch_size", 200),
         )
 
@@ -206,9 +249,9 @@ class ConfigurablePostgresSearch(SearchQueryDepPort):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> (
-        PostgresPGroongaSearchAdapterV2[Any]
-        | PostgresFTSSearchAdapterV2[Any]
-        | PostgresVectorSearchAdapterV2[Any]
+        PostgresPGroongaSearchAdapter[Any]
+        | PostgresFTSSearchAdapter[Any]
+        | PostgresVectorSearchAdapter[Any]
     ):
         return _postgres_search_port_for_config(context, spec, self.config)
 
@@ -329,7 +372,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             tenant_aware=tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.get("nested_field_hints"),
-            snapshot_store=_resolve_result_snapshot(context, spec.snapshot),
+            snapshot_coord=_snapshot_coord(context, spec.snapshot),
         )
 
 
@@ -341,16 +384,13 @@ def _postgres_search_port_for_config(
     member_spec: SearchSpec[Any],
     c: PostgresSearchConfig,
 ) -> (
-    PostgresPGroongaSearchAdapterV2[Any]
-    | PostgresFTSSearchAdapterV2[Any]
-    | PostgresVectorSearchAdapterV2[Any]
+    PostgresPGroongaSearchAdapter[Any]
+    | PostgresFTSSearchAdapter[Any]
+    | PostgresVectorSearchAdapter[Any]
 ):
     validate_pg_search_conf(c)
 
-    snapshot_port = _resolve_result_snapshot(
-        context,
-        member_spec.snapshot,
-    )
+    snapshot_coord = _snapshot_coord(context, member_spec.snapshot)
 
     tenant_aware = c.get("tenant_aware", False)
     index_qname = PostgresQualifiedName(*c["index"])
@@ -359,7 +399,7 @@ def _postgres_search_port_for_config(
 
     match c["engine"]:
         case "pgroonga":
-            return PostgresPGroongaSearchAdapterV2(
+            return PostgresPGroongaSearchAdapter(
                 spec=member_spec,
                 index_qname=index_qname,
                 source_qname=read_qname,
@@ -374,7 +414,7 @@ def _postgres_search_port_for_config(
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
-                snapshot_store=snapshot_port,
+                snapshot_coord=snapshot_coord,
             )
 
         case "fts":
@@ -385,7 +425,7 @@ def _postgres_search_port_for_config(
 
             validate_fts_groups_for_search_spec(member_spec, fts_groups)
 
-            return PostgresFTSSearchAdapterV2(
+            return PostgresFTSSearchAdapter(
                 spec=member_spec,
                 index_qname=index_qname,
                 source_qname=read_qname,
@@ -400,7 +440,7 @@ def _postgres_search_port_for_config(
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
-                snapshot_store=snapshot_port,
+                snapshot_coord=snapshot_coord,
             )
 
         case "vector":
@@ -415,7 +455,7 @@ def _postgres_search_port_for_config(
                 name=str(en),
                 dimensions=int(ed),
             )
-            return PostgresVectorSearchAdapterV2(
+            return PostgresVectorSearchAdapter(
                 spec=member_spec,
                 index_qname=index_qname,
                 source_qname=read_qname,
@@ -433,7 +473,7 @@ def _postgres_search_port_for_config(
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
-                snapshot_store=snapshot_port,
+                snapshot_coord=snapshot_coord,
             )
 
 
@@ -520,7 +560,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             rrf_k=int(self.config.get("rrf_k", 60)),
             rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
             postgres_client=context.dep(PostgresClientDepKey),
-            snapshot_store=_resolve_result_snapshot(context, spec.snapshot),
+            snapshot_coord=_snapshot_coord(context, spec.snapshot),
         )
 
 

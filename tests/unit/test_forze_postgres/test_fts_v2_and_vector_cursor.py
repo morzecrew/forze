@@ -14,8 +14,8 @@ from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
 from forze_postgres.adapters.search import (
-    PostgresFTSSearchAdapterV2,
-    PostgresVectorSearchAdapterV2,
+    PostgresFTSSearchAdapter,
+    PostgresVectorSearchAdapter,
 )
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
@@ -25,10 +25,10 @@ class _M(BaseModel):
     label: str
 
 
-def _fts() -> PostgresFTSSearchAdapterV2[_M]:
+def _fts() -> PostgresFTSSearchAdapter[_M]:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
-    return PostgresFTSSearchAdapterV2(
+    return PostgresFTSSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
         index_qname=PostgresQualifiedName("public", "idx"),
         source_qname=PostgresQualifiedName("public", "v"),
@@ -43,10 +43,10 @@ def _fts() -> PostgresFTSSearchAdapterV2[_M]:
     )
 
 
-def _vec() -> PostgresVectorSearchAdapterV2[_M]:
+def _vec() -> PostgresVectorSearchAdapter[_M]:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
-    return PostgresVectorSearchAdapterV2(
+    return PostgresVectorSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
         index_qname=PostgresQualifiedName("public", "idx"),
         source_qname=PostgresQualifiedName("public", "h"),

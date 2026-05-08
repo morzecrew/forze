@@ -7,7 +7,7 @@ require_redis()
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncIterator, Awaitable, Mapping, Sequence, cast, final
 
 import attrs
 from redis.asyncio.client import Pipeline, Redis
@@ -163,6 +163,41 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
     # Canonical methods
+
+    @redis_handled("redis.exists")  # type: ignore[untyped-decorator]
+    async def exists(self, key: str) -> bool:
+        res = await self.__executor().exists(key)
+
+        return res == 1
+
+    # ....................... #
+
+    @redis_handled("redis.pttl")  # type: ignore[untyped-decorator]
+    async def pttl(self, key: str) -> int | None:
+        raw_res = await self.__executor().pttl(key)
+        res = cast(int, raw_res)
+
+        return res if res >= 0 else None
+
+    # ....................... #
+
+    @redis_handled("redis.run_script")  # type: ignore[untyped-decorator]
+    async def run_script(
+        self,
+        script: str,
+        keys: Sequence[str],
+        args: Sequence[Any],
+    ) -> str:
+        numkeys = len(keys)
+        keys_and_args = [*keys, *args]
+        raw_res = self.__executor().eval(script, numkeys, *keys_and_args)
+
+        if isinstance(raw_res, Awaitable):
+            raw_res = await raw_res
+
+        return raw_res
+
+    # ....................... #
 
     @redis_handled("redis.get")  # type: ignore[untyped-decorator]
     async def get(self, key: str) -> bytes | str | None:

@@ -8,6 +8,10 @@ import attrs
 
 from forze.application.contracts.cache import CacheDepKey
 from forze.application.contracts.counter import CounterDepKey
+from forze.application.contracts.dlock import (
+    DistributedLockCommandDepKey,
+    DistributedLockQueryDepKey,
+)
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.execution import Deps, DepsModule
@@ -16,6 +20,7 @@ from ...kernel.platform import RedisClientPort
 from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
+    RedisDistributedLockConfig,
     RedisIdempotencyConfig,
     RedisSearchResultSnapshotConfig,
     RedisUniversalConfig,
@@ -23,6 +28,7 @@ from .configs import (
 from .deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
+    ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
     ConfigurableRedisSearchResultSnapshot,
 )
@@ -83,6 +89,11 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     ) = attrs.field(default=None)
     """Mapping from search snapshot names to their Redis-specific configurations."""
 
+    dlocks: Mapping[K, RedisDistributedLockConfig | RedisUniversalConfig] | None = (
+        attrs.field(default=None)
+    )
+    """Mapping from distributed lock spec names to their Redis-specific configurations."""
+
     #! read and write separately?
 
     # pubsub: dict[str, RedisPubSubConfig] = attrs.field(factory=dict)
@@ -105,6 +116,7 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
         counter_deps = Deps[K]()
         idempotency_deps = Deps[K]()
         search_snapshot_deps = Deps[K]()
+        dlock_deps = Deps[K]()
 
         if self.caches:
             cache_deps = cache_deps.merge(
@@ -166,6 +178,24 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
                 )
             )
 
+        if self.dlocks:
+            dlock_factories = {
+                name: ConfigurableRedisDistributedLock(config=config)
+                for name, config in self.dlocks.items()
+            }
+            dlock_deps = dlock_deps.merge(
+                Deps[K].routed(
+                    {
+                        DistributedLockQueryDepKey: dlock_factories,
+                        DistributedLockCommandDepKey: dlock_factories,
+                    }
+                )
+            )
+
         return plain_deps.merge(
-            cache_deps, counter_deps, idempotency_deps, search_snapshot_deps
+            cache_deps,
+            counter_deps,
+            idempotency_deps,
+            search_snapshot_deps,
+            dlock_deps,
         )

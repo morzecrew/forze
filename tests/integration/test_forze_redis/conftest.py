@@ -11,9 +11,13 @@ from testcontainers.redis import RedisContainer
 
 pytest.importorskip("redis")
 
+from datetime import timedelta
+
+from forze.application.contracts.dlock import DistributedLockSpec
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
+    RedisDistributedLockAdapter,
     RedisIdempotencyAdapter,
     RedisPubSubAdapter,
     RedisPubSubCodec,
@@ -103,6 +107,19 @@ async def redis_search_snapshot(
     return RedisSearchResultSnapshotAdapter(
         client=redis_client,
         key_codec=RedisKeyCodec(namespace=namespace),
+    )
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_dlock(
+    redis_client: RedisClient,
+) -> RedisDistributedLockAdapter:
+    """Provide a :class:`RedisDistributedLockAdapter` with a unique namespace per test."""
+    namespace = f"it:dlock:{uuid4().hex[:12]}"
+    return RedisDistributedLockAdapter(
+        client=redis_client,
+        key_codec=RedisKeyCodec(namespace=namespace),
+        spec=DistributedLockSpec(name="it-lock", ttl=timedelta(seconds=60)),
     )
 
 

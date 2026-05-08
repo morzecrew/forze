@@ -4,7 +4,7 @@ import pytest
 
 from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
-from forze_postgres.adapters.search._cursor_keyset import (
+from forze.application.contracts.search import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
 )

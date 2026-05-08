@@ -15,14 +15,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
+from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
-    weighted_rrf_merge_rows,
-)
-from forze_postgres.adapters.search.federated_snapshot import (
-    federated_fingerprint,
-    federated_row_key_string,
 )
 from forze_postgres.execution.deps.configs import (
     validate_postgres_federated_search_conf,
@@ -64,7 +60,7 @@ def test_weighted_rrf_merge_applies_branch_weights() -> None:
     x = _Hit(id=1, label="x")
     y = _Hit(id=2, label="y")
     k = 60
-    merged = weighted_rrf_merge_rows(
+    merged = SearchResultSnapshotCoordinator.weighted_rrf_merge_rows(
         leg_rows=(
             ("a", (x, y), 2.0),
             ("b", (y, x), 1.0),
@@ -77,7 +73,7 @@ def test_weighted_rrf_merge_applies_branch_weights() -> None:
 
 
 def test_weighted_rrf_skips_non_positive_weight_leg() -> None:
-    only = weighted_rrf_merge_rows(
+    only = SearchResultSnapshotCoordinator.weighted_rrf_merge_rows(
         leg_rows=(
             ("a", (_Hit(id=1),), 0.0),
             ("b", (_Hit(id=2),), 1.0),
@@ -138,8 +134,10 @@ def test_validate_postgres_federated_search_conf_accepts_embedded_hub_member() -
 @pytest.mark.asyncio
 async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     h = _Hit(id=1, label="x")
-    row_key = federated_row_key_string("a", h)
-    fp = federated_fingerprint("q", None, None, spec_name="fed", rrf_k=60)
+    row_key = SearchResultSnapshotCoordinator.federated_record_key_string("a", h)
+    fp = SearchResultSnapshotCoordinator.federated_fingerprint(
+        "q", None, None, spec_name="fed", rrf_k=60
+    )
     store = MagicMock()
     store.get_id_range = AsyncMock(return_value=[row_key])
     store.get_meta = AsyncMock(
@@ -159,7 +157,7 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
         federated_spec=_fed_with_result_snapshot(),
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
-        snapshot_store=store,
+        snapshot_coord=SearchResultSnapshotCoordinator(store=store),
     )
     page = await adapter.search(
         "q",
@@ -201,7 +199,7 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
         federated_spec=_fed_with_result_snapshot(),
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
-        snapshot_store=store,
+        snapshot_coord=SearchResultSnapshotCoordinator(store=store),
     )
     page = await adapter.search(
         "q",

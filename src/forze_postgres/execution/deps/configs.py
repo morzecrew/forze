@@ -255,28 +255,35 @@ def _validate_same_heap_as_hub(
         raise CoreError(
             f"Hub search leg {leg_index} cannot use same_heap_as_hub with engine 'fts'.",
         )
+
     if leg.get("field_map"):
         raise CoreError(
             f"Hub search leg {leg_index} cannot use same_heap_as_hub together with 'field_map'.",
         )
+
     hub_pair = cfg["hub"]
     heap_read = leg.get("heap", leg.get("read"))
+
     if not heap_read:
         raise CoreError(
             f"Hub search leg {leg_index} with same_heap_as_hub must include 'heap' or 'read'.",
         )
+
     if tuple(hub_pair) != tuple(heap_read):
         raise CoreError(
             f"Hub search leg {leg_index} with same_heap_as_hub must use the same "
             "qualified relation as the hub in 'read' or 'heap'.",
         )
+
     hpk = str(leg.get("heap_pk", ID_FIELD))
     fk_cols = normalize_hub_fk_columns(leg["hub_fk"])
+
     if len(fk_cols) != 1 or fk_cols[0] != hpk:
         raise CoreError(
             f"Hub search leg {leg_index} with same_heap_as_hub requires 'hub_fk' "
             "to be a single column name equal to 'heap_pk' (default 'id').",
         )
+
     if eng == "pgroonga" and leg.get("pgroonga_score_version", "v2") != "v2":
         raise CoreError(
             f"Hub search leg {leg_index} with same_heap_as_hub and engine 'pgroonga' "

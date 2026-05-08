@@ -1,4 +1,4 @@
-"""Vector (pgvector) search with projection vs index-heap separation (CTE pipeline)."""
+"""PGroonga search with projection vs index-heap separation (CTE pipeline)."""
 
 from forze_postgres._compat import require_psycopg
 
@@ -18,10 +18,6 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
-from forze.application.contracts.embeddings import (
-    EmbeddingsProviderPort,
-    EmbeddingsSpec,
-)
 from forze.application.contracts.query import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -36,12 +32,15 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
-    SearchResultSnapshotPort,
     SearchSpec,
+    cursor_return_fields_for_select,
     effective_phrase_combine,
     normalize_search_queries,
+    ranked_search_cursor_key_spec,
+    search_options_for_simple_adapter,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
+from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
@@ -55,30 +54,17 @@ from forze_postgres.pagination import (
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ..txmanager import PostgresTxScopeKey
-from ._cursor_keyset import (
-    cursor_return_fields_for_select,
-    ranked_search_cursor_key_spec,
-)
-from ._options import search_options_for_simple_adapter
-from ._vector_sql import (
-    VectorDistanceKind,
-    assert_embedding_shape,
-    vector_knn_multi_score_expr,
-    vector_knn_score_expr,
-    vector_param_literal,
-)
-from .federated_snapshot import effective_snapshot_max_ids
-from .result_snapshot_ops import (
-    put_simple_result_snapshot,
-    read_simple_result_snapshot,
-    should_write_result_snapshot,
-    simple_search_fingerprint,
-    snapshot_sql_pagination,
+from ._pgroonga_sql import (
+    pgroonga_match_clause,
+    pgroonga_phrase_match_text,
+    pgroonga_score_rank_expr,
 )
 
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
+
+# ....................... #
 
 _DEFAULT_JOIN: Final[tuple[tuple[str, str], ...]] = ((ID_FIELD, ID_FIELD),)
 
@@ -86,49 +72,67 @@ _FILTERED_CTE_ALIAS: Final[str] = "f"
 _INDEX_ALIAS: Final[str] = "t"
 _PROJECTION_ALIAS: Final[str] = "v"
 _SCORED_CTE_ALIAS: Final[str] = "s"
-_RANK_COLUMN: Final[str] = "_vector_rank"
+_RANK_COLUMN: Final[str] = "_pgroonga_rank"
 
 # ....................... #
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresVectorSearchAdapterV2[M: BaseModel](
+class PostgresPGroongaSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
     TxScopedPort,
 ):
-    """pgvector :class:`SearchQueryPort`: KNN on a heap column with projection filters."""
+    """PGroonga :class:`SearchQueryPort` using a projection relation and index heap.
+
+    Structured filters (and tenant scope) apply on the **projection** relation
+    (:attr:`~PostgresGateway.qname`), typically a view. Full-text matching and
+    ``pgroonga_score`` run on the **index heap** (:attr:`index_heap_qname`) so the
+    index can live on a base table while rows are shaped by the view.
+
+    Query shape (simplified)::
+
+        WITH filtered AS (
+            SELECT v.<join keys> FROM <projection> v WHERE <filters>
+        ),
+        scored AS (
+            SELECT t.<heap cols> AS <proj keys>, <rank>
+            FROM <index heap> t
+            INNER JOIN filtered f ON <join>
+            WHERE <pgroonga match or TRUE>
+        )
+        SELECT v.<read fields>
+        FROM <projection> v
+        INNER JOIN scored s ON <join to projection keys>
+        ORDER BY s.<rank> DESC NULLS LAST, <user sorts on v>
+    """
 
     spec: SearchSpec[M]
     """Search specification."""
 
     index_qname: PostgresQualifiedName
-    """Qualified name for configuration symmetry (index object); not read at query time."""
+    """Index qualified name."""
 
     index_heap_qname: PostgresQualifiedName
-    """Heap that holds the ``vector`` column used for distance scoring."""
-
-    embedder: EmbeddingsProviderPort
-    """Text-to-vector (query string encoding)."""
-
-    embeddings_spec: EmbeddingsSpec
-    """Expected vector dimension; must match the ``vector`` column and embedder output."""
-
-    vector_column: str
-    """Heap column with type ``vector`` (or compatible)."""
-
-    vector_distance: VectorDistanceKind = "l2"
-    """pgvector distance operator family (``<->`` / ``<=>`` / ``<#>``)."""
+    """Index heap qualified name (relation which index is built on)."""
 
     join_pairs: Sequence[tuple[str, str]] | None = attrs.field(default=None)
     """Join pairs (projection column, index heap column)."""
 
     index_field_map: Mapping[str, str] | None = attrs.field(default=None)
-    """Optional map from :class:`SearchSpec` field names to heap column names (unused in v2)."""
+    """Index field map (projection column -> index heap column)."""
 
-    snapshot_store: SearchResultSnapshotPort | None = None
-    """Optional store for ordered row keys to accelerate paged reads."""
+    pgroonga_score_version: Literal["v1", "v2"] = "v2"
+    """
+    Which ``pgroonga_score`` form to emit (from :attr:`PostgresSearchConfig.pgroonga_score_version`).
+
+    ``v2``: ``pgroonga_score(tableoid, ctid)``. ``v1``: ``pgroonga_score(heap alias)`` when the heap
+    scan does not support the ``v2`` system columns.
+    """
+
+    snapshot_coord: SearchResultSnapshotCoordinator | None = None
+    """Coordinator for KV ordered-ID snapshots."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
     """Transaction scope."""
@@ -142,7 +146,6 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        _ = self.index_qname, self.index_field_map
         proj_keys = {pc for pc, _ in self._safe_join_pairs}
 
         if len(proj_keys) != len(self._safe_join_pairs):
@@ -155,6 +158,27 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
         return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
+
+    # ....................... #
+
+    async def _pgroonga_match_combined_query(
+        self,
+        mq: str,
+        *,
+        options: SearchOptions | None = None,
+    ) -> tuple[sql.Composable, list[Any]]:
+        if not mq:
+            return sql.SQL("TRUE"), []
+
+        return await pgroonga_match_clause(
+            search=self.spec,
+            index_field_map=self.index_field_map,
+            index_qname=self.index_qname,
+            introspector=self.introspector,
+            index_alias=_INDEX_ALIAS,
+            query=mq,
+            options=options,
+        )
 
     # ....................... #
 
@@ -197,14 +221,25 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
 
     # ....................... #
 
-    def _scored_key_columns(self) -> sql.Composable:
-        return sql.SQL(", ").join(
+    def _scored_select_keys_and_rank(
+        self,
+        *,
+        query: str,
+    ) -> tuple[sql.Composable, sql.Composable]:
+        key_cols = sql.SQL(", ").join(
             sql.SQL("{} AS {}").format(
                 sql.Identifier(_INDEX_ALIAS, ic),
                 sql.Identifier(pc),
             )
             for pc, ic in self._safe_join_pairs
         )
+        rank = pgroonga_score_rank_expr(
+            index_alias=_INDEX_ALIAS,
+            rank_column=_RANK_COLUMN,
+            query=query,
+            score_version=self.pgroonga_score_version,
+        )
+        return key_cols, rank
 
     # ....................... #
 
@@ -321,23 +356,17 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         options = search_options_for_simple_adapter(options)
 
         rs_spec = self.spec.snapshot
-        fp_fingerprint = simple_search_fingerprint(
+        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
             query,
             filters,
             sorts,
             spec_name=self.spec.name,
-            variant="vector",
-            extras={
-                "phrase_combine": str(effective_phrase_combine(options)),
-                "embeddings": str(self.embeddings_spec.name),
-                "vector_column": str(self.vector_column),
-                "vector_distance": str(self.vector_distance),
-                "embeddings_dim": int(self.embeddings_spec.dimensions),
-            },
+            variant="pgroonga",
+            extras={"phrase_combine": str(effective_phrase_combine(options))},
         )
-        if self.snapshot_store is not None and rs_spec is not None:
-            maybe_snap: Any = await read_simple_result_snapshot(
-                store=self.snapshot_store,
+
+        if self.snapshot_coord is not None and rs_spec is not None:
+            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
                 fp_computed=fp_fingerprint,
@@ -347,59 +376,172 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                 return_fields=return_fields,
                 return_count=return_count,
             )
+
             if maybe_snap is not None:
                 return maybe_snap
 
-        combine = effective_phrase_combine(options)
         fw, fp = await self.where_clause(filters)
-
-        key_cols = self._scored_key_columns()
-        scored_rank: sql.Composable
         terms = normalize_search_queries(query)
+        combine = effective_phrase_combine(options)
+        mq = pgroonga_phrase_match_text(terms, combine=combine)
 
         if not terms:
-            sw = sql.SQL("TRUE")
-            scored_rank = sql.SQL("(0)::double precision AS {}").format(
-                sql.Identifier(_RANK_COLUMN),
+            extra_ob = await self._projection_order_by_clause(sorts)
+            order_parts: list[sql.Composable] = (  # type: ignore[assignment]
+                [extra_ob]
+                if extra_ob is not None
+                else [
+                    sql.SQL("{} ASC").format(
+                        sql.Identifier(_PROJECTION_ALIAS, sorted(self.read_fields)[0]),
+                    ),
+                ]
             )
-            params_body: list[Any] = [*fp]
-
-        elif len(terms) == 1:
-            one = await self.embedder.embed_one(terms[0], input_kind="query")
-            assert_embedding_shape(
-                one,
-                expect_dim=self.embeddings_spec.dimensions,
+            order_sql = sql.SQL(", ").join(order_parts)
+            count_stmt = sql.SQL(
+                """
+                SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
+                """
+            ).format(
+                proj=self.source_qname.ident(),
+                pa=sql.Identifier(_PROJECTION_ALIAS),
+                fw=fw,
             )
-            sw = sql.SQL("TRUE")
-            scored_rank = vector_knn_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-            )
-            params_body = [*fp, vector_param_literal(one)]
+            params_base = list(fp)
+            total = 0
 
-        else:
-            vecs = await self.embedder.embed(terms, input_kind="query")
-
-            for vec in vecs:
-                assert_embedding_shape(
-                    vec,
-                    expect_dim=self.embeddings_spec.dimensions,
+            if return_count:
+                total = int(
+                    await self.client.fetch_value(count_stmt, params_base, default=0),
                 )
 
-            sw = sql.SQL("TRUE")
-            scored_rank = vector_knn_multi_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-                n_queries=len(vecs),
-                phrase_combine=combine,
+                if total == 0:
+                    return page_from_limit_offset(
+                        [],
+                        pagination or {},
+                        total=0,
+                    )
+
+            cols = self.return_clause(
+                return_type,
+                return_fields,
+                table_alias=_PROJECTION_ALIAS,
             )
-            params_body = [*fp, *[vector_param_literal(v) for v in vecs]]
+            data_stmt = sql.SQL(
+                """
+                SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
+                """
+            ).format(
+                cols=cols,
+                proj=self.source_qname.ident(),
+                pa=sql.Identifier(_PROJECTION_ALIAS),
+                fw=fw,
+                order=order_sql,
+            )
+
+            params = params_base
+            pagination = pagination or {}
+
+            want_sn = (
+                self.snapshot_coord is not None
+                and rs_spec is not None
+                and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
+            )
+            max_n0 = (
+                self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+                if want_sn and self.snapshot_coord is not None
+                else 0
+            )
+            sql_limit, sql_offset, page_limit = (
+                SearchResultSnapshotCoordinator.snapshot_pagination(
+                    want_sn, max_n0, dict(pagination)
+                )
+            )
+            if sql_limit is not None:
+                data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+                params.append(int(sql_limit))
+
+            if want_sn:
+                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+                params.append(int(sql_offset))
+
+            elif pagination.get("offset") is not None:
+                data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+                params.append(int(pagination.get("offset") or 0))
+
+            rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
+
+            handle_no = None
+
+            if want_sn and self.snapshot_coord is not None and rs_spec is not None:
+                pool_len = len(rows)
+                pool0 = pydantic_validate_many(self.model_type, rows)
+                handle_no = await self.snapshot_coord.put_simple_ordered_hits(
+                    pool0,
+                    snap_opt=snapshot,
+                    rs_spec=rs_spec,
+                    fp_computed=fp_fingerprint,
+                    pool_len_before_cap=pool_len,
+                )
+                u_ = int(pagination.get("offset") or 0)
+                rows = rows[u_ : u_ + page_limit]
+
+            if return_type is not None:
+                v = pydantic_validate_many(return_type, rows)
+
+                if return_count:
+                    return page_from_limit_offset(
+                        v,
+                        pagination,
+                        total=total,
+                        snapshot=handle_no,
+                    )
+
+                return page_from_limit_offset(
+                    v,
+                    pagination,
+                    total=None,
+                    snapshot=handle_no,
+                )
+
+            if return_fields is not None:
+                raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
+
+                if return_count:
+                    return page_from_limit_offset(
+                        raw,
+                        pagination,
+                        total=total,
+                        snapshot=handle_no,
+                    )
+
+                return page_from_limit_offset(
+                    raw,
+                    pagination,
+                    total=None,
+                    snapshot=handle_no,
+                )
+
+            m = pydantic_validate_many(self.model_type, rows)
+
+            if return_count:
+                return page_from_limit_offset(
+                    m,
+                    pagination,
+                    total=total,
+                    snapshot=handle_no,
+                )
+
+            return page_from_limit_offset(
+                m,
+                pagination,
+                total=None,
+                snapshot=handle_no,
+            )
+
+        sw, sp = await self._pgroonga_match_combined_query(mq, options=options)
 
         key_sel = self._filtered_select_list()
+        scored_keys, scored_rank = self._scored_select_keys_and_rank(query=mq)
 
         filtered_cte = sql.SQL(
             """
@@ -428,7 +570,7 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             )"""
         ).format(
             scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            scored_keys=key_cols,
+            scored_keys=scored_keys,
             scored_rank=scored_rank,
             heap=self.index_heap_qname.ident(),
             ia=sql.Identifier(_INDEX_ALIAS),
@@ -452,7 +594,7 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             join_vs=join_vs,
         )
 
-        order_parts: list[sql.Composable] = [
+        order_parts: list[sql.Composable] = [  # type: ignore[no-redef]
             sql.SQL("{} DESC NULLS LAST").format(
                 sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
             )
@@ -472,13 +614,13 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             """
         ).format(with_clause=with_clause, from_outer=from_outer)
 
+        params_count = [*fp, *sp]
         total = 0
 
         if return_count:
             total = int(
-                await self.client.fetch_value(count_stmt, params_body, default=0),
+                await self.client.fetch_value(count_stmt, params_count, default=0),
             )
-
             if total == 0:
                 return page_from_limit_offset(
                     [],
@@ -505,25 +647,28 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             order=order_sql,
         )
 
-        params = list(params_body)
-
+        params = [*fp, *sp]
         pagination = pagination or {}
-
-        want_sn = (
-            self.snapshot_store is not None
+        want_s = (
+            self.snapshot_coord is not None
             and rs_spec is not None
-            and should_write_result_snapshot(snapshot, rs_spec)
+            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
         )
-        max_nv = effective_snapshot_max_ids(snapshot, rs_spec) if want_sn else 0
-
-        sql_limit, sql_offset, page_limit = snapshot_sql_pagination(
-            want_sn, max_nv, dict(pagination)
+        max_n1 = (
+            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
+            if want_s and self.snapshot_coord is not None
+            else 0
+        )
+        sql_limit, sql_offset, page_limit = (
+            SearchResultSnapshotCoordinator.snapshot_pagination(
+                want_s, max_n1, dict(pagination)
+            )
         )
         if sql_limit is not None:
             data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
             params.append(int(sql_limit))
 
-        if want_sn:
+        if want_s:
             data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             params.append(int(sql_offset))
 
@@ -533,21 +678,20 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
 
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
 
-        handle_out = None
+        handle_sc = None
 
-        if want_sn and self.snapshot_store is not None and rs_spec is not None:
-            pl = len(rows)
-            pool = pydantic_validate_many(self.model_type, rows)
-            handle_out = await put_simple_result_snapshot(
-                self.snapshot_store,
-                pool,
+        if want_s and self.snapshot_coord is not None and rs_spec is not None:
+            pool_len2 = len(rows)
+            pool1 = pydantic_validate_many(self.model_type, rows)
+            handle_sc = await self.snapshot_coord.put_simple_ordered_hits(
+                pool1,
                 snap_opt=snapshot,
                 rs_spec=rs_spec,
                 fp_computed=fp_fingerprint,
-                pool_len_before_cap=pl,
+                pool_len_before_cap=pool_len2,
             )
-            uo = int(pagination.get("offset") or 0)
-            rows = rows[uo : uo + page_limit]
+            u0 = int(pagination.get("offset") or 0)
+            rows = rows[u0 : u0 + page_limit]
 
         if return_type is not None:
             v = pydantic_validate_many(return_type, rows)
@@ -557,14 +701,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                     v,
                     pagination,
                     total=total,
-                    snapshot=handle_out,
+                    snapshot=handle_sc,
                 )
 
             return page_from_limit_offset(
                 v,
                 pagination,
                 total=None,
-                snapshot=handle_out,
+                snapshot=handle_sc,
             )
 
         if return_fields is not None:
@@ -575,14 +719,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                     raw,
                     pagination,
                     total=total,
-                    snapshot=handle_out,
+                    snapshot=handle_sc,
                 )
 
             return page_from_limit_offset(
                 raw,
                 pagination,
                 total=None,
-                snapshot=handle_out,
+                snapshot=handle_sc,
             )
 
         m = pydantic_validate_many(self.model_type, rows)
@@ -592,14 +736,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                 m,
                 pagination,
                 total=total,
-                snapshot=handle_out,
+                snapshot=handle_sc,
             )
 
         return page_from_limit_offset(
             m,
             pagination,
             total=None,
-            snapshot=handle_out,
+            snapshot=handle_sc,
         )
 
     # ....................... #
@@ -654,7 +798,14 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         return_type: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
-        """Keyset on the projection (empty query) or ranked KNN distance scores."""
+        """Keyset pagination on the projection (empty query) or ranked PGroonga matches.
+
+        **Browse (empty query):** Same ordering rules as :meth:`search` without a query.
+
+        **Ranked:** Orders by ``_pgroonga_rank`` DESC NULLS LAST, optional ``sorts``, then
+        ``id``. With ``return_fields``, list only the columns you want in each hit; rank
+        and other keyset columns are selected internally and omitted from the response.
+        """
 
         options = search_options_for_simple_adapter(options)
         terms = normalize_search_queries(query)
@@ -816,45 +967,6 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                 has_more=has_more,
             )
 
-        combine = effective_phrase_combine(options)
-        fw_r, fp_r = await self.where_clause(filters)
-        key_cols_r = self._scored_key_columns()
-
-        if len(terms) == 1:
-            one = await self.embedder.embed_one(terms[0], input_kind="query")
-            assert_embedding_shape(
-                one,
-                expect_dim=self.embeddings_spec.dimensions,
-            )
-            sw_r = sql.SQL("TRUE")
-            scored_rank_r = vector_knn_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-            )
-            params_base_r: list[Any] = [*fp_r, vector_param_literal(one)]
-
-        else:
-            vecs = await self.embedder.embed(terms, input_kind="query")
-
-            for vec in vecs:
-                assert_embedding_shape(
-                    vec,
-                    expect_dim=self.embeddings_spec.dimensions,
-                )
-
-            sw_r = sql.SQL("TRUE")
-            scored_rank_r = vector_knn_multi_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-                n_queries=len(vecs),
-                phrase_combine=combine,
-            )
-            params_base_r = [*fp_r, *[vector_param_literal(v) for v in vecs]]
-
         key_spec_r = ranked_search_cursor_key_spec(
             rank_field=_RANK_COLUMN,
             sorts=sorts,
@@ -862,7 +974,10 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
         sort_keys_r = [k for k, _ in key_spec_r]
         directions_r = [d for _, d in key_spec_r]
 
-        key_sel_r = self._filtered_select_list()
+        fw_r, fp_r = await self.where_clause(filters)
+        combine = effective_phrase_combine(options)
+        mq = pgroonga_phrase_match_text(terms, combine=combine)
+        sw_r, sp_r = await self._pgroonga_match_combined_query(mq, options=options)
 
         filtered_cte = sql.SQL(
             """
@@ -873,12 +988,13 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             )"""
         ).format(
             filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            key_sel=key_sel_r,
+            key_sel=self._filtered_select_list(),
             proj=self.source_qname.ident(),
             pa=sql.Identifier(_PROJECTION_ALIAS),
             fw=fw_r,
         )
 
+        scored_keys_r, scored_rank_r = self._scored_select_keys_and_rank(query=mq)
         join_sf_r = self._scored_join_on_filtered()
         scored_cte = sql.SQL(
             """
@@ -891,7 +1007,7 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
             )"""
         ).format(
             scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            scored_keys=key_cols_r,
+            scored_keys=scored_keys_r,
             scored_rank=scored_rank_r,
             heap=self.index_heap_qname.ident(),
             ia=sql.Identifier(_INDEX_ALIAS),
@@ -934,7 +1050,7 @@ class PostgresVectorSearchAdapterV2[M: BaseModel](
                 )
 
         where_fin_r: sql.Composable = sql.SQL("TRUE")
-        params_r: list[Any] = list(params_base_r)
+        params_r: list[Any] = [*fp_r, *sp_r]
 
         if use_after or use_before:
             token_r = str(c["after" if use_after else "before"])

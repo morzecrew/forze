@@ -1,5 +1,6 @@
 """Transaction manager and scoped port contracts."""
 
+from collections.abc import Awaitable, Callable
 from typing import AsyncContextManager, Protocol, final, runtime_checkable
 from uuid import UUID
 
@@ -49,6 +50,22 @@ class TxScopedPort(Protocol):
 
 
 @runtime_checkable
+class AfterCommitPort(Protocol):
+    """Run async side effects after a successful DB commit when in a transaction.
+
+    Implementations align with :meth:`forze.application.execution.ExecutionContext.transaction`
+    (e.g. defer until commit, or run immediately when no transaction is active).
+    """
+
+    def __call__(self, fn: Callable[[], Awaitable[None]]) -> Awaitable[None]:
+        """Await *fn* now if outside a transaction; else run it after commit."""
+        ...
+
+
+# ....................... #
+
+
+@runtime_checkable
 class TxManagerPort(Protocol):
     """Transactional boundary for the current execution context.
 
@@ -59,6 +76,8 @@ class TxManagerPort(Protocol):
 
     scope_key: TxScopeKey
     """The key used to scope the transaction."""
+
+    # ....................... #
 
     def transaction(self) -> AsyncContextManager[None]:
         """Return an async context manager that scopes a transaction.

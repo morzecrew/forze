@@ -14,7 +14,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError
-from forze_postgres.adapters.search import PostgresPGroongaSearchAdapterV2
+from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
 from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
 from forze_postgres.execution.deps.deps import (
     ConfigurablePostgresHubSearch,
@@ -162,7 +162,7 @@ async def test_postgres_search_adapter(
 
     adapter = execution_context.search_query(spec)
 
-    assert isinstance(adapter, PostgresPGroongaSearchAdapterV2)
+    assert isinstance(adapter, PostgresPGroongaSearchAdapter)
 
     __p = await adapter.search("python", return_count=True)
     res = __p.hits
@@ -199,27 +199,26 @@ async def test_postgres_search_adapter(
         "python",
         pagination={"limit": 1, "offset": 0},
         sorts={"title": "asc"},
-        options={"weights": {"title": 0.5, "content": 0.5}}, return_count=True)
+        options={"weights": {"title": 0.5, "content": 0.5}},
+        return_count=True,
+    )
     page = __p.hits
     total = __p.count
     assert total == 3
     assert len(page) == 1
 
-    __p = await adapter.search(
-        "python",
-        return_fields=["title"], return_count=True)
+    __p = await adapter.search("python", return_fields=["title"], return_count=True)
     titles_only = __p.hits
     total_t = __p.count
     assert total_t == 3
     assert set(titles_only[0].keys()) == {"title"}
 
     __p = await adapter.search(["python", "framework"], return_count=True)
-    any_two = __p.hits
     n_any = __p.count
     assert n_any == 3
     __p = await adapter.search(
-        ["python", "framework"],
-        options={"phrase_combine": "all"}, return_count=True)
+        ["python", "framework"], options={"phrase_combine": "all"}, return_count=True
+    )
     all_two = __p.hits
     n_all = __p.count
     assert n_all == 1
@@ -287,7 +286,7 @@ async def test_postgres_pgroonga_search_adapter_v2_projection_vs_heap(
         fields=["title", "content"],
     )
 
-    adapter = PostgresPGroongaSearchAdapterV2(
+    adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
         source_qname=PostgresQualifiedName(schema="public", name="search_projection"),
         index_qname=PostgresQualifiedName(
@@ -309,9 +308,7 @@ async def test_postgres_pgroonga_search_adapter_v2_projection_vs_heap(
     assert cnt == 2
     assert {r.title for r in res} == {"Forze Framework", "Postgres Guide"}
 
-    __p = await adapter.search(
-        "hexagonal",
-        sorts={"title": "asc"}, return_count=True)
+    __p = await adapter.search("hexagonal", sorts={"title": "asc"}, return_count=True)
     one = __p.hits
     cnt_one = __p.count
     assert cnt_one == 1
@@ -365,7 +362,7 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
         fields=["title", "content"],
     )
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresPGroongaSearchAdapterV2)
+    assert isinstance(adapter, PostgresPGroongaSearchAdapter)
 
     __p = await adapter.search("hello", return_count=True)
     rows = __p.hits
@@ -509,17 +506,15 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
 
-    __p = await adapter.search(
-        "alpha",
-        sorts={"quantity": "asc"}, return_count=True)
+    __p = await adapter.search("alpha", sorts={"quantity": "asc"}, return_count=True)
     sorted_by_qty = __p.hits
     cnt_sort = __p.count
     assert cnt_sort == 2
     assert [h.quantity for h in sorted_by_qty] == [1, 3]
 
     __p = await adapter.search(
-        "alpha",
-        pagination={"limit": 1, "offset": 0}, return_count=True)
+        "alpha", pagination={"limit": 1, "offset": 0}, return_count=True
+    )
     page1 = __p.hits
     cnt_page = __p.count
     assert cnt_page == 2
@@ -529,9 +524,7 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
         id: UUID
         quantity: int
 
-    __p = await adapter.search(
-        "alpha",
-        return_type=LinkIdQty, return_count=True)
+    __p = await adapter.search("alpha", return_type=LinkIdQty, return_count=True)
     partial = __p.hits
     cnt_partial = __p.count
     assert cnt_partial == 2
@@ -539,8 +532,8 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert all(isinstance(p.quantity, int) for p in partial)
 
     __p = await adapter.search(
-        "alpha",
-        return_fields=["id", "quantity"], return_count=True)
+        "alpha", return_fields=["id", "quantity"], return_count=True
+    )
     raw_links = __p.hits
     cnt_raw = __p.count
     assert cnt_raw == 2
@@ -556,7 +549,9 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
 
     __p = await adapter.search(
         "alpha",
-        options={"member_weights": {det_name: 0.0, spec_name: 0.0}}, return_count=True)
+        options={"member_weights": {det_name: 0.0, spec_name: 0.0}},
+        return_count=True,
+    )
     all_legs_off = __p.hits
     n_off = __p.count
     assert n_off == 3
@@ -568,8 +563,8 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert n_no_match == 0
 
     __p = await adapter.search(
-        "gamma",
-        filters={"$fields": {"spec_id": str(s1)}}, return_count=True)
+        "gamma", filters={"$fields": {"spec_id": str(s1)}}, return_count=True
+    )
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
@@ -598,20 +593,20 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert {h.id for h in browse} == {lid1, lid2, lid3}
 
     __p = await adapter.search("   \t", return_count=True)
-    browse_ws = __p.hits
     c_ws = __p.count
     assert c_ws == 3
 
     __p = await adapter.search(
         "alpha",
-        options={"member_weights": {det_name: 0.0, spec_name: 1.0}}, return_count=True)
-    zero_detail = __p.hits
+        options={"member_weights": {det_name: 0.0, spec_name: 1.0}},
+        return_count=True,
+    )
     c_z = __p.count
     assert c_z == 0
 
     __p = await adapter.search(
-        "gamma",
-        options={"members": [spec_name]}, return_count=True)
+        "gamma", options={"members": [spec_name]}, return_count=True
+    )
     only_spec = __p.hits
     c_os = __p.count
     assert c_os == 2
@@ -738,8 +733,8 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     assert {h.id for h in hits} == {lid1, lid3}
 
     __p = await adapter.search(
-        "gamma",
-        filters={"$fields": {"spec_id": str(s1)}}, return_count=True)
+        "gamma", filters={"$fields": {"spec_id": str(s1)}}, return_count=True
+    )
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
@@ -753,7 +748,9 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
 
 
 @pytest.mark.asyncio
-async def test_postgres_hub_pgroonga_combine_or_vs_and(pg_client: PostgresClient) -> None:
+async def test_postgres_hub_pgroonga_combine_or_vs_and(
+    pg_client: PostgresClient,
+) -> None:
     """``combine_strategy`` OR includes a link if any leg matches; AND requires every leg."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
@@ -879,7 +876,9 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(pg_client: PostgresClient
 
 
 @pytest.mark.asyncio
-async def test_postgres_hub_mixed_pgroonga_and_fts_legs(pg_client: PostgresClient) -> None:
+async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
+    pg_client: PostgresClient,
+) -> None:
     """One PGroonga leg and one FTS leg on the same link hub."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
@@ -992,7 +991,6 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(pg_client: PostgresClien
     adapter = ConfigurablePostgresHubSearch(config=hub_mix_cfg)(ctx_hub, hub_spec)
 
     __p = await adapter.search("mixed", return_count=True)
-    hits = __p.hits
     cnt = __p.count
     assert cnt == 3
 
@@ -1003,8 +1001,8 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(pg_client: PostgresClien
     assert {h.id for h in hits_alpha} == {lid1, lid3}
 
     __p = await adapter.search(
-        "gamma",
-        filters={"$fields": {"spec_id": str(s1)}}, return_count=True)
+        "gamma", filters={"$fields": {"spec_id": str(s1)}}, return_count=True
+    )
     hits_gamma = __p.hits
     n_gamma = __p.count
     assert n_gamma == 2
@@ -1012,7 +1010,9 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(pg_client: PostgresClien
 
 
 @pytest.mark.asyncio
-async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(pg_client: PostgresClient) -> None:
+async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(
+    pg_client: PostgresClient,
+) -> None:
     """Two hub FK columns reference the same heap (OR linkage); second leg uses another heap."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
@@ -1136,7 +1136,9 @@ async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(pg_client: PostgresCl
 
     __p = await adapter.search(
         "East",
-        options={"member_weights": {party_leg: 1.0, label_leg: 0.0}}, return_count=True)
+        options={"member_weights": {party_leg: 1.0, label_leg: 0.0}},
+        return_count=True,
+    )
     only_party = __p.hits
     n_po = __p.count
     assert n_po == 1
@@ -1156,7 +1158,9 @@ class _SameHeapHubRow(BaseModel):
 
 
 @pytest.mark.asyncio
-async def test_postgres_hub_same_heap_as_hub_single_leg(pg_client: PostgresClient) -> None:
+async def test_postgres_hub_same_heap_as_hub_single_leg(
+    pg_client: PostgresClient,
+) -> None:
     """Hub leg on the same table as the hub uses the hf-only path (no heap self-join)."""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
@@ -1273,7 +1277,7 @@ async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
         model_type=SearchableModel,
         fields=["title", "content"],
     )
-    adapter = PostgresPGroongaSearchAdapterV2(
+    adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
         source_qname=PostgresQualifiedName(schema="public", name=proj),
         index_qname=PostgresQualifiedName(schema="public", name=idx),
@@ -1355,7 +1359,7 @@ async def test_postgres_pgroonga_v2_nonempty_query_count_zero_short_circuit(
         model_type=SearchableModel,
         fields=["title", "content"],
     )
-    adapter = PostgresPGroongaSearchAdapterV2(
+    adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
         source_qname=PostgresQualifiedName(schema="public", name=proj),
         index_qname=PostgresQualifiedName(schema="public", name=idx),
@@ -1410,7 +1414,7 @@ async def test_postgres_pgroonga_v2_ranked_search_uses_score_v1(
         model_type=SearchableModel,
         fields=["title", "content"],
     )
-    adapter = PostgresPGroongaSearchAdapterV2(
+    adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
         source_qname=PostgresQualifiedName(schema="public", name=proj),
         index_qname=PostgresQualifiedName(schema="public", name=idx),
@@ -1467,7 +1471,7 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
         model_type=SearchableModel,
         fields=["title", "content"],
     )
-    adapter = PostgresPGroongaSearchAdapterV2(
+    adapter = PostgresPGroongaSearchAdapter(
         spec=spec,
         source_qname=PostgresQualifiedName(schema="public", name=proj),
         index_qname=PostgresQualifiedName(schema="public", name=idx),

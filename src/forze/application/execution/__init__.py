@@ -1,17 +1,14 @@
-"""Execution kernel for usecases, dependency injection, and lifecycle.
-
-Provides :class:`ExecutionContext` (dependency resolution, transactions),
-:class:`Usecase` (base for application workflows), :class:`ExecutionRuntime`
-(scoped execution with deps and lifecycle), and :class:`UsecaseRegistry` for
-composing usecases with middlewares. Middlewares include guards, effects,
-on-failure and finally hooks, and transaction wrapping.
-"""
+"""Execution kernel for usecases, dependency injection, and lifecycle."""
 
 from ..contracts.auth import AuthIdentity
 from .context import CallContext, ExecutionContext
 from .delegate import UsecaseDelegate, delegated_usecase_effect
 from .deps import Deps, DepsModule, DepsPlan
-from .dispatch import expand_wildcard_dispatch_sources, find_dispatch_cycle, format_dispatch_cycle
+from .dispatch import (
+    expand_wildcard_dispatch_sources,
+    find_dispatch_cycle,
+    format_dispatch_cycle,
+)
 from .facade import FacadeOpRef, UsecasesFacade, facade_call, facade_op
 from .lifecycle import LifecycleHook, LifecyclePlan, LifecycleStep
 from .middleware import (

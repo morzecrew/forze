@@ -60,6 +60,7 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
+        skip_cache: bool = ...,
     ) -> Awaitable[JsonDict]:
         """Fetch a document and return selected fields as a JSON mapping."""
         ...  # pragma: no cover
@@ -71,6 +72,7 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         *,
         for_update: bool = ...,
         return_fields: None = ...,
+        skip_cache: bool = ...,
     ) -> Awaitable[R]:
         """Fetch a document and return the typed read model."""
         ...  # pragma: no cover
@@ -81,12 +83,14 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         *,
         for_update: bool = False,
         return_fields: Sequence[str] | None = None,
+        skip_cache: bool = False,
     ) -> Awaitable[R | JsonDict]:
         """Fetch a single document by primary key.
 
         :param pk: Document identifier.
         :param for_update: When ``True``, lock the row for update when possible.
         :param return_fields: Optional subset of fields to project.
+        :param skip_cache: When ``True``, bypass read-through cache (no read, no write).
         :returns: Either the typed read model or a JSON mapping.
         """
         ...  # pragma: no cover
@@ -99,6 +103,7 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str],
+        skip_cache: bool = ...,
     ) -> Awaitable[Sequence[JsonDict]]:
         """Fetch multiple documents and project selected fields as JSON."""
         ...  # pragma: no cover
@@ -109,6 +114,7 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         pks: Sequence[UUID],
         *,
         return_fields: None = ...,
+        skip_cache: bool = ...,
     ) -> Awaitable[Sequence[R]]:
         """Fetch multiple documents and return typed read models."""
         ...  # pragma: no cover
@@ -118,8 +124,14 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str] | None = None,
+        skip_cache: bool = False,
     ) -> Awaitable[Sequence[R] | Sequence[JsonDict]]:
-        """Fetch multiple documents by primary key."""
+        """Fetch multiple documents by primary key.
+
+        :param pks: Document identifiers in the desired result order.
+        :param return_fields: Optional subset of fields to project per row.
+        :param skip_cache: When ``True``, bypass read-through cache (no read, no write).
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -691,6 +703,98 @@ class DocumentCommandPort[
         Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None
     ]:
         """Apply partial updates to multiple documents."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> Awaitable[Sequence[R]]:
+        """Apply the same partial update to all documents matching *filters* in one store operation."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> Awaitable[int]:
+        """Apply the same partial update to all documents matching *filters* in one store operation."""
+        ...  # pragma: no cover
+
+    def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: bool = True,
+    ) -> Awaitable[Sequence[R] | int]:
+        """Apply the same partial update to every document matching *filters* using a fast store path.
+
+        Does not take per-row expected revisions. Revision bumps are handled in the
+        database (Postgres: single ``UPDATE … WHERE``; Mongo: batched ``update_many`` on
+        ``_id`` sets). Semantics may differ from :meth:`update` when domain models derive
+        fields during apply.
+
+        :param filters: Required filter expression (same shape as :meth:`DocumentQueryPort.find_many`).
+        :param dto: Patch applied uniformly to each matching row.
+        :param return_new: When ``True``, reload and return read models for updated rows
+            (Postgres: ``RETURNING``; Mongo: ``get_many`` per chunk). When ``False``, return
+            the number of rows the store reported as updated.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    @overload
+    def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+        chunk_size: int | None = ...,
+    ) -> Awaitable[Sequence[R]]:
+        """Match :meth:`update_many` semantics via chunked :meth:`find_many` + :meth:`update_many`."""
+        ...  # pragma: no cover
+
+    @overload
+    def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[False],
+        chunk_size: int | None = ...,
+    ) -> Awaitable[int]:
+        """Match :meth:`update_many` semantics via chunked :meth:`find_many` + :meth:`update_many`."""
+        ...  # pragma: no cover
+
+    def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: bool = True,
+        chunk_size: int | None = None,
+    ) -> Awaitable[Sequence[R] | int]:
+        """Apply the same partial update to every matching document using optimistic revisions.
+
+        Loads documents in chunks (keyset by primary key), then calls :meth:`update_many`
+        so each row uses its current ``rev`` like :meth:`update`.
+
+        :param filters: Required filter expression.
+        :param dto: Patch applied uniformly to each row in a chunk.
+        :param chunk_size: Maximum rows per chunk; defaults to the adapter batch size when omitted.
+        :param return_new: When ``True``, return all updated read models; when ``False``, return the count updated.
+        """
         ...  # pragma: no cover
 
     # ....................... #

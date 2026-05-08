@@ -47,6 +47,14 @@ class RedisSearchResultSnapshotConfig(RedisUniversalConfig):
 
 
 # ....................... #
+
+
+@final
+class RedisDistributedLockConfig(RedisUniversalConfig):
+    """Configuration for Redis-backed distributed locks."""
+
+
+# ....................... #
 #! very questionable to have namespace inside pubsub and streams
 
 # @final

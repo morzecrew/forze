@@ -10,12 +10,16 @@ from typing import Any, Literal, Mapping
 
 from psycopg import sql
 
-from forze.application.contracts.search import PhraseCombine, SearchOptions, SearchSpec
+from forze.application.contracts.search import (
+    PhraseCombine,
+    SearchOptions,
+    SearchSpec,
+    calculate_effective_field_weights,
+)
 from forze.base.errors import CoreError
 
 from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.introspect import PostgresIntrospector
-from ._utils import calculate_effective_field_weights
 
 # ----------------------- #
 
@@ -188,6 +192,7 @@ def pgroonga_score_rank_expr(
 
     if score_version == "v1":
         score_call = sql.SQL("pgroonga_score({})").format(sql.Identifier(index_alias))
+
     else:
         score_call = sql.Composed(
             [
@@ -198,4 +203,5 @@ def pgroonga_score_rank_expr(
                 sql.SQL(".ctid)"),
             ]
         )
+
     return sql.SQL("{} AS {}").format(score_call, sql.Identifier(rank_column))

@@ -5,7 +5,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import AsyncContextManager, AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncContextManager, AsyncIterator, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -148,6 +148,23 @@ class RoutedRedisClient(RedisClientPort):
         return _cm()
 
     # ....................... #
+
+    async def exists(self, key: str) -> bool:
+        inner = await self._get_client()
+        return await inner.exists(key)
+
+    async def pttl(self, key: str) -> int | None:
+        inner = await self._get_client()
+        return await inner.pttl(key)
+
+    async def run_script(
+        self,
+        script: str,
+        keys: Sequence[str],
+        args: Sequence[Any],
+    ) -> str:
+        inner = await self._get_client()
+        return await inner.run_script(script, keys, args)
 
     async def get(self, key: str) -> bytes | str | None:
         inner = await self._get_client()

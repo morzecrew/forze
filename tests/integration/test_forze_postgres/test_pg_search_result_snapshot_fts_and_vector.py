@@ -8,7 +8,10 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
+from forze.application.contracts.embeddings import (
+    EmbeddingsProviderDepKey,
+    EmbeddingsSpec,
+)
 from forze.application.contracts.search import (
     SearchQueryDepKey,
     SearchResultSnapshotDepKey,
@@ -18,12 +21,15 @@ from forze.application.contracts.search import (
 from forze.application.execution import Deps, ExecutionContext
 from forze_mock import MockHashEmbeddingsProvider
 from forze_postgres.adapters.search import (
-    PostgresFTSSearchAdapterV2,
-    PostgresVectorSearchAdapterV2,
+    PostgresFTSSearchAdapter,
+    PostgresVectorSearchAdapter,
 )
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
+from forze_postgres.execution.deps.keys import (
+    PostgresClientDepKey,
+    PostgresIntrospectorDepKey,
+)
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 from forze_redis.execution.deps.deps import ConfigurableRedisSearchResultSnapshot
@@ -129,9 +135,11 @@ async def test_fts_v2_result_snapshot_reread(
     )
     ctx = _exec_fts(pg_client, redis_client, table=table, index_name=index_name)
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresFTSSearchAdapterV2)
+    assert isinstance(adapter, PostgresFTSSearchAdapter)
 
-    p1 = await adapter.search("keyword", return_count=True, pagination={"limit": 5, "offset": 0})
+    p1 = await adapter.search(
+        "keyword", return_count=True, pagination={"limit": 5, "offset": 0}
+    )
     assert p1.snapshot is not None
     assert p1.count == 1
     p2 = await adapter.search(
@@ -179,7 +187,9 @@ async def test_vector_v2_result_snapshot_reread(
         deps=Deps.plain(
             {
                 PostgresClientDepKey: pgvector_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pgvector_client),
+                PostgresIntrospectorDepKey: PostgresIntrospector(
+                    client=pgvector_client
+                ),
                 RedisClientDepKey: redis_client,
                 SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
                     config={"namespace": ns},
@@ -211,8 +221,10 @@ async def test_vector_v2_result_snapshot_reread(
         ),
     )
     adapter = ctx.search_query(spec)
-    assert isinstance(adapter, PostgresVectorSearchAdapterV2)
-    p1 = await adapter.search("vecq", return_count=True, pagination={"limit": 3, "offset": 0})
+    assert isinstance(adapter, PostgresVectorSearchAdapter)
+    p1 = await adapter.search(
+        "vecq", return_count=True, pagination={"limit": 3, "offset": 0}
+    )
     assert p1.snapshot is not None
     p2 = await adapter.search(
         "vecq",

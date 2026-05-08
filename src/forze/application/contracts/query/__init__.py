@@ -30,9 +30,12 @@ from .internal import (
 )
 from .types import QueryOp, QueryValue
 from .pagination import (
+    assert_cursor_projection_includes_sort_keys,
+    assemble_keyset_cursor_page,
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_with_id,
+    resolved_cursor_limit,
     row_value_for_sort_key,
 )
 
@@ -55,6 +58,8 @@ __all__ = [
     "ParsedAggregates",
     "QueryFilterExpression",
     "QuerySortExpression",
+    "assert_cursor_projection_includes_sort_keys",
+    "assemble_keyset_cursor_page",
     "PaginationExpression",
     "CursorPaginationExpression",
     "QueryFilterExpressionParser",
@@ -68,5 +73,6 @@ __all__ = [
     "decode_keyset_v1",
     "encode_keyset_v1",
     "normalize_sorts_with_id",
+    "resolved_cursor_limit",
     "row_value_for_sort_key",
 ]

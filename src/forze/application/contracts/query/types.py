@@ -6,10 +6,10 @@ from uuid import UUID
 
 # ----------------------- #
 
-Numeric = int | float | datetime | date
-"""Numeric types for ordering operators."""
+Numeric = int | float | datetime | date | UUID
+"""Numeric types for ordering operators (includes :class:`~uuid.UUID` for keyset paging)."""
 
-Scalar = Numeric | bool | str | UUID
+Scalar = Numeric | bool | str
 """Scalar value types for filter expressions."""
 
 Array = Sequence[Scalar]

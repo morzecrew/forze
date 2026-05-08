@@ -5,11 +5,18 @@ Provides :class:`TxManagerPort`, :class:`TxScopedPort`, :class:`TxHandle`,
 """
 
 from .deps import TxManagerDepKey, TxManagerDepPort
-from .ports import TxHandle, TxManagerPort, TxScopedPort, TxScopeKey
+from .ports import (
+    AfterCommitPort,
+    TxHandle,
+    TxManagerPort,
+    TxScopedPort,
+    TxScopeKey,
+)
 
 # ----------------------- #
 
 __all__ = [
+    "AfterCommitPort",
     "TxManagerPort",
     "TxScopeKey",
     "TxManagerDepKey",

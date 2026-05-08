@@ -80,6 +80,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
+    search_options_for_simple_adapter,
 )
 from forze.application.contracts.storage import (
     DownloadedObject,
@@ -94,14 +95,13 @@ from forze.application.contracts.stream import (
 )
 from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
-from forze.base.logging import Logger
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     pydantic_dump,
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.constants import REV_FIELD
+from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
@@ -115,26 +115,6 @@ M = TypeVar("M", bound=BaseModel)
 T = TypeVar("T", bound=BaseModel)
 
 _MISSING = object()
-
-_mock_search_logger = Logger("forze_mock.adapters")
-
-
-def _search_options_for_mock_simple(options: SearchOptions | None) -> SearchOptions:
-    opts = dict(options or {})
-
-    if "member_weights" in opts or "members" in opts:
-        _mock_search_logger.warning(
-            "mock_search_options_hub_keys_ignored",
-            message=(
-                "SearchOptions member_weights and members are ignored for simple "
-                "(single-index) mock search"
-            ),
-        )
-        opts.pop("member_weights", None)
-        opts.pop("members", None)
-
-    return cast(SearchOptions, opts)
-
 
 # ----------------------- #
 # Shared state
@@ -726,6 +706,7 @@ class MockDocumentAdapter[
         *,
         for_update: bool = ...,
         return_fields: Sequence[str],
+        skip_cache: bool = ...,
     ) -> JsonDict: ...
 
     @overload
@@ -735,6 +716,7 @@ class MockDocumentAdapter[
         *,
         for_update: bool = ...,
         return_fields: None = ...,
+        skip_cache: bool = ...,
     ) -> R: ...
 
     async def get(
@@ -743,8 +725,9 @@ class MockDocumentAdapter[
         *,
         for_update: bool = False,
         return_fields: Sequence[str] | None = None,
+        skip_cache: bool = False,
     ) -> R | JsonDict:
-        del for_update
+        del for_update, skip_cache
         with self.state.lock:
             doc = dict(self._ensure_exists(pk))
         return self._to_read_or_projection(doc, return_fields)
@@ -757,6 +740,7 @@ class MockDocumentAdapter[
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str],
+        skip_cache: bool = ...,
     ) -> Sequence[JsonDict]: ...
 
     @overload
@@ -765,6 +749,7 @@ class MockDocumentAdapter[
         pks: Sequence[UUID],
         *,
         return_fields: None = ...,
+        skip_cache: bool = ...,
     ) -> Sequence[R]: ...
 
     async def get_many(
@@ -772,7 +757,9 @@ class MockDocumentAdapter[
         pks: Sequence[UUID],
         *,
         return_fields: Sequence[str] | None = None,
+        skip_cache: bool = False,
     ) -> Sequence[R] | Sequence[JsonDict]:
+        del skip_cache
         with self.state.lock:
             store = self._store()
             missing = [pk for pk in pks if pk not in store]
@@ -1478,6 +1465,151 @@ class MockDocumentAdapter[
     # ....................... #
 
     @overload
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[False],
+    ) -> int: ...
+
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: bool = True,
+    ) -> Sequence[R] | int:
+        if not self.spec.supports_update():
+            raise CoreError("Update command type is not supported for this model")
+
+        patch = pydantic_dump(dto, exclude={"unset": True})
+
+        if not patch:
+            return [] if return_new else 0
+
+        results: list[R] = []
+        n = 0
+
+        with self.state.lock:
+            store = self._store()
+            for pk, raw in list(store.items()):
+                if not _match_filters(raw, filters):
+                    continue
+
+                current = self._to_domain(dict(raw))
+                updated, diff = current.update(patch)
+
+                if not diff:
+                    continue
+
+                updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
+                serialized = pydantic_dump(updated)
+                store[pk] = serialized
+                n += 1
+
+                if return_new:
+                    results.append(self._to_read(serialized))
+
+        if return_new:
+            return results
+
+        return n
+
+    # ....................... #
+
+    @overload
+    async def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[True] = True,
+        chunk_size: int | None = ...,
+    ) -> Sequence[R]: ...
+
+    @overload
+    async def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: Literal[False],
+        chunk_size: int | None = ...,
+    ) -> int: ...
+
+    async def update_matching_strict(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        return_new: bool = True,
+        chunk_size: int | None = None,
+    ) -> Sequence[R] | int:
+        if not self.spec.supports_update():
+            raise CoreError("Update command type is not supported for this model")
+
+        eff = 200 if chunk_size is None else chunk_size
+        if eff < 1:
+            raise CoreError("chunk_size must be positive")
+
+        n_total = 0
+        out: list[R] = []
+        last_id: UUID | None = None
+
+        while True:
+            chunk_filter: QueryFilterExpression = (  # type: ignore[valid-type]
+                filters
+                if last_id is None
+                else {
+                    "$and": [
+                        filters,
+                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                    ]
+                }
+            )
+            page = await self.find_many(
+                filters=chunk_filter,
+                pagination={"limit": eff},
+                sorts={ID_FIELD: "asc"},
+                return_count=False,
+            )
+            rows = page.hits
+            if not rows:
+                break
+
+            updates = [(r.id, r.rev, dto) for r in rows]
+
+            if return_new:
+                out.extend(
+                    await self.update_many(updates, return_new=True),
+                )
+            else:
+                await self.update_many(updates, return_new=False)
+
+            n_total += len(rows)
+            last_id = rows[-1].id
+
+            if len(rows) < eff:
+                break
+
+        if return_new:
+            return out
+
+        return n_total
+
+    # ....................... #
+
+    @overload
     async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
 
     @overload
@@ -1847,7 +1979,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
     ) -> list[JsonDict]:
-        options = _search_options_for_mock_simple(options)
+        options = search_options_for_simple_adapter(options)
         fields, weights = self._resolve_fields(options)
         terms = normalize_search_queries(query)
         combine = effective_phrase_combine(options)

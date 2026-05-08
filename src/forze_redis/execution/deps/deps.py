@@ -4,6 +4,7 @@ import attrs
 
 from forze.application.contracts.cache import CacheDepPort, CacheSpec
 from forze.application.contracts.counter import CounterDepPort, CounterSpec
+from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencySpec
 from forze.application.contracts.search import SearchResultSnapshotPort, SearchResultSnapshotSpec
 from forze.application.execution import ExecutionContext
@@ -11,6 +12,7 @@ from forze.application.execution import ExecutionContext
 from ...adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
+    RedisDistributedLockAdapter,
     RedisIdempotencyAdapter,
     RedisKeyCodec,
     RedisSearchResultSnapshotAdapter,
@@ -18,6 +20,7 @@ from ...adapters import (
 from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
+    RedisDistributedLockConfig,
     RedisIdempotencyConfig,
     RedisSearchResultSnapshotConfig,
     RedisUniversalConfig,
@@ -142,6 +145,36 @@ class ConfigurableRedisSearchResultSnapshot:
             default_ttl=spec.ttl,
             default_max_ids=spec.max_ids,
             default_chunk_size=spec.chunk_size,
+            tenant_aware=self.config.get("tenant_aware", False),
+            tenant_provider=ctx.get_tenant_id,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableRedisDistributedLock:
+    """Build :class:`RedisDistributedLockAdapter` from execution context and lock spec."""
+
+    config: RedisDistributedLockConfig | RedisUniversalConfig
+    """Configuration (namespace, optional tenant awareness)."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: DistributedLockSpec,
+    ) -> RedisDistributedLockAdapter:
+        client = ctx.dep(RedisClientDepKey)
+        key_codec = RedisKeyCodec(namespace=str(self.config["namespace"]))
+
+        return RedisDistributedLockAdapter(
+            client=client,
+            key_codec=key_codec,
+            spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
             tenant_provider=ctx.get_tenant_id,
         )

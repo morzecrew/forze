@@ -11,6 +11,7 @@ from .execution import (
     RedisClientDepKey,
     RedisCounterConfig,
     RedisDepsModule,
+    RedisDistributedLockConfig,
     RedisIdempotencyConfig,
     RedisUniversalConfig,
     redis_lifecycle_step,
@@ -31,6 +32,7 @@ __all__ = [
     "routed_redis_lifecycle_step",
     "RedisCacheConfig",
     "RedisCounterConfig",
+    "RedisDistributedLockConfig",
     "RedisIdempotencyConfig",
     "RedisUniversalConfig",
 ]

@@ -13,8 +13,8 @@ pytest.importorskip("psycopg")
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import CoreError
+from forze_postgres.adapters.search import PostgresVectorSearchAdapter
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
-from forze_postgres.adapters.search import PostgresVectorSearchAdapterV2
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 
@@ -26,10 +26,10 @@ class _M(BaseModel):
 def _minimal_vector_port(
     *,
     join_pairs: tuple[tuple[str, str], ...] | None = None,
-) -> PostgresVectorSearchAdapterV2[_M]:
+) -> PostgresVectorSearchAdapter[_M]:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
-    return PostgresVectorSearchAdapterV2(
+    return PostgresVectorSearchAdapter(
         spec=SearchSpec(name="t", model_type=_M, fields=["id", "label"]),
         index_qname=PostgresQualifiedName("public", "idx"),
         source_qname=PostgresQualifiedName("public", "heap"),

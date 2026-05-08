@@ -1,9 +1,8 @@
 """Federated multi-index search: per-member adapters merged with weighted RRF."""
 
 import asyncio
-import uuid
 from functools import partial
-from typing import Any, Final, Literal, Sequence, TypeVar, final, overload
+from typing import Final, Literal, Sequence, TypeVar, final, overload
 
 import attrs
 from pydantic import BaseModel
@@ -27,10 +26,11 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
-    SearchResultSnapshotPort,
     SearchResultSnapshotSpec,
+    prepare_federated_search_options,
 )
 from forze.application.contracts.tx import TxScopedPort, TxScopeKey
+from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
@@ -38,74 +38,18 @@ from forze.base.serialization import pydantic_validate_many
 from ...kernel.db_gather import gather_db_work
 from ...kernel.platform import PostgresClientPort
 from ..txmanager import PostgresTxScopeKey
-from ._options import prepare_federated_search_options
-from .federated_snapshot import (
-    effective_snapshot_chunk_size,
-    effective_snapshot_max_ids,
-    effective_snapshot_ttl,
-    federated_fingerprint,
-    federated_row_key_string,
-    hydrate_federated_row_key,
-    should_write_federated_snapshot,
-)
 
 # ----------------------- #
 
 T = TypeVar("T", bound=BaseModel)
 
+# ....................... #
+
 _DEFAULT_RRF_K: Final[int] = 60
 _DEFAULT_PER_LEG_LIMIT: Final[int] = 5000
 
 
-def weighted_rrf_merge_rows(
-    *,
-    leg_rows: Sequence[tuple[str, Sequence[BaseModel], float]],
-    k: int,
-) -> list[tuple[FederatedSearchReadModel[Any], float]]:
-    """Merge ranked hit lists with weighted reciprocal rank fusion (RRF).
-
-    Each tuple is ``(member, hits in relevance order, member_weight)`` where
-    ``member`` is the leg :class:`~forze.application.contracts.search.SearchSpec`
-    ``name``. Rows with non-positive member weights are skipped. RRF contribution
-    per row is ``weight / (k + rank)`` with **1-based** ``rank``.
-    """
-
-    scores: dict[str, float] = {}
-    models: dict[str, FederatedSearchReadModel[Any]] = {}
-
-    for member, hits, weight in leg_rows:
-        if weight <= 0.0:
-            continue
-
-        for rank, hit in enumerate(hits, start=1):
-            key = _federated_row_key(member, hit)
-            contrib = float(weight) / (float(k) + float(rank))
-            scores[key] = scores.get(key, 0.0) + contrib
-
-            if key not in models:
-                models[key] = FederatedSearchReadModel(
-                    hit=hit,
-                    member=member,
-                )
-
-    ordered = sorted(
-        scores.keys(),
-        key=lambda rk: (-scores[rk], models[rk].member, rk),
-    )
-
-    return [(models[rk], scores[rk]) for rk in ordered]
-
-
-def _federated_row_key(member: str, hit: BaseModel) -> str:
-    return federated_row_key_string(member, hit)
-
-
-def _federated_merged_hit_field(
-    item: tuple[FederatedSearchReadModel[Any], float],
-    *,
-    field: str,
-) -> Any:
-    return getattr(item[0].hit, field)
+# ....................... #
 
 
 @final
@@ -143,8 +87,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     postgres_client: PostgresClientPort | None = None
     """When set, leg queries respect pool / transaction concurrency rules."""
 
-    snapshot_store: SearchResultSnapshotPort | None = None
-    """Optional store for ordered RRF row keys to accelerate subsequent pages (same search request)."""
+    snapshot_coord: SearchResultSnapshotCoordinator | None = None
+    """Coordinator for federation snapshot runs."""
 
     tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
@@ -290,9 +234,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
-        page_limit = max(1, int(limit)) if limit is not None else 20
 
-        fp_computed = federated_fingerprint(
+        fp_computed = SearchResultSnapshotCoordinator.federated_fingerprint(
             query,
             filters,
             sorts,
@@ -301,80 +244,24 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         )
 
         if (
-            self.snapshot_store is not None
+            self.snapshot_coord is not None
             and rs_spec is not None
             and snapshot is not None
             and "id" in snapshot
         ):
-            if "fingerprint" in snapshot:
-                sub_fp = str(snapshot["fingerprint"])
-
-            else:
-                sub_fp = None
-
-            raw_keys = await self.snapshot_store.get_id_range(
-                str(snapshot["id"]),
-                offset,
-                page_limit,
-                expected_fingerprint=sub_fp,
+            maybe_page = (
+                await self.snapshot_coord.read_federated_snapshot_page_if_requested(
+                    federated_spec=self.federated_spec,
+                    rs_spec=rs_spec,
+                    snapshot=snapshot,
+                    fp_computed=fp_computed,
+                    pagination=dict(pagination or {}),
+                    return_type=return_type,
+                    return_count=return_count,
+                )
             )
-
-            if raw_keys is not None:
-                sm = await self.snapshot_store.get_meta(str(snapshot["id"]))
-                total_snap = (
-                    int(sm.total) if sm and sm.complete else offset + len(raw_keys)
-                )
-                fp_h = (sm and sm.fingerprint) or fp_computed
-                handle = SearchSnapshotHandle(
-                    id=str(snapshot["id"]),
-                    fingerprint=fp_h,
-                    total=total_snap,
-                    capped=False,
-                )
-
-                hydrated = [
-                    hydrate_federated_row_key(k, self.federated_spec) for k in raw_keys
-                ]
-
-                if return_type is not None:
-                    rows2 = [
-                        {
-                            "hit": it.hit.model_dump(mode="json"),
-                            "member": it.member,
-                        }
-                        for it in hydrated
-                    ]
-                    v2 = pydantic_validate_many(return_type, rows2)
-
-                    if return_count:
-                        return page_from_limit_offset(
-                            v2,
-                            pagination,
-                            total=total_snap,
-                            snapshot=handle,
-                        )
-
-                    return page_from_limit_offset(
-                        v2,
-                        pagination,
-                        total=None,
-                        snapshot=handle,
-                    )
-
-                if return_count:
-                    return page_from_limit_offset(
-                        hydrated,
-                        pagination,
-                        total=total_snap,
-                        snapshot=handle,
-                    )
-
-                return page_from_limit_offset(
-                    hydrated,
-                    pagination,
-                    total=None,
-                    snapshot=handle,
-                )
+            if maybe_page is not None:
+                return maybe_page
 
         active = [
             (name, port, member_weights[i])
@@ -421,12 +308,18 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 *(_run_leg(n, p, w) for n, p, w in active),
             )
 
-        merged = weighted_rrf_merge_rows(leg_rows=leg_results, k=int(self.rrf_k))
+        merged = SearchResultSnapshotCoordinator.weighted_rrf_merge_rows(
+            leg_rows=leg_results,
+            k=int(self.rrf_k),
+        )
 
         if sorts:
             for field, direction in reversed(list(sorts.items())):
                 merged.sort(
-                    key=partial(_federated_merged_hit_field, field=field),
+                    key=partial(
+                        SearchResultSnapshotCoordinator.federated_merged_hit_field,
+                        field=field,
+                    ),
                     reverse=(direction == "desc"),
                 )
 
@@ -436,35 +329,27 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         handle_out: SearchSnapshotHandle | None = None
 
         if (
-            self.snapshot_store is not None
+            self.snapshot_coord is not None
             and rs_spec is not None
-            and should_write_federated_snapshot(snapshot, rs_spec)
+            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
         ):
-            max_n = effective_snapshot_max_ids(snapshot, rs_spec)
+            max_n = self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
             to_store = merged[:max_n]
-            capped = total > len(to_store)
+
             row_keys = [
-                federated_row_key_string(item[0].member, item[0].hit)
+                SearchResultSnapshotCoordinator.federated_record_key_string(
+                    item[0].member,
+                    item[0].hit,
+                )
                 for item in to_store
             ]
 
-            run_id = str(uuid.uuid4())
-            put_ttl = effective_snapshot_ttl(snapshot, rs_spec)
-            put_chunk = effective_snapshot_chunk_size(snapshot, rs_spec)
-
-            await self.snapshot_store.put_run(
-                run_id=run_id,
-                fingerprint=fp_computed,
-                ordered_ids=row_keys,
-                ttl=put_ttl,
-                chunk_size=put_chunk,
-            )
-
-            handle_out = SearchSnapshotHandle(
-                id=run_id,
-                fingerprint=fp_computed,
-                total=len(row_keys),
-                capped=capped,
+            handle_out = await self.snapshot_coord.put_ordered_snapshot_keys(
+                row_keys,
+                snap_opt=snapshot,
+                rs_spec=rs_spec,
+                fp_computed=fp_computed,
+                pool_len_before_cap=total,
             )
 
         window = merged[offset:]
