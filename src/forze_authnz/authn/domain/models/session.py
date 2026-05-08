@@ -24,7 +24,7 @@ class SessionImmutableFields(CoreModel):
     family_id: UUID = Field(default_factory=uuid4, frozen=True)
     """Family ID."""
 
-    refresh_digest: bytes = Field(frozen=True)
+    refresh_digest: str = Field(frozen=True)
     """Refresh hash digest."""
 
     expires_at: datetime = Field(frozen=True)

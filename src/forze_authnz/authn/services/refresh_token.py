@@ -39,14 +39,14 @@ class RefreshTokenService:
 
     # ....................... #
 
-    def calculate_token_digest(self, token: str) -> bytes:
+    def calculate_token_digest(self, token: str) -> str:
         raw = self._b64url_decode(token)
 
-        return hmac.new(self.pepper, raw, hashlib.sha256).digest()
+        return hmac.new(self.pepper, raw, hashlib.sha256).hexdigest()
 
     # ....................... #
 
-    def verify_token(self, token: str, expected_digest: bytes) -> bool:
+    def verify_token(self, token: str, expected_digest: str) -> bool:
         try:
             got = self.calculate_token_digest(token)
 
