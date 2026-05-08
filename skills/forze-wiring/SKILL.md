@@ -1,20 +1,24 @@
 ---
 name: forze-wiring
-description: Wire Forze runtime, dependencies, composition, and interface (FastAPI). Apply when the user asks to set up the application, configure adapters, or expose endpoints.
+description: >-
+  Wires Forze ExecutionRuntime, DepsPlan, lifecycle, Postgres/Redis/Mock deps
+  modules, document/search composition, UsecasePlan transactions, FastAPI
+  routers, and DTO mapping. Use when bootstrapping an app, registering adapters,
+  or exposing HTTP endpoints with forze_fastapi.
 ---
 
 # Forze Wiring
 
-Use this skill when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer (e.g. FastAPI).
+Use when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer (e.g. FastAPI). For mapping logical spec names to tables and Redis namespaces, see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md). For day-to-day usecase code, see [`forze-framework-usage`](forze-framework-usage/SKILL.md).
 
 ## Runtime setup
 
 ### Dependency plan
 
-Combine adapter modules with `Deps.merge`. Each integration package provides a `*DepsModule`:
+Pass **`DepsModule` instances** to `DepsPlan.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreError`).
 
 ```python
-from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
+from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
 from forze_postgres import PostgresDepsModule, postgres_lifecycle_step, PostgresClient, PostgresConfig
 from forze_redis import RedisDepsModule, redis_lifecycle_step, RedisClient, RedisConfig
 
@@ -22,18 +26,25 @@ postgres_client = PostgresClient()
 redis_client = RedisClient()
 
 deps_plan = DepsPlan.from_modules(
-    lambda: Deps.merge(
-        PostgresDepsModule(
-            client=postgres_client,
-            rev_bump_strategy="database",
-            history_write_strategy="database",
-        )(),
-        RedisDepsModule(client=redis_client)(),
+    PostgresDepsModule(
+        client=postgres_client,
+        rw_documents={
+            "projects": {
+                "read": ("public", "projects"),
+                "write": ("public", "projects"),
+                "bookkeeping_strategy": "database",
+            },
+        },
+        tx={"default"},
+    ),
+    RedisDepsModule(
+        client=redis_client,
+        caches={"projects": {"namespace": "app:projects"}},
     ),
 )
 ```
 
-`Deps.merge` raises if any key is registered twice — catches misconfiguration early.
+Alternatively, a single callable module may return `Deps.merge(...)` — see [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md).
 
 ### Lifecycle plan
 
@@ -58,25 +69,24 @@ lifecycle_plan = LifecyclePlan.from_steps(
 runtime = ExecutionRuntime(deps=deps_plan, lifecycle=lifecycle_plan)
 ```
 
-Run the app inside `runtime.scope()`:
+Run work inside `runtime.scope()`:
 
 ```python
 async with runtime.scope():
     ctx = runtime.get_context()
-    # Application runs here
 ```
 
 ## Document composition
 
-### Registry and plan
+### Registry and transaction plan
 
-`build_document_registry` registers standard CRUD usecases. `tx_document_plan` wraps them in transactions:
+`build_document_registry` registers standard CRUD usecases. **Transactions are not implicit** — attach a `UsecasePlan` with `.tx(..., route=...)` / `DocumentOperation` keys, or use `build_default_tx_document_plan`:
 
 ```python
 from forze.application.composition.document import (
     DocumentDTOs,
+    build_default_tx_document_plan,
     build_document_registry,
-    tx_document_plan,
 )
 
 project_dtos = DocumentDTOs(
@@ -86,15 +96,32 @@ project_dtos = DocumentDTOs(
 )
 
 registry = build_document_registry(project_spec, project_dtos)
-registry.extend_plan(tx_document_plan, inplace=True)
+registry.extend_plan(build_default_tx_document_plan("default"), inplace=True)
+```
+
+Equivalent explicit plan:
+
+```python
+from forze.application.composition.document import DocumentOperation
+from forze.application.execution import UsecasePlan
+
+document_plan = (
+    UsecasePlan()
+    .tx(DocumentOperation.CREATE, route="default")
+    .tx(DocumentOperation.UPDATE, route="default")
+    .tx(DocumentOperation.KILL, route="default")
+    .tx(DocumentOperation.DELETE, route="default")
+    .tx(DocumentOperation.RESTORE, route="default")
+)
+registry.extend_plan(document_plan, inplace=True)
 ```
 
 ### Custom usecases and middleware
 
-Add custom operations and guards/effects:
-
 ```python
-from forze.application.composition.document import DocumentOperation, tx_document_plan
+from forze.application.composition.document import DocumentOperation
+from forze.application.execution import UsecasePlan
+
 
 def auth_guard(ctx):
     async def guard(args):
@@ -102,21 +129,32 @@ def auth_guard(ctx):
             raise PermissionError("Not authorized")
     return guard
 
-plan = (
-    tx_document_plan
-    .tx("archive")  # Add transaction for custom op
+
+extra_plan = (
+    UsecasePlan()
     .before(DocumentOperation.CREATE, auth_guard, priority=100)
     .after_commit(DocumentOperation.CREATE, notify_effect)
 )
+registry.extend_plan(extra_plan, inplace=True)
+```
 
-registry = build_document_registry(project_spec, project_dtos)
-registry = registry.register("archive", lambda ctx: ArchiveProject(ctx=ctx))
-registry.extend_plan(plan, inplace=True)
+Custom operations use **string** keys merged into the same registry/plan:
+
+```python
+registry.register(
+    "archive",
+    lambda ctx: ArchiveProject(ctx=ctx),
+    inplace=True,
+)
+registry.extend_plan(
+    UsecasePlan().tx("archive", route="default"),
+    inplace=True,
+)
 ```
 
 ### Plan buckets (order)
 
-`outer_before` → `outer_wrap` → [transaction] → `in_tx_before` → `in_tx_wrap` → usecase → `in_tx_after` → `outer_after` → `after_commit`. Higher priority runs first (outermost).
+`outer_before` → `outer_wrap` → [transaction] → `in_tx_before` → `in_tx_wrap` → usecase → `in_tx_after` → `outer_after` → `after_commit`. Higher priority runs first within a bucket.
 
 ## FastAPI integration
 
@@ -149,10 +187,14 @@ app.include_router(
 ```python
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with runtime.scope():
         yield
+
 
 app = FastAPI(lifespan=lifespan)
 ```
@@ -162,7 +204,8 @@ app = FastAPI(lifespan=lifespan)
 Inject computed fields (e.g. `number_id`, `creator_id`) before the usecase:
 
 ```python
-from forze.application.mapping import NumberIdStep, CreatorIdStep, build_document_create_mapper
+from forze.application.composition.document import build_document_create_mapper
+from forze.application.mapping import CreatorIdStep, NumberIdStep
 
 mapper = (
     build_document_create_mapper(project_spec, project_dtos)
@@ -172,19 +215,19 @@ mapper = (
 
 ## Testing with Mock
 
-No external services needed:
+In-memory adapters — no external services:
 
 ```python
 from forze.application.execution import DepsPlan, ExecutionRuntime
 from forze_mock import MockDepsModule
 
-module = MockDepsModule()
-runtime = ExecutionRuntime(deps=DepsPlan.from_modules(module))
+mock_module = MockDepsModule()
+runtime = ExecutionRuntime(deps=DepsPlan.from_modules(mock_module))
 
 async with runtime.scope():
     ctx = runtime.get_context()
-    doc = ctx.doc_read(project_spec)
-    result = await doc.get(some_uuid)
+    doc_q = ctx.doc_query(project_spec)
+    result = await doc_q.get(some_uuid)
 ```
 
 ## Search composition
@@ -195,6 +238,7 @@ from forze.application.composition.search import (
     SearchUsecasesFacade,
     build_search_registry,
 )
+from forze.application.dto.search import SearchRequestDTO
 
 search_dtos = SearchDTOs(read=ProjectReadModel)
 search_registry = build_search_registry(project_search_spec, search_dtos)
@@ -205,7 +249,14 @@ result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 
 ## Anti-patterns
 
-1. **Building Deps manually for production** — use `DepsPlan.from_modules` with integration modules.
-2. **Skipping lifecycle** — real adapters need connection pools started/stopped.
-3. **Creating context outside scope** — `get_context()` raises if not inside `runtime.scope()`.
-4. **Forgetting `ctx_dep`** — FastAPI router needs it to resolve ports per request.
+1. **Hand-building `Deps` for production** — prefer `DepsPlan.from_modules` and integration modules.
+2. **Skipping lifecycle** — real adapters need pools started/stopped.
+3. **`get_context()` outside `runtime.scope()`** — raises `RuntimeError`.
+4. **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.
+5. **Expecting `tx_document_plan`** — use `build_default_tx_document_plan` or an explicit `UsecasePlan`.
+
+## Reference
+
+- [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md)
+- [`pages/docs/core-package/composition.md`](../../pages/docs/core-package/composition.md)
+- [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)

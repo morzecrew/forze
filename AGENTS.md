@@ -101,6 +101,8 @@ Use them for:
 - `tests/unit/`: unit tests, typically mirroring `src` layout.
 - `tests/integration/`: integration tests with external dependencies.
 - `tests/perf/`: performance benchmarks (require Docker).
+- `skills/`: published [Agent Skills](https://agentskills.io/) (`SKILL.md` per skill); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`).
+- `skills/`: published [Agent Skills](https://agentskills.io/) (`SKILL.md` per skill); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`).
 
 ## Operating rules for agents
 

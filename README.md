@@ -66,9 +66,10 @@ Skills are automatically available once installed. The agent will use them when 
 
 | Name | Description |
 | -------- | -------- |
-|**forze-framework-usage** | Write code that uses the framework correctly according to the core concepts. |
-|**forze-domain-aggregates** | Define domain models, document aggregates, and specifications. |
-|**forze-wiring** | Wire runtime, dependencies, lifecycle, usecase composition, and interface layer. |
+| **forze-framework-usage** | ExecutionContext, document query/command ports, search, cache, counters, storage, and transactions in usecases. |
+| **forze-domain-aggregates** | Document aggregates, mixins, validators, kernel `DocumentSpec` / `SearchSpec`, and composition DTOs. |
+| **forze-wiring** | Runtime, deps modules, lifecycle, document/search composition, `UsecasePlan`, FastAPI routers, mapping. |
+| **forze-specs-infrastructure** | Mapping logical spec names to Postgres/Mongo/Redis configs and transaction routes. |
 
 ## Versioning
 

@@ -1,11 +1,15 @@
 ---
 name: forze-framework-usage
-description: Write code that uses the Forze framework correctly. Apply when the user asks to implement features, usecases, or integrate Forze into their application.
+description: >-
+  Guides correct use of Forze ExecutionContext, document/query/command ports,
+  search, cache, counters, storage, and transactions in usecases. Use when
+  implementing features or usecases with Forze, DocumentSpec, SearchSpec,
+  hexagonal ports, or integrating application code with the runtime.
 ---
 
 # Forze Framework Usage
 
-Use this skill when writing code that **uses** Forze (not when developing new adapters). The agent must understand framework concepts and produce code aligned with Forze patterns.
+Use when writing code that **consumes** Forze (not when authoring new adapters). Pair with [`forze-domain-aggregates`](forze-domain-aggregates/SKILL.md) for models/specs and [`forze-wiring`](forze-wiring/SKILL.md) for runtime and composition.
 
 ## Core concepts
 
@@ -22,66 +26,71 @@ Usecases and domain models **never** import adapter classes or infrastructure pa
 
 ### Contracts and adapters
 
-The application declares **what** it needs via protocol interfaces (contracts). Infrastructure provides **how** (adapters). Usecases resolve ports from `ExecutionContext`; they never import adapters.
+The application declares **what** it needs via protocol interfaces (contracts). Infrastructure provides **how** (adapters). Resolve ports from `ExecutionContext`; never import adapters into usecases.
 
 ```python
 # Correct: resolve port from context
-doc = self.ctx.doc_read(project_spec)
-result = await doc.get(some_id)
+doc_q = self.ctx.doc_query(project_spec)
+result = await doc_q.get(some_id)
 
 # Wrong: importing adapter
-from forze_postgres import PostgresDocumentAdapter  # Never do this in usecases
+from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in usecases
 ```
 
 ### Execution context
 
-`ExecutionContext` is the central resolution point. Usecases receive `ctx` and resolve ports from it:
+`ExecutionContext` resolves infrastructure by **logical spec** (`spec.name` routes factories). Common helpers:
 
-| Method | Returns | Example |
-|--------|---------|---------|
-| `ctx.doc_read(spec)` | DocumentReadPort | `doc = ctx.doc_read(project_spec)` |
-| `ctx.doc_write(spec)` | DocumentWritePort | `doc = ctx.doc_write(project_spec)` |
-| `ctx.cache(spec)` | CachePort | `cache = ctx.cache(cache_spec)` |
-| `ctx.counter(namespace)` | CounterPort | `counter = ctx.counter("tickets")` |
-| `ctx.storage(bucket)` | StoragePort | `storage = ctx.storage("attachments")` |
-| `ctx.search(spec)` | SearchReadPort | `search = ctx.search(search_spec)` |
-| `ctx.txmanager()` | TxManagerPort | `tx = ctx.txmanager()` |
+| Method | Returns | Notes |
+|--------|---------|--------|
+| `dep(key, route=...)` | `T` | Generic resolution by `DepKey` |
+| `doc_query(spec)` | `DocumentQueryPort` | Reads, listings |
+| `doc_command(spec)` | `DocumentCommandPort` | Creates, updates, deletes |
+| `cache(spec)` | `CachePort` | `CacheSpec` |
+| `counter(spec)` | `CounterPort` | `CounterSpec` |
+| `storage(spec)` | `StoragePort` | `StorageSpec` |
+| `search_query(spec)` | `SearchQueryPort` | Full-text search |
+| `txmanager(route)` | `TxManagerPort` | Transaction route (e.g. `"default"`) |
 
-For contracts without a convenience method, use `ctx.dep(DepKey)(ctx, spec)`.
+Also available: `embeddings_provider`, `hub_search_query`, `federated_search_query`, distributed lock query/command, tenant resolver — see [`pages/docs/core-package/execution.md`](../../pages/docs/core-package/execution.md).
+
+For keys without a convenience method, use `ctx.dep(DepKey, route=...)`.
 
 ### Usecase pattern
 
-Usecases extend `Usecase[Args, R]`, receive `ExecutionContext`, and implement `main(args) -> R`:
+Usecases extend `Usecase[Args, R]`, hold `ExecutionContext`, implement `main(args) -> R`:
 
 ```python
 from forze.application.execution import Usecase
 
 class GetProject(Usecase[UUID, ProjectReadModel]):
     async def main(self, args: UUID) -> ProjectReadModel:
-        doc = self.ctx.doc_read(project_spec)
-        result = await doc.get(args)
-        if result is None:
-            raise NotFoundError("Project not found")
-        return result
+        doc_q = self.ctx.doc_query(project_spec)
+        return await doc_q.get(args)
 ```
 
-Usecases resolve ports from `self.ctx`; they do not receive ports via constructor (except when built by composition factories).
+Typical reads raise `NotFoundError` when missing (adapter-defined); do not assume `None`.
+
+Usecases resolve ports from `self.ctx`; they do not take ports in the constructor except when composition factories inject them.
 
 ### Transactions
 
-Use `ctx.transaction()` for transactional scope. Nested calls reuse the same transaction (savepoints when supported):
+`transaction(route)` is an **async context manager**. Pass the **same route** registered on your deps module (e.g. Postgres `tx={"default"}`). Nested calls reuse the active transaction (savepoints when supported). Mixing incompatible managers in one scope raises `CoreError`.
 
 ```python
-async with self.ctx.transaction():
-    doc = self.ctx.doc_write(project_spec)
-    await doc.create(cmd1)
-    await doc.create(cmd2)
-    # Both commit or roll back together
+async with self.ctx.transaction("default"):
+    doc_c = self.ctx.doc_command(project_spec)
+    await doc_c.create(cmd1)
+    await doc_c.create(cmd2)
 ```
+
+### Identity and tenancy
+
+Bind `AuthnIdentity` / `TenantIdentity` at the HTTP or worker boundary when needed (e.g. FastAPI `ContextBindingMiddleware`). See [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md) and [`pages/docs/core-package/contracts.md`](../../pages/docs/core-package/contracts.md).
 
 ## Query syntax
 
-Filters use a shared DSL. Shape: `{"$fields": {...}}`, `{"$and": [expr, ...]}`, `{"$or": [expr, ...]}`.
+Filters use the shared DSL: `{"$fields": {...}}`, `{"$and": [...]}`, `{"$or": [...]}`.
 
 **Field shortcuts:**
 
@@ -97,62 +106,76 @@ Filters use a shared DSL. Shape: `{"$fields": {...}}`, `{"$and": [expr, ...]}`, 
 
 ```python
 filters = {"$fields": {"status": "active", "is_deleted": False}}
-rows, total = await doc.find_many(filters=filters, limit=20, offset=0, sorts={"created_at": "desc"})
+rows, total = await doc_q.find_many(
+    filters=filters, limit=20, offset=0, sorts={"created_at": "desc"}
+)
 ```
 
 ## Common patterns
 
-### Document CRUD
+### Document reads and writes
 
-Use `DocumentReadPort` for reads, `DocumentWritePort` for mutations. Both accept a `DocumentSpec`:
+Use `doc_query` for read-only operations and `doc_command` for mutations:
 
 ```python
-doc_read = self.ctx.doc_read(project_spec)
-doc_write = self.ctx.doc_write(project_spec)
+doc_q = self.ctx.doc_query(project_spec)
+doc_c = self.ctx.doc_command(project_spec)
 
-# Read
-project = await doc_read.get(id)
-rows, total = await doc_read.find_many(filters=..., limit=20, offset=0)
+project = await doc_q.get(doc_id)
+rows, total = await doc_q.find_many(filters=..., limit=20, offset=0)
 
-# Write
-created = await doc_write.create(CreateProjectCmd(title="New"))
-updated = await doc_write.update(id, UpdateProjectCmd(title="Updated"), rev=current_rev)
-await doc_write.delete(id, rev=current_rev)  # soft delete
-await doc_write.kill(id)  # hard delete
+created = await doc_c.create(CreateProjectCmd(title="New"))
+updated = await doc_c.update(
+    doc_id, current_rev, UpdateProjectCmd(title="Updated")
+)
+await doc_c.delete(doc_id, current_rev)
+await doc_c.kill(doc_id)
 ```
 
 ### Search
 
 ```python
-search = self.ctx.search(project_search_spec)
+search = self.ctx.search_query(project_search_spec)
 hits, total = await search.search(query="roadmap", filters=..., limit=20, offset=0)
 ```
 
 ### Counter (e.g. number_id)
 
 ```python
-counter = self.ctx.counter("projects")
+from forze.application.contracts.counter import CounterSpec
+
+counter = self.ctx.counter(CounterSpec(name="tickets"))
 next_id = await counter.incr()
 ```
 
 ### Object storage
 
 ```python
-storage = self.ctx.storage("attachments")
+from forze.application.contracts.storage import StorageSpec
+
+storage = self.ctx.storage(StorageSpec(name="attachments"))
 stored = await storage.upload("file.pdf", data, description="Contract")
 downloaded = await storage.download(stored.key)
 ```
 
+## Gotchas
+
+- **`doc_read` / `doc_write` are obsolete** — use `doc_query` / `doc_command`.
+- **`ctx.search` is obsolete** — use `ctx.search_query(spec)`.
+- **`ctx.counter("name")` is wrong** — pass `CounterSpec(name=...)`.
+- **`ctx.storage("bucket")` is wrong** — pass `StorageSpec(name=...)`.
+- **`transaction()` requires a route** — must match a registered tx manager route.
+- **Do not nest incompatible tx backends** (e.g. Postgres + Mongo in one scope).
+
 ## Anti-patterns
 
-1. **Importing adapters in usecases** — resolve via `ctx.doc_read(spec)` etc.
-2. **Domain importing application/infrastructure** — domain is pure, no ports or DB.
-3. **Mixing transaction scopes** — don't resolve Postgres and Mongo ports in the same transaction.
-4. **Using raw SQL/ORM in usecases** — use document/search/cache ports instead.
-5. **Creating ExecutionContext manually** — get it from `runtime.get_context()` or `ctx_dep`.
+1. Importing adapters in usecases — resolve via `ctx.doc_query` / `doc_command` / other ports.
+2. Domain importing application or infrastructure — keep domain pure.
+3. Raw SQL/ORM in usecases — use document/search/cache/storage ports.
+4. Constructing `ExecutionContext` by hand in apps — obtain via `runtime.get_context()` or FastAPI `ctx_dep`.
 
 ## Reference
 
-- Docs: `pages/docs/` (getting-started, core-concepts, core-package, integrations)
-- Contracts catalog: `pages/docs/core-concepts/contracts-adapters.md`
-- Query syntax: `pages/docs/core-package/query-syntax.md`
+- [`pages/docs/core-package/execution.md`](../../pages/docs/core-package/execution.md)
+- [`pages/docs/core-concepts/contracts-adapters.md`](../../pages/docs/core-concepts/contracts-adapters.md)
+- [`pages/docs/core-package/query-syntax.md`](../../pages/docs/core-package/query-syntax.md)

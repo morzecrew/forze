@@ -1,15 +1,21 @@
 ---
 name: forze-domain-aggregates
-description: Define domain models, document aggregates, and specifications for Forze. Apply when the user asks to create entities, models, specs, or DTOs.
+description: >-
+  Defines Forze document aggregates (Document, commands, ReadDocument),
+  mixins, validators, kernel DocumentSpec and SearchSpec. Use when modeling
+  entities, DTOs, DocumentSpec, SearchSpec, CacheSpec, or aligning schemas with
+  Forze domain and application contracts.
 ---
 
 # Forze Domain Aggregates
 
-Use this skill when defining domain models, document aggregates, and specifications. Focus on **usage** — creating aggregates that work with Forze's document and composition layers.
+Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, and Redis namespaces belong in integration configs — see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md) and [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md).
+
+Pair with [`forze-framework-usage`](forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](forze-wiring/SKILL.md) for composition and HTTP.
 
 ## Document aggregate structure
 
-Every document aggregate needs four model types:
+Every document aggregate typically defines four model types:
 
 | Type | Base class | Purpose |
 |------|------------|---------|
@@ -42,18 +48,21 @@ class ProjectReadModel(ReadDocument):
 
 ## Document base fields
 
-`Document` provides: `id`, `rev`, `created_at`, `last_update_at`. `CreateDocumentCmd` optionally accepts `id` and `created_at` for imports. `ReadDocument` includes the same core fields.
+`Document` provides: `id`, `rev`, `created_at`, `last_update_at`. `CreateDocumentCmd` optionally accepts `id` and `created_at` for imports. `ReadDocument` carries the same core fields.
 
 ## Mixins
 
 | Mixin | Adds | Use when |
 |-------|------|----------|
-| `SoftDeletionMixin` | `is_deleted` | Soft-delete support; blocks updates when deleted |
-| `NumberMixin` | `number_id` | Human-readable IDs (use `NumberIdStep` in mapper) |
-| `CreatorMixin` | `creator_id` | Audit trail (use `CreatorIdStep` in mapper) |
-| `NameMixin` | `name`, `display_name`, etc. | Named entities |
+| `SoftDeletionMixin` | `is_deleted` | Soft-delete support |
+| `NumberMixin` | `number_id` | Human-readable IDs (combine with `NumberIdStep` in mapping) |
+| `CreatorMixin` | `creator_id` | Audit (`CreatorIdStep`) |
+| `NameMixin` | `name`, `display_name`, … | Named entities |
 
 ```python
+from forze.domain.mixins import NumberCreateCmdMixin, NumberMixin, SoftDeletionMixin
+from forze.domain.models import CreateDocumentCmd, Document
+
 class Ticket(NumberMixin, SoftDeletionMixin, Document):
     title: str
 
@@ -63,7 +72,7 @@ class CreateTicketCmd(NumberCreateCmdMixin, CreateDocumentCmd):
 
 ## Update validators
 
-Enforce business rules during `Document.update()`:
+Enforce rules during `Document.update()`:
 
 ```python
 from forze.domain.validation import update_validator
@@ -79,77 +88,77 @@ class Project(Document):
             raise ValidationError("Invalid status transition.")
 ```
 
-## DocumentSpec
+## DocumentSpec (kernel)
 
-Binds the aggregate to storage, cache, and history. Adapters read it — you declare once:
+`DocumentSpec` binds **model types** and logical `name`. It does **not** embed SQL `source` strings or Mongo collection names — those live on `PostgresDocumentConfig`, `MongoDocumentConfig`, etc., keyed by the same `name`.
 
 ```python
 from datetime import timedelta
+
+from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 
 project_spec = DocumentSpec(
-    namespace="projects",
-    read={"source": "public.projects", "model": ProjectReadModel},
+    name="projects",
+    read=ProjectReadModel,
     write={
-        "source": "public.projects",
-        "models": {
-            "domain": Project,
-            "create_cmd": CreateProjectCmd,
-            "update_cmd": UpdateProjectCmd,
-        },
+        "domain": Project,
+        "create_cmd": CreateProjectCmd,
+        "update_cmd": UpdateProjectCmd,
     },
-    history={"source": "public.projects_history"},
-    cache={"enabled": True, "ttl": timedelta(minutes=5)},
+    history_enabled=True,
+    cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
 )
 ```
 
 | Field | Purpose |
 |-------|---------|
-| `namespace` | Cache key prefix, logical name |
-| `read` | Source relation + read model |
-| `write` | Source + domain, create_cmd, update_cmd |
-| `history` | Optional audit trail source |
-| `cache` | Optional cache (enabled, ttl) |
+| `name` | Logical route id; must match infra config keys |
+| `read` | Read model type |
+| `write` | `domain`, `create_cmd`, optional `update_cmd`; omit / shape for read-only |
+| `history_enabled` | Adapter may persist revision history when infra provides it |
+| `cache` | Optional `CacheSpec` for read-through caching |
 
-## SearchSpec
+Use `spec.supports_soft_delete()`, `supports_update()`, `supports_number_id()` when branching composition logic.
 
-For full-text search, define separately:
+## SearchSpec (kernel)
+
+Search is separate from `DocumentSpec`:
 
 ```python
 from forze.application.contracts.search import SearchSpec
 
 project_search_spec = SearchSpec(
-    namespace="projects",
-    model=ProjectReadModel,
-    indexes={
-        "idx_title": {
-            "source": "public.projects",
-            "fields": [{"path": "title"}],
-        },
-    },
-    default_index="idx_title",
+    name="projects",
+    model_type=ProjectReadModel,
+    fields=("title", "description"),
+    default_weights={"title": 0.6, "description": 0.4},
 )
 ```
 
+Postgres index and heap layout are configured per integration (`PostgresSearchConfig` under the same `name`).
+
 ## Database schema alignment
 
-Column names must match Pydantic field names. Core fields: `id`, `rev`, `created_at`, `last_update_at`. Add mixin fields (`is_deleted`, `number_id`, `creator_id`) and domain fields.
+Column names must match Pydantic field names. Core columns: `id`, `rev`, `created_at`, `last_update_at`. Add mixin fields (`is_deleted`, `number_id`, `creator_id`) and domain fields as needed.
+
+The following illustrates a typical Postgres table; **table placement is infrastructure**, not part of `DocumentSpec`:
 
 ```sql
 CREATE TABLE public.projects (
-    id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    rev         integer     NOT NULL DEFAULT 1,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    last_update_at timestamptz NOT NULL DEFAULT now(),
-    is_deleted  boolean     NOT NULL DEFAULT false,
-    title       text        NOT NULL,
-    description text        NOT NULL
+    id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    rev              integer     NOT NULL DEFAULT 1,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    last_update_at   timestamptz NOT NULL DEFAULT now(),
+    is_deleted       boolean     NOT NULL DEFAULT false,
+    title            text        NOT NULL,
+    description      text        NOT NULL
 );
 ```
 
 ## DocumentDTOs for composition
 
-When using `build_document_registry` and FastAPI router:
+When using `build_document_registry` and FastAPI routers:
 
 ```python
 from forze.application.composition.document import DocumentDTOs
@@ -163,7 +172,12 @@ project_dtos = DocumentDTOs(
 
 ## Anti-patterns
 
-1. **Domain model importing ports or adapters** — domain is pure.
-2. **Update command with required fields** — use `None` defaults for partial updates.
-3. **Read model with mutable defaults** — use `frozen=True` semantics (ReadDocument is frozen).
-4. **Spec with wrong source** — `source` must match actual table/collection name.
+1. **Domain importing ports or adapters** — domain stays pure.
+2. **Update command with required fields** — use optional fields with `None` defaults for partial patches.
+3. **Mutable defaults on read models** — `ReadDocument` is frozen.
+4. **Putting physical `source` / table names on `DocumentSpec`** — keep specs kernel-only; wire tables in deps modules.
+
+## Reference
+
+- [`pages/docs/core-concepts/aggregate-specification.md`](../../pages/docs/core-concepts/aggregate-specification.md)
+- [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md)
