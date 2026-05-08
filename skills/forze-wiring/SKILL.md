@@ -1,15 +1,15 @@
 ---
 name: forze-wiring
 description: >-
-  Wires Forze ExecutionRuntime, DepsPlan, lifecycle, Postgres/Redis/Mock deps
-  modules, document/search composition, UsecasePlan transactions, FastAPI
-  routers, and DTO mapping. Use when bootstrapping an app, registering adapters,
-  or exposing HTTP endpoints with forze_fastapi.
+  Wires Forze ExecutionRuntime, DepsPlan, lifecycle, built-in deps modules,
+  document/search composition, UsecasePlan transactions, and interface entry
+  points. Use when bootstrapping an app or composing runtime, lifecycle, and
+  usecase registries.
 ---
 
 # Forze Wiring
 
-Use when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer (e.g. FastAPI). For mapping logical spec names to tables and Redis namespaces, see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md). For day-to-day usecase code, see [`forze-framework-usage`](forze-framework-usage/SKILL.md).
+Use when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](forze-fastapi-interface/SKILL.md). For day-to-day usecase code, see [`forze-framework-usage`](forze-framework-usage/SKILL.md).
 
 ## Runtime setup
 
@@ -18,9 +18,20 @@ Use when setting up the Forze runtime, dependency plan, lifecycle, usecase compo
 Pass **`DepsModule` instances** to `DepsPlan.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreError`).
 
 ```python
+from enum import StrEnum
+
 from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
 from forze_postgres import PostgresDepsModule, postgres_lifecycle_step, PostgresClient, PostgresConfig
 from forze_redis import RedisDepsModule, redis_lifecycle_step, RedisClient, RedisConfig
+
+
+class ResourceName(StrEnum):
+    PROJECTS = "projects"
+
+
+class TxRoute(StrEnum):
+    DEFAULT = "default"
+
 
 postgres_client = PostgresClient()
 redis_client = RedisClient()
@@ -29,17 +40,17 @@ deps_plan = DepsPlan.from_modules(
     PostgresDepsModule(
         client=postgres_client,
         rw_documents={
-            "projects": {
+            ResourceName.PROJECTS: {
                 "read": ("public", "projects"),
                 "write": ("public", "projects"),
                 "bookkeeping_strategy": "database",
             },
         },
-        tx={"default"},
+        tx={TxRoute.DEFAULT},
     ),
     RedisDepsModule(
         client=redis_client,
-        caches={"projects": {"namespace": "app:projects"}},
+        caches={ResourceName.PROJECTS: {"namespace": "app:projects"}},
     ),
 )
 ```
@@ -96,7 +107,7 @@ project_dtos = DocumentDTOs(
 )
 
 registry = build_document_registry(project_spec, project_dtos)
-registry.extend_plan(build_default_tx_document_plan("default"), inplace=True)
+registry.extend_plan(build_default_tx_document_plan(TxRoute.DEFAULT), inplace=True)
 ```
 
 Equivalent explicit plan:
@@ -107,11 +118,11 @@ from forze.application.execution import UsecasePlan
 
 document_plan = (
     UsecasePlan()
-    .tx(DocumentOperation.CREATE, route="default")
-    .tx(DocumentOperation.UPDATE, route="default")
-    .tx(DocumentOperation.KILL, route="default")
-    .tx(DocumentOperation.DELETE, route="default")
-    .tx(DocumentOperation.RESTORE, route="default")
+    .tx(DocumentOperation.CREATE, route=TxRoute.DEFAULT)
+    .tx(DocumentOperation.UPDATE, route=TxRoute.DEFAULT)
+    .tx(DocumentOperation.KILL, route=TxRoute.DEFAULT)
+    .tx(DocumentOperation.DELETE, route=TxRoute.DEFAULT)
+    .tx(DocumentOperation.RESTORE, route=TxRoute.DEFAULT)
 )
 registry.extend_plan(document_plan, inplace=True)
 ```
@@ -147,7 +158,7 @@ registry.register(
     inplace=True,
 )
 registry.extend_plan(
-    UsecasePlan().tx("archive", route="default"),
+    UsecasePlan().tx("archive", route=TxRoute.DEFAULT),
     inplace=True,
 )
 ```
@@ -165,21 +176,23 @@ def context_dependency():
     return runtime.get_context()
 ```
 
-### Document router
+### Document endpoints
 
 ```python
-from forze_fastapi.routers import build_document_router
+from fastapi import APIRouter
 
-app.include_router(
-    build_document_router(
-        prefix="/projects",
-        tags=["projects"],
-        registry=registry,
-        spec=project_spec,
-        dtos=project_dtos,
-        ctx_dep=context_dependency,
-    )
+from forze_fastapi.endpoints.document import attach_document_endpoints
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+attach_document_endpoints(
+    router,
+    document=project_spec,
+    dtos=project_dtos,
+    registry=registry,
+    ctx_dep=context_dependency,
 )
+
+app.include_router(router)
 ```
 
 ### Lifespan with runtime scope
@@ -254,9 +267,11 @@ result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 3. **`get_context()` outside `runtime.scope()`** — raises `RuntimeError`.
 4. **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.
 5. **Expecting `tx_document_plan`** — use `build_default_tx_document_plan` or an explicit `UsecasePlan`.
+6. **Duplicating literal route strings** — use shared `StrEnum` values for spec names and transaction routes.
 
 ## Reference
 
 - [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md)
 - [`pages/docs/core-package/composition.md`](../../pages/docs/core-package/composition.md)
 - [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)
+- [`pages/docs/integrations/mock.md`](../../pages/docs/integrations/mock.md)
