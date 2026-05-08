@@ -119,7 +119,7 @@ Full control over the chain — receives `next` and `args`:
 Wraps the usecase in a transaction. After a successful commit, runs registered after-commit effects:
 
     :::python
-    from forze.application.execution import TxMiddleware
+    from forze.application.execution.middleware import TxMiddleware
 
     tx_mw = TxMiddleware(ctx=ctx)
     tx_mw = tx_mw.with_after_commit(notify_effect, publish_effect)

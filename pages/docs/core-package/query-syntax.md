@@ -116,7 +116,8 @@ Supported directions:
 - `"asc"`
 - `"desc"`
 
-If `sorts` is omitted, adapters default to sorting by `id` descending.
+If `sorts` is omitted for regular offset pagination, this layer does not add an
+explicit ordering. Pass a sort expression when callers need deterministic order.
 
 ## Aggregate syntax
 
@@ -210,12 +211,14 @@ model shape). `return_count` then counts documents, not groups.
     :::python
     doc = ctx.doc_query(project_spec)
 
-    rows, total = await doc.find_many(
+    page = await doc.find_many(
         filters=filters,
         sorts=sorts,
-        limit=20,
-        offset=0,
+        pagination={"limit": 20, "offset": 0},
+        return_count=True,
     )
+    rows = page.hits
+    total = page.count
 
 ### Search request usage
 

@@ -56,7 +56,7 @@ Read-only operations for document aggregates:
 | `get` | `(pk, *, for_update?, return_fields?)` | `R` or `JsonDict` |
 | `get_many` | `(pks, *, return_fields?)` | `Sequence[R]` or `Sequence[JsonDict]` |
 | `find` | `(filters, *, for_update?, return_fields?)` | `R \| None` or `JsonDict \| None` |
-| `find_many` | `(filters?, limit?, offset?, sorts?, *, return_fields?)` | `(list[R], int)` or `(list[JsonDict], int)` |
+| `find_many` | `(filters?, pagination?, sorts?, *, return_count?, return_fields?)` | `CountlessPage[R]` / `Page[R]` or JSON projections |
 | `count` | `(filters?)` | `int` |
 
 When `return_fields` is provided, methods return `JsonDict` projections instead of typed models. `for_update` locks the row when the backend supports it.
@@ -69,14 +69,14 @@ Mutation operations for document aggregates:
 |--------|-----------|---------|
 | `create` | `(dto)` | `R` |
 | `create_many` | `(dtos)` | `Sequence[R]` |
-| `update` | `(pk, dto, *, rev?)` | `R` |
-| `update_many` | `(pks, dtos, *, revs?)` | `Sequence[R]` |
+| `update` | `(pk, rev, dto)` | `R` |
+| `update_many` | `(updates)` | `Sequence[R]` |
 | `touch` / `touch_many` | `(pk)` / `(pks)` | `R` / `Sequence[R]` |
 | `kill` / `kill_many` | `(pk)` / `(pks)` | `None` |
-| `delete` / `delete_many` | `(pk, *, rev?)` / `(pks, *, revs?)` | `R` / `Sequence[R]` |
-| `restore` / `restore_many` | `(pk, *, rev?)` / `(pks, *, revs?)` | `R` / `Sequence[R]` |
+| `delete` / `delete_many` | `(pk, rev)` / `(deletes)` | `R` / `Sequence[R]` |
+| `restore` / `restore_many` | `(pk, rev)` / `(restores)` | `R` / `Sequence[R]` |
 
-The optional `rev` parameter enables optimistic concurrency control. When provided, the adapter checks that the current revision matches before applying the change.
+Revision-bearing commands check that the current revision matches before applying the change. Batch `updates`, `deletes`, and `restores` are sequences of tuples that include the document id and expected revision.
 
 ### DocumentSpec
 
@@ -311,13 +311,13 @@ S3-style blob storage:
 
     events_spec = PubSubSpec(name="events", model=EventPayload)
 
-### PubSubPublishPort[M]
+### PubSubCommandPort[M]
 
 | Method | Purpose |
 |--------|---------|
 | `publish(topic, payload, *, type?, key?, published_at?)` | Publish a message |
 
-### PubSubSubscribePort[M]
+### PubSubQueryPort[M]
 
 | Method | Purpose |
 |--------|---------|
@@ -338,8 +338,8 @@ S3-style blob storage:
 
 | Key | Purpose |
 |-----|---------|
-| `PubSubPublishDepKey` | Publish port |
-| `PubSubSubscribeDepKey` | Subscribe port |
+| `PubSubCommandDepKey` | Command port |
+| `PubSubQueryDepKey` | Query port |
 
 ## Stream
 
@@ -350,14 +350,14 @@ S3-style blob storage:
 
     audit_stream = StreamSpec(name="audit", model=AuditEntry)
 
-### StreamReadPort[M]
+### StreamQueryPort[M]
 
 | Method | Purpose |
 |--------|---------|
 | `read(stream_mapping, *, limit?, timeout?)` | Read entries from streams |
 | `tail(stream_mapping, *, timeout?)` | Async iterator following new entries |
 
-### StreamGroupPort[M]
+### StreamGroupQueryPort[M]
 
 | Method | Purpose |
 |--------|---------|
@@ -365,7 +365,7 @@ S3-style blob storage:
 | `tail(group, consumer, stream_mapping, *, timeout?)` | Consumer group tail |
 | `ack(group, stream, ids)` | Acknowledge entries |
 
-### StreamWritePort[M]
+### StreamCommandPort[M]
 
 | Method | Purpose |
 |--------|---------|
@@ -386,9 +386,9 @@ S3-style blob storage:
 
 | Key | Purpose |
 |-----|---------|
-| `StreamReadDepKey` | Read port |
-| `StreamWriteDepKey` | Write port |
-| `StreamGroupDepKey` | Group port |
+| `StreamQueryDepKey` | Query port |
+| `StreamCommandDepKey` | Command port |
+| `StreamGroupQueryDepKey` | Group query port |
 
 ## Idempotency
 
@@ -445,13 +445,14 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 
 ## Context handling
 
-Execution identity is represented by `CallContext` and optional `AuthIdentity` on `ExecutionContext`.
-`AuthIdentity` carries `subject_id` plus optional `tenant_id`, `actor_id`, claims, roles, and permissions; bind at the boundary via `ctx.bind_call(..., identity=...)`.
+Execution identity is represented by `CallContext`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
+`AuthnIdentity` carries the authenticated `principal_id`; `TenantIdentity` carries the current `tenant_id`. Bind them at the boundary via `ctx.bind_call(..., identity=..., tenancy=...)`.
 
-`forze_auth` provides a document-backed auth provider around these contracts:
-`DocumentAuthSpec`, `DocumentAuthDepsModule`, and adapters for authentication,
-authorization, token lifecycle, and API-key lifecycle. The provider uses regular
-document ports, so storage is selected by the existing document adapter wiring.
+`forze_authnz` provides document-backed authn helpers around these contracts:
+`AuthnSpec`, `AuthnDepKey`, lifecycle dep keys, and document specs such as
+`principal_spec`, `password_account_spec`, `api_key_account_spec`, and
+`session_spec`. The provider uses regular document ports, so storage is selected
+by the existing document adapter wiring.
 
 ## Resolving ports
 
@@ -472,7 +473,7 @@ All ports are resolved through `ExecutionContext`. Contracts with convenience me
 For contracts without a convenience method, use `dep()` with the dep key:
 
     :::python
-    from forze.application.contracts.pubsub import PubSubPublishDepKey
+    from forze.application.contracts.pubsub import PubSubCommandDepKey
 
-    publisher = ctx.dep(PubSubPublishDepKey)(ctx, events_spec)
+    publisher = ctx.dep(PubSubCommandDepKey)(ctx, events_spec)
     await publisher.publish("events.created", payload)

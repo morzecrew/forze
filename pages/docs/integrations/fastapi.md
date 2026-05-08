@@ -185,9 +185,9 @@ Prebuilt routes take parameters from typed DTOs in `forze.application.dto` (for 
 
 ## Call context middleware
 
-`ContextBindingMiddleware` (`forze_fastapi.middlewares`) binds call context and optional `AuthIdentity` to each request and can echo call context in response headers. Use `auth_identity_codec` for already-trusted identity headers, or `auth_identity_resolver` for async authentication before binding.
+`ContextBindingMiddleware` (`forze_fastapi.middlewares`) binds call context plus `AuthnIdentity` and `TenantIdentity` to each request, and can echo call context in response headers. Use `authn_identity_codec` / `tenant_identity_codec` for already-trusted identity headers, or `authn_identity_resolver` / `tenant_identity_resolver` for async resolution before binding.
 
-`HeaderAuthIdentityResolver` extracts bearer tokens from `Authorization` and API keys from `X-API-Key`, resolves `AuthenticationDepKey` for the configured `AuthSpec`, and binds the returned `AuthIdentity` through the middleware.
+`HeaderAuthIdentityResolver` extracts bearer tokens from `Authorization` and API keys from `X-API-Key`, resolves `AuthnDepKey` for the configured `AuthnSpec`, and binds the returned `AuthnIdentity` through the middleware.
 
 ## Runtime scope with FastAPI lifespan
 

@@ -189,12 +189,12 @@ Forze ships built-in usecases for standard document CRUD:
 
 | Operation | Usecase class | Args | Returns |
 |-----------|--------------|------|---------|
-| `GET` | `GetDocument` | `UUID` | `R` (read model) |
+| `GET` | `GetDocument` | `DocumentIdDTO` | `R` (read model) |
 | `CREATE` | `CreateDocument` | `C` (create cmd) | `R` |
-| `UPDATE` | `UpdateDocument` | `UpdateArgs[U]` | `R` |
-| `KILL` | `KillDocument` | `UUID` | `None` |
-| `DELETE` | `DeleteDocument` | `SoftDeleteArgs` | `R` |
-| `RESTORE` | `RestoreDocument` | `SoftDeleteArgs` | `R` |
+| `UPDATE` | `UpdateDocument` | `DocumentUpdateDTO[U]` | `DocumentUpdateRes[R]` |
+| `KILL` | `KillDocument` | `DocumentIdDTO` | `None` |
+| `DELETE` | `DeleteDocument` | `DocumentIdRevDTO` | `R` |
+| `RESTORE` | `RestoreDocument` | `DocumentIdRevDTO` | `R` |
 | `LIST` | `TypedListDocuments` | `tL` (list request) | `Paginated[R]` |
 | `RAW_LIST` | `RawListDocuments` | `rL` (raw list request) | `RawPaginated` |
 

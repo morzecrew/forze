@@ -26,12 +26,12 @@ The registry includes factories for all `DocumentOperation` variants:
 
 | Operation | Usecase | Args | Returns |
 |-----------|---------|------|---------|
-| `GET` | `GetDocument` | `UUID` | `R` |
+| `GET` | `GetDocument` | `DocumentIdDTO` | `R` |
 | `CREATE` | `CreateDocument` | `C` | `R` |
-| `UPDATE` | `UpdateDocument` | `UpdateArgs[U]` | `R` |
-| `KILL` | `KillDocument` | `UUID` | `None` |
-| `DELETE` | `DeleteDocument` | `SoftDeleteArgs` | `R` |
-| `RESTORE` | `RestoreDocument` | `SoftDeleteArgs` | `R` |
+| `UPDATE` | `UpdateDocument` | `DocumentUpdateDTO[U]` | `DocumentUpdateRes[R]` |
+| `KILL` | `KillDocument` | `DocumentIdDTO` | `None` |
+| `DELETE` | `DeleteDocument` | `DocumentIdRevDTO` | `R` |
+| `RESTORE` | `RestoreDocument` | `DocumentIdRevDTO` | `R` |
 | `LIST` | `TypedListDocuments` | `tL` | `Paginated[R]` |
 | `RAW_LIST` | `RawListDocuments` | `rL` | `RawPaginated` |
 
@@ -60,14 +60,21 @@ If you need transaction middleware, compose a `UsecasePlan` explicitly and exten
 Typed facade exposing document operations as attributes:
 
     :::python
+    from forze.application.dto import DocumentIdDTO, DocumentUpdateDTO
     from forze.application.composition.document import DocumentUsecasesFacade
 
     facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
 
     project = await facade.create(CreateProjectCmd(title="New"))
-    fetched = await facade.get(project.id)
-    updated = await facade.update(UpdateArgs(pk=project.id, dto=UpdateProjectCmd(title="Updated")))
-    await facade.kill(project.id)
+    fetched = await facade.get(DocumentIdDTO(id=project.id))
+    updated = await facade.update(
+        DocumentUpdateDTO(
+            id=project.id,
+            rev=project.rev,
+            dto=UpdateProjectCmd(title="Updated"),
+        )
+    )
+    await facade.kill(DocumentIdDTO(id=project.id))
 
 | Attribute | Resolved usecase |
 |-----------|-----------------|
@@ -129,20 +136,20 @@ Add custom middleware to the default plan or register custom operations:
 
     plan = plan.tx("archive", route="default").before("archive", auth_guard, priority=100)
 
-### UpdateArgs and SoftDeleteArgs
+### DocumentUpdateDTO and DocumentIdRevDTO
 
 Typed argument containers for update and soft-delete usecases:
 
     :::python
-    from forze.application.usecases.document import UpdateArgs, SoftDeleteArgs
+    from forze.application.dto import DocumentIdRevDTO, DocumentUpdateDTO
 
     # Update
-    await facade.update(UpdateArgs(pk=project_id, dto=update_cmd))
+    await facade.update(DocumentUpdateDTO(id=project_id, rev=current_rev, dto=update_cmd))
 
     # Soft delete with optimistic concurrency
-    await facade.delete(SoftDeleteArgs(pk=project_id, rev=current_rev))
+    await facade.delete(DocumentIdRevDTO(id=project_id, rev=current_rev))
 
-`UpdateArgs[U]` carries `pk` (UUID) and `dto` (update command). `SoftDeleteArgs` carries `pk` (UUID) and optional `rev` (int).
+`DocumentUpdateDTO[U]` carries `id`, `rev`, and `dto` (update command). `DocumentIdRevDTO` carries `id` and the expected `rev`.
 
 ## Search composition
 

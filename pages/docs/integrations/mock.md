@@ -25,9 +25,9 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockStorageAdapter` | `StoragePort` |
 | `MockTxManagerAdapter` | `TxManagerPort` |
 | `MockQueueAdapter` | `QueueReadPort`, `QueueWritePort` |
-| `MockPubSubAdapter` | `PubSubPublishPort`, `PubSubSubscribePort` |
-| `MockStreamAdapter` | `StreamReadPort`, `StreamWritePort` |
-| `MockStreamGroupAdapter` | `StreamGroupPort` |
+| `MockPubSubAdapter` | `PubSubCommandPort`, `PubSubQueryPort` |
+| `MockStreamAdapter` | `StreamQueryPort`, `StreamCommandPort` |
+| `MockStreamGroupAdapter` | `StreamGroupQueryPort` |
 
 ## Runtime wiring
 
@@ -54,7 +54,7 @@ No lifecycle plan is needed — mock adapters have no connections to manage.
 | `MockStateDepKey` | Shared in-memory state |
 | `DocumentQueryDepKey` | Document query adapter |
 | `DocumentCommandDepKey` | Document command adapter |
-| `SearchReadDepKey` | Search adapter |
+| `SearchQueryDepKey` | Search adapter |
 | `CounterDepKey` | Counter adapter |
 | `CacheDepKey` | Cache adapter |
 | `IdempotencyDepKey` | Idempotency adapter |
@@ -62,11 +62,11 @@ No lifecycle plan is needed — mock adapters have no connections to manage.
 | `TxManagerDepKey` | Transaction manager (no-op) |
 | `QueueReadDepKey` | Queue read adapter |
 | `QueueWriteDepKey` | Queue write adapter |
-| `PubSubPublishDepKey` | Pub/sub publish adapter |
-| `PubSubSubscribeDepKey` | Pub/sub subscribe adapter |
-| `StreamReadDepKey` | Stream read adapter |
-| `StreamWriteDepKey` | Stream write adapter |
-| `StreamGroupDepKey` | Stream group adapter |
+| `PubSubCommandDepKey` | Pub/sub command adapter |
+| `PubSubQueryDepKey` | Pub/sub query adapter |
+| `StreamQueryDepKey` | Stream query adapter |
+| `StreamCommandDepKey` | Stream command adapter |
+| `StreamGroupQueryDepKey` | Stream group query adapter |
 
 ## Shared state
 

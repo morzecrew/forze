@@ -126,9 +126,11 @@ Transaction middleware is composed explicitly with `UsecasePlan` and merged into
 Create a facade from an execution context and the registry:
 
     :::python
+    from forze.application.dto import DocumentIdDTO
+
     facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
     project = await facade.create(CreateProjectCmd(title="New"))
-    fetched = await facade.get(project.id)
+    fetched = await facade.get(DocumentIdDTO(id=project.id))
 
 ### Document operations
 
@@ -209,12 +211,18 @@ You can register entirely custom usecases alongside the standard ones:
 
     :::python
     from forze.application.execution import Usecase, UsecasePlan, UsecaseRegistry
+    from forze.domain.models import BaseDTO
 
 
-    class ArchiveProject(Usecase[UUID, ProjectReadModel]):
-        async def main(self, args: UUID) -> ProjectReadModel:
+    class ArchiveProjectArgs(BaseDTO):
+        id: UUID
+        rev: int
+
+
+    class ArchiveProject(Usecase[ArchiveProjectArgs, ProjectReadModel]):
+        async def main(self, args: ArchiveProjectArgs) -> ProjectReadModel:
             doc = self.ctx.doc_command(project_spec)
-            return await doc.update(args, UpdateProjectCmd(status="archived"))
+            return await doc.update(args.id, args.rev, UpdateProjectCmd(status="archived"))
 
 
     registry = build_document_registry(project_spec, project_dtos)

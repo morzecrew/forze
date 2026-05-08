@@ -229,19 +229,21 @@ Resolve ports from `ExecutionContext` using the same `DocumentSpec` you use in t
     doc_c = ctx.doc_command(project_spec)
 
     project = await doc_q.get(project_id)
-    projects, total = await doc_q.find_many(
+    page = await doc_q.find_many(
         filters={"$fields": {"is_deleted": False}},
         sorts={"created_at": "desc"},
-        limit=20,
-        offset=0,
+        pagination={"limit": 20, "offset": 0},
+        return_count=True,
     )
+    projects = page.hits
+    total = page.count
     count = await doc_q.count({"$fields": {"is_deleted": False}})
 
     created = await doc_c.create(CreateProjectCmd(title="New", description="..."))
-    updated = await doc_c.update(project_id, UpdateProjectCmd(title="Updated"), rev=1)
-    await doc_c.delete(project_id)
-    await doc_c.restore(project_id)
-    await doc_c.kill(project_id)
+    updated = await doc_c.update(project.id, project.rev, UpdateProjectCmd(title="Updated"))
+    deleted = await doc_c.delete(updated.id, updated.rev)
+    restored = await doc_c.restore(deleted.id, deleted.rev)
+    await doc_c.kill(restored.id)
 
 The adapter handles revision checks, cache coordination when `DocumentSpec.cache` is set, history when configured, and query rendering via the shared query DSL.
 

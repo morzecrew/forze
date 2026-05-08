@@ -274,4 +274,5 @@ A complete wiring example showing deps, lifecycle, and runtime:
     async with runtime.scope():
         ctx = runtime.get_context()
         doc = ctx.doc_query(project_spec)
-        projects = await doc.find_many(limit=10)
+        page = await doc.find_many(pagination={"limit": 10, "offset": 0})
+        projects = page.hits

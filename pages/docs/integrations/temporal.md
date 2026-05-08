@@ -1,6 +1,6 @@
 # Temporal Integration
 
-`forze_temporal` connects [Temporal.io](https://temporal.io) to Forze’s workflow contracts. It provides a **`TemporalClient`** wrapper around the Temporal Python SDK (Pydantic data conversion by default), **`TemporalDepsModule`** for dependency registration, **command and query adapters** implementing `WorkflowCommandPort` and `WorkflowQueryPort`, and optional **interceptors** so `ExecutionContext` (call context and `AuthIdentity`) flows through client and worker.
+`forze_temporal` connects [Temporal.io](https://temporal.io) to Forze’s workflow contracts. It provides a **`TemporalClient`** wrapper around the Temporal Python SDK (Pydantic data conversion by default), **`TemporalDepsModule`** for dependency registration, **command and query adapters** implementing `WorkflowCommandPort` and `WorkflowQueryPort`, and optional **interceptors** so `ExecutionContext` (call context, `AuthnIdentity`, and `TenantIdentity`) flows through client and worker.
 
 Kernel specs use logical workflow names (`WorkflowSpec.name`). **`TemporalDepsModule`** maps each name to a **`TemporalWorkflowConfig`** (task queue and optional multi-tenancy). See [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md).
 

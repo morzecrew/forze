@@ -114,14 +114,14 @@ The `"projects"` key must match `rw_documents["projects"]` in `MongoDepsModule`.
     fetched = await doc_q.get(created.id)
     updated = await doc_c.update(
         created.id,
+        created.rev,
         UpdateProjectCmd(title="Beta"),
-        rev=created.rev,
     )
-    touched = await doc_c.touch(created.id)
+    touched = await doc_c.touch(updated.id)
 
-    await doc_c.delete(created.id)
-    await doc_c.restore(created.id)
-    await doc_c.kill(created.id)
+    deleted = await doc_c.delete(touched.id, touched.rev)
+    restored = await doc_c.restore(deleted.id, deleted.rev)
+    await doc_c.kill(restored.id)
 
 ### Batch operations
 
@@ -136,7 +136,7 @@ The `"projects"` key must match `rw_documents["projects"]` in `MongoDepsModule`.
 The Mongo adapter uses the shared query DSL:
 
     :::python
-    projects, total = await doc_q.find_many(
+    page = await doc_q.find_many(
         filters={
             "$and": [
                 {"$fields": {"is_deleted": False}},
@@ -144,9 +144,11 @@ The Mongo adapter uses the shared query DSL:
             ]
         },
         sorts={"created_at": "desc"},
-        limit=20,
-        offset=0,
+        pagination={"limit": 20, "offset": 0},
+        return_count=True,
     )
+    projects = page.hits
+    total = page.count
 
     count = await doc_q.count({"$fields": {"is_deleted": False}})
 
@@ -156,7 +158,8 @@ See [Query Syntax](../core-package/query-syntax.md).
 
 - `$null: true` matches explicit `null` and missing fields
 - Array operators map to MongoDB operators
-- Sorting may default to `_id` when unspecified
+- Use `id` in sort expressions; the adapter maps it to MongoDB `_id`. If
+  `sorts` is omitted, this layer does not pass an explicit sort to MongoDB.
 
 ## Transactions
 
@@ -165,7 +168,8 @@ MongoDB transactions require a replica set or sharded cluster. Within `ctx.trans
     :::python
     async with ctx.transaction("default"):
         await doc_c.create(CreateProjectCmd(title="In transaction"))
-        await doc_c.update(existing_id, UpdateProjectCmd(title="Also in tx"))
+        existing = await doc_q.get(existing_id)
+        await doc_c.update(existing.id, existing.rev, UpdateProjectCmd(title="Also in tx"))
 
 ## Revision and history
 

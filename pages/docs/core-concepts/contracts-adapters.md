@@ -24,7 +24,7 @@ Split into read and write ports for CQRS flexibility:
 | `get` | `(pk, *, for_update?, return_fields?) -> R | JsonDict` | Fetch one document by ID |
 | `get_many` | `(pks, *, return_fields?) -> Sequence[R] | Sequence[JsonDict]` | Fetch multiple by IDs |
 | `find` | `(filters, *, for_update?, return_fields?) -> R | None` | Find one by filter |
-| `find_many` | `(filters?, limit?, offset?, sorts?, *, return_fields?) -> (list[R], int)` | Paginated query |
+| `find_many` | `(filters?, pagination?, sorts?, *, return_count?, return_fields?) -> CountlessPage[R] | Page[R]` | Paginated query |
 | `count` | `(filters?) -> int` | Count matching documents |
 
 **`DocumentCommandPort[R, D, C, U]`**: mutation operations:
@@ -33,12 +33,12 @@ Split into read and write ports for CQRS flexibility:
 |--------|-----------|---------|
 | `create` | `(dto) -> R` | Create a document |
 | `create_many` | `(dtos) -> Sequence[R]` | Batch create |
-| `update` | `(pk, dto, *, rev?) -> R` | Partial update |
-| `update_many` | `(pks, dtos, *, revs?) -> Sequence[R]` | Batch update |
+| `update` | `(pk, rev, dto) -> R` | Partial update |
+| `update_many` | `(updates) -> Sequence[R]` | Batch update |
 | `touch` | `(pk) -> R` | Bump `last_update_at` only |
 | `kill` | `(pk) -> None` | Hard delete |
-| `delete` | `(pk, *, rev?) -> R` | Soft delete |
-| `restore` | `(pk, *, rev?) -> R` | Restore from soft delete |
+| `delete` | `(pk, rev) -> R` | Soft delete |
+| `restore` | `(pk, rev) -> R` | Restore from soft delete |
 
 Both ports also have `*_many` batch variants for all applicable operations.
 
@@ -115,13 +115,13 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Pub/Sub
 
-**`PubSubPublishPort[M]`**: publish to a topic:
+**`PubSubCommandPort[M]`**: publish to a topic:
 
 | Method | Purpose |
 |--------|---------|
 | `publish(topic, payload, *, type?, key?, published_at?)` | Publish a message |
 
-**`PubSubSubscribePort[M]`**: subscribe to topics:
+**`PubSubQueryPort[M]`**: subscribe to topics:
 
 | Method | Purpose |
 |--------|---------|
@@ -129,14 +129,14 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Stream
 
-**`StreamReadPort[M]`**: read from an append-only log:
+**`StreamQueryPort[M]`**: read from an append-only log:
 
 | Method | Purpose |
 |--------|---------|
 | `read(stream_mapping, *, limit?, timeout?)` | Read entries from streams |
 | `tail(stream_mapping, *, timeout?)` | Async iterator that follows new entries |
 
-**`StreamGroupPort[M]`**: consumer group reads:
+**`StreamGroupQueryPort[M]`**: consumer group reads:
 
 | Method | Purpose |
 |--------|---------|
@@ -144,7 +144,7 @@ Both ports also have `*_many` batch variants for all applicable operations.
 | `tail(group, consumer, stream_mapping, *, timeout?)` | Group tail |
 | `ack(group, stream, ids)` | Acknowledge entries |
 
-**`StreamWritePort[M]`**: append to a stream:
+**`StreamCommandPort[M]`**: append to a stream:
 
 | Method | Purpose |
 |--------|---------|
@@ -168,9 +168,10 @@ Both ports also have `*_many` batch variants for all applicable operations.
 Forze tracks request identity through `ExecutionContext`:
 
 - `CallContext` (`execution_id`, `correlation_id`, optional `causation_id`)
-- `AuthIdentity` (required `subject_id`; optional `tenant_id`, `actor_id`, etc.)
+- `AuthnIdentity` (authenticated `principal_id`)
+- `TenantIdentity` (current `tenant_id`)
 
-These are bound at the application boundary (for example, in HTTP middleware) via `ctx.bind_call(..., identity=...)`.
+These are bound at the application boundary (for example, in HTTP middleware) via `ctx.bind_call(..., identity=..., tenancy=...)`.
 
 ## Dependency keys
 
@@ -188,9 +189,9 @@ Each contract has a corresponding `DepKey` for registration and resolution. Inte
 For contracts without convenience methods on `ExecutionContext`, use `dep()` directly:
 
     :::python
-    from forze.application.contracts.pubsub import PubSubPublishDepKey
+    from forze.application.contracts.pubsub import PubSubCommandDepKey
 
-    publish = ctx.dep(PubSubPublishDepKey)(ctx, spec)
+    publish = ctx.dep(PubSubCommandDepKey)(ctx, spec)
 
 ## Wiring adapters
 
