@@ -129,9 +129,12 @@ Connection recovery is bounded by `reconnect_timeout`. Query-level retries shoul
 
 ## Troubleshooting
 
-| Common error | Likely cause | Fix |
-|--------------|--------------|-----|
-| `Write relation is required for non read-only documents` | A read-write document was registered without `write`. | Add `write=(schema, table)` or register the document under `ro_documents`. |
-| Search configuration validation fails | Engine-specific fields are missing, such as `fts_groups`, `vector_column`, `embedding_dimensions`, or `embeddings_name`. | Add the required fields for the selected search engine. |
-| Tenant A sees schema metadata from tenant B | A routed client uses introspection cache without a partition key. | Set `introspector_cache_partition_key` to the same tenant/route identity used for routing. |
-| Pool exhaustion or slow batch operations | Pool sizes and batch concurrency are too small for workload. | Increase `max_size`, tune `pool_headroom`/`max_concurrent_queries`, or reduce batch size. |
+| Symptom | Likely cause | Fix | See also |
+|---------|--------------|-----|----------|
+| Revision/history reads fail because a history relation is missing. | `history_enabled` or a Postgres history config was enabled, but the history table was not created or mapped. | Create the history table with migrations and set the `history=(schema, table)` tuple in the document config. | [Operational notes](#operational-notes) |
+| Reads or writes target the wrong table or schema. | The `(schema, table)` tuple in `PostgresDocumentConfig`, `PostgresReadOnlyDocumentConfig`, or `PostgresSearchConfig` points at the wrong relation. | Verify every `read`, `write`, `history`, and search tuple against your migrations and logical `DocumentSpec.name`. | [Config](#config) |
+| `ctx.txmanager(route)` cannot resolve a transaction dependency. | The transaction route was not registered in `PostgresDepsModule.tx`, or the requested route name differs. | Add the route to `tx` and call `ctx.txmanager(...)` with the same route string. | [Deps module](#deps-module) |
+| `Write relation is required for non read-only documents`. | A read-write document was registered without `write`. | Add `write=(schema, table)` or register the document under `ro_documents`. | [Contract coverage table](#contract-coverage-table) |
+| Search configuration validation fails. | Engine-specific fields are missing, such as `fts_groups`, `vector_column`, `embedding_dimensions`, or `embeddings_name`. | Add the required fields for the selected search engine. | [Configuration reference](#configuration-reference) |
+| Tenant A sees schema metadata from tenant B. | A routed client uses introspection cache without a partition key. | Set `introspector_cache_partition_key` to the same tenant or route identity used for routing. | [Operational notes](#operational-notes) |
+| Pool exhaustion or slow batch operations. | Pool sizes and batch concurrency are too small for workload. | Increase `max_size`, tune `pool_headroom`/`max_concurrent_queries`, or reduce batch size. | [Pool settings](#pool-settings) |

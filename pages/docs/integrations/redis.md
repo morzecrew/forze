@@ -128,9 +128,12 @@ Set `socket_timeout` and `connect_timeout` for bounded Redis calls. Add higher-l
 
 ## Troubleshooting
 
-| Common error | Likely cause | Fix |
-|--------------|--------------|-----|
-| Cache misses immediately after writes | TTL is too short or Redis evicted keys. | Review `CacheSpec` TTL values and Redis eviction/memory settings. |
-| Idempotency does not deduplicate requests | Different idempotency keys are sent or the idempotency adapter is not registered. | Send a stable key and register `IdempotencyDepKey` through `RedisDepsModule`. |
-| Tenant data appears in shared keys | `tenant_aware` is disabled or tenancy identity is missing from the context. | Set `tenant_aware=True` and ensure the execution context has tenancy information. |
-| Lock acquisition never succeeds | A previous holder has not expired or lock timeout settings are mismatched. | Check the lock spec lease/timeout values and Redis key TTLs. |
+| Symptom | Likely cause | Fix | See also |
+|---------|--------------|-----|----------|
+| Cache, counter, lock, or snapshot keys appear under an unexpected prefix. | The Redis config namespace does not match the intended contract or tenant-aware key strategy. | Set each Redis config `namespace` deliberately and enable `tenant_aware=True` when keys must include tenancy identity. | [Config](#config) |
+| Cache entries or idempotency records expire earlier or later than expected. | The contract TTL and Redis eviction/persistence behavior were confused. | Treat `CacheSpec` and `IdempotencySpec` TTLs as logical expiry settings, then verify Redis memory policy and persistence settings separately. | [Idempotency](#idempotency) |
+| Idempotency works in one process but duplicate requests run in another worker. | Workers do not share the same Redis idempotency namespace or some workers use an in-memory adapter. | Register the same Redis idempotency adapter and namespace for every worker that can handle the operation. | [Operational notes](#operational-notes) |
+| Cache misses immediately after writes. | TTL is too short or Redis evicted keys. | Review `CacheSpec` TTL values and Redis eviction/memory settings. | [Contract coverage table](#contract-coverage-table) |
+| Idempotency does not deduplicate requests. | Different idempotency keys are sent or the idempotency adapter is not registered. | Send a stable key and register `IdempotencyDepKey` through `RedisDepsModule`. | [Idempotency](#idempotency) |
+| Tenant data appears in shared keys. | `tenant_aware` is disabled or tenancy identity is missing from the context. | Set `tenant_aware=True` and ensure the execution context has tenancy information. | [Config](#config) |
+| Lock acquisition never succeeds. | A previous holder has not expired or lock timeout settings are mismatched. | Check the lock spec lease/timeout values and Redis key TTLs. | [Contract coverage table](#contract-coverage-table) |
