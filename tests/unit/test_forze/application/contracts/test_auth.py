@@ -1,21 +1,20 @@
-"""Tests for authentication contracts (value objects, spec, dependency keys)."""
+"""Tests for authentication and authorization contracts (value objects, deps, ports)."""
 
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from typing import Any
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 
-from forze.application.contracts.auth import (
+from forze.application.contracts.authn import (
     ApiKeyCredentials,
     ApiKeyLifecycleDepKey,
     ApiKeyResponse,
-    AuthIdentity,
-    AuthSpec,
-    AuthenticationDepKey,
-    AuthorizationDepKey,
-    AuthorizationRequest,
+    AuthnDepKey,
+    AuthnIdentity,
+    AuthnSpec,
     OAuth2Tokens,
     OAuth2TokensResponse,
     PasswordCredentials,
@@ -23,53 +22,34 @@ from forze.application.contracts.auth import (
     TokenLifecycleDepKey,
     TokenResponse,
 )
-from forze.application.contracts.auth.ports import (
+from forze.application.contracts.authn.value_objects import CredentialLifetime
+from forze.application.contracts.authn.ports import (
     ApiKeyLifecyclePort,
-    AuthenticationPort,
-    AuthorizationPort,
+    AuthnPort,
     TokenLifecyclePort,
 )
+from forze.application.contracts.authz import AuthzDepKey
+from forze.application.contracts.authz.ports import AuthzPort
 
 
-class TestAuthSpec:
+class TestAuthnSpec:
     def test_minimal_spec(self) -> None:
-        spec = AuthSpec(name="auth")
+        spec = AuthnSpec(name="auth")
         assert spec.name == "auth"
 
 
-class TestAuthIdentity:
-    def test_defaults_are_safe_for_empty_principal(self) -> None:
-        ident = AuthIdentity(subject_id="sub-1")
-        assert ident.actor_id is None
-        assert ident.tenant_id is None
-        assert ident.claims is None
-        assert ident.roles == frozenset()
-        assert ident.permissions == frozenset()
-        assert ident.is_active is True
-
-    def test_with_roles_and_claims(self) -> None:
-        aid = uuid4()
-        tid = uuid4()
-        ident = AuthIdentity(
-            subject_id="u1",
-            actor_id=aid,
-            tenant_id=tid,
-            claims={"scope": "read"},
-            roles=frozenset({"admin"}),
-            permissions=frozenset({"doc:read"}),
-            is_active=False,
-        )
-        assert ident.claims == {"scope": "read"}
-        assert "admin" in ident.roles
-        assert ident.is_active is False
+class TestAuthnIdentity:
+    def test_principal_only(self) -> None:
+        pid = uuid4()
+        ident = AuthnIdentity(principal_id=pid)
+        assert ident.principal_id == pid
 
 
 class TestCredentialsAndTokens:
-    def test_password_credentials_hashed_flag(self) -> None:
-        raw = PasswordCredentials(login="user", password="secret", is_hashed=False)
-        hashed = PasswordCredentials(login="user", password="bcrypt$...", is_hashed=True)
-        assert raw.is_hashed is False
-        assert hashed.is_hashed is True
+    def test_password_credentials(self) -> None:
+        cred = PasswordCredentials(login="user", password="secret")
+        assert cred.login == "user"
+        assert cred.password == "secret"
 
     def test_api_key_credentials_optional_prefix(self) -> None:
         bare = ApiKeyCredentials(key="k")
@@ -86,30 +66,28 @@ class TestCredentialsAndTokens:
         assert cred.scheme == "Bearer"
         assert cred.kind == "access"
 
-    def test_oauth2_tokens_optional_refresh_and_id(self) -> None:
+    def test_oauth2_tokens_optional_refresh(self) -> None:
         access = TokenCredentials(token="a")
         refresh = TokenCredentials(token="r")
-        id_tok = TokenCredentials(token="i")
         bundle = OAuth2Tokens(
             access_token=access,
             refresh_token=refresh,
-            id_token=id_tok,
         )
         assert bundle.refresh_token is refresh
-        assert bundle.id_token is id_tok
 
     def test_nested_token_and_api_key_responses(self) -> None:
         key_cred = ApiKeyCredentials(key="secret")
         api_resp = ApiKeyResponse(
             key=key_cred,
-            expires_in=timedelta(hours=1),
-            scopes=("read", "write"),
+            lifetime=CredentialLifetime(expires_in=timedelta(hours=1)),
         )
-        assert api_resp.scopes == ("read", "write")
+        assert api_resp.key is key_cred
+        assert api_resp.lifetime is not None
+        assert api_resp.lifetime.expires_in == timedelta(hours=1)
 
         tok = TokenResponse(
             token=TokenCredentials(token="x"),
-            expires_in=None,
+            lifetime=None,
         )
         oauth_resp = OAuth2TokensResponse(
             access_token=tok,
@@ -118,64 +96,48 @@ class TestCredentialsAndTokens:
         assert oauth_resp.refresh_token is None
 
 
-class TestAuthorizationRequest:
-    def test_action_only(self) -> None:
-        req = AuthorizationRequest(action="delete")
-        assert req.resource is None
-        assert req.subject is None
-        assert req.context is None
-
-    def test_resource_and_context_for_abac(self) -> None:
-        subject = object()
-        req = AuthorizationRequest(
-            action="update",
-            resource="invoice",
-            subject=subject,
-            context={"ip": "10.0.0.1"},
-        )
-        assert req.subject is subject
-        assert req.context == {"ip": "10.0.0.1"}
-
-
-class TestAuthDepKeys:
+class TestAuthnAndAuthzDepKeys:
     def test_dep_key_names_are_stable(self) -> None:
-        assert AuthenticationDepKey.name == "authentication"
-        assert AuthorizationDepKey.name == "authorization"
-        assert TokenLifecycleDepKey.name == "token_lifecycle"
-        assert ApiKeyLifecycleDepKey.name == "api_key_lifecycle"
+        assert AuthnDepKey.name == "authn"
+        assert AuthzDepKey.name == "authz"
+        assert TokenLifecycleDepKey.name == "authn_token_lifecycle"
+        assert ApiKeyLifecycleDepKey.name == "authn_api_key_lifecycle"
+
+
+def _pid_from_str(value: str) -> UUID:
+    return uuid5(NAMESPACE_URL, value)
 
 
 class _StubAuthenticationPort:
-    async def authenticate_with_password(self, credentials: PasswordCredentials):
-        return AuthIdentity(subject_id=credentials.login)
+    async def authenticate_with_password(self, credentials: PasswordCredentials) -> AuthnIdentity:
+        return AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
 
-    async def authenticate_with_token(self, credentials: TokenCredentials):
-        return AuthIdentity(subject_id="from-token")
+    async def authenticate_with_token(self, credentials: TokenCredentials) -> AuthnIdentity:
+        return AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
 
-    async def authenticate_with_api_key(self, credentials: ApiKeyCredentials):
-        return AuthIdentity(subject_id="from-key")
+    async def authenticate_with_api_key(self, credentials: ApiKeyCredentials) -> AuthnIdentity:
+        return AuthnIdentity(principal_id=_pid_from_str("key:" + credentials.key))
 
 
 class _StubTokenLifecyclePort:
-    async def issue_tokens(self, identity: AuthIdentity):
-        return None
+    async def issue_tokens(self, identity: AuthnIdentity) -> OAuth2TokensResponse:
+        tr = TokenResponse(token=TokenCredentials(token="issued"))
+        return OAuth2TokensResponse(access_token=tr)
 
-    async def refresh_tokens(self, credentials: OAuth2Tokens):
-        return None
+    async def refresh_tokens(self, credentials: OAuth2Tokens) -> OAuth2TokensResponse:
+        tr = TokenResponse(token=TokenCredentials(token="refreshed"))
+        return OAuth2TokensResponse(access_token=tr)
 
-    async def revoke_token(self, token_id: str) -> None:
-        return None
-
-    async def revoke_many_tokens(self, token_ids: tuple[str, ...]) -> None:
+    async def revoke_tokens(self, identity: AuthnIdentity) -> None:
         return None
 
 
 class _StubApiKeyLifecyclePort:
-    async def issue_api_key(self, identity: AuthIdentity):
-        return None
+    async def issue_api_key(self, identity: AuthnIdentity) -> ApiKeyResponse:
+        return ApiKeyResponse(key=ApiKeyCredentials(key="issued"))
 
-    async def refresh_api_key(self, credentials: ApiKeyCredentials):
-        return None
+    async def refresh_api_key(self, credentials: ApiKeyCredentials) -> ApiKeyResponse:
+        return ApiKeyResponse(key=credentials)
 
     async def revoke_api_key(self, key_id: str) -> None:
         return None
@@ -184,59 +146,55 @@ class _StubApiKeyLifecyclePort:
         return None
 
 
-class _StubAuthorizationPort:
-    async def authorize(self, identity: AuthIdentity, request: AuthorizationRequest):
-        return True
-
-    async def authorize_many(
+class _StubAuthzPort:
+    async def permits(
         self,
-        identity: AuthIdentity,
-        requests: tuple[AuthorizationRequest, ...],
-    ):
+        principal: Any,
+        permission: str,
+        *,
+        resource: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> bool:
         return True
 
 
 @pytest.mark.asyncio
 async def test_authentication_port_stub_round_trip() -> None:
-    port: AuthenticationPort = _StubAuthenticationPort()
+    port: AuthnPort = _StubAuthenticationPort()
     pw = await port.authenticate_with_password(
         PasswordCredentials(login="alice", password="x"),
     )
-    assert pw is not None and pw.subject_id == "alice"
+    assert pw.principal_id == _pid_from_str("pw:alice")
     tok = await port.authenticate_with_token(TokenCredentials(token="t"))
-    assert tok is not None and tok.subject_id == "from-token"
+    assert tok.principal_id == _pid_from_str("tok:t")
     key = await port.authenticate_with_api_key(ApiKeyCredentials(key="k"))
-    assert key is not None and key.subject_id == "from-key"
+    assert key.principal_id == _pid_from_str("key:k")
 
 
 @pytest.mark.asyncio
 async def test_token_lifecycle_port_stub() -> None:
     port: TokenLifecyclePort = _StubTokenLifecyclePort()
-    ident = AuthIdentity(subject_id="u")
-    assert await port.issue_tokens(ident) is None
-    assert await port.refresh_tokens(OAuth2Tokens(access_token=TokenCredentials(token="a"))) is None
-    await port.revoke_token("id")
-    await port.revoke_many_tokens(("a", "b"))
+    ident = AuthnIdentity(principal_id=uuid4())
+    issued = await port.issue_tokens(ident)
+    assert issued.access_token.token.token == "issued"
+    refreshed = await port.refresh_tokens(OAuth2Tokens(access_token=TokenCredentials(token="a")))
+    assert refreshed.access_token.token.token == "refreshed"
+    await port.revoke_tokens(ident)
 
 
 @pytest.mark.asyncio
 async def test_api_key_lifecycle_port_stub() -> None:
     port: ApiKeyLifecyclePort = _StubApiKeyLifecyclePort()
-    ident = AuthIdentity(subject_id="u")
-    assert await port.issue_api_key(ident) is None
-    assert await port.refresh_api_key(ApiKeyCredentials(key="k")) is None
+    ident = AuthnIdentity(principal_id=uuid4())
+    issued = await port.issue_api_key(ident)
+    assert issued.key.key == "issued"
+    assert await port.refresh_api_key(ApiKeyCredentials(key="k")) is not None
     await port.revoke_api_key("kid")
     await port.revoke_many_api_keys(("x",))
 
 
 @pytest.mark.asyncio
-async def test_authorization_port_stub() -> None:
-    port: AuthorizationPort = _StubAuthorizationPort()
-    ident = AuthIdentity(subject_id="u")
-    ok = await port.authorize(ident, AuthorizationRequest(action="read"))
-    assert ok is True
-    ok_many = await port.authorize_many(
-        ident,
-        (AuthorizationRequest(action="read"),),
-    )
-    assert ok_many is True
+async def test_authz_port_stub() -> None:
+    port: AuthzPort = _StubAuthzPort()
+    ident = AuthnIdentity(principal_id=uuid4())
+    assert await port.permits(ident, "read") is True

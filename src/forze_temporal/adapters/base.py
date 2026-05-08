@@ -8,8 +8,8 @@ from typing import Callable
 
 import attrs
 
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.primitives import uuid4
-from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import TemporalClientPort
 
@@ -17,7 +17,7 @@ from ..kernel.platform import TemporalClientPort
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TemporalBaseAdapter(MultiTenancyMixin):
+class TemporalBaseAdapter(TenancyMixin):
     """Base adapter for Temporal integration."""
 
     client: TemporalClientPort

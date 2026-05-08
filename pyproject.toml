@@ -140,7 +140,6 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/forze",
-    "src/forze_contrib",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_mongo",
@@ -148,7 +147,7 @@ packages = [
     "src/forze_rabbitmq",
     "src/forze_redis",
     "src/forze_s3",
-    "src/forze_auth",
+    "src/forze_authnz",
     "src/forze_socketio",
     "src/forze_sqs",
     "src/forze_temporal",
@@ -232,7 +231,6 @@ warn_unused_ignores = false
 [tool.importlinter]
 root_packages = [
     "forze",
-    "forze_contrib",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -243,7 +241,7 @@ root_packages = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_auth",
+    "forze_authnz",
 ]
 exclude_type_checking_imports = true
 
@@ -286,7 +284,6 @@ protected_modules = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_auth",
 ]
 allowed_importers = []
 as_packages = true
@@ -297,7 +294,6 @@ as_packages = true
 [tool.vulture]
 paths = [
     "src/forze",
-    "src/forze_contrib",
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_postgres",
@@ -308,7 +304,7 @@ paths = [
     "src/forze_mongo",
     "src/forze_rabbitmq",
     "src/forze_sqs",
-    "src/forze_auth",
+    "src/forze_authnz",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -327,7 +323,6 @@ mi_min = "B"
 [tool.deptry]
 known_first_party = [
     "forze",
-    "forze_contrib",
     "forze_fastapi",
     "forze_mock",
     "forze_postgres",
@@ -338,7 +333,7 @@ known_first_party = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_auth",
+    "forze_authnz",
 ]
 ignore_notebooks = true
 

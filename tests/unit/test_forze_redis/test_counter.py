@@ -4,6 +4,8 @@ from uuid import UUID
 import pytest
 
 from forze_redis.adapters.codecs import RedisKeyCodec
+from forze.application.contracts.tenancy import TenantIdentity
+
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.kernel.platform.client import RedisClient
 
@@ -32,7 +34,7 @@ async def test_redis_counter_adapter_with_tenant(redis_mock: Mock) -> None:
         client=redis_mock,
         key_codec=RedisKeyCodec(namespace="ns"),
         tenant_aware=True,
-        tenant_provider=lambda: tid,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
     )
 
     redis_mock.incr = AsyncMock(return_value=2)

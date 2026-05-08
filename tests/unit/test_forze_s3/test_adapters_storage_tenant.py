@@ -3,7 +3,12 @@ from uuid import UUID
 
 import pytest
 
+from forze.application.contracts.tenancy import TenantIdentity
+
 from forze_s3.adapters.storage import S3StorageAdapter
+
+
+_TENANT = UUID("12345678-1234-5678-1234-567812345678")
 
 
 @pytest.fixture
@@ -14,7 +19,7 @@ def storage_adapter_with_tenant() -> S3StorageAdapter:
         client=client,
         bucket="test-bucket",
         tenant_aware=True,
-        tenant_provider=lambda: UUID("12345678-1234-5678-1234-567812345678"),
+        tenant_provider=lambda: TenantIdentity(tenant_id=_TENANT),
         key_generator=lambda: str(mock_uuid),
     )
 

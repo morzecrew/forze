@@ -38,7 +38,7 @@ class ConfigurableTemporalWorkflowQuery(WorkflowQueryDepPort):
             queue=self.config["queue"],
             spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )
 
 
@@ -67,5 +67,5 @@ class ConfigurableTemporalWorkflowCommand(WorkflowCommandDepPort):
             queue=self.config["queue"],
             spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )

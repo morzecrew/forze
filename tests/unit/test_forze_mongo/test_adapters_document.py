@@ -604,6 +604,7 @@ class TestMongoDocumentAdapterMutationsWithCache:
             cache_coord=_mongo_cc(read_gw, ms),
         )
         assert await adapter.create_many([]) == []
+        assert await adapter.create_many([], return_new=False) is None
         write_gw.create_many.assert_not_awaited()
 
     @pytest.mark.asyncio

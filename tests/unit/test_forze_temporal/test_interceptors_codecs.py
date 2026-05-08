@@ -8,20 +8,16 @@ pytest.importorskip("temporalio")
 
 from temporalio.api.common.v1 import Payload
 
-from forze.application.contracts.auth.value_objects import AuthIdentity
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import CallContext
 from forze.base.primitives import uuid7
-from forze_temporal.interceptors.codecs import (
-    DEFAULT_TEMPORAL_SUBJECT,
-    TemporalContextBinder,
-    TemporalContextCodec,
-)
+from forze_temporal.interceptors.codecs import TemporalContextBinder, TemporalContextCodec
 
 _EXEC_HEADER = "Forze-Execution-ID"
 _CORR_HEADER = "Forze-Correlation-ID"
 _TENANT_HEADER = "Forze-Tenant-ID"
-_ACTOR_HEADER = "Forze-Actor-ID"
-_SUBJECT_HEADER = "Forze-Subject-ID"
+_PRINCIPAL_HEADER = "Forze-Principal-ID"
 
 
 class TestTemporalContextCodecEncode:
@@ -43,17 +39,17 @@ class TestTemporalContextCodecEncode:
         assert headers[_EXEC_HEADER].data == str(eid).encode("utf-8")
         assert headers[_CORR_HEADER].data == str(cid).encode("utf-8")
 
-    def test_encode_identity_tenant_actor_and_subject(self) -> None:
+    def test_encode_principal_and_tenant(self) -> None:
         codec = TemporalContextCodec()
+        pid = uuid7()
         tid = uuid7()
-        aid = uuid7()
-        identity = AuthIdentity(subject_id="caller", tenant_id=tid, actor_id=aid)
+        identity = AuthnIdentity(principal_id=pid)
+        tenancy = TenantIdentity(tenant_id=tid)
 
-        headers = codec.encode(identity=identity)
+        headers = codec.encode(identity=identity, tenancy=tenancy)
 
-        assert headers[_SUBJECT_HEADER].data == b"caller"
+        assert headers[_PRINCIPAL_HEADER].data == str(pid).encode("utf-8")
         assert headers[_TENANT_HEADER].data == str(tid).encode("utf-8")
-        assert headers[_ACTOR_HEADER].data == str(aid).encode("utf-8")
 
     def test_encode_empty_when_no_contexts(self) -> None:
         assert TemporalContextCodec().encode() == {}
@@ -75,51 +71,52 @@ class TestTemporalContextCodecDecode:
         }
 
         decoded = codec.decode(headers)
-        call, identity = binder.bind(decoded)
+        call, identity, tenancy = binder.bind(decoded)
 
         assert call.correlation_id == cid
         assert call.causation_id == parent_eid
-        assert identity.subject_id == DEFAULT_TEMPORAL_SUBJECT
+        assert identity is None
+        assert tenancy is None
 
     def test_bind_generates_correlation_when_missing(self) -> None:
         codec = TemporalContextCodec()
         binder = TemporalContextBinder()
 
         decoded = codec.decode({})
-        call, identity = binder.bind(decoded)
+        call, identity, tenancy = binder.bind(decoded)
 
         assert isinstance(call.correlation_id, UUID)
         assert call.correlation_id == call.execution_id
-        assert identity.subject_id == DEFAULT_TEMPORAL_SUBJECT
+        assert identity is None
+        assert tenancy is None
 
-    def test_bind_restores_tenant_actor_and_default_subject(self) -> None:
+    def test_bind_restores_tenant_without_principal(self) -> None:
         codec = TemporalContextCodec()
         binder = TemporalContextBinder()
         tid = uuid7()
-        aid = uuid7()
         headers = {
             _TENANT_HEADER: Payload(data=str(tid).encode("utf-8")),
-            _ACTOR_HEADER: Payload(data=str(aid).encode("utf-8")),
         }
 
         decoded = codec.decode(headers)
-        _call, identity = binder.bind(decoded)
+        _call, identity, tenancy = binder.bind(decoded)
 
-        assert identity.tenant_id == tid
-        assert identity.actor_id == aid
-        assert identity.subject_id == DEFAULT_TEMPORAL_SUBJECT
+        assert identity is None
+        assert tenancy is not None and tenancy.tenant_id == tid
 
-    def test_bind_restores_explicit_subject(self) -> None:
+    def test_bind_restores_principal(self) -> None:
         codec = TemporalContextCodec()
         binder = TemporalContextBinder()
+        pid = uuid7()
         headers = {
-            _SUBJECT_HEADER: Payload(data=b"user-1"),
+            _PRINCIPAL_HEADER: Payload(data=str(pid).encode("utf-8")),
         }
 
         decoded = codec.decode(headers)
-        _call, identity = binder.bind(decoded)
+        _call, identity, tenancy = binder.bind(decoded)
 
-        assert identity.subject_id == "user-1"
+        assert identity is not None and identity.principal_id == pid
+        assert tenancy is None
 
     def test_bind_does_not_restore_local_execution_id_from_encoded_headers(
         self,
@@ -135,7 +132,7 @@ class TestTemporalContextCodecDecode:
         assert _EXEC_HEADER in headers
 
         decoded = codec.decode(headers)
-        call_out, _ = TemporalContextBinder().bind(decoded)
+        call_out, _, _ = TemporalContextBinder().bind(decoded)
 
         assert call_out.execution_id != eid
         assert call_out.correlation_id == cid

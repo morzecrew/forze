@@ -15,6 +15,7 @@ from forze.application.contracts.workflow import (
     WorkflowUpdateSpec,
 )
 from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.errors import CoreError
 from forze_temporal.adapters.workflow import TemporalWorkflowCommandAdapter, TemporalWorkflowQueryAdapter
 from forze_temporal.kernel.platform.client import TemporalClient
@@ -180,7 +181,7 @@ class TestTemporalBaseAdapterWorkflowId:
             queue="q",
             spec=spec,
             tenant_aware=True,
-            tenant_provider=lambda: tid,
+            tenant_provider=lambda: TenantIdentity(tenant_id=tid),
         )
         assert (
             adapter.construct_workflow_id("job-1")

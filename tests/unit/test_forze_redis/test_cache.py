@@ -5,6 +5,8 @@ import attrs
 
 from forze.base.codecs import JsonCodec
 
+from forze.application.contracts.tenancy import TenantIdentity
+
 from forze_redis.adapters.cache import RedisCacheAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
 
@@ -73,7 +75,7 @@ def test_redis_cache_adapter_keys_with_tenant() -> None:
         client=client,  # type: ignore[arg-type]
         key_codec=key_codec,
         tenant_aware=True,
-        tenant_provider=lambda: tenant_id,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant_id),
     )
 
     tid = str(tenant_id)

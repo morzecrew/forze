@@ -8,7 +8,7 @@ from typing import Any
 
 import attrs
 
-from forze_contrib.tenancy import MultiTenancyMixin
+from forze.application.contracts.tenancy import TenancyMixin
 
 from ..kernel.platform import RedisClientPort
 from .codecs import RedisKeyCodec
@@ -17,7 +17,7 @@ from .codecs import RedisKeyCodec
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisBaseAdapter(MultiTenancyMixin):
+class RedisBaseAdapter(TenancyMixin):
     """Base adapter class for Redis integration."""
 
     client: RedisClientPort

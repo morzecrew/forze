@@ -550,6 +550,7 @@ class TestPostgresDocumentAdapterCommands:
         )
 
         assert await adapter.create_many([]) == []
+        assert await adapter.create_many([], return_new=False) is None
         write_gw.create_many.assert_not_called()
 
     @pytest.mark.asyncio
@@ -676,6 +677,7 @@ class TestPostgresDocumentAdapterCommands:
         )
 
         assert await adapter.touch_many([]) == []
+        assert await adapter.touch_many([], return_new=False) is None
         write_gw.touch_many.assert_not_called()
 
     @pytest.mark.asyncio
@@ -762,6 +764,8 @@ class TestPostgresDocumentAdapterCommands:
         assert await adapter.update_many([]) == []
         assert await adapter.delete_many([]) == []
         assert await adapter.restore_many([]) == []
+        assert await adapter.delete_many([], return_new=False) is None
+        assert await adapter.restore_many([], return_new=False) is None
         write_gw.update_many.assert_not_called()
         write_gw.delete_many.assert_not_called()
         write_gw.restore_many.assert_not_called()

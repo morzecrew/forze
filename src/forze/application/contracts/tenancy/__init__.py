@@ -1,5 +1,6 @@
 from .deps import TenantResolverDepKey, TenantResolverDepPort
-from .ports import TenantResolverPort
+from .mixins import TenancyMixin
+from .ports import TenantProviderPort, TenantResolverPort
 from .value_objects import TenantIdentity
 
 # ----------------------- #
@@ -9,4 +10,6 @@ __all__ = [
     "TenantResolverPort",
     "TenantResolverDepKey",
     "TenantResolverDepPort",
+    "TenantProviderPort",
+    "TenancyMixin",
 ]

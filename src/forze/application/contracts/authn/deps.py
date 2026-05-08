@@ -1,5 +1,11 @@
 from ..base import BaseDepPort, DepKey
-from .ports import AuthnPort, PasswordLifecyclePort, TokenLifecyclePort
+from .ports import (
+    ApiKeyLifecyclePort,
+    AuthnPort,
+    PasswordAccountProvisioningPort,
+    PasswordLifecyclePort,
+    TokenLifecyclePort,
+)
 from .specs import AuthnSpec
 
 # ----------------------- #
@@ -13,6 +19,14 @@ PasswordLifecycleDepPort = BaseDepPort[AuthnSpec, PasswordLifecyclePort]
 TokenLifecycleDepPort = BaseDepPort[AuthnSpec, TokenLifecyclePort]
 """Token lifecycle dependency port."""
 
+ApiKeyLifecycleDepPort = BaseDepPort[AuthnSpec, ApiKeyLifecyclePort]
+"""API key lifecycle dependency port."""
+
+PasswordAccountProvisioningDepPort = BaseDepPort[
+    AuthnSpec, PasswordAccountProvisioningPort
+]
+"""Password account provisioning dependency port."""
+
 # ....................... #
 
 AuthnDepKey = DepKey[AuthnDepPort]("authn")
@@ -23,3 +37,11 @@ PasswordLifecycleDepKey = DepKey[PasswordLifecycleDepPort]("authn_password_lifec
 
 TokenLifecycleDepKey = DepKey[TokenLifecycleDepPort]("authn_token_lifecycle")
 """Key used to register the `TokenLifecyclePort` builder implementation."""
+
+ApiKeyLifecycleDepKey = DepKey[ApiKeyLifecycleDepPort]("authn_api_key_lifecycle")
+"""Key used to register the `ApiKeyLifecyclePort` builder implementation."""
+
+PasswordAccountProvisioningDepKey = DepKey[PasswordAccountProvisioningDepPort](
+    "authn_password_account_provisioning"
+)
+"""Key used to register the `PasswordAccountProvisioningPort` builder implementation."""

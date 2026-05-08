@@ -15,7 +15,7 @@ from forze.application.contracts.queue import (
     QueueMessage,
     QueueQueryPort,
 )
-from forze_contrib.tenancy import MultiTenancyMixin
+from forze.application.contracts.tenancy import TenancyMixin
 
 from ..kernel.platform import SQSClientPort
 from .codecs import SQSQueueCodec
@@ -28,7 +28,7 @@ from .codecs import SQSQueueCodec
 class SQSQueueAdapter[M: BaseModel](
     QueueQueryPort[M],
     QueueCommandPort[M],
-    MultiTenancyMixin,
+    TenancyMixin,
 ):
     """SQS queue adapter."""
 
@@ -128,6 +128,7 @@ class SQSQueueAdapter[M: BaseModel](
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[M]]:
         physical_queue = self.__queue_name(queue)
+
         async with self.client.client():
             raw = await self.client.receive(
                 physical_queue,
@@ -169,5 +170,6 @@ class SQSQueueAdapter[M: BaseModel](
         requeue: bool = True,
     ) -> int:
         physical_queue = self.__queue_name(queue)
+
         async with self.client.client():
             return await self.client.nack(physical_queue, ids, requeue=requeue)

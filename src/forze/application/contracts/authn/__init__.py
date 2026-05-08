@@ -1,15 +1,28 @@
 from .deps import (
+    ApiKeyLifecycleDepKey,
+    ApiKeyLifecycleDepPort,
     AuthnDepKey,
     AuthnDepPort,
+    PasswordAccountProvisioningDepKey,
+    PasswordAccountProvisioningDepPort,
     PasswordLifecycleDepKey,
     PasswordLifecycleDepPort,
+    TokenLifecycleDepKey,
+    TokenLifecycleDepPort,
 )
-from .ports import AuthnPort, PasswordLifecyclePort, TokenLifecyclePort
+from .ports import (
+    ApiKeyLifecyclePort,
+    AuthnPort,
+    PasswordAccountProvisioningPort,
+    PasswordLifecyclePort,
+    TokenLifecyclePort,
+)
 from .specs import AuthnSpec
 from .value_objects import (
     ApiKeyCredentials,
     ApiKeyResponse,
     AuthnIdentity,
+    CredentialLifetime,
     OAuth2Tokens,
     OAuth2TokensResponse,
     PasswordCredentials,
@@ -31,9 +44,18 @@ __all__ = [
     "ApiKeyCredentials",
     "ApiKeyResponse",
     "AuthnIdentity",
+    "CredentialLifetime",
     "PasswordCredentials",
     "TokenCredentials",
     "OAuth2Tokens",
     "OAuth2TokensResponse",
     "TokenResponse",
+    "TokenLifecycleDepKey",
+    "TokenLifecycleDepPort",
+    "ApiKeyLifecycleDepKey",
+    "ApiKeyLifecycleDepPort",
+    "ApiKeyLifecyclePort",
+    "PasswordAccountProvisioningDepKey",
+    "PasswordAccountProvisioningDepPort",
+    "PasswordAccountProvisioningPort",
 ]

@@ -438,9 +438,14 @@ class TestDocumentCommandReturnNewViaMock:
         assert n >= 2
 
     @pytest.mark.asyncio
-    async def test_create_many_empty_still_returns_empty_list(self) -> None:
+    async def test_create_many_empty_return_new_false_is_none(self) -> None:
         port = _document_adapter()
-        assert await port.create_many([], return_new=False) == []
+        assert await port.create_many([], return_new=False) is None
+
+    @pytest.mark.asyncio
+    async def test_touch_many_empty_return_new_false_is_none(self) -> None:
+        port = _document_adapter()
+        assert await port.touch_many([], return_new=False) is None
 
     @pytest.mark.asyncio
     async def test_update_return_new_false(self) -> None:
@@ -487,11 +492,6 @@ class TestDocumentCommandReturnNewViaMock:
         c1 = await port.create(CreateDocumentCmd())
         c2 = await port.create(CreateDocumentCmd())
         assert await port.touch_many([c1.id, c2.id], return_new=False) is None
-
-    @pytest.mark.asyncio
-    async def test_touch_many_empty_returns_empty_list(self) -> None:
-        port = _document_adapter()
-        assert await port.touch_many([], return_new=False) == []
 
     @pytest.mark.asyncio
     async def test_delete_restore_return_new_false(self) -> None:

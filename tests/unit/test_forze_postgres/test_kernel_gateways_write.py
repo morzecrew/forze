@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.errors import ConcurrencyError, NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.kernel.gateways import (
@@ -241,7 +242,7 @@ def _build_tenant_aware_gateway() -> (
         update_cmd_type=MyUpdateDoc,
         strategy="application",
         tenant_aware=True,
-        tenant_provider=lambda: tid,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tid),
     )
     return gw, client
 

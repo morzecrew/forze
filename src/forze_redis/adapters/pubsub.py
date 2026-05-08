@@ -17,7 +17,7 @@ from forze.application.contracts.pubsub import (
     PubSubMessage,
     PubSubQueryPort,
 )
-from forze_contrib.tenancy import MultiTenancyMixin
+from forze.application.contracts.tenancy import TenancyMixin
 
 from ..kernel.platform import RedisClientPort
 from .codecs import RedisPubSubCodec
@@ -30,7 +30,7 @@ from .codecs import RedisPubSubCodec
 class RedisPubSubAdapter[M: BaseModel](
     PubSubCommandPort[M],
     PubSubQueryPort[M],
-    MultiTenancyMixin,
+    TenancyMixin,
 ):
     """Redis implementation of :class:`~forze.application.contracts.pubsub.PubSubCommandPort` and :class:`~forze.application.contracts.pubsub.PubSubQueryPort`.
 

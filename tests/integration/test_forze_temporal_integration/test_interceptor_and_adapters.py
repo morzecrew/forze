@@ -10,7 +10,7 @@ from temporalio.worker import Worker
 
 from forze.application.contracts.workflow import WorkflowHandle, WorkflowSpec
 from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
-from forze.application.contracts.auth.value_objects import AuthIdentity
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import CallContext, ExecutionContext
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
@@ -61,7 +61,7 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
                         correlation_id=fixed,
                         causation_id=None,
                     ),
-                    identity=AuthIdentity(subject_id="it"),
+                    identity=AuthnIdentity(principal_id=uuid7()),
                 ):
                     handle = await env.client.start_workflow(
                         ItContextProbeWorkflow.run,

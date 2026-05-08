@@ -15,3 +15,14 @@ class TenantResolverPort(Protocol):
     ) -> Awaitable[TenantIdentity | None]:
         """Resolve the tenant identity from the principal ID."""
         ...
+
+
+# ....................... #
+
+
+class TenantProviderPort(Protocol):
+    """Port for providing the tenant ID."""
+
+    def __call__(self) -> TenantIdentity | None:
+        """Provide the tenant ID."""
+        ...

@@ -6,7 +6,10 @@ from forze.application.contracts.cache import CacheDepPort, CacheSpec
 from forze.application.contracts.counter import CounterDepPort, CounterSpec
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.idempotency import IdempotencyDepPort, IdempotencySpec
-from forze.application.contracts.search import SearchResultSnapshotPort, SearchResultSnapshotSpec
+from forze.application.contracts.search import (
+    SearchResultSnapshotPort,
+    SearchResultSnapshotSpec,
+)
 from forze.application.execution import ExecutionContext
 
 from ...adapters import (
@@ -55,7 +58,7 @@ class ConfigurableRedisCache(CacheDepPort):
             ttl_body=spec.ttl,
             ttl_kv=spec.ttl,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )
 
 
@@ -84,7 +87,7 @@ class ConfigurableRedisCounter(CounterDepPort):
             client=client,
             key_codec=key_codec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )
 
 
@@ -114,7 +117,7 @@ class ConfigurableRedisIdempotency(IdempotencyDepPort):
             key_codec=key_codec,
             ttl=spec.ttl,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )
 
 
@@ -146,7 +149,7 @@ class ConfigurableRedisSearchResultSnapshot:
             default_max_ids=spec.max_ids,
             default_chunk_size=spec.chunk_size,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )
 
 
@@ -176,5 +179,5 @@ class ConfigurableRedisDistributedLock:
             key_codec=key_codec,
             spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )

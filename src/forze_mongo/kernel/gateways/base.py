@@ -7,7 +7,7 @@ require_mongo()
 # ....................... #
 
 from functools import cached_property
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 import attrs
@@ -19,6 +19,7 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
+from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
@@ -31,7 +32,7 @@ from ..query import MongoQueryRenderer
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoGateway[M: BaseModel]:
+class MongoGateway[M: BaseModel](TenancyMixin):
     """Base gateway providing collection access, query rendering, and document mapping.
 
     Subclasses (e.g. :class:`MongoReadGateway`, :class:`MongoWriteGateway`)
@@ -54,12 +55,6 @@ class MongoGateway[M: BaseModel]:
 
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
     """Query expression renderer."""
-
-    tenant_aware: bool = attrs.field(default=False)
-    """Whether tenant ID is required for the gateway."""
-
-    tenant_provider: Callable[[], UUID | None] | None = attrs.field(default=None)
-    """Callable to provide the tenant ID."""
 
     # ....................... #
 

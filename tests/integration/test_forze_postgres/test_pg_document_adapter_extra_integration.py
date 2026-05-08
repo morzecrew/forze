@@ -381,7 +381,9 @@ async def test_pg_adapter_mutation_branches_and_empty_batches(
     assert await cmd.ensure_many([], return_new=False) is None
     assert await cmd.upsert_many([], return_new=False) is None
     assert await cmd.update_many([], return_new=False) is None
-    assert await cmd.touch_many([], return_new=False) == []
+    assert await cmd.touch_many([], return_new=False) is None
+    assert await cmd.delete_many([], return_new=False) is None
+    assert await cmd.restore_many([], return_new=False) is None
     assert await cmd.kill_many([]) is None
 
     base = await cmd.create(_CxCreate(sku="base"))

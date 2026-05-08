@@ -1,21 +1,29 @@
 from .deps import (
-    AuthorizationDepKey,
-    AuthorizationDepPort,
+    AuthzDepKey,
+    AuthzDepPort,
+    EffectiveGrantsDepKey,
+    EffectiveGrantsDepPort,
     PrincipalRegistryDepKey,
     PrincipalRegistryDepPort,
     RoleAssignmentDepKey,
     RoleAssignmentDepPort,
 )
-from .ports import AuthorizationPort, PrincipalRegistryPort, RoleAssignmentPort
+from .ports import (
+    AuthzPort,
+    EffectiveGrantsPort,
+    PrincipalRegistryPort,
+    RoleAssignmentPort,
+)
 from .specs import AuthzSpec
-from .value_objects import PrincipalKind, PrincipalRef
+from .types import PrincipalKind
+from .value_objects import EffectiveGrants, PrincipalRef
 
 # ----------------------- #
 
 __all__ = [
-    "AuthorizationDepKey",
-    "AuthorizationDepPort",
-    "AuthorizationPort",
+    "AuthzDepKey",
+    "AuthzDepPort",
+    "AuthzPort",
     "AuthzSpec",
     "PrincipalKind",
     "PrincipalRef",
@@ -25,4 +33,8 @@ __all__ = [
     "RoleAssignmentDepKey",
     "RoleAssignmentDepPort",
     "RoleAssignmentPort",
+    "EffectiveGrantsDepKey",
+    "EffectiveGrantsDepPort",
+    "EffectiveGrantsPort",
+    "EffectiveGrants",
 ]

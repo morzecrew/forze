@@ -20,11 +20,11 @@ from forze.application.contracts.query import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
 from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
-from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClientPort
@@ -94,7 +94,7 @@ class PostgresQualifiedName:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresGateway[M: BaseModel](MultiTenancyMixin):
+class PostgresGateway[M: BaseModel](TenancyMixin):
     """Base gateway providing shared query-building helpers for a single Postgres relation."""
 
     source_qname: PostgresQualifiedName

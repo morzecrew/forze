@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class TenantResolverDepPort(Protocol):
     """Tenant resolver dependency port."""
 
-    def __call__(self, context: "ExecutionContext") -> TenantResolverPort:
+    def __call__(self, ctx: "ExecutionContext") -> TenantResolverPort:
         """Build a tenant resolver port instance."""
         ...
 

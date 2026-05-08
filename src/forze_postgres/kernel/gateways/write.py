@@ -956,6 +956,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         dto: U,
+        *,
+        batch_size: int = 200,
     ) -> tuple[int, Sequence[D]]:
         """Bulk-update rows matching *filters* in a single ``UPDATE … RETURNING``.
 

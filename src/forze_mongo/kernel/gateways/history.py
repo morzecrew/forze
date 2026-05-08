@@ -155,8 +155,12 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         """
 
         record = self._from_data(data)
-        payload = pydantic_dump(record)
-        await self.client.insert_one(await self.coll(), self._coerce_query_value(payload))
+        raw_payload = pydantic_dump(record)
+        raw_payload = self.adapt_payload_for_write(raw_payload)
+
+        payload = self._coerce_query_value(raw_payload)
+
+        await self.client.insert_one(await self.coll(), payload)
 
     # ....................... #
 
@@ -171,6 +175,8 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
         records = list(map(self._from_data, data))
         raw_payloads = pydantic_dump_many(records)
+        raw_payloads = list(map(self.adapt_payload_for_write, raw_payloads))
+
         payloads = list(map(self._coerce_query_value, raw_payloads))
 
         await self.client.insert_many(await self.coll(), payloads)

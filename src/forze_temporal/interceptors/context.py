@@ -36,7 +36,8 @@ from temporalio.worker import (
 )
 from temporalio.worker import Interceptor as WorkerInterceptor
 
-from forze.application.contracts.auth.value_objects import AuthIdentity
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import CallContext, ExecutionContext
 
 from .codecs import TemporalContextBinder, TemporalContextCodec
@@ -119,7 +120,7 @@ class BaseContextInterceptor:
         ctx = self.ctx_dep()
         context_headers = self.codec.encode(
             call=ctx.get_call_ctx(),
-            identity=ctx.get_auth_identity(),
+            identity=ctx.get_authn_identity(),
         )
         headers = dict(input.headers or {})
 
@@ -133,8 +134,9 @@ class BaseContextInterceptor:
     def bind_headers(
         self,
         headers: Mapping[str, Payload],
-    ) -> tuple[CallContext, AuthIdentity]:
+    ) -> tuple[CallContext, AuthnIdentity | None, TenantIdentity | None]:
         decoded = self.codec.decode(headers)
+
         return self.binder.bind(decoded)
 
     # ....................... #
@@ -145,9 +147,9 @@ class BaseContextInterceptor:
         next: Callable[[], Awaitable[Any]],
     ) -> Any:
         ctx = self.ctx_dep()
-        call_ctx, identity = self.bind_headers(headers)
+        call_ctx, identity, tenant = self.bind_headers(headers)
 
-        with ctx.bind_call(call=call_ctx, identity=identity):
+        with ctx.bind_call(call=call_ctx, identity=identity, tenancy=tenant):
             return await next()
 
     # ....................... #
@@ -158,9 +160,9 @@ class BaseContextInterceptor:
         next: Callable[[], Any],
     ) -> Any:
         ctx = self.ctx_dep()
-        call_ctx, identity = self.bind_headers(headers)
+        call_ctx, identity, tenant = self.bind_headers(headers)
 
-        with ctx.bind_call(call=call_ctx, identity=identity):
+        with ctx.bind_call(call=call_ctx, identity=identity, tenancy=tenant):
             return next()
 
 

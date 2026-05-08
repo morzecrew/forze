@@ -21,9 +21,9 @@ from forze.application.contracts.storage import (
     StoragePort,
     StoredObject,
 )
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.errors import CoreError, ValidationError
 from forze.base.primitives import utcnow, uuid7
-from forze_contrib.tenancy import MultiTenancyMixin
 
 from ..kernel.platform import S3ClientPort
 from .codecs import default_b64_codec, default_path_codec
@@ -33,7 +33,7 @@ from .codecs import default_b64_codec, default_path_codec
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class S3StorageAdapter(StoragePort, MultiTenancyMixin):
+class S3StorageAdapter(StoragePort, TenancyMixin):
     """Storage adapter that persists files in an S3-compatible bucket.
 
     Implements :class:`~forze.application.contracts.storage.StoragePort`.
@@ -227,6 +227,7 @@ class S3StorageAdapter(StoragePort, MultiTenancyMixin):
 
         prefix = default_path_codec.join(prefix)
         self._validate_prefix(prefix)
+
         path = self.construct_path(prefix)
 
         async with self.client.client():

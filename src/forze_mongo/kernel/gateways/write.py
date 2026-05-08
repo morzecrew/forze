@@ -275,8 +275,10 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             {"$setOnInsert": storage},
         )
         created = await self.read_gw.get(model.id)
+
         if res.upserted_id is not None:
             await self._write_history(created)
+
         return created
 
     # ....................... #
@@ -297,9 +299,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         raw_payloads = pydantic_dump_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         new_indices: list[int] = []
+
         for offset in range(0, len(dtos), batch_size):
             chunk_payloads = payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
+
             ops: list[UpdateOne] = [
                 UpdateOne(
                     self._add_tenant_filter(
@@ -338,9 +342,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         data = pydantic_dump(model)
         data = self.adapt_payload_for_write(data, create=True)
         storage = self._storage_doc(data)
+
         flt: JsonDict = self._add_tenant_filter(
             {"_id": self._storage_pk(model.id)},
         )
+
         res: Any = await self.client.update_one_upsert(
             await self.coll(),
             flt,
@@ -376,9 +382,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         u_all = [u for _, u in pairs]
         new_indices: list[int] = []
+
         for offset in range(0, len(pairs), batch_size):
             chunk_payloads = payloads[offset : offset + batch_size]
             chunk_models = models[offset : offset + batch_size]
+
             ops: list[UpdateOne] = [
                 UpdateOne(
                     self._add_tenant_filter(
@@ -394,21 +402,27 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 ops,
                 ordered=False,
             )
+
             umap = cast(Mapping[int, Any], bres.upserted_ids or {})
+
             for idx in umap:
                 new_indices.append(offset + int(idx))
 
         inserted_idx: set[int] = set(new_indices)
+
         if inserted_idx:
             new_pks = [models[i].id for i in inserted_idx]
             hist = await self.read_gw.get_many(new_pks)
             await self._write_history(*hist)
 
         to_update: list[tuple[UUID, U]] = []
+
         for i, m in enumerate(models):
             if i in inserted_idx:
                 continue
+
             to_update.append((m.id, u_all[i]))
+
         if to_update:
             pks = [a[0] for a in to_update]
             u_dtos = [a[1] for a in to_update]

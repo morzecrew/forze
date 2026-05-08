@@ -1131,6 +1131,9 @@ class MockDocumentAdapter[
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not dtos:
+            if not return_new:
+                return None
+
             return []
         if return_new:
             return [await self.create(dto, return_new=True) for dto in dtos]
@@ -1653,6 +1656,9 @@ class MockDocumentAdapter[
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not pks:
+            if not return_new:
+                return None
+
             return []
         if len(set(pks)) != len(pks):
             raise CoreError("Primary keys must be unique")
@@ -1758,6 +1764,9 @@ class MockDocumentAdapter[
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
         if not deletes:
+            if not return_new:
+                return None
+
             return []
         if return_new:
             return [await self.delete(pk, r, return_new=True) for pk, r in deletes]
@@ -1838,6 +1847,9 @@ class MockDocumentAdapter[
         if not self._supports_soft_delete():
             raise CoreError("Soft deletion is not supported for this model")
         if not restores:
+            if not return_new:
+                return None
+
             return []
         if return_new:
             return [await self.restore(pk, r, return_new=True) for pk, r in restores]

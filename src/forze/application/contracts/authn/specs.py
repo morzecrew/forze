@@ -3,7 +3,7 @@ import attrs
 from ..base import BaseSpec
 
 # ----------------------- #
-#! Most likely need separate specs for ports
+#! TODO: configuration for password, token, api key - ?
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

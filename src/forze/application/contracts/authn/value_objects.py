@@ -15,6 +15,7 @@ class AuthnIdentity:
 
 
 # ....................... #
+# Password
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -29,6 +30,24 @@ class PasswordCredentials:
 
 
 # ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class CredentialLifetime:
+    """Lifetime of an authentication credential."""
+
+    expires_in: timedelta | None = attrs.field(default=None)
+    """Time until the credential expires if applicable."""
+
+    expires_at: datetime | None = attrs.field(default=None)
+    """Absolute expiration time if known."""
+
+    issued_at: datetime | None = attrs.field(default=None)
+    """Absolute issue time if known."""
+
+
+# ....................... #
+# API key
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -55,14 +74,12 @@ class ApiKeyResponse:
     key_id: str | None = attrs.field(default=None)
     """Identifier of the issued API key, when the provider exposes one."""
 
-    expires_in: timedelta | None = attrs.field(default=None)
-    """Time until the API key expires if applicable."""
-
-    expires_at: datetime | None = attrs.field(default=None)
-    """Absolute expiration time if known."""
+    lifetime: CredentialLifetime | None = attrs.field(default=None)
+    """Lifetime of the API key."""
 
 
 # ....................... #
+# Abstract token credentials
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -89,17 +106,12 @@ class TokenResponse:
     token: TokenCredentials
     """Token."""
 
-    expires_in: timedelta | None = attrs.field(default=None)
-    """Time until the token expires if applicable."""
-
-    issued_at: datetime | None = attrs.field(default=None)
-    """Absolute issue time if known."""
-
-    expires_at: datetime | None = attrs.field(default=None)
-    """Absolute expiration time if known."""
+    lifetime: CredentialLifetime | None = attrs.field(default=None)
+    """Lifetime of the token."""
 
 
 # ....................... #
+# OAuth2 tokens
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

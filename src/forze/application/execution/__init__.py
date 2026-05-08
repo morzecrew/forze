@@ -1,6 +1,5 @@
 """Execution kernel for usecases, dependency injection, and lifecycle."""
 
-from ..contracts.auth import AuthIdentity
 from .context import CallContext, ExecutionContext
 from .delegate import UsecaseDelegate, delegated_usecase_effect
 from .deps import Deps, DepsModule, DepsPlan
@@ -38,7 +37,6 @@ from .usecase import Usecase, UsecaseFactory
 __all__ = [
     "ExecutionContext",
     "CallContext",
-    "AuthIdentity",
     "DispatchDeclaringEffectFactory",
     "UsecasePlan",
     "UsecaseRegistry",

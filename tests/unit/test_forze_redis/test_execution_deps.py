@@ -16,7 +16,9 @@ from forze.application.contracts.dlock import (
     DistributedLockSpec,
 )
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
-from forze.application.execution import AuthIdentity, CallContext, Deps, ExecutionContext
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import CallContext, Deps, ExecutionContext
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
@@ -69,11 +71,12 @@ class TestConfigurableRedisFactories:
         tid = uuid4()
         with ctx.bind_call(
             call=CallContext(execution_id=uuid4(), correlation_id=uuid4()),
-            identity=AuthIdentity(subject_id="test", tenant_id=tid),
+            identity=AuthnIdentity(principal_id=uuid4()),
+            tenancy=TenantIdentity(tenant_id=tid),
         ):
             spec = CacheSpec(name="cache")
             adapter = factory(ctx, spec)
-            assert adapter.tenant_provider() == tid
+            assert adapter.tenant_provider().tenant_id == tid
 
         assert isinstance(adapter, RedisCacheAdapter)
         assert adapter.tenant_aware is True

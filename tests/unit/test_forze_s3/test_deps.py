@@ -2,7 +2,9 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
-from forze.application.execution import AuthIdentity, CallContext, Deps, ExecutionContext
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import CallContext, Deps, ExecutionContext
 from forze_s3.adapters.storage import S3StorageAdapter
 from forze_s3.execution.deps import S3ClientDepKey, S3DepsModule
 from forze_s3.execution.deps.deps import ConfigurableS3Storage
@@ -34,11 +36,13 @@ def test_s3_storage_factory_resolves_tenant_from_context() -> None:
     )
 
     call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    ident = AuthIdentity(subject_id="test", tenant_id=tid)
-
-    with context.bind_call(call=call, identity=ident):
+    with context.bind_call(
+        call=call,
+        identity=AuthnIdentity(principal_id=uuid4()),
+        tenancy=TenantIdentity(tenant_id=tid),
+    ):
         storage = factory(context, StorageSpec(name="x"))
-        assert storage.tenant_provider() == tid
+        assert storage.tenant_provider().tenant_id == tid
 
 
 def test_s3_deps_module_registers_expected_keys() -> None:

@@ -8,7 +8,9 @@ from typing import Awaitable, Protocol
 
 from fastapi import Request
 
-from forze.application.execution import AuthIdentity, CallContext, ExecutionContext
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import CallContext, ExecutionContext
 
 # ----------------------- #
 
@@ -28,20 +30,43 @@ class CallContextCodecPort(Protocol):
 # ....................... #
 
 
-class AuthIdentityCodecPort(Protocol):
+class AuthnIdentityCodecPort(Protocol):
     """Codec for decoding the authenticated identity from a request."""
 
-    def decode(self, request: Request) -> AuthIdentity | None: ...  # pragma: no cover
+    def decode(self, request: Request) -> AuthnIdentity | None: ...  # pragma: no cover
 
 
 # ....................... #
 
 
-class AuthIdentityResolverPort(Protocol):
+class AuthnIdentityResolverPort(Protocol):
     """Async resolver for authenticating a request into an identity."""
 
     def resolve(
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> Awaitable[AuthIdentity | None]: ...  # pragma: no cover
+    ) -> Awaitable[AuthnIdentity | None]: ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class TenantIdentityCodecPort(Protocol):
+    """Codec for decoding the tenant identity from a request."""
+
+    def decode(self, request: Request) -> TenantIdentity | None: ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class TenantIdentityResolverPort(Protocol):
+    """Async resolver for resolving the tenant identity from a request."""
+
+    def resolve(
+        self,
+        request: Request,
+        ctx: ExecutionContext,
+        identity: AuthnIdentity | None,
+    ) -> Awaitable[TenantIdentity | None]: ...  # pragma: no cover

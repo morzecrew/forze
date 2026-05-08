@@ -15,7 +15,7 @@ from forze.application._logger import logger
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
-from ..contracts.auth import AuthIdentity
+from ..contracts.authn import AuthnIdentity
 from ..contracts.base import DepKey, DepsPort
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort, CounterSpec
@@ -49,6 +49,7 @@ from ..contracts.search import (
     SearchSpec,
 )
 from ..contracts.storage import StorageDepKey, StoragePort, StorageSpec
+from ..contracts.tenancy import TenantIdentity, TenantResolverDepKey, TenantResolverPort
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 
 # ----------------------- #
@@ -129,12 +130,19 @@ class ExecutionContext:
     )
     """Current call context."""
 
-    __auth_identity: ContextVar[AuthIdentity | None] = attrs.field(
-        factory=lambda: ContextVar("auth_identity", default=None),
+    __authn_identity: ContextVar[AuthnIdentity | None] = attrs.field(
+        factory=lambda: ContextVar("authn_identity", default=None),
         init=False,
         repr=False,
     )
-    """Current authenticated identity (auth contract)."""
+    """Current authenticated identity (authn contract)."""
+
+    __tenancy_identity: ContextVar[TenantIdentity | None] = attrs.field(
+        factory=lambda: ContextVar("tenancy_identity", default=None),
+        init=False,
+        repr=False,
+    )
+    """Current tenancy identity (tenancy contract)."""
 
     __after_commit_callbacks: ContextVar[list[Callable[[], Awaitable[None]]] | None] = (
         attrs.field(
@@ -157,28 +165,23 @@ class ExecutionContext:
 
     # ....................... #
 
-    def get_auth_identity(self) -> AuthIdentity | None:
-        """Return the current :class:`~forze.application.contracts.auth.AuthIdentity`.
+    def get_authn_identity(self) -> AuthnIdentity | None:
+        """Return the current :class:`~forze.application.contracts.authn.AuthnIdentity`.
 
         :returns: Bound identity, if any.
         """
 
-        return self.__auth_identity.get()
+        return self.__authn_identity.get()
 
     # ....................... #
 
-    def get_tenant_id(self) -> UUID | None:
-        """Return the current tenant ID from :meth:`get_auth_identity`.
+    def get_tenancy_identity(self) -> TenantIdentity | None:
+        """Return the current :class:`~forze.application.contracts.tenancy.TenantIdentity`.
 
-        :returns: Tenant ID.
+        :returns: Bound tenancy identity, if any.
         """
 
-        identity = self.get_auth_identity()
-
-        if identity is None:
-            return None
-
-        return identity.tenant_id
+        return self.__tenancy_identity.get()
 
     # ....................... #
 
@@ -187,7 +190,8 @@ class ExecutionContext:
         self,
         *,
         call: CallContext,
-        identity: AuthIdentity | None = None,
+        identity: AuthnIdentity | None = None,
+        tenancy: TenantIdentity | None = None,
     ) -> Iterator[None]:
         """Bind a call and optional auth identity to the execution context.
 
@@ -195,11 +199,13 @@ class ExecutionContext:
 
         :param call: Call context to bind.
         :param identity: Authenticated identity from auth contracts.
+        :param tenancy: Tenant identity from tenancy contracts.
         :returns: Context manager that binds the call context to the execution context.
         """
 
         call_token = self.__call_context.set(call)
-        identity_token = self.__auth_identity.set(identity)
+        identity_token = self.__authn_identity.set(identity)
+        tenancy_token = self.__tenancy_identity.set(tenancy)
 
         #! Maybe move string keys to constants above
 
@@ -212,13 +218,10 @@ class ExecutionContext:
             bound["causation_id"] = str(call.causation_id)
 
         if identity is not None:
-            bound["subject_id"] = identity.subject_id
+            bound["principal_id"] = identity.principal_id
 
-            if identity.tenant_id is not None:
-                bound["tenant_id"] = str(identity.tenant_id)
-
-            if identity.actor_id is not None:
-                bound["actor_id"] = str(identity.actor_id)
+        if tenancy is not None:
+            bound["tenant_id"] = str(tenancy.tenant_id)
 
         try:
             with bound_contextvars(**bound):
@@ -226,7 +229,8 @@ class ExecutionContext:
 
         finally:
             self.__call_context.reset(call_token)
-            self.__auth_identity.reset(identity_token)
+            self.__authn_identity.reset(identity_token)
+            self.__tenancy_identity.reset(tenancy_token)
 
     # ....................... #
 
@@ -649,3 +653,21 @@ class ExecutionContext:
         )
 
         return dc
+
+    # ....................... #
+
+    def tenant_resolver(self) -> TenantResolverPort | None:
+        """Resolve a tenant resolver port."""
+
+        if not self.deps.exists(TenantResolverDepKey):
+            return None
+
+        dep = self.dep(TenantResolverDepKey)
+        tr = dep(self)
+
+        logger.trace(
+            "Resolved tenant resolver port -> %s",
+            type(tr).__qualname__,
+        )
+
+        return tr

@@ -41,7 +41,7 @@ class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )
 
 
@@ -71,5 +71,5 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenant_id,
+            tenant_provider=ctx.get_tenancy_identity,
         )

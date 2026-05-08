@@ -5,6 +5,7 @@ import pytest
 from datetime import timedelta
 
 from forze.application.contracts.idempotency import IdempotencySnapshot
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.errors import ConflictError
 from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
@@ -28,7 +29,7 @@ def adapter_with_tenant(mock_redis_client: MagicMock) -> RedisIdempotencyAdapter
         key_codec=RedisKeyCodec(namespace=_NS),
         ttl=timedelta(seconds=60),
         tenant_aware=True,
-        tenant_provider=lambda: _TID,
+        tenant_provider=lambda: TenantIdentity(tenant_id=_TID),
     )
 
 

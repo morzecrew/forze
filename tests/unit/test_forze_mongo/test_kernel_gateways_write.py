@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.errors import ConcurrencyError, CoreError
 from forze.domain.constants import TENANT_ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
@@ -105,12 +106,12 @@ class TestMongoWriteGateway:
             create_cmd_type=MyCreateDoc,
             update_cmd_type=MyUpdateDoc,
             tenant_aware=True,
-            tenant_provider=lambda: tid,
+            tenant_provider=lambda: TenantIdentity(tenant_id=tid),
         )
         await gw.update(pk, MyUpdateDoc(name="after"))
 
         update_filter = client.update_one.await_args.args[1]
-        assert update_filter[TENANT_ID_FIELD] == tid
+        assert update_filter[TENANT_ID_FIELD].tenant_id == tid
         assert update_filter["_id"] == str(pk)
         assert update_filter["rev"] == 1
 

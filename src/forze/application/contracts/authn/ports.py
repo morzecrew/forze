@@ -1,7 +1,9 @@
-from typing import Awaitable, Protocol
+from typing import Awaitable, Protocol, Sequence
+from uuid import UUID
 
 from .value_objects import (
     ApiKeyCredentials,
+    ApiKeyResponse,
     AuthnIdentity,
     OAuth2Tokens,
     OAuth2TokensResponse,
@@ -69,4 +71,55 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
     def revoke_tokens(
         self,
         identity: AuthnIdentity,  # noqa: F841
+    ) -> Awaitable[None]: ...
+
+
+# ....................... #
+
+
+class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
+    """Port for managing the lifecycle of API keys."""
+
+    def issue_api_key(
+        self,
+        identity: AuthnIdentity,  # noqa: F841
+    ) -> Awaitable[ApiKeyResponse]: ...
+
+    def refresh_api_key(
+        self,
+        credentials: ApiKeyCredentials,  # noqa: F841
+    ) -> Awaitable[ApiKeyResponse]: ...
+
+    def revoke_api_key(self, key_id: str) -> Awaitable[None]: ...  # noqa: F841
+
+    def revoke_many_api_keys(
+        self,
+        key_ids: Sequence[str],  # noqa: F841
+    ) -> Awaitable[None]: ...
+
+
+# ....................... #
+
+
+class PasswordAccountProvisioningPort(Protocol):  # pragma: no cover
+    """Port for provisioning password accounts."""
+
+    def register_with_password(
+        self,
+        principal_id: UUID,
+        credentials: PasswordCredentials,
+    ) -> Awaitable[None]: ...
+
+    def provision_password_account(
+        self,
+        operator: AuthnIdentity,
+        principal_id: UUID,
+        credentials: PasswordCredentials,
+    ) -> Awaitable[None]: ...
+
+    def accept_invite_with_password(
+        self,
+        invite: TokenCredentials,  # noqa: F841
+        principal_id: UUID,
+        credentials: PasswordCredentials,
     ) -> Awaitable[None]: ...

@@ -436,8 +436,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        parsed, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
-            aggregates,
+        parsed, select_clause, group_clause, aggregate_params = (
+            renderer.render_aggregates(
+                aggregates,
+            )
         )
         params = list(aggregate_params) + list(params)
         sort_clause = renderer.render_aggregate_order_by(parsed, sorts)
@@ -486,8 +488,10 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        _parsed, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
-            aggregates,
+        _parsed, select_clause, group_clause, aggregate_params = (
+            renderer.render_aggregates(
+                aggregates,
+            )
         )
         params = list(aggregate_params) + list(params)
 

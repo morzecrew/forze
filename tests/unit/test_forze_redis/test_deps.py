@@ -39,13 +39,19 @@ def test_redis_counter_factory_tenant_aware_uses_context() -> None:
     )
     counter = factory(context, CounterSpec(name="ns"))
 
-    from forze.application.execution import AuthIdentity, CallContext
+    from forze.application.contracts.authn import AuthnIdentity
+    from forze.application.contracts.tenancy import TenantIdentity
+    from forze.application.execution import CallContext
 
     call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    ident = AuthIdentity(subject_id="test", tenant_id=tid)
+    ident = AuthnIdentity(principal_id=uuid4())
 
-    with context.bind_call(call=call, identity=ident):
-        assert counter.tenant_provider() == tid
+    with context.bind_call(
+        call=call,
+        identity=ident,
+        tenancy=TenantIdentity(tenant_id=tid),
+    ):
+        assert counter.tenant_provider().tenant_id == tid
 
 
 class _PubSubPayload(BaseModel):
