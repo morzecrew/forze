@@ -1,8 +1,25 @@
 # MongoDB Integration
 
+## What this integration provides
+
+Persist documents and transactions in MongoDB behind Forze document contracts.
+
+## When to use it
+
+Use this when MongoDB is your document store or when you need collection-oriented persistence for aggregates.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_mongo` provides document storage and transaction management backed by MongoDB. It implements `DocumentQueryPort`, `DocumentCommandPort`, and `TxManagerPort` using async `pymongo`.
 
-Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / `ro_documents`. See [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md).
+Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / `ro_documents`. See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
 
 ## Installation
 
@@ -152,7 +169,7 @@ The Mongo adapter uses the shared query DSL:
 
     count = await doc_q.count({"$fields": {"is_deleted": False}})
 
-See [Query Syntax](../core-package/query-syntax.md).
+See [Query Syntax](../reference/query-syntax.md).
 
 ### Mongo-specific behavior
 

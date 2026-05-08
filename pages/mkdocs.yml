@@ -3,6 +3,11 @@ site_url: https://morzecrew.github.io/forze
 repo_url: https://github.com/morzecrew/forze
 dev_addr: "localhost:8045"
 
+not_in_nav: |
+  core-concepts/*
+  core-package/*
+
+
 theme:
   name: shadcn
   icon: null
@@ -37,36 +42,45 @@ markdown_extensions:
       force_linenos: false
 
 nav:
-  - Home: index.md
-  - Installation: installation.md
-  - Getting Started: getting-started.md
+  - Start Here:
+    - Home: index.md
+    - Installation: installation.md
+    - Getting Started: getting-started.md
+    - First Project Walkthrough: first-project-walkthrough.md
 
   - Concepts:
-    - Overview: core-concepts/index.md
-    - Specs and wiring: core-concepts/specs-and-wiring.md
-    - Layered Architecture: core-concepts/layered-architecture.md
-    - Domain Layer: core-concepts/domain-layer.md
-    - Application Layer: core-concepts/application-layer.md
-    - Contracts and Adapters: core-concepts/contracts-adapters.md
-    - Aggregate Specification: core-concepts/aggregate-specification.md
-    - Usecase Composition: core-concepts/usecase-composition.md
+    - Overview: concepts/index.md
+    - Architecture: concepts/layered-architecture.md
+    - Domain Layer: concepts/domain-layer.md
+    - Application Layer: concepts/application-layer.md
+    - Contracts and Adapters: concepts/contracts-adapters.md
+    - Specs and Wiring: concepts/specs-and-wiring.md
+    - Aggregate Specification: concepts/aggregate-specification.md
+    - Composition: concepts/usecase-composition.md
 
-  - Core Package:
-    - Overview: core-package/index.md
-    - Base Layer: core-package/base-layer.md
-    - Domain Models: core-package/domain-models.md
-    - Contracts: core-package/contracts.md
-    - Execution: core-package/execution.md
-    - Middleware & Plans: core-package/middleware-plans.md
-    - Composition & Mapping: core-package/composition.md
-    - Query Syntax: core-package/query-syntax.md
+  - Recipes:
+    - CRUD with FastAPI, Postgres, and Redis: recipes/crud-fastapi-postgres-redis.md
+    - Read-only Document API: recipes/read-only-document-api.md
+    - Add Caching: recipes/add-caching.md
+    - Add Idempotency: recipes/add-idempotency.md
+    - Background Workflow: recipes/background-workflow.md
+
+  - Reference:
+    - Overview: reference/index.md
+    - Base Layer: reference/base-layer.md
+    - Domain Models: reference/domain-models.md
+    - Contracts: reference/contracts.md
+    - Execution: reference/execution.md
+    - Middleware & Plans: reference/middleware-plans.md
+    - Composition & Mapping: reference/composition.md
+    - Query Syntax: reference/query-syntax.md
 
   - Integrations:
     - FastAPI: integrations/fastapi.md
     - Socket.IO: integrations/socketio.md
     - PostgreSQL: integrations/postgres.md
-    - Redis: integrations/redis.md
-    - S3: integrations/s3.md
+    - Redis / Valkey: integrations/redis.md
+    - S3-Compatible Storage: integrations/s3.md
     - MongoDB: integrations/mongo.md
     - Temporal: integrations/temporal.md
     - SQS: integrations/sqs.md

@@ -1,5 +1,22 @@
 # RabbitMQ Integration
 
+## What this integration provides
+
+Send and receive typed queue messages through RabbitMQ exchanges and queues.
+
+## When to use it
+
+Use this when you need brokered message delivery, acknowledgements, and worker-based processing with RabbitMQ.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_rabbitmq` provides message queue adapters backed by RabbitMQ. It implements `QueueReadPort` and `QueueWritePort` using `aio-pika` (an async AMQP client). The adapter uses work queue semantics with durable queues, persistent messages, and manual acknowledgement.
 
 ## Installation

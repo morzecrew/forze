@@ -1,8 +1,25 @@
 # PostgreSQL Integration
 
+## What this integration provides
+
+Persist documents, search indexes, transactions, and related data in PostgreSQL behind Forze application contracts.
+
+## When to use it
+
+Use this when Postgres is your primary document store, search backend, or transaction boundary.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_postgres` provides document storage, full-text search, and transaction management backed by PostgreSQL. It implements `DocumentQueryPort`, `DocumentCommandPort`, `SearchQueryPort`, and `TxManagerPort` using async `psycopg` with connection pooling.
 
-Kernel specs (`DocumentSpec`, `SearchSpec`) describe **models and logical names**. **Table and index locations** are supplied separately via `PostgresDepsModule` (`rw_documents`, `searches`, …). See [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md).
+Kernel specs (`DocumentSpec`, `SearchSpec`) describe **models and logical names**. **Table and index locations** are supplied separately via `PostgresDepsModule` (`rw_documents`, `searches`, …). See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
 
 ## Installation
 
@@ -318,7 +335,7 @@ For `"fts"`, every field in `SearchSpec.fields` must appear in `fts_groups`. For
         offset=0,
     )
 
-See [Query Syntax](../core-package/query-syntax.md) for filter and sort expressions.
+See [Query Syntax](../reference/query-syntax.md) for filter and sort expressions.
 
 ## Combining with Redis
 

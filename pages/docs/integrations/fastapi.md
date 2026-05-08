@@ -1,5 +1,22 @@
 # FastAPI Integration
 
+## What this integration provides
+
+Expose Forze usecases and document/search contracts as typed HTTP routes without making domain or application code depend on FastAPI.
+
+## When to use it
+
+Use this when HTTP is your interface layer, when you need generated CRUD/search endpoints, or when you want custom route helpers backed by `ExecutionRuntime`.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_fastapi` connects Forze usecases to HTTP routes. It attaches typed endpoints to a standard FastAPI `APIRouter`: document CRUD (`attach_document_endpoints`), full-text search (`attach_search_endpoints`), and lower-level helpers in `forze_fastapi.endpoints.http` for custom operations. Optional middleware binds call context to requests; `register_exception_handlers` and `register_scalar_docs` integrate errors and API docs.
 
 ## Package layout

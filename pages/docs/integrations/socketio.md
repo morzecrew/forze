@@ -1,5 +1,22 @@
 # Socket.IO Integration
 
+## What this integration provides
+
+Expose typed realtime events while keeping event handlers wired to application usecases instead of transport-specific business logic.
+
+## When to use it
+
+Use this when clients need bidirectional updates, command events, or server-emitted events over Socket.IO.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_socketio` connects Forze usecases to real-time Socket.IO events. It provides typed command routing, usecase dispatch through `ExecutionContext`, typed server event emission, and optional Redis backplane support for distributed deployments.
 
 ## Installation

@@ -1,8 +1,25 @@
 # Temporal Integration
 
+## What this integration provides
+
+Run durable workflows while preserving typed Forze workflow contracts and execution context propagation.
+
+## When to use it
+
+Use this when work is long-running, retryable, signalable, queryable, or needs Temporal worker orchestration.
+
+## Standard setup checklist
+
+1. Install the matching optional extra.
+2. Create the integration client or module configuration.
+3. Register the module in `DepsPlan` with routes that match your specs.
+4. Add lifecycle steps when the integration opens network connections.
+5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+
+
 `forze_temporal` connects [Temporal.io](https://temporal.io) to Forze’s workflow contracts. It provides a **`TemporalClient`** wrapper around the Temporal Python SDK (Pydantic data conversion by default), **`TemporalDepsModule`** for dependency registration, **command and query adapters** implementing `WorkflowCommandPort` and `WorkflowQueryPort`, and optional **interceptors** so `ExecutionContext` (call context, `AuthnIdentity`, and `TenantIdentity`) flows through client and worker.
 
-Kernel specs use logical workflow names (`WorkflowSpec.name`). **`TemporalDepsModule`** maps each name to a **`TemporalWorkflowConfig`** (task queue and optional multi-tenancy). See [Specs and infrastructure wiring](../core-concepts/specs-and-wiring.md).
+Kernel specs use logical workflow names (`WorkflowSpec.name`). **`TemporalDepsModule`** maps each name to a **`TemporalWorkflowConfig`** (task queue and optional multi-tenancy). See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
 
 ## Installation
 
