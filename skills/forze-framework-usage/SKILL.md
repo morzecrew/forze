@@ -2,14 +2,14 @@
 name: forze-framework-usage
 description: >-
   Guides correct use of Forze ExecutionContext, document/query/command ports,
-  search, cache, counters, storage, and transactions in usecases. Use when
-  implementing features or usecases with Forze, DocumentSpec, SearchSpec,
-  hexagonal ports, or integrating application code with the runtime.
+  search, cache, counters, storage, messaging, workflows, identity, and
+  transactions in usecases. Use when implementing features or usecases with
+  Forze specs, hexagonal ports, or runtime context.
 ---
 
 # Forze Framework Usage
 
-Use when writing code that **consumes** Forze (not when authoring new adapters). Pair with [`forze-domain-aggregates`](forze-domain-aggregates/SKILL.md) for models/specs and [`forze-wiring`](forze-wiring/SKILL.md) for runtime and composition.
+Use when writing code that **consumes** Forze (not when authoring new adapters). Pair with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for models/specs, [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) for `StrEnum` route names, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime and composition.
 
 ## Core concepts
 
@@ -54,7 +54,7 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 
 Also available: `embeddings_provider`, `hub_search_query`, `federated_search_query`, distributed lock query/command, tenant resolver — see [`pages/docs/core-package/execution.md`](../../pages/docs/core-package/execution.md).
 
-For keys without a convenience method, use `ctx.dep(DepKey, route=...)`.
+For keys without a convenience method, use `ctx.dep(DepKey, route=spec.name)(ctx, spec)`. Queue, pub/sub, stream, workflow, authn/authz, and secrets patterns have dedicated skills.
 
 ### Usecase pattern
 
@@ -75,18 +75,26 @@ Usecases resolve ports from `self.ctx`; they do not take ports in the constructo
 
 ### Transactions
 
-`transaction(route)` is an **async context manager**. Pass the **same route** registered on your deps module (e.g. Postgres `tx={"default"}`). Nested calls reuse the active transaction (savepoints when supported). Mixing incompatible managers in one scope raises `CoreError`.
+`transaction(route)` is an **async context manager**. Pass the **same route** registered on your deps module (prefer a shared `StrEnum`, e.g. `TxRoute.DEFAULT`). Nested calls reuse the active transaction (savepoints when supported). Mixing incompatible managers in one scope raises `CoreError`.
 
 ```python
-async with self.ctx.transaction("default"):
+async with self.ctx.transaction(TxRoute.DEFAULT):
     doc_c = self.ctx.doc_command(project_spec)
     await doc_c.create(cmd1)
     await doc_c.create(cmd2)
 ```
 
+Use `defer_after_commit()` or `run_after_commit_or_now()` for side effects that must happen only after the root transaction commits:
+
+```python
+async with self.ctx.transaction(TxRoute.DEFAULT):
+    created = await self.ctx.doc_command(project_spec).create(args)
+    self.ctx.defer_after_commit(lambda: notify_project_created(created.id))
+```
+
 ### Identity and tenancy
 
-Bind `AuthnIdentity` / `TenantIdentity` at the HTTP or worker boundary when needed (e.g. FastAPI `ContextBindingMiddleware`). See [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md) and [`pages/docs/core-package/contracts.md`](../../pages/docs/core-package/contracts.md).
+Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary when needed. Usecases may read `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()` but should not call `ctx.bind_call(...)` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
 
 ## Query syntax
 
@@ -153,10 +161,32 @@ next_id = await counter.incr()
 ```python
 from forze.application.contracts.storage import StorageSpec
 
-storage = self.ctx.storage(StorageSpec(name="attachments"))
+storage = self.ctx.storage(StorageSpec(name=ResourceName.ATTACHMENTS))
 stored = await storage.upload("file.pdf", data, description="Contract")
 downloaded = await storage.download(stored.key)
 ```
+
+See [`forze-storage-s3`](../forze-storage-s3/SKILL.md) for S3 wiring and tenant-aware bucket behavior.
+
+### Queue, pub/sub, stream, and workflow ports
+
+Contracts without convenience methods resolve the routed factory and call it with `(ctx, spec)`:
+
+```python
+from forze.application.contracts.queue import QueueCommandDepKey
+from forze.application.contracts.workflow import WorkflowCommandDepKey
+
+queue = self.ctx.dep(QueueCommandDepKey, route=order_queue.name)(self.ctx, order_queue)
+await queue.enqueue("orders", args, type="order.created")
+
+workflow = self.ctx.dep(
+    WorkflowCommandDepKey,
+    route=onboarding_workflow.name,
+)(self.ctx, onboarding_workflow)
+handle = await workflow.start(StartOnboarding(project_id=args.project_id))
+```
+
+See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`forze-temporal-workflows`](../forze-temporal-workflows/SKILL.md).
 
 ## Gotchas
 
@@ -165,6 +195,7 @@ downloaded = await storage.download(stored.key)
 - **`ctx.counter("name")` is wrong** — pass `CounterSpec(name=...)`.
 - **`ctx.storage("bucket")` is wrong** — pass `StorageSpec(name=...)`.
 - **`transaction()` requires a route** — must match a registered tx manager route.
+- **`ctx.workflow_command(...)` does not exist** — resolve `WorkflowCommandDepKey` with `route=spec.name`.
 - **Do not nest incompatible tx backends** (e.g. Postgres + Mongo in one scope).
 
 ## Anti-patterns
@@ -179,3 +210,4 @@ downloaded = await storage.download(stored.key)
 - [`pages/docs/core-package/execution.md`](../../pages/docs/core-package/execution.md)
 - [`pages/docs/core-concepts/contracts-adapters.md`](../../pages/docs/core-concepts/contracts-adapters.md)
 - [`pages/docs/core-package/query-syntax.md`](../../pages/docs/core-package/query-syntax.md)
+- [`pages/docs/core-package/contracts.md`](../../pages/docs/core-package/contracts.md)

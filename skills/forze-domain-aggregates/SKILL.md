@@ -3,15 +3,15 @@ name: forze-domain-aggregates
 description: >-
   Defines Forze document aggregates (Document, commands, ReadDocument),
   mixins, validators, kernel DocumentSpec and SearchSpec. Use when modeling
-  entities, DTOs, DocumentSpec, SearchSpec, CacheSpec, or aligning schemas with
-  Forze domain and application contracts.
+  entities, DTOs, StrEnum-backed DocumentSpec, SearchSpec, CacheSpec, or
+  aligning schemas with Forze domain and application contracts.
 ---
 
 # Forze Domain Aggregates
 
-Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, and Redis namespaces belong in integration configs — see [`forze-specs-infrastructure`](forze-specs-infrastructure/SKILL.md) and [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md).
+Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md).
 
-Pair with [`forze-framework-usage`](forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](forze-wiring/SKILL.md) for composition and HTTP.
+Pair with [`forze-framework-usage`](../forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](../forze-wiring/SKILL.md) for composition and HTTP.
 
 ## Document aggregate structure
 
@@ -94,12 +94,18 @@ class Project(Document):
 
 ```python
 from datetime import timedelta
+from enum import StrEnum
 
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 
+
+class ResourceName(StrEnum):
+    PROJECTS = "projects"
+
+
 project_spec = DocumentSpec(
-    name="projects",
+    name=ResourceName.PROJECTS,
     read=ProjectReadModel,
     write={
         "domain": Project,
@@ -107,13 +113,13 @@ project_spec = DocumentSpec(
         "update_cmd": UpdateProjectCmd,
     },
     history_enabled=True,
-    cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
+    cache=CacheSpec(name=ResourceName.PROJECTS, ttl=timedelta(minutes=5)),
 )
 ```
 
 | Field | Purpose |
 |-------|---------|
-| `name` | Logical route id; must match infra config keys |
+| `name` | Logical route id (`str | StrEnum`); must match infra config keys |
 | `read` | Read model type |
 | `write` | `domain`, `create_cmd`, optional `update_cmd`; omit / shape for read-only |
 | `history_enabled` | Adapter may persist revision history when infra provides it |
@@ -129,7 +135,7 @@ Search is separate from `DocumentSpec`:
 from forze.application.contracts.search import SearchSpec
 
 project_search_spec = SearchSpec(
-    name="projects",
+    name=ResourceName.PROJECTS,
     model_type=ProjectReadModel,
     fields=("title", "description"),
     default_weights={"title": 0.6, "description": 0.4},
@@ -176,6 +182,7 @@ project_dtos = DocumentDTOs(
 2. **Update command with required fields** — use optional fields with `None` defaults for partial patches.
 3. **Mutable defaults on read models** — `ReadDocument` is frozen.
 4. **Putting physical `source` / table names on `DocumentSpec`** — keep specs kernel-only; wire tables in deps modules.
+5. **Scattering literal spec names** — put resource names in a shared `StrEnum` and reuse it in specs and deps modules.
 
 ## Reference
 
