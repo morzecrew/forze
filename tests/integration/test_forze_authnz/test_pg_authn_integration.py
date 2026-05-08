@@ -13,9 +13,12 @@ pytest.importorskip("jwt")
 
 from forze.application.contracts.authn import (
     ApiKeyCredentials,
+    AuthnDepKey,
     AuthnIdentity,
+    AuthnSpec,
     PasswordCredentials,
     TokenCredentials,
+    TokenLifecycleDepKey,
 )
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
@@ -41,10 +44,17 @@ from forze_authnz.authn.domain.models.account import (
     CreateApiKeyAccountCmd,
     CreatePasswordAccountCmd,
 )
+from forze_authnz.authn.execution import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    AuthnRouteCaps,
+    build_authn_shared_services,
+)
 from forze_authnz.authn.services import (
     AccessTokenService,
     ApiKeyConfig,
     ApiKeyService,
+    PasswordConfig,
     PasswordService,
     RefreshTokenConfig,
     RefreshTokenService,
@@ -453,3 +463,132 @@ async def test_pg_provision_password_account(pg_client: PostgresClient) -> None:
         await authn.authenticate_with_password(
             PasswordCredentials(login="carol", password="initial"),
         )
+
+
+def _integration_password_config() -> PasswordConfig:
+    return PasswordConfig(time_cost=1, memory_cost=8192, parallelism=1)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_execution_deps_password_authentication(pg_client: PostgresClient) -> None:
+    """Resolve :class:`AuthnAdapter` via :class:`AuthnDepsModule` merged with Postgres document deps."""
+
+    suffix = uuid4().hex[:12]
+    pepper = secrets.token_bytes(32)
+    base_ctx = await _authn_pg_setup(pg_client, suffix=suffix)
+
+    kernel = AuthnKernelConfig(
+        password=_integration_password_config(),
+        api_key_pepper=pepper,
+    )
+
+    authn_part = AuthnDepsModule(
+        kernel=kernel,
+        authn={
+            "default": AuthnRouteCaps(password=True, api_key=True),
+        },
+    )()
+
+    ctx = ExecutionContext(deps=base_ctx.deps.merge(authn_part))
+
+    pid = uuid4()
+    await _insert_principal_row(
+        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    )
+
+    shared = build_authn_shared_services(kernel)
+    pwd_svc = shared.password_svc
+    assert pwd_svc is not None
+
+    hashed = pwd_svc.hash_password("correct horse battery staple")
+    pwd_cmd = ctx.doc_command(password_account_spec)
+
+    with ctx.bind_call(call=_call_ctx()):
+        await pwd_cmd.create(
+            CreatePasswordAccountCmd(
+                principal_id=pid,
+                username="alice",
+                password_hash=hashed,
+            ),
+            return_new=False,
+        )
+
+    factory = ctx.dep(AuthnDepKey, route="default")
+    authn = factory(ctx, AuthnSpec(name="default"))
+
+    assert isinstance(authn, AuthnAdapter)
+
+    with ctx.bind_call(call=_call_ctx()):
+        identity = await authn.authenticate_with_password(
+            PasswordCredentials(login="alice", password="correct horse battery staple"),
+        )
+
+    assert identity.principal_id == pid
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_execution_deps_issue_tokens_and_bearer_auth(pg_client: PostgresClient) -> None:
+    """Token lifecycle and bearer auth using shared kernel-backed :class:`AuthnDepsModule`."""
+
+    suffix = uuid4().hex[:12]
+    pepper = secrets.token_bytes(32)
+    access_secret = secrets.token_bytes(32)
+    base_ctx = await _authn_pg_setup(pg_client, suffix=suffix)
+
+    kernel = AuthnKernelConfig(
+        access_token_secret=access_secret,
+        refresh_token_pepper=pepper,
+        refresh_token=RefreshTokenConfig(expires_in=timedelta(days=30)),
+        password=_integration_password_config(),
+        api_key_pepper=pepper,
+    )
+
+    exec_deps = AuthnDepsModule(
+        kernel=kernel,
+        authn={
+            "oauth": AuthnRouteCaps(bearer=True, password=True, api_key=True),
+        },
+        token_lifecycle={"oauth"},
+    )()
+
+    ctx = ExecutionContext(deps=base_ctx.deps.merge(exec_deps))
+
+    pid = uuid4()
+    await _insert_principal_row(
+        pg_client, table=f"authn_pri_{suffix}", principal_id=pid
+    )
+
+    tl_factory = ctx.dep(TokenLifecycleDepKey, route="oauth")
+    token_adapter = tl_factory(ctx, AuthnSpec(name="oauth"))
+    assert isinstance(token_adapter, TokenLifecycleAdapter)
+
+    identity = AuthnIdentity(principal_id=pid)
+    with ctx.bind_call(call=_call_ctx()):
+        issued = await token_adapter.issue_tokens(identity)
+
+    access_creds = issued.access_token.token
+    assert issued.refresh_token is not None
+
+    sub = TokenCredentials(
+        token=access_creds.token,
+        scheme=access_creds.scheme,
+        kind=access_creds.kind,
+    )
+
+    auth_factory = ctx.dep(AuthnDepKey, route="oauth")
+    authn = auth_factory(ctx, AuthnSpec(name="oauth"))
+
+    with ctx.bind_call(call=_call_ctx()):
+        bearer_id = await authn.authenticate_with_token(sub)
+
+    assert bearer_id.principal_id == pid
+
+    with ctx.bind_call(call=_call_ctx()):
+        page = await ctx.doc_query(session_spec).find_many(
+            filters={"$fields": {"principal_id": pid}}
+        )
+
+    assert len(page.hits) == 1
+    assert page.hits[0].refresh_digest

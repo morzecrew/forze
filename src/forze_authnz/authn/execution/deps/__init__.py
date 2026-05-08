@@ -1,11 +1,10 @@
 """Authn dependency configurations, factories, and module."""
 
 from .configs import (
-    ApiKeyLifecycleRouteConfig,
-    AuthnRouteConfig,
-    PasswordLifecycleRouteConfig,
-    PasswordProvisioningRouteConfig,
-    TokenLifecycleRouteConfig,
+    AuthnKernelConfig,
+    AuthnRouteCaps,
+    AuthnSharedServices,
+    build_authn_shared_services,
 )
 from .deps import (
     ConfigurableApiKeyLifecycle,
@@ -20,11 +19,10 @@ from .module import AuthnDepsModule
 
 __all__ = [
     "AuthnDepsModule",
-    "AuthnRouteConfig",
-    "TokenLifecycleRouteConfig",
-    "PasswordLifecycleRouteConfig",
-    "ApiKeyLifecycleRouteConfig",
-    "PasswordProvisioningRouteConfig",
+    "AuthnKernelConfig",
+    "AuthnRouteCaps",
+    "AuthnSharedServices",
+    "build_authn_shared_services",
     "ConfigurableAuthn",
     "ConfigurableTokenLifecycle",
     "ConfigurablePasswordLifecycle",
