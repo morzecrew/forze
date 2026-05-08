@@ -1,0 +1,70 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 42
+    }
+}
+
+direction: right
+
+Request: {
+    shape: rectangle
+    label: HTTP request
+}
+
+Middleware: {
+    shape: rectangle
+    label: |md
+        ### Middleware
+        bind call/principal context
+    |
+}
+
+EndpointFeature: {
+    shape: rectangle
+    label: |md
+        ### Endpoint feature
+        validation · ETag · idempotency
+    |
+}
+
+Usecase: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### Usecase
+        application operation
+    |
+}
+
+Port: {
+    shape: rectangle
+    label: |md
+        ### Port
+        DocumentCommandPort
+    |
+}
+
+Adapter: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: |md
+        ### Adapter
+        Postgres / Mongo / Mock
+    |
+}
+
+Response: {
+    shape: rectangle
+    label: HTTP response
+}
+
+Request -> Middleware -> EndpointFeature -> Usecase -> Port -> Adapter
+Adapter -> Port -> Usecase -> EndpointFeature -> Response

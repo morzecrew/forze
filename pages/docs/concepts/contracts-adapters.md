@@ -11,6 +11,11 @@ Use this when you choose or implement ports, adapters, dependency keys, or integ
 
 Forze follows **hexagonal architecture** (ports and adapters). The core idea is simple: the application layer declares **what** capabilities it needs through protocol interfaces (contracts), and infrastructure packages provide **how** those capabilities are implemented (adapters). The application never depends on a specific adapter.
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/integration-adapter-boundary.svg" alt="Application contract boundary and integration adapter implementation">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/integration-adapter-boundary.svg" alt="Application contract boundary and integration adapter implementation">
+</div>
+
 ## How it works
 
 1. The application layer defines **contracts**: protocol interfaces describing required capabilities

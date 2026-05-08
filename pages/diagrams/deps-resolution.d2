@@ -1,0 +1,69 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 42
+    }
+}
+
+direction: right
+
+DepsPlan: {
+    shape: rectangle
+    label: |md
+        ### DepsPlan
+        Ordered modules
+    |
+}
+
+Modules: {
+    shape: rectangle
+    label: Modules
+
+    postgres: PostgresDepsModule
+    redis: RedisDepsModule
+    custom: Custom module
+}
+
+Deps: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### Deps
+        Merged dependency container
+    |
+}
+
+Keys: {
+    shape: rectangle
+    label: Dependency keys
+
+    doc_query: DocumentQueryDepKey
+    doc_command: DocumentCommandDepKey
+    cache: CacheDepKey
+}
+
+Ports: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: Resolved ports
+
+    query: DocumentQueryPort
+    command: DocumentCommandPort
+    cache_port: CachePort
+}
+
+DepsPlan -> Modules: calls each module
+Modules.postgres -> Deps: contributes document deps
+Modules.redis -> Deps: contributes cache deps
+Modules.custom -> Deps: contributes app deps
+Deps -> Keys: registers key + route
+Keys.doc_query -> Ports.query: ctx.doc_query(spec)
+Keys.doc_command -> Ports.command: ctx.doc_command(spec)
+Keys.cache -> Ports.cache_port: ctx.cache(spec)

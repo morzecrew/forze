@@ -4,6 +4,11 @@ Document contracts are the primary persistence abstraction for aggregate read
 models and write commands. They are split into query and command ports so a
 usecase can depend only on the side it needs.
 
+<div class="d2-diagram">
+  <img class="d2-light" src="/forze/assets/diagrams/light/document-crud-flow.svg" alt="Document CRUD flow from command DTO to domain model, document port, and read model">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/document-crud-flow.svg" alt="Document CRUD flow from command DTO to domain model, document port, and read model">
+</div>
+
 ## `DocumentSpec[R, D, C, U]`
 
 | Section | Details |

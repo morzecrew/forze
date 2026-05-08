@@ -1,0 +1,70 @@
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 42
+    }
+}
+
+direction: right
+
+ReadPath: {
+    shape: rectangle
+    label: |md
+        ### Read path
+        ctx.doc_query(spec).get(id)
+    |
+}
+
+Cache: {
+    shape: rectangle
+    label: |md
+        ### Cache adapter
+        Redis / Valkey
+    |
+}
+
+Hit: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: |md
+        ### Cache hit
+        return read model
+    |
+}
+
+Miss: {
+    shape: rectangle
+    label: |md
+        ### Cache miss
+        fallback required
+    |
+}
+
+Database: {
+    shape: cylinder
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### Database adapter
+        Postgres document storage
+    |
+}
+
+WarmCache: {
+    shape: rectangle
+    label: Store result with TTL
+}
+
+ReadPath -> Cache: get document key
+Cache -> Hit: found
+Cache -> Miss: not found
+Miss -> Database: DB fallback
+Database -> WarmCache: hydrate read model
+WarmCache -> Cache: set cache entry
+WarmCache -> Hit: return result
