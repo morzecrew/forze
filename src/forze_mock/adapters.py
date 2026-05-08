@@ -629,12 +629,7 @@ def _mock_cursor_tokens(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockDocumentAdapter[
-    R: ReadDocument,
-    D: Document,
-    C: CreateDocumentCmd,
-    U: BaseDTO,
-](
+class MockDocumentAdapter(
     DocumentQueryPort[R],
     DocumentCommandPort[R, D, C, U],
 ):

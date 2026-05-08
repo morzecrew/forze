@@ -93,6 +93,17 @@ async def test_routed_redis_eviction() -> None:
     assert instances[1].close.await_count == 1
 
 
+def test_routed_redis_rejects_zero_max_cached_tenants() -> None:
+    secrets = _MemSecrets({_T1: "redis://localhost:6379/0"})
+    with pytest.raises(CoreError, match="max_cached_tenants"):
+        RoutedRedisClient(
+            secrets=secrets,
+            secret_ref_for_tenant=_ref,
+            tenant_provider=lambda: _T1,
+            max_cached_tenants=0,
+        )
+
+
 @pytest.mark.asyncio
 async def test_routed_redis_requires_tenant() -> None:
     secrets = _MemSecrets({_T1: "redis://localhost:6379/0"})

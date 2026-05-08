@@ -95,6 +95,18 @@ async def test_routed_mongo_eviction() -> None:
     assert instances[1].close.await_count == 1
 
 
+def test_routed_mongo_rejects_zero_max_cached_tenants() -> None:
+    secrets = _MemSecrets({_T1: "mongodb://localhost:27017"})
+    with pytest.raises(CoreError, match="max_cached_tenants"):
+        RoutedMongoClient(
+            secrets=secrets,
+            secret_ref_for_tenant=_ref,
+            tenant_provider=lambda: _T1,
+            database_name_for_tenant=lambda _tid: "app",
+            max_cached_tenants=0,
+        )
+
+
 @pytest.mark.asyncio
 async def test_routed_mongo_requires_tenant() -> None:
     secrets = _MemSecrets({_T1: "mongodb://localhost:27017"})

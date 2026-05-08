@@ -29,17 +29,17 @@ from .specs import DocumentSpec
 
 # ----------------------- #
 
+R = TypeVar("R", bound=BaseModel)
+D = TypeVar("D", bound=Document)
+C = TypeVar("C", bound=CreateDocumentCmd)
+U = TypeVar("U", bound=BaseDTO)
+
 T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
 
 
-class BaseDocumentPort[
-    R: BaseModel,
-    D: Document,
-    C: CreateDocumentCmd,
-    U: BaseDTO,
-](Protocol):
+class BaseDocumentPort(Protocol[R, D, C, U]):
     """Base port for document storage and retrieval."""
 
     spec: DocumentSpec[R, D, C, U]
@@ -50,7 +50,7 @@ class BaseDocumentPort[
 
 
 @runtime_checkable
-class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protocol):
+class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
     """Query operations for document aggregates."""
 
     @overload
@@ -400,12 +400,7 @@ class DocumentQueryPort[R: BaseModel](BaseDocumentPort[R, Any, Any, Any], Protoc
 
 
 @runtime_checkable
-class DocumentCommandPort[
-    R: BaseModel,
-    D: Document,
-    C: CreateDocumentCmd,
-    U: BaseDTO,
-](BaseDocumentPort[R, D, C, U], Protocol):
+class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     """Command operations for document aggregates."""
 
     @overload

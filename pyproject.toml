@@ -108,6 +108,8 @@ socketio = [
 ]
 neo4j = ["neo4j>=6.1.0"]
 arango = ["python-arango-async>=1.2.2"]
+
+#! TODO: rename to 'authnz'
 contrib = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
 
 # ....................... #
@@ -188,6 +190,7 @@ omit = [
     "*/__init__.py",
     "*/_version.py",
     "*/_compat.py",
+    "*/_logging.py",
     # DI lifecycle modules are integration/service wiring (containers, signals), not core library logic.
     "*/forze_postgres/execution/lifecycle.py",
     "*/forze_mongo/execution/lifecycle.py",

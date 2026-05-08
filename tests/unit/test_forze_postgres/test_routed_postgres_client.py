@@ -93,6 +93,17 @@ async def test_routed_eviction_closes_old_pool() -> None:
     assert instances[1].close.await_count == 1
 
 
+def test_routed_postgres_rejects_zero_max_cached_tenants() -> None:
+    secrets = _MemSecrets({_T1: "postgresql://localhost/db1"})
+    with pytest.raises(CoreError, match="max_cached_tenants"):
+        RoutedPostgresClient(
+            secrets=secrets,
+            secret_ref_for_tenant=_ref,
+            tenant_provider=lambda: _T1,
+            max_cached_tenants=0,
+        )
+
+
 @pytest.mark.asyncio
 async def test_routed_requires_tenant() -> None:
     secrets = _MemSecrets({_T1: "postgresql://localhost/db1"})

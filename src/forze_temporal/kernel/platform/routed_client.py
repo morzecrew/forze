@@ -1,7 +1,5 @@
 """Temporal client that resolves a server address per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
@@ -133,6 +131,7 @@ class RoutedTemporalClient(TemporalClientPort):
 
             client = TemporalClient()
             await client.initialize(host, config=self.connection_config)
+
             self._clients[tid] = client
             self._clients.move_to_end(tid)
 

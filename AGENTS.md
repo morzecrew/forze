@@ -88,6 +88,7 @@ Use them for:
 ## Repository map (high signal paths)
 
 - `src/forze/`: core framework layers (application/domain/utils/base).
+- `src/forze_authnz/`: document-backed authn/authz integration package.
 - `src/forze_fastapi/`: FastAPI integration package.
 - `src/forze_postgres/`: Postgres integration package.
 - `src/forze_redis/`: Redis integration package.
@@ -101,7 +102,8 @@ Use them for:
 - `tests/unit/`: unit tests, typically mirroring `src` layout.
 - `tests/integration/`: integration tests with external dependencies.
 - `tests/perf/`: performance benchmarks (require Docker).
-- `skills/`: published [Agent Skills](https://agentskills.io/) (`SKILL.md` per skill); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`).
+- `pages/`: documentation source and build files.
+- `examples/`: usage examples and tutorials.
 - `skills/`: published [Agent Skills](https://agentskills.io/) (`SKILL.md` per skill); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`).
 
 ## Operating rules for agents
