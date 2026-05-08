@@ -1,207 +1,136 @@
 # Redis / Valkey Integration
 
-## What this integration provides
+## Page opening
 
-Provide cache, counter, idempotency, pub/sub, stream, and distributed-lock capabilities through Redis or Valkey adapters.
+`forze_redis` provides Redis/Valkey-backed infrastructure adapters for caches, counters, idempotency records, search result snapshots, and distributed locks. It is designed for fast, ephemeral or coordination-oriented state behind Forze contracts.
 
-## When to use it
-
-Use this when you need fast ephemeral state, request idempotency, read-through caching, or Redis-native messaging primitives.
-
-## Standard setup checklist
-
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
-
-
-`forze_redis` provides cache, counters, and idempotency adapters backed by Redis or Valkey. It implements `CachePort`, `CounterPort`, and `IdempotencyPort`.
-
-Kernel specs use logical names (`CacheSpec.name`, document cache on `DocumentSpec`). **`RedisDepsModule` maps each name to a `RedisCacheConfig`** (namespace prefix, optional `tenant_aware`). See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
+| Topic | Details |
+|------|---------|
+| What it provides | A Redis client, lifecycle hooks, dependency module, codecs, and adapters for cache, counter, idempotency, search snapshot, and distributed-lock contracts. |
+| Supported Forze contracts | `CacheDepKey`, `CounterDepKey`, `IdempotencyDepKey`, `SearchResultSnapshotDepKey`, `DistributedLockQueryDepKey`, and `DistributedLockCommandDepKey`. |
+| When to use it | Use this integration for low-latency caching, duplicate request protection, counters, search pagination snapshots, or distributed locking with Redis-compatible infrastructure. |
 
 ## Installation
 
-    :::bash
-    uv add 'forze[redis]'
+```bash
+uv add 'forze[redis]'
+```
 
-Works with both Redis and Valkey (API-compatible).
+| Requirement | Notes |
+|-------------|-------|
+| Package extra | `redis` installs the async Redis client dependency. |
+| Required service | Redis or Valkey. |
+| Local development dependency | A local Redis/Valkey server or container. Integration tests normally use testcontainers. |
 
-## Runtime wiring
+## Minimal setup
 
-    :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_redis import RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
+### Client
 
-    client = RedisClient()
-    module = RedisDepsModule(
-        client=client,
-        caches={
-            "projects": {"namespace": "app:projects"},
-        },
-        counters={
-            "projects": {"namespace": "app:seq:projects"},
-        },
-        idempotency={
-            "default": {"namespace": "app:idempotency"},
-        },
+```python
+from forze_redis import RedisClient, RedisConfig
+
+redis = RedisClient()
+```
+
+Use `RoutedRedisClient` when tenant or route identity selects the Redis endpoint.
+
+### Config
+
+```python
+from forze_redis import RedisCacheConfig, RedisIdempotencyConfig
+
+cache_config = RedisCacheConfig(namespace="projects", tenant_aware=True)
+idempotency_config = RedisIdempotencyConfig(namespace="idempotency")
+```
+
+Each Redis resource needs a namespace. Set `tenant_aware=True` when keys must include the current tenancy identity.
+
+### Deps module
+
+```python
+from forze.application.execution import DepsPlan
+from forze_redis import RedisDepsModule
+
+redis_module = RedisDepsModule(
+    client=redis,
+    caches={"projects": cache_config},
+    idempotency=idempotency_config,
+    search_snapshots={"projects": {"namespace": "project-search"}},
+    dlocks={"project-locks": {"namespace": "locks"}},
+)
+
+deps_plan = DepsPlan.from_modules(redis_module)
+```
+
+Use routed mappings when the contract is named, and a plain `idempotency` config when all idempotency specs share one Redis namespace.
+
+### Lifecycle step
+
+```python
+from forze.application.execution import LifecyclePlan
+from forze_redis import redis_lifecycle_step
+
+lifecycle = LifecyclePlan.from_steps(
+    redis_lifecycle_step(
+        dsn="redis://localhost:6379/0",
+        config=RedisConfig(max_size=20),
     )
+)
+```
 
-    runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
-        lifecycle=LifecyclePlan.from_steps(
-            redis_lifecycle_step(
-                dsn="redis://localhost:6379/0",
-                config=RedisConfig(
-                    max_size=20,
-                    socket_timeout=2.0,
-                    connect_timeout=2.0,
-                ),
-            )
-        ),
-    )
+Use `routed_redis_lifecycle_step(client=routed_redis)` with `RoutedRedisClient` and do not combine routed and non-routed lifecycle steps for the same client.
 
-### RedisConfig options
+## Contract coverage table
 
-| Option | Type | Default | Purpose |
-|--------|------|---------|---------|
-| `max_size` | `int` | `10` | Maximum connections in the pool |
-| `socket_timeout` | `float` | `5.0` | Socket read/write timeout (seconds) |
-| `connect_timeout` | `float` | `5.0` | Connection establishment timeout (seconds) |
-
-### What gets registered
-
-`RedisDepsModule` registers **routed** factories under:
-
-| Key | Maps |
-|-----|------|
-| `RedisClientDepKey` | Shared async Redis client |
-| `CacheDepKey` | `caches: dict[str, RedisCacheConfig]` → `CacheSpec.name` |
-| `CounterDepKey` | `counters: dict[str, RedisCounterConfig]` → `CounterSpec.name` |
-| `IdempotencyDepKey` | `idempotency: dict[str, RedisIdempotencyConfig]` → idempotency route on `IdempotencySpec` |
-
-Each config requires a `namespace` string used as a Redis key prefix.
-
-## Document cache
-
-When `DocumentSpec.cache` is set, the document dep factory resolves `ctx.cache(spec.cache)` while building the adapter. Register a cache route whose **key matches `CacheSpec.name`**:
-
-    :::python
-    from datetime import timedelta
-    from forze.application.contracts.cache import CacheSpec
-    from forze.application.contracts.document import DocumentSpec
-
-    project_spec = DocumentSpec(
-        name="projects",
-        read=ProjectReadModel,
-        write={
-            "domain": Project,
-            "create_cmd": CreateProjectCmd,
-            "update_cmd": UpdateProjectCmd,
-        },
-        cache=CacheSpec(name="projects", ttl=timedelta(minutes=5)),
-    )
-
-    # RedisDepsModule.caches must include the same key "projects"
-    RedisDepsModule(
-        client=redis_client,
-        caches={"projects": {"namespace": "app:projects"}},
-    )
-
-The adapter stores versioned bodies under the configured namespace.
-
-### Cache key patterns
-
-| Pattern | Purpose |
-|---------|---------|
-| `{namespace}/cache/pointer/{key}` | Points to the current cache version |
-| `{namespace}/cache/body/{key}/{version}` | Stores the serialized document body |
-
-The two-level key design allows atomic cache invalidation: updating the pointer version makes old body entries expire naturally.
-
-## Direct cache access
-
-When you need cache outside of the document adapter, resolve a cache port directly:
-
-    :::python
-    from datetime import timedelta
-    from forze.application.contracts.cache import CacheSpec
-
-    cache = ctx.cache(
-        CacheSpec(name="sessions", ttl=timedelta(minutes=30))
-    )
-
-    await cache.set(session_id, session_data)
-    result = await cache.get(session_id)
-    await cache.invalidate(session_id)
-
-## Counters
-
-Counters are namespace-scoped atomic incrementers. Pass a `CounterSpec` whose `name` matches `RedisDepsModule.counters`:
-
-    :::python
-    from forze.application.contracts.counter import CounterSpec
-
-    counter = ctx.counter(CounterSpec(name="projects"))
-
-    next_id = await counter.incr()
-    batch_end = await counter.incr_batch(10)
-    await counter.decr(by=1)
-    await counter.reset(value=1)
-
-| Method | Returns | Purpose |
-|--------|---------|---------|
-| `incr(suffix?, by?)` | `int` | Increment by amount (default 1), return new value |
-| `incr_batch(count, suffix?)` | `int` | Increment by count, return final value |
-| `decr(suffix?, by?)` | `int` | Decrement by amount, return new value |
-| `reset(suffix?, value?)` | `None` | Reset counter to value (default 0) |
-
-Counter keys follow the pattern `{namespace}[/{suffix}]`.
+| Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
+|----------------|------------------------|--------------------------|-------------|
+| Cache | `ConfigurableRedisCache` / `RedisCacheAdapter` | `CacheDepKey`, route usually equal to `CacheSpec.name`. | TTL behavior comes from `CacheSpec`; Redis memory eviction policy still applies. |
+| Counter | `ConfigurableRedisCounter` / `RedisCounterAdapter` | `CounterDepKey`, route usually equal to `CounterSpec.name`. | Counters are Redis-backed and should not be treated as relational source-of-truth rows. |
+| Idempotency | `ConfigurableRedisIdempotency` / `RedisIdempotencyAdapter` | `IdempotencyDepKey`, plain or routed by `IdempotencySpec.name`. | Correctness depends on stable idempotency keys and a TTL long enough for client retries. |
+| Search result snapshots | `ConfigurableRedisSearchResultSnapshot` / `RedisSearchResultSnapshotAdapter` | `SearchResultSnapshotDepKey`, route usually equal to `SearchResultSnapshotSpec.name`. | Snapshot IDs expire; clients must handle expired pagination snapshots. |
+| Distributed locks | `ConfigurableRedisDistributedLock` / `RedisDistributedLockAdapter` | `DistributedLockQueryDepKey` and `DistributedLockCommandDepKey`, route usually equal to `DistributedLockSpec.name`. | Lock safety depends on Redis availability, expiry settings, and clock/timeout choices. |
+| Raw client | `RedisClient` | `RedisClientDepKey`. | Prefer contract adapters in usecases unless raw Redis commands are truly infrastructure-specific. |
 
 ## Idempotency
 
-The Redis idempotency adapter stores request fingerprints and response snapshots. FastAPI routes that use `IdempotencyFeature` (for example the document **create** route from `attach_document_endpoints` when idempotency is enabled) resolve `IdempotencyPort` via `IdempotencyDepKey`.
+Redis idempotency stores in-flight or completed operation records for the TTL defined by the `IdempotencySpec`. Use one namespace for shared idempotency state or route named idempotency specs through `RedisDepsModule.idempotency`. Clients and handlers still need stable operation keys; Redis provides the storage and expiry semantics.
 
-Register at least one route in `RedisDepsModule.idempotency` (for example `"default"`). The `IdempotencySpec.name` on each HTTP feature must match a configured route.
+## Complete recipe link
 
-Key pattern: `{namespace}/{operation}/{idempotency_key}` (namespace comes from `RedisIdempotencyConfig`)
+See [Add Caching](../recipes/add-caching.md) and [Add Idempotency](../recipes/add-idempotency.md) for focused recipes, or [CRUD with FastAPI, Postgres, and Redis](../recipes/crud-fastapi-postgres-redis.md) for a combined stack.
 
-### How it works
+## Configuration reference
 
-1. On the first request, `begin()` returns `None` (no cached response)
-2. After the handler succeeds, `commit()` stores the response as an `IdempotencySnapshot`
-3. On duplicate requests (same operation + key + payload hash), `begin()` returns the stored snapshot
-4. The endpoint returns the cached response without re-executing the handler
+### Connection settings
 
-## Combining with Postgres
+`RedisClient` connects with a Redis URL. Use a routed client for per-tenant or per-region endpoints. Configure TLS, authentication, database number, and Sentinel/cluster strategy in the URL or client construction supported by the underlying Redis client.
 
-Redis is commonly combined with Postgres for cache, counters, and idempotency:
+### Pool settings
 
-    :::python
-    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_postgres import PostgresDepsModule, postgres_lifecycle_step, PostgresConfig
-    from forze_redis import RedisDepsModule, redis_lifecycle_step, RedisConfig
+`RedisConfig` exposes `max_size`, `socket_timeout`, and `connect_timeout`. Keep `max_size` aligned with application concurrency and Redis server limits.
 
-    runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(
-            lambda: Deps.merge(
-                PostgresDepsModule(client=pg, rw_documents={...})(),
-                RedisDepsModule(
-                    client=redis,
-                    caches={"projects": {"namespace": "app:projects"}},
-                    idempotency={"default": {"namespace": "app:idempotency"}},
-                )(),
-            ),
-        ),
-        lifecycle=LifecyclePlan.from_steps(
-            postgres_lifecycle_step(dsn="postgresql://...", config=PostgresConfig()),
-            redis_lifecycle_step(dsn="redis://...", config=RedisConfig()),
-        ),
-    )
+### Serialization settings
 
-With both modules registered:
+Adapters use Redis key codecs with the configured namespace and optional tenant identity. Payload serialization is handled by the adapter for the relevant contract; use Pydantic models at contract boundaries.
 
-- `DocumentSpec.cache` pulls in Redis when `CacheSpec.name` exists in `caches`
-- `CounterSpec` routes to `counters`
-- HTTP idempotency uses `idempotency` routes
+### Retry/timeout behavior
+
+Set `socket_timeout` and `connect_timeout` for bounded Redis calls. Add higher-level retries only for operations that are safe to repeat; idempotency and lock operations should be retried carefully because timing matters.
+
+## Operational notes
+
+| Concern | Notes |
+|---------|-------|
+| Migrations/schema requirements | None. Namespaces are logical key prefixes, but production deployments should document key patterns and retention expectations. |
+| Cleanup/shutdown | Register `redis_lifecycle_step` or `routed_redis_lifecycle_step` so connection pools close cleanly. |
+| Idempotency/caching behavior | Cache and idempotency records expire according to their specs. Redis eviction can remove keys earlier if memory policies allow it. |
+| Production caveats | Enable persistence/replication only when the stored data requires it, monitor memory and key cardinality, and avoid using one namespace for unrelated contracts. |
+
+## Troubleshooting
+
+| Common error | Likely cause | Fix |
+|--------------|--------------|-----|
+| Cache misses immediately after writes | TTL is too short or Redis evicted keys. | Review `CacheSpec` TTL values and Redis eviction/memory settings. |
+| Idempotency does not deduplicate requests | Different idempotency keys are sent or the idempotency adapter is not registered. | Send a stable key and register `IdempotencyDepKey` through `RedisDepsModule`. |
+| Tenant data appears in shared keys | `tenant_aware` is disabled or tenancy identity is missing from the context. | Set `tenant_aware=True` and ensure the execution context has tenancy information. |
+| Lock acquisition never succeeds | A previous holder has not expired or lock timeout settings are mismatched. | Check the lock spec lease/timeout values and Redis key TTLs. |

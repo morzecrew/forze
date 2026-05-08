@@ -1,170 +1,129 @@
 # Temporal Integration
 
-## What this integration provides
+## Page opening
 
-Run durable workflows while preserving typed Forze workflow contracts and execution context propagation.
+`forze_temporal` connects Forze workflow contracts to Temporal. It provides a Temporal client, dependency module, lifecycle hooks, workflow command/query adapters, and context propagation interceptors so application code can schedule or inspect workflows through Forze ports.
 
-## When to use it
-
-Use this when work is long-running, retryable, signalable, queryable, or needs Temporal worker orchestration.
-
-## Standard setup checklist
-
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
-
-
-`forze_temporal` connects [Temporal.io](https://temporal.io) to Forze’s workflow contracts. It provides a **`TemporalClient`** wrapper around the Temporal Python SDK (Pydantic data conversion by default), **`TemporalDepsModule`** for dependency registration, **command and query adapters** implementing `WorkflowCommandPort` and `WorkflowQueryPort`, and optional **interceptors** so `ExecutionContext` (call context, `AuthnIdentity`, and `TenantIdentity`) flows through client and worker.
-
-Kernel specs use logical workflow names (`WorkflowSpec.name`). **`TemporalDepsModule`** maps each name to a **`TemporalWorkflowConfig`** (task queue and optional multi-tenancy). See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
+| Topic | Details |
+|------|---------|
+| What it provides | `TemporalClient`, optional routed client, workflow adapters, lifecycle hooks, and `ExecutionContextInterceptor`. |
+| Supported Forze contracts | `WorkflowCommandDepKey` and `WorkflowQueryDepKey`, plus `TemporalClientDepKey` for infrastructure access. |
+| When to use it | Use this integration for durable background workflows, long-running orchestration, retries managed by Temporal, and task-queue based worker execution. |
 
 ## Installation
 
-    :::bash
-    uv add 'forze[temporal]'
+```bash
+uv add 'forze[temporal]'
+```
 
-The extra pulls `temporalio` and related dependencies.
+| Requirement | Notes |
+|-------------|-------|
+| Package extra | `temporal` installs `temporalio`. |
+| Required service | A Temporal frontend service and one or more workers registered to the relevant task queue. |
+| Local development dependency | Temporal dev server, Docker Compose, Temporal Cloud dev namespace, or another local Temporal-compatible endpoint. |
 
-## What ships in `forze_temporal`
+## Minimal setup
 
-| Area | Types |
-|------|--------|
-| Client | `TemporalClient`, `TemporalConfig` (`forze_temporal.kernel.platform`) |
-| Wiring | `TemporalDepsModule`, `TemporalClientDepKey`, `TemporalWorkflowConfig`, `temporal_lifecycle_step` (`forze_temporal.execution`) |
-| Adapters | `TemporalWorkflowCommandAdapter`, `TemporalWorkflowQueryAdapter` (`forze_temporal.adapters`) |
-| Context propagation | `ExecutionContextInterceptor`, `TemporalContextCodec` (`forze_temporal.interceptors`) |
+### Client
 
-## Core contracts (forze)
+```python
+from forze_temporal import TemporalClient, TemporalConfig
 
-Workflows are described with **`WorkflowSpec`**: a logical **`name`**, a **`run`** invocation (`WorkflowInvokeSpec` with Pydantic `args_type` / `return_type`), and optional **`signals`**, **`queries`**, and **`updates`** maps. Ports are split into:
+client = TemporalClient()
+```
 
-- **`WorkflowCommandPort`**: `start`, `signal`, `update`, `cancel`, `terminate`
-- **`WorkflowQueryPort`**: `query`, `result`
+Use `RoutedTemporalClient` when tenant or route identity selects a Temporal namespace/cluster.
 
-Both ports carry the same **`WorkflowSpec`** (`spec` field). Operations use typed **`WorkflowHandle`** values (workflow id and optional run id) returned from `start`.
+### Config
 
-Dependency injection uses **routed** factories (same pattern as documents or cache):
+```python
+from forze_temporal import TemporalWorkflowConfig
 
-| Key | Role |
-|-----|------|
-| `WorkflowCommandDepKey` | `WorkflowCommandDepPort` — given `ExecutionContext` + `WorkflowSpec`, returns a `WorkflowCommandPort` |
-| `WorkflowQueryDepKey` | `WorkflowQueryDepPort` — returns a `WorkflowQueryPort` |
+workflow_config = TemporalWorkflowConfig(
+    queue="projects-task-queue",
+    tenant_aware=True,
+)
+```
 
-The **route** for resolution is `WorkflowSpec.name`. There is no `ctx.workflow_command(...)` helper on `ExecutionContext`; resolve the factory with `dep(..., route=spec.name)` and call it with the spec (see below).
+The `queue` value must match the Temporal task queue your workers poll.
 
-## Runtime wiring
+### Deps module
 
-Construct a **`TemporalClient`** (not connected until lifecycle **`initialize`**), register workflows by name, and merge the module into your **`DepsPlan`**. Use **`temporal_lifecycle_step`** so the client connects during application startup.
+```python
+from forze.application.execution import DepsPlan
+from forze_temporal import TemporalDepsModule
 
-    :::python
-    from forze.application.execution import DepsPlan, ExecutionRuntime, LifecyclePlan
+temporal_module = TemporalDepsModule(
+    client=client,
+    workflows={"project-workflow": workflow_config},
+)
 
-    from forze_temporal.execution import TemporalDepsModule, temporal_lifecycle_step
-    from forze_temporal.kernel.platform import TemporalClient, TemporalConfig
+deps_plan = DepsPlan.from_modules(temporal_module)
+```
 
-    temporal = TemporalClient()
-    module = TemporalDepsModule(
-        client=temporal,
-        workflows={
-            "ProjectOnboarding": {"queue": "project-tasks", "tenant_aware": True},
-            "BillingRun": {"queue": "billing"},
-        },
+The route key should match your `WorkflowSpec.name`.
+
+### Lifecycle step
+
+```python
+from forze.application.execution import LifecyclePlan
+from forze_temporal import temporal_lifecycle_step
+
+lifecycle = LifecyclePlan.from_steps(
+    temporal_lifecycle_step(
+        host="localhost:7233",
+        config=TemporalConfig(namespace="default"),
     )
+)
+```
 
-    runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
-        lifecycle=LifecyclePlan.from_steps(
-            temporal_lifecycle_step(
-                host="localhost:7233",
-                config=TemporalConfig(namespace="default"),
-            )
-        ),
-    )
+Use `routed_temporal_lifecycle_step(client=routed_temporal)` with `RoutedTemporalClient` and do not combine routed and non-routed lifecycle steps for the same client.
 
-Keys in **`workflows`** must match **`WorkflowSpec.name`** for each workflow you resolve from usecases. If **`workflows`** is empty, only **`TemporalClientDepKey`** is registered (no workflow routes).
+## Contract coverage table
 
-### `TemporalWorkflowConfig`
+| Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
+|----------------|------------------------|--------------------------|-------------|
+| Workflow commands | `ConfigurableTemporalWorkflowCommand` / Temporal workflow command adapter. | `WorkflowCommandDepKey`, route usually equal to `WorkflowSpec.name`. | Requires a worker to register the workflow/activity implementation and poll the configured task queue. |
+| Workflow queries | `ConfigurableTemporalWorkflowQuery` / Temporal workflow query adapter. | `WorkflowQueryDepKey`, route usually equal to `WorkflowSpec.name`. | Query availability depends on Temporal workflow state and query handlers. |
+| Raw Temporal client | `TemporalClient` or `RoutedTemporalClient`. | `TemporalClientDepKey`. | Prefer workflow contracts in usecases to keep Temporal details at the infrastructure edge. |
+| Context propagation | `ExecutionContextInterceptor`. | Configured in `TemporalConfig.interceptors`. | Only propagates context fields supported by the interceptor and Temporal payload/headers. |
 
-| Field | Purpose |
-|-------|---------|
-| `queue` | Temporal task queue passed to `start_workflow` |
-| `tenant_aware` (optional) | If true, default workflow ids are prefixed with the current tenant (`tenant:{uuid}:...`); requires tenant context when generating ids |
+## Complete recipe link
 
-### `TemporalConfig` (client)
+See [Background Workflow](../recipes/background-workflow.md) for a complete workflow-oriented recipe.
 
-| Field | Default | Purpose |
-|-------|---------|---------|
-| `namespace` | `"default"` | Temporal namespace |
-| `lazy` | `False` | Lazy client initialization |
-| `interceptors` | `None` | SDK interceptors; use this to attach **`ExecutionContextInterceptor`** (see below) |
+## Configuration reference
 
-The platform client uses **`pydantic_data_converter`** from `temporalio.contrib.pydantic` for workflow arguments and results.
+### Connection settings
 
-## Using workflow ports in usecases
+`TemporalClient` connects to `target_host` and uses `TemporalConfig.namespace`. Configure TLS, API keys, or cloud endpoints according to your Temporal deployment and client construction.
 
-Resolve the routed **factory** with `WorkflowSpec.name` as the route, then invoke it with the **`ExecutionContext`** and your **`WorkflowSpec`**:
+### Pool settings
 
-    :::python
-    from forze.application.contracts.workflow import WorkflowCommandDepKey, WorkflowSpec
-    from forze.application.execution import Usecase
+Temporal client connection pooling is handled by the Temporal SDK. Worker concurrency, activity slots, and task queue polling are configured in your worker process rather than the Forze dependency module.
 
+### Serialization settings
 
-    project_onboarding_spec: WorkflowSpec = ...  # defined once in your app
+Temporal payload serialization is controlled by the Temporal SDK and any interceptors/converters you configure. Keep workflow input/output models stable because Temporal histories may outlive code deployments.
 
+### Retry/timeout behavior
 
-    class StartProjectOnboarding(Usecase[UUID, None]):
-        async def main(self, args: UUID) -> None:
-            factory = self.ctx.dep(
-                WorkflowCommandDepKey,
-                route=project_onboarding_spec.name,
-            )
-            cmd = factory(self.ctx, project_onboarding_spec)
+Temporal workflow/activity retry policies and timeouts belong to workflow and activity definitions. Forze schedules and queries workflows through ports; Temporal owns durable retries after a workflow starts.
 
-            handle = await cmd.start(
-                ProjectOnboardingIn(project_id=args),
-                workflow_id=f"project-onboarding-{args}",
-            )
-            # persist handle.workflow_id / handle.run_id if needed
+## Operational notes
 
+| Concern | Notes |
+|---------|-------|
+| Migrations/schema requirements | Temporal server persistence is managed by Temporal. Application-level workflow versioning and compatibility are your responsibility. |
+| Cleanup/shutdown | Register `temporal_lifecycle_step` or `routed_temporal_lifecycle_step` so clients connect on startup and close on shutdown. Stop workers gracefully so in-flight activities can finish or heartbeat. |
+| Idempotency/caching behavior | Temporal workflow IDs are the usual deduplication boundary. Choose deterministic IDs when scheduling must be idempotent. |
+| Production caveats | Version workflows with Temporal-safe patterns, keep task queue names explicit, monitor stuck workflows, and avoid non-deterministic code in workflow definitions. |
 
-    class SignalProjectOnboarding(Usecase[SignalArgs, None]):
-        async def main(self, args: SignalArgs) -> None:
-            factory = self.ctx.dep(
-                WorkflowCommandDepKey,
-                route=project_onboarding_spec.name,
-            )
-            cmd = factory(self.ctx, project_onboarding_spec)
+## Troubleshooting
 
-            await cmd.signal(
-                args.handle,
-                signal=project_onboarding_spec.signals["step_completed"],
-                args=StepCompletedSignal(step=args.step, result=args.result),
-            )
-
-For reads and **`result`**, resolve **`WorkflowQueryDepKey`** the same way with **`route=spec.name`** and use **`WorkflowQueryPort`**.
-
-## Adapters (direct use)
-
-Integration tests and advanced setups can build adapters without the deps module:
-
-- **`TemporalWorkflowCommandAdapter`**: `WorkflowCommandPort` — needs `client`, `queue`, `spec`, and optional **`tenant_aware`** / **`tenant_provider`** / **`workflow_id_factory`**
-- **`TemporalWorkflowQueryAdapter`**: `WorkflowQueryPort` — same constructor fields
-
-Both extend **`TemporalBaseAdapter`**: when **`tenant_aware`** is true, **`construct_workflow_id`** prefixes ids with the tenant from **`tenant_provider`** (typically `ctx.get_tenant_id` when using **`ConfigurableTemporalWorkflowCommand`** / **`ConfigurableTemporalWorkflowQuery`** from the deps module).
-
-## Execution context in Temporal
-
-To propagate **`ExecutionContext`** (e.g. correlation id) across Temporal headers, register **`ExecutionContextInterceptor`** on the client **`TemporalConfig.interceptors`** and use the same interceptor type on workers. See `forze_temporal.interceptors.ExecutionContextInterceptor` and integration tests under `tests/integration/test_forze_temporal_integration/`.
-
-## Lifecycle and shutdown
-
-**`temporal_lifecycle_step`** registers a **startup** hook that calls **`TemporalClient.initialize(host, config=...)`**. The Temporal SDK does not require explicit teardown for correctness; if you want to clear the client reference on shutdown, add a separate **`LifecycleStep`** whose shutdown calls **`TemporalClient.close()`**.
-
-## Why this shape
-
-- **Ports stay stable**: usecases depend on **`WorkflowCommandPort` / `WorkflowQueryPort`** and **`WorkflowSpec`**, not on `temporalio` types.
-- **Temporal details stay in adapters**: task queues, workflow handles, and SDK calls live in **`forze_temporal`**.
-- **Same wiring model as other integrations**: routed keys, **`Deps.merge`**, and lifecycle steps match Redis, Postgres, and the rest of Forze.
+| Common error | Likely cause | Fix |
+|--------------|--------------|-----|
+| Workflow never starts | No worker is polling the configured task queue or the queue name differs. | Start a worker for the same task queue configured in `TemporalWorkflowConfig.queue`. |
+| Namespace not found | Client namespace does not exist in Temporal. | Create the namespace or change `TemporalConfig.namespace`. |
+| Non-determinism failure during replay | Workflow code changed in a way Temporal cannot replay. | Use Temporal workflow versioning patterns and avoid non-deterministic calls inside workflows. |
+| Context is missing in workflow/activity | The context interceptor was not configured or the field is not propagated. | Add `ExecutionContextInterceptor` to `TemporalConfig.interceptors` and verify supported context fields. |

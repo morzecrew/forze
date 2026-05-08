@@ -1,360 +1,137 @@
 # PostgreSQL Integration
 
-## What this integration provides
+## Page opening
 
-Persist documents, search indexes, transactions, and related data in PostgreSQL behind Forze application contracts.
+`forze_postgres` provides PostgreSQL-backed adapters for document storage, read-only projections, full-text/vector search, federated search, hub search, and transaction management. It keeps persistence code behind Forze contracts while using PostgreSQL tables, views, indexes, and connection pools at the infrastructure edge.
 
-## When to use it
-
-Use this when Postgres is your primary document store, search backend, or transaction boundary.
-
-## Standard setup checklist
-
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
-
-
-`forze_postgres` provides document storage, full-text search, and transaction management backed by PostgreSQL. It implements `DocumentQueryPort`, `DocumentCommandPort`, `SearchQueryPort`, and `TxManagerPort` using async `psycopg` with connection pooling.
-
-Kernel specs (`DocumentSpec`, `SearchSpec`) describe **models and logical names**. **Table and index locations** are supplied separately via `PostgresDepsModule` (`rw_documents`, `searches`, …). See [Specs and infrastructure wiring](../concepts/specs-and-wiring.md).
+| Topic | Details |
+|------|---------|
+| What it provides | A `PostgresClient`, lifecycle hooks, dependency module, document adapters, search adapters, an introspector, and a transaction manager. |
+| Supported Forze contracts | `DocumentQueryDepKey`, `DocumentCommandDepKey`, `SearchQueryDepKey`, `HubSearchQueryDepKey`, `FederatedSearchQueryDepKey`, and `TxManagerDepKey`. |
+| When to use it | Use this integration when PostgreSQL is the system of record, when projections/search indexes live in PostgreSQL, or when usecases need transaction boundaries around Postgres-backed adapters. |
 
 ## Installation
 
-    :::bash
-    uv add 'forze[postgres]'
+```bash
+uv add 'forze[postgres]'
+```
 
-Requires PostgreSQL 14 or later.
+| Requirement | Notes |
+|-------------|-------|
+| Package extra | `postgres` installs `psycopg` and `psycopg-pool`. |
+| Required service | PostgreSQL. Search features may require extensions such as PGroonga or pgvector depending on the selected engine. |
+| Local development dependency | A local PostgreSQL server or a containerized PostgreSQL instance. Integration tests normally use testcontainers. |
 
-## Runtime wiring
+## Minimal setup
 
-Create a client, pass **per-aggregate** Postgres configs into `PostgresDepsModule`, and add a lifecycle step for pool management:
+### Client
 
-    :::python
-    from forze.application.execution import Deps, DepsPlan, ExecutionRuntime, LifecyclePlan
-    from forze_postgres import (
-        PostgresClient,
-        PostgresConfig,
-        PostgresDepsModule,
-        postgres_lifecycle_step,
+```python
+from forze_postgres import PostgresClient, PostgresConfig
+
+pg = PostgresClient()
+```
+
+Use `RoutedPostgresClient` when the current tenant or route determines the DSN.
+
+### Config
+
+```python
+from forze_postgres import PostgresDocumentConfig
+
+project_document_config = PostgresDocumentConfig(
+    read=("public", "project_reads"),
+    write=("public", "projects"),
+    history=("public", "project_history"),
+    bookkeeping_strategy="application",
+    batch_size=200,
+)
+```
+
+For search, use `PostgresSearchConfig`, `PostgresHubSearchConfig`, or `PostgresFederatedSearchConfig` and choose `engine="pgroonga"`, `engine="fts"`, or `engine="vector"`.
+
+### Deps module
+
+```python
+from forze.application.execution import DepsPlan
+from forze_postgres import PostgresDepsModule
+
+postgres_module = PostgresDepsModule(
+    client=pg,
+    rw_documents={"projects": project_document_config},
+    searches={"projects": project_search_config},
+    tx={"projects"},
+)
+
+deps_plan = DepsPlan.from_modules(postgres_module)
+```
+
+Routes such as `"projects"` should match the names used by your `DocumentSpec`, `SearchSpec`, and transaction wiring.
+
+### Lifecycle step
+
+```python
+from forze.application.execution import LifecyclePlan
+from forze_postgres import postgres_lifecycle_step
+
+lifecycle = LifecyclePlan.from_steps(
+    postgres_lifecycle_step(
+        dsn="postgresql://forze:forze@localhost:5432/forze",
+        config=PostgresConfig(min_size=1, max_size=10),
     )
+)
+```
 
-    client = PostgresClient()
-
-    module = PostgresDepsModule(
-        client=client,
-        rw_documents={
-            "projects": {
-                "read": ("public", "projects"),
-                "write": ("public", "projects"),
-                "bookkeeping_strategy": "database",
-                "history": ("public", "projects_history"),
-            },
-        },
-        searches={
-            "projects": {
-                "engine": "pgroonga",
-                "index": ("public", "idx_projects_content"),
-                "source": ("public", "projects"),
-            },
-        },
-        tx={"default"},
-    )
-
-    runtime = ExecutionRuntime(
-        deps=DepsPlan.from_modules(module),
-        lifecycle=LifecyclePlan.from_steps(
-            postgres_lifecycle_step(
-                dsn="postgresql://user:pass@localhost:5432/mydb",
-                config=PostgresConfig(min_size=2, max_size=15),
-            )
-        ),
-    )
-
-Keys in `rw_documents`, `ro_documents`, and `searches` must match `DocumentSpec.name` and `SearchSpec.name` on the kernel side.
-
-### PostgresConfig options
-
-| Option | Type | Default | Purpose |
-|--------|------|---------|---------|
-| `min_size` | `int` | `2` | Minimum connections in the pool |
-| `max_size` | `int` | `10` | Maximum connections in the pool |
-| `timeout` | `float` | `30.0` | Connection acquisition timeout (seconds) |
-
-### What gets registered
-
-`PostgresDepsModule` registers:
-
-| Key | Capability |
-|-----|-----------|
-| `PostgresClientDepKey` | Async `psycopg` client (pool) |
-| `PostgresIntrospectorDepKey` | Catalog introspection (search, types) |
-| `DocumentQueryDepKey` | Routed document **query** factories (`ConfigurablePostgresReadOnlyDocument` / derived read side) |
-| `DocumentCommandDepKey` | Routed document **command** factories (`ConfigurablePostgresDocument`) |
-| `SearchQueryDepKey` | Routed search factories (`ConfigurablePostgresSearch`) |
-| `TxManagerDepKey` | Transaction managers per route in `tx` |
-
-## DocumentSpec vs Postgres config
-
-`DocumentSpec` carries **read model type**, **write model types**, `history_enabled`, and optional `CacheSpec`. It does **not** contain SQL identifiers.
-
-`PostgresDocumentConfig` supplies:
-
-| Field | Purpose |
-|-------|---------|
-| `read` | `(schema, relation)` for reads (table, view, or materialized view) |
-| `write` | `(schema, table)` for mutations |
-| `history` | Optional `(schema, table)` when history is stored in Postgres |
-| `bookkeeping_strategy` | `"database"` or `"application"` — who bumps `rev` and timestamps |
-| `batch_size` | Optional write batch size (default 200) |
-| `tenant_aware` | Optional multi-tenant column handling |
-
-Read-only documents use `ro_documents` with `PostgresReadOnlyDocumentConfig` (`read` only).
-
-## Document table schema
-
-Every document table must include core columns matching the domain model fields.
-
-### Required columns
-
-| Column | Type | Default | Purpose |
-|--------|------|---------|---------|
-| `id` | `uuid` | `gen_random_uuid()` | Primary key |
-| `rev` | `integer` | `1` | Revision counter |
-| `created_at` | `timestamptz` | `now()` | Creation timestamp |
-| `last_update_at` | `timestamptz` | `now()` | Last update timestamp |
-
-### Optional columns (by mixin)
-
-| Column | Type | Mixin | Purpose |
-|--------|------|-------|---------|
-| `is_deleted` | `boolean` | `SoftDeletionMixin` | Soft delete flag |
-| `number_id` | `bigint` | `NumberMixin` | Human-readable sequence |
-| `creator_id` | `uuid` | `CreatorMixin` | Creator reference |
-| `tenant_id` | `uuid` | Multi-tenancy | Tenant partition |
-
-Add domain-specific columns as needed. Column names must match Pydantic model field names (snake_case).
-
-### Example DDL
-
-    :::sql
-    CREATE TABLE public.projects (
-        id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-        rev             integer     NOT NULL DEFAULT 1,
-        created_at      timestamptz NOT NULL DEFAULT now(),
-        last_update_at  timestamptz NOT NULL DEFAULT now(),
-        is_deleted      boolean     NOT NULL DEFAULT false,
-        title           text        NOT NULL,
-        description     text        NOT NULL
-    );
+Use `routed_postgres_lifecycle_step(client=routed_pg)` with `RoutedPostgresClient` and do not combine routed and non-routed lifecycle steps for the same client.
 
-## Revision strategy
+## Contract coverage table
 
-`bookkeeping_strategy` on `PostgresDocumentConfig` controls how `rev` and `last_update_at` advance:
-
-| Strategy | Behavior |
-|----------|----------|
-| `"database"` | Prefer triggers (or DB defaults) to bump `rev` and touch timestamps |
-| `"application"` | Adapter supplies the next `rev` in the update path |
-
-### Database trigger for revision bumping
-
-When using `"database"` bookkeeping with triggers, for example:
-
-    :::sql
-    CREATE OR REPLACE FUNCTION bump_rev()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        NEW.rev := OLD.rev + 1;
-        NEW.last_update_at := now();
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
+| Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
+|----------------|------------------------|--------------------------|-------------|
+| Document queries | `ConfigurablePostgresReadOnlyDocument` / `PostgresDocumentAdapter` | `DocumentQueryDepKey`, route usually equal to `DocumentSpec.name`. | Requires a read relation; nested filtering may need `nested_field_hints` for ambiguous JSON/dict fields. |
+| Document commands | `ConfigurablePostgresDocument` / `PostgresDocumentAdapter` | `DocumentCommandDepKey`, route usually equal to `DocumentSpec.name`. | Requires a write relation and bookkeeping strategy; history is used only when both schema and spec enable it. |
+| Search queries | `ConfigurablePostgresSearch` with PGroonga, FTS, or vector adapter. | `SearchQueryDepKey`, route usually equal to `SearchSpec.name`. | Engine-specific schema/index requirements apply; vector search requires an embedding provider and matching dimensions. |
+| Hub search | `ConfigurablePostgresHubSearch` | `HubSearchQueryDepKey`, route usually equal to the hub search spec name. | Member relations and hub foreign-key mappings must be configured consistently. |
+| Federated search | `ConfigurablePostgresFederatedSearch` | `FederatedSearchQueryDepKey`, route usually equal to federated search spec name. | Requires at least two member configurations; result merging uses configured reciprocal-rank-fusion options. |
+| Transactions | `postgres_txmanager` | `TxManagerDepKey`, route from the module `tx` set. | Only coordinates operations that use the same Postgres client/context. |
+| Raw client/introspection | `PostgresClient` and `PostgresIntrospector` | `PostgresClientDepKey` and `PostgresIntrospectorDepKey`. | Use raw access sparingly; prefer contracts in usecases. |
 
-    CREATE TRIGGER projects_bump_rev
-    BEFORE UPDATE ON public.projects
-    FOR EACH ROW EXECUTE FUNCTION bump_rev();
+## Complete recipe link
 
-## History table (audit trail)
+See [CRUD with FastAPI, Postgres, and Redis](../recipes/crud-fastapi-postgres-redis.md) for an end-to-end HTTP + PostgreSQL + cache recipe. Use [Read-only Document API](../recipes/read-only-document-api.md) when you only expose projections.
 
-Set `history_enabled=True` on `DocumentSpec` and provide `history` in `PostgresDocumentConfig` when you use a history table. If `history` is missing while `history_enabled` is true (or the reverse), the adapter logs a warning and skips the history gateway.
+## Configuration reference
 
-### History table schema
+### Connection settings
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| `source` | `text` | Source relation name (e.g. `public.projects`) |
-| `id` | `uuid` | Document identifier |
-| `rev` | `integer` | Revision number |
-| `data` | `jsonb` | Full document snapshot at that revision |
+`PostgresClient` connects with a DSN. For multi-tenant or per-route databases, use `RoutedPostgresClient` and pass `introspector_cache_partition_key` to `PostgresDepsModule` when catalog caching must be partitioned by tenant.
 
-### Example DDL
+### Pool settings
 
-    :::sql
-    CREATE TABLE public.projects_history (
-        source  text    NOT NULL,
-        id      uuid    NOT NULL,
-        rev     integer NOT NULL,
-        data    jsonb   NOT NULL,
-        PRIMARY KEY (source, id, rev)
-    );
-
-    CREATE INDEX idx_projects_history_lookup
-    ON public.projects_history (source, id, rev);
-
-### History writes
-
-Use either database triggers (copy `OLD` row before update) or application-level inserts, consistent with `bookkeeping_strategy` and your operational preferences.
-
-    :::sql
-    CREATE OR REPLACE FUNCTION write_document_history()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        INSERT INTO public.projects_history (source, id, rev, data)
-        VALUES ('public.projects', OLD.id, OLD.rev, to_jsonb(OLD));
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    CREATE TRIGGER projects_history_trigger
-    BEFORE UPDATE ON public.projects
-    FOR EACH ROW EXECUTE FUNCTION write_document_history();
-
-## Transactions
+`PostgresConfig` controls `min_size`, `max_size`, `max_lifetime`, `max_idle`, `reconnect_timeout`, `num_workers`, `pool_headroom`, and optional `max_concurrent_queries`. Keep `max_concurrent_queries` below pool capacity when large batch reads and writes run concurrently.
 
-The Postgres adapter uses `psycopg` async connections with context-variable scoping. Within an `ExecutionContext.transaction()` scope, document operations share the same connection when resolved through the Postgres tx manager route you registered in `PostgresDepsModule.tx`.
+### Serialization settings
 
-Nested `transaction()` calls create savepoints:
+Document adapters map Pydantic read/create/update models to PostgreSQL rows. Search adapters map configured field names to heap/read columns with `field_map`, `join_pairs`, and optional nested field hints.
 
-    :::python
-    async with ctx.transaction("default"):
-        await doc_c.create(cmd_1)
+### Retry/timeout behavior
 
-        async with ctx.transaction("default"):
-            await doc_c.create(cmd_2)
-
-If the inner block raises, only the savepoint is rolled back.
+Connection recovery is bounded by `reconnect_timeout`. Query-level retries should be handled at usecase or adapter-call boundaries only when the operation is safe to repeat. Use transactions for multi-step writes that must commit atomically.
 
-## Document operations
+## Operational notes
 
-Resolve ports from `ExecutionContext` using the same `DocumentSpec` you use in the kernel:
+| Concern | Notes |
+|---------|-------|
+| Migrations/schema requirements | Create read/write/history relations, indexes, extensions, and search indexes outside Forze with your migration tool. Forze introspects existing schema; it does not create application tables for you. |
+| Cleanup/shutdown | Register `postgres_lifecycle_step` or `routed_postgres_lifecycle_step` so pools open on startup and close on shutdown. |
+| Idempotency/caching behavior | Document adapters can coordinate with a cache specified on the document spec. Idempotency is a separate contract, commonly backed by Redis. |
+| Production caveats | Size pools for concurrency, configure transaction isolation deliberately, monitor long-running queries, and validate PGroonga/pgvector extension versions before deploying search features. |
 
-    :::python
-    doc_q = ctx.doc_query(project_spec)
-    doc_c = ctx.doc_command(project_spec)
+## Troubleshooting
 
-    project = await doc_q.get(project_id)
-    page = await doc_q.find_many(
-        filters={"$fields": {"is_deleted": False}},
-        sorts={"created_at": "desc"},
-        pagination={"limit": 20, "offset": 0},
-        return_count=True,
-    )
-    projects = page.hits
-    total = page.count
-    count = await doc_q.count({"$fields": {"is_deleted": False}})
-
-    created = await doc_c.create(CreateProjectCmd(title="New", description="..."))
-    updated = await doc_c.update(project.id, project.rev, UpdateProjectCmd(title="Updated"))
-    deleted = await doc_c.delete(updated.id, updated.rev)
-    restored = await doc_c.restore(deleted.id, deleted.rev)
-    await doc_c.kill(restored.id)
-
-The adapter handles revision checks, cache coordination when `DocumentSpec.cache` is set, history when configured, and query rendering via the shared query DSL.
-
-## Full-text search
-
-The search stack has two layers:
-
-1. **`SearchSpec`** (kernel) — `name`, `model_type`, `fields`, weights, optional `fuzzy`
-2. **`PostgresSearchConfig`** — `engine` (`"pgroonga"` or `"fts"`), `index` and `source` as `(schema, name)` tuples, optional `fts_groups` for native FTS
-
-| Engine | Extension | Best for |
-|--------|-----------|----------|
-| **PGroonga** | `pgroonga` | CJK, fuzzy, array expressions |
-| **Native FTS** | Built-in | GIN + `tsvector` |
-
-### Example kernel + infra
-
-    :::python
-    from forze.application.contracts.search import SearchSpec
-
-    project_search = SearchSpec(
-        name="projects",
-        model_type=ProjectReadModel,
-        fields=("title", "description"),
-        default_weights={"title": 0.6, "description": 0.4},
-    )
-
-    # PostgresDepsModule.searches["projects"] must match project_search.name
-    searches={
-        "projects": {
-            "engine": "fts",
-            "index": ("public", "idx_projects_fts"),
-            "source": ("public", "projects"),
-            "fts_groups": {
-                "A": ("title",),
-                "B": ("description",),
-            },
-        },
-    }
-
-For `"fts"`, every field in `SearchSpec.fields` must appear in `fts_groups`. For `"pgroonga"`, `fts_groups` is omitted.
-
-### PGroonga indexes
-
-    :::sql
-    CREATE EXTENSION IF NOT EXISTS pgroonga;
-
-    CREATE INDEX idx_projects_title ON public.projects
-    USING pgroonga (title pgroonga_text_full_text_search_ops);
-
-### Native FTS (GIN + tsvector)
-
-    :::sql
-    ALTER TABLE public.projects
-    ADD COLUMN doc_tsv tsvector
-    GENERATED ALWAYS AS (
-        setweight(to_tsvector('english', coalesce(title, '')), 'A')
-        || setweight(to_tsvector('english', coalesce(description, '')), 'B')
-    ) STORED;
-
-    CREATE INDEX idx_projects_fts ON public.projects USING gin (doc_tsv);
-
-### Using the search port
-
-    :::python
-    search = ctx.search_query(project_search)
-
-    hits, total = await search.search(
-        query="roadmap",
-        filters={"$fields": {"is_deleted": False}},
-        limit=20,
-        offset=0,
-    )
-
-See [Query Syntax](../reference/query-syntax.md) for filter and sort expressions.
-
-## Combining with Redis
-
-Typical stack: Postgres for persistence, Redis for cache and idempotency. Use the **same logical names** on `CacheSpec` / `DocumentSpec` and in `RedisDepsModule.caches`:
-
-    :::python
-    deps_plan = DepsPlan.from_modules(
-        lambda: Deps.merge(
-            PostgresDepsModule(client=pg, rw_documents={...}, searches={...})(),
-            RedisDepsModule(
-                client=redis,
-                caches={"projects": {"namespace": "app:projects"}},
-            )(),
-        ),
-    )
-
-    lifecycle = LifecyclePlan.from_steps(
-        postgres_lifecycle_step(dsn="postgresql://...", config=PostgresConfig()),
-        redis_lifecycle_step(dsn="redis://...", config=RedisConfig()),
-    )
-
-When `DocumentSpec.cache` is set, the Postgres document dep factory resolves `ctx.cache(spec.cache)` (same `CacheSpec.name` as your cache route) while constructing the adapter.
+| Common error | Likely cause | Fix |
+|--------------|--------------|-----|
+| `Write relation is required for non read-only documents` | A read-write document was registered without `write`. | Add `write=(schema, table)` or register the document under `ro_documents`. |
+| Search configuration validation fails | Engine-specific fields are missing, such as `fts_groups`, `vector_column`, `embedding_dimensions`, or `embeddings_name`. | Add the required fields for the selected search engine. |
+| Tenant A sees schema metadata from tenant B | A routed client uses introspection cache without a partition key. | Set `introspector_cache_partition_key` to the same tenant/route identity used for routing. |
+| Pool exhaustion or slow batch operations | Pool sizes and batch concurrency are too small for workload. | Increase `max_size`, tune `pool_headroom`/`max_concurrent_queries`, or reduce batch size. |
