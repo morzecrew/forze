@@ -6,6 +6,7 @@ dev_addr: "localhost:8045"
 not_in_nav: |
   core-concepts/*
   core-package/*
+  reference/contracts.md
 
 
 theme:
@@ -69,7 +70,16 @@ nav:
     - Overview: reference/index.md
     - Base Layer: reference/base-layer.md
     - Domain Models: reference/domain-models.md
-    - Contracts: reference/contracts.md
+    - Contracts:
+      - Overview: core-package/contracts.md
+      - Document: core-package/contracts/document.md
+      - Cache: core-package/contracts/cache.md
+      - Queue: core-package/contracts/queue.md
+      - Pub/Sub: core-package/contracts/pubsub.md
+      - Stream: core-package/contracts/stream.md
+      - Storage: core-package/contracts/storage.md
+      - Workflow: core-package/contracts/workflow.md
+      - Idempotency: core-package/contracts/idempotency.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
     - Composition & Mapping: reference/composition.md

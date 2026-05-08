@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs:** Split core-package contract reference into domain pages with repeatable API-entry tables and a contract selection overview.
 - **Breaking (packaging):** optional dependency extra renamed from `contrib` to `authnz` (argon2, PyJWT, email-validator).
 - **Authnz:** `Session.refresh_digest` and `RefreshTokenService` token digests use hex strings (not raw bytes).
 - **Docs:** Restructured MkDocs navigation around reader intents (Start Here, Concepts, Recipes, Reference, Integrations), moved dense core package inventories to Reference, added recipe pages, and left moved-page stubs for old concept/reference URLs.
