@@ -48,8 +48,8 @@ Read:
 - `justfile`
 
 Use it for:
-- test entrypoints (`just test-fast`, path-scoped tests)
-- performance testing (`just test-perf`, performance benchmarks)
+- test entrypoints (`just test`, path-scoped tests)
+- performance testing (`just perf`, performance benchmarks)
 - quality checks (`just quality`, strict mode)
 - security/dependency/dead-code checks
 
@@ -88,7 +88,8 @@ Use them for:
 ## Repository map (high signal paths)
 
 - `src/forze/`: core framework layers (application/domain/utils/base).
-- `src/forze_authnz/`: document-backed authn/authz integration package.
+- `src/forze_authn/`: document-backed authentication integration package.
+- `src/forze_authz/`: document-backed authorization integration package.
 - `src/forze_fastapi/`: FastAPI integration package.
 - `src/forze_postgres/`: Postgres integration package.
 - `src/forze_redis/`: Redis integration package.
@@ -140,9 +141,9 @@ The VM update script installs `uv`, `just`, and Python 3.13 via `uv`. After the 
 
 See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 
-- **Unit tests:** `just test-fast tests/unit`
-- **All tests (unit + integration):** `just test-fast` (integration tests need Docker for testcontainers)
-- **Performance tests:** `just test-perf` (requires Docker)
+- **Unit tests:** `just test tests/unit`
+- **All tests (unit + integration):** `just test` (integration tests need Docker for testcontainers)
+- **Performance tests:** `just perf` (requires Docker)
 - **Quality checks (lint/imports/dead-code/deps/security):** `just quality` (or `just quality -s` for strict)
 - **Docs:** `just pages serve`
 

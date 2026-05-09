@@ -78,7 +78,6 @@ Skills are automatically available once installed. The agent will use them when 
 | **forze-temporal-workflows** | `WorkflowSpec`, Temporal deps, workflow command/query ports, lifecycle, context propagation, and tests. |
 | **forze-auth-tenancy-secrets** | Authn/authz contracts, context identity binding, tenant-aware routing, secrets, and FastAPI resolvers. |
 | **forze-graph-contracts** | Graph module/node/edge specs, graph refs, query/command ports, and custom graph adapter wiring. |
-| **forze-testing** | Mock deps, fake ports, runtime-scope tests, integration-test boundaries, and quality commands. |
 | **forze-observability-errors** | Structured `CoreError` handling, adapter exception mapping, logging, call context, and FastAPI error responses. |
 
 ## Versioning

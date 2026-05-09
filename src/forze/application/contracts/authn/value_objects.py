@@ -13,6 +13,9 @@ class AuthnIdentity:
     principal_id: UUID
     """Principal ID."""
 
+    tenant_id: UUID | None = None
+    """When set, credential or token bound the subject to this tenant (bootstrap hint)."""
+
 
 # ....................... #
 # Password

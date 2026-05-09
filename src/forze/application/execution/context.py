@@ -49,7 +49,13 @@ from ..contracts.search import (
     SearchSpec,
 )
 from ..contracts.storage import StorageDepKey, StoragePort, StorageSpec
-from ..contracts.tenancy import TenantIdentity, TenantResolverDepKey, TenantResolverPort
+from ..contracts.tenancy import (
+    TenantIdentity,
+    TenantManagementDepKey,
+    TenantManagementPort,
+    TenantResolverDepKey,
+    TenantResolverPort,
+)
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
 
 # ----------------------- #
@@ -671,3 +677,21 @@ class ExecutionContext:
         )
 
         return tr
+
+    # ....................... #
+
+    def tenant_management(self) -> TenantManagementPort | None:
+        """Resolve a tenant management port."""
+
+        if not self.deps.exists(TenantManagementDepKey):
+            return None
+
+        dep = self.dep(TenantManagementDepKey)
+        tm = dep(self)
+
+        logger.trace(
+            "Resolved tenant management port -> %s",
+            type(tm).__qualname__,
+        )
+
+        return tm

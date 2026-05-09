@@ -146,7 +146,7 @@ jobs:
 
       - name: Run tests
         run: |
-          just test-fast \
+          just test \
             --cov=src \
             --cov-report=xml \
             --cov-report=term \

@@ -122,16 +122,30 @@ def attach_http_endpoint(
     if rsp is type(None):
         rsp = None  # type: ignore[assignment]
 
-    router.add_api_route(
-        path,
-        endpoint,
-        methods=[method],
-        response_model=rsp,
-        status_code=spec.http.get("status_code"),
-        operation_id=operation_id,
-        summary=metadata.get("summary"),
-        response_model_exclude_none=exclude_none,
-    )
+    route_kwargs: dict[str, Any] = {
+        "path": path,
+        "endpoint": endpoint,
+        "methods": [method],
+        "response_model": rsp,
+        "status_code": spec.http.get("status_code"),
+        "operation_id": operation_id,
+        "summary": metadata.get("summary"),
+        "response_model_exclude_none": exclude_none,
+    }
+
+    if "dependencies" in metadata:
+        route_kwargs["dependencies"] = list(metadata["dependencies"])
+
+    if "openapi_extra" in metadata:
+        route_kwargs["openapi_extra"] = dict(metadata["openapi_extra"])
+
+    if "responses" in metadata:
+        route_kwargs["responses"] = dict(metadata["responses"])
+
+    if "include_in_schema" in metadata:
+        route_kwargs["include_in_schema"] = bool(metadata["include_in_schema"])
+
+    router.add_api_route(**route_kwargs)
 
     return router
 

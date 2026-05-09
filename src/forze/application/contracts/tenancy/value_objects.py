@@ -11,3 +11,6 @@ class TenantIdentity:
 
     tenant_id: UUID
     """Tenant ID."""
+
+    tenant_key: str | None = None
+    """Optional stable catalog key for APIs or logging."""

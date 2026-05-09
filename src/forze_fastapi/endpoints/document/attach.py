@@ -5,7 +5,7 @@ require_fastapi()
 # ....................... #
 
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter
 
@@ -15,7 +15,8 @@ from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
 from .._logger import logger
-from ..http import SimpleHttpEndpointSpec, attach_http_endpoint
+from ..http import HttpEndpointSpec, SimpleHttpEndpointSpec, attach_http_endpoint
+from ..http.policy import AnyFeature, with_default_http_features
 from .endpoints import (
     build_document_aggregated_list_endpoint_spec,
     build_document_create_endpoint_spec,
@@ -35,6 +36,8 @@ from .specs import DocumentEndpointsSpec
 # ----------------------- #
 #! A bit damn function, but building a framework around is even more stupid.
 
+HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+
 
 def attach_document_endpoints(
     router: APIRouter,
@@ -45,9 +48,13 @@ def attach_document_endpoints(
     ctx_dep: Callable[[], ExecutionContext],
     endpoints: DocumentEndpointsSpec | None = None,
     exclude_none: bool = True,
+    default_http_features: Sequence[AnyFeature] | None = None,
 ) -> APIRouter:
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
+
+    def _apply_defaults(spec: HttpEndSpec) -> HttpEndSpec:
+        return with_default_http_features(spec, default_http_features)
 
     get_endpoint = endpoints.get("get_", False)
     get_by_number_id_endpoint = endpoints.get("get_by_number_id", False)
@@ -74,7 +81,7 @@ def attach_document_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=get_endpoint_spec,
+            spec=_apply_defaults(get_endpoint_spec),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -105,7 +112,7 @@ def attach_document_endpoints(
             )
             attach_http_endpoint(
                 router=router,
-                spec=get_by_number_id_endpoint_spec,
+                spec=_apply_defaults(get_by_number_id_endpoint_spec),
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
@@ -121,7 +128,7 @@ def attach_document_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=list_endpoint_spec,
+            spec=_apply_defaults(list_endpoint_spec),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -141,7 +148,7 @@ def attach_document_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=raw_list_endpoint_spec,
+            spec=_apply_defaults(raw_list_endpoint_spec),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -161,7 +168,7 @@ def attach_document_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=aggregated_list_endpoint_spec,
+            spec=_apply_defaults(aggregated_list_endpoint_spec),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -181,7 +188,7 @@ def attach_document_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=list_cursor_endpoint_spec,
+            spec=_apply_defaults(list_cursor_endpoint_spec),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -201,7 +208,7 @@ def attach_document_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=raw_list_cursor_endpoint_spec,
+            spec=_apply_defaults(raw_list_cursor_endpoint_spec),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -242,7 +249,7 @@ def attach_document_endpoints(
             )
             attach_http_endpoint(
                 router=router,
-                spec=create_endpoint_spec,
+                spec=_apply_defaults(create_endpoint_spec),
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
@@ -279,7 +286,7 @@ def attach_document_endpoints(
             )
             attach_http_endpoint(
                 router=router,
-                spec=update_endpoint_spec,
+                spec=_apply_defaults(update_endpoint_spec),
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
@@ -301,7 +308,7 @@ def attach_document_endpoints(
             )
             attach_http_endpoint(
                 router=router,
-                spec=kill_endpoint_spec,
+                spec=_apply_defaults(kill_endpoint_spec),
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
@@ -332,7 +339,7 @@ def attach_document_endpoints(
             )
             attach_http_endpoint(
                 router=router,
-                spec=delete_endpoint_spec,
+                spec=_apply_defaults(delete_endpoint_spec),
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
@@ -365,7 +372,7 @@ def attach_document_endpoints(
             )
             attach_http_endpoint(
                 router=router,
-                spec=restore_endpoint_spec,
+                spec=_apply_defaults(restore_endpoint_spec),
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,

@@ -61,7 +61,7 @@ identity = await authn.authenticate_with_password(
 )
 ```
 
-`forze_authnz` provides document-backed authn models/services/adapters; its document specs use `StrEnum` resource names and must be wired to document storage like any other aggregate.
+`forze_authn` provides document-backed authn models/services/adapters; `forze_authz` provides document-backed authorization (catalog, bindings, adapters for authz ports). Document specs use `StrEnum` resource names and must be wired to document storage like any other aggregate.
 
 ## Tenancy and routed clients
 
@@ -88,7 +88,7 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 2. **Passing tenant ids through every DTO for routing** — bind `TenantIdentity` and use tenant-aware adapters.
 3. **Hard-coding credentials in deps modules** — resolve via secrets/config.
 4. **Treating authz as domain-only state** — use authz ports for policy decisions that depend on external grants.
-5. **Forgetting authn document specs need storage wiring** — `forze_authnz` specs are still `DocumentSpec`s.
+5. **Forgetting authn document specs need storage wiring** — `forze_authn` and `forze_authz` specs are still `DocumentSpec`s.
 
 ## Reference
 
@@ -97,4 +97,5 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 - [`src/forze/application/contracts/authz`](../../src/forze/application/contracts/authz)
 - [`src/forze/application/contracts/tenancy`](../../src/forze/application/contracts/tenancy)
 - [`src/forze/application/contracts/secrets`](../../src/forze/application/contracts/secrets)
-- [`src/forze_authnz`](../../src/forze_authnz)
+- [`src/forze_authn`](../../src/forze_authn)
+- [`src/forze_authz`](../../src/forze_authz)

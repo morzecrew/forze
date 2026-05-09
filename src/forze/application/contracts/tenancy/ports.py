@@ -20,6 +20,41 @@ class TenantResolverPort(Protocol):
 # ....................... #
 
 
+class TenantManagementPort(Protocol):
+    """Lifecycle operations on tenants and principal membership (not CRUD-generic)."""
+
+    def provision_tenant(
+        self,
+        *,
+        tenant_key: str | None = None,
+    ) -> Awaitable[TenantIdentity]:
+        """Create a tenant aggregate and return its identity."""
+        ...
+
+    def attach_principal(
+        self,
+        principal_id: UUID,
+        tenant_id: UUID,
+    ) -> Awaitable[None]:
+        """Grant membership (idempotent if binding already exists)."""
+        ...
+
+    def detach_principal(
+        self,
+        principal_id: UUID,
+        tenant_id: UUID,
+    ) -> Awaitable[None]:
+        """Revoke membership."""
+        ...
+
+    def deactivate_tenant(self, tenant_id: UUID) -> Awaitable[None]:
+        """Disable tenant (exact semantics adapter-defined, e.g. soft deactivate)."""
+        ...
+
+
+# ....................... #
+
+
 class TenantProviderPort(Protocol):
     """Port for providing the tenant ID."""
 

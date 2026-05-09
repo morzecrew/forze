@@ -79,10 +79,10 @@ Then use [just](https://github.com/casey/just) to run necessary commands:
 
     :::bash
     # Run unit and integration tests
-    just test-fast
+    just test
 
     # Run performance tests
-    just test-perf
+    just perf
 
     # Run all quality checks
     just quality

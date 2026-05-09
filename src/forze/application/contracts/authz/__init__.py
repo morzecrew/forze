@@ -16,7 +16,14 @@ from .ports import (
 )
 from .specs import AuthzSpec
 from .types import PrincipalKind
-from .value_objects import EffectiveGrants, PrincipalRef
+from .value_objects import (
+    EffectiveGrants,
+    GroupRef,
+    PermissionRef,
+    PrincipalRef,
+    RoleRef,
+    coalesce_authz_tenant_id,
+)
 
 # ----------------------- #
 
@@ -37,4 +44,8 @@ __all__ = [
     "EffectiveGrantsDepPort",
     "EffectiveGrantsPort",
     "EffectiveGrants",
+    "GroupRef",
+    "PermissionRef",
+    "RoleRef",
+    "coalesce_authz_tenant_id",
 ]

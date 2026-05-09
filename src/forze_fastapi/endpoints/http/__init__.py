@@ -22,6 +22,10 @@ from .features import (
     ETagProviderPort,
     IdempotencyFeature,
 )
+from .features.security import (
+    RequireAuthnFeature,
+    RequireTenantFeature,
+)
 from .mapping import (
     BodyAsIsMapper,
     DocumentUpdateResDataMapper,
@@ -29,6 +33,7 @@ from .mapping import (
     QueryAsIsBodyAssignMapper,
     QueryAsIsMapper,
 )
+from .policy import AnyFeature, merge_http_endpoint_features, with_default_http_features
 
 # ----------------------- #
 
@@ -49,6 +54,11 @@ __all__ = [
     "ETagProviderPort",
     "ETAG_HEADER_KEY",
     "IF_NONE_MATCH_HEADER_KEY",
+    "RequireAuthnFeature",
+    "RequireTenantFeature",
+    "AnyFeature",
+    "merge_http_endpoint_features",
+    "with_default_http_features",
     "BodyAsIsMapper",
     "DocumentUpdateResDataMapper",
     "QueryAsIsBodyAssignMapper",

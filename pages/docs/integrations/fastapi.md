@@ -14,6 +14,7 @@
 | What it provides | FastAPI routers and middleware that resolve Forze dependencies from `ExecutionContext` and call registered usecases. |
 | Supported Forze contracts | `DocumentSpec` and `SearchSpec` through generated endpoints; arbitrary `Usecase` classes through HTTP endpoint specs; optional ETag and idempotency behaviors through endpoint features. |
 | When to use it | Use this integration when FastAPI is the delivery layer for a Forze service, when you want generated CRUD/search routes, or when custom HTTP operations should still run through `ExecutionRuntime`. |
+| Authn / authz / tenancy | [Recipe: boundary vs feature guards, resolver policy, default features on generated routes](../recipes/authn-authz-tenancy-fastapi.md). |
 
 ## Installation
 

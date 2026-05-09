@@ -108,7 +108,10 @@ socketio = [
 ]
 neo4j = ["neo4j>=6.1.0"]
 arango = ["python-arango-async>=1.2.2"]
+authn = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
+authz = []
 authnz = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
+casbin = ["pycasbin>=2.8.0"]
 
 # ....................... #
 
@@ -147,7 +150,9 @@ packages = [
     "src/forze_rabbitmq",
     "src/forze_redis",
     "src/forze_s3",
-    "src/forze_authnz",
+    "src/forze_authn",
+    "src/forze_authz",
+    "src/forze_tenancy",
     "src/forze_socketio",
     "src/forze_sqs",
     "src/forze_temporal",
@@ -242,7 +247,9 @@ root_packages = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_authnz",
+    "forze_authn",
+    "forze_authz",
+    "forze_tenancy",
 ]
 exclude_type_checking_imports = true
 
@@ -257,6 +264,7 @@ type = "layers"
 layers = [
     "forze.application.composition",
     "forze.application.usecases",
+    "forze.application.guards",
     "forze.application.execution",
     "forze.application.dto",
     "forze.application.contracts",
@@ -305,7 +313,9 @@ paths = [
     "src/forze_mongo",
     "src/forze_rabbitmq",
     "src/forze_sqs",
-    "src/forze_authnz",
+    "src/forze_authn",
+    "src/forze_authz",
+    "src/forze_tenancy",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -334,7 +344,9 @@ known_first_party = [
     "forze_mongo",
     "forze_rabbitmq",
     "forze_sqs",
-    "forze_authnz",
+    "forze_authn",
+    "forze_authz",
+    "forze_tenancy",
 ]
 ignore_notebooks = true
 
@@ -352,6 +364,7 @@ DEP002 = [
     #! Added temporarily
     "neo4j",
     "python-arango-async",
+    "pycasbin",
 ]
 DEP003 = [
     "types_aiobotocore_s3",

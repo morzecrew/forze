@@ -2,7 +2,7 @@ from typing import Any, Awaitable, Mapping, Protocol
 from uuid import UUID
 
 from .types import PrincipalKind
-from .value_objects import EffectiveGrants, PrincipalRef
+from .value_objects import EffectiveGrants, PrincipalRef, RoleRef
 
 # ----------------------- #
 
@@ -32,8 +32,16 @@ class EffectiveGrantsPort(Protocol):
     def resolve_effective_grants(
         self,
         principal: PrincipalRef | UUID,
+        *,
+        tenant_id: UUID | None = None,
     ) -> Awaitable[EffectiveGrants]:
-        """Resolve effective grants for a principal."""
+        """Resolve effective grants for a principal in an optional tenant partition.
+
+        :param tenant_id: Explicit tenant scope for the call. When ``principal`` is a
+            :class:`~forze.application.contracts.authz.value_objects.PrincipalRef` with
+            :attr:`~forze.application.contracts.authz.value_objects.PrincipalRef.tenant_id`
+            set, both must agree or :class:`~forze.base.errors.CoreError` is raised.
+        """
         ...  # pragma: no cover
 
 
@@ -46,24 +54,39 @@ class RoleAssignmentPort(Protocol):
     def assign_role(
         self,
         principal: PrincipalRef | UUID,
-        role: str,  # noqa: F841
+        role_key: str,  # noqa: F841
+        *,
+        tenant_id: UUID | None = None,
     ) -> Awaitable[None]:
-        """Grant a role name to the principal."""
+        """Grant a role (catalog ``role_key``) to the principal.
+
+        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
+        """
         ...  # pragma: no cover
 
     def revoke_role(
         self,
         principal: PrincipalRef | UUID,
-        role: str,  # noqa: F841
+        role_key: str,  # noqa: F841
+        *,
+        tenant_id: UUID | None = None,
     ) -> Awaitable[None]:
-        """Revoke a role name from the principal."""
+        """Revoke a role (catalog ``role_key``) from the principal.
+
+        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
+        """
         ...  # pragma: no cover
 
     def list_roles(
         self,
         principal: PrincipalRef | UUID,
-    ) -> Awaitable[frozenset[str]]:
-        """Enumerate role names assigned to the principal."""
+        *,
+        tenant_id: UUID | None = None,
+    ) -> Awaitable[frozenset[RoleRef]]:
+        """Enumerate roles assigned via principal-role bindings (including via groups).
+
+        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
+        """
         ...  # pragma: no cover
 
 
@@ -76,10 +99,14 @@ class AuthzPort(Protocol):
     def permits(
         self,
         principal: PrincipalRef | UUID,
-        permission: str,  # noqa: F841
+        permission_key: str,  # noqa: F841
         *,
+        tenant_id: UUID | None = None,
         resource: str | None = None,  # noqa: F841
         context: Mapping[str, Any] | None = None,  # noqa: F841
     ) -> Awaitable[bool]:
-        """Whether the principal satisfies the permission."""
+        """Whether the principal satisfies the catalog permission (``permission_key``).
+
+        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
+        """
         ...  # pragma: no cover

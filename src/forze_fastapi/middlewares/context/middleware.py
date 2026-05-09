@@ -18,7 +18,6 @@ from forze.base.validators import NoneValidator
 
 from .callctx import HeaderCallContextCodec
 from .ports import (
-    AuthnIdentityCodecPort,
     AuthnIdentityResolverPort,
     CallContextCodecPort,
     TenantIdentityCodecPort,
@@ -47,12 +46,6 @@ class ContextBindingMiddleware:
     )
     """The codec to encode and decode the call context."""
 
-    authn_identity_codec: AuthnIdentityCodecPort | None = attrs.field(
-        kw_only=True,
-        default=None,
-    )
-    """Decodes the authenticated identity from a request."""
-
     authn_identity_resolver: AuthnIdentityResolverPort | None = attrs.field(
         kw_only=True,
         default=None,
@@ -75,13 +68,6 @@ class ContextBindingMiddleware:
 
     def __attrs_post_init__(self) -> None:
         if not NoneValidator.exactly_one(
-            self.authn_identity_resolver, self.authn_identity_codec
-        ):
-            raise CoreError(
-                "Exactly one of authn_identity_resolver or authn_identity_codec must be provided"
-            )
-
-        if not NoneValidator.exactly_one(
             self.tenant_identity_resolver, self.tenant_identity_codec
         ):
             raise CoreError(
@@ -103,9 +89,6 @@ class ContextBindingMiddleware:
 
         if self.authn_identity_resolver is not None:
             identity = await self.authn_identity_resolver.resolve(request, ctx)
-
-        elif self.authn_identity_codec is not None:
-            identity = self.authn_identity_codec.decode(request)
 
         if self.tenant_identity_resolver is not None:
             tenant = await self.tenant_identity_resolver.resolve(request, ctx, identity)

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FastAPI:** configurable credential order and ambiguity handling on `HeaderAuthIdentityResolver`; `CookieAuthIdentityResolver`; HTTP security endpoint features (`RequireAuthnFeature`, `RequirePermissionFeature`, `RequireTenantFeature`); `default_http_features` on document/search attach helpers; `merge_http_endpoint_features` / `with_default_http_features` in `forze_fastapi.endpoints.http.policy`; OpenAPI helpers in `forze_fastapi.openapi.security` (including `openapi_operation_security`); optional `attach_oauth2_password_token_template_routes` with `OAuth2TokenJsonResponse` for JSON-serializable token responses; `HttpMetadataSpec` supports `dependencies`, `openapi_extra`, `responses`, and `include_in_schema` on routes registered via `attach_http_endpoint`.
+- **Application guards:** `forze.application.guards` — `AuthzPermissionRequirement`, `AuthzOpRequirementMap`, and `authz_permission_guard_factory` for interface-agnostic `AuthzPort.permits` checks in `UsecasePlan` guard pipelines.
+- **Tenancy:** `TenancyDepsModule` (`forze_tenancy.execution`) registers `TenantResolverDepKey` / `TenantManagementDepKey` routes with `ConfigurableTenantResolver` / `ConfigurableTenantManagement`; optional `verify_tenant_active` applies to all resolver routes on the module.
 - **Docs:** Added D2 diagrams for dependency resolution, FastAPI requests, document CRUD, cache fallback, and adapter boundaries.
 - **Redis:** `RedisDepsModule.dlocks` registers `DistributedLockQueryDepKey` / `DistributedLockCommandDepKey` via `ConfigurableRedisDistributedLock` (`RedisDistributedLockConfig` or `RedisUniversalConfig`). Structural `RedisClientPort`, `RoutedRedisClient`, and `routed_redis_lifecycle_step` (per-tenant DSN via `SecretsPort`, LRU pools).
 - **Document:** `DocumentCommandPort.update_matching` / `update_matching_strict` (Postgres fast `UPDATE … RETURNING`, Mongo batched updates + `$inc` on `rev`, strict chunked path); `ensure` / `ensure_many`; `get` / `get_many` optional `skip_cache`; `find_many` with `return_type` (no aggregates) validates rows via read gateways (Postgres, Mongo, mock).
@@ -17,18 +20,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Execution:** `ConditionalGuard` / `ConditionalEffect` / `WhenGuard` / `WhenEffect`; usecase dispatch graph validation at `finalize` (`add_dispatch_edge`, plan-derived edges, `*` expansion, re-entrancy guard, `UsecaseDelegate` `map_in` / `map_out`).
 - **Secrets:** `SecretRef`, `AsyncSecretsPort`, `AsyncSecretsDepKey`, `resolve_structured`; `SecretNotFoundError`.
 - **Routed infrastructure:** structural ports + routed clients + lifecycle hooks for Postgres (`AsyncSecretsPort` DSN), Mongo (`SecretsPort` URI, `database_name_for_tenant`), S3 (`S3RoutingCredentials`), RabbitMQ, SQS (`SQSRoutingCredentials`), Temporal. Postgres introspector optional `cache_partition_key` and `PostgresDepsModule.introspector_cache_partition_key`.
-- **Auth / authz / graph:** `forze.application.contracts.authz` (registry, roles, authorization ports); `forze.application.contracts.graph` (specs, ports, validators); `forze_auth` document-backed auth module; FastAPI `AuthIdentityResolverPort` / `HeaderAuthIdentityResolver`.
-- **Authnz:** `forze_authnz.authn.execution` — `AuthnKernelConfig` (secrets + token/password/API-key configs), `build_authn_shared_services`, `AuthnRouteCaps`, and route sets for lifecycle/provisioning DepKeys; `AuthnDepsModule` builds shared services once; configurable factories take `AuthnSharedServices`; wiring validation raises `CoreError`; unit tests and Postgres integration tests (merged document deps).
+- **Auth / authz / graph:** `forze.application.contracts.authz` (registry, roles, authorization ports); `forze.application.contracts.graph` (specs, ports, validators); `forze_authn` / `forze_authz` document-backed integration packages; FastAPI `AuthIdentityResolverPort` / `HeaderAuthIdentityResolver`.
+- **Authnz:** `forze_authz` — permission/role/group catalog documents, binding junctions, `AuthzGrantResolver` for effective grants, `AuthzPolicyService` for permit checks, adapters for `forze.application.contracts.authz` ports, and `AuthzDepsModule` / `AuthzKernelConfig` execution wiring.
+- **Authnz / Casbin:** optional extra `authnz-casbin` (PyCasbin) and integration package `forze_casbin` (`StaticLinesAdapter`, `build_enforcer_with_static_policies`) as a stepping stone toward document-backed Casbin adapters.
+- **Authnz:** `forze_authn.execution` — `AuthnKernelConfig` (secrets + token/password/API-key configs), `build_authn_shared_services`, `AuthnRouteCaps`, and route sets for lifecycle/provisioning DepKeys; `AuthnDepsModule` builds shared services once; configurable factories take `AuthnSharedServices`; wiring validation raises `CoreError`; unit tests and Postgres integration tests (merged document deps).
 - **Pagination:** `forze.pagination` base64-JSON v1 cursors and `normalize_sorts_with_id`; Postgres `seek_sql`.
 - **Document adapters:** Postgres / Mongo `find_many_with_cursor` (Mongo v1: primary-key sorts only); Postgres PGroonga `search_with_cursor` accepts empty query for filter-only keyset scan (non-empty ranked query remains on `search`).
 - **Postgres search:** FTS v2 and PGroonga v2 on index heap + projection relation (`WITH filtered … scored …`); shared `_fts_sql` and `_pgroonga_sql`. Hub: `HubSearchSpec`, `ExecutionContext.hub_search_query`, `PostgresHubSearchConfig` / legs / adapter / leg engines (`PgroongaHubLegEngine`, `FtsHubLegEngine`, `hub_leg_engine_for`), optional `same_heap_as_hub`, member weights (`member_weights`, weight `0` skips leg), dot-separated JSON paths + `nested_field_hints`, `validate_fts_groups_for_search_spec`. Federated: `PostgresFederatedSearchAdapter`, config/deps, weighted RRF via `prepare_federated_search_options`. `ConfigurablePostgresSearch` with `engine: "fts"` builds FTS v2.
 - **FastAPI:** `attach_http_endpoint` `body_mode: "form"` for multipart (`File` / `Form`).
 - Integration tests for routed Postgres, Mongo, Redis, S3, SQS, RabbitMQ, and Temporal platform clients (tenant LRU pools, secrets errors, transactions; Mongo/Redis exercise routed ports across CRUD, aggregation, Redis streams/pub/sub/script/pipeline; S3/SQS JSON routing credentials; RabbitMQ DSN strings; Temporal against time-skipping test server).
-- Integration tests for ``forze_authnz`` authn adapters against Postgres document stores.
-- Unit tests for ``forze_authnz`` API key, password, refresh token, and access token services.
+- Integration tests for ``forze_authn`` authn adapters against Postgres document stores.
+- Unit tests for ``forze_authn`` API key, password, refresh token, and access token services.
+- **Tenancy:** optional `AuthnIdentity.tenant_id`; access tokens may carry JWT ``tid``; sessions persist optional `tenant_id` for refresh; FastAPI `TenantIdentityResolver` merges credential tenant, optional `HeaderTenantIdentityCodec`, and `TenantResolverPort` with `strict_tenant_sources`; `TenantManagementPort`, `TenantManagementDepKey`, `ExecutionContext.tenant_management()`; optional `TenantIdentity.tenant_key`.
+- **Package:** `forze_tenancy` — `tenant_spec`, `principal_tenant_binding_spec`, `DocumentTenantResolver`, `DocumentTenantManagementAdapter`, `ConfigurableDocumentTenantResolver` / `ConfigurableDocumentTenantManagement`.
+- **Authnz:** `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_authn.application` for bootstrap document routes.
+
 
 ### Changed
 
+- **Breaking (packaging):** Split `forze_authnz` into `forze_authn` (authentication) and `forze_authz` (authorization). Imports such as `forze_authnz.authn.*` / `forze_authnz.authz.*` become `forze_authn.*` / `forze_authz.*`. Optional extra `authn` lists JWT/password/crypto dependencies; `authz` is an empty extra (symmetry / future-proofing); `authnz` remains and matches `authn` for backward-compatible installs.
+- **Breaking (authz contracts):** `PrincipalRef` includes optional `tenant_id`. `EffectiveGrantsPort.resolve_effective_grants`, `RoleAssignmentPort.assign_role` / `revoke_role` / `list_roles`, and `AuthzPort.permits` take optional keyword-only `tenant_id`. Added `coalesce_authz_tenant_id` to merge explicit `tenant_id` with `PrincipalRef.tenant_id` (mismatch raises `CoreError`). `forze_authz` adapters accept and forward the scope; grant queries remain unchanged until tenant-scoped binding documents exist.
+
+- **Authnz:** token session documents include optional `tenant_id` (persisted access-token tenant for refresh); deployments must add the column / field when using relational document stores.
+- **Breaking (Authnz contracts):** `EffectiveGrants` carries `RoleRef` / `PermissionRef`; `AuthzPort.permits(..., permission_key=...)`, `RoleAssignmentPort.assign_role` / `revoke_role(..., role_key=...)`, `list_roles` returns `frozenset[RoleRef]`. `forze_authz` resolves grants from catalog and binding documents (embedded roles on policy principals removed). `AuthzSpec` no longer carries `scope_key` (tenancy and store routing stay on `ExecutionContext` / document deps).
 - **Breaking (Authnz execution):** `AuthnDepsModule` uses `AuthnKernelConfig` and capability/route-set registrations instead of per-route service instances (`AuthnRouteConfig`, `TokenLifecycleRouteConfig`, etc.).
 - **Docs:** Split core-package contract reference into domain pages with repeatable API-entry tables and a contract selection overview.
 - **Breaking (packaging):** optional dependency extra renamed from `contrib` to `authnz` (argon2, PyJWT, email-validator).
@@ -57,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ``forze_authnz`` ``ApiKeyLifecycleAdapter.issue_api_key``: unpack ``(prefix, secret)`` tuple from ``ApiKeyService.generate_key`` in the correct order.
+- ``forze_authn`` ``ApiKeyLifecycleAdapter.issue_api_key``: unpack ``(prefix, secret)`` tuple from ``ApiKeyService.generate_key`` in the correct order.
 - `forze_postgres` `PostgresWriteGateway`: batched updates no longer duplicate `rev` in `VALUES`, fixing PostgreSQL `AmbiguousColumn`.
 - `forze_postgres` `PostgresHubPGroongaSearchAdapter`: empty/whitespace queries no longer emit invalid rank SQL.
 - `forze_s3` `S3StorageAdapter`: default `key_generator` returns a fresh UUID v7 per call (avoids accidental overwrites).

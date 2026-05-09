@@ -1,5 +1,5 @@
 set quiet
-# set shell := ["bash", "-cu"]
+set shell := ["bash", "-cu"]
 
 # ----------------------- #
 # Paths / constants
@@ -54,13 +54,13 @@ _uv_cmd name strict *command:
 # CI
 
 # Run fast tests
-test-fast *args='':
+test *args='':
     {{ _uv_sync }}
 
     uv run pytest -m "not perf" {{ args }}
 
 # Run performance tests (requires Docker for testcontainers)
-test-perf *args='tests/perf':
+perf *args='tests/perf':
     {{ _uv_sync }}
 
     uv run pytest \

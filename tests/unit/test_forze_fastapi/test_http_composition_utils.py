@@ -4,7 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,7 @@ from forze_fastapi.endpoints.http.composition.attach import (
     attach_http_endpoints,
 )
 from forze_fastapi.endpoints.http.composition.signature import build_http_endpoint_signature
+from forze_fastapi.openapi.security import http_bearer_scheme, openapi_operation_security
 from forze_fastapi.endpoints.http.composition.utils import (
     build_body_parameters,
     build_dependency_parameter,
@@ -296,6 +297,36 @@ class TestAttachHttpEndpoint:
             x for x in router.routes if isinstance(x, APIRoute) and x.path == "/ping"
         )
         assert route.endpoint.__doc__ == "## Hello"
+
+    def test_attach_passes_openapi_extra_and_dependencies(self) -> None:
+        router = APIRouter()
+        reg = MagicMock(spec=UsecaseRegistry)
+        reg.qualify_operation = MagicMock(return_value="ns.secured")
+
+        bearer = http_bearer_scheme(auto_error=False)
+        spec = _minimal_get_spec(
+            path="/secured",
+            metadata={
+                "dependencies": [Depends(bearer)],
+                "openapi_extra": openapi_operation_security("httpBearer"),
+            },
+        )
+
+        def ctx_dep() -> ExecutionContext:
+            return ExecutionContext(deps=Deps())
+
+        attach_http_endpoint(
+            router,
+            spec=spec,
+            registry=reg,
+            ctx_dep=ctx_dep,
+        )
+        route = next(
+            x for x in router.routes if isinstance(x, APIRoute) and x.path == "/secured"
+        )
+
+        assert route.openapi_extra == {"security": [{"httpBearer": []}]}
+        assert len(route.dependencies) >= 1
 
     def test_attach_http_endpoints_iteration(self) -> None:
         router = APIRouter()

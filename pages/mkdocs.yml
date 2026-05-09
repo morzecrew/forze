@@ -55,12 +55,14 @@ nav:
     - Domain Layer: concepts/domain-layer.md
     - Application Layer: concepts/application-layer.md
     - Contracts and Adapters: concepts/contracts-adapters.md
+    - Multi-tenancy: concepts/multi-tenancy.md
     - Specs and Wiring: concepts/specs-and-wiring.md
     - Aggregate Specification: concepts/aggregate-specification.md
     - Composition: concepts/usecase-composition.md
 
   - Recipes:
     - CRUD with FastAPI, Postgres, and Redis: recipes/crud-fastapi-postgres-redis.md
+    - Authn, authz, and tenancy (FastAPI): recipes/authn-authz-tenancy-fastapi.md
     - Read-only Document API: recipes/read-only-document-api.md
     - Add Caching: recipes/add-caching.md
     - Add Idempotency: recipes/add-idempotency.md

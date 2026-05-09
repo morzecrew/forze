@@ -30,15 +30,6 @@ class CallContextCodecPort(Protocol):
 # ....................... #
 
 
-class AuthnIdentityCodecPort(Protocol):
-    """Codec for decoding the authenticated identity from a request."""
-
-    def decode(self, request: Request) -> AuthnIdentity | None: ...  # pragma: no cover
-
-
-# ....................... #
-
-
 class AuthnIdentityResolverPort(Protocol):
     """Async resolver for authenticating a request into an identity."""
 

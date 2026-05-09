@@ -28,8 +28,10 @@ from forze.application.contracts.authn.ports import (
     AuthnPort,
     TokenLifecyclePort,
 )
-from forze.application.contracts.authz import AuthzDepKey
+from forze.application.contracts.authz import AuthzDepKey, coalesce_authz_tenant_id
 from forze.application.contracts.authz.ports import AuthzPort
+from forze.application.contracts.authz.value_objects import PrincipalRef
+from forze.base.errors import CoreError
 
 
 class TestAuthnSpec:
@@ -104,6 +106,43 @@ class TestAuthnAndAuthzDepKeys:
         assert ApiKeyLifecycleDepKey.name == "authn_api_key_lifecycle"
 
 
+class TestCoalesceAuthzTenantId:
+    def test_explicit_wins_over_unscoped_ref(self) -> None:
+        tid = uuid4()
+        pid = uuid4()
+        ref = PrincipalRef(principal_id=pid, kind="user")
+
+        assert coalesce_authz_tenant_id(ref, tenant_id=tid) == tid
+
+    def test_ref_tenant_when_explicit_none(self) -> None:
+        tid = uuid4()
+        pid = uuid4()
+        ref = PrincipalRef(principal_id=pid, kind="user", tenant_id=tid)
+
+        assert coalesce_authz_tenant_id(ref, tenant_id=None) == tid
+
+    def test_matching_explicit_and_ref(self) -> None:
+        tid = uuid4()
+        pid = uuid4()
+        ref = PrincipalRef(principal_id=pid, kind="user", tenant_id=tid)
+
+        assert coalesce_authz_tenant_id(ref, tenant_id=tid) == tid
+
+    def test_uuid_principal_uses_explicit_only(self) -> None:
+        tid = uuid4()
+        pid = uuid4()
+
+        assert coalesce_authz_tenant_id(pid, tenant_id=tid) == tid
+        assert coalesce_authz_tenant_id(pid, tenant_id=None) is None
+
+    def test_conflict_raises(self) -> None:
+        pid = uuid4()
+        ref = PrincipalRef(principal_id=pid, kind="user", tenant_id=uuid4())
+
+        with pytest.raises(CoreError, match="Conflicting tenant_id"):
+            coalesce_authz_tenant_id(ref, tenant_id=uuid4())
+
+
 def _pid_from_str(value: str) -> UUID:
     return uuid5(NAMESPACE_URL, value)
 
@@ -150,11 +189,14 @@ class _StubAuthzPort:
     async def permits(
         self,
         principal: Any,
-        permission: str,
+        permission_key: str,
         *,
+        tenant_id: UUID | None = None,
         resource: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> bool:
+        _ = permission_key, resource, context, tenant_id, principal
+
         return True
 
 

@@ -1,4 +1,4 @@
-from typing import Generic, Literal, NotRequired, Sequence, TypedDict
+from typing import Any, Generic, Literal, NotRequired, Sequence, TypedDict
 
 import attrs
 
@@ -38,6 +38,18 @@ class HttpMetadataSpec(TypedDict, total=False):
 
     description: str
     """The description of the endpoint."""
+
+    dependencies: Sequence[Any]
+    """Per-route FastAPI dependencies (for example ``Security(bearer)``) merged into OpenAPI."""
+
+    openapi_extra: dict[str, Any]
+    """Merged into the generated OpenAPI operation (for example ``security`` requirements)."""
+
+    responses: dict[int | str, dict[str, Any]]
+    """Additional OpenAPI responses for this route."""
+
+    include_in_schema: bool
+    """When ``False``, omit the route from the OpenAPI schema."""
 
 
 # ....................... #
