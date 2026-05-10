@@ -25,3 +25,14 @@ class NoneValidator:
         all_not_none = all(v is not None for v in values)
 
         return all_none or all_not_none
+
+    # ....................... #
+
+    @classmethod
+    def one_or_none(cls, *values: object) -> bool:
+        """Validate that exactly one of the values is not None or all of the values are None."""
+
+        exactly_one = cls.exactly_one(*values)
+        at_least_one = cls.at_least_one(*values)
+
+        return exactly_one or not at_least_one

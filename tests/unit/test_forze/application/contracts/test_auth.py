@@ -11,6 +11,7 @@ import pytest
 from forze.application.contracts.authn import (
     ApiKeyCredentials,
     ApiKeyLifecycleDepKey,
+    ApiKeyLifecyclePort,
     ApiKeyResponse,
     AuthnDepKey,
     AuthnIdentity,
@@ -20,14 +21,11 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     TokenCredentials,
     TokenLifecycleDepKey,
+    TokenLifecyclePort,
     TokenResponse,
 )
+from forze.application.contracts.authn.ports import AuthnPort
 from forze.application.contracts.authn.value_objects import CredentialLifetime
-from forze.application.contracts.authn.ports import (
-    ApiKeyLifecyclePort,
-    AuthnPort,
-    TokenLifecyclePort,
-)
 from forze.application.contracts.authz import AuthzDepKey, coalesce_authz_tenant_id
 from forze.application.contracts.authz.ports import AuthzPort
 from forze.application.contracts.authz.value_objects import PrincipalRef
@@ -148,13 +146,19 @@ def _pid_from_str(value: str) -> UUID:
 
 
 class _StubAuthenticationPort:
-    async def authenticate_with_password(self, credentials: PasswordCredentials) -> AuthnIdentity:
+    async def authenticate_with_password(
+        self, credentials: PasswordCredentials
+    ) -> AuthnIdentity:
         return AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
 
-    async def authenticate_with_token(self, credentials: TokenCredentials) -> AuthnIdentity:
+    async def authenticate_with_token(
+        self, credentials: TokenCredentials
+    ) -> AuthnIdentity:
         return AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
 
-    async def authenticate_with_api_key(self, credentials: ApiKeyCredentials) -> AuthnIdentity:
+    async def authenticate_with_api_key(
+        self, credentials: ApiKeyCredentials
+    ) -> AuthnIdentity:
         return AuthnIdentity(principal_id=_pid_from_str("key:" + credentials.key))
 
 
@@ -219,7 +223,9 @@ async def test_token_lifecycle_port_stub() -> None:
     ident = AuthnIdentity(principal_id=uuid4())
     issued = await port.issue_tokens(ident)
     assert issued.access_token.token.token == "issued"
-    refreshed = await port.refresh_tokens(OAuth2Tokens(access_token=TokenCredentials(token="a")))
+    refreshed = await port.refresh_tokens(
+        OAuth2Tokens(access_token=TokenCredentials(token="a"))
+    )
     assert refreshed.access_token.token.token == "refreshed"
     await port.revoke_tokens(ident)
 

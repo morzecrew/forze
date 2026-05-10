@@ -22,7 +22,6 @@ class AuthnRefreshTokens(Usecase[AuthnRefreshRequestDTO, AuthnTokenResponseDTO])
 
     async def main(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
         creds = OAuth2Tokens(
-            access_token=TokenCredentials(token="unused", kind="access"),  # nosec: B106
             refresh_token=TokenCredentials(
                 token=args.refresh_token,
                 kind="refresh",

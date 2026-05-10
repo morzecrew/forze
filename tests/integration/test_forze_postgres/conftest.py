@@ -12,11 +12,10 @@ from testcontainers.redis import RedisContainer
 pytest.importorskip("psycopg")
 pytest.importorskip("redis")
 
+from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig
-
-from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
 
 
 def _ensure_docker_available() -> None:
@@ -43,7 +42,7 @@ def redis_container() -> RedisContainer:
 def postgres_container():
     """Starts a Postgres container with PGroonga for testing."""
     with PostgresContainer(
-        image="ghcr.io/morzecrew/postgres:18-cron-pgroonga", driver="psycopg"
+        image="ghcr.io/morzecrew/postgres:18", driver="psycopg"
     ) as postgres:
         yield postgres
 

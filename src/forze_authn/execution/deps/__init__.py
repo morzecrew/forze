@@ -2,13 +2,18 @@
 
 from .configs import (
     AuthnKernelConfig,
-    AuthnRouteCaps,
     AuthnSharedServices,
     build_authn_shared_services,
 )
 from .deps import (
     ConfigurableApiKeyLifecycle,
+    ConfigurableArgon2PasswordVerifier,
     ConfigurableAuthn,
+    ConfigurableDeterministicUuidResolver,
+    ConfigurableForzeJwtTokenVerifier,
+    ConfigurableHmacApiKeyVerifier,
+    ConfigurableJwtNativeUuidResolver,
+    ConfigurableMappingTableResolver,
     ConfigurablePasswordAccountProvisioning,
     ConfigurablePasswordLifecycle,
     ConfigurableTokenLifecycle,
@@ -20,12 +25,17 @@ from .module import AuthnDepsModule
 __all__ = [
     "AuthnDepsModule",
     "AuthnKernelConfig",
-    "AuthnRouteCaps",
     "AuthnSharedServices",
     "build_authn_shared_services",
-    "ConfigurableAuthn",
-    "ConfigurableTokenLifecycle",
-    "ConfigurablePasswordLifecycle",
     "ConfigurableApiKeyLifecycle",
+    "ConfigurableArgon2PasswordVerifier",
+    "ConfigurableAuthn",
+    "ConfigurableDeterministicUuidResolver",
+    "ConfigurableForzeJwtTokenVerifier",
+    "ConfigurableHmacApiKeyVerifier",
+    "ConfigurableJwtNativeUuidResolver",
+    "ConfigurableMappingTableResolver",
     "ConfigurablePasswordAccountProvisioning",
+    "ConfigurablePasswordLifecycle",
+    "ConfigurableTokenLifecycle",
 ]

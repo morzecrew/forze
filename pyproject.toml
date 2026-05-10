@@ -111,6 +111,7 @@ arango = ["python-arango-async>=1.2.2"]
 authn = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
 authz = []
 authnz = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
+oidc = ["pyjwt[crypto]>=2.12.1"]
 casbin = ["pycasbin>=2.8.0"]
 
 # ....................... #
@@ -152,6 +153,7 @@ packages = [
     "src/forze_s3",
     "src/forze_authn",
     "src/forze_authz",
+    "src/forze_oidc",
     "src/forze_tenancy",
     "src/forze_socketio",
     "src/forze_sqs",
@@ -249,6 +251,7 @@ root_packages = [
     "forze_sqs",
     "forze_authn",
     "forze_authz",
+    "forze_oidc",
     "forze_tenancy",
 ]
 exclude_type_checking_imports = true
@@ -315,6 +318,7 @@ paths = [
     "src/forze_sqs",
     "src/forze_authn",
     "src/forze_authz",
+    "src/forze_oidc",
     "src/forze_tenancy",
 ]
 sort_by_size = true
@@ -346,6 +350,7 @@ known_first_party = [
     "forze_sqs",
     "forze_authn",
     "forze_authz",
+    "forze_oidc",
     "forze_tenancy",
 ]
 ignore_notebooks = true

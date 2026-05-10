@@ -6,56 +6,77 @@ import attrs
 
 from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
+    ApiKeyVerifierDepKey,
+    ApiKeyVerifierPort,
     AuthnPort,
     AuthnSpec,
     PasswordAccountProvisioningPort,
     PasswordLifecyclePort,
+    PasswordVerifierDepKey,
+    PasswordVerifierPort,
+    PrincipalResolverDepKey,
+    PrincipalResolverPort,
     TokenLifecyclePort,
+    TokenVerifierDepKey,
+    TokenVerifierPort,
 )
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 
 from ...adapters import (
     ApiKeyLifecycleAdapter,
-    AuthnAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
     TokenLifecycleAdapter,
 )
 from ...application.specs import (
     api_key_account_spec,
+    identity_mapping_spec,
     password_account_spec,
     principal_spec,
     session_spec,
 )
-from .configs import AuthnRouteCaps, AuthnSharedServices
+from ...orchestrator import AuthnOrchestrator
+from ...resolvers import (
+    DeterministicUuidResolver,
+    JwtNativeUuidResolver,
+    MappingTableResolver,
+)
+from ...verifiers import (
+    Argon2PasswordVerifier,
+    ForzeJwtTokenVerifier,
+    HmacApiKeyVerifier,
+)
+from .configs import AuthnSharedServices
 
 # ----------------------- #
+# Verifier factories
 
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class ConfigurableAuthn:
-    """Build :class:`~forze_authn.adapters.authentication.AuthnAdapter` from shared services + caps."""
+class ConfigurableArgon2PasswordVerifier:
+    """Build :class:`Argon2PasswordVerifier` from the shared password service + ``ctx`` document port."""
 
     shared: AuthnSharedServices
-    caps: AuthnRouteCaps
 
     # ....................... #
 
-    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> AuthnPort:
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PasswordVerifierPort:
         _ = spec
 
-        pa_qry = ctx.doc_query(password_account_spec) if self.caps.password else None
+        if self.shared.password_svc is None:
+            raise CoreError(
+                "Password verifier requires kernel.password",
+            )
 
-        ak_qry = ctx.doc_query(api_key_account_spec) if self.caps.api_key else None
-
-        return AuthnAdapter(
-            access_svc=self.shared.access_svc if self.caps.bearer else None,
-            password_svc=self.shared.password_svc if self.caps.password else None,
-            api_key_svc=self.shared.api_key_svc if self.caps.api_key else None,
-            pa_qry=pa_qry,
-            ak_qry=ak_qry,
+        return Argon2PasswordVerifier(
+            password_svc=self.shared.password_svc,
+            pa_qry=ctx.doc_query(password_account_spec),
         )
 
 
@@ -64,8 +85,181 @@ class ConfigurableAuthn:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableForzeJwtTokenVerifier:
+    """Build :class:`ForzeJwtTokenVerifier` from the shared access-token service."""
+
+    shared: AuthnSharedServices
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> TokenVerifierPort:
+        _ = ctx, spec
+
+        if self.shared.access_svc is None:
+            raise CoreError(
+                "Forze JWT token verifier requires kernel.access_token_secret",
+            )
+
+        return ForzeJwtTokenVerifier(access_svc=self.shared.access_svc)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableHmacApiKeyVerifier:
+    """Build :class:`HmacApiKeyVerifier` from the shared API key service + ``ctx`` document port."""
+
+    shared: AuthnSharedServices
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> ApiKeyVerifierPort:
+        _ = spec
+
+        if self.shared.api_key_svc is None:
+            raise CoreError(
+                "API key verifier requires kernel.api_key_pepper",
+            )
+
+        return HmacApiKeyVerifier(
+            api_key_svc=self.shared.api_key_svc,
+            ak_qry=ctx.doc_query(api_key_account_spec),
+        )
+
+
+# ....................... #
+# Resolver factories
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableJwtNativeUuidResolver:
+    """Build :class:`JwtNativeUuidResolver` (no execution-context dependencies)."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PrincipalResolverPort:
+        _ = ctx, spec
+        return JwtNativeUuidResolver()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableDeterministicUuidResolver:
+    """Build :class:`DeterministicUuidResolver` (no execution-context dependencies)."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PrincipalResolverPort:
+        _ = ctx, spec
+        return DeterministicUuidResolver()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableMappingTableResolver:
+    """Build :class:`MappingTableResolver` from the identity-mapping document ports."""
+
+    provision_on_first_sight: bool = False
+    """Whether the resolver mints new principal ids on unknown subjects."""
+
+    # ....................... #
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PrincipalResolverPort:
+        _ = spec
+
+        cmd = (
+            ctx.doc_command(identity_mapping_spec)
+            if self.provision_on_first_sight
+            else None
+        )
+
+        return MappingTableResolver(
+            qry=ctx.doc_query(identity_mapping_spec),
+            cmd=cmd,
+            provision_on_first_sight=self.provision_on_first_sight,
+        )
+
+
+# ....................... #
+# Orchestrator factory
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableAuthn:
+    """Build :class:`AuthnOrchestrator` by composing per-method verifiers + resolver from deps."""
+
+    enabled_methods: frozenset[str]
+    """Snapshot of :attr:`AuthnSpec.enabled_methods`; pre-baked at registration time."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> AuthnPort:
+        # Re-validate against the live spec to guard against route name reuse with
+        # mismatched method sets (the registration snapshot wins).
+        if frozenset(spec.enabled_methods) != self.enabled_methods:
+            raise CoreError(
+                "AuthnSpec.enabled_methods does not match the enabled_methods registered "
+                f"for route '{spec.name}'",
+            )
+
+        password_v: PasswordVerifierPort | None = None
+        token_v: TokenVerifierPort | None = None
+        api_key_v: ApiKeyVerifierPort | None = None
+
+        if "password" in self.enabled_methods:
+            password_v = ctx.dep(PasswordVerifierDepKey, route=spec.name)(ctx, spec)
+
+        if "token" in self.enabled_methods:
+            token_v = ctx.dep(TokenVerifierDepKey, route=spec.name)(ctx, spec)
+
+        if "api_key" in self.enabled_methods:
+            api_key_v = ctx.dep(ApiKeyVerifierDepKey, route=spec.name)(ctx, spec)
+
+        resolver = ctx.dep(PrincipalResolverDepKey, route=spec.name)(ctx, spec)
+
+        return AuthnOrchestrator(
+            resolver=resolver,
+            enabled_methods=self.enabled_methods,
+            password_verifier=password_v,
+            token_verifier=token_v,
+            api_key_verifier=api_key_v,
+        )
+
+
+# ....................... #
+# Lifecycle / provisioning factories (unchanged shapes)
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableTokenLifecycle:
-    """Build :class:`~forze_authn.adapters.token_lifecycle.TokenLifecycleAdapter`."""
+    """Build :class:`TokenLifecycleAdapter`."""
 
     shared: AuthnSharedServices
 
@@ -94,7 +288,7 @@ class ConfigurableTokenLifecycle:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurablePasswordLifecycle:
-    """Build :class:`~forze_authn.adapters.password_lifecycle.PasswordLifecycleAdapter`."""
+    """Build :class:`PasswordLifecycleAdapter`."""
 
     shared: AuthnSharedServices
 
@@ -123,7 +317,7 @@ class ConfigurablePasswordLifecycle:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurableApiKeyLifecycle:
-    """Build :class:`~forze_authn.adapters.api_key_lifecycle.ApiKeyLifecycleAdapter`."""
+    """Build :class:`ApiKeyLifecycleAdapter`."""
 
     shared: AuthnSharedServices
 
@@ -149,7 +343,7 @@ class ConfigurableApiKeyLifecycle:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurablePasswordAccountProvisioning:
-    """Build :class:`~forze_authn.adapters.password_provisioning.PasswordAccountProvisioningAdapter`."""
+    """Build :class:`PasswordAccountProvisioningAdapter`."""
 
     shared: AuthnSharedServices
 

@@ -10,6 +10,7 @@ class AuthnResourceName(StrEnum):
     API_KEY_ACCOUNTS = "authn_api_key_accounts"
     TOKEN_SESSIONS = "authn_token_sessions"  # nosec B105
     PRINCIPALS = "authn_principals"
+    IDENTITY_MAPPINGS = "authn_identity_mappings"
 
 
 # Document spec names used during authentication bootstrap. These reads must not rely on
@@ -20,4 +21,5 @@ AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES = frozenset({
     AuthnResourceName.API_KEY_ACCOUNTS,
     AuthnResourceName.TOKEN_SESSIONS,
     AuthnResourceName.PRINCIPALS,
+    AuthnResourceName.IDENTITY_MAPPINGS,
 })

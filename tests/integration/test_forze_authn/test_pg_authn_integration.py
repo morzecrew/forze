@@ -1,4 +1,4 @@
-"""Integration tests for authn adapters against Postgres document gateways."""
+"""Integration tests for authn against Postgres document gateways."""
 
 from __future__ import annotations
 
@@ -26,9 +26,15 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context import CallContext
+from forze_authn import (
+    Argon2PasswordVerifier,
+    AuthnOrchestrator,
+    ForzeJwtTokenVerifier,
+    HmacApiKeyVerifier,
+    JwtNativeUuidResolver,
+)
 from forze_authn.adapters import (
     ApiKeyLifecycleAdapter,
-    AuthnAdapter,
     PasswordAccountProvisioningAdapter,
     PasswordLifecycleAdapter,
     TokenLifecycleAdapter,
@@ -47,7 +53,6 @@ from forze_authn.domain.models.account import (
 from forze_authn.execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
-    AuthnRouteCaps,
     build_authn_shared_services,
 )
 from forze_authn.services import (
@@ -206,11 +211,45 @@ def _call_ctx() -> CallContext:
     return CallContext(execution_id=uuid4(), correlation_id=uuid4())
 
 
+def _orchestrator(
+    *,
+    password_svc: PasswordService | None = None,
+    pa_qry: object = None,
+    api_key_svc: ApiKeyService | None = None,
+    ak_qry: object = None,
+    access_svc: AccessTokenService | None = None,
+    methods: frozenset[str],
+) -> AuthnOrchestrator:
+    """Manually compose an :class:`AuthnOrchestrator` for explicit-wiring tests."""
+
+    return AuthnOrchestrator(
+        resolver=JwtNativeUuidResolver(),
+        enabled_methods=methods,
+        password_verifier=(
+            Argon2PasswordVerifier(password_svc=password_svc, pa_qry=pa_qry)  # type: ignore[arg-type]
+            if password_svc is not None and pa_qry is not None
+            else None
+        ),
+        api_key_verifier=(
+            HmacApiKeyVerifier(api_key_svc=api_key_svc, ak_qry=ak_qry)  # type: ignore[arg-type]
+            if api_key_svc is not None and ak_qry is not None
+            else None
+        ),
+        token_verifier=(
+            ForzeJwtTokenVerifier(access_svc=access_svc)
+            if access_svc is not None
+            else None
+        ),
+    )
+
+
+# ....................... #
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
     suffix = uuid4().hex[:12]
-    pepper = secrets.token_bytes(32)
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
 
     pwd_svc = PasswordService()
@@ -232,12 +271,10 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
             return_new=False,
         )
 
-    authn = AuthnAdapter(
-        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+    authn = _orchestrator(
         password_svc=pwd_svc,
         pa_qry=ctx.doc_query(password_account_spec),
-        api_key_svc=ApiKeyService(pepper=pepper),
-        ak_qry=ctx.doc_query(api_key_account_spec),
+        methods=frozenset({"password"}),
     )
 
     with ctx.bind_call(call=_call_ctx()):
@@ -256,7 +293,7 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) -> None:
-    """Persist a refresh session row, then authenticate the issued access JWT via :class:`AuthnAdapter`."""
+    """Persist a refresh session row, then authenticate the issued access JWT via the orchestrator."""
 
     suffix = uuid4().hex[:12]
     pepper = secrets.token_bytes(32)
@@ -294,12 +331,9 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
         kind=access_creds.kind,
     )
 
-    authn = AuthnAdapter(
+    authn = _orchestrator(
         access_svc=access_svc,
-        password_svc=PasswordService(),
-        pa_qry=ctx.doc_query(password_account_spec),
-        api_key_svc=ApiKeyService(pepper=pepper),
-        ak_qry=ctx.doc_query(api_key_account_spec),
+        methods=frozenset({"token"}),
     )
 
     with ctx.bind_call(call=_call_ctx()):
@@ -344,8 +378,6 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
             return_new=False,
         )
 
-    pwd_svc = PasswordService()
-
     lifecycle = ApiKeyLifecycleAdapter(
         api_key_svc=api_key_svc,
         ak_qry=ctx.doc_query(api_key_account_spec),
@@ -353,12 +385,10 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
         principal_qry=ctx.doc_query(principal_spec),
     )
 
-    authn = AuthnAdapter(
-        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
-        password_svc=pwd_svc,
-        pa_qry=ctx.doc_query(password_account_spec),
+    authn = _orchestrator(
         api_key_svc=api_key_svc,
         ak_qry=ctx.doc_query(api_key_account_spec),
+        methods=frozenset({"api_key"}),
     )
 
     with ctx.bind_call(call=_call_ctx()):
@@ -378,7 +408,6 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
 @pytest.mark.asyncio
 async def test_pg_change_password(pg_client: PostgresClient) -> None:
     suffix = uuid4().hex[:12]
-    pepper = secrets.token_bytes(32)
     ctx = await _authn_pg_setup(pg_client, suffix=suffix)
 
     pwd_svc = PasswordService()
@@ -407,12 +436,10 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
     with ctx.bind_call(call=_call_ctx()):
         await plc.change_password(AuthnIdentity(principal_id=pid), "new-secret")
 
-    authn = AuthnAdapter(
-        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+    authn = _orchestrator(
         password_svc=pwd_svc,
         pa_qry=ctx.doc_query(password_account_spec),
-        api_key_svc=ApiKeyService(pepper=pepper),
-        ak_qry=ctx.doc_query(api_key_account_spec),
+        methods=frozenset({"password"}),
     )
 
     with ctx.bind_call(call=_call_ctx()):
@@ -452,12 +479,10 @@ async def test_pg_provision_password_account(pg_client: PostgresClient) -> None:
         )
 
     pwd_qry = ctx.doc_query(password_account_spec)
-    authn = AuthnAdapter(
-        access_svc=AccessTokenService(secret_key=secrets.token_bytes(32)),
+    authn = _orchestrator(
         password_svc=PasswordService(),
         pa_qry=pwd_qry,
-        api_key_svc=ApiKeyService(pepper=secrets.token_bytes(32)),
-        ak_qry=ctx.doc_query(api_key_account_spec),
+        methods=frozenset({"password"}),
     )
 
     with ctx.bind_call(call=_call_ctx()):
@@ -475,7 +500,7 @@ def _integration_password_config() -> PasswordConfig:
 async def test_pg_execution_deps_password_authentication(
     pg_client: PostgresClient,
 ) -> None:
-    """Resolve :class:`AuthnAdapter` via :class:`AuthnDepsModule` merged with Postgres document deps."""
+    """Resolve the orchestrator via :class:`AuthnDepsModule` merged with Postgres document deps."""
 
     suffix = uuid4().hex[:12]
     pepper = secrets.token_bytes(32)
@@ -488,9 +513,7 @@ async def test_pg_execution_deps_password_authentication(
 
     authn_part = AuthnDepsModule(
         kernel=kernel,
-        authn={
-            "default": AuthnRouteCaps(password=True, api_key=True),
-        },
+        authn={"default": frozenset({"password", "api_key"})},
     )()
 
     ctx = ExecutionContext(deps=base_ctx.deps.merge(authn_part))
@@ -517,10 +540,11 @@ async def test_pg_execution_deps_password_authentication(
             return_new=False,
         )
 
+    spec = AuthnSpec(name="default", enabled_methods=frozenset({"password", "api_key"}))
     factory = ctx.dep(AuthnDepKey, route="default")
-    authn = factory(ctx, AuthnSpec(name="default"))
+    authn = factory(ctx, spec)
 
-    assert isinstance(authn, AuthnAdapter)
+    assert isinstance(authn, AuthnOrchestrator)
 
     with ctx.bind_call(call=_call_ctx()):
         identity = await authn.authenticate_with_password(
@@ -550,11 +574,11 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
         api_key_pepper=pepper,
     )
 
+    methods = frozenset({"token", "password", "api_key"})
+
     exec_deps = AuthnDepsModule(
         kernel=kernel,
-        authn={
-            "oauth": AuthnRouteCaps(bearer=True, password=True, api_key=True),
-        },
+        authn={"oauth": methods},
         token_lifecycle={"oauth"},
     )()
 
@@ -565,8 +589,10 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
         pg_client, table=f"authn_pri_{suffix}", principal_id=pid
     )
 
+    spec = AuthnSpec(name="oauth", enabled_methods=methods)
+
     tl_factory = ctx.dep(TokenLifecycleDepKey, route="oauth")
-    token_adapter = tl_factory(ctx, AuthnSpec(name="oauth"))
+    token_adapter = tl_factory(ctx, spec)
     assert isinstance(token_adapter, TokenLifecycleAdapter)
 
     identity = AuthnIdentity(principal_id=pid)
@@ -583,7 +609,7 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
     )
 
     auth_factory = ctx.dep(AuthnDepKey, route="oauth")
-    authn = auth_factory(ctx, AuthnSpec(name="oauth"))
+    authn = auth_factory(ctx, spec)
 
     with ctx.bind_call(call=_call_ctx()):
         bearer_id = await authn.authenticate_with_token(sub)

@@ -13,7 +13,7 @@ from forze_postgres.kernel.platform.client import PostgresClient, PostgresConfig
 def postgres_container():
     """Starts a Postgres container with PGroonga for performance testing."""
     with PostgresContainer(
-        image="ghcr.io/morzecrew/postgres:18-cron-pgroonga", driver="psycopg"
+        image="ghcr.io/morzecrew/postgres:18", driver="psycopg"
     ) as postgres:
         yield postgres
 

@@ -11,6 +11,12 @@ from ..domain.models.account import (
     UpdateApiKeyAccountCmd,
     UpdatePasswordAccountCmd,
 )
+from ..domain.models.identity_mapping import (
+    CreateIdentityMappingCmd,
+    IdentityMapping,
+    ReadIdentityMapping,
+    UpdateIdentityMappingCmd,
+)
 from ..domain.models.session import (
     CreateSessionCmd,
     ReadSession,
@@ -57,5 +63,17 @@ session_spec = DocumentSpec(
         "domain": Session,
         "create_cmd": CreateSessionCmd,
         "update_cmd": UpdateSessionCmd,
+    },
+)
+
+# ....................... #
+
+identity_mapping_spec = DocumentSpec(
+    name=AuthnResourceName.IDENTITY_MAPPINGS,
+    read=ReadIdentityMapping,
+    write={
+        "domain": IdentityMapping,
+        "create_cmd": CreateIdentityMappingCmd,
+        "update_cmd": UpdateIdentityMappingCmd,
     },
 )

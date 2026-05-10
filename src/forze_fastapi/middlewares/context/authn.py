@@ -110,7 +110,7 @@ class HeaderAuthnIdentityResolver(AuthnIdentityResolverPort):
         if raw is None:
             return None
 
-        #! most likely that should happen on authn port level
+        # Scheme is forwarded as a routing hint; verifiers decide whether to consult it.
         scheme, token = self._split_authorization(raw)
 
         if token is None:
@@ -126,8 +126,8 @@ class HeaderAuthnIdentityResolver(AuthnIdentityResolverPort):
         if raw is None:
             return None
 
-        #! most likely that should happen on authn port level
-        prefix, key = self._split_authorization(raw, sep=":")  # ?? prefix is not used
+        # Optional ``prefix:key`` shape; verifiers reading the prefix can use the hint.
+        prefix, key = self._split_authorization(raw, sep=":")
 
         if key is None:
             return ApiKeyCredentials(key=prefix)

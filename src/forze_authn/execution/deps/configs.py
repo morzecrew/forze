@@ -1,11 +1,12 @@
-"""Kernel and route capability configuration for authn dependency factories."""
+"""Kernel and shared-service configuration for authn dependency factories."""
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from enum import StrEnum
 from typing import final
 
 import attrs
 
+from forze.application.contracts.authn import AuthnMethod
 from forze.base.errors import CoreError
 
 from ...services import (
@@ -28,14 +29,15 @@ class AuthnKernelConfig:
     """Secrets and service tuning shared across all authn routes for one module.
 
     Optional sections omitting secrets disable building that service; route validation
-    ensures capabilities do not reference missing services.
+    ensures the methods enabled in :class:`~forze.application.contracts.authn.AuthnSpec`
+    only reference services that were built.
     """
 
     access_token_secret: bytes | None = attrs.field(
         default=None,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
-    """Minimum 32 bytes when set; required for bearer auth and token lifecycle."""
+    """Minimum 32 bytes when set; required for token authentication and token lifecycle."""
 
     access_token: AccessTokenConfig = attrs.field(factory=AccessTokenConfig)
     """Access token service configuration."""
@@ -56,7 +58,7 @@ class AuthnKernelConfig:
         default=None,
         validator=attrs.validators.optional(attrs.validators.min_len(32)),
     )
-    """Minimum 32 bytes when set; required for API key auth and API key lifecycle."""
+    """Minimum 32 bytes when set; required for API key authentication and API key lifecycle."""
 
     api_key: ApiKeyConfig = attrs.field(factory=ApiKeyConfig)
     """API key service configuration."""
@@ -67,21 +69,12 @@ class AuthnKernelConfig:
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class AuthnRouteCaps:
-    """Which authentication mechanisms are enabled for an :class:`~forze.application.contracts.authn.AuthnSpec` route."""
-
-    password: bool = False
-    api_key: bool = False
-    bearer: bool = False
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
 class AuthnSharedServices:
-    """Services constructed once per :class:`AuthnKernelConfig`."""
+    """Services constructed once per :class:`AuthnKernelConfig`.
+
+    Each field is optional; the corresponding kernel section gates its construction.
+    Verifier dep factories pull only the services they need from this bundle.
+    """
 
     access_svc: AccessTokenService | None
     refresh_svc: RefreshTokenService | None
@@ -133,27 +126,26 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
 # ....................... #
 
 
-def validate_route_caps(shared: AuthnSharedServices, caps: AuthnRouteCaps) -> None:
-    """Ensure capability flags match built services."""
+def validate_route_methods(
+    shared: AuthnSharedServices,
+    methods: frozenset[AuthnMethod],
+) -> None:
+    """Ensure each enabled method has the matching service in ``shared``."""
 
-    if not caps.password and not caps.api_key and not caps.bearer:
-        msg = "AuthnRouteCaps requires at least one of password, api_key, bearer"
-
+    if not methods:
+        msg = "AuthnSpec.enabled_methods must contain at least one credential family"
         raise CoreError(msg)
 
-    if caps.password and shared.password_svc is None:
-        msg = "password capability requires kernel.password"
-
+    if "password" in methods and shared.password_svc is None:
+        msg = "'password' method requires kernel.password"
         raise CoreError(msg)
 
-    if caps.api_key and shared.api_key_svc is None:
-        msg = "api_key capability requires kernel.api_key_pepper"
-
+    if "api_key" in methods and shared.api_key_svc is None:
+        msg = "'api_key' method requires kernel.api_key_pepper"
         raise CoreError(msg)
 
-    if caps.bearer and shared.access_svc is None:
-        msg = "bearer capability requires kernel.access_token_secret"
-
+    if "token" in methods and shared.access_svc is None:
+        msg = "'token' method requires kernel.access_token_secret"
         raise CoreError(msg)
 
 
@@ -163,12 +155,16 @@ def validate_route_caps(shared: AuthnSharedServices, caps: AuthnRouteCaps) -> No
 def validate_shared_matches_route_sets[K: str | StrEnum](
     *,
     shared: AuthnSharedServices,
+    authn: Mapping[K, frozenset[AuthnMethod]],
     token_lifecycle: Collection[K],
     password_lifecycle: Collection[K],
     api_key_lifecycle: Collection[K],
     password_account_provisioning: Collection[K],
 ) -> None:
     """Fail fast when routes require kernel sections that were not configured."""
+
+    for methods in authn.values():
+        validate_route_methods(shared, methods)
 
     if token_lifecycle:
         if shared.access_svc is None:

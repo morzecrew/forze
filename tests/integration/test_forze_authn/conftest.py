@@ -28,7 +28,7 @@ def postgres_container():
     """Postgres container (same pattern as ``test_forze_postgres``)."""
     _ensure_docker_available()
     with PostgresContainer(
-        image="ghcr.io/morzecrew/postgres:18-cron-pgroonga", driver="psycopg"
+        image="ghcr.io/morzecrew/postgres:18", driver="psycopg"
     ) as postgres:
         yield postgres
 

@@ -67,11 +67,12 @@ class ContextBindingMiddleware:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if not NoneValidator.exactly_one(
-            self.tenant_identity_resolver, self.tenant_identity_codec
+        if not NoneValidator.one_or_none(
+            self.tenant_identity_resolver,
+            self.tenant_identity_codec,
         ):
             raise CoreError(
-                "Exactly one of tenant_identity_resolver or tenant_identity_codec must be provided"
+                "Only one of tenant_identity_resolver or tenant_identity_codec must be provided"
             )
 
     # ....................... #
