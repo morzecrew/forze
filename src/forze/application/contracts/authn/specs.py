@@ -2,6 +2,8 @@ from typing import Literal
 
 import attrs
 
+from forze.base.errors import CoreError
+
 from ..base import BaseSpec
 
 # ----------------------- #
@@ -9,8 +11,8 @@ from ..base import BaseSpec
 AuthnMethod = Literal["password", "token", "api_key"]
 """Supported credential families for an authn route."""
 
-
 # ....................... #
+#! str | StrEnum | None
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -45,6 +47,6 @@ class AuthnSpec(BaseSpec):
 
     def __attrs_post_init__(self) -> None:
         if not self.enabled_methods:
-            raise ValueError(
+            raise CoreError(
                 "AuthnSpec.enabled_methods must contain at least one credential family",
             )
