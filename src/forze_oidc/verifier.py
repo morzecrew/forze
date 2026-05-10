@@ -9,7 +9,8 @@ from datetime import timedelta
 from typing import final
 
 import attrs
-import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
+from jwt import decode as jwt_decode
 
 from forze.application.contracts.authn import (
     TokenCredentials,
@@ -67,7 +68,7 @@ class OidcTokenVerifier(TokenVerifierPort):
         try:
             key = self.key_provider.get_signing_key(credentials.token)
 
-            claims = jwt.decode(  # pyright: ignore[reportUnknownMemberType]
+            claims = jwt_decode(  # pyright: ignore[reportUnknownMemberType]
                 jwt=credentials.token,
                 key=key,
                 algorithms=list(self.algorithms),
@@ -77,13 +78,13 @@ class OidcTokenVerifier(TokenVerifierPort):
                 options={"require": ["iss", "sub", "exp"]},
             )
 
-        except jwt.ExpiredSignatureError as exc:
+        except ExpiredSignatureError as exc:
             raise AuthenticationError(
                 "OIDC token expired",
                 code="oidc_token_expired",
             ) from exc
 
-        except jwt.InvalidTokenError as exc:
+        except InvalidTokenError as exc:
             raise AuthenticationError(
                 "Invalid OIDC token",
                 code="invalid_oidc_token",

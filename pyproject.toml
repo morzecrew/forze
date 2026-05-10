@@ -108,9 +108,12 @@ socketio = [
 ]
 neo4j = ["neo4j>=6.1.0"]
 arango = ["python-arango-async>=1.2.2"]
-authn = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
+authn = [
+    "argon2-cffi>=25.1.0",
+    "email-validator>=2.3.0",
+    "pyjwt[crypto]>=2.12.1",
+]
 authz = []
-authnz = ["argon2-cffi>=25.1.0", "email-validator>=2.3.0", "pyjwt>=2.12.1"]
 oidc = ["pyjwt[crypto]>=2.12.1"]
 casbin = ["pycasbin>=2.8.0"]
 

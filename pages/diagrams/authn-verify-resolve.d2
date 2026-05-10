@@ -1,0 +1,85 @@
+# Authentication pipeline: verify-then-resolve
+
+style: {
+    fill: transparent
+}
+
+vars: {
+    d2-config: {
+        pad: 50
+    }
+}
+
+direction: right
+
+Boundary: {
+    shape: rectangle
+    label: |md
+        ### Boundary
+        Header / Cookie resolver
+    |
+}
+
+Orchestrator: {
+    shape: rectangle
+    style: {
+        stroke: "#4a90d9"
+    }
+    label: |md
+        ### AuthnOrchestrator
+        dispatch by credential family
+    |
+}
+
+Verifier: {
+    shape: rectangle
+    label: |md
+        ### Verifier
+        TokenVerifierPort / PasswordVerifierPort / ApiKeyVerifierPort
+    |
+}
+
+Assertion: {
+    shape: rectangle
+    style: {
+        stroke: "#9b59b6"
+    }
+    label: |md
+        ### VerifiedAssertion
+        issuer · subject · aud · tenant_hint · claims
+    |
+}
+
+Resolver: {
+    shape: rectangle
+    label: |md
+        ### Resolver
+        JwtNativeUuid · Deterministic · MappingTable
+    |
+}
+
+Identity: {
+    shape: rectangle
+    style: {
+        stroke: "#2e7d32"
+    }
+    label: |md
+        ### AuthnIdentity
+        principal_id (UUID) · tenant_id (UUID?)
+    |
+}
+
+Context: {
+    shape: rectangle
+    label: |md
+        ### ExecutionContext
+        bind_call(identity=...)
+    |
+}
+
+Boundary -> Orchestrator: raw credentials
+Orchestrator -> Verifier: dispatch
+Verifier -> Assertion: emit
+Assertion -> Resolver: feed
+Resolver -> Identity: produce
+Identity -> Context: bind at boundary

@@ -7,8 +7,7 @@ require_oidc()
 from typing import Any, Protocol, final
 
 import attrs
-import jwt
-from jwt import PyJWKClient, PyJWKClientError
+from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
 
 from forze.base.errors import AuthenticationError
 
@@ -57,10 +56,16 @@ class JwksKeyProvider(SigningKeyProviderPort):
     """
 
     jwks_uri: str
+    """The JWKS URI to fetch the signing keys from."""
 
     cache_keys: bool = True
+    """Whether to cache the signing keys."""
+
     cache_ttl_seconds: int = 300
+    """The cache TTL in seconds."""
+
     timeout: int = 10
+    """The timeout in seconds."""
 
     # Non-init field to lazily create the client.
     _client: PyJWKClient | None = attrs.field(default=None, init=False)
@@ -83,10 +88,14 @@ class JwksKeyProvider(SigningKeyProviderPort):
     # ....................... #
 
     def get_signing_key(self, token: str) -> Any:
-        try:
-            return self._require_client().get_signing_key_from_jwt(token).key
+        """Get the signing key for the given token."""
 
-        except (PyJWKClientError, jwt.InvalidTokenError) as exc:
+        c = self._require_client()
+
+        try:
+            return c.get_signing_key_from_jwt(token).key
+
+        except (PyJWKClientError, InvalidTokenError) as exc:
             raise AuthenticationError(
                 "Could not resolve OIDC signing key",
                 code="invalid_oidc_signing_key",

@@ -18,7 +18,7 @@ flowchart TB
 ## Without tenancy
 
 - Register **authn** and **authz** dep routes on the kernel `Deps` (`AuthnDepsModule`, `AuthzDepsModule`, document stores for auth specs).
-- Use `HeaderAuthIdentityResolver` (or `CookieAuthIdentityResolver`) for credentials.
+- Use `HeaderAuthnIdentityResolver` (or `CookieAuthnIdentityResolver`) for credentials.
 - For tenant, you must still configure **exactly one** tenant strategy on the middleware: for example `TenantIdentityResolver(required=False)` with **no** `TenantResolverDepKey` registered, so `TenantIdentity` stays `None`.
 - Call `AuthzPort.permits(..., tenant_id=None)` unless you scope policy by tenant.
 
@@ -30,8 +30,8 @@ flowchart TB
 
 ## Credential sources on the boundary
 
-- `HeaderAuthIdentityResolver` supports **Authorization bearer** and **API key** headers. Control **order** with `try_sources` (for example `("api_key", "token")` to prefer API keys). If both raw credentials are present, `when_multiple_credentials="reject"` raises `AuthenticationError` with `code="ambiguous_credentials"` instead of picking one silently.
-- `CookieAuthIdentityResolver` reads an access token from a named cookie into `TokenCredentials`. Cookie bearer has **CSRF** implications for browser clients; prefer `HttpOnly` + `SameSite` and avoid using cookie access tokens for state-changing requests without anti-CSRF tokens, or restrict cookies to non-browser clients.
+- `HeaderAuthnIdentityResolver` supports **Authorization bearer** and **API key** headers. Control **order** with `try_sources` (for example `("api_key", "token")` to prefer API keys). If both raw credentials are present, `when_multiple_credentials="reject"` raises `AuthenticationError` with `code="ambiguous_credentials"` instead of picking one silently. The `scheme` (Authorization) and `prefix` (API key) parts are forwarded to verifiers as **routing hints** — verifiers decide whether to consult them, and the JWT signature/claims (or HMAC tag) are the actual security boundary.
+- `CookieAuthnIdentityResolver` reads an access token from a named cookie into `TokenCredentials`. Cookie bearer has **CSRF** implications for browser clients; prefer `HttpOnly` + `SameSite` and avoid using cookie access tokens for state-changing requests without anti-CSRF tokens, or restrict cookies to non-browser clients.
 
 ## Kernel wiring (sketch)
 
@@ -40,22 +40,30 @@ Merge document deps with `AuthnDepsModule(...)()` and `AuthzDepsModule(...)()`, 
 ## FastAPI wiring (sketch)
 
 ```python
+from forze.application.contracts.authn import AuthnSpec
 from forze_fastapi.middlewares.context import (
     ContextBindingMiddleware,
-    HeaderAuthIdentityResolver,
+    HeaderAuthnIdentityResolver,
 )
 from forze_fastapi.middlewares.context.tenancy import TenantIdentityResolver
+
+api_authn = AuthnSpec(
+    name="api",
+    enabled_methods=frozenset({"token"}),
+)
 
 app.add_middleware(
     ContextBindingMiddleware,
     ctx_dep=get_ctx,
-    authn_identity_resolver=HeaderAuthIdentityResolver(
-        spec=AuthnSpec(name="api"),
+    authn_identity_resolver=HeaderAuthnIdentityResolver(
+        spec=api_authn,
         when_multiple_credentials="reject",
     ),
     tenant_identity_resolver=TenantIdentityResolver(required=False),
 )
 ```
+
+`AuthnSpec.enabled_methods` is the contract between the boundary and the configured verifier set: the orchestrator raises `AuthenticationError` if a request supplies a credential family that the spec does not advertise. The optional `token_profile` / `password_profile` / `api_key_profile` / `resolver_profile` fields select named verifier/resolver implementations registered by `AuthnDepsModule` — see [Authentication pipeline](../concepts/authentication.md) and [External IdPs over OIDC](external-idp-oidc.md).
 
 ## Usecase-level authz and OpenAPI alignment
 
@@ -94,7 +102,7 @@ Pass `default_http_features` into `attach_document_endpoints` / `attach_search_e
 
 ## Optional template routes
 
-`attach_oauth2_password_token_template_routes` registers minimal **login** and **refresh** JSON routes over `AuthnPort` and `TokenLifecyclePort`. Treat them as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
+`attach_oauth2_password_token_template_routes` registers minimal **login** and **refresh** JSON routes over `AuthnPort` and `TokenLifecyclePort` (the latter now lives in `forze.application.contracts.authn_lifecycle`). The implementation of `AuthnPort` provided by `forze_authn` is `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the template routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
 
 The `ctx_dep` callable must be annotated with a concrete return type (for example `def get_ctx() -> ExecutionContext:`) so FastAPI treats it as a dependency rather than trying to parse `ExecutionContext` from the request.
 

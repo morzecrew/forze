@@ -29,6 +29,7 @@ Start here to understand the building blocks:
 These pages cover the orchestration layer:
 
 - [Contracts](contracts.md) — protocol ports, specs, and dependency keys for all infrastructure concerns
+- [Authentication](authentication.md) — full authn contract surface (verifiers, resolvers, lifecycle, dep keys), `forze_authn` first-party stack, and `forze_oidc` integration surface
 - [Execution](execution.md) — `ExecutionContext`, dependency injection, runtime lifecycle
 - [Middleware & Plans](middleware-plans.md) — guards, effects, transaction wrapping, usecase plans, and the registry
 - [Composition & Mapping](composition.md) — facades, providers, DTO mapping pipelines, and paginated responses

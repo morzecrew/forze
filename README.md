@@ -38,6 +38,16 @@ Install with optional integrations:
 uv add 'forze[fastapi,postgres,socketio]'
 ```
 
+Authentication extras:
+
+```bash
+# First-party authn (Argon2 / PyJWT / email-validator)
+uv add 'forze[authn]'
+
+# Generic OIDC verifier (RS256/ES256/HS256, JWKS) for external IdPs
+uv add 'forze[oidc]'
+```
+
 ## Documentation
 
 Full documentation is available at [https://morzecrew.github.io/forze/](https://morzecrew.github.io/forze/).
@@ -76,7 +86,7 @@ Skills are automatically available once installed. The agent will use them when 
 | **forze-storage-s3** | `StorageSpec`, `StoragePort`, `S3DepsModule`, tenant-aware buckets, lifecycle, and storage tests. |
 | **forze-messaging-streaming** | Queue, pub/sub, stream contracts, SQS/RabbitMQ wiring, Redis adapters, and mock messaging tests. |
 | **forze-temporal-workflows** | `WorkflowSpec`, Temporal deps, workflow command/query ports, lifecycle, context propagation, and tests. |
-| **forze-auth-tenancy-secrets** | Authn/authz contracts, context identity binding, tenant-aware routing, secrets, and FastAPI resolvers. |
+| **forze-auth-tenancy-secrets** | Authn (verify-then-resolve, AuthnSpec, AuthnDepsModule), authz contracts, identity binding, tenant-aware routing, secrets, FastAPI resolvers, and external IdP wiring (`forze_oidc`). |
 | **forze-graph-contracts** | Graph module/node/edge specs, graph refs, query/command ports, and custom graph adapter wiring. |
 | **forze-observability-errors** | Structured `CoreError` handling, adapter exception mapping, logging, call context, and FastAPI error responses. |
 

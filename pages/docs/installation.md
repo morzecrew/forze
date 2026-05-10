@@ -39,6 +39,8 @@ Install only what you need. Extras map directly to integration packages:
 | `socketio` | Socket.IO integration (`forze_socketio`) |
 | `sqs` | SQS integration (`forze_sqs`) |
 | `rabbitmq` | RabbitMQ integration (`forze_rabbitmq`) |
+| `authn` | First-party `forze_authn` (Argon2, PyJWT, email-validator) |
+| `oidc` | Generic OIDC verifier (`forze_oidc`, PyJWT with crypto) for external IdPs |
 
 `forze_mock` is bundled with the core package and requires no extra. It provides in-memory adapters for development and testing without external infrastructure.
 

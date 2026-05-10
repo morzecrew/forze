@@ -4,9 +4,8 @@ require_oidc()
 
 # ....................... #
 
-from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, final
+from typing import Any, Mapping, final
 
 import attrs
 
@@ -26,13 +25,22 @@ class OidcClaimMapper:
     """
 
     issuer_claim: str = "iss"
+    """The issuer claim to use."""
+
     subject_claim: str = "sub"
+    """The subject claim to use."""
+
     audience_claim: str | None = "aud"
-    tenant_claim: str | None = None
-    """When set, the resolver picks tenant context from this claim instead of leaving it ``None``."""
+    """The audience claim to use."""
 
     issued_at_claim: str | None = "iat"
+    """The issued-at claim to use."""
+
     expires_at_claim: str | None = "exp"
+    """The expiry claim to use."""
+
+    tenant_claim: str | None = None
+    """When set, the resolver picks tenant context from this claim instead of leaving it ``None``."""
 
     # ....................... #
 
@@ -57,6 +65,7 @@ class OidcClaimMapper:
                 audience = aud_raw[0]
 
         tenant_hint: str | None = None
+
         if self.tenant_claim is not None:
             tid_raw = claims.get(self.tenant_claim)
 
@@ -74,12 +83,15 @@ class OidcClaimMapper:
         )
 
     # ....................... #
+    #! support for strings (?)
 
     @staticmethod
     def _coerce_timestamp(
         claims: Mapping[str, Any],
         name: str | None,
     ) -> datetime | None:
+        """Coerce timestamp claim to a :class:`datetime` if present."""
+
         if name is None:
             return None
 

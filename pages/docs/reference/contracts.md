@@ -448,12 +448,7 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 Execution identity is represented by `CallContext`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
 `AuthnIdentity` carries the authenticated `principal_id`; `TenantIdentity` carries the current `tenant_id`. Bind them at the boundary via `ctx.bind_call(..., identity=..., tenancy=...)`.
 
-`forze_authn` provides document-backed authn helpers around these contracts:
-`AuthnSpec`, `AuthnDepKey`, lifecycle dep keys, and document specs such as
-`principal_spec`, `password_account_spec`, `api_key_account_spec`, and
-`session_spec`. `forze_authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`,
-policy principal and binding specs). The provider uses regular document ports, so storage is selected
-by the existing document adapter wiring.
+The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_authn` first-party stack, and `forze_oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
 
 ## Resolving ports
 

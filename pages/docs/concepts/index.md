@@ -37,6 +37,7 @@ Class names may evolve, but these invariants are stable:
 | [Domain Layer](domain-layer.md) | Document model, versioning, update semantics, mixins, validation |
 | [Application Layer](application-layer.md) | Usecases, middleware chains, execution runtime, dependency<br>and lifecycle plans |
 | [Contracts and Adapters](contracts-adapters.md) | Port protocols, adapter implementations, dependency wiring |
+| [Authentication Pipeline](authentication.md) | Verify-then-resolve seam, ``VerifiedAssertion``, principal resolvers, UUID-native rationale |
 | [Multi-tenancy](multi-tenancy.md) | Authn vs tenant identity, bootstrap, JWT ``tid``, reference package |
 | [Specs and infrastructure wiring](specs-and-wiring.md) | Kernel specs vs integration configs, routed dependency keys |
 | [Aggregate Specification](aggregate-specification.md) | How to define aggregates and how adapters consume them |

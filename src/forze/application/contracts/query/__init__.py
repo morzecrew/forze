@@ -7,19 +7,23 @@ from .expressions import (
     AggregateFieldExpression,
     AggregateFunction,
     AggregateGroupKeysExpression,
+    AggregatesExpression,
     AggregateTimeBucketExpression,
     AggregateTimeBucketUnit,
-    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryConjunction,
+    QueryDisjunction,
+    QueryFieldOpConjunction,
     QueryFilterExpression,
+    QueryPredicate,
     QuerySortExpression,
 )
 from .internal import (
     AggregateComputedField,
     AggregateField,
-    AggregateTimeBucket,
     AggregatesExpressionParser,
+    AggregateTimeBucket,
     ParsedAggregates,
     QueryAnd,
     QueryExpr,
@@ -28,16 +32,16 @@ from .internal import (
     QueryOr,
     QueryValueCaster,
 )
-from .types import QueryOp, QueryValue
 from .pagination import (
-    assert_cursor_projection_includes_sort_keys,
     assemble_keyset_cursor_page,
+    assert_cursor_projection_includes_sort_keys,
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_with_id,
     resolved_cursor_limit,
     row_value_for_sort_key,
 )
+from .types import QueryOp, QueryValue
 
 # ----------------------- #
 
@@ -75,4 +79,8 @@ __all__ = [
     "normalize_sorts_with_id",
     "resolved_cursor_limit",
     "row_value_for_sort_key",
+    "QueryPredicate",
+    "QueryConjunction",
+    "QueryDisjunction",
+    "QueryFieldOpConjunction",
 ]

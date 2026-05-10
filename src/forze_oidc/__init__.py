@@ -10,9 +10,6 @@ package only needs to:
    for the relevant routes; reuse a :class:`forze_authn` resolver
    (:class:`MappingTableResolver` or :class:`DeterministicUuidResolver`) to map external
    subjects to internal Forze principals.
-
-No core contract changes are required to support new IdPs (Firebase, Casdoor, Auth0, …);
-each ships its own thin package built on top of :mod:`forze_oidc`.
 """
 
 from .claims import OidcClaimMapper
