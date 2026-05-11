@@ -20,6 +20,7 @@ from ..http import (
     AuthnRequirement,
     BodyAsIsMapper,
     EmptyMapper,
+    HttpBodyMode,
     HttpEndpointSpec,
     HttpMetadataSpec,
     HttpRequestSpec,
@@ -76,7 +77,17 @@ def build_authn_password_login_endpoint_spec(
         "body_mode": "form",
     }
 
-    output_feature: TokenTransportOutputFeature[Any, Any, Any, Any, AuthnLoginRequestDTO, AuthnLoginRequestDTO, AuthnTokenResponseDTO, AuthnTokenResponseDTO, Facade] = TokenTransportOutputFeature(
+    output_feature: TokenTransportOutputFeature[
+        Any,
+        Any,
+        Any,
+        Any,
+        AuthnLoginRequestDTO,
+        AuthnLoginRequestDTO,
+        AuthnTokenResponseDTO,
+        AuthnTokenResponseDTO,
+        Facade,
+    ] = TokenTransportOutputFeature(
         access_transport=access_transport,
         refresh_transport=refresh_transport,
         mode="issue",
@@ -128,8 +139,28 @@ def build_authn_refresh_endpoint_spec(
 
     http_spec: HttpSpec = {"method": "POST", "path": path}
 
-    input_feature: TokenTransportInputFeature[Any, Any, Any, Any, Any, AuthnRefreshRequestDTO, AuthnTokenResponseDTO, AuthnTokenResponseDTO, Facade] = TokenTransportInputFeature(refresh_transport=refresh_transport)
-    output_feature: TokenTransportOutputFeature[Any, Any, Any, Any, Any, AuthnRefreshRequestDTO, AuthnTokenResponseDTO, AuthnTokenResponseDTO, Facade] = TokenTransportOutputFeature(
+    input_feature: TokenTransportInputFeature[
+        Any,
+        Any,
+        Any,
+        Any,
+        Any,
+        AuthnRefreshRequestDTO,
+        AuthnTokenResponseDTO,
+        AuthnTokenResponseDTO,
+        Facade,
+    ] = TokenTransportInputFeature(refresh_transport=refresh_transport)
+    output_feature: TokenTransportOutputFeature[
+        Any,
+        Any,
+        Any,
+        Any,
+        Any,
+        AuthnRefreshRequestDTO,
+        AuthnTokenResponseDTO,
+        AuthnTokenResponseDTO,
+        Facade,
+    ] = TokenTransportOutputFeature(
         access_transport=access_transport,
         refresh_transport=refresh_transport,
         mode="issue",
@@ -211,7 +242,9 @@ def build_authn_logout_endpoint_spec(
 
     http_spec: HttpSpec = {"method": "POST", "path": path, "status_code": 204}
 
-    output_feature: TokenTransportOutputFeature[Any, Any, Any, Any, Any, BaseDTO, None, None, Facade] = TokenTransportOutputFeature(
+    output_feature: TokenTransportOutputFeature[
+        Any, Any, Any, Any, Any, BaseDTO, None, None, Facade
+    ] = TokenTransportOutputFeature(
         access_transport=access_transport,
         refresh_transport=refresh_transport,
         mode="clear",
@@ -247,7 +280,7 @@ def build_authn_change_password_endpoint_spec(
     *,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
-    body_mode: str = "form",
+    body_mode: HttpBodyMode = "form",
 ) -> ChangePasswordEndpointSpec:
     """Build the change-password endpoint spec.
 
@@ -257,12 +290,10 @@ def build_authn_change_password_endpoint_spec(
     time.
     """
 
-    if body_mode not in ("form", "json"):
-        raise ValueError("body_mode must be 'form' or 'json'")
-
     path = path_coerce(path_override or "/change-password")
 
     http_spec: HttpSpec = {"method": "POST", "path": path, "status_code": 204}
+
     request_spec: HttpRequestSpec[Any, Any, Any, Any, AuthnChangePasswordRequestDTO] = {
         "body_type": AuthnChangePasswordRequestDTO,
         "body_mode": body_mode,  # type: ignore[typeddict-item]

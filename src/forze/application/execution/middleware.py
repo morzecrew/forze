@@ -10,6 +10,7 @@ run before, effects after.
 """
 
 from enum import StrEnum
+from inspect import isawaitable
 from typing import Awaitable, Callable, Protocol, Self, final
 
 import attrs
@@ -137,12 +138,17 @@ class WhenGuard[Args](Guard[Args]):
     """
 
     guard: Guard[Args]
-    when: Callable[[Args], bool]
+    when: Callable[[Args], bool | Awaitable[bool]]
 
     # ....................... #
 
     async def __call__(self, args: Args) -> None:
-        if self.when(args):
+        when_res = self.when(args)
+
+        if isawaitable(when_res):
+            when_res = await when_res
+
+        if when_res:
             await self.guard(args)
 
 
@@ -157,12 +163,17 @@ class WhenEffect[Args, R](Effect[Args, R]):
     """
 
     effect: Effect[Args, R]
-    when: Callable[[Args, R], bool]
+    when: Callable[[Args, R], bool | Awaitable[bool]]
 
     # ....................... #
 
     async def __call__(self, args: Args, res: R) -> R:
-        if self.when(args, res):
+        when_res = self.when(args, res)
+
+        if isawaitable(when_res):
+            when_res = await when_res
+
+        if when_res:
             return await self.effect(args, res)
 
         return res

@@ -16,6 +16,8 @@ from forze.base.primitives import uuid7
 from .ports import CallContextCodecPort
 
 # ----------------------- #
+#! TODO: add forze_fastapi/utils.py with common helpers
+#! - json dumps for python object and encode string to latin-1 - for headers
 
 
 @final

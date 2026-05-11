@@ -6,6 +6,7 @@ from .composition import (
 )
 from .contracts import (
     AuthnRequirement,
+    HttpBodyMode,
     HttpEndpointContext,
     HttpEndpointHandlerPort,
     HttpEndpointSpec,
@@ -74,4 +75,5 @@ __all__ = [
     "facade_dependency",
     "SimpleHttpEndpointSpec",
     "EmptyMapper",
+    "HttpBodyMode",
 ]

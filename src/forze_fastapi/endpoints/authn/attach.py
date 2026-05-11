@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from forze.application.contracts.authn import AuthnSpec
 from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.base.errors import CoreError
 
 from ..http import (
     AuthnRequirement,
@@ -47,13 +48,17 @@ def _derive_authn_requirement(
 
     if transport_dict.get("kind") == "cookie":
         cookie_name = transport_dict.get("cookie_name")
+
         if not cookie_name:
-            raise ValueError("cookie_name is required for cookie access transport")
+            raise CoreError("cookie_name is required for cookie access transport")
+
         return AuthnRequirement(authn_route=spec.name, token_cookie=str(cookie_name))
 
     header_name = transport_dict.get("header_name")
+
     if not header_name:
-        raise ValueError("header_name is required for header access transport")
+        raise CoreError("header_name is required for header access transport")
+
     return AuthnRequirement(authn_route=spec.name, token_header=str(header_name))
 
 
