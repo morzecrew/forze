@@ -41,7 +41,20 @@ jobs:
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
       - name: Install d2
-        run: curl -fsSL https://d2lang.com/install.sh | VERSION=v0.7.1 sh -s --
+        run: |
+          set -euxo pipefail
+
+          D2_VERSION=v0.7.1
+
+          curl -LsSf -o /tmp/d2.tar.gz \
+          "https://github.com/terrastruct/d2/releases/download/${D2_VERSION}/d2-${D2_VERSION}-linux-amd64.tar.gz";
+
+          mkdir -p /tmp/d2-extract
+          tar -xzf /tmp/d2.tar.gz -C /tmp/d2-extract
+          sudo mv "$(find /tmp/d2-extract -type f -name d2 | head -n 1)" /usr/local/bin/d2
+          sudo chmod +x /usr/local/bin/d2
+
+          d2 --version
 
       - name: Install dependencies
         run: uv sync --group docs

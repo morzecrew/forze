@@ -13,9 +13,33 @@ RUN apt-get update  \
     shellcheck=0.10.0-1 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LsSf https://astral.sh/uv/0.10.9/install.sh | bash && \
-    curl -LsSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin --tag 1.46.0 && \
-    curl -LsSf https://d2lang.com/install.sh | VERSION=v0.7.1 bash -s --
+ARG JUST_VERSION=1.46.0
+ARG D2_VERSION=v0.7.1
+ARG UV_VERSION=0.10.9
+
+RUN set -eux; \
+    curl -LsSf -o /tmp/just.tar.gz \
+    "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"; \
+    tar -xzf /tmp/just.tar.gz -C /tmp; \
+    mv /tmp/just /usr/local/bin/just; \
+    chmod +x /usr/local/bin/just; \
+    \
+    curl -LsSf -o /tmp/d2.tar.gz \
+    "https://github.com/terrastruct/d2/releases/download/${D2_VERSION}/d2-${D2_VERSION}-linux-amd64.tar.gz"; \
+    mkdir -p /tmp/d2-extract; \
+    tar -xzf /tmp/d2.tar.gz -C /tmp/d2-extract; \
+    mv "$(find /tmp/d2-extract -type f -name d2 | head -n 1)" /usr/local/bin/d2; \
+    chmod +x /usr/local/bin/d2; \
+    \
+    curl -LsSf -o /tmp/uv.tar.gz \
+    "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz"; \
+    mkdir -p /tmp/uv-extract; \
+    tar -xzf /tmp/uv.tar.gz -C /tmp/uv-extract; \
+    mv "$(find /tmp/uv-extract -type f -name uv | head -n 1)" /usr/local/bin/uv; \
+    mv "$(find /tmp/uv-extract -type f -name uvx | head -n 1)" /usr/local/bin/uvx; \
+    chmod +x /usr/local/bin/uv /usr/local/bin/uvx; \
+    \
+    rm -rf /tmp/*.tar.gz /tmp/*.tgz /tmp/d2-extract /tmp/uv-extract
 
 USER vscode
 WORKDIR /workspaces/forze

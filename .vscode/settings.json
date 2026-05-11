@@ -18,7 +18,7 @@
         "**/.coverage": true,
         "**/.cache": true,
         "dist/": true,
-        "**/.devcontainer/": true,
+        //"**/.devcontainer/": true,
         "**/.venv/": true,
         ".agent": true,
         ".claude": true,
