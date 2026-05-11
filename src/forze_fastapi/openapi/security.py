@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # ----------------------- #
-#! All this shit is not correct
 
 
 def http_bearer_scheme(*, auto_error: bool = False) -> HTTPBearer:
@@ -22,16 +21,20 @@ def openapi_http_bearer_scheme(
     *,
     scheme_name: str = "httpBearer",
     bearer_format: str = "JWT",
+    description: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return a single-entry ``components.securitySchemes`` fragment for HTTP bearer."""
 
-    return {
-        scheme_name: {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": bearer_format,
-        }
+    body: dict[str, Any] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": bearer_format,
     }
+
+    if description is not None:
+        body["description"] = description
+
+    return {scheme_name: body}
 
 
 # ....................... #
@@ -41,16 +44,43 @@ def openapi_api_key_cookie_scheme(
     *,
     scheme_name: str,
     cookie_name: str,
+    description: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return a ``components.securitySchemes`` fragment for an API key in a cookie."""
 
-    return {
-        scheme_name: {
-            "type": "apiKey",
-            "in": "cookie",
-            "name": cookie_name,
-        }
+    body: dict[str, Any] = {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": cookie_name,
     }
+
+    if description is not None:
+        body["description"] = description
+
+    return {scheme_name: body}
+
+
+# ....................... #
+
+
+def openapi_api_key_header_scheme(
+    *,
+    scheme_name: str,
+    header_name: str,
+    description: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Return a ``components.securitySchemes`` fragment for an API key in a header."""
+
+    body: dict[str, Any] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": header_name,
+    }
+
+    if description is not None:
+        body["description"] = description
+
+    return {scheme_name: body}
 
 
 # ....................... #

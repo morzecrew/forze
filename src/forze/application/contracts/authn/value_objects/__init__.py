@@ -6,22 +6,33 @@ as before; submodules expose narrower seams when needed (e.g. resolvers consume 
 """
 
 from .assertion import VerifiedAssertion
-from .credentials import ApiKeyCredentials, PasswordCredentials, TokenCredentials
+from .credentials import (
+    AccessTokenCredentials,
+    ApiKeyCredentials,
+    PasswordCredentials,
+    RefreshTokenCredentials,
+)
 from .identity import AuthnIdentity
 from .lifetime import CredentialLifetime
-from .tokens import ApiKeyResponse, OAuth2Tokens, OAuth2TokensResponse, TokenResponse
+from .tokens import (
+    IssuedAccessToken,
+    IssuedApiKey,
+    IssuedRefreshToken,
+    IssuedTokens,
+)
 
 # ----------------------- #
 
 __all__ = [
+    "AccessTokenCredentials",
     "ApiKeyCredentials",
-    "ApiKeyResponse",
     "AuthnIdentity",
     "CredentialLifetime",
-    "OAuth2Tokens",
-    "OAuth2TokensResponse",
+    "IssuedAccessToken",
+    "IssuedApiKey",
+    "IssuedRefreshToken",
+    "IssuedTokens",
     "PasswordCredentials",
-    "TokenCredentials",
-    "TokenResponse",
+    "RefreshTokenCredentials",
     "VerifiedAssertion",
 ]

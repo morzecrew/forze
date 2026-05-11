@@ -64,6 +64,45 @@ attach_search_endpoints(router, dtos=search_dtos, registry=search_registry, ctx_
 
 Document routes are attached only when the spec/DTOs support the operation. Use separate prefixes or explicit endpoint specs when document and search paths would collide.
 
+## Pre-built authn endpoints
+
+`forze_fastapi.endpoints.authn.attach_authn_endpoints` registers configurable login/refresh/logout/change-password routes wired to the `AuthnUsecasesFacade` (`forze.application.composition.authn.build_authn_registry`). Configure access/refresh transports per token type:
+
+```python
+from forze.application.composition.authn import build_authn_registry
+from forze_fastapi.endpoints.authn import (
+    CookieTokenTransportSpec,
+    HeaderTokenTransportSpec,
+    attach_authn_endpoints,
+)
+
+authn_registry = build_authn_registry(authn_spec)
+authn_registry.finalize("authn", inplace=True)
+
+attach_authn_endpoints(
+    router,
+    spec=authn_spec,
+    registry=authn_registry,
+    ctx_dep=ctx_dep,
+    endpoints={
+        "password_login": True,
+        "refresh": True,
+        "logout": True,
+        "change_password": True,
+        "config": {
+            "access_token_transport": HeaderTokenTransportSpec(
+                kind="header", header_name="Authorization", scheme="Bearer",
+            ),
+            "refresh_token_transport": CookieTokenTransportSpec(
+                kind="cookie", cookie_name="refresh_token",
+            ),
+        },
+    },
+)
+```
+
+Password login uses `application/x-www-form-urlencoded`. The refresh endpoint reads the refresh token from the configured transport (cookie or header). Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless one is supplied via `SimpleHttpEndpointSpec[\"authn\"]`. To declare auth on document/search endpoints, set `SimpleHttpEndpointSpec[\"authn\"] = AuthnRequirement(...)` — the helper prepends `RequireAuthnFeature` and merges OpenAPI security in one shot.
+
 ## Custom HTTP operations
 
 Use `forze_fastapi.endpoints.http` when an operation is not document/search CRUD.

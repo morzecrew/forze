@@ -15,7 +15,7 @@ Read this when you wire authentication for a new route, integrate an external Id
   <img class="d2-dark" src="/forze/assets/diagrams/dark/authn-verify-resolve.svg" alt="Authentication pipeline: header/cookie boundary resolves credentials, orchestrator dispatches to a verifier, verifier emits VerifiedAssertion, resolver returns canonical AuthnIdentity">
 </div>
 
-1. **Boundary** — `HeaderAuthnIdentityResolver` / `CookieAuthnIdentityResolver` extracts raw credentials from the request and asks the configured `AuthnPort` to authenticate them.
+1. **Boundary** — one or more single-source resolvers (`HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver`) extract raw credentials from the request and ask the configured `AuthnPort` to authenticate them. `ContextBindingMiddleware` accepts a `Sequence` of resolvers plus a `when_multiple_credentials` policy to fail closed on ambiguous credentials.
 2. **Orchestration** — `AuthnPort` (default implementation: `AuthnOrchestrator` from `forze_authn`) dispatches by credential family (`password`, `token`, `api_key`).
 3. **Verification** — A `*VerifierPort` proves the credential is valid against its issuer (signature, hash, JWKS, etc.) and emits a `VerifiedAssertion` carrying `(issuer, subject, audience, tenant_hint, claims)`.
 4. **Resolution** — A `PrincipalResolverPort` maps the assertion to a canonical `AuthnIdentity` with `UUID` `principal_id` and optional `tenant_id`.

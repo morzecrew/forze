@@ -9,20 +9,21 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 import pytest
 
 from forze.application.contracts.authn import (
+    AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyLifecycleDepKey,
     ApiKeyLifecyclePort,
-    ApiKeyResponse,
     AuthnDepKey,
     AuthnIdentity,
     AuthnSpec,
-    OAuth2Tokens,
-    OAuth2TokensResponse,
+    IssuedAccessToken,
+    IssuedApiKey,
+    IssuedRefreshToken,
+    IssuedTokens,
     PasswordCredentials,
-    TokenCredentials,
+    RefreshTokenCredentials,
     TokenLifecycleDepKey,
     TokenLifecyclePort,
-    TokenResponse,
 )
 from forze.application.contracts.authn.ports import AuthnPort
 from forze.application.contracts.authn.value_objects import CredentialLifetime
@@ -57,27 +58,27 @@ class TestCredentialsAndTokens:
         assert bare.prefix is None
         assert prefixed.prefix == "pk_live_"
 
-    def test_token_credentials_scheme_and_kind(self) -> None:
-        cred = TokenCredentials(
-            token="t",
-            scheme="Bearer",
-            kind="access",
-        )
+    def test_access_token_credentials_default_scheme(self) -> None:
+        cred = AccessTokenCredentials(token="t")
         assert cred.scheme == "Bearer"
-        assert cred.kind == "access"
+        assert cred.profile is None
 
-    def test_oauth2_tokens_optional_refresh(self) -> None:
-        access = TokenCredentials(token="a")
-        refresh = TokenCredentials(token="r")
-        bundle = OAuth2Tokens(
-            access_token=access,
-            refresh_token=refresh,
+    def test_access_token_credentials_custom_scheme_and_profile(self) -> None:
+        cred = AccessTokenCredentials(
+            token="t",
+            scheme="Token",
+            profile="firebase",
         )
-        assert bundle.refresh_token is refresh
+        assert cred.scheme == "Token"
+        assert cred.profile == "firebase"
 
-    def test_nested_token_and_api_key_responses(self) -> None:
+    def test_refresh_token_credentials(self) -> None:
+        cred = RefreshTokenCredentials(token="r")
+        assert cred.token == "r"
+
+    def test_issued_api_key_response(self) -> None:
         key_cred = ApiKeyCredentials(key="secret")
-        api_resp = ApiKeyResponse(
+        api_resp = IssuedApiKey(
             key=key_cred,
             lifetime=CredentialLifetime(expires_in=timedelta(hours=1)),
         )
@@ -85,15 +86,17 @@ class TestCredentialsAndTokens:
         assert api_resp.lifetime is not None
         assert api_resp.lifetime.expires_in == timedelta(hours=1)
 
-        tok = TokenResponse(
-            token=TokenCredentials(token="x"),
-            lifetime=None,
-        )
-        oauth_resp = OAuth2TokensResponse(
-            access_token=tok,
-            refresh_token=None,
-        )
-        assert oauth_resp.refresh_token is None
+    def test_issued_tokens_optional_refresh(self) -> None:
+        access = IssuedAccessToken(token=AccessTokenCredentials(token="x"))
+        bundle = IssuedTokens(access=access, refresh=None)
+        assert bundle.access is access
+        assert bundle.refresh is None
+
+    def test_issued_tokens_with_refresh(self) -> None:
+        access = IssuedAccessToken(token=AccessTokenCredentials(token="a"))
+        refresh = IssuedRefreshToken(token=RefreshTokenCredentials(token="r"))
+        bundle = IssuedTokens(access=access, refresh=refresh)
+        assert bundle.refresh is refresh
 
 
 class TestAuthnAndAuthzDepKeys:
@@ -152,7 +155,7 @@ class _StubAuthenticationPort:
         return AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
 
     async def authenticate_with_token(
-        self, credentials: TokenCredentials
+        self, credentials: AccessTokenCredentials
     ) -> AuthnIdentity:
         return AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
 
@@ -163,24 +166,31 @@ class _StubAuthenticationPort:
 
 
 class _StubTokenLifecyclePort:
-    async def issue_tokens(self, identity: AuthnIdentity) -> OAuth2TokensResponse:
-        tr = TokenResponse(token=TokenCredentials(token="issued"))
-        return OAuth2TokensResponse(access_token=tr)
+    async def issue_tokens(self, identity: AuthnIdentity) -> IssuedTokens:
+        return IssuedTokens(
+            access=IssuedAccessToken(token=AccessTokenCredentials(token="issued")),
+        )
 
-    async def refresh_tokens(self, credentials: OAuth2Tokens) -> OAuth2TokensResponse:
-        tr = TokenResponse(token=TokenCredentials(token="refreshed"))
-        return OAuth2TokensResponse(access_token=tr)
+    async def refresh_tokens(
+        self,
+        refresh_token: RefreshTokenCredentials,
+    ) -> IssuedTokens:
+        _ = refresh_token
+
+        return IssuedTokens(
+            access=IssuedAccessToken(token=AccessTokenCredentials(token="refreshed")),
+        )
 
     async def revoke_tokens(self, identity: AuthnIdentity) -> None:
         return None
 
 
 class _StubApiKeyLifecyclePort:
-    async def issue_api_key(self, identity: AuthnIdentity) -> ApiKeyResponse:
-        return ApiKeyResponse(key=ApiKeyCredentials(key="issued"))
+    async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
+        return IssuedApiKey(key=ApiKeyCredentials(key="issued"))
 
-    async def refresh_api_key(self, credentials: ApiKeyCredentials) -> ApiKeyResponse:
-        return ApiKeyResponse(key=credentials)
+    async def refresh_api_key(self, credentials: ApiKeyCredentials) -> IssuedApiKey:
+        return IssuedApiKey(key=credentials)
 
     async def revoke_api_key(self, key_id: str) -> None:
         return None
@@ -211,7 +221,7 @@ async def test_authentication_port_stub_round_trip() -> None:
         PasswordCredentials(login="alice", password="x"),
     )
     assert pw.principal_id == _pid_from_str("pw:alice")
-    tok = await port.authenticate_with_token(TokenCredentials(token="t"))
+    tok = await port.authenticate_with_token(AccessTokenCredentials(token="t"))
     assert tok.principal_id == _pid_from_str("tok:t")
     key = await port.authenticate_with_api_key(ApiKeyCredentials(key="k"))
     assert key.principal_id == _pid_from_str("key:k")
@@ -222,11 +232,9 @@ async def test_token_lifecycle_port_stub() -> None:
     port: TokenLifecyclePort = _StubTokenLifecyclePort()
     ident = AuthnIdentity(principal_id=uuid4())
     issued = await port.issue_tokens(ident)
-    assert issued.access_token.token.token == "issued"
-    refreshed = await port.refresh_tokens(
-        OAuth2Tokens(access_token=TokenCredentials(token="a"))
-    )
-    assert refreshed.access_token.token.token == "refreshed"
+    assert issued.access.token.token == "issued"
+    refreshed = await port.refresh_tokens(RefreshTokenCredentials(token="r"))
+    assert refreshed.access.token.token == "refreshed"
     await port.revoke_tokens(ident)
 
 

@@ -7,7 +7,6 @@ from forze.application.contracts.authn import (
     AuthnIdentity,
     PasswordAccountProvisioningPort,
     PasswordCredentials,
-    TokenCredentials,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.errors import CoreError
@@ -77,7 +76,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
 
     async def accept_invite_with_password(
         self,
-        invite: TokenCredentials,  # noqa: F841 # would need to verify the invite token outside?
+        invite_token: str,  # noqa: F841 # would need to verify the invite token outside?
         principal_id: UUID,
         credentials: PasswordCredentials,
     ) -> None:

@@ -2,11 +2,14 @@ import attrs
 
 from forze.application.contracts.authn import (
     AuthnPort,
+    IssuedTokens,
     PasswordCredentials,
     TokenLifecyclePort,
 )
 from forze.application.dto import AuthnLoginRequestDTO, AuthnTokenResponseDTO
 from forze.application.execution import Usecase
+
+from ._utils import token_response_from_issued_tokens
 
 # ----------------------- #
 
@@ -30,17 +33,6 @@ class AuthnPasswordLogin(Usecase[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
         )
 
         identity = await self.authn.authenticate_with_password(creds)
-        tokens = await self.token_lifecycle.issue_tokens(identity)
+        tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(identity)
 
-        access_token = tokens.access_token.token.token
-        access_token_type = tokens.access_token.token.scheme or "bearer"
-        refresh_token: str | None = None
-
-        if tokens.refresh_token:
-            refresh_token = tokens.refresh_token.token.token
-
-        return AuthnTokenResponseDTO(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            access_token_type=access_token_type,
-        )
+        return token_response_from_issued_tokens(tokens)

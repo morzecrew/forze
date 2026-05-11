@@ -1,6 +1,11 @@
 """Data transfer objects for application layer requests and responses."""
 
-from .authn import AuthnLoginRequestDTO, AuthnRefreshRequestDTO, AuthnTokenResponseDTO
+from .authn import (
+    AuthnChangePasswordRequestDTO,
+    AuthnLoginRequestDTO,
+    AuthnRefreshRequestDTO,
+    AuthnTokenResponseDTO,
+)
 from .document import (
     DocumentIdDTO,
     DocumentIdRevDTO,
@@ -58,6 +63,7 @@ __all__ = [
     "DocumentUpdateRes",
     "CursorPagination",
     "AggregatedListRequestDTO",
+    "AuthnChangePasswordRequestDTO",
     "AuthnLoginRequestDTO",
     "AuthnRefreshRequestDTO",
     "AuthnTokenResponseDTO",

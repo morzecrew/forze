@@ -3,9 +3,11 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.authz import PrincipalRegistryPort
-from forze.application.contracts.authz.types import PrincipalKind
-from forze.application.contracts.authz.value_objects import PrincipalRef
+from forze.application.contracts.authz import (
+    PrincipalKind,
+    PrincipalRef,
+    PrincipalRegistryPort,
+)
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 
 from ..domain.models.policy_principal import (

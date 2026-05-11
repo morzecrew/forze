@@ -49,13 +49,14 @@ See [`pages/docs/concepts/authentication.md`](../../pages/docs/concepts/authenti
 
 ## FastAPI identity
 
-`ContextBindingMiddleware` calls a resolver port to extract credentials and bind `AuthnIdentity`. Use `HeaderAuthnIdentityResolver` for bearer / API-key headers and `CookieAuthnIdentityResolver` for cookie-held tokens.
+`ContextBindingMiddleware` accepts a `Sequence` of single-source resolvers (`authn_identity_resolvers`) plus a `when_multiple_credentials` policy. Use `HeaderTokenAuthnIdentityResolver` for `Authorization`-style bearer headers, `HeaderApiKeyAuthnIdentityResolver` for API-key headers, and `CookieTokenAuthnIdentityResolver` for cookie-held tokens — wire only the sources you actually accept.
 
 ```python
 from forze.application.contracts.authn import AuthnSpec
 from forze_fastapi.middlewares.context import (
     ContextBindingMiddleware,
-    HeaderAuthnIdentityResolver,
+    HeaderApiKeyAuthnIdentityResolver,
+    HeaderTokenAuthnIdentityResolver,
 )
 
 authn_spec = AuthnSpec(
@@ -66,14 +67,15 @@ authn_spec = AuthnSpec(
 app.add_middleware(
     ContextBindingMiddleware,
     ctx_dep=ctx_dep,
-    authn_identity_resolver=HeaderAuthnIdentityResolver(
-        spec=authn_spec,
-        when_multiple_credentials="reject",
+    authn_identity_resolvers=(
+        HeaderTokenAuthnIdentityResolver(spec=authn_spec),
+        HeaderApiKeyAuthnIdentityResolver(spec=authn_spec),
     ),
+    when_multiple_credentials="reject",
 )
 ```
 
-`HeaderAuthnIdentityResolver` forwards `scheme` and API-key `prefix` as routing hints; the verifier's signature/claims (or HMAC tag) are the security boundary, not the header shape.
+The resolvers forward `scheme` and API-key `prefix` as routing hints; the verifier's signature/claims (or HMAC tag) are the security boundary, not the header shape.
 
 ## Authn dep keys
 
@@ -195,7 +197,7 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 5. **Forgetting authn document specs need storage wiring** — `forze_authn` and `forze_authz` specs are still `DocumentSpec`s; `identity_mapping_spec` must allow neither cache nor history.
 6. **Storing external IdP subject strings as principal ids** — always go through a `PrincipalResolverPort` so internal identifiers stay UUID.
 7. **Re-validating tokens inside resolvers** — verification is the verifier's job; resolvers only translate `(issuer, subject, tenant_hint)`.
-8. **Using `TokenCredentials.scheme` / `kind` as a security gate** — they are routing hints; the verifier's signature/claim checks are the boundary.
+8. **Using `AccessTokenCredentials.scheme` / `profile` as a security gate** — they are routing hints; the verifier's signature/claim checks are the boundary.
 
 ## Reference
 

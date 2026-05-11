@@ -12,7 +12,11 @@ from forze.application.composition.search import SearchDTOs
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
 from ..http import HttpEndpointSpec, SimpleHttpEndpointSpec, attach_http_endpoint
-from ..http.policy import AnyFeature, with_default_http_features
+from ..http.policy import (
+    AnyFeature,
+    apply_authn_requirement,
+    with_default_http_features,
+)
 from .endpoints import (
     build_raw_search_cursor_endpoint_spec,
     build_raw_search_endpoint_spec,
@@ -39,8 +43,14 @@ def attach_search_endpoints(
 ) -> APIRouter:
     endpoints = endpoints or {}
 
-    def _apply_defaults(spec: HttpEndSpec) -> HttpEndSpec:
-        return with_default_http_features(spec, default_http_features)
+    def _apply_defaults(
+        spec: HttpEndSpec,
+        simple: SimpleHttpEndpointSpec | None = None,
+    ) -> HttpEndSpec:
+        with_defaults = with_default_http_features(spec, default_http_features)
+        if simple is None:
+            return with_defaults
+        return apply_authn_requirement(with_defaults, simple.get("authn"))
 
     search_endpoint = endpoints.get("search", False)
     raw_search_endpoint = endpoints.get("raw_search", False)
@@ -59,7 +69,7 @@ def attach_search_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=_apply_defaults(search_endpoint_spec),
+            spec=_apply_defaults(search_endpoint_spec, _search),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -79,7 +89,7 @@ def attach_search_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=_apply_defaults(raw_search_endpoint_spec),
+            spec=_apply_defaults(raw_search_endpoint_spec, _raw_search),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -99,7 +109,7 @@ def attach_search_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=_apply_defaults(search_cursor_endpoint_spec),
+            spec=_apply_defaults(search_cursor_endpoint_spec, _search_c),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
@@ -119,7 +129,7 @@ def attach_search_endpoints(
         )
         attach_http_endpoint(
             router=router,
-            spec=_apply_defaults(raw_search_cursor_endpoint_spec),
+            spec=_apply_defaults(raw_search_cursor_endpoint_spec, _raw_search_c),
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,

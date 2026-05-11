@@ -12,12 +12,12 @@ pytest.importorskip("argon2")
 pytest.importorskip("jwt")
 
 from forze.application.contracts.authn import (
+    AccessTokenCredentials,
     ApiKeyCredentials,
     AuthnDepKey,
     AuthnIdentity,
     AuthnSpec,
     PasswordCredentials,
-    TokenCredentials,
     TokenLifecycleDepKey,
 )
 from forze.application.contracts.document import (
@@ -322,13 +322,12 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
     with ctx.bind_call(call=_call_ctx()):
         issued = await token_adapter.issue_tokens(identity)
 
-    access_creds = issued.access_token.token
-    assert issued.refresh_token is not None
+    access_creds = issued.access.token
+    assert issued.refresh is not None
 
-    sub = TokenCredentials(
+    sub = AccessTokenCredentials(
         token=access_creds.token,
         scheme=access_creds.scheme,
-        kind=access_creds.kind,
     )
 
     authn = _orchestrator(
@@ -599,13 +598,12 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
     with ctx.bind_call(call=_call_ctx()):
         issued = await token_adapter.issue_tokens(identity)
 
-    access_creds = issued.access_token.token
-    assert issued.refresh_token is not None
+    access_creds = issued.access.token
+    assert issued.refresh is not None
 
-    sub = TokenCredentials(
+    sub = AccessTokenCredentials(
         token=access_creds.token,
         scheme=access_creds.scheme,
-        kind=access_creds.kind,
     )
 
     auth_factory = ctx.dep(AuthnDepKey, route="oauth")

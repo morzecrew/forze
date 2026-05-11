@@ -5,9 +5,9 @@ import attrs
 from forze.application.contracts.authn import (
     ApiKeyCredentials,
     ApiKeyLifecyclePort,
-    ApiKeyResponse,
     AuthnIdentity,
     CredentialLifetime,
+    IssuedApiKey,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.errors import AuthenticationError, CoreError
@@ -75,7 +75,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     # ....................... #
 
-    async def issue_api_key(self, identity: AuthnIdentity) -> ApiKeyResponse:
+    async def issue_api_key(self, identity: AuthnIdentity) -> IssuedApiKey:
         ak = await find_api_key_account_by_authn_identity(self.ak_qry, identity)
 
         if ak is None or not ak.is_active:
@@ -102,7 +102,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         creds = ApiKeyCredentials(key=key, prefix=prefix)
 
-        return ApiKeyResponse(
+        return IssuedApiKey(
             key=creds,
             key_id=str(created_key.id),
             lifetime=CredentialLifetime(
@@ -115,7 +115,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     async def refresh_api_key(
         self,
         credentials: ApiKeyCredentials,  # noqa: F841
-    ) -> ApiKeyResponse:
+    ) -> IssuedApiKey:
         raise NotImplementedError("Not implemented")
 
     # ....................... #

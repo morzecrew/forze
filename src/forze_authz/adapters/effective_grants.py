@@ -3,9 +3,9 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.authz import EffectiveGrantsPort
-from forze.application.contracts.authz.value_objects import (
+from forze.application.contracts.authz import (
     EffectiveGrants,
+    EffectiveGrantsPort,
     PrincipalRef,
     coalesce_authz_tenant_id,
 )

@@ -2,10 +2,10 @@ from typing import Awaitable, Protocol, Sequence
 
 from ..value_objects import (
     ApiKeyCredentials,
-    ApiKeyResponse,
     AuthnIdentity,
-    OAuth2Tokens,
-    OAuth2TokensResponse,
+    IssuedApiKey,
+    IssuedTokens,
+    RefreshTokenCredentials,
 )
 
 # ----------------------- #
@@ -30,12 +30,12 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
     def issue_tokens(
         self,
         identity: AuthnIdentity,  # noqa: F841
-    ) -> Awaitable[OAuth2TokensResponse]: ...
+    ) -> Awaitable[IssuedTokens]: ...
 
     def refresh_tokens(
         self,
-        credentials: OAuth2Tokens,  # noqa: F841
-    ) -> Awaitable[OAuth2TokensResponse]: ...
+        refresh_token: RefreshTokenCredentials,  # noqa: F841
+    ) -> Awaitable[IssuedTokens]: ...
 
     def revoke_tokens(
         self,
@@ -52,12 +52,12 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
     def issue_api_key(
         self,
         identity: AuthnIdentity,  # noqa: F841
-    ) -> Awaitable[ApiKeyResponse]: ...
+    ) -> Awaitable[IssuedApiKey]: ...
 
     def refresh_api_key(
         self,
         credentials: ApiKeyCredentials,  # noqa: F841
-    ) -> Awaitable[ApiKeyResponse]: ...
+    ) -> Awaitable[IssuedApiKey]: ...
 
     def revoke_api_key(self, key_id: str) -> Awaitable[None]: ...  # noqa: F841
 

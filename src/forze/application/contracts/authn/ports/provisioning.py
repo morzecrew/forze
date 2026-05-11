@@ -4,7 +4,6 @@ from uuid import UUID
 from ..value_objects import (
     AuthnIdentity,
     PasswordCredentials,
-    TokenCredentials,
 )
 
 # ----------------------- #
@@ -28,7 +27,7 @@ class PasswordAccountProvisioningPort(Protocol):  # pragma: no cover
 
     def accept_invite_with_password(
         self,
-        invite: TokenCredentials,  # noqa: F841
+        invite_token: str,  # noqa: F841
         principal_id: UUID,
         credentials: PasswordCredentials,
     ) -> Awaitable[None]: ...

@@ -8,19 +8,20 @@ from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from forze.application.contracts.authn import (
+    AccessTokenCredentials,
     ApiKeyCredentials,
     AuthnDepKey,
     AuthnIdentity,
     AuthnSpec,
-    TokenCredentials,
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import CallContext, Deps, ExecutionContext
 from forze.base.errors import AuthenticationError
-from forze_fastapi.middlewares.context import HeaderCallContextCodec
-from forze_fastapi.middlewares.context.authn import (
-    CookieAuthnIdentityResolver,
-    HeaderAuthnIdentityResolver,
+from forze_fastapi.middlewares.context import (
+    CookieTokenAuthnIdentityResolver,
+    HeaderApiKeyAuthnIdentityResolver,
+    HeaderCallContextCodec,
+    HeaderTokenAuthnIdentityResolver,
 )
 from forze_fastapi.middlewares.context.middleware import ContextBindingMiddleware
 from forze_mock import MockDepsModule, MockState
@@ -30,17 +31,6 @@ from forze_mock import MockDepsModule, MockState
 
 def _execution_ctx() -> ExecutionContext:
     return ExecutionContext(deps=MockDepsModule(state=MockState())())
-
-
-class _NullAuthnResolver:
-    """Async no-op authn resolver (middleware requires exactly one authn source)."""
-
-    async def resolve(
-        self,
-        request: Request,
-        ctx: ExecutionContext,
-    ) -> AuthnIdentity | None:
-        return None
 
 
 class _NullTenantCodec:
@@ -64,7 +54,6 @@ class _NullTenantResolver:
 
 def _mw_kwargs() -> dict[str, object]:
     return {
-        "authn_identity_resolver": _NullAuthnResolver(),
         "tenant_identity_codec": _NullTenantCodec(),
     }
 
@@ -77,7 +66,7 @@ class _TokenAuthPort:
 
     async def authenticate_with_token(
         self,
-        credentials: TokenCredentials,
+        credentials: AccessTokenCredentials,
     ) -> AuthnIdentity | None:
         return AuthnIdentity(principal_id=uuid5(NAMESPACE_URL, credentials.token))
 
@@ -100,7 +89,7 @@ class _ApiKeyAuthPort:
 
     async def authenticate_with_token(
         self,
-        credentials: TokenCredentials,
+        credentials: AccessTokenCredentials,
     ) -> AuthnIdentity | None:
         return None
 
@@ -117,6 +106,36 @@ class _ApiKeyAuthPort:
 class _ApiKeyAuthFactory:
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _ApiKeyAuthPort:
         return _ApiKeyAuthPort()
+
+
+class _BothPort:
+    async def authenticate_with_password(
+        self, credentials: object
+    ) -> AuthnIdentity | None:
+        return None
+
+    async def authenticate_with_token(
+        self,
+        credentials: AccessTokenCredentials,
+    ) -> AuthnIdentity:
+        return AuthnIdentity(
+            principal_id=uuid5(NAMESPACE_URL, "t:" + credentials.token),
+        )
+
+    async def authenticate_with_api_key(
+        self,
+        credentials: object,
+    ) -> AuthnIdentity:
+        assert isinstance(credentials, ApiKeyCredentials)
+
+        return AuthnIdentity(
+            principal_id=uuid5(NAMESPACE_URL, "k:" + credentials.key),
+        )
+
+
+class _BothFactory:
+    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _BothPort:
+        return _BothPort()
 
 
 class TestHeaderCallContextCodec:
@@ -219,8 +238,8 @@ class TestContextBindingMiddleware:
         assert "x-request-id" in response.headers
         assert "x-correlation-id" in response.headers
 
-    def test_authn_identity_resolver_invoked_when_configured(self) -> None:
-        """Async authn identity resolver is called for HTTP requests."""
+    def test_authn_identity_resolvers_invoked_when_configured(self) -> None:
+        """Each resolver in the sequence is consulted for HTTP requests."""
 
         class _IdentityResolver:
             def __init__(self) -> None:
@@ -239,7 +258,7 @@ class TestContextBindingMiddleware:
         mw = ContextBindingMiddleware(
             self._ok_app,
             ctx_dep=lambda: ctx,
-            authn_identity_resolver=identity_resolver,
+            authn_identity_resolvers=(identity_resolver,),
             tenant_identity_resolver=_NullTenantResolver(),
         )
         client = TestClient(mw)
@@ -247,8 +266,66 @@ class TestContextBindingMiddleware:
 
         assert identity_resolver.called is True
 
+    def test_first_in_order_short_circuits(self) -> None:
+        class _Always:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.called = False
+
+            async def resolve(
+                self,
+                request: Request,
+                ctx: ExecutionContext,
+            ) -> AuthnIdentity | None:
+                self.called = True
+                return AuthnIdentity(principal_id=uuid5(NAMESPACE_URL, self.name))
+
+        first = _Always("first")
+        second = _Always("second")
+
+        ctx = _execution_ctx()
+        mw = ContextBindingMiddleware(
+            self._ok_app,
+            ctx_dep=lambda: ctx,
+            authn_identity_resolvers=(first, second),
+            when_multiple_credentials="first_in_order",
+            tenant_identity_codec=_NullTenantCodec(),
+        )
+        client = TestClient(mw)
+        client.get("/")
+
+        assert first.called is True
+        # In ``first_in_order`` mode, later resolvers must not run once a hit
+        # is found.
+        assert second.called is False
+
+    def test_reject_raises_when_more_than_one_resolver_returns_identity(self) -> None:
+        class _Always:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            async def resolve(
+                self,
+                request: Request,
+                ctx: ExecutionContext,
+            ) -> AuthnIdentity | None:
+                return AuthnIdentity(principal_id=uuid5(NAMESPACE_URL, self.name))
+
+        ctx = _execution_ctx()
+        mw = ContextBindingMiddleware(
+            self._ok_app,
+            ctx_dep=lambda: ctx,
+            authn_identity_resolvers=(_Always("a"), _Always("b")),
+            when_multiple_credentials="reject",
+            tenant_identity_codec=_NullTenantCodec(),
+        )
+        client = TestClient(mw)
+
+        with pytest.raises(AuthenticationError, match="Multiple"):
+            client.get("/")
+
     @pytest.mark.asyncio
-    async def test_header_authn_identity_resolver_uses_authentication_port(
+    async def test_header_token_resolver_uses_authentication_port(
         self,
     ) -> None:
         """Header resolver extracts bearer tokens and calls the auth contract."""
@@ -256,7 +333,7 @@ class TestContextBindingMiddleware:
         ctx = ExecutionContext(
             deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}),
         )
-        resolver = HeaderAuthnIdentityResolver(spec=AuthnSpec(name="auth"))
+        resolver = HeaderTokenAuthnIdentityResolver(spec=AuthnSpec(name="auth"))
         req = Request(
             {
                 "type": "http",
@@ -272,105 +349,50 @@ class TestContextBindingMiddleware:
         assert identity.principal_id == uuid5(NAMESPACE_URL, "token-1")
 
     @pytest.mark.asyncio
-    async def test_header_auth_rejects_ambiguous_credentials(self) -> None:
-        class _BothPort:
-            async def authenticate_with_password(self, credentials: object) -> None:
-                return None
-
-            async def authenticate_with_token(
-                self,
-                credentials: TokenCredentials,
-            ) -> AuthnIdentity:
-                return AuthnIdentity(
-                    principal_id=uuid5(NAMESPACE_URL, "t:" + credentials.token)
-                )
-
-            async def authenticate_with_api_key(
-                self, credentials: object
-            ) -> AuthnIdentity:
-                assert isinstance(credentials, ApiKeyCredentials)
-
-                return AuthnIdentity(
-                    principal_id=uuid5(NAMESPACE_URL, "k:" + credentials.key)
-                )
-
-        class _BothFactory:
-            def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _BothPort:
-                return _BothPort()
-
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _BothFactory()}))
-        resolver = HeaderAuthnIdentityResolver(
+    async def test_header_token_resolver_required_missing(self) -> None:
+        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
+        resolver = HeaderTokenAuthnIdentityResolver(
             spec=AuthnSpec(name="auth"),
-            when_multiple_credentials="reject",
+            required=True,
         )
         req = Request(
             {
                 "type": "http",
                 "path": "/",
                 "method": "GET",
-                "headers": [
-                    (b"authorization", b"Bearer tok"),
-                    (b"x-api-key", b"secret-key"),
-                ],
+                "headers": [],
             }
         )
 
-        with pytest.raises(AuthenticationError, match="Multiple"):
+        with pytest.raises(AuthenticationError, match="required"):
             await resolver.resolve(req, ctx)
 
     @pytest.mark.asyncio
-    async def test_header_auth_api_key_first_order(self) -> None:
-        class _BothPort:
-            async def authenticate_with_password(self, credentials: object) -> None:
-                return None
-
-            async def authenticate_with_token(
-                self,
-                credentials: TokenCredentials,
-            ) -> AuthnIdentity:
-                return AuthnIdentity(
-                    principal_id=uuid5(NAMESPACE_URL, "t:" + credentials.token)
-                )
-
-            async def authenticate_with_api_key(
-                self, credentials: object
-            ) -> AuthnIdentity:
-                assert isinstance(credentials, ApiKeyCredentials)
-
-                return AuthnIdentity(
-                    principal_id=uuid5(NAMESPACE_URL, "k:" + credentials.key)
-                )
-
-        class _BothFactory:
-            def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _BothPort:
-                return _BothPort()
-
-        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _BothFactory()}))
-        resolver = HeaderAuthnIdentityResolver(
-            spec=AuthnSpec(name="auth"),
-            try_sources=("api_key", "token"),
+    async def test_header_api_key_resolver_uses_authentication_port(
+        self,
+    ) -> None:
+        ctx = ExecutionContext(
+            deps=Deps.plain({AuthnDepKey: _ApiKeyAuthFactory()}),
         )
+        resolver = HeaderApiKeyAuthnIdentityResolver(spec=AuthnSpec(name="auth"))
         req = Request(
             {
                 "type": "http",
                 "path": "/",
                 "method": "GET",
-                "headers": [
-                    (b"authorization", b"Bearer tok"),
-                    (b"x-api-key", b"secret-key"),
-                ],
+                "headers": [(b"x-api-key", b"secret-key")],
             }
         )
 
         identity = await resolver.resolve(req, ctx)
 
         assert identity is not None
-        assert identity.principal_id == uuid5(NAMESPACE_URL, "k:secret-key")
+        assert identity.principal_id == uuid5(NAMESPACE_URL, "key:secret-key")
 
     @pytest.mark.asyncio
-    async def test_cookie_auth_identity_resolver(self) -> None:
+    async def test_cookie_token_resolver(self) -> None:
         ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
-        resolver = CookieAuthnIdentityResolver(
+        resolver = CookieTokenAuthnIdentityResolver(
             spec=AuthnSpec(name="auth"), cookie_name="sid"
         )
         req = Request(
@@ -386,6 +408,42 @@ class TestContextBindingMiddleware:
 
         assert identity is not None
         assert identity.principal_id == uuid5(NAMESPACE_URL, "cookie-token")
+
+    @pytest.mark.asyncio
+    async def test_middleware_rejects_ambiguous_credentials_via_resolvers(
+        self,
+    ) -> None:
+        """Two resolvers each producing an identity should be rejected when policy is reject."""
+
+        ctx = ExecutionContext(deps=Deps.plain({AuthnDepKey: _BothFactory()}))
+
+        token_resolver = HeaderTokenAuthnIdentityResolver(spec=AuthnSpec(name="auth"))
+        api_key_resolver = HeaderApiKeyAuthnIdentityResolver(spec=AuthnSpec(name="auth"))
+
+        async def _ok(scope, receive, send):  # type: ignore[no-untyped-def]
+            await send(
+                {"type": "http.response.start", "status": 200, "headers": []},
+            )
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        mw = ContextBindingMiddleware(
+            _ok,
+            ctx_dep=lambda: ctx,
+            authn_identity_resolvers=(token_resolver, api_key_resolver),
+            when_multiple_credentials="reject",
+            tenant_identity_codec=_NullTenantCodec(),
+        )
+
+        client = TestClient(mw)
+
+        with pytest.raises(AuthenticationError, match="Multiple"):
+            client.get(
+                "/",
+                headers={
+                    "Authorization": "Bearer tok",
+                    "X-API-Key": "secret-key",
+                },
+            )
 
     @pytest.mark.asyncio
     async def test_non_http_scope_passthrough(self) -> None:

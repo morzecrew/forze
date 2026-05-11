@@ -4,8 +4,8 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.authz import AuthzPort
-from forze.application.contracts.authz.value_objects import (
+from forze.application.contracts.authz import (
+    AuthzPort,
     PrincipalRef,
     coalesce_authz_tenant_id,
 )

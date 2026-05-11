@@ -13,7 +13,7 @@ from jwt import ExpiredSignatureError, InvalidTokenError
 from jwt import decode as jwt_decode
 
 from forze.application.contracts.authn import (
-    TokenCredentials,
+    AccessTokenCredentials,
     TokenVerifierPort,
     VerifiedAssertion,
 )
@@ -63,7 +63,7 @@ class OidcTokenVerifier(TokenVerifierPort):
 
     async def verify_token(
         self,
-        credentials: TokenCredentials,
+        credentials: AccessTokenCredentials,
     ) -> VerifiedAssertion:
         try:
             key = self.key_provider.get_signing_key(credentials.token)

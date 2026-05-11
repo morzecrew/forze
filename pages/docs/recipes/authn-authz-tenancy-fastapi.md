@@ -18,7 +18,7 @@ flowchart TB
 ## Without tenancy
 
 - Register **authn** and **authz** dep routes on the kernel `Deps` (`AuthnDepsModule`, `AuthzDepsModule`, document stores for auth specs).
-- Use `HeaderAuthnIdentityResolver` (or `CookieAuthnIdentityResolver`) for credentials.
+- Use one or more of `HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver` for credentials.
 - For tenant, you must still configure **exactly one** tenant strategy on the middleware: for example `TenantIdentityResolver(required=False)` with **no** `TenantResolverDepKey` registered, so `TenantIdentity` stays `None`.
 - Call `AuthzPort.permits(..., tenant_id=None)` unless you scope policy by tenant.
 
@@ -30,8 +30,13 @@ flowchart TB
 
 ## Credential sources on the boundary
 
-- `HeaderAuthnIdentityResolver` supports **Authorization bearer** and **API key** headers. Control **order** with `try_sources` (for example `("api_key", "token")` to prefer API keys). If both raw credentials are present, `when_multiple_credentials="reject"` raises `AuthenticationError` with `code="ambiguous_credentials"` instead of picking one silently. The `scheme` (Authorization) and `prefix` (API key) parts are forwarded to verifiers as **routing hints** — verifiers decide whether to consult them, and the JWT signature/claims (or HMAC tag) are the actual security boundary.
-- `CookieAuthnIdentityResolver` reads an access token from a named cookie into `TokenCredentials`. Cookie bearer has **CSRF** implications for browser clients; prefer `HttpOnly` + `SameSite` and avoid using cookie access tokens for state-changing requests without anti-CSRF tokens, or restrict cookies to non-browser clients.
+`ContextBindingMiddleware` accepts a sequence of single-source resolvers (`authn_identity_resolvers`); the **order** of the sequence is the precedence order, and the `when_multiple_credentials` policy decides what happens when more than one resolver returns an identity for the same request:
+
+- `HeaderTokenAuthnIdentityResolver` reads bearer tokens from a configurable header (default `Authorization`). The `scheme` part of the header is forwarded to verifiers as a **routing hint** — the JWT signature/claims (or opaque-token verifier) remain the actual security boundary.
+- `HeaderApiKeyAuthnIdentityResolver` reads API keys from a configurable header (default `X-API-Key`). The optional `prefix:key` shape lets verifiers route to per-prefix profiles.
+- `CookieTokenAuthnIdentityResolver` reads an access token from a named cookie into `AccessTokenCredentials`. Cookie bearer has **CSRF** implications for browser clients; prefer `HttpOnly` + `SameSite` and avoid using cookie access tokens for state-changing requests without anti-CSRF tokens, or restrict cookies to non-browser clients.
+
+Set `when_multiple_credentials="reject"` to raise `AuthenticationError(code="ambiguous_credentials")` when more than one resolver succeeds; the default `"first_in_order"` short-circuits on the first hit.
 
 ## Kernel wiring (sketch)
 
@@ -43,22 +48,24 @@ Merge document deps with `AuthnDepsModule(...)()` and `AuthzDepsModule(...)()`, 
 from forze.application.contracts.authn import AuthnSpec
 from forze_fastapi.middlewares.context import (
     ContextBindingMiddleware,
-    HeaderAuthnIdentityResolver,
+    HeaderApiKeyAuthnIdentityResolver,
+    HeaderTokenAuthnIdentityResolver,
 )
 from forze_fastapi.middlewares.context.tenancy import TenantIdentityResolver
 
 api_authn = AuthnSpec(
     name="api",
-    enabled_methods=frozenset({"token"}),
+    enabled_methods=frozenset({"token", "api_key"}),
 )
 
 app.add_middleware(
     ContextBindingMiddleware,
     ctx_dep=get_ctx,
-    authn_identity_resolver=HeaderAuthnIdentityResolver(
-        spec=api_authn,
-        when_multiple_credentials="reject",
+    authn_identity_resolvers=(
+        HeaderTokenAuthnIdentityResolver(spec=api_authn),
+        HeaderApiKeyAuthnIdentityResolver(spec=api_authn),
     ),
+    when_multiple_credentials="reject",
     tenant_identity_resolver=TenantIdentityResolver(required=False),
 )
 ```
@@ -100,9 +107,51 @@ OpenAPI cannot be inferred from arbitrary guard callables; **sharing** `AuthzPer
 
 Pass `default_http_features` into `attach_document_endpoints` / `attach_search_endpoints` to prepend guards (for example `RequireAuthnFeature()`, `RequirePermissionFeature(...)`) to every generated endpoint spec without editing each builder. Defaults remain **off** if you omit the argument.
 
-## Optional template routes
+## Pre-built authn endpoints
 
-`attach_oauth2_password_token_template_routes` registers minimal **login** and **refresh** JSON routes over `AuthnPort` and `TokenLifecyclePort` (the latter now lives in `forze.application.contracts.authn_lifecycle`). The implementation of `AuthnPort` provided by `forze_authn` is `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the template routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
+`attach_authn_endpoints` registers configurable **login**, **refresh**, **logout**, and **change-password** routes wired to the `AuthnUsecasesFacade`:
+
+```python
+from fastapi import APIRouter
+from forze.application.composition.authn import build_authn_registry
+from forze_fastapi.endpoints.authn import (
+    CookieTokenTransportSpec,
+    HeaderTokenTransportSpec,
+    attach_authn_endpoints,
+)
+
+reg = build_authn_registry(api_authn)
+reg.finalize("authn", inplace=True)
+
+router = APIRouter(prefix="/auth")
+attach_authn_endpoints(
+    router,
+    spec=api_authn,
+    registry=reg,
+    ctx_dep=get_ctx,
+    endpoints={
+        "password_login": True,
+        "refresh": True,
+        "logout": True,
+        "change_password": True,
+        "config": {
+            "access_token_transport": HeaderTokenTransportSpec(
+                kind="header",
+                header_name="Authorization",
+                scheme="Bearer",
+            ),
+            "refresh_token_transport": CookieTokenTransportSpec(
+                kind="cookie",
+                cookie_name="refresh_token",
+            ),
+        },
+    },
+)
+```
+
+Password login uses `application/x-www-form-urlencoded` so first-party login forms post directly. The matching `TokenTransportInputFeature` reads the refresh token from the configured transport on `/refresh`; the `TokenTransportOutputFeature` sets cookies on issue and clears them on logout.
+
+Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless the caller explicitly supplies one in the `SimpleHttpEndpointSpec` for the endpoint. The `AuthnUsecasesFacade.password_login` implementation provided by `forze_authn` is `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the pre-built routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
 
 The `ctx_dep` callable must be annotated with a concrete return type (for example `def get_ctx() -> ExecutionContext:`) so FastAPI treats it as a dependency rather than trying to parse `ExecutionContext` from the request.
 

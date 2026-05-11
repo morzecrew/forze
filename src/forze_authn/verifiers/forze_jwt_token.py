@@ -4,7 +4,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.authn import (
-    TokenCredentials,
+    AccessTokenCredentials,
     TokenVerifierPort,
     VerifiedAssertion,
 )
@@ -19,7 +19,7 @@ from ..services import AccessTokenService
 class ForzeJwtTokenVerifier(TokenVerifierPort):
     """Verify a first-party Forze access JWT and emit a :class:`VerifiedAssertion`.
 
-    Treats ``TokenCredentials.scheme`` and ``kind`` as routing hints only; the underlying
+    Treats ``AccessTokenCredentials.scheme`` as a routing hint only; the underlying
     :class:`AccessTokenService` is the security gate (signature, expiry, issuer, audience).
     The emitted ``issuer`` is taken from the verified ``iss`` claim so that resolvers can
     distinguish first-party Forze tokens from any other JWT-shaped issuer wired on the
@@ -33,7 +33,7 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
 
     async def verify_token(
         self,
-        credentials: TokenCredentials,
+        credentials: AccessTokenCredentials,
     ) -> VerifiedAssertion:
         claims = self.access_svc.verify_token(credentials.token)
 

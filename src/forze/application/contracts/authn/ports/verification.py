@@ -1,9 +1,9 @@
 from typing import Awaitable, Protocol
 
 from ..value_objects import (
+    AccessTokenCredentials,
     ApiKeyCredentials,
     PasswordCredentials,
-    TokenCredentials,
     VerifiedAssertion,
 )
 
@@ -31,18 +31,20 @@ class PasswordVerifierPort(Protocol):
 
 
 class TokenVerifierPort(Protocol):
-    """Verify token credentials (JWT, opaque, OIDC, etc.) and emit a :class:`VerifiedAssertion`.
+    """Verify access-token credentials (JWT, opaque, OIDC, etc.) and emit a :class:`VerifiedAssertion`.
 
     External IdP integrations (Firebase, Casdoor, generic OIDC) implement this port; their
     :attr:`~forze.application.contracts.authn.value_objects.assertion.VerifiedAssertion.issuer`
-    becomes the discriminator inside the principal resolver.
+    becomes the discriminator inside the principal resolver. Refresh tokens are handled
+    by :class:`~forze.application.contracts.authn.ports.lifecycle.TokenLifecyclePort` and
+    never reach a verifier.
     """
 
     def verify_token(
         self,
-        credentials: TokenCredentials,  # noqa: F841
+        credentials: AccessTokenCredentials,  # noqa: F841
     ) -> Awaitable[VerifiedAssertion]:
-        """Verify token credentials and return a :class:`VerifiedAssertion`."""
+        """Verify access-token credentials and return a :class:`VerifiedAssertion`."""
         ...
 
 

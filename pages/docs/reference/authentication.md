@@ -7,7 +7,7 @@ Reference for the authentication contract group (`forze.application.contracts.au
 | Module | Role |
 |--------|------|
 | `forze.application.contracts.authn` | Value objects, ports, `AuthnSpec`, dep keys (re-exports the submodules below). |
-| `forze.application.contracts.authn.value_objects` | `AuthnIdentity`, `VerifiedAssertion`, `*Credentials`, `*Response`, `OAuth2Tokens`, `CredentialLifetime`. |
+| `forze.application.contracts.authn.value_objects` | `AuthnIdentity`, `VerifiedAssertion`, `*Credentials` (`AccessTokenCredentials`, `RefreshTokenCredentials`, …), `Issued*` (`IssuedAccessToken`, `IssuedRefreshToken`, `IssuedTokens`, `IssuedApiKey`), `CredentialLifetime`. |
 | `forze.application.contracts.authn.ports.authn` | `AuthnPort` orchestration facade. |
 | `forze.application.contracts.authn.ports.verification` | `PasswordVerifierPort`, `TokenVerifierPort`, `ApiKeyVerifierPort`. |
 | `forze.application.contracts.authn.ports.resolution` | `PrincipalResolverPort`. |
@@ -51,17 +51,18 @@ Raw credential value objects accepted by the orchestrator:
 | Type | Required fields | Optional hint fields |
 |------|------------------|----------------------|
 | `PasswordCredentials` | `login`, `password` | — |
-| `TokenCredentials` | `token` | `scheme`, `kind`, `profile` (routing hints; verifiers decide whether to consult them) |
+| `AccessTokenCredentials` | `token` | `scheme` (default `"Bearer"`), `profile` (selects a verifier registration when more than one is wired) |
+| `RefreshTokenCredentials` | `token` | — (lifecycle-validated; no profile knob) |
 | `ApiKeyCredentials` | `key` | `prefix` |
 
 ### Token responses
 
 | Type | Purpose |
 |------|---------|
-| `ApiKeyResponse` | Issued API key (`key`, optional `key_id`, optional `lifetime`). |
-| `TokenResponse` | Single issued token (`token`, optional `lifetime`). |
-| `OAuth2Tokens` | Optional `access_token` + optional `refresh_token` (refresh-only flows omit access). |
-| `OAuth2TokensResponse` | `access_token: TokenResponse` + optional `refresh_token: TokenResponse`. |
+| `IssuedApiKey` | Issued API key (`key`, optional `key_id`, optional `lifetime`). |
+| `IssuedAccessToken` | Single issued access token (`token: AccessTokenCredentials`, optional `lifetime`). |
+| `IssuedRefreshToken` | Single issued refresh token (`token: RefreshTokenCredentials`, optional `lifetime`). |
+| `IssuedTokens` | `access: IssuedAccessToken` + optional `refresh: IssuedRefreshToken`. |
 | `CredentialLifetime` | Optional `expires_in`, `expires_at`, `issued_at`. |
 
 ## Ports
@@ -73,7 +74,7 @@ Orchestration facade; one method per credential family. Default implementation: 
 | Method | Returns |
 |--------|---------|
 | `authenticate_with_password(PasswordCredentials)` | `AuthnIdentity` |
-| `authenticate_with_token(TokenCredentials)` | `AuthnIdentity` |
+| `authenticate_with_token(AccessTokenCredentials)` | `AuthnIdentity` |
 | `authenticate_with_api_key(ApiKeyCredentials)` | `AuthnIdentity` |
 
 Invoking a method whose family is not in `AuthnSpec.enabled_methods` raises `AuthenticationError(code="method_disabled")`.
@@ -85,7 +86,7 @@ Each verifier proves the credential against its issuer and emits a `VerifiedAsse
 | Port | Method | Returns |
 |------|--------|---------|
 | `PasswordVerifierPort` | `verify_password(PasswordCredentials)` | `VerifiedAssertion` |
-| `TokenVerifierPort` | `verify_token(TokenCredentials)` | `VerifiedAssertion` |
+| `TokenVerifierPort` | `verify_token(AccessTokenCredentials)` | `VerifiedAssertion` |
 | `ApiKeyVerifierPort` | `verify_api_key(ApiKeyCredentials)` | `VerifiedAssertion` |
 
 ### PrincipalResolverPort
@@ -101,7 +102,7 @@ Maps a `VerifiedAssertion` to a canonical `AuthnIdentity`.
 | Port | Methods |
 |------|---------|
 | `PasswordLifecyclePort` | `change_password(identity, new_password)` |
-| `TokenLifecyclePort` | `issue_tokens(identity)`, `refresh_tokens(OAuth2Tokens)`, `revoke_tokens(identity)` |
+| `TokenLifecyclePort` | `issue_tokens(identity) -> IssuedTokens`, `refresh_tokens(RefreshTokenCredentials) -> IssuedTokens`, `revoke_tokens(identity)` |
 | `ApiKeyLifecyclePort` | `issue_api_key(identity)`, `refresh_api_key(ApiKeyCredentials)`, `revoke_api_key(key_id)`, `revoke_many_api_keys(key_ids)` |
 
 ### PasswordAccountProvisioningPort
@@ -110,7 +111,7 @@ Maps a `VerifiedAssertion` to a canonical `AuthnIdentity`.
 |--------|---------|
 | `register_with_password(principal_id, credentials)` | Self-service registration. |
 | `provision_password_account(operator, principal_id, credentials)` | Operator-driven provisioning. |
-| `accept_invite_with_password(invite, principal_id, credentials)` | Token-bound invite redemption. |
+| `accept_invite_with_password(invite_token, principal_id, credentials)` | Token-bound invite redemption (invite token as opaque string). |
 
 ## Spec
 
@@ -150,7 +151,7 @@ All dep keys live in `forze.application.contracts.authn` (re-exported from `.dep
 | `ApiKeyVerifierDepKey` | `ApiKeyVerifierPort` | One factory per route. |
 | `PrincipalResolverDepKey` | `PrincipalResolverPort` | One factory per route; default is `JwtNativeUuidResolver`. |
 | `PasswordLifecycleDepKey` | `PasswordLifecyclePort` | Optional; only registered when `password_lifecycle` routes are listed. |
-| `TokenLifecycleDepKey` | `TokenLifecyclePort` | Required for `attach_oauth2_password_token_template_routes`. |
+| `TokenLifecycleDepKey` | `TokenLifecyclePort` | Required for `attach_authn_endpoints` (login/refresh/logout). |
 | `ApiKeyLifecycleDepKey` | `ApiKeyLifecyclePort` | Optional; for API-key issuance/revocation flows. |
 | `PasswordAccountProvisioningDepKey` | `PasswordAccountProvisioningPort` | Optional; for self-service or operator-driven account creation. |
 

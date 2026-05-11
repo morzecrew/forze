@@ -1,4 +1,3 @@
-from .constants import PrincipalKind
 from .models import (
     CreatePolicyPrincipalCmd,
     PolicyPrincipal,
@@ -11,7 +10,6 @@ from .models import (
 __all__ = [
     "CreatePolicyPrincipalCmd",
     "PolicyPrincipal",
-    "PrincipalKind",
     "ReadPolicyPrincipal",
     "UpdatePolicyPrincipalCmd",
 ]

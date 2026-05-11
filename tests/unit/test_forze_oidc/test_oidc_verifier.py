@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 import jwt
 
-from forze.application.contracts.authn import TokenCredentials, VerifiedAssertion
+from forze.application.contracts.authn import AccessTokenCredentials, VerifiedAssertion
 from forze.base.errors import AuthenticationError
 from forze.base.primitives import utcnow
 from forze_authn import DeterministicUuidResolver, MappingTableResolver
@@ -120,7 +120,7 @@ class TestOidcTokenVerifier:
 
         sub = str(uuid4())
         token = _hs256_token(secret, issuer="https://issuer.example", subject=sub)
-        assertion = await verifier.verify_token(TokenCredentials(token=token))
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
 
         assert assertion.issuer == "https://issuer.example"
         assert assertion.subject == sub
@@ -137,7 +137,7 @@ class TestOidcTokenVerifier:
         token = _hs256_token(secret, issuer="other", subject="u")
 
         with pytest.raises(AuthenticationError):
-            await verifier.verify_token(TokenCredentials(token=token))
+            await verifier.verify_token(AccessTokenCredentials(token=token))
 
     @pytest.mark.asyncio
     async def test_rejects_expired_token(self) -> None:
@@ -157,7 +157,7 @@ class TestOidcTokenVerifier:
         )
 
         with pytest.raises(AuthenticationError) as ei:
-            await verifier.verify_token(TokenCredentials(token=expired))
+            await verifier.verify_token(AccessTokenCredentials(token=expired))
         assert ei.value.code == "oidc_token_expired"
 
     @pytest.mark.asyncio
@@ -175,11 +175,11 @@ class TestOidcTokenVerifier:
         token = _hs256_token(
             secret, issuer="https://issuer", subject="ext:42", audience="app"
         )
-        assertion = await verifier.verify_token(TokenCredentials(token=token))
+        assertion = await verifier.verify_token(AccessTokenCredentials(token=token))
         identity = await resolver.resolve(assertion)
 
         # Stable across calls
-        assertion2 = await verifier.verify_token(TokenCredentials(token=token))
+        assertion2 = await verifier.verify_token(AccessTokenCredentials(token=token))
         identity2 = await resolver.resolve(assertion2)
         assert identity.principal_id == identity2.principal_id
 

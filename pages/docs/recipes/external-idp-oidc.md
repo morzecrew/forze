@@ -17,7 +17,7 @@ Use this recipe when an external identity provider (Casdoor, Firebase Auth, Auth
 3. Build a configurable factory wrapping `OidcTokenVerifier` and a `JwksKeyProvider` per IdP issuer.
 4. Pick a `PrincipalResolverPort`: `MappingTableResolver` for production SSO, `DeterministicUuidResolver` for stateless prototyping.
 5. Pass the verifier and resolver overrides into `AuthnDepsModule.token_verifiers` / `AuthnDepsModule.resolvers`.
-6. Wire `HeaderAuthnIdentityResolver` on the FastAPI middleware with the matching `AuthnSpec`.
+6. Wire `HeaderTokenAuthnIdentityResolver` (and any siblings you need) on the FastAPI middleware with the matching `AuthnSpec`.
 
 ## Configurable factories
 
@@ -101,7 +101,7 @@ deps = DepsPlan.from_modules(authn_module)
 from forze.application.contracts.authn import AuthnSpec
 from forze_fastapi.middlewares.context import (
     ContextBindingMiddleware,
-    HeaderAuthnIdentityResolver,
+    HeaderTokenAuthnIdentityResolver,
 )
 
 api_authn = AuthnSpec(
@@ -112,14 +112,12 @@ api_authn = AuthnSpec(
 app.add_middleware(
     ContextBindingMiddleware,
     ctx_dep=get_ctx,
-    authn_identity_resolver=HeaderAuthnIdentityResolver(
-        spec=api_authn,
-        when_multiple_credentials="reject",
-    ),
+    authn_identity_resolvers=(HeaderTokenAuthnIdentityResolver(spec=api_authn),),
+    when_multiple_credentials="reject",
 )
 ```
 
-The header resolver forwards `Authorization: Bearer <jwt>` into `TokenCredentials`. `OidcTokenVerifier` ignores `scheme` / `kind` (they are routing hints) and goes straight to signature/claims validation.
+The header resolver forwards `Authorization: Bearer <jwt>` into `AccessTokenCredentials`. `OidcTokenVerifier` ignores `scheme` (a routing hint) and goes straight to signature/claims validation.
 
 ## Multi-IdP topology
 
@@ -153,7 +151,7 @@ Routes without an entry in `token_verifiers` / `resolvers` fall back to the firs
 | `MappingTableResolver(provision_on_first_sight=True)` | SSO with admin overrides or future account merging. | One DB write on first sight per principal. |
 | `MappingTableResolver(provision_on_first_sight=False)` | Invitation-only, tightly controlled access. | Requires out-of-band provisioning before first login. |
 | `DeterministicUuidResolver` | Read-only deployments, prototyping, or environments without writable storage. | No row to attach admin metadata, audit, or future account merges to. |
-| Multiple `TokenVerifierPort` per route via profiles | Same route accepts both first-party and external tokens. | Requires explicit `TokenCredentials.profile` (or `AuthnSpec.token_profile`) routing. |
+| Multiple `TokenVerifierPort` per route via profiles | Same route accepts both first-party and external tokens. | Requires explicit `AccessTokenCredentials.profile` (or `AuthnSpec.token_profile`) routing. |
 
 ## Learn more
 

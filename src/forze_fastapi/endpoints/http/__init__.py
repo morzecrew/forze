@@ -5,6 +5,7 @@ from .composition import (
     build_http_endpoint_spec,
 )
 from .contracts import (
+    AuthnRequirement,
     HttpEndpointContext,
     HttpEndpointHandlerPort,
     HttpEndpointSpec,
@@ -33,7 +34,12 @@ from .mapping import (
     QueryAsIsBodyAssignMapper,
     QueryAsIsMapper,
 )
-from .policy import AnyFeature, merge_http_endpoint_features, with_default_http_features
+from .policy import (
+    AnyFeature,
+    apply_authn_requirement,
+    merge_http_endpoint_features,
+    with_default_http_features,
+)
 
 # ----------------------- #
 
@@ -57,6 +63,8 @@ __all__ = [
     "RequireAuthnFeature",
     "RequireTenantFeature",
     "AnyFeature",
+    "apply_authn_requirement",
+    "AuthnRequirement",
     "merge_http_endpoint_features",
     "with_default_http_features",
     "BodyAsIsMapper",

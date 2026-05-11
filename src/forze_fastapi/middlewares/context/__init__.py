@@ -1,9 +1,10 @@
 from .authn import (
-    CookieAuthnIdentityResolver,
-    HeaderAuthnIdentityResolver,
+    CookieTokenAuthnIdentityResolver,
+    HeaderApiKeyAuthnIdentityResolver,
+    HeaderTokenAuthnIdentityResolver,
 )
 from .callctx import HeaderCallContextCodec
-from .middleware import ContextBindingMiddleware
+from .middleware import ContextBindingMiddleware, MultipleCredentialPolicy
 from .ports import (
     AuthnIdentityResolverPort,
     CallContextCodecPort,
@@ -14,13 +15,15 @@ from .tenancy import HeaderTenantIdentityCodec, TenantIdentityResolver
 # ----------------------- #
 
 __all__ = [
-    "ContextBindingMiddleware",
-    "CallContextCodecPort",
     "AuthnIdentityResolverPort",
-    "CookieAuthnIdentityResolver",
-    "HeaderAuthnIdentityResolver",
+    "CallContextCodecPort",
+    "ContextBindingMiddleware",
+    "CookieTokenAuthnIdentityResolver",
+    "HeaderApiKeyAuthnIdentityResolver",
     "HeaderCallContextCodec",
-    "TenantIdentityCodecPort",
     "HeaderTenantIdentityCodec",
+    "HeaderTokenAuthnIdentityResolver",
+    "MultipleCredentialPolicy",
+    "TenantIdentityCodecPort",
     "TenantIdentityResolver",
 ]

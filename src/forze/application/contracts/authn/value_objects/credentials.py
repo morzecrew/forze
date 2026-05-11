@@ -31,27 +31,40 @@ class ApiKeyCredentials:
 
 
 # ....................... #
-# Abstract token credentials
+# Access token (verifier-consumed bearer-style credentials)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TokenCredentials:
-    """Credentials for token authentication.
+class AccessTokenCredentials:
+    """Credentials carrying an access token presented for verification.
 
-    ``scheme`` and ``kind`` are routing hints, not security gates; verifier implementations
-    decide whether to consult them. ``profile`` selects an explicit verifier registration
-    when more than one verifier is wired for the same authn route (overrides the spec hint
-    when set).
+    ``scheme`` is a routing/labeling hint (for OAuth2-style ``Bearer ...``
+    headers); ``profile`` selects an explicit verifier registration when more
+    than one token verifier is wired on the same authn route (overrides the
+    spec hint when set).
     """
 
     token: str
-    """Opaque access or identity token."""
+    """Opaque access token string."""
 
-    scheme: str | None = attrs.field(default=None)
-    """Optional token scheme hint, e.g. ``"Bearer"``."""
-
-    kind: str | None = attrs.field(default=None)
-    """Optional token kind hint, e.g. ``"access"``, ``"refresh"``, ``"id"``."""
+    scheme: str = attrs.field(default="Bearer")
+    """Token scheme label, e.g. ``"Bearer"``."""
 
     profile: str | None = attrs.field(default=None)
     """Optional verifier profile name; overrides ``AuthnSpec.token_profile`` when set."""
+
+
+# ....................... #
+# Refresh token (lifecycle-consumed)
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RefreshTokenCredentials:
+    """Credentials carrying a refresh token presented for token rotation.
+
+    Refresh tokens are validated by the lifecycle service (digest/expiry/chain),
+    never by a token verifier port; therefore there is no ``profile`` knob.
+    """
+
+    token: str
+    """Opaque refresh token string."""

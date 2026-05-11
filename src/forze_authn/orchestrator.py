@@ -3,6 +3,7 @@ from typing import final
 import attrs
 
 from forze.application.contracts.authn import (
+    AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
     AuthnIdentity,
@@ -11,7 +12,6 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     PasswordVerifierPort,
     PrincipalResolverPort,
-    TokenCredentials,
     TokenVerifierPort,
 )
 from forze.base.errors import AuthenticationError, CoreError
@@ -105,7 +105,7 @@ class AuthnOrchestrator(AuthnPort):
 
     async def authenticate_with_token(
         self,
-        credentials: TokenCredentials,
+        credentials: AccessTokenCredentials,
     ) -> AuthnIdentity:
         if "token" not in self.enabled_methods or self.token_verifier is None:
             raise AuthenticationError(

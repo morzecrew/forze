@@ -1,3 +1,4 @@
+from .authn import AuthnRequirement, AuthnRequirementSchemeName
 from .constants import (
     HTTP_BODY_KEY,
     HTTP_CTX_KEY,
@@ -19,6 +20,8 @@ from .specs import (
 # ----------------------- #
 
 __all__ = [
+    "AuthnRequirement",
+    "AuthnRequirementSchemeName",
     "HttpEndpointSpec",
     "HttpRequestDTO",
     "HttpRequestSpec",

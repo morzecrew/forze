@@ -1,10 +1,10 @@
 from typing import Awaitable, Protocol
 
 from ..value_objects import (
+    AccessTokenCredentials,
     ApiKeyCredentials,
     AuthnIdentity,
     PasswordCredentials,
-    TokenCredentials,
 )
 
 # ----------------------- #
@@ -29,9 +29,9 @@ class AuthnPort(Protocol):
 
     def authenticate_with_token(
         self,
-        credentials: TokenCredentials,  # noqa: F841
+        credentials: AccessTokenCredentials,  # noqa: F841
     ) -> Awaitable[AuthnIdentity]:
-        """Authenticate with token credentials and return the subject."""
+        """Authenticate with access-token credentials and return the subject."""
         ...
 
     def authenticate_with_api_key(

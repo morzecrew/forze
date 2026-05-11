@@ -7,6 +7,7 @@ from forze.application.execution import FacadeOpRef
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO
 
+from .authn import AuthnRequirement
 from .constants import HttpBodyMode
 from .ports import HttpEndpointFeaturePort
 from .typevars import B, C, F, H, In, P, Q, R, Raw
@@ -169,3 +170,4 @@ class SimpleHttpEndpointSpec(TypedDict, total=False):
 
     path_override: str
     metadata: HttpMetadataSpec
+    authn: AuthnRequirement

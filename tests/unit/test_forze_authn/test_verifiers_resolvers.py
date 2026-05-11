@@ -23,7 +23,7 @@ from forze.application.contracts.authn import (
     ApiKeyCredentials,
     AuthnIdentity,
     PasswordCredentials,
-    TokenCredentials,
+    AccessTokenCredentials,
     VerifiedAssertion,
 )
 from forze.base.errors import AuthenticationError, CoreError
@@ -171,7 +171,7 @@ class _StubPasswordVerifier:
 
 
 class _StubTokenVerifier:
-    async def verify_token(self, c: TokenCredentials) -> VerifiedAssertion:
+    async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
         return VerifiedAssertion(
             issuer="stub:token", subject="00000000-0000-0000-0000-000000000002"
         )
@@ -246,7 +246,7 @@ class TestAuthnOrchestrator:
             resolver=resolver,
         )
 
-        ident = await orch.authenticate_with_token(TokenCredentials(token="t"))
+        ident = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
 
         assert isinstance(ident, AuthnIdentity)
         assert len(resolver.calls) == 1
@@ -263,7 +263,7 @@ class TestAuthnOrchestrator:
             resolver=resolver,
         )
 
-        await orch.authenticate_with_token(TokenCredentials(token="t"))
+        await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
         await orch.authenticate_with_password(
             PasswordCredentials(login="u", password="p")
         )

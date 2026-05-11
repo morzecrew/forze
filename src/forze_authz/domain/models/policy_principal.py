@@ -1,5 +1,6 @@
 from pydantic import Field
 
+from forze.application.contracts.authz import PrincipalKind
 from forze.domain.models import (
     BaseDTO,
     CoreModel,
@@ -8,7 +9,6 @@ from forze.domain.models import (
     ReadDocument,
 )
 
-from ..constants import PrincipalKind
 from ..mixins import IsActiveMixin
 
 # ----------------------- #

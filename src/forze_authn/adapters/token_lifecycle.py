@@ -5,23 +5,20 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.authn import (
+    AccessTokenCredentials,
     AuthnIdentity,
     CredentialLifetime,
-    OAuth2Tokens,
-    OAuth2TokensResponse,
-    TokenCredentials,
+    IssuedAccessToken,
+    IssuedRefreshToken,
+    IssuedTokens,
+    RefreshTokenCredentials,
     TokenLifecyclePort,
-    TokenResponse,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.errors import AuthenticationError, CoreError
 from forze.base.primitives import utcnow
 
-from ..domain.constants import (
-    ACCESS_TOKEN_KIND,
-    ACCESS_TOKEN_SCHEME,
-    REFRESH_TOKEN_KIND,
-)
+from ..domain.constants import ACCESS_TOKEN_SCHEME
 from ..domain.models.account import ReadPrincipal
 from ..domain.models.session import (
     CreateSessionCmd,
@@ -101,7 +98,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     async def issue_tokens(
         self,
         identity: AuthnIdentity,
-    ) -> OAuth2TokensResponse:
+    ) -> IssuedTokens:
         now = utcnow()
 
         access_expires_at = now + self.access_expires_in
@@ -124,12 +121,11 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         await self.session_cmd.create(session_cmd, return_new=False)
 
-        return OAuth2TokensResponse(
-            access_token=TokenResponse(
-                token=TokenCredentials(
+        return IssuedTokens(
+            access=IssuedAccessToken(
+                token=AccessTokenCredentials(
                     token=access_token,
                     scheme=ACCESS_TOKEN_SCHEME,
-                    kind=ACCESS_TOKEN_KIND,
                 ),
                 lifetime=CredentialLifetime(
                     expires_in=self.access_expires_in,
@@ -137,11 +133,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                     expires_at=access_expires_at,
                 ),
             ),
-            refresh_token=TokenResponse(
-                token=TokenCredentials(
-                    token=refresh_token,
-                    kind=REFRESH_TOKEN_KIND,
-                ),
+            refresh=IssuedRefreshToken(
+                token=RefreshTokenCredentials(token=refresh_token),
                 lifetime=CredentialLifetime(
                     expires_in=self.refresh_expires_in,
                     issued_at=now,
@@ -188,10 +181,11 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
     # ....................... #
 
-    async def refresh_tokens(self, credentials: OAuth2Tokens) -> OAuth2TokensResponse:
-        refresh_token = credentials.refresh_token
-
-        if refresh_token is None:
+    async def refresh_tokens(
+        self,
+        refresh_token: RefreshTokenCredentials,
+    ) -> IssuedTokens:
+        if not refresh_token.token:
             raise AuthenticationError("Refresh token is required")
 
         refresh_digest = self.refresh_svc.calculate_token_digest(refresh_token.token)
@@ -256,12 +250,11 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             return_new=False,
         )
 
-        return OAuth2TokensResponse(
-            access_token=TokenResponse(
-                token=TokenCredentials(
+        return IssuedTokens(
+            access=IssuedAccessToken(
+                token=AccessTokenCredentials(
                     token=new_access_token,
                     scheme=ACCESS_TOKEN_SCHEME,
-                    kind=ACCESS_TOKEN_KIND,
                 ),
                 lifetime=CredentialLifetime(
                     expires_in=self.access_expires_in,
@@ -269,11 +262,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                     expires_at=access_expires_at,
                 ),
             ),
-            refresh_token=TokenResponse(
-                token=TokenCredentials(
-                    token=new_refresh_token,
-                    kind=REFRESH_TOKEN_KIND,
-                ),
+            refresh=IssuedRefreshToken(
+                token=RefreshTokenCredentials(token=new_refresh_token),
                 lifetime=CredentialLifetime(
                     expires_in=self.refresh_expires_in,
                     issued_at=now,

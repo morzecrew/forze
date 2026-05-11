@@ -1,13 +1,18 @@
 import attrs
 
-from .credentials import ApiKeyCredentials, TokenCredentials
+from .credentials import (
+    AccessTokenCredentials,
+    ApiKeyCredentials,
+    RefreshTokenCredentials,
+)
 from .lifetime import CredentialLifetime
 
 # ----------------------- #
+# API key
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ApiKeyResponse:
+class IssuedApiKey:
     """Response from API key endpoint."""
 
     key: ApiKeyCredentials
@@ -21,47 +26,50 @@ class ApiKeyResponse:
 
 
 # ....................... #
+# Access token
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class TokenResponse:
-    """Response from token endpoint."""
+class IssuedAccessToken:
+    """An access token freshly issued by a token lifecycle service."""
 
-    token: TokenCredentials
-    """Token."""
+    token: AccessTokenCredentials
+    """Access token credentials."""
 
     lifetime: CredentialLifetime | None = attrs.field(default=None)
-    """Lifetime of the token."""
+    """Lifetime of the access token."""
 
 
 # ....................... #
-# OAuth2 tokens
+# Refresh token
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class OAuth2Tokens:
-    """Credentials for OAuth2 authentication.
+class IssuedRefreshToken:
+    """A refresh token freshly issued by a token lifecycle service."""
 
-    ``access_token`` is optional so refresh-only flows do not need a placeholder access
-    token to satisfy the shape.
+    token: RefreshTokenCredentials
+    """Refresh token credentials."""
+
+    lifetime: CredentialLifetime | None = attrs.field(default=None)
+    """Lifetime of the refresh token."""
+
+
+# ....................... #
+# Token bundle
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class IssuedTokens:
+    """Bundle of tokens returned from issue/refresh flows.
+
+    ``access`` is always present; ``refresh`` is omitted when the underlying
+    lifecycle does not rotate refresh tokens (for example pure access-only
+    flows or stateless verifier-only routes).
     """
 
-    access_token: TokenCredentials | None = attrs.field(default=None)
-    """Access token (optional; omit for refresh-only requests)."""
+    access: IssuedAccessToken
+    """Issued access token."""
 
-    refresh_token: TokenCredentials | None = attrs.field(default=None)
-    """Refresh token."""
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class OAuth2TokensResponse:
-    """Response from OAuth2 token endpoint."""
-
-    access_token: TokenResponse
-    """Access token."""
-
-    refresh_token: TokenResponse | None = attrs.field(default=None)
-    """Refresh token."""
+    refresh: IssuedRefreshToken | None = attrs.field(default=None)
+    """Issued refresh token, when applicable."""
