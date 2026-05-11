@@ -58,10 +58,12 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
     """Register authn dependency factories that resolve document ports via execution context.
 
     The ``authn`` mapping carries one entry per route, describing which credential families
-    that route accepts. For each entry the module registers (i) the matching first-party
-    verifier under :class:`PasswordVerifierDepKey` / :class:`TokenVerifierDepKey` /
-    :class:`ApiKeyVerifierDepKey`, (ii) a default :class:`JwtNativeUuidResolver` under
-    :class:`PrincipalResolverDepKey`, and (iii) the orchestrator under :class:`AuthnDepKey`.
+    that route accepts. For each entry the module registers:
+
+    1. the matching first-party verifier under :class:`PasswordVerifierDepKey` / :class:`TokenVerifierDepKey` / :class:`ApiKeyVerifierDepKey`,
+    2. a default :class:`JwtNativeUuidResolver` under :class:`PrincipalResolverDepKey`,
+    3. the orchestrator under :class:`AuthnDepKey`.
+
     External integrations override individual verifiers/resolvers by merging additional
     :class:`Deps` after the module's output.
     """
@@ -85,9 +87,16 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
     """Optional per-route API key verifier overrides; routes without an entry get :class:`HmacApiKeyVerifier`."""
 
     token_lifecycle: Collection[K] | None = attrs.field(default=None)
+    """Authn routes that should use first-party token lifecycle management."""
+
     password_lifecycle: Collection[K] | None = attrs.field(default=None)
+    """Authn routes that should use first-party password lifecycle management."""
+
     api_key_lifecycle: Collection[K] | None = attrs.field(default=None)
+    """Authn routes that should use first-party API key lifecycle management."""
+
     password_account_provisioning: Collection[K] | None = attrs.field(default=None)
+    """Authn routes that should use first-party password account provisioning."""
 
     # ....................... #
 
@@ -104,8 +113,9 @@ class AuthnDepsModule[K: str | StrEnum](DepsModule[K]):
             return Deps[K]()
 
         if self.kernel is None:
-            msg = "kernel is required when registering authn dependency routes"
-            raise CoreError(msg)
+            raise CoreError(
+                "kernel is required when registering authn dependency routes"
+            )
 
         shared = build_authn_shared_services(self.kernel)
 
