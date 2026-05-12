@@ -198,33 +198,38 @@ class TestPsycopgQueryRenderer:
         )
         assert p_dis == [arg]
 
-    def test_array_column_eq_normalizes_to_superset(self) -> None:
-        """Array columns map ``$eq`` to superset semantics."""
+    def test_array_column_eq_uses_exact_array_equality(self) -> None:
+        """Native array columns compare with ``=`` against a bound array value."""
         types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
         r = PsycopgQueryRenderer(types=types)
-        _sql, params = r.render(QueryField("tags", "$eq", ["x", "y"]))
+        sql_out, params = r.render(QueryField("tags", "$eq", ["x", "y"]))
         assert params == [["x", "y"]]
+        b = sql_out.as_bytes()
+        assert b"=" in b and b"@>" not in b
 
-    def test_array_column_eq_scalar_wraps_to_superset(self) -> None:
-        """Array ``$eq`` with a scalar operand wraps as a one-element array."""
+    def test_array_column_eq_scalar_raises(self) -> None:
+        """``$eq`` on an array column requires a list/tuple RHS."""
         types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
         r = PsycopgQueryRenderer(types=types)
-        _sql, params = r.render(QueryField("tags", "$eq", "only"))
-        assert params == [["only"]]
+        with pytest.raises(CoreError, match="list/tuple"):
+            r.render(QueryField("tags", "$eq", "only"))
 
-    def test_array_column_in_normalizes_to_overlaps(self) -> None:
-        """Array columns map ``$in`` to overlaps."""
+    def test_array_column_in_uses_element_membership(self) -> None:
+        """``$in`` on array columns matches any unnested element against the list."""
         types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
         r = PsycopgQueryRenderer(types=types)
-        _sql, params = r.render(QueryField("tags", "$in", ["a", "b"]))
+        sql_out, params = r.render(QueryField("tags", "$in", ["a", "b"]))
         assert params == [["a", "b"]]
+        assert b"unnest" in sql_out.as_bytes() and b"&&" not in sql_out.as_bytes()
 
-    def test_array_column_nin_normalizes_to_disjoint(self) -> None:
-        """Array columns map ``$nin`` to disjoint."""
+    def test_array_column_nin_negates_element_membership(self) -> None:
+        """``$nin`` on array columns negates the element-wise membership predicate."""
         types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
         r = PsycopgQueryRenderer(types=types)
-        _sql, params = r.render(QueryField("tags", "$nin", ["z"]))
+        sql_out, params = r.render(QueryField("tags", "$nin", ["z"]))
         assert params == [["z"]]
+        b = sql_out.as_bytes()
+        assert b"unnest" in b and b"NOT" in b and b"&&" not in b
 
     def test_typed_scalar_coercion(self) -> None:
         """With a type map, scalar operands are coerced."""

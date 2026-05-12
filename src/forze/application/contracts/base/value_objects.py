@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, overload
 
 import attrs
 
@@ -81,6 +81,26 @@ class CursorPage[T]:
 
 
 # ....................... #
+
+
+@overload
+def page_from_limit_offset[T](
+    hits: list[T],
+    pagination: Mapping[str, Any] | None,
+    *,
+    total: None = None,
+    snapshot: SearchSnapshotHandle | None = None,
+) -> CountlessPage[T]: ...
+
+
+@overload
+def page_from_limit_offset[T](
+    hits: list[T],
+    pagination: Mapping[str, Any] | None,
+    *,
+    total: int,
+    snapshot: SearchSnapshotHandle | None = None,
+) -> Page[T]: ...
 
 
 def page_from_limit_offset[T](

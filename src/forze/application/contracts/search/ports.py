@@ -1,17 +1,17 @@
 """Search query and command port definitions.
 
-**Cursor search (``search_with_cursor``):** SQL and vector adapters must keyset
-within the same ranked ``ORDER BY`` (score columns + tie-breakers, typically
-``id``). That implies declaring cursor columns in :class:`.SearchSpec` or
-Postgres search config, reusing the index heap primary key where applicable.
-Postgres hub and simple adapters inject keyset columns into the query when
-``return_fields`` is set, then return only the requested fields. Federated (RRF)
-search does not implement cursors yet; use :meth:`~SearchQueryPort.search` with
-limit/offset there.
+**Cursor search (``search_cursor`` / ``project_search_cursor`` / ``select_search_cursor``):**
+SQL and vector adapters must keyset within the same ranked ``ORDER BY`` (score columns +
+tie-breakers, typically ``id``). That implies declaring cursor columns in :class:`.SearchSpec` or
+Postgres search config, reusing the index heap primary key where applicable. Postgres hub and
+simple adapters inject keyset columns into the query when using projection cursor methods, then
+return only the requested fields. Federated (RRF) search does not implement cursors yet; use
+offset methods such as :meth:`~SearchQueryPort.search` or :meth:`~SearchQueryPort.search_page`
+with limit/offset there.
 """
 
 from datetime import timedelta
-from typing import Awaitable, Literal, Protocol, Sequence, TypeVar, overload
+from typing import Awaitable, Protocol, Sequence, TypeVar
 
 from pydantic import BaseModel
 
@@ -35,99 +35,13 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class SearchQueryPort[R: BaseModel](Protocol):
-    @overload
-    def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[R]]:
-        """Search documents and return typed read models (no count query)."""
-        ...  # pragma: no cover
+    """Full-text search with result shape encoded in method names.
 
-    @overload
-    def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[T]]: ...  # pragma: no cover
-
-    @overload
-    def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[JsonDict]]: ...  # pragma: no cover
-
-    @overload
-    def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Awaitable[Page[R]]:
-        """Search documents and return typed read models and total count."""
-        ...  # pragma: no cover
-
-    @overload
-    def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Awaitable[Page[T]]: ...  # pragma: no cover
-
-    @overload
-    def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[True],
-    ) -> Awaitable[Page[JsonDict]]: ...  # pragma: no cover
+    ``search*`` returns the spec read model ``R``; ``project_search*`` returns ``JsonDict`` rows;
+    ``select_search*`` validates rows as ``return_type``. Methods without ``_page`` or ``_cursor``
+    return :class:`~.CountlessPage` (no total count query); ``*_page`` returns :class:`~.Page`;
+    ``*_cursor`` returns :class:`~.CursorPage`.
+    """
 
     def search(
         self,
@@ -137,67 +51,81 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> Awaitable[
-        CountlessPage[R]
-        | CountlessPage[T]
-        | CountlessPage[JsonDict]
-        | Page[R]
-        | Page[T]
-        | Page[JsonDict]
-    ]:
-        """Search documents using a query string and optional filters.
-
-        When ``return_count`` is ``True``, returns a :class:`~.Page` with
-        ``count``; otherwise a :class:`~.CountlessPage` (no total).
-        """
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Awaitable[CountlessPage[R]]:
+        """Search and return typed read models (no total count query)."""
         ...  # pragma: no cover
 
-    # ....................... #
-
-    @overload
-    def search_with_cursor(
+    def search_page(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-    ) -> Awaitable[CursorPage[R]]: ...  # pragma: no cover
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Awaitable[Page[R]]:
+        """Search and return typed read models with total matching count."""
+        ...  # pragma: no cover
 
-    @overload
-    def search_with_cursor(
+    def project_search(
         self,
+        fields: Sequence[str],
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Awaitable[CountlessPage[JsonDict]]:
+        """Search with field projection (no total count query)."""
+        ...  # pragma: no cover
+
+    def project_search_page(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Awaitable[Page[JsonDict]]:
+        """Search with field projection and total matching count."""
+        ...  # pragma: no cover
+
+    def select_search(
+        self,
         return_type: type[T],
-        return_fields: None = ...,
-    ) -> Awaitable[CursorPage[T]]: ...  # pragma: no cover
-
-    @overload
-    def search_with_cursor(
-        self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-    ) -> Awaitable[CursorPage[JsonDict]]: ...  # pragma: no cover
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Awaitable[CountlessPage[T]]:
+        """Search validating each hit as ``return_type`` (no total count query)."""
+        ...  # pragma: no cover
 
-    def search_with_cursor(
+    def select_search_page(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Awaitable[Page[T]]:
+        """Search as ``return_type`` with total matching count."""
+        ...  # pragma: no cover
+
+    def search_cursor(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -205,11 +133,35 @@ class SearchQueryPort[R: BaseModel](Protocol):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> Awaitable[
-        CursorPage[R] | CursorPage[T] | CursorPage[JsonDict]
-    ]: ...  # pragma: no cover
+    ) -> Awaitable[CursorPage[R]]:
+        """Keyset / cursor page of typed read models."""
+        ...  # pragma: no cover
+
+    def project_search_cursor(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> Awaitable[CursorPage[JsonDict]]:
+        """Keyset / cursor page with field projection."""
+        ...  # pragma: no cover
+
+    def select_search_cursor(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> Awaitable[CursorPage[T]]:
+        """Keyset / cursor page validating each hit as ``return_type``."""
+        ...  # pragma: no cover
 
 
 # ....................... #

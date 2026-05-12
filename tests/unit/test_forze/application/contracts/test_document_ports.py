@@ -15,6 +15,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.query import QueryFilterExpression
 from forze.base.errors import NotFoundError, ValidationError
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 from forze_mock import MockState
@@ -107,11 +108,14 @@ class TestDocumentQueryPortViaMock:
         assert hasattr(result, "id")
 
     @pytest.mark.asyncio
-    async def test_get_with_return_fields_returns_dict(self) -> None:
+    async def test_project_by_id_returns_dict(self) -> None:
         port = _document_adapter()
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        result = await port.get(created.id, return_fields=["id", "rev"])
+        result = await port.project(
+            {"$fields": {ID_FIELD: str(created.id)}},
+            ["id", "rev"],
+        )
         assert isinstance(result, dict)
         assert "id" in result
         assert "rev" in result
@@ -132,14 +136,17 @@ class TestDocumentQueryPortViaMock:
         assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_get_many_with_return_fields(self) -> None:
+    async def test_project_many_by_ids_returns_dict_rows(self) -> None:
         port = _document_adapter()
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        result = await port.get_many([created.id], return_fields=["id"])
-        assert len(result) == 1
-        assert isinstance(result[0], dict)
-        assert "id" in result[0]
+        page = await port.project_many(
+            ["id"],
+            filters={"$fields": {ID_FIELD: {"$in": [str(created.id)]}}},
+        )
+        assert len(page.hits) == 1
+        assert isinstance(page.hits[0], dict)
+        assert "id" in page.hits[0]
 
     @pytest.mark.asyncio
     async def test_find_returns_none_when_empty(self) -> None:
@@ -158,20 +165,19 @@ class TestDocumentQueryPortViaMock:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_find_many_returns_tuple(self) -> None:
+    async def test_find_page_returns_counted_page(self) -> None:
         port = _document_adapter()
-        page = await port.find_many(return_count=True)
+        page = await port.find_page()
         assert isinstance(page.hits, list)
         assert isinstance(page.count, int)
         assert page.count >= 0
 
     @pytest.mark.asyncio
-    async def test_find_many_with_filters_and_pagination(self) -> None:
+    async def test_find_page_with_filters_and_pagination(self) -> None:
         port = _document_adapter()
         await port.create(CreateDocumentCmd())
-        page = await port.find_many(
+        page = await port.find_page(
             pagination={"limit": 1, "offset": 0},
-            return_count=True,
         )
         assert len(page.hits) <= 1
         assert page.count >= 0
@@ -588,13 +594,11 @@ class TestUpdateMatchingViaMock:
 
         remaining = await port.find_many(
             filters={"$fields": {"title": "keep"}},
-            return_count=False,
         )
         assert len(remaining.hits) == 0
 
         done_hits = await port.find_many(
             filters={"$fields": {"title": "done"}},
-            return_count=False,
         )
         assert len(done_hits.hits) == 2
 
@@ -625,6 +629,5 @@ class TestUpdateMatchingViaMock:
 
         z_page = await port.find_many(
             filters={"$fields": {"title": "z"}},
-            return_count=False,
         )
         assert len(z_page.hits) == 3

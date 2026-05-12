@@ -13,6 +13,8 @@ Use when setting up the Forze runtime, dependency plan, lifecycle, usecase compo
 
 ## Runtime setup
 
+Kernel **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and logical `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsPlan.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md).
+
 ### Dependency plan
 
 Pass **`DepsModule` instances** to `DepsPlan.from_modules`. Each module’s `__call__` returns a `Deps` container; the plan merges them (conflicting keys raise `CoreError`).
@@ -56,6 +58,17 @@ deps_plan = DepsPlan.from_modules(
 ```
 
 Alternatively, a single callable module may return `Deps.merge(...)` — see [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md).
+
+Merge optional integration modules the same way — for example `TenancyDepsModule` from `forze_tenancy.execution` registers `TenantResolverDepKey` / `TenantManagementDepKey` routes for document-backed tenant resolution (see [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md)):
+
+```python
+from forze_tenancy.execution import TenancyDepsModule
+
+deps_plan = DepsPlan.from_modules(
+    PostgresDepsModule(...),
+    TenancyDepsModule(tenant_resolver={"main"}),
+)
+```
 
 ### Lifecycle plan
 

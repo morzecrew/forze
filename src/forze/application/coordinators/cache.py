@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort
 from forze.application.contracts.tx import AfterCommitPort
-from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     pydantic_cache_dump,
     pydantic_cache_dump_many,
@@ -201,9 +200,9 @@ class DocumentCacheCoordinator[R: BaseModel]:
         self,
         pk: UUID,
         *,
-        fetch_on_cache_fault: Callable[[], Awaitable[R | JsonDict]],
+        fetch_on_cache_fault: Callable[[], Awaitable[R]],
         fetch_on_miss_without_lock: Callable[[], Awaitable[R]],
-    ) -> R | JsonDict:
+    ) -> R:
         """Read-through *pk*: cache layer, resilient fallback on transport errors."""
 
         if self.cache is None:
@@ -241,7 +240,7 @@ class DocumentCacheCoordinator[R: BaseModel]:
         self,
         pks: Sequence[UUID],
         *,
-        fetch_many_on_cache_fault: Callable[[], Awaitable[Sequence[R | JsonDict]]],
+        fetch_many_on_cache_fault: Callable[[], Awaitable[Sequence[R]]],
         fetch_misses_many: Callable[[list[str]], Awaitable[Sequence[R]]],
     ) -> Sequence[R]:
         """Read-through for ordered ``pks`` (full rows only).
@@ -250,10 +249,7 @@ class DocumentCacheCoordinator[R: BaseModel]:
         """
 
         if self.cache is None:
-            return cast(
-                Sequence[R],
-                await fetch_many_on_cache_fault(),
-            )
+            return await fetch_many_on_cache_fault()
 
         try:
             hits, misses = await self.cache.get_many([str(pk) for pk in pks])
@@ -275,10 +271,7 @@ class DocumentCacheCoordinator[R: BaseModel]:
 
             logger.trace("Cache exception: %s", exc)
 
-            return cast(
-                Sequence[R],
-                await fetch_many_on_cache_fault(),
-            )
+            return await fetch_many_on_cache_fault()
 
         miss_res: list[R] = []
 

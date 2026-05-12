@@ -50,7 +50,7 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.search.search(
+        res = await self.search.search_page(
             query=body.query,
             filters=body.filters,
             pagination={
@@ -60,7 +60,6 @@ class TypedSearch[Out: BaseModel](Usecase[SearchRequestDTO, Paginated[Out]]):
             sorts=body.sorts,
             options=body.options,
             snapshot=body.snapshot,
-            return_count=True,
         )
 
         return Paginated.from_page(res)
@@ -99,7 +98,8 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.search.search(
+        res = await self.search.project_search_page(
+            tuple(body.return_fields),
             query=body.query,
             filters=body.filters,
             pagination={
@@ -108,9 +108,7 @@ class RawSearch(Usecase[RawSearchRequestDTO, RawPaginated]):
             },
             sorts=body.sorts,
             options=body.options,
-            return_fields=tuple(body.return_fields),
             snapshot=body.snapshot,
-            return_count=True,
         )
 
         return RawPaginated.from_page(res)
@@ -141,7 +139,7 @@ class TypedCursorSearch[Out: BaseModel](
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.search.search_with_cursor(
+        res = await self.search.search_cursor(
             query=body.query,
             filters=body.filters,
             cursor=body.to_cursor_expression(),
@@ -175,13 +173,13 @@ class RawCursorSearch(Usecase[RawCursorSearchRequestDTO, RawCursorPaginated]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.search.search_with_cursor(
+        res = await self.search.project_search_cursor(
+            tuple(body.return_fields),
             query=body.query,
             filters=body.filters,
             cursor=body.to_cursor_expression(),
             sorts=body.sorts,
             options=body.options,
-            return_fields=tuple(body.return_fields),
         )
 
         return RawCursorPaginated.from_page(res)

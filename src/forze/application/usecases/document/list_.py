@@ -51,14 +51,13 @@ class TypedListDocuments[Out: BaseModel](Usecase[ListRequestDTO, Paginated[Out]]
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.doc.find_many(
+        res = await self.doc.find_page(
             filters=body.filters,
             sorts=body.sorts,
             pagination={
                 "limit": limit,
                 "offset": offset,
             },
-            return_count=True,
         )
 
         return Paginated.from_page(res)
@@ -97,15 +96,14 @@ class RawListDocuments(Usecase[RawListRequestDTO, RawPaginated]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.doc.find_many(
+        res = await self.doc.project_page(
+            tuple(body.return_fields),
             filters=body.filters,
             sorts=body.sorts,
             pagination={
                 "limit": limit,
                 "offset": offset,
             },
-            return_fields=tuple(body.return_fields),
-            return_count=True,
         )
 
         return RawPaginated.from_page(res)
@@ -136,7 +134,7 @@ class TypedCursorListDocuments[Out: BaseModel](
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.doc.find_many_with_cursor(
+        res = await self.doc.find_cursor(
             filters=body.filters,
             cursor=body.to_cursor_expression(),
             sorts=body.sorts,
@@ -168,11 +166,11 @@ class RawCursorListDocuments(Usecase[RawCursorListRequestDTO, RawCursorPaginated
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.doc.find_many_with_cursor(
+        res = await self.doc.project_cursor(
+            tuple(body.return_fields),
             filters=body.filters,
             cursor=body.to_cursor_expression(),
             sorts=body.sorts,
-            return_fields=tuple(body.return_fields),
         )
 
         return RawCursorPaginated.from_page(res)
@@ -205,15 +203,14 @@ class AggregatedListDocuments(Usecase[AggregatedListRequestDTO, RawPaginated]):
         if self.mapper:
             body = await self.mapper(body, ctx=self.ctx)
 
-        res = await self.doc.find_many(
+        res = await self.doc.aggregate_page(
+            body.aggregates,
             filters=body.filters,
-            aggregates=body.aggregates,
             sorts=body.sorts,
             pagination={
                 "limit": limit,
                 "offset": offset,
             },
-            return_count=True,
         )
 
         return RawPaginated.from_page(res)

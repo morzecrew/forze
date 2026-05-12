@@ -12,6 +12,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.domain.constants import ID_FIELD
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
@@ -89,7 +90,10 @@ async def test_get_many_and_field_projection(mongo_client: MongoClient) -> None:
     many = await cmd.get_many([a.id, b.id])
     assert {x.id for x in many} == {a.id, b.id}
 
-    proj = await cmd.get(a.id, return_fields=("name", "tag"))
+    proj = await cmd.project(
+        {"$fields": {ID_FIELD: a.id}},
+        ("name", "tag"),
+    )
     assert proj == {"name": "one", "tag": "x"}
 
 

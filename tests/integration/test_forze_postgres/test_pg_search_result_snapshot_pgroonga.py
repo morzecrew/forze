@@ -101,15 +101,13 @@ async def test_pgroonga_v2_result_snapshot_reread(
     )
     adapter = ctx.search_query(spec)
     assert isinstance(adapter, PostgresPGroongaSearchAdapter)
-    p1 = await adapter.search(
+    p1 = await adapter.search_page(
         "hello",
-        return_count=True,
         pagination={"limit": 5, "offset": 0},
     )
     assert p1.snapshot is not None
-    p2 = await adapter.search(
+    p2 = await adapter.search_page(
         "hello",
-        return_count=True,
         pagination={"limit": 5, "offset": 0},
         snapshot={"id": p1.snapshot.id, "fingerprint": p1.snapshot.fingerprint},
     )
@@ -184,18 +182,16 @@ async def test_pgroonga_v2_filter_only_empty_query_snapshot_reread(
     )
     adapter = ctx.search_query(spec)
     flt: QueryFilterExpression = {"$fields": {"title": "match-me"}}
-    p1 = await adapter.search(
+    p1 = await adapter.search_page(
         "",
         filters=flt,
-        return_count=True,
         pagination={"limit": 3, "offset": 0},
     )
     assert p1.count == 1
     assert p1.snapshot is not None
-    p2 = await adapter.search(
+    p2 = await adapter.search_page(
         "",
         filters=flt,
-        return_count=True,
         pagination={"limit": 3, "offset": 0},
         snapshot={"id": p1.snapshot.id, "fingerprint": p1.snapshot.fingerprint},
     )

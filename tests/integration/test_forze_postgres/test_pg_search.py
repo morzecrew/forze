@@ -97,7 +97,7 @@ async def test_postgres_pgroonga_single_column_index(
 
     spec = SearchSpec(name="pg1col", model_type=OneCol, fields=["title"])
     adapter = ctx.search_query(spec)
-    __p = await adapter.search("singleton", options={"fuzzy": True}, return_count=True)
+    __p = await adapter.search_page("singleton", options={"fuzzy": True})
     rows = __p.hits
     n = __p.count
     assert n == 1
@@ -164,13 +164,13 @@ async def test_postgres_search_adapter(
 
     assert isinstance(adapter, PostgresPGroongaSearchAdapter)
 
-    __p = await adapter.search("python", return_count=True)
+    __p = await adapter.search_page("python")
     res = __p.hits
     cnt = __p.count
     assert cnt == 3
     assert len(res) == 3
 
-    __p = await adapter.search("hexagonal", return_count=True)
+    __p = await adapter.search_page("hexagonal")
     res2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 1
@@ -180,45 +180,42 @@ async def test_postgres_search_adapter(
     class TitleOnly(BaseModel):
         title: str
 
-    __p = await adapter.search("python", return_type=TitleOnly, return_count=True)
+    __p = await adapter.select_search_page(TitleOnly, "python")
     as_titles = __p.hits
     n_t = __p.count
     assert n_t == 3
     assert {r.title for r in as_titles} == {d["title"] for d in docs}
 
-    __p = await adapter.search("zznonexistent999", return_count=True)
+    __p = await adapter.search_page("zznonexistent999")
     none_rows = __p.hits
     n_none = __p.count
     assert n_none == 0
     assert none_rows == []
 
-    await adapter.search("python", options={"fuzzy": True}, return_count=True)
+    await adapter.search_page("python", options={"fuzzy": True})
 
     # Weighted search, pagination, explicit sort, and partial field projection
-    __p = await adapter.search(
+    __p = await adapter.search_page(
         "python",
         pagination={"limit": 1, "offset": 0},
         sorts={"title": "asc"},
         options={"weights": {"title": 0.5, "content": 0.5}},
-        return_count=True,
     )
     page = __p.hits
     total = __p.count
     assert total == 3
     assert len(page) == 1
 
-    __p = await adapter.search("python", return_fields=["title"], return_count=True)
+    __p = await adapter.project_search_page(["title"], "python")
     titles_only = __p.hits
     total_t = __p.count
     assert total_t == 3
     assert set(titles_only[0].keys()) == {"title"}
 
-    __p = await adapter.search(["python", "framework"], return_count=True)
+    __p = await adapter.search_page(["python", "framework"])
     n_any = __p.count
     assert n_any == 3
-    __p = await adapter.search(
-        ["python", "framework"], options={"phrase_combine": "all"}, return_count=True
-    )
+    __p = await adapter.search_page(["python", "framework"], options={"phrase_combine": "all"})
     all_two = __p.hits
     n_all = __p.count
     assert n_all == 1
@@ -302,13 +299,13 @@ async def test_postgres_pgroonga_search_adapter_v2_projection_vs_heap(
         index_field_map={"title": "doc_title", "content": "doc_body"},
     )
 
-    __p = await adapter.search("python", return_count=True)
+    __p = await adapter.search_page("python")
     res = __p.hits
     cnt = __p.count
     assert cnt == 2
     assert {r.title for r in res} == {"Forze Framework", "Postgres Guide"}
 
-    __p = await adapter.search("hexagonal", sorts={"title": "asc"}, return_count=True)
+    __p = await adapter.search_page("hexagonal", sorts={"title": "asc"})
     one = __p.hits
     cnt_one = __p.count
     assert cnt_one == 1
@@ -364,7 +361,7 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
     adapter = ctx.search_query(spec)
     assert isinstance(adapter, PostgresPGroongaSearchAdapter)
 
-    __p = await adapter.search("hello", return_count=True)
+    __p = await adapter.search_page("hello")
     rows = __p.hits
     n = __p.count
     assert n == 1
@@ -500,21 +497,19 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_pg)(ctx_hub, hub_spec)
 
-    __p = await adapter.search("alpha", return_count=True)
+    __p = await adapter.search_page("alpha")
     hits = __p.hits
     cnt = __p.count
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
 
-    __p = await adapter.search("alpha", sorts={"quantity": "asc"}, return_count=True)
+    __p = await adapter.search_page("alpha", sorts={"quantity": "asc"})
     sorted_by_qty = __p.hits
     cnt_sort = __p.count
     assert cnt_sort == 2
     assert [h.quantity for h in sorted_by_qty] == [1, 3]
 
-    __p = await adapter.search(
-        "alpha", pagination={"limit": 1, "offset": 0}, return_count=True
-    )
+    __p = await adapter.search_page("alpha", pagination={"limit": 1, "offset": 0})
     page1 = __p.hits
     cnt_page = __p.count
     assert cnt_page == 2
@@ -524,15 +519,16 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
         id: UUID
         quantity: int
 
-    __p = await adapter.search("alpha", return_type=LinkIdQty, return_count=True)
+    __p = await adapter.select_search_page(LinkIdQty, "alpha")
     partial = __p.hits
     cnt_partial = __p.count
     assert cnt_partial == 2
     assert {p.id for p in partial} == {lid1, lid3}
     assert all(isinstance(p.quantity, int) for p in partial)
 
-    __p = await adapter.search(
-        "alpha", return_fields=["id", "quantity"], return_count=True
+    __p = await adapter.project_search_page(
+        ["id", "quantity"],
+        "alpha",
     )
     raw_links = __p.hits
     cnt_raw = __p.count
@@ -541,29 +537,28 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
 
     hub_pg_sum: PostgresHubSearchConfig = {**hub_pg, "score_merge": "sum"}
     adapter_sum = ConfigurablePostgresHubSearch(config=hub_pg_sum)(ctx_hub, hub_spec)
-    __p = await adapter_sum.search("alpha", return_count=True)
+    __p = await adapter_sum.search_page("alpha")
     sum_hits = __p.hits
     sum_cnt = __p.count
     assert sum_cnt == 2
     assert {h.id for h in sum_hits} == {lid1, lid3}
 
-    __p = await adapter.search(
+    __p = await adapter.search_page(
         "alpha",
         options={"member_weights": {det_name: 0.0, spec_name: 0.0}},
-        return_count=True,
     )
     all_legs_off = __p.hits
     n_off = __p.count
     assert n_off == 3
     assert {h.id for h in all_legs_off} == {lid1, lid2, lid3}
 
-    __p = await adapter.search("no_such_term_xyz", return_count=True)
+    __p = await adapter.search_page("no_such_term_xyz")
     _ = __p.hits
     n_no_match = __p.count
     assert n_no_match == 0
 
-    __p = await adapter.search(
-        "gamma", filters={"$fields": {"spec_id": str(s1)}}, return_count=True
+    __p = await adapter.search_page(
+        "gamma", filters={"$fields": {"spec_id": str(s1)}}
     )
     hits2 = __p.hits
     cnt2 = __p.count
@@ -580,33 +575,30 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
         )
     )
     resolved = ctx.hub_search_query(hub_spec)
-    __p = await resolved.search("delta", return_count=True)
+    __p = await resolved.search_page("delta")
     same = __p.hits
     c3 = __p.count
     assert c3 == 1
     assert same[0].id == lid3
 
-    __p = await adapter.search("", return_count=True)
+    __p = await adapter.search_page("")
     browse = __p.hits
     c_browse = __p.count
     assert c_browse == 3
     assert {h.id for h in browse} == {lid1, lid2, lid3}
 
-    __p = await adapter.search("   \t", return_count=True)
+    __p = await adapter.search_page("   \t")
     c_ws = __p.count
     assert c_ws == 3
 
-    __p = await adapter.search(
+    __p = await adapter.search_page(
         "alpha",
         options={"member_weights": {det_name: 0.0, spec_name: 1.0}},
-        return_count=True,
     )
     c_z = __p.count
     assert c_z == 0
 
-    __p = await adapter.search(
-        "gamma", options={"members": [spec_name]}, return_count=True
-    )
+    __p = await adapter.search_page("gamma", options={"members": [spec_name]})
     only_spec = __p.hits
     c_os = __p.count
     assert c_os == 2
@@ -726,21 +718,21 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_fts_cfg)(ctx_hub, hub_spec)
 
-    __p = await adapter.search("alpha", return_count=True)
+    __p = await adapter.search_page("alpha")
     hits = __p.hits
     cnt = __p.count
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
 
-    __p = await adapter.search(
-        "gamma", filters={"$fields": {"spec_id": str(s1)}}, return_count=True
+    __p = await adapter.search_page(
+        "gamma", filters={"$fields": {"spec_id": str(s1)}}
     )
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
     assert {h.id for h in hits2} == {lid1, lid2}
 
-    __p = await adapter.search("", return_count=True)
+    __p = await adapter.search_page("")
     fts_browse = __p.hits
     fts_cnt = __p.count
     assert fts_cnt == 3
@@ -859,7 +851,7 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(
     adapter_or = ConfigurablePostgresHubSearch(
         config={**base_members, "combine_strategy": "or"}
     )(ctx, hub_spec)
-    __p = await adapter_or.search("findme", return_count=True)
+    __p = await adapter_or.search_page("findme")
     hits_or = __p.hits
     n_or = __p.count
     assert n_or == 2
@@ -868,7 +860,7 @@ async def test_postgres_hub_pgroonga_combine_or_vs_and(
     adapter_and = ConfigurablePostgresHubSearch(
         config={**base_members, "combine_strategy": "and"}
     )(ctx, hub_spec)
-    __p = await adapter_and.search("findme", return_count=True)
+    __p = await adapter_and.search_page("findme")
     hits_and = __p.hits
     n_and = __p.count
     assert n_and == 1
@@ -990,18 +982,18 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_mix_cfg)(ctx_hub, hub_spec)
 
-    __p = await adapter.search("mixed", return_count=True)
+    __p = await adapter.search_page("mixed")
     cnt = __p.count
     assert cnt == 3
 
-    __p = await adapter.search("alpha", return_count=True)
+    __p = await adapter.search_page("alpha")
     hits_alpha = __p.hits
     n_alpha = __p.count
     assert n_alpha == 2
     assert {h.id for h in hits_alpha} == {lid1, lid3}
 
-    __p = await adapter.search(
-        "gamma", filters={"$fields": {"spec_id": str(s1)}}, return_count=True
+    __p = await adapter.search_page(
+        "gamma", filters={"$fields": {"spec_id": str(s1)}}
     )
     hits_gamma = __p.hits
     n_gamma = __p.count
@@ -1116,35 +1108,34 @@ async def test_postgres_hub_pgroonga_multi_hub_fk_one_heap(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_pg)(ctx_hub, hub_spec)
 
-    __p = await adapter.search("Alpha", return_count=True)
+    __p = await adapter.search_page("Alpha")
     hits_alpha = __p.hits
     n_alpha = __p.count
     assert n_alpha == 1
     assert hits_alpha[0].id == c1
 
-    __p = await adapter.search("Gamma", return_count=True)
+    __p = await adapter.search_page("Gamma")
     hits_gamma = __p.hits
     n_gamma = __p.count
     assert n_gamma == 1
     assert hits_gamma[0].id == c2
 
-    __p = await adapter.search("Beta", return_count=True)
+    __p = await adapter.search_page("Beta")
     hits_beta = __p.hits
     n_beta = __p.count
     assert n_beta == 2
     assert {h.id for h in hits_beta} == {c1, c2}
 
-    __p = await adapter.search(
+    __p = await adapter.search_page(
         "East",
         options={"member_weights": {party_leg: 1.0, label_leg: 0.0}},
-        return_count=True,
     )
     only_party = __p.hits
     n_po = __p.count
     assert n_po == 1
     assert only_party[0].id == c2
 
-    __p = await adapter.search("", return_count=True)
+    __p = await adapter.search_page("")
     browse = __p.hits
     n_all = __p.count
     assert n_all == 2
@@ -1224,11 +1215,11 @@ async def test_postgres_hub_same_heap_as_hub_single_leg(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_pg)(ctx_hub, hub_spec)
 
-    __p = await adapter.search("match", return_count=True)
+    __p = await adapter.search_page("match")
     assert __p.count == 1
     assert __p.hits[0].id == a
 
-    __p = await adapter.search("", return_count=True)
+    __p = await adapter.search_page("")
     assert __p.count == 2
     assert {h.id for h in __p.hits} == {a, b}
 
@@ -1290,21 +1281,19 @@ async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
         index_field_map={"title": "doc_title", "content": "doc_body"},
     )
 
-    z = await adapter.search(
+    z = await adapter.search_page(
         "",
         filters={"$fields": {"title": "Nope"}},
-        return_count=True,
     )
     assert z.count == 0
     assert z.hits == []
 
-    page = await adapter.search(
+    page = await adapter.project_search_page(
+        ("title", "id"),
         "",
         filters={"$fields": {"title": "Apple"}},
         pagination={"limit": 5, "offset": 0},
         sorts={"title": "asc"},
-        return_fields=("title", "id"),
-        return_count=True,
     )
     assert page.count == 1
     assert page.hits[0] == {"title": "Apple", "id": d1}
@@ -1313,11 +1302,10 @@ async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
         id: UUID
         title: str
 
-    typed = await adapter.search(
+    typed = await adapter.select_search(
+        Row,
         "",
         sorts={"title": "desc"},
-        return_type=Row,
-        return_count=False,
     )
     assert [r.title for r in typed.hits] == ["Banana", "Apple"]
 
@@ -1372,7 +1360,7 @@ async def test_postgres_pgroonga_v2_nonempty_query_count_zero_short_circuit(
         index_field_map={"title": "doc_title", "content": "doc_body"},
     )
 
-    empty = await adapter.search("xyznonmatch12345", return_count=True)
+    empty = await adapter.search_page("xyznonmatch12345")
     assert empty.count == 0
     assert empty.hits == []
 
@@ -1428,7 +1416,7 @@ async def test_postgres_pgroonga_v2_ranked_search_uses_score_v1(
         pgroonga_score_version="v1",
     )
 
-    page = await adapter.search("gamma", return_count=True)
+    page = await adapter.search_page("gamma")
     assert page.count == 1
     assert page.hits[0].title == "alpha"
 
@@ -1485,34 +1473,34 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
     )
 
     with pytest.raises(CoreError, match="at most one"):
-        await adapter.search_with_cursor("", cursor={"after": "x", "before": "y"})
+        await adapter.search_cursor("", cursor={"after": "x", "before": "y"})
 
     with pytest.raises(CoreError, match="positive"):
-        await adapter.search_with_cursor("", cursor={"limit": 0})
+        await adapter.search_cursor("", cursor={"limit": 0})
 
-    p0 = await adapter.search_with_cursor(
+    p0 = await adapter.project_search_cursor(
+        ["title"],
         "",
         sorts={"title": "asc"},
-        return_fields=["title"],
         cursor={"limit": 2},
     )
     assert len(p0.hits) == 2
     assert set(p0.hits[0].keys()) == {"title"}
 
-    p1 = await adapter.search_with_cursor(
+    p1 = await adapter.project_search_cursor(
+        ["title", "content", "id"],
         "",
         sorts={"title": "asc"},
-        return_fields=["title", "content", "id"],
         cursor={"limit": 2},
     )
     assert len(p1.hits) == 2
     assert p1.has_more is True
     assert p1.next_cursor is not None
 
-    p2 = await adapter.search_with_cursor(
+    p2 = await adapter.project_search_cursor(
+        ["title", "content", "id"],
         "",
         sorts={"title": "asc"},
-        return_fields=["title", "content", "id"],
         cursor={"limit": 2, "after": p1.next_cursor},
     )
     assert len(p2.hits) >= 1
@@ -1521,28 +1509,28 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
         id: UUID
         title: str
 
-    p3 = await adapter.search_with_cursor(
+    p3 = await adapter.select_search_cursor(
+        Hit,
         "",
         sorts={"title": "asc"},
-        return_type=Hit,
         cursor={"limit": 10},
     )
     assert len(p3.hits) == 3
     assert isinstance(p3.hits[0], Hit)
 
-    r1 = await adapter.search_with_cursor(
+    r1 = await adapter.project_search_cursor(
+        ["title", "content", "id"],
         "x",
         sorts={"title": "asc"},
-        return_fields=["title", "content", "id"],
         cursor={"limit": 2},
     )
     assert len(r1.hits) >= 1
     assert set(r1.hits[0].keys()) == {"title", "content", "id"}
     if r1.has_more and r1.next_cursor:
-        r2 = await adapter.search_with_cursor(
+        r2 = await adapter.project_search_cursor(
+            ["title", "content", "id"],
             "x",
             sorts={"title": "asc"},
-            return_fields=["title", "content", "id"],
             cursor={"limit": 2, "after": r1.next_cursor},
         )
         assert len(r2.hits) >= 1
@@ -1637,18 +1625,16 @@ async def test_postgres_hub_fts_leg_multi_query_phrase_combine(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    page_all = await adapter.search(
+    page_all = await adapter.search_page(
         ["alpha", "beta"],
         options={"phrase_combine": "all"},
-        return_count=True,
     )
     assert page_all.count == 1
     assert page_all.hits[0].id == l1
 
-    page_any = await adapter.search(
+    page_any = await adapter.search_page(
         ["alpha", "beta"],
         options={"phrase_combine": "any"},
-        return_count=True,
     )
     assert page_any.count == 3
 
@@ -1757,11 +1743,11 @@ async def test_postgres_hub_combine_and_with_score_merge_sum(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    page = await adapter.search("unique", return_count=True)
+    page = await adapter.search_page("unique")
     assert page.count == 1
     assert page.hits[0].id == link_id
 
-    empty = await adapter.search("onlydetailnomatch", return_count=True)
+    empty = await adapter.search_page("onlydetailnomatch")
     assert empty.count == 0
 
 
@@ -1828,20 +1814,19 @@ async def test_postgres_hub_return_count_zero_and_projections(
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
     impossible: QueryFilterExpression = {"$fields": {"name": "nope"}}
-    z = await adapter.search("solo", filters=impossible, return_count=True)
+    z = await adapter.search_page("solo", filters=impossible)
     assert isinstance(z, Page)
     assert z.count == 0
     assert z.hits == []
 
-    rf = await adapter.search(
+    rf = await adapter.project_search(
+        ["id", "name"],
         "solo",
-        return_fields=["id", "name"],
-        return_count=False,
     )
     assert not isinstance(rf, Page)
     assert rf.hits[0] == {"id": u, "name": "solo"}
 
-    rt = await adapter.search("solo", return_type=HubHitId, return_count=False)
+    rt = await adapter.select_search(HubHitId, "solo")
     assert isinstance(rt, CountlessPage)
     assert isinstance(rt.hits[0], HubHitId)
 
@@ -1908,7 +1893,7 @@ async def test_postgres_hub_browse_empty_query_with_sorts(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    page = await adapter.search("", sorts={"name": "asc"}, return_count=True)
+    page = await adapter.search_page("", sorts={"name": "asc"})
     assert page.count == 2
     assert [h.name for h in page.hits] == ["a", "b"]
 
@@ -1976,27 +1961,27 @@ async def test_postgres_hub_search_with_cursor(
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
     with pytest.raises(CoreError, match="at most one"):
-        await adapter.search_with_cursor(
+        await adapter.search_cursor(
             "",
             cursor={"after": "x", "before": "y"},
         )
 
     with pytest.raises(CoreError, match="positive"):
-        await adapter.search_with_cursor("", cursor={"limit": 0})
+        await adapter.search_cursor("", cursor={"limit": 0})
 
-    p0 = await adapter.search_with_cursor(
+    p0 = await adapter.project_search_cursor(
+        ["name"],
         "",
         sorts={"name": "asc"},
-        return_fields=["name"],
         cursor={"limit": 1},
     )
     assert len(p0.hits) == 1
     assert set(p0.hits[0].keys()) == {"name"}
 
-    p1: CursorPage = await adapter.search_with_cursor(
+    p1: CursorPage = await adapter.project_search_cursor(
+        ["name", "display_name", "id"],
         "",
         sorts={"name": "asc"},
-        return_fields=["name", "display_name", "id"],
         cursor={"limit": 1},
     )
     assert len(p1.hits) == 1
@@ -2004,18 +1989,18 @@ async def test_postgres_hub_search_with_cursor(
     assert p1.next_cursor is not None
     assert p1.hits[0]["name"] == "alpha"
 
-    p2 = await adapter.search_with_cursor(
+    p2 = await adapter.project_search_cursor(
+        ["name", "display_name", "id"],
         "",
         sorts={"name": "asc"},
-        return_fields=["name", "display_name", "id"],
         cursor={"limit": 1, "after": p1.next_cursor},
     )
     assert len(p2.hits) == 1
     assert p2.hits[0]["name"] == "beta"
 
-    r1 = await adapter.search_with_cursor(
+    r1 = await adapter.project_search_cursor(
+        ["id", "name", "display_name"],
         "alpha",
-        return_fields=["id", "name", "display_name"],
         cursor={"limit": 5},
     )
     assert len(r1.hits) == 1
@@ -2089,10 +2074,10 @@ async def test_postgres_hub_search_with_cursor_ranked_id_desc_chains(
         cur: dict[str, Any] = {"limit": 5}
         if next_c is not None:
             cur["after"] = next_c
-        page = await adapter.search_with_cursor(
+        page = await adapter.project_search_cursor(
+            ["id", "name", "display_name"],
             "token",
             sorts={"id": "desc"},
-            return_fields=["id", "name", "display_name"],
             cursor=cur,
         )
         assert len(page.hits) > 0
@@ -2172,7 +2157,7 @@ async def test_postgres_hub_search_with_cursor_browse_no_sorts(
         cur: dict[str, Any] = {"limit": 3}
         if next_c is not None:
             cur["after"] = next_c
-        page = await adapter.search_with_cursor("", cursor=cur)
+        page = await adapter.search_cursor("", cursor=cur)
         assert len(page.hits) > 0
         collected.extend(h.id for h in page.hits)
         if not page.has_more:

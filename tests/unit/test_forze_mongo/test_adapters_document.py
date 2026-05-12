@@ -170,8 +170,8 @@ class TestMongoDocumentAdapter:
             read_gw=read_gw,
             cache_coord=_mongo_cc(read_gw, ms),
         )
-        page = await adapter.find_many(
-            None, pagination=None, sorts=None, return_count=True
+        page = await adapter.find_page(
+            None, pagination=None, sorts=None
         )
 
         assert page.hits == []
@@ -197,7 +197,7 @@ class TestMongoDocumentAdapter:
         result = await adapter.get(pk, for_update=True)
 
         assert result == expected
-        read_gw.get.assert_awaited_once_with(pk, for_update=True, return_fields=None)
+        read_gw.get.assert_awaited_once_with(pk, for_update=True)
         cache.set_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -221,7 +221,7 @@ class TestMongoDocumentAdapter:
         result = await adapter.get_many(pks)
 
         assert result == expected
-        read_gw.get_many.assert_awaited_once_with(pks, return_fields=None)
+        read_gw.get_many.assert_awaited_once_with(pks)
         cache.set_many_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -243,7 +243,7 @@ class TestMongoDocumentAdapter:
         result = await adapter.get(pk, skip_cache=True)
 
         assert result == expected
-        read_gw.get.assert_awaited_once_with(pk, for_update=False, return_fields=None)
+        read_gw.get.assert_awaited_once_with(pk, for_update=False)
         cache.get.assert_not_awaited()
         cache.set_versioned.assert_not_awaited()
 
@@ -266,7 +266,7 @@ class TestMongoDocumentAdapter:
         result = await adapter.get_many(pks, skip_cache=True)
 
         assert result == expected
-        read_gw.get_many.assert_awaited_once_with(pks, return_fields=None)
+        read_gw.get_many.assert_awaited_once_with(pks)
         cache.get_many.assert_not_awaited()
         cache.set_many_versioned.assert_not_awaited()
 
@@ -530,7 +530,7 @@ class TestMongoDocumentAdapterCacheHits:
         cache.delete_many.assert_awaited()
 
 
-class TestMongoDocumentAdapterFindManyWithCursor:
+class TestMongoDocumentAdapterFindCursor:
     @pytest.mark.asyncio
     async def test_wraps_gateway_rows_into_cursor_page(self) -> None:
         read_gw = _build_read_gateway()
@@ -543,7 +543,7 @@ class TestMongoDocumentAdapterFindManyWithCursor:
             read_gw=read_gw,
             cache_coord=_mongo_cc(read_gw, ms),
         )
-        page = await adapter.find_many_with_cursor(
+        page = await adapter.find_cursor(
             None,
             cursor={"limit": 2},
             sorts=None,
@@ -556,7 +556,7 @@ class TestMongoDocumentAdapterFindManyWithCursor:
 
 class TestMongoDocumentAdapterFindAndPage:
     @pytest.mark.asyncio
-    async def test_find_passes_return_fields_to_gateway(self) -> None:
+    async def test_project_passes_fields_to_gateway(self) -> None:
         read_gw = _build_read_gateway()
         read_gw.find.return_value = {"name": "x"}
         adapter = MongoDocumentAdapter(
@@ -565,14 +565,14 @@ class TestMongoDocumentAdapterFindAndPage:
             cache_coord=_mongo_cc(read_gw, ms),
         )
         filt = {"$fields": {"name": "x"}}
-        row = await adapter.find(filt, return_fields=["name"])
+        row = await adapter.project(filt, ["name"])
         assert row == {"name": "x"}
         read_gw.find.assert_awaited_once_with(
-            filt, for_update=False, return_fields=["name"]
+            filt, for_update=False, return_fields=("name",)
         )
 
     @pytest.mark.asyncio
-    async def test_find_many_with_count_loads_hits_when_nonzero(self) -> None:
+    async def test_find_page_with_count_loads_hits_when_nonzero(self) -> None:
         read_gw = _build_read_gateway()
         read_gw.count = AsyncMock(return_value=3)
         read_gw.find_many.return_value = [_read_doc(uuid4())]
@@ -581,10 +581,9 @@ class TestMongoDocumentAdapterFindAndPage:
             read_gw=read_gw,
             cache_coord=_mongo_cc(read_gw, ms),
         )
-        page = await adapter.find_many(
+        page = await adapter.find_page(
             None,
             pagination={"limit": 10, "offset": 0},
-            return_count=True,
         )
         assert page.count == 3
         assert len(page.hits) == 1

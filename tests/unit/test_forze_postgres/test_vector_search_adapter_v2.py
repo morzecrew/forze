@@ -61,7 +61,7 @@ async def test_search_with_cursor_browse_calls_fetch_all() -> None:
     port.client.fetch_all = AsyncMock(
         return_value=[{"id": uid, "label": "only"}],
     )
-    page = await port.search_with_cursor("", cursor={"limit": 5})
+    page = await port.search_cursor("", cursor={"limit": 5})
     assert len(page.hits) == 1
     assert page.hits[0].id == uid
     port.client.fetch_all.assert_awaited_once()
@@ -82,9 +82,9 @@ async def test_search_with_cursor_ranked_calls_embed_and_fetch() -> None:
             },
         ],
     )
-    page = await port.search_with_cursor(
+    page = await port.project_search_cursor(
+        ["id", "label"],
         "q",
-        return_fields=["id", "label"],
         cursor={"limit": 3},
     )
     assert len(page.hits) == 1

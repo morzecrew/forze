@@ -159,14 +159,13 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
         rrf_per_leg_limit=10,
         snapshot_coord=SearchResultSnapshotCoordinator(store=store),
     )
-    page = await adapter.search(
+    page = await adapter.search_page(
         "q",
         pagination={"offset": 0, "limit": 5},
         snapshot={
             "id": "run-1",
             "fingerprint": fp,
         },
-        return_count=True,
     )
     pa.search.assert_not_awaited()
     pb.search.assert_not_awaited()
@@ -201,10 +200,9 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
         rrf_per_leg_limit=10,
         snapshot_coord=SearchResultSnapshotCoordinator(store=store),
     )
-    page = await adapter.search(
+    page = await adapter.search_page(
         "q",
         pagination={"offset": 0, "limit": 5},
-        return_count=True,
     )
     assert page.snapshot is not None
     run_id = page.snapshot.id
@@ -231,10 +229,9 @@ async def test_federated_search_skips_zero_weight_members() -> None:
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=50,
     )
-    page = await adapter.search(
+    page = await adapter.search_page(
         "q",
         options={"member_weights": {"a": 0.0, "b": 1.0}},
-        return_count=True,
     )
     pa.search.assert_not_awaited()
     pb.search.assert_awaited_once()
@@ -265,8 +262,8 @@ async def test_federated_search_pagination_on_merged_pool() -> None:
         rrf_k=60,
         rrf_per_leg_limit=10,
     )
-    page = await adapter.search(
-        "q", pagination={"offset": 2, "limit": 2}, return_count=True
+    page = await adapter.search_page(
+        "q", pagination={"offset": 2, "limit": 2}
     )
     assert page.count == 6
     assert len(page.hits) == 2
@@ -282,7 +279,7 @@ async def test_federated_search_all_members_disabled_returns_empty() -> None:
         federated_spec=_fed(),
         legs=(("a", na), ("b", nb)),
     )
-    page = await adapter.search("q", options={"members": []}, return_count=True)
+    page = await adapter.search_page("q", options={"members": []})
     assert page.hits == []
     assert page.count == 0
 
@@ -294,7 +291,7 @@ async def test_federated_search_all_members_disabled_countless_page() -> None:
         federated_spec=_fed(),
         legs=(("a", MagicMock()), ("b", MagicMock())),
     )
-    page = await adapter.search("q", options={"members": []}, return_count=False)
+    page = await adapter.search("q", options={"members": []})
     assert page.hits == []
     assert isinstance(page, CountlessPage)
 
@@ -334,8 +331,8 @@ async def test_federated_search_with_cursor_is_not_implemented() -> None:
         federated_spec=_fed(),
         legs=(("a", MagicMock()), ("b", MagicMock())),
     )
-    with pytest.raises(CoreError, match="search_with_cursor"):
-        await adapter.search_with_cursor("q")
+    with pytest.raises(CoreError, match="search_cursor"):
+        await adapter.search_cursor("q")
 
 
 def test_federated_adapter_rejects_leg_count_mismatch() -> None:
@@ -362,8 +359,8 @@ async def test_federated_search_rejects_return_fields() -> None:
         federated_spec=_fed(),
         legs=(("a", MagicMock()), ("b", MagicMock())),
     )
-    with pytest.raises(CoreError, match="return_fields"):
-        await adapter.search("q", return_fields=("id",))
+    with pytest.raises(CoreError, match="project_search"):
+        await adapter.project_search(("id",), "q")
 
 
 class _FedRow(BaseModel):
@@ -387,7 +384,7 @@ async def test_federated_search_return_type_validates_rows() -> None:
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
     )
-    page = await adapter.search("q", return_type=_FedRow, return_count=True)
+    page = await adapter.select_search_page(_FedRow, "q")
     assert page.count >= 1
     assert len(page.hits) >= 1
     assert isinstance(page.hits[0], _FedRow)
@@ -414,11 +411,10 @@ async def test_federated_search_applies_sorts_on_merged_field() -> None:
         legs=(("a", pa), ("b", pb)),
         rrf_per_leg_limit=10,
     )
-    page = await adapter.search(
+    page = await adapter.search_page(
         "q",
         sorts={"label": "asc"},
         pagination={"offset": 0, "limit": 10},
-        return_count=True,
     )
     assert page.count == 3
     assert len(page.hits) == 3

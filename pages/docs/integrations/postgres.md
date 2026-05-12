@@ -89,6 +89,43 @@ lifecycle = LifecyclePlan.from_steps(
 
 Use `routed_postgres_lifecycle_step(client=routed_pg)` with `RoutedPostgresClient` and do not combine routed and non-routed lifecycle steps for the same client.
 
+### Catalog warmup, introspector TTL, and document schema checks
+
+Order lifecycle steps so the pool opens first, then optional warmup and validation:
+
+```python
+from forze.application.execution import LifecyclePlan
+from forze_postgres import (
+    PostgresConfig,
+    postgres_catalog_warmup_lifecycle_step,
+    postgres_document_schema_spec_for_binding,
+    postgres_document_schema_validation_lifecycle_step,
+    postgres_lifecycle_step,
+)
+
+lifecycle = LifecyclePlan.from_steps(
+    postgres_lifecycle_step(dsn="postgresql://...", config=PostgresConfig()),
+    postgres_catalog_warmup_lifecycle_step(
+        searches=search_configs_by_route,
+        hub_searches=hub_search_configs_by_route,
+        federated_searches=federated_search_configs_by_route,
+    ),
+    postgres_document_schema_validation_lifecycle_step(
+        specs=(
+            postgres_document_schema_spec_for_binding(
+                "orders",
+                spec=orders_document_spec,
+                config=orders_pg_config,
+            ),
+        ),
+    ),
+)
+```
+
+- **`warm_postgres_catalog` / `postgres_catalog_warmup_lifecycle_step`** prefetch relation column types and index catalog metadata used by FTS/PGroonga search (and vector read/heap relations). They are safe no-ops when `PostgresDepsModule.introspector_cache_partition_key` is set but no tenant is available during startup (trace log only).
+- **`PostgresDepsModule.introspector_cache_ttl`** passes a TTL into `PostgresIntrospector` so cached catalog rows expire without a process restart (useful after migrations).
+- **`postgres_document_schema_spec_for_binding`** and **`postgres_document_schema_validation_lifecycle_step`** optionally assert that read (and write/history) relations expose the columns implied by your `DocumentSpec` and Pydantic models. Use `read_omit_fields` / `write_omit_fields` / `history_omit_fields` on `PostgresDocumentSchemaSpec` when a field is not stored as its own column.
+
 ## Contract coverage table
 
 | Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
@@ -109,7 +146,7 @@ See [CRUD with FastAPI, Postgres, and Redis](../recipes/crud-fastapi-postgres-re
 
 ### Connection settings
 
-`PostgresClient` connects with a DSN. For multi-tenant or per-route databases, use `RoutedPostgresClient` and pass `introspector_cache_partition_key` to `PostgresDepsModule` when catalog caching must be partitioned by tenant.
+`PostgresClient` connects with a DSN. For multi-tenant or per-route databases, use `RoutedPostgresClient` and pass `introspector_cache_partition_key` to `PostgresDepsModule` when catalog caching must be partitioned by tenant. Optional `introspector_cache_ttl` expires cached catalog metadata after a duration (see the lifecycle subsection above).
 
 ### Pool settings
 

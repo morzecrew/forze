@@ -153,11 +153,11 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
     for u in ids:
         await cmd.create(_CxCreate(id=u, sku=str(u)[:8]))
 
-    p1 = await q.find_many_with_cursor(None, cursor={"limit": 2}, sorts=None)
+    p1 = await q.find_cursor(None, cursor={"limit": 2}, sorts=None)
     assert p1.prev_cursor is None
     assert p1.next_cursor is not None
 
-    p2 = await q.find_many_with_cursor(
+    p2 = await q.find_cursor(
         None,
         cursor={"limit": 2, "after": p1.next_cursor},
         sorts=None,
@@ -165,14 +165,14 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
     assert p2.prev_cursor is not None
     assert len(p2.hits) == 2
 
-    p_desc = await q.find_many_with_cursor(
+    p_desc = await q.find_cursor(
         None,
         cursor={"limit": 10},
         sorts={ID_FIELD: "desc"},
     )
     assert p_desc.hits[0].id == ids[-1]
 
-    p_before = await q.find_many_with_cursor(
+    p_before = await q.find_cursor(
         None,
         cursor={"limit": 2, "before": p1.next_cursor},
         sorts=None,
@@ -185,7 +185,7 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
 async def test_mongo_adapter_find_and_find_many_projections_with_count(
     mongo_client: MongoClient,
 ) -> None:
-    """``find`` / ``find_many`` with ``return_fields`` and counted page."""
+    """``project`` / ``project_page`` for field projections with counts."""
     col = f"m_pr_{uuid4().hex[:8]}"
     db = (await mongo_client.db()).name
     spec = DocumentSpec(
@@ -213,19 +213,18 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
     await cmd.create(_CxCreate(sku="apple"))
     await cmd.create(_CxCreate(sku="banana"))
 
-    one = await q.find(
+    one = await q.project(
         {"$fields": {"sku": "apple"}},
-        return_fields=["sku"],
+        ["sku"],
     )
     assert one is not None
     assert one == {"sku": "apple"}
 
-    page = await q.find_many(
+    page = await q.project_page(
+        ["id", "sku"],
         {"$fields": {"sku": {"$in": ["apple", "banana"]}}},
         pagination={"limit": 10, "offset": 0},
         sorts={"sku": "asc"},
-        return_fields=["id", "sku"],
-        return_count=True,
     )
     assert page.count == 2
     assert {r["sku"] for r in page.hits} == {"apple", "banana"}

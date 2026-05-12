@@ -244,8 +244,4 @@ model shape). `return_count` then counts documents, not groups.
 ## Backend notes
 
 - Semantics are shared, but rendering is backend-specific (Postgres vs Mongo).
-- For Postgres array columns, shortcuts are normalized:
-  - `$eq` may behave as array superset
-  - `$in` may behave as overlaps
-  - `$nin` may behave as disjoint
 - In Mongo renderer defaults, `$null: true` matches both explicit `null` and missing fields.

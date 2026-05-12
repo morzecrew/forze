@@ -153,10 +153,10 @@ async def test_find_for_update_with_projection_inside_transaction(
 
     async with ctx.transaction("main"):
         query = ctx.doc_query(spec)
-        proj = await query.find(
+        proj = await query.project(
             {"$fields": {"title": "unique-find-title"}},
+            ("id", "rev", "title"),
             for_update=True,
-            return_fields=("id", "rev", "title"),
         )
         assert proj is not None
         assert proj["title"] == "unique-find-title"

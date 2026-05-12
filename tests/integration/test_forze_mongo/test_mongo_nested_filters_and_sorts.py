@@ -79,11 +79,9 @@ async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
     await cmd.create(RowCreate(title="a", meta=Meta(score=10)))
     await cmd.create(RowCreate(title="b", meta=Meta(score=20)))
 
-    __p = await query.find_many(
-        None,
+    __p = await query.find_page(None,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "asc"},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count
@@ -101,10 +99,8 @@ async def test_filter_nested_numeric_operator(mongo_client: MongoClient) -> None
     await cmd.create(RowCreate(title="in", meta=Meta(score=3, tag="x")))
     await cmd.create(RowCreate(title="out", meta=Meta(score=300, tag="y")))
 
-    __p = await query.find_many(
-        {"$fields": {"meta.score": {"$lt": 10}}},
+    __p = await query.find_page({"$fields": {"meta.score": {"$lt": 10}}},
         pagination={"limit": 10, "offset": 0},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count
@@ -140,11 +136,9 @@ async def test_and_or_combinators_with_nested_paths(
             {"$fields": {"meta.tag": {"$eq": "t2"}}},
         ]
     }
-    __p = await query.find_many(
-        or_filt,
+    __p = await query.find_page(or_filt,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "asc"},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count
@@ -164,11 +158,9 @@ async def test_multi_field_sort_including_nested(mongo_client: MongoClient) -> N
     await cmd.create(RowCreate(title="a", meta=Meta(score=10)))
     await cmd.create(RowCreate(title="z", meta=Meta(score=5)))
 
-    __p = await query.find_many(
-        None,
+    __p = await query.find_page(None,
         pagination={"limit": 10, "offset": 0},
         sorts={"meta.score": "desc", "title": "asc"},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count

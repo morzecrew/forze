@@ -172,8 +172,9 @@ async def test_count_and_find_many_empty_collection(mongo_client: MongoClient) -
     ctx, spec = await _rw_ctx(mongo_client, col)
     query = ctx.doc_query(spec)
     assert await query.count() == 0
-    __p = await query.find_many(
-        None, pagination={"limit": 5, "offset": 0}, return_count=True
+    __p = await query.find_page(
+        None,
+        pagination={"limit": 5, "offset": 0},
     )
     rows = __p.hits
     total = __p.count

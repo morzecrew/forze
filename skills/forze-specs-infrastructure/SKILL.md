@@ -10,7 +10,7 @@ description: >-
 
 # Forze specs and infrastructure wiring
 
-Kernel **specs** declare model types and logical `name`. Integration **configs** on dependency modules map each `name` to physical infrastructure (relations, collections, Redis namespaces, buckets, queues, task queues, transaction routes). Use with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for spec fields, [`forze-deps-modules`](../forze-deps-modules/SKILL.md) for custom modules, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime setup.
+Kernel **specs** declare model types and logical `name`. Integration **configs** on dependency modules map each `name` to physical infrastructure (relations, collections, Redis namespaces, buckets, queues, task queues, transaction routes). At runtime, usecases obtain **`DocumentQueryPort`**, **`DocumentCommandPort`**, **`SearchQueryPort`**, and other ports from **`ExecutionContext`** once those modules are merged into a `DepsPlan`; specs only supply the route (`name`) and types the factories receive. Use with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for spec fields, [`forze-deps-modules`](../forze-deps-modules/SKILL.md) for custom modules, and [`forze-wiring`](../forze-wiring/SKILL.md) for runtime setup.
 
 ## Prefer `StrEnum` names
 

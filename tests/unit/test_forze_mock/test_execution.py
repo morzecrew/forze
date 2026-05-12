@@ -82,12 +82,11 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
     found = await ctx.doc_query(spec).get(created.id)
     assert found.id == created.id
 
-    search_page = await ctx.search_query(_search_spec()).search(
+    page = await ctx.search_query(_search_spec()).search_page(
         "hello",
-        return_count=True,
     )
-    assert search_page.count == 1
-    assert search_page.hits[0].id == created.id
+    assert page.count == 1
+    assert page.hits[0].id == created.id
 
 
 async def test_execution_context_resolves_optional_contract_ports() -> None:

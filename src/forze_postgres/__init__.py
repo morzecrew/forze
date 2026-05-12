@@ -11,15 +11,26 @@ from .execution import (
     PostgresClientDepKey,
     PostgresDepsModule,
     PostgresDocumentConfig,
+    PostgresDocumentSchemaSpec,
     PostgresFederatedSearchConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
+    postgres_catalog_warmup_lifecycle_step,
+    postgres_document_schema_spec_for_binding,
+    postgres_document_schema_validation_lifecycle_step,
     postgres_lifecycle_step,
     routed_postgres_lifecycle_step,
+    validate_postgres_document_schemas,
+    warm_postgres_catalog,
 )
-from .kernel.platform import PostgresClient, PostgresClientPort, PostgresConfig, RoutedPostgresClient
+from .kernel.platform import (
+    PostgresClient,
+    PostgresClientPort,
+    PostgresConfig,
+    RoutedPostgresClient,
+)
 
 # ----------------------- #
 
@@ -32,6 +43,12 @@ __all__ = [
     "PostgresClientDepKey",
     "postgres_lifecycle_step",
     "routed_postgres_lifecycle_step",
+    "postgres_catalog_warmup_lifecycle_step",
+    "warm_postgres_catalog",
+    "postgres_document_schema_spec_for_binding",
+    "postgres_document_schema_validation_lifecycle_step",
+    "PostgresDocumentSchemaSpec",
+    "validate_postgres_document_schemas",
     "PgroongaScoreVersion",
     "PostgresDocumentConfig",
     "PostgresReadOnlyDocumentConfig",

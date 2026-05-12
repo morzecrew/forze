@@ -173,16 +173,29 @@ ETag support is route-feature based. Use it for stable read responses such as do
 
 ```python
 from forze_fastapi.exceptions import register_exception_handlers
-from forze_fastapi.middlewares import ContextBindingMiddleware, LoggingMiddleware
+from forze_fastapi.middlewares import (
+    ContextBindingMiddleware,
+    CustomHeadersMiddleware,
+    LoggingMiddleware,
+)
 from forze_fastapi.openapi import register_scalar_docs
+
+build_id = "dev"  # e.g. from os.environ at import time
 
 app.add_middleware(ContextBindingMiddleware, ctx_dep=ctx_dep)
 app.add_middleware(LoggingMiddleware)
+app.add_middleware(
+    CustomHeadersMiddleware,
+    static_headers={"X-API-Version": "1"},
+    dynamic_headers={"X-Build-Id": lambda: build_id},
+)
 register_exception_handlers(app)
 register_scalar_docs(app, path="/docs")
 ```
 
 `ContextBindingMiddleware` binds `CallContext`, `AuthnIdentity`, and `TenantIdentity` at the boundary. Use resolvers/codecs there; usecases should only read identity from `ExecutionContext`.
+
+`CustomHeadersMiddleware` adds response headers from `static_headers` and/or `dynamic_headers` (callables may be sync or async). It raises `CoreError` if the response already defines any of the same header names.
 
 ## Anti-patterns
 

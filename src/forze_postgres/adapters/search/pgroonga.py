@@ -244,96 +244,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
     # ....................... #
 
     @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[M]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[M]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[True] = ...,
-    ) -> Page[JsonDict]: ...
-
-    async def search(
+    async def _offset_search_impl(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -342,17 +253,99 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-        return_type: type[T] | None = None,
+        return_count: Literal[False],
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> CountlessPage[M]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> Page[M]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[False],
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[False],
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> Page[T]: ...
+
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: bool,
+        return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> (
-        CountlessPage[M]
-        | CountlessPage[T]
-        | CountlessPage[JsonDict]
-        | Page[M]
-        | Page[T]
-        | Page[JsonDict]
-    ):
+    ) -> Any:
         options = search_options_for_simple_adapter(options)
 
         rs_spec = self.spec.snapshot
@@ -415,7 +408,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
                 if total == 0:
-                    return page_from_limit_offset(
+                    return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                         [],
                         pagination or {},
                         total=0,
@@ -622,7 +615,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 await self.client.fetch_value(count_stmt, params_count, default=0),
             )
             if total == 0:
-                return page_from_limit_offset(
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                     [],
                     pagination or {},
                     total=0,
@@ -748,46 +741,146 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     # ....................... #
 
-    @overload
-    async def search_with_cursor(
+    async def search(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-    ) -> CursorPage[M]: ...
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[M]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=None,
+            return_fields=None,
+        )
 
-    @overload
-    async def search_with_cursor(
+    async def search_page(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[M]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_search(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def project_search_page(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[JsonDict]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_search(
+        self,
         return_type: type[T],
-        return_fields: None = ...,
-    ) -> CursorPage[T]: ...
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[T]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def select_search_page(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[T]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    # ....................... #
 
     @overload
-    async def search_with_cursor(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
-
-    async def search_with_cursor(
+    async def _cursor_search_impl(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -795,9 +888,47 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_type: type[T] | None = None,
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> CursorPage[M]: ...
+
+    @overload
+    async def _cursor_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    @overload
+    async def _cursor_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> CursorPage[T]: ...
+
+    async def _cursor_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
+    ) -> Any:
         """Keyset pagination on the projection (empty query) or ranked PGroonga matches.
 
         **Browse (empty query):** Same ordering rules as :meth:`search` without a query.
@@ -1185,4 +1316,63 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             next_cursor=nxt_r,
             prev_cursor=prv_r,
             has_more=has_more_r,
+        )
+
+    async def search_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[M]:
+        return await self._cursor_search_impl(
+            query,
+            filters,
+            cursor,
+            sorts,
+            options=options,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_search_cursor(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[JsonDict]:
+        return await self._cursor_search_impl(
+            query,
+            filters,
+            cursor,
+            sorts,
+            options=options,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_search_cursor(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[T]:
+        return await self._cursor_search_impl(
+            query,
+            filters,
+            cursor,
+            sorts,
+            options=options,
+            return_type=return_type,
+            return_fields=None,
         )

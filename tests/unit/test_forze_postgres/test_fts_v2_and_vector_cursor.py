@@ -67,25 +67,25 @@ def _vec() -> PostgresVectorSearchAdapter[_M]:
 async def test_fts_v2_search_with_cursor_rejects_after_and_before() -> None:
     p = _fts()
     with pytest.raises(CoreError, match="at most one"):
-        await p.search_with_cursor("q", cursor={"after": "a", "before": "b"})
+        await p.search_cursor("q", cursor={"after": "a", "before": "b"})
 
 
 @pytest.mark.asyncio
 async def test_fts_v2_search_with_cursor_rejects_non_positive_limit() -> None:
     p = _fts()
     with pytest.raises(CoreError, match="positive"):
-        await p.search_with_cursor("q", cursor={"limit": 0})
+        await p.search_cursor("q", cursor={"limit": 0})
 
 
 @pytest.mark.asyncio
 async def test_vector_v2_search_with_cursor_rejects_after_and_before() -> None:
     p = _vec()
     with pytest.raises(CoreError, match="at most one"):
-        await p.search_with_cursor("q", cursor={"after": "a", "before": "b"})
+        await p.search_cursor("q", cursor={"after": "a", "before": "b"})
 
 
 @pytest.mark.asyncio
 async def test_vector_v2_search_with_cursor_rejects_non_positive_limit() -> None:
     p = _vec()
     with pytest.raises(CoreError, match="positive"):
-        await p.search_with_cursor("q", cursor={"limit": 0})
+        await p.search_cursor("q", cursor={"limit": 0})

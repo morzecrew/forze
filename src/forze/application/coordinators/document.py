@@ -562,51 +562,14 @@ class DocumentCoordinator(
 
     # ....................... #
 
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_fields: Sequence[str],
-        skip_cache: bool = ...,
-    ) -> JsonDict:
-        """Fetch a document projected to *return_fields*."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_fields: None = ...,
-        skip_cache: bool = ...,
-    ) -> R:
-        """Fetch a document as the read model."""
-        ...
-
     async def get(
         self,
         pk: UUID,
         *,
         for_update: bool = False,
-        return_fields: Sequence[str] | None = None,
         skip_cache: bool = False,
-    ) -> R | JsonDict:
-        """Fetch a single document by primary key, using the cache when available.
-
-        Cache is bypassed when *return_fields* is set, when *skip_cache* is
-        ``True``, or when no cache is configured. Miss warm-up uses
-        :class:`~forze.application.coordinators.DocumentCacheCoordinator`, including
-        post-commit deferral when configured.
-
-        :param pk: Document primary key.
-        :param for_update: Require a transaction context.
-        :param return_fields: Optional field subset to project.
-        :param skip_cache: When ``True``, bypass the read-through cache and read
-            only from persistence.
-        """
+    ) -> R:
+        """Fetch a single document by primary key, using the cache when available."""
 
         if not self.cache_coord.id_rev_capable():
             raise InvalidOperationError(
@@ -615,86 +578,43 @@ class DocumentCoordinator(
 
         if not self.cache_coord.read_through_eligible(
             skip_cache=skip_cache,
-            return_fields=return_fields,
+            return_fields=None,
         ):
-            return await self.read_gw.get(
-                pk,
-                for_update=for_update,
-                return_fields=return_fields,
-            )
+            return await self.read_gw.get(pk, for_update=for_update)
 
         return await self.cache_coord.get_read_through(
             pk,
-            fetch_on_cache_fault=lambda: self.read_gw.get(
-                pk,
-                for_update=for_update,
-                return_fields=return_fields,
-            ),
+            fetch_on_cache_fault=lambda: self.read_gw.get(pk, for_update=for_update),
             fetch_on_miss_without_lock=lambda: self.read_gw.get(pk),
         )
 
     # ....................... #
 
-    @overload
     async def get_many(
         self,
         pks: Sequence[UUID],
         *,
-        return_fields: Sequence[str],
-        skip_cache: bool = ...,
-    ) -> Sequence[JsonDict]:
-        """Fetch multiple documents projected to *return_fields*."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: None = ...,
-        skip_cache: bool = ...,
-    ) -> Sequence[R]:
-        """Fetch multiple documents as the read model."""
-        ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: Sequence[str] | None = None,
         skip_cache: bool = False,
-    ) -> Sequence[R] | Sequence[JsonDict]:
-        """Fetch multiple documents by primary key with cache-aware batching.
-
-        Cached entries are returned from the cache; misses are fetched from the
-        backing store and warmed through
-        :class:`~forze.application.coordinators.DocumentCacheCoordinator`.
-
-        :param pks: Primary keys to fetch.
-        :param return_fields: Optional field subset to project.
-        :param skip_cache: When ``True``, bypass the read-through cache and read
-            only from persistence.
-        """
+    ) -> Sequence[R]:
+        """Fetch multiple documents by primary key with cache-aware batching."""
 
         if not pks:
             return []
 
         if not self.cache_coord.id_rev_capable():
             raise InvalidOperationError(
-                f"Cannot get many documents of type '{type(self.read_gw.model_type).__name__}' as they do not have defined id field"
+                f"Cannot get many documents of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
             )
 
         if not self.cache_coord.read_through_eligible(
             skip_cache=skip_cache,
-            return_fields=return_fields,
+            return_fields=None,
         ):
-            return await self.read_gw.get_many(pks, return_fields=return_fields)
+            return await self.read_gw.get_many(pks)
 
         return await self.cache_coord.get_many_read_through(
             pks,
-            fetch_many_on_cache_fault=lambda: self.read_gw.get_many(
-                pks, return_fields=return_fields
-            ),
+            fetch_many_on_cache_fault=lambda: self.read_gw.get_many(pks),
             fetch_misses_many=lambda misses: self.read_gw.get_many(
                 [UUID(x) for x in misses]
             ),
@@ -702,221 +622,189 @@ class DocumentCoordinator(
 
     # ....................... #
 
-    @overload
-    async def find(
-        self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
-        *,
-        for_update: bool = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict | None:
-        """Find one document matching filters projected to *return_fields*."""
-        ...
-
-    @overload
-    async def find(
-        self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
-        *,
-        for_update: bool = ...,
-        return_fields: None = ...,
-    ) -> R | None:
-        """Find one document matching filters as the read model."""
-        ...
-
     async def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_fields: Sequence[str] | None = None,
-    ) -> R | JsonDict | None:
-        """Find a single document matching the given filters.
+    ) -> R | None:
+        """Find a single document matching the given filters."""
 
-        :param filters: Query filter expression.
-        :param for_update: Require a transaction context.
-        :param return_fields: Optional field subset to project.
-        :returns: The matching document or ``None``.
-        """
+        return await self.read_gw.find(filters, for_update=for_update)
+
+    async def project(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        fields: Sequence[str],
+        *,
+        for_update: bool = False,
+    ) -> JsonDict | None:
+        """Find one document matching filters and project ``fields``."""
 
         return await self.read_gw.find(
             filters,
             for_update=for_update,
-            return_fields=return_fields,
+            return_fields=tuple(fields),
+        )
+
+    async def select(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        return_type: type[T],
+        *,
+        for_update: bool = False,
+    ) -> T | None:
+        """Find one document matching filters as ``return_type``."""
+
+        return await self.read_gw.find(
+            filters,
+            for_update=for_update,
+            return_model=return_type,
         )
 
     # ....................... #
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: AggregatesExpression,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]:
-        """Find aggregate rows as JSON mappings (no count query)."""
-        ...
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: None,
+        return_model: None,
+        return_fields: None,
+    ) -> CountlessPage[R]: ...
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: AggregatesExpression,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]:
-        """Find aggregate rows validated against ``return_type``."""
-        ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: AggregatesExpression,
-        return_type: None = ...,
-        return_fields: None = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
         return_count: Literal[True],
-    ) -> Page[JsonDict]:
-        """Find aggregate rows with total group count."""
-        ...
+        aggregates: None,
+        return_model: None,
+        return_fields: None,
+    ) -> Page[R]: ...
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: AggregatesExpression,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Page[T]:
-        """Find typed aggregate rows with total group count."""
-        ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: None,
+        return_model: None,
         return_fields: Sequence[str],
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]:
-        """Find documents projected to *return_fields* (no count query)."""
-        ...
+    ) -> CountlessPage[JsonDict]: ...
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[R]:
-        """Find documents as the read model (no count query)."""
-        ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[True],
+        aggregates: None,
+        return_model: None,
         return_fields: Sequence[str],
-        return_count: Literal[True],
-    ) -> Page[JsonDict]:
-        """Find documents projected to *return_fields* with total count."""
-        ...
+    ) -> Page[JsonDict]: ...
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Page[R]:
-        """Find documents as the read model with total count."""
-        ...
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: None,
+        return_model: type[T],
+        return_fields: None,
+    ) -> CountlessPage[T]: ...
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]:
-        """Find documents validated against ``return_type`` (non-aggregate)."""
-        ...
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[True],
+        aggregates: None,
+        return_model: type[T],
+        return_fields: None,
+    ) -> Page[T]: ...
 
     @overload
-    async def find_many(
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: AggregatesExpression,
+        return_model: None,
+        return_fields: None,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def _offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
         return_count: Literal[True],
-    ) -> Page[T]:
-        """Find documents as ``return_type`` with total document count."""
-        ...
+        aggregates: AggregatesExpression,
+        return_model: None,
+        return_fields: None,
+    ) -> Page[JsonDict]: ...
 
-    async def find_many(
+    @overload
+    async def _offset_page(
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
         *,
-        aggregates: AggregatesExpression | None = None,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> (
-        Page[R]
-        | CountlessPage[R]
-        | Page[T]
-        | CountlessPage[T]
-        | Page[JsonDict]
-        | CountlessPage[JsonDict]
-    ):
-        """Find documents with optional pagination, sort, and total count."""
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: AggregatesExpression,
+        return_model: type[T],
+        return_fields: None,
+    ) -> CountlessPage[T]: ...
 
+    @overload
+    async def _offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[True],
+        aggregates: AggregatesExpression,
+        return_model: type[T],
+        return_fields: None,
+    ) -> Page[T]: ...
+
+    async def _offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: bool,
+        aggregates: AggregatesExpression | None,
+        return_model: type[Any] | None,
+        return_fields: Sequence[str] | None,
+    ) -> Any:
         if aggregates is not None and return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
 
@@ -929,7 +817,7 @@ class DocumentCoordinator(
                 else await self.read_gw.count(filters)
             )
             if not cnt:
-                return page_from_limit_offset(
+                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
                     [],
                     pagination,
                     total=0,
@@ -947,7 +835,7 @@ class DocumentCoordinator(
                 offset=offset,
                 sorts=sorts,
                 aggregates=aggregates,
-                return_model=return_type,
+                return_model=return_model,
             )
         else:
             res = await self.read_gw.find_many(  # type: ignore[misc]
@@ -955,47 +843,244 @@ class DocumentCoordinator(
                 limit=limit,
                 offset=offset,
                 sorts=sorts,
-                return_model=return_type,  # type: ignore[arg-type]
+                return_model=return_model,  # type: ignore[arg-type]
                 return_fields=return_fields,  # type: ignore[arg-type]
             )
 
         if return_count:
-            return page_from_limit_offset(  # type: ignore[return-value]
+            return page_from_limit_offset(
                 list(res),
                 pagination,
                 total=cnt,
             )
-        return page_from_limit_offset(list(res), pagination, total=None)  # type: ignore[return-value]
+        return page_from_limit_offset(list(res), pagination, total=None)
+
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[R]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=None,
+            return_model=None,
+            return_fields=None,
+        )
+
+    async def project_many(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=None,
+            return_model=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_many(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[T]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=None,
+            return_model=return_type,
+            return_fields=None,
+        )
+
+    async def find_page(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[R]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=None,
+            return_model=None,
+            return_fields=None,
+        )
+
+    async def project_page(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[JsonDict]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=None,
+            return_model=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_page(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[T]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=None,
+            return_model=return_type,
+            return_fields=None,
+        )
+
+    async def aggregate_many(
+        self,
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=aggregates,
+            return_model=None,
+            return_fields=None,
+        )
+
+    async def aggregate_page(
+        self,
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[JsonDict]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=aggregates,
+            return_model=None,
+            return_fields=None,
+        )
+
+    async def select_many_aggregated(
+        self,
+        return_type: type[T],
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[T]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=aggregates,
+            return_model=return_type,
+            return_fields=None,
+        )
+
+    async def select_page_aggregated(
+        self,
+        return_type: type[T],
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[T]:
+        return await self._offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=aggregates,
+            return_model=return_type,
+            return_fields=None,
+        )
 
     # ....................... #
 
-    @overload
-    async def find_many_with_cursor(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
-
-    @overload
-    async def find_many_with_cursor(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        return_fields: None = ...,
-    ) -> CursorPage[R]: ...
-
-    async def find_many_with_cursor(
+    async def find_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[R]:
+        return await self._cursor_page(
+            filters=filters,
+            cursor=cursor,
+            sorts=sorts,
+            return_fields=None,
+        )
+
+    async def project_cursor(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[JsonDict]:
+        return await self._cursor_page(
+            filters=filters,
+            cursor=cursor,
+            sorts=sorts,
+            return_fields=tuple(fields),
+        )
+
+    @overload
+    async def _cursor_page(
+        self,
         *,
-        return_fields: Sequence[str] | None = None,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_fields: None,
+    ) -> CursorPage[R]: ...
+
+    @overload
+    async def _cursor_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    async def _cursor_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_fields: Sequence[str] | None,
     ) -> CursorPage[R] | CursorPage[JsonDict]:
         normalized = normalize_sorts_with_id(sorts)
 
@@ -1011,7 +1096,7 @@ class DocumentCoordinator(
             sort_keys != [ID_FIELD] or len(sort_keys) != 1
         ):
             raise CoreError(
-                "find_many_with_cursor (strict) requires sorting only by primary key: "
+                "find_cursor (strict) requires sorting only by primary key: "
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
             )
 
@@ -1603,12 +1688,11 @@ class DocumentCoordinator(
             )
 
             page = (
-                await self.find_many(
+                await self.project_many(
+                    [ID_FIELD, REV_FIELD],
                     filters=chunk_filter,
                     pagination={"limit": eff_chunk},
                     sorts={ID_FIELD: "asc"},
-                    return_count=False,
-                    return_fields=[ID_FIELD, REV_FIELD],
                 )
             ).hits
 

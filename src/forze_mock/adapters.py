@@ -19,6 +19,7 @@ from typing import (
     AsyncIterator,
     Literal,
     Mapping,
+    NoReturn,
     Sequence,
     TypeVar,
     cast,
@@ -694,66 +695,26 @@ class MockDocumentAdapter(
 
     # ....................... #
 
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_fields: Sequence[str],
-        skip_cache: bool = ...,
-    ) -> JsonDict: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_fields: None = ...,
-        skip_cache: bool = ...,
-    ) -> R: ...
-
     async def get(
         self,
         pk: UUID,
         *,
         for_update: bool = False,
-        return_fields: Sequence[str] | None = None,
         skip_cache: bool = False,
-    ) -> R | JsonDict:
+    ) -> R:
         del for_update, skip_cache
         with self.state.lock:
             doc = dict(self._ensure_exists(pk))
-        return self._to_read_or_projection(doc, return_fields)
+        return self._to_read(doc)
 
     # ....................... #
 
-    @overload
     async def get_many(
         self,
         pks: Sequence[UUID],
         *,
-        return_fields: Sequence[str],
-        skip_cache: bool = ...,
-    ) -> Sequence[JsonDict]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: None = ...,
-        skip_cache: bool = ...,
-    ) -> Sequence[R]: ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: Sequence[str] | None = None,
         skip_cache: bool = False,
-    ) -> Sequence[R] | Sequence[JsonDict]:
+    ) -> Sequence[R]:
         del skip_cache
         with self.state.lock:
             store = self._store()
@@ -762,42 +723,61 @@ class MockDocumentAdapter(
                 raise NotFoundError(f"Documents not found: {missing}")
             docs = [dict(store[pk]) for pk in pks]
 
-        return [self._to_read_or_projection(doc, return_fields) for doc in docs]  # type: ignore[return-value]
+        return [self._to_read(doc) for doc in docs]
 
     # ....................... #
-
-    @overload
-    async def find(
-        self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
-        *,
-        for_update: bool = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict | None: ...
-
-    @overload
-    async def find(
-        self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
-        *,
-        for_update: bool = ...,
-        return_fields: None = ...,
-    ) -> R | None: ...
 
     async def find(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_fields: Sequence[str] | None = None,
-    ) -> R | JsonDict | None:
+    ) -> R | None:
         del for_update
 
-        page = await self.find_many(  # type: ignore[call-overload]
+        page = await self.find_many(
             filters=filters,
             pagination={"limit": 1},
-            return_fields=return_fields,
-            return_count=False,
+        )
+
+        if not page.hits:
+            return None
+
+        return page.hits[0]
+
+    async def project(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        fields: Sequence[str],
+        *,
+        for_update: bool = False,
+    ) -> JsonDict | None:
+        del for_update
+
+        page = await self.project_many(
+            tuple(fields),
+            filters=filters,
+            pagination={"limit": 1},
+        )
+
+        if not page.hits:
+            return None
+
+        return page.hits[0]
+
+    async def select(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        return_type: type[T],
+        *,
+        for_update: bool = False,
+    ) -> T | None:
+        del for_update
+
+        page = await self.select_many(
+            return_type,
+            filters=filters,
+            pagination={"limit": 1},
         )
 
         if not page.hits:
@@ -808,153 +788,146 @@ class MockDocumentAdapter(
     # ....................... #
 
     @overload
-    async def find_many(
+    async def _mock_offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: AggregatesExpression,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: AggregatesExpression,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]: ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: AggregatesExpression,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Page[JsonDict]: ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: AggregatesExpression,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Page[T]: ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: None,
+        return_type: None,
+        return_fields: None,
     ) -> CountlessPage[R]: ...
 
     @overload
-    async def find_many(
+    async def _mock_offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
         return_count: Literal[True],
-    ) -> Page[JsonDict]: ...
-
-    @overload
-    async def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True],
+        aggregates: None,
+        return_type: None,
+        return_fields: None,
     ) -> Page[R]: ...
 
     @overload
-    async def find_many(
+    async def _mock_offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: None,
+        return_type: None,
+        return_fields: Sequence[str],
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def _mock_offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[True],
+        aggregates: None,
+        return_type: None,
+        return_fields: Sequence[str],
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def _mock_offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: None,
         return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
+        return_fields: None,
     ) -> CountlessPage[T]: ...
 
     @overload
-    async def find_many(
+    async def _mock_offset_page(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
         return_count: Literal[True],
+        aggregates: None,
+        return_type: type[T],
+        return_fields: None,
     ) -> Page[T]: ...
 
-    async def find_many(
+    @overload
+    async def _mock_offset_page(
         self,
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
         *,
-        aggregates: AggregatesExpression | None = None,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> (
-        Page[R]
-        | CountlessPage[R]
-        | Page[T]
-        | CountlessPage[T]
-        | Page[JsonDict]
-        | CountlessPage[JsonDict]
-    ):
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: AggregatesExpression,
+        return_type: None,
+        return_fields: None,
+    ) -> CountlessPage[JsonDict]: ...
+
+    @overload
+    async def _mock_offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[True],
+        aggregates: AggregatesExpression,
+        return_type: None,
+        return_fields: None,
+    ) -> Page[JsonDict]: ...
+
+    @overload
+    async def _mock_offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[False],
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def _mock_offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: Literal[True],
+        aggregates: AggregatesExpression,
+        return_type: type[T],
+        return_fields: None,
+    ) -> Page[T]: ...
+
+    async def _mock_offset_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_count: bool,
+        aggregates: AggregatesExpression | None,
+        return_type: type[Any] | None,
+        return_fields: Sequence[str] | None,
+    ) -> Any:
         if aggregates is not None and return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
 
@@ -1007,42 +980,239 @@ class MockDocumentAdapter(
             rows = rows[:limit]
 
         if return_count:
-            return page_from_limit_offset(  # type: ignore[return-value]
+            return page_from_limit_offset(
                 cast(Any, rows),
                 pagination,
                 total=total,
             )
-        return page_from_limit_offset(cast(Any, rows), pagination, total=None)  # type: ignore[return-value]
+        return page_from_limit_offset(cast(Any, rows), pagination, total=None)
+
+    async def find_many(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[R]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=None,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_many(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=None,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_many(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[T]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=None,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def find_page(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[R]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=None,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_page(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[JsonDict]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=None,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_page(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[T]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=None,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def aggregate_many(
+        self,
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=aggregates,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def aggregate_page(
+        self,
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[JsonDict]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=aggregates,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def select_many_aggregated(
+        self,
+        return_type: type[T],
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CountlessPage[T]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=False,
+            aggregates=aggregates,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def select_page_aggregated(
+        self,
+        return_type: type[T],
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Page[T]:
+        return await self._mock_offset_page(
+            filters=filters,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=True,
+            aggregates=aggregates,
+            return_type=return_type,
+            return_fields=None,
+        )
 
     # ....................... #
 
-    @overload
-    async def find_many_with_cursor(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
-
-    @overload
-    async def find_many_with_cursor(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        return_fields: None = ...,
-    ) -> CursorPage[R]: ...
-
-    async def find_many_with_cursor(
+    async def find_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[R]:
+        return await self._mock_cursor_page(
+            filters=filters,
+            cursor=cursor,
+            sorts=sorts,
+            return_fields=None,
+        )
+
+    async def project_cursor(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[JsonDict]:
+        return await self._mock_cursor_page(
+            filters=filters,
+            cursor=cursor,
+            sorts=sorts,
+            return_fields=tuple(fields),
+        )
+
+    @overload
+    async def _mock_cursor_page(
+        self,
         *,
-        return_fields: Sequence[str] | None = None,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_fields: None,
+    ) -> CursorPage[R]: ...
+
+    @overload
+    async def _mock_cursor_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    async def _mock_cursor_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_fields: Sequence[str] | None,
     ) -> CursorPage[R] | CursorPage[JsonDict]:
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
@@ -1575,17 +1745,17 @@ class MockDocumentAdapter(
                     ]
                 }
             )
-            page = await self.find_many(
+            page = await self.project_many(
+                [ID_FIELD, REV_FIELD],
                 filters=chunk_filter,
                 pagination={"limit": eff},
                 sorts={ID_FIELD: "asc"},
-                return_count=False,
             )
             rows = page.hits
             if not rows:
                 break
 
-            updates = [(r.id, r.rev, dto) for r in rows]
+            updates = [(UUID(str(r[ID_FIELD])), int(r[REV_FIELD]), dto) for r in rows]
 
             if return_new:
                 out.extend(
@@ -1595,7 +1765,7 @@ class MockDocumentAdapter(
                 await self.update_many(updates, return_new=False)
 
             n_total += len(rows)
-            last_id = rows[-1].id
+            last_id = UUID(str(rows[-1][ID_FIELD]))
 
             if len(rows) < eff:
                 break
@@ -2017,96 +2187,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
     # ....................... #
 
     @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[M]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[M]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[True] = ...,
-    ) -> Page[JsonDict]: ...
-
-    async def search(
+    async def _offset_search_impl(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -2115,17 +2196,85 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-        return_type: type[T] | None = None,
+        return_count: Literal[False],
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> CountlessPage[M]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> Page[M]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[False],
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> Page[T]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: bool,
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> NoReturn: ...
+
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: bool,
+        return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> (
-        CountlessPage[M]
-        | CountlessPage[T]
-        | CountlessPage[JsonDict]
-        | Page[M]
-        | Page[T]
-        | Page[JsonDict]
-    ):
+    ) -> Any:
+        _ = snapshot
         ordered = self._full_ordered_search_documents(query, filters, sorts, options)
         total = len(ordered)
         pagination = pagination or {}
@@ -2141,71 +2290,171 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         if return_fields is not None:
             proj = [_project(doc, return_fields) for doc in ordered]
             if return_count:
-                return page_from_limit_offset(  # type: ignore[return-value]
+                return page_from_limit_offset(
                     proj, pagination, total=total
                 )
-            return page_from_limit_offset(proj, pagination, total=None)  # type: ignore[return-value]
+            return page_from_limit_offset(proj, pagination, total=None)
 
         if return_type is not None:
             out = pydantic_validate_many(return_type, ordered)
             if return_count:
-                return page_from_limit_offset(  # type: ignore[return-value]
+                return page_from_limit_offset(
                     out, pagination, total=total
                 )
-            return page_from_limit_offset(out, pagination, total=None)  # type: ignore[return-value]
+            return page_from_limit_offset(out, pagination, total=None)
 
         allowed = set(self.spec.model_type.model_fields.keys())
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
-        out = pydantic_validate_many(self.spec.model_type, typed_docs)  # type: ignore[arg-type]
+        out = pydantic_validate_many(self.spec.model_type, typed_docs)
 
         if return_count:
-            return page_from_limit_offset(  # type: ignore[return-value]
+            return page_from_limit_offset(
                 out, pagination, total=total
             )
-        return page_from_limit_offset(out, pagination, total=None)  # type: ignore[return-value]
+        return page_from_limit_offset(out, pagination, total=None)
+
+    # ....................... #
+
+    async def search(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[M]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def search_page(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[M]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_search(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def project_search_page(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[JsonDict]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_search(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[T]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def select_search_page(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[T]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=return_type,
+            return_fields=None,
+        )
 
     # ....................... #
 
     @overload
-    async def search_with_cursor(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-    ) -> CursorPage[M]: ...
-
-    @overload
-    async def search_with_cursor(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-    ) -> CursorPage[T]: ...
-
-    @overload
-    async def search_with_cursor(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
-
-    async def search_with_cursor(
+    async def _cursor_search_impl(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -2213,9 +2462,47 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_type: type[T] | None = None,
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> CursorPage[M]: ...
+
+    @overload
+    async def _cursor_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> CursorPage[JsonDict]: ...
+
+    @overload
+    async def _cursor_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> CursorPage[T]: ...
+
+    async def _cursor_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> CursorPage[M] | CursorPage[T] | CursorPage[JsonDict]:
+    ) -> Any:
         ordered = self._full_ordered_search_documents(query, filters, sorts, options)
         start, lim = _mock_cursor_start_and_limit(cursor)
         window = ordered[start : start + lim + 1]
@@ -2236,7 +2523,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         if return_type is not None:
             hits_T = pydantic_validate_many(return_type, page)
 
-            return CursorPage(  # type: ignore[return-value]
+            return CursorPage(
                 hits=hits_T,
                 next_cursor=next_c,
                 prev_cursor=prev_c,
@@ -2247,11 +2534,70 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in page]
         hits = pydantic_validate_many(self.spec.model_type, typed_docs)
 
-        return CursorPage(  # type: ignore[return-value]
+        return CursorPage(
             hits=hits,
             next_cursor=next_c,
             prev_cursor=prev_c,
             has_more=has_more,
+        )
+
+    async def search_cursor(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[M]:
+        return await self._cursor_search_impl(
+            query,
+            filters,
+            cursor,
+            sorts,
+            options=options,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_search_cursor(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[JsonDict]:
+        return await self._cursor_search_impl(
+            query,
+            filters,
+            cursor,
+            sorts,
+            options=options,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_search_cursor(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[T]:
+        return await self._cursor_search_impl(
+            query,
+            filters,
+            cursor,
+            sorts,
+            options=options,
+            return_type=return_type,
+            return_fields=None,
         )
 
 

@@ -40,7 +40,10 @@ Install only what you need. Extras map directly to integration packages:
 | `sqs` | SQS integration (`forze_sqs`) |
 | `rabbitmq` | RabbitMQ integration (`forze_rabbitmq`) |
 | `authn` | First-party `forze_authn` (Argon2, PyJWT, email-validator) |
+| `authz` | Empty extra (symmetry / future-proofing); `forze_authz` ships in the main wheel with `forze` |
 | `oidc` | Generic OIDC verifier (`forze_oidc`, PyJWT with crypto) for external IdPs |
+
+The PyPI wheel includes `forze_authn`, `forze_authz`, `forze_oidc`, and `forze_tenancy` without selecting those extras; extras only add **transitive** dependencies (for example `authn` pulls Argon2 and validators for password flows).
 
 `forze_mock` is bundled with the core package and requires no extra. It provides in-memory adapters for development and testing without external infrastructure.
 

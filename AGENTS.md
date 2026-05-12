@@ -90,6 +90,8 @@ Use them for:
 - `src/forze/`: core framework layers (application/domain/utils/base).
 - `src/forze_authn/`: document-backed authentication integration package.
 - `src/forze_authz/`: document-backed authorization integration package.
+- `src/forze_oidc/`: generic OIDC token verifier integration package.
+- `src/forze_tenancy/`: tenant aggregates, resolver/management adapters, and `TenancyDepsModule`.
 - `src/forze_fastapi/`: FastAPI integration package.
 - `src/forze_postgres/`: Postgres integration package.
 - `src/forze_redis/`: Redis integration package.

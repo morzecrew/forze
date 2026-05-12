@@ -126,7 +126,10 @@ class PsycopgQueryRenderer:
     """Render :class:`QueryExpr` trees into psycopg :class:`~psycopg.sql.Composable` SQL with positional parameters.
 
     When *types* is provided, values are coerced to match the Postgres column
-    type and array operators are normalized automatically.
+    type. Native array columns use the same filter-operator semantics as other
+    backends (exact equality for ``$eq`` / ``$neq``, element-wise ``$in`` /
+    ``$nin``); use ``$superset``, ``$subset``, ``$overlaps``, or ``$disjoint``
+    for set-relation predicates.
     """
 
     types: PostgresColumnTypes | None = attrs.field(default=None)
@@ -391,8 +394,6 @@ class PsycopgQueryRenderer:
         *,
         t: PostgresType | None,
     ) -> sql.Composable:
-        op, value = self._normalize_op(op, value, t=t)
-
         match op:
             case "$null" | "$empty":
                 return self._render_unary(col, op, value, t=t)
@@ -509,6 +510,20 @@ class PsycopgQueryRenderer:
             "$neq": "<>",
         }
         op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
+
+        if t is not None and t.is_array:
+            if not isinstance(value, (list, tuple)) or isinstance(
+                value,
+                (str, bytes, bytearray),
+            ):
+                raise CoreError(
+                    f"Array column filter {op!r} requires a list/tuple value; "
+                    "use $null for null checks, $superset / $overlaps / $in for "
+                    "containment-style matches.",
+                )
+            bound = self.binder.add(self.coercer.array(value, t=t))
+            return sql.SQL("{} {} {}").format(col, op_sql, bound)
+
         value = self.coercer.scalar(value, t=t)
 
         return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(value))
@@ -523,8 +538,16 @@ class PsycopgQueryRenderer:
         *,
         t: PostgresType | None,
     ) -> sql.Composable:
-        value = self.coercer.array(value, t=t)
-        expr = sql.SQL("{} = ANY({})").format(col, self.binder.add(value))
+        coerced = self.coercer.array(value, t=t)
+
+        if t is not None and t.is_array:
+            inner = sql.SQL(
+                "EXISTS (SELECT 1 FROM unnest({}) AS _fz_u WHERE _fz_u = ANY({}))",
+            ).format(col, self.binder.add(coerced))
+
+            return inner if op == "$in" else sql.SQL("NOT ({})").format(inner)
+
+        expr = sql.SQL("{} = ANY({})").format(col, self.binder.add(coerced))
 
         return expr if op == "$in" else sql.SQL("NOT ({})").format(expr)
 
@@ -553,27 +576,3 @@ class PsycopgQueryRenderer:
             op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
 
             return sql.SQL("{} {} {}").format(col, op_sql, ph)
-
-    # ....................... #
-
-    @staticmethod
-    def _normalize_op(
-        op: QueryOp.All,  # type: ignore[valid-type]
-        value: Any,
-        *,
-        t: PostgresType | None,
-    ) -> tuple[QueryOp.All, Any]:  # type: ignore[valid-type]
-        if t is not None and t.is_array:
-            if op == "$eq":
-                if isinstance(value, QueryValue.Scalar):
-                    return "$superset", [value]
-
-                return "$superset", value
-
-            if op == "$in":
-                return "$overlaps", value
-
-            if op == "$nin":
-                return "$disjoint", value
-
-        return op, value

@@ -132,23 +132,21 @@ async def test_vector_l2_knn_orders_by_nearest(pgvector_client: PostgresClient) 
     assert isinstance(port, PostgresVectorSearchAdapter)
     _ = port.index_qname, PostgresQualifiedName("public", index_name)
 
-    __p = await port.search("alpha", return_count=True)
+    __p = await port.search_page("alpha")
     hits = __p.hits
     total = __p.count
     assert total == 2
     assert hits[0].id == a_id
     assert hits[1].id == b_id
 
-    __p = await port.search(["alpha", "beta"], return_count=True)
+    __p = await port.search_page(["alpha", "beta"])
     disj = __p.hits
     n_disj = __p.count
     assert n_disj == 2
     assert {row.id for row in disj} == {a_id, b_id}
     assert disj[0].id == a_id
 
-    __p = await port.search(
-        ["alpha", "beta"], options={"phrase_combine": "all"}, return_count=True
-    )
+    __p = await port.search_page(["alpha", "beta"], options={"phrase_combine": "all"})
     conj = __p.hits
     n_conj = __p.count
     assert n_conj == 2
@@ -193,7 +191,7 @@ async def test_vector_l2_with_hnsw_index(pgvector_client: PostgresClient) -> Non
         pgvector_client, table=table, index_name=index_name, vector_distance="l2"
     )
     port = ctx.search_query(spec)
-    __p = await port.search("xkey", return_count=True)
+    __p = await port.search_page("xkey")
     out = __p.hits
     n = __p.count
     assert n == 2
@@ -239,7 +237,7 @@ async def test_vector_cosine_knn_orders_by_nearest(
         pgvector_client, table=table, index_name=index_name, vector_distance="cosine"
     )
     port = ctx.search_query(spec)
-    __p = await port.search("one", return_count=True)
+    __p = await port.search_page("one")
     rows = __p.hits
     total = __p.count
     assert total == 2
@@ -287,7 +285,7 @@ async def test_vector_inner_product_knn_orders_by_nearest(
         vector_distance="inner_product",
     )
     port = ctx.search_query(spec)
-    __p = await port.search("ip_a", return_count=True)
+    __p = await port.search_page("ip_a")
     rows = __p.hits
     total = __p.count
     assert total == 2
@@ -328,7 +326,7 @@ async def test_vector_empty_query_zero_rank_includes_all_filtered_rows(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    __p = await port.search("   ", return_count=True)
+    __p = await port.search_page("   ")
     _rows = __p.hits
     total = __p.count
     assert total == 2
@@ -375,7 +373,7 @@ async def test_vector_respects_eq_filter_on_projection(
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
     flt: QueryFilterExpression = {"$fields": {"label": "keep"}}
-    __p = await port.search("filter_me", filters=flt, return_count=True)
+    __p = await port.search_page("filter_me", filters=flt)
     rows = __p.hits
     n = __p.count
     assert n == 1
@@ -417,7 +415,7 @@ async def test_vector_return_count_no_matches_short_circuit(
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
     impossible: QueryFilterExpression = {"$fields": {"label": "nope"}}
-    page = await port.search("lonely", filters=impossible, return_count=True)
+    page = await port.search_page("lonely", filters=impossible)
     assert isinstance(page, Page)
     assert page.count == 0
     assert page.hits == []
@@ -457,7 +455,7 @@ async def test_vector_sorts_add_secondary_order_on_tied_rank(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    page = await port.search(" ", sorts={"label": "asc"}, return_count=True)
+    page = await port.search_page(" ", sorts={"label": "asc"})
     assert page.count == 2
     assert [h.label for h in page.hits] == ["a", "b"]
 
@@ -498,24 +496,22 @@ async def test_vector_return_fields_and_pagination(
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
 
-    counted = await port.search(
+    counted = await port.project_search_page(
+        ["id", "label"],
         " ",
         sorts={"label": "asc"},
         pagination={"limit": 2, "offset": 0},
-        return_fields=["id", "label"],
-        return_count=True,
     )
     assert counted.count == 3
     assert len(counted.hits) == 2
     assert all(set(r.keys()) == {"id", "label"} for r in counted.hits)
     assert [r["label"] for r in counted.hits] == ["a", "b"]
 
-    page2 = await port.search(
+    page2 = await port.project_search(
+        ["label"],
         " ",
         sorts={"label": "asc"},
         pagination={"limit": 2, "offset": 2},
-        return_fields=["label"],
-        return_count=False,
     )
     assert not isinstance(page2, Page)
     assert len(page2.hits) == 1
@@ -554,7 +550,7 @@ async def test_vector_search_return_type_override(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    page = await port.search("typed", return_type=VecDocView, return_count=True)
+    page = await port.select_search_page(VecDocView, "typed")
     assert page.count == 1
     assert isinstance(page.hits[0], VecDocView)
     assert page.hits[0].id == row_id
@@ -592,7 +588,7 @@ async def test_vector_search_return_type_countless_page(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    page = await port.search("rt0", return_type=VecDocView, return_count=False)
+    page = await port.select_search(VecDocView, "rt0")
     assert not isinstance(page, Page)
     assert len(page.hits) == 1
     assert isinstance(page.hits[0], VecDocView)
@@ -630,7 +626,7 @@ async def test_vector_search_default_model_countless_page(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    page = await port.search("nc", return_count=False)
+    page = await port.search("nc")
     assert not isinstance(page, Page)
     assert len(page.hits) == 1
     assert isinstance(page.hits[0], VecDoc)
@@ -675,10 +671,10 @@ async def test_vector_search_with_cursor_ranked_chains(
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
 
-    p1: CursorPage = await port.search_with_cursor(
+    p1: CursorPage = await port.project_search_cursor(
+        ["id", "label"],
         "near-a",
         sorts={"label": "asc"},
-        return_fields=["id", "label"],
         cursor={"limit": 1},
     )
     assert len(p1.hits) == 1
@@ -686,19 +682,19 @@ async def test_vector_search_with_cursor_ranked_chains(
     assert p1.has_more is True
     assert p1.next_cursor is not None
 
-    p2 = await port.search_with_cursor(
+    p2 = await port.project_search_cursor(
+        ["id", "label"],
         "near-a",
         sorts={"label": "asc"},
-        return_fields=["id", "label"],
         cursor={"limit": 5, "after": p1.next_cursor},
     )
     assert len(p2.hits) == 2
     assert {p1.hits[0]["id"], *{r["id"] for r in p2.hits}} == {id_a, id_b, id_c}
 
-    b0 = await port.search_with_cursor(
+    b0 = await port.project_search_cursor(
+        ["id", "label"],
         "",
         sorts={"label": "asc"},
-        return_fields=["id", "label"],
         cursor={"limit": 2},
     )
     assert len(b0.hits) == 2
@@ -743,10 +739,9 @@ async def test_vector_search_three_term_query_multi_embed(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    p = await port.search(
+    p = await port.search_page(
         ["q0", "q1", "q2"],
         options={"phrase_combine": "all"},
-        return_count=True,
     )
     assert p.count == 3
     assert {r.label for r in p.hits} == {"one", "two", "sum"}
@@ -787,10 +782,10 @@ async def test_vector_search_with_cursor_browse_before(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
-    p0: CursorPage = await port.search_with_cursor(
+    p0: CursorPage = await port.project_search_cursor(
+        ["id", "label"],
         "",
         sorts={"label": "asc"},
-        return_fields=["id", "label"],
         cursor={"limit": 1},
     )
     assert len(p0.hits) == 1
@@ -798,20 +793,20 @@ async def test_vector_search_with_cursor_browse_before(
     assert p0.has_more is True
     assert p0.next_cursor is not None
 
-    p1 = await port.search_with_cursor(
+    p1 = await port.project_search_cursor(
+        ["id", "label"],
         "",
         sorts={"label": "asc"},
-        return_fields=["id", "label"],
         cursor={"limit": 1, "after": p0.next_cursor},
     )
     assert len(p1.hits) == 1
     assert p1.hits[0]["label"] == "b"
     assert p1.next_cursor is not None
 
-    p_back: CursorPage = await port.search_with_cursor(
+    p_back: CursorPage = await port.project_search_cursor(
+        ["id", "label"],
         "",
         sorts={"label": "asc"},
-        return_fields=["id", "label"],
         cursor={"limit": 2, "before": p1.next_cursor},
     )
     assert len(p_back.hits) >= 1
@@ -856,10 +851,10 @@ async def test_vector_search_with_cursor_ranked_return_type_and_before(
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search_query(spec)
 
-    p0: CursorPage = await port.search_with_cursor(
+    p0: CursorPage = await port.select_search_cursor(
+        VecDocView,
         "knn-a",
         sorts={"label": "asc"},
-        return_type=VecDocView,
         cursor={"limit": 1},
     )
     assert len(p0.hits) == 1
@@ -868,19 +863,19 @@ async def test_vector_search_with_cursor_ranked_return_type_and_before(
     assert p0.has_more is True
     assert p0.next_cursor is not None
 
-    p1 = await port.search_with_cursor(
+    p1 = await port.select_search_cursor(
+        VecDocView,
         "knn-a",
         sorts={"label": "asc"},
-        return_type=VecDocView,
         cursor={"limit": 1, "after": p0.next_cursor},
     )
     assert len(p1.hits) == 1
     assert p1.next_cursor is not None
 
-    p_back: CursorPage = await port.search_with_cursor(
+    p_back: CursorPage = await port.select_search_cursor(
+        VecDocView,
         "knn-a",
         sorts={"label": "asc"},
-        return_type=VecDocView,
         cursor={"limit": 2, "before": p1.next_cursor},
     )
     assert len(p_back.hits) >= 1

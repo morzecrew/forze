@@ -109,32 +109,31 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
 
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
-    __p = await adapter.search("postgres OR search", return_count=True)
+    __p = await adapter.search_page("postgres OR search")
     res = __p.hits
     total = __p.count
     assert total == 1
     assert len(res) == 1
     assert res[0].title == "PostgreSQL FTS"
 
-    __p = await adapter.search(
+    __p = await adapter.search_page(
         "text",
         pagination={"limit": 1, "offset": 0},
         sorts={"title": "asc"},
         options={"weights": {"title": 0.6, "content": 0.4}},
-        return_count=True,
     )
     page = __p.hits
     n_total = __p.count
     assert n_total >= 1
     assert len(page) == 1
 
-    __p = await adapter.search("text", return_fields=["title"], return_count=True)
+    __p = await adapter.project_search_page(["title"], "text")
     titles = __p.hits
     t2 = __p.count
     assert t2 >= 1
     assert set(titles[0].keys()) == {"title"}
 
-    __p = await adapter.search("zzzabsenttoken", return_count=True)
+    __p = await adapter.search_page("zzzabsenttoken")
     no_hits = __p.hits
     n_zero = __p.count
     assert n_zero == 0
@@ -143,29 +142,25 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     class TitleSlice(BaseModel):
         title: str
 
-    __p = await adapter.search(
-        "postgres OR search", return_type=TitleSlice, return_count=True
-    )
+    __p = await adapter.select_search_page(TitleSlice, "postgres OR search")
     slim = __p.hits
     n_slim = __p.count
     assert n_slim == 1
     assert slim[0].title == "PostgreSQL FTS"
 
-    __p = await adapter.search(["search", "recipe"], return_count=True)
+    __p = await adapter.search_page(["search", "recipe"])
     multi = __p.hits
     n_multi = __p.count
     assert n_multi == 2
     assert {r.title for r in multi} == {"PostgreSQL FTS", "Cooking"}
 
-    __p = await adapter.search("search OR recipe", return_count=True)
+    __p = await adapter.search_page("search OR recipe")
     str_or = __p.hits
     n_str = __p.count
     assert n_str == n_multi
     assert {r.title for r in str_or} == {r.title for r in multi}
 
-    __p = await adapter.search(
-        ["search", "full"], options={"phrase_combine": "all"}, return_count=True
-    )
+    __p = await adapter.search_page(["search", "full"], options={"phrase_combine": "all"})
     and_hits = __p.hits
     n_and = __p.count
     assert n_and == 1
@@ -216,7 +211,7 @@ async def test_fts_search_with_filters_and_empty_query(
     adapter = ctx.search_query(spec)
 
     flt: QueryFilterExpression = {"$fields": {"title": "keep"}}
-    __p = await adapter.search("", filters=flt, return_count=True)
+    __p = await adapter.search_page("", filters=flt)
     rows = __p.hits
     cnt = __p.count
     assert cnt == 1
@@ -288,7 +283,7 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
 
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
-    __p = await adapter.search("fts", return_count=True)
+    __p = await adapter.search_page("fts")
     res = __p.hits
     total = __p.count
     assert total == 1
@@ -345,7 +340,7 @@ async def test_fts_adapter_v2_direct_projection_heap_and_index_field_map(
         tenant_aware=False,
     )
 
-    __p = await adapter.search("hello", return_count=True)
+    __p = await adapter.search_page("hello")
     rows = __p.hits
     n = __p.count
     assert n == 1
@@ -393,10 +388,10 @@ async def test_fts_search_with_cursor_ranked_and_browse(
     )
     adapter = ctx.search_query(spec)
 
-    p1: CursorPage = await adapter.search_with_cursor(
+    p1: CursorPage = await adapter.project_search_cursor(
+        ["title", "content", "id"],
         "common",
         sorts={"title": "asc"},
-        return_fields=["title", "content", "id"],
         cursor={"limit": 1},
     )
     assert len(p1.hits) == 1
@@ -404,18 +399,18 @@ async def test_fts_search_with_cursor_ranked_and_browse(
     assert p1.has_more is True
     assert p1.next_cursor is not None
 
-    p2 = await adapter.search_with_cursor(
+    p2 = await adapter.project_search_cursor(
+        ["title", "content", "id"],
         "common",
         sorts={"title": "asc"},
-        return_fields=["title", "content", "id"],
         cursor={"limit": 5, "after": p1.next_cursor},
     )
     assert len(p2.hits) == 2
 
-    b0 = await adapter.search_with_cursor(
+    b0 = await adapter.project_search_cursor(
+        ["title", "content", "id"],
         "",
         sorts={"title": "asc"},
-        return_fields=["title", "content", "id"],
         cursor={"limit": 2},
     )
     assert len(b0.hits) == 2
@@ -464,15 +459,13 @@ async def test_fts_phrase_combine_any_vs_all_multi_term(
     )
     adapter = ctx.search_query(spec)
     assert isinstance(adapter, PostgresFTSSearchAdapter)
-    p_any = await adapter.search(
+    p_any = await adapter.search_page(
         ["giraffe", "zebra"],
         options={"phrase_combine": "any"},
-        return_count=True,
     )
-    p_all = await adapter.search(
+    p_all = await adapter.search_page(
         ["giraffe", "zebra"],
         options={"phrase_combine": "all"},
-        return_count=True,
     )
     assert p_any.count == 3
     assert p_all.count == 1
@@ -525,10 +518,10 @@ async def test_fts_search_with_cursor_return_type_and_before(
         id: UUID
         title: str
 
-    p0: CursorPage = await adapter.search_with_cursor(
+    p0: CursorPage = await adapter.select_search_cursor(
+        FtsTitleId,
         "curtok",
         sorts={"title": "asc"},
-        return_type=FtsTitleId,
         cursor={"limit": 1},
     )
     assert len(p0.hits) == 1
@@ -537,20 +530,20 @@ async def test_fts_search_with_cursor_return_type_and_before(
     assert p0.has_more is True
     assert p0.next_cursor is not None
 
-    p1 = await adapter.search_with_cursor(
+    p1 = await adapter.select_search_cursor(
+        FtsTitleId,
         "curtok",
         sorts={"title": "asc"},
-        return_type=FtsTitleId,
         cursor={"limit": 1, "after": p0.next_cursor},
     )
     assert len(p1.hits) == 1
     assert p1.hits[0].title == "b"
     assert p1.next_cursor is not None
 
-    p_back: CursorPage = await adapter.search_with_cursor(
+    p_back: CursorPage = await adapter.select_search_cursor(
+        FtsTitleId,
         "curtok",
         sorts={"title": "asc"},
-        return_type=FtsTitleId,
         cursor={"limit": 2, "before": p1.next_cursor},
     )
     assert len(p_back.hits) >= 1
@@ -595,7 +588,7 @@ async def test_fts_v2_ranked_count_zero_short_circuits(
         fields=["title", "content"],
     )
     adapter = ctx.search_query(spec)
-    p = await adapter.search("zzznotokenmatchunique123", return_count=True)
+    p = await adapter.search_page("zzznotokenmatchunique123")
     assert p.count == 0
     assert p.hits == []
 
@@ -644,19 +637,19 @@ async def test_fts_v2_search_with_cursor_ranked_return_type_and_fields(
     class TitleOnly(BaseModel):
         title: str
 
-    p1: CursorPage = await adapter.search_with_cursor(
+    p1: CursorPage = await adapter.select_search_cursor(
+        TitleOnly,
         "sharedtok",
         sorts={"title": "asc"},
-        return_type=TitleOnly,
         cursor={"limit": 1},
     )
     assert len(p1.hits) == 1
     assert isinstance(p1.hits[0], TitleOnly)
 
-    p2: CursorPage = await adapter.search_with_cursor(
+    p2: CursorPage = await adapter.project_search_cursor(
+        ["title", "id"],
         "sharedtok",
         sorts={"title": "asc"},
-        return_fields=["title", "id"],
         cursor={"limit": 2},
     )
     assert len(p2.hits) == 2

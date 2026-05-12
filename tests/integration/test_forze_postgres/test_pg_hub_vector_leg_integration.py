@@ -121,16 +121,15 @@ async def test_hub_vector_leg_knn_single_and_multi_query(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    one = await adapter.search("alpha", return_count=True)
+    one = await adapter.search_page("alpha")
     assert one.count == 2
     assert one.hits[0].id == l1
 
-    multi = await adapter.search(
+    multi = await adapter.search_page(
         ["alpha", "beta"],
         options={"phrase_combine": "any"},
-        return_count=True,
     )
     assert multi.count == 2
 
-    browse = await adapter.search("", return_count=True)
+    browse = await adapter.search_page("")
     assert browse.count == 2

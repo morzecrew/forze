@@ -76,7 +76,7 @@ class TestMockSearchAdapter:
     async def test_search_empty_returns_empty(self) -> None:
         state = MockState()
         search = _search_adapter(state)
-        page = await search.search("q", return_count=True)
+        page = await search.search_page("q")
         assert page.hits == []
         assert page.count == 0
 
@@ -88,7 +88,7 @@ class TestMockSearchAdapter:
 
         await doc.create(_CreateWithTitle(title="foo"))
         await doc.create(_CreateWithTitle(title="foo"))
-        page = await search.search("foo", return_count=True)
+        page = await search.search_page("foo")
         assert page.count == 2
         assert page.hits[0].title == "foo"
         assert page.hits[1].title == "foo"
@@ -101,9 +101,8 @@ class TestMockSearchAdapter:
 
         await doc.create(_CreateWithTitle(title="alpha"))
         await doc.create(_CreateWithTitle(title="beta"))
-        page = await search.search(
+        page = await search.search_page(
             ["alpha", "gamma"],
-            return_count=True,
         )
         assert page.count == 1
         assert page.hits[0].title == "alpha"
@@ -116,8 +115,8 @@ class TestMockSearchAdapter:
 
         for i in range(5):
             await doc.create(_CreateWithTitle(title="q"))
-        page = await search.search(
-            "q", pagination={"limit": 2}, return_count=True
+        page = await search.search_page(
+            "q", pagination={"limit": 2}
         )
         assert page.count == 5
         assert len(page.hits) == 2
@@ -130,10 +129,9 @@ class TestMockSearchAdapter:
 
         for _ in range(5):
             await doc.create(_CreateWithTitle(title="q"))
-        page = await search.search(
+        page = await search.search_page(
             "q",
             pagination={"offset": 2, "limit": 2},
-            return_count=True,
         )
         assert page.count == 5
         assert len(page.hits) == 2
@@ -145,8 +143,9 @@ class TestMockSearchAdapter:
         search = _search_adapter(state)
 
         await doc.create(_CreateWithTitle(title="foo"))
-        page = await search.search(
-            "foo", return_fields=["title"], return_count=True
+        page = await search.project_search_page(
+            ["title"],
+            "foo",
         )
         assert page.count == 1
         assert page.hits[0] == {"title": "foo"}
@@ -158,6 +157,6 @@ class TestMockSearchAdapter:
         search = _search_adapter(state)
 
         await doc.create(_CreateWithTitle(title="first"))
-        page = await search.search("first", return_count=True)
+        page = await search.search_page("first")
         assert page.count == 1
         assert page.hits[0].title == "first"

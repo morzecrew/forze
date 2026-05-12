@@ -81,9 +81,8 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert found is not None
     assert found.id == created.id
 
-    __p = await adapter.find_many(
+    __p = await adapter.find_page(
         pagination={"limit": 10},
-        return_count=True,
     )
     docs = __p.hits
     total = __p.count
@@ -163,11 +162,10 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
 
     q_adapter = ctx.doc_query(spec)
 
-    __p = await q_adapter.find_many(
+    __p = await q_adapter.find_page(
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count
@@ -175,7 +173,7 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
     assert total == 3
     assert [r.name for r in rows] == ["alice", "bob", "charlie"]
 
-    rows_desc = await q_adapter.find_many(
+    rows_desc = await q_adapter.find_page(
         None,
         pagination={"limit": 2, "offset": 0},
         sorts={"name": "desc"},

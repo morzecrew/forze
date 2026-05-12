@@ -31,14 +31,21 @@ Switching from Postgres to Mongo means changing the dependency plan, not the use
 
 Split into read and write ports for CQRS flexibility:
 
-**`DocumentQueryPort[R]`**: read-only operations:
+**`DocumentQueryPort[R]`**: read-only operations (by key, by filters, offset pages, cursor pages, aggregates, count). Use `project*` / `select*` for projections and alternate row types; `find_page` / `project_page` / `select_page` / `aggregate_page` / `select_page_aggregated` for counted offset pages; `find_many` / `project_many` / … for countless pages; `find_cursor` / `project_cursor` for keyset pagination.
 
-| Method | Signature | Purpose |
-|--------|-----------|---------|
-| `get` | `(pk, *, for_update?, return_fields?) -> R | JsonDict` | Fetch one document by ID |
-| `get_many` | `(pks, *, return_fields?) -> Sequence[R] | Sequence[JsonDict]` | Fetch multiple by IDs |
-| `find` | `(filters, *, for_update?, return_fields?) -> R | None` | Find one by filter |
-| `find_many` | `(filters?, pagination?, sorts?, *, return_count?, return_fields?) -> CountlessPage[R] | Page[R]` | Paginated query |
+| Method | Signature (summary) | Purpose |
+|--------|---------------------|---------|
+| `get` | `(pk, *, for_update?, skip_cache?) -> R` | Fetch one by ID |
+| `get_many` | `(pks, *, skip_cache?) -> Sequence[R]` | Fetch many by IDs |
+| `find` | `(filters, *, for_update?) -> R \| None` | Find one by filter |
+| `project` | `(filters, fields, *, for_update?) -> JsonDict \| None` | Find one with field projection |
+| `select` | `(filters, return_type, *, for_update?) -> T \| None` | Find one as `return_type` |
+| `find_many` / `find_page` | `(filters?, pagination?, sorts?)` | Offset list without / with total count |
+| `project_many` / `project_page` | `(fields, filters?, pagination?, sorts?)` | Offset projection without / with count |
+| `select_many` / `select_page` | `(return_type, filters?, pagination?, sorts?)` | Offset list as `T` without / with count |
+| `find_cursor` / `project_cursor` | keyset args | Cursor page of `R` or projections |
+| `aggregate_many` / `aggregate_page` | `(aggregates, ...)` | Aggregate JSON rows |
+| `select_many_aggregated` / `select_page_aggregated` | `(return_type, aggregates, ...)` | Typed aggregate rows |
 | `count` | `(filters?) -> int` | Count matching documents |
 
 **`DocumentCommandPort[R, D, C, U]`**: mutation operations:

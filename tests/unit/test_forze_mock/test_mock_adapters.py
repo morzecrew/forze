@@ -113,50 +113,46 @@ async def test_document_filter_sort_projection_and_search() -> None:
     )
 
     # Filter by scalar shortcut and sort descending by title.
-    page = await doc.find_many(
+    page = await doc.project_page(
+        ["title", "category"],
         filters={"$fields": {"category": "books"}},
         sorts={"title": "desc"},
-        return_fields=["title", "category"],
-        return_count=True,
     )
     assert page.count == 2
     assert [row["title"] for row in page.hits] == ["TypeScript Guide", "Rust Book"]
 
     # $in shortcut over list fields.
-    page = await doc.find_many(
+    page = await doc.find_page(
         filters={"$fields": {"tags": {"$in": ["rust"]}}},
-        return_count=True,
     )
     assert page.count == 1
     assert page.hits[0].title == "Rust Book"
 
     # Search sees the same namespace as document adapter.
-    s_page = await search.search("rust", return_count=True)
+    s_page = await search.search_page("rust")
     assert s_page.count == 1
     assert s_page.hits[0].title == "Rust Book"
 
-    any_p = await search.search(
+    any_p = await search.search_page(
         ["rust", "typescript"],
-        return_count=True,
     )
     assert any_p.count == 2
-    all_p = await search.search(
+    all_p = await search.search_page(
         ["rust", "typescript"],
         options={"phrase_combine": "all"},
-        return_count=True,
     )
     assert all_p.count == 0
 
-    both_p = await search.search(
+    both_p = await search.search_page(
         ["rust", "book"],
         options={"phrase_combine": "all"},
-        return_count=True,
     )
     assert both_p.count == 1
     assert both_p.hits[0].title == "Rust Book"
 
-    raw_page = await search.search(
-        "rust", return_fields=["title"], return_count=True
+    raw_page = await search.project_search_page(
+        ["title"],
+        "rust",
     )
     assert raw_page.count == 1
     assert raw_page.hits == [{"title": "Rust Book"}]
@@ -181,10 +177,9 @@ async def test_document_aggregates_group_and_validate_return_type() -> None:
         _ProductCreate(title="Gaming Mouse", category="hardware", price=50.0),
     )
 
-    page = await doc.find_many(
-        filters=None,
-        sorts={"revenue": "desc"},
-        aggregates={
+    page = await doc.select_page_aggregated(
+        _CategoryStats,
+        {
             "$fields": {"category": "category"},
             "$computed": {
                 "products": {"$count": None},
@@ -201,8 +196,8 @@ async def test_document_aggregates_group_and_validate_return_type() -> None:
                 },
             },
         },
-        return_type=_CategoryStats,
-        return_count=True,
+        filters=None,
+        sorts={"revenue": "desc"},
     )
 
     assert page.count == 2

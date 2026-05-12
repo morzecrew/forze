@@ -10,6 +10,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
@@ -90,36 +91,39 @@ async def test_find_find_many_count_and_projections(
         },
     )
     cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
 
     a = await cmd.create(_Create(name="alpha", kind="a"))
     b = await cmd.create(_Create(name="beta", kind="b"))
     await cmd.create(_Create(name="gamma", kind="a"))
 
-    found = await cmd.find({"$fields": {"name": "beta"}})
+    found = await q.find({"$fields": {"name": "beta"}})
     assert found is not None
     assert found.name == "beta"
 
-    __p = await cmd.find_many(
+    __p = await q.find_page(
         {"$fields": {"kind": "a"}},
         pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count
     assert total == 2
     assert [r.name for r in rows] == ["alpha", "gamma"]
 
-    assert await cmd.count({"$fields": {"kind": "b"}}) == 1
+    assert await q.count({"$fields": {"kind": "b"}}) == 1
 
-    row = await cmd.get(a.id, return_fields=("name", "kind"))
+    row = await q.project(
+        {"$fields": {ID_FIELD: a.id}},
+        ("name", "kind"),
+    )
     assert row == {"name": "alpha", "kind": "a"}
 
-    many = await cmd.get_many([a.id, b.id])
+    many = await q.get_many([a.id, b.id])
     assert len(many) == 2
     assert {x.id for x in many} == {a.id, b.id}
 
-    assert await cmd.get_many([]) == []
+    assert await q.get_many([]) == []
 
 
 @pytest.mark.asyncio
@@ -152,6 +156,7 @@ async def test_create_update_touch_kill_many(
         },
     )
     cmd = ctx.doc_command(spec)
+    q = ctx.doc_query(spec)
 
     created = await cmd.create_many(
         [
@@ -170,7 +175,7 @@ async def test_create_update_touch_kill_many(
     assert t1.rev == 3 and t2.rev == 3
 
     await cmd.kill_many([created[0].id, created[1].id])
-    assert await cmd.count() == 0
+    assert await q.count() == 0
 
 
 @pytest.mark.asyncio

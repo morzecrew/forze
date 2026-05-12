@@ -91,18 +91,14 @@ async def test_field_filter_with_sql_metacharacters_is_literal_match(
     )
     q = cfg(ctx, spec)
 
-    __p = await q.find_many(
-        filters={"$fields": {"title": malicious}},
-        return_count=True,
+    __p = await q.find_page(filters={"$fields": {"title": malicious}},
     )
     rows = __p.hits
     total = __p.count
     assert total == 1
     assert rows[0].id == id_m
 
-    __p = await q.find_many(
-        filters={"$fields": {"title": benign}},
-        return_count=True,
+    __p = await q.find_page(filters={"$fields": {"title": benign}},
     )
     rows2 = __p.hits
     total2 = __p.count

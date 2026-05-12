@@ -107,6 +107,12 @@ app = FastAPI(lifespan=lifespan)
 
 FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it on the endpoint spec or generated document create endpoint, require clients to send a stable `Idempotency-Key`, and register an idempotency dependency such as Redis under `IdempotencyDepKey`. The stored response is keyed by the operation, idempotency key, and mapped usecase input, so avoid using one key for different payloads.
 
+## ASGI middleware
+
+Most services stack `ContextBindingMiddleware` (bind `CallContext`, `AuthnIdentity`, `TenantIdentity`), `LoggingMiddleware`, `register_exception_handlers`, and Scalar docs. See [Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md) for boundary wiring.
+
+`CustomHeadersMiddleware` (`from forze_fastapi.middlewares import CustomHeadersMiddleware`) injects **response** headers before the response is sent. Pass `static_headers` as a string-to-string map and/or `dynamic_headers` as a map of header names to zero-argument callables that return `str` or `Awaitable[str]`. If the outgoing response already includes any of the injected header names, the middleware raises `CoreError` with a duplicate-headers message.
+
 ## Complete recipe link
 
 See [CRUD with FastAPI, Postgres, and Redis](../recipes/crud-fastapi-postgres-redis.md) for a complete application-shaped recipe. Keep this page as the integration reference and put long end-to-end examples in recipe pages.

@@ -175,6 +175,22 @@ For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_c
 
 `AuthnIdentity.tenant_id` is set by the resolver when the assertion carries a `tenant_hint` (e.g. JWT `tid` claim or an OIDC tenant claim). `TenantIdentityResolver` then merges credential-bound tenant id, optional header hint, and `TenantResolverPort` results.
 
+## Tenancy deps module
+
+`TenancyDepsModule` (`from forze_tenancy.execution import TenancyDepsModule`) registers `TenantResolverDepKey` and/or `TenantManagementDepKey` factories (`ConfigurableTenantResolver`, `ConfigurableTenantManagement`) for the route names you pass. Merge it into `DepsPlan.from_modules` alongside Postgres/Mongo and auth modules when tenant catalog documents drive `TenantResolverPort` / `TenantManagementPort`.
+
+```python
+from forze_tenancy.execution import TenancyDepsModule
+
+TenancyDepsModule(
+    tenant_resolver={"main"},
+    tenant_management={"main"},
+    verify_tenant_active=True,
+)
+```
+
+See [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-tenancy.md) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
+
 ## Secrets
 
 `SecretsDepKey` registers a `SecretsPort`. `SecretRef` is a logical path, and `resolve_structured()` validates JSON secrets into Pydantic models.
@@ -215,3 +231,4 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 - [`src/forze_authn`](../../src/forze_authn)
 - [`src/forze_authz`](../../src/forze_authz)
 - [`src/forze_oidc`](../../src/forze_oidc)
+- [`src/forze_tenancy`](../../src/forze_tenancy)

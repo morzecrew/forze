@@ -7,6 +7,8 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Callable
+from datetime import timedelta
+from time import monotonic
 from typing import Any, cast, final
 
 import attrs
@@ -39,6 +41,9 @@ class PostgresIntrospector:
     Results for relations, columns, and indexes are cached in-memory
     and can be selectively invalidated via :meth:`invalidate_relation`,
     :meth:`invalidate_index`, or fully cleared with :meth:`clear`.
+
+    When :attr:`cache_ttl` is set, cached entries expire after that duration
+    (monotonic clock) and are transparently reloaded on the next access.
     """
 
     client: PostgresClientPort = attrs.field(on_setattr=attrs.setters.frozen)
@@ -52,11 +57,30 @@ class PostgresIntrospector:
     returns ``None``, introspection raises :class:`CoreError`.
     """
 
+    cache_ttl: timedelta | None = None
+    """When set, drop cached relation, column, and index entries after this duration.
+
+    Uses a monotonic clock per process. ``None`` keeps entries until
+    :meth:`invalidate_relation`, :meth:`invalidate_index`, or :meth:`clear`.
+    """
+
     # Non initable fields
     __column_cache: PostgresColumnCache = attrs.field(factory=dict, init=False)
     __index_cache: PostgresIndexCache = attrs.field(factory=dict, init=False)
     __relation_cache: PostgresRelationCache = attrs.field(factory=dict, init=False)
     __index_def_cache: PostgresIndexDefCache = attrs.field(factory=dict, init=False)
+    __column_cache_ts: dict[tuple[str, str, str], float] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    __relation_cache_ts: dict[tuple[str, str, str], float] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    __index_cache_ts: dict[tuple[str, str, str], float] = attrs.field(
+        factory=dict,
+        init=False,
+    )
 
     # ....................... #
 
@@ -89,6 +113,74 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    def _ttl_seconds(self) -> float | None:
+        if self.cache_ttl is None:
+            return None
+
+        return self.cache_ttl.total_seconds()
+
+    def _relation_ttl_expired(self, key: tuple[str, str, str]) -> bool:
+        ttl = self._ttl_seconds()
+
+        if ttl is None:
+            return False
+
+        t0 = self.__relation_cache_ts.get(key)
+
+        if t0 is None:
+            return False
+
+        return monotonic() - t0 >= ttl
+
+    def _relation_store(self, key: tuple[str, str, str], kind: PostgresRelationKind) -> None:
+        self.__relation_cache[key] = kind
+
+        if self._ttl_seconds() is not None:
+            self.__relation_cache_ts[key] = monotonic()
+
+    def _column_ttl_expired(self, key: tuple[str, str, str]) -> bool:
+        ttl = self._ttl_seconds()
+
+        if ttl is None:
+            return False
+
+        t0 = self.__column_cache_ts.get(key)
+
+        if t0 is None:
+            return False
+
+        return monotonic() - t0 >= ttl
+
+    def _column_store(self, key: tuple[str, str, str], cols: PostgresColumnTypes) -> None:
+        self.__column_cache[key] = cols
+
+        if self._ttl_seconds() is not None:
+            self.__column_cache_ts[key] = monotonic()
+
+    def _index_bundle_ttl_expired(self, key: tuple[str, str, str]) -> bool:
+        ttl = self._ttl_seconds()
+
+        if ttl is None:
+            return False
+
+        t0 = self.__index_cache_ts.get(key)
+
+        if t0 is None:
+            return False
+
+        return monotonic() - t0 >= ttl
+
+    def _index_bundle_store(self, key: tuple[str, str, str]) -> None:
+        if self._ttl_seconds() is not None:
+            self.__index_cache_ts[key] = monotonic()
+
+    def _index_bundle_evict(self, key: tuple[str, str, str]) -> None:
+        self.__index_cache.pop(key, None)
+        self.__index_def_cache.pop(key, None)
+        self.__index_cache_ts.pop(key, None)
+
+    # ....................... #
+
     async def get_relation(
         self,
         *,
@@ -107,7 +199,12 @@ class PostgresIntrospector:
         key = self._rel_key(schema, relation)
 
         if key in self.__relation_cache:
-            return self.__relation_cache[key]
+            if self._relation_ttl_expired(key):
+                self.__relation_cache.pop(key, None)
+                self.__relation_cache_ts.pop(key, None)
+
+            else:
+                return self.__relation_cache[key]
 
         stmt = sql.SQL(
             """
@@ -143,7 +240,7 @@ class PostgresIntrospector:
             case _:
                 pass
 
-        self.__relation_cache[key] = kind
+        self._relation_store(key, kind)
 
         return kind
 
@@ -201,7 +298,12 @@ class PostgresIntrospector:
         key = self._rel_key(schema, relation)
 
         if key in self.__column_cache:
-            return self.__column_cache[key]
+            if self._column_ttl_expired(key):
+                self.__column_cache.pop(key, None)
+                self.__column_cache_ts.pop(key, None)
+
+            else:
+                return self.__column_cache[key]
 
         # Fail fast if relation doesn't exist
         await self.require_relation(schema=schema, relation=relation)
@@ -265,7 +367,7 @@ class PostgresIntrospector:
 
             out[col] = PostgresType(base=base, is_array=is_array, not_null=not_null)
 
-        self.__column_cache[key] = out
+        self._column_store(key, out)
 
         return out
 
@@ -284,7 +386,11 @@ class PostgresIntrospector:
         key = self._idx_key(schema, index)
 
         if key in self.__index_def_cache:
-            return self.__index_def_cache[key]
+            if self._index_bundle_ttl_expired(key):
+                self._index_bundle_evict(key)
+
+            else:
+                return self.__index_def_cache[key]
 
         stmt = sql.SQL(
             """
@@ -304,6 +410,7 @@ class PostgresIntrospector:
 
         indexdef = str(row["indexdef"])
         self.__index_def_cache[key] = indexdef
+        self._index_bundle_store(key)
 
         return indexdef
 
@@ -329,7 +436,11 @@ class PostgresIntrospector:
         key = self._idx_key(schema, index)
 
         if key in self.__index_cache:
-            return self.__index_cache[key]
+            if self._index_bundle_ttl_expired(key):
+                self._index_bundle_evict(key)
+
+            else:
+                return self.__index_cache[key]
 
         # NOTE:
         # - pg_get_expr(ix.indexprs, ix.indrelid) gives expression for expression indexes
@@ -416,6 +527,7 @@ class PostgresIntrospector:
 
         self.__index_cache[key] = info
         self.__index_def_cache[key] = indexdef
+        self._index_bundle_store(key)
 
         return info
 
@@ -425,8 +537,11 @@ class PostgresIntrospector:
         """Evict cached relation kind and column types for a specific relation."""
 
         schema = self.__normalize_schema(schema)
-        self.__relation_cache.pop(self._rel_key(schema, relation), None)
-        self.__column_cache.pop(self._rel_key(schema, relation), None)
+        rk = self._rel_key(schema, relation)
+        self.__relation_cache.pop(rk, None)
+        self.__relation_cache_ts.pop(rk, None)
+        self.__column_cache.pop(rk, None)
+        self.__column_cache_ts.pop(rk, None)
 
     # ....................... #
 
@@ -435,8 +550,7 @@ class PostgresIntrospector:
 
         schema = self.__normalize_schema(schema)
         idx_key = self._idx_key(schema, index)
-        self.__index_cache.pop(idx_key, None)
-        self.__index_def_cache.pop(idx_key, None)
+        self._index_bundle_evict(idx_key)
 
     # ....................... #
 
@@ -447,3 +561,6 @@ class PostgresIntrospector:
         self.__column_cache.clear()
         self.__index_cache.clear()
         self.__index_def_cache.clear()
+        self.__relation_cache_ts.clear()
+        self.__column_cache_ts.clear()
+        self.__index_cache_ts.clear()

@@ -182,7 +182,7 @@ def _ddl_soft(t: str) -> str:
 async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
     pg_client: PostgresClient,
 ) -> None:
-    """Keyset pages: ``after`` / ``before``, desc order, and ``return_fields`` cursor rows."""
+    """Keyset pages: ``after`` / ``before``, desc order, and projected cursor rows."""
     t = f"pg_cx_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
 
@@ -199,11 +199,11 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
     for u in ids:
         await cmd.create(_CxCreate(id=u, sku=str(u)[:8]))
 
-    p1 = await q.find_many_with_cursor(None, cursor={"limit": 2}, sorts=None)
+    p1 = await q.find_cursor(None, cursor={"limit": 2}, sorts=None)
     assert p1.prev_cursor is None
     assert p1.next_cursor is not None
 
-    p2 = await q.find_many_with_cursor(
+    p2 = await q.find_cursor(
         None,
         cursor={"limit": 2, "after": p1.next_cursor},
         sorts=None,
@@ -211,25 +211,25 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
     assert p2.prev_cursor is not None
     assert len(p2.hits) == 2
 
-    p_desc = await q.find_many_with_cursor(
+    p_desc = await q.find_cursor(
         None,
         cursor={"limit": 10},
         sorts={ID_FIELD: "desc"},
     )
     assert p_desc.hits[0].id == ids[-1]
 
-    p_before = await q.find_many_with_cursor(
+    p_before = await q.find_cursor(
         None,
         cursor={"limit": 2, "before": p1.next_cursor},
         sorts=None,
     )
     assert len(p_before.hits) >= 1
 
-    p_proj = await q.find_many_with_cursor(
+    p_proj = await q.project_cursor(
+        ["id", "sku"],
         None,
         cursor={"limit": 2},
         sorts={"sku": "asc"},
-        return_fields=["id", "sku"],
     )
     assert len(p_proj.hits) == 2
     for row in p_proj.hits:
@@ -241,7 +241,7 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
 async def test_pg_adapter_find_many_count_zero_and_countless_page(
     pg_client: PostgresClient,
 ) -> None:
-    """``return_count`` short-circuit when count is 0; page without total when ``return_count=False``."""
+    """Counted page short-circuit when count is 0; countless page omits total."""
     t = f"pg_fc_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
 
@@ -251,10 +251,9 @@ async def test_pg_adapter_find_many_count_zero_and_countless_page(
 
     await cmd.create(_CxCreate(sku="only"))
 
-    empty = await q.find_many(
+    empty = await q.find_page(
         {"$fields": {"sku": "nope"}},
         pagination={"limit": 10, "offset": 0},
-        return_count=True,
     )
     assert isinstance(empty, Page)
     assert empty.count == 0
@@ -263,7 +262,6 @@ async def test_pg_adapter_find_many_count_zero_and_countless_page(
     countless = await q.find_many(
         {"$fields": {"sku": "only"}},
         pagination={"limit": 10, "offset": 0},
-        return_count=False,
     )
     assert not isinstance(countless, Page)
     assert len(countless.hits) == 1
@@ -274,7 +272,7 @@ async def test_pg_adapter_find_many_count_zero_and_countless_page(
 async def test_pg_adapter_find_and_find_many_projections_with_count(
     pg_client: PostgresClient,
 ) -> None:
-    """``find`` / ``find_many`` with ``return_fields`` and ``return_count``."""
+    """``project`` / ``project_page`` for field projections with counts."""
     t = f"pg_pr_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
 
@@ -285,19 +283,18 @@ async def test_pg_adapter_find_and_find_many_projections_with_count(
     await cmd.create(_CxCreate(sku="apple"))
     await cmd.create(_CxCreate(sku="banana"))
 
-    one = await q.find(
+    one = await q.project(
         {"$fields": {"sku": "apple"}},
-        return_fields=["sku"],
+        ["sku"],
     )
     assert one is not None
     assert one == {"sku": "apple"}
 
-    page = await q.find_many(
+    page = await q.project_page(
+        ["id", "sku"],
         {"$fields": {"sku": {"$in": ["apple", "banana"]}}},
         pagination={"limit": 10, "offset": 0},
         sorts={"sku": "asc"},
-        return_fields=["id", "sku"],
-        return_count=True,
     )
     assert page.count == 2
     assert {r["sku"] for r in page.hits} == {"apple", "banana"}
@@ -305,7 +302,7 @@ async def test_pg_adapter_find_and_find_many_projections_with_count(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_pg_adapter_find_many_with_cursor_requires_sort_fields_in_projection(
+async def test_pg_adapter_project_cursor_requires_sort_fields_in_projection(
     pg_client: PostgresClient,
 ) -> None:
     t = f"pg_fe_{uuid4().hex[:12]}"
@@ -318,11 +315,11 @@ async def test_pg_adapter_find_many_with_cursor_requires_sort_fields_in_projecti
     await cmd.create(_CxCreate(sku="x"))
 
     with pytest.raises(CoreError, match="projection must include"):
-        await q.find_many_with_cursor(
+        await q.project_cursor(
+            ["sku"],
             None,
             cursor={"limit": 5},
             sorts={"sku": "asc"},
-            return_fields=["sku"],
         )
 
 
@@ -510,7 +507,7 @@ class _SkuGroup(BaseModel):
 async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
     pg_client: PostgresClient,
 ) -> None:
-    """``return_fields`` forces the read path that skips cache (adapter lines ~211, ~281)."""
+    """Projection paths skip read-through cache (adapter bypass for partial reads)."""
     t = f"pg_rf_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
 
@@ -519,10 +516,18 @@ async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
     q = ctx.doc_query(spec)
 
     doc = await cmd.create(_CxCreate(sku="rf"))
-    prj = await q.get(doc.id, return_fields=["sku", "rev"])
+    prj = await q.project(
+        {"$fields": {ID_FIELD: doc.id}},
+        ["sku", "rev"],
+    )
     assert prj == {"sku": "rf", "rev": 1}
     b = await cmd.create(_CxCreate(sku="rf2"))
-    prjs = await q.get_many([doc.id, b.id], return_fields=["id", "sku"])
+    prjs = (
+        await q.project_many(
+            ["id", "sku"],
+            filters={"$fields": {ID_FIELD: {"$in": [doc.id, b.id]}}},
+        )
+    ).hits
     assert len(prjs) == 2
     assert {r["sku"] for r in prjs} == {"rf", "rf2"}
 
@@ -532,7 +537,7 @@ async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
 async def test_pg_adapter_find_many_aggregates_with_typed_page(
     pg_client: PostgresClient,
 ) -> None:
-    """``find_many`` with ``aggregates``, ``return_type``, and ``return_count``."""
+    """``select_page_aggregated`` with group counts."""
     t = f"pg_ag_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
 
@@ -548,13 +553,12 @@ async def test_pg_adapter_find_many_aggregates_with_typed_page(
         "$fields": {"cat": "sku"},
         "$computed": {"n": {"$count": None}},
     }
-    p = await q.find_many(
+    p = await q.select_page_aggregated(
+        _SkuGroup,
+        agg,
         None,
         pagination={"limit": 10, "offset": 0},
         sorts={"cat": "asc"},
-        aggregates=agg,
-        return_type=_SkuGroup,
-        return_count=True,
     )
     assert isinstance(p, Page)
     assert p.count == 2
@@ -564,7 +568,7 @@ async def test_pg_adapter_find_many_aggregates_with_typed_page(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_pg_adapter_find_many_rejects_conflicting_args(
+async def test_pg_adapter_aggregate_page_rejects_unknown_kwargs(
     pg_client: PostgresClient,
 ) -> None:
     t = f"pg_inv_{uuid4().hex[:12]}"
@@ -576,20 +580,15 @@ async def test_pg_adapter_find_many_rejects_conflicting_args(
         "$fields": {"c": "sku"},
         "$computed": {"n": {"$count": None}},
     }
-    with pytest.raises(CoreError, match="Aggregates cannot be combined with return_fields"):
-        await q.find_many(
-            None,
-            aggregates=agg,
-            return_fields=["sku"],
-        )
+    with pytest.raises(TypeError):
+        await q.aggregate_page(agg, filters=None, return_fields=["sku"])  # type: ignore[call-arg]
 
     cmd = ctx.doc_command(spec)
     await cmd.create(_CxCreate(sku="rt-single"))
-    page = await q.find_many(
+    page = await q.select_many(
+        _CxRead,
         {"$fields": {"sku": "rt-single"}},
         pagination={"limit": 10},
-        return_type=_CxRead,
-        return_count=False,
     )
     assert len(page.hits) == 1
     assert isinstance(page.hits[0], _CxRead)

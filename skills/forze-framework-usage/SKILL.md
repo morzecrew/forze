@@ -92,6 +92,8 @@ async with self.ctx.transaction(TxRoute.DEFAULT):
     self.ctx.defer_after_commit(lambda: notify_project_created(created.id))
 ```
 
+Optional guards and effects in `UsecasePlan` chains can use `WhenGuard` / `WhenEffect`; the `when` callable may return `bool` or `Awaitable[bool]`. See [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
+
 ### Identity and tenancy
 
 Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary when needed. Usecases may read `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()` but should not call `ctx.bind_call(...)` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
@@ -114,9 +116,12 @@ Filters use the shared DSL: `{"$fields": {...}}`, `{"$and": [...]}`, `{"$or": [.
 
 ```python
 filters = {"$fields": {"status": "active", "is_deleted": False}}
-rows, total = await doc_q.find_many(
-    filters=filters, limit=20, offset=0, sorts={"created_at": "desc"}
+page = await doc_q.find_page(
+    filters=filters,
+    pagination={"limit": 20, "offset": 0},
+    sorts={"created_at": "desc"},
 )
+rows, total = page.hits, page.count
 ```
 
 ## Common patterns
@@ -130,7 +135,11 @@ doc_q = self.ctx.doc_query(project_spec)
 doc_c = self.ctx.doc_command(project_spec)
 
 project = await doc_q.get(doc_id)
-rows, total = await doc_q.find_many(filters=..., limit=20, offset=0)
+listed = await doc_q.find_many(
+    filters=...,
+    pagination={"limit": 20, "offset": 0},
+)
+rows = listed.hits
 
 created = await doc_c.create(CreateProjectCmd(title="New"))
 updated = await doc_c.update(

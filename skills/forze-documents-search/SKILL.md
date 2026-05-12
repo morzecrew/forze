@@ -1,34 +1,36 @@
 ---
 name: forze-documents-search
 description: >-
-  Implements Forze document reads/writes, query DSL, pagination, cache-aware
-  DocumentSpec wiring, SearchSpec, Postgres/Mongo/mock document adapters, and
-  Postgres simple/hub/federated search. Use when building data access features.
+  Implements Forze document and search access: DocumentQueryPort,
+  DocumentCommandPort, SearchQueryPort, query DSL, pagination, cache-aware
+  DocumentSpec / SearchSpec usage, Postgres/Mongo/mock adapters, and Postgres
+  simple/hub/federated search. Use when building data access features.
 ---
 
 # Forze documents and search
 
-Use when implementing document persistence, filtered listings, cursor pagination, text search, hub search, or federated search. Pair with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for aggregate models.
+Use when implementing document persistence, filtered listings, cursor pagination, text search, hub search, or federated search. Pair with [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md) for aggregate models and [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) for mapping `spec.name` to tables and indexes in deps modules.
 
-## Document ports
+## Document ports (`DocumentQueryPort` / `DocumentCommandPort`)
 
-Use `ctx.doc_query(spec)` for reads and `ctx.doc_command(spec)` for writes.
+Kernel **`DocumentSpec`** carries model types and logical `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.doc_query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.doc_command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
 
 ```python
 doc_q = self.ctx.doc_query(project_spec)
 doc_c = self.ctx.doc_command(project_spec)
 
 project = await doc_q.get(project_id)
-rows, total = await doc_q.find_many(
+page = await doc_q.find_page(
     filters={"$fields": {"status": "active"}},
-    limit=20,
+    pagination={"limit": 20, "offset": 0},
     sorts={"created_at": "desc", "id": "asc"},
 )
+rows, total = page.hits, page.count
 
 updated = await doc_c.update(project_id, project.rev, UpdateProjectCmd(title="Done"))
 ```
 
-Revision-bearing writes enforce optimistic concurrency. Use `return_fields` for projections and `return_new=False` when the updated model is not needed.
+Revision-bearing writes enforce optimistic concurrency. Use **`DocumentQueryPort`** methods such as ``project`` / ``project_many`` for partial reads; use `return_new=False` on command updates when the updated model is not needed.
 
 ## Query DSL
 
@@ -60,9 +62,9 @@ project_spec = DocumentSpec(
 
 When `AfterCommitPort` is wired, document cache warm/invalidation happens after a successful commit.
 
-## Search
+## Search (`SearchQueryPort`)
 
-Use `SearchSpec` for logical searchable models and `ctx.search_query(spec)` for full-text search.
+Use **`SearchSpec`** for logical searchable models. `ctx.search_query(spec)` resolves **`SearchQueryDepKey`** for route `spec.name` and returns **`SearchQueryPort`**; physical FTS/PGroonga layout belongs in **`PostgresDepsModule.searches`** (or hub/federated maps), not on the spec.
 
 ```python
 project_search = SearchSpec(
@@ -78,8 +80,6 @@ hits, total = await self.ctx.search_query(project_search).search(
     limit=20,
 )
 ```
-
-Postgres physical search layout belongs in `PostgresDepsModule.searches`, `hub_searches`, or `federated_searches`, not in `SearchSpec`.
 
 ## Hub and federated search
 
@@ -103,6 +103,8 @@ Keep snapshot storage and cursor/keyset behavior in infrastructure config; use t
 
 ## Reference
 
+- [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md)
+- [`pages/docs/core-package/contracts/document.md`](../../pages/docs/core-package/contracts/document.md)
 - [`pages/docs/core-package/query-syntax.md`](../../pages/docs/core-package/query-syntax.md)
 - [`pages/docs/core-package/contracts.md`](../../pages/docs/core-package/contracts.md)
 - [`pages/docs/integrations/postgres.md`](../../pages/docs/integrations/postgres.md)

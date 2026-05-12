@@ -2,7 +2,7 @@
 
 import asyncio
 from functools import partial
-from typing import Final, Literal, Sequence, TypeVar, final, overload
+from typing import Any, Final, Literal, NoReturn, Sequence, TypeVar, final, overload
 
 import attrs
 from pydantic import BaseModel
@@ -69,7 +69,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     Pagination applies to the merged list. Each leg fetches at most
     :attr:`rrf_per_leg_limit` rows; :attr:`total` is the length of the merged
-    candidate pool (thus exact only when no leg truncates).
+    candidate pool (thus exact only when no leg truncates). Cursor keyset methods
+    are not supported; use offset pagination (:meth:`search`, :meth:`search_page`).
     """
 
     federated_spec: FederatedSearchSpec[M]
@@ -82,7 +83,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     """RRF smoothing constant (typical default 60)."""
 
     rrf_per_leg_limit: int = _DEFAULT_PER_LEG_LIMIT
-    """Maximum hits pulled per member for merging (truncation bounds :meth:`search` totals)."""
+    """Maximum hits pulled per member for merging (truncation bounds offset search totals)."""
 
     postgres_client: PostgresClientPort | None = None
     """When set, leg queries respect pool / transaction concurrency rules."""
@@ -111,96 +112,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     # ....................... #
 
     @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[FederatedSearchReadModel[M]]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = ...,
-    ) -> CountlessPage[JsonDict]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[FederatedSearchReadModel[M]]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True] = ...,
-    ) -> Page[T]: ...
-
-    @overload
-    async def search(
-        self,
-        query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        options: SearchOptions | None = ...,
-        snapshot: SearchResultSnapshotOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[True] = ...,
-    ) -> Page[JsonDict]: ...
-
-    async def search(
+    async def _offset_search_impl(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -209,21 +121,89 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         *,
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
-        return_type: type[T] | None = None,
+        return_count: Literal[False],
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> CountlessPage[FederatedSearchReadModel[M]]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: None = None,
+        return_fields: None = None,
+    ) -> Page[FederatedSearchReadModel[M]]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[False],
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> CountlessPage[T]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: Literal[True],
+        return_type: type[T],
+        return_fields: None = None,
+    ) -> Page[T]: ...
+
+    @overload
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: bool,
+        return_type: None = None,
+        return_fields: Sequence[str],
+    ) -> NoReturn: ...
+
+    async def _offset_search_impl(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+        return_count: bool,
+        return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> (
-        CountlessPage[FederatedSearchReadModel[M]]
-        | CountlessPage[T]
-        | CountlessPage[JsonDict]
-        | Page[FederatedSearchReadModel[M]]
-        | Page[T]
-        | Page[JsonDict]
-    ):
+    ) -> Any:
         if return_fields is not None:
             raise CoreError(
-                "Fields selection with `return_fields` is not supported for federated search. "
-                "Use `return_type` instead",
+                "Field projection is not supported for federated search "
+                "(``project_search`` / ``project_search_page``). "
+                "Use ``select_search`` / ``select_search_page`` with a ``return_type`` instead.",
             )
 
         leg_opts, member_weights = prepare_federated_search_options(
@@ -270,14 +250,15 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         ]
 
         if not active:
+            empty_hits: list[FederatedSearchReadModel[M]] = []
             if return_count:
                 return page_from_limit_offset(
-                    [],
+                    empty_hits,
                     pagination or {},
                     total=0,
                 )
 
-            return page_from_limit_offset([], pagination or {}, total=None)
+            return page_from_limit_offset(empty_hits, pagination or {}, total=None)
 
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         leg_page: PaginationExpression = {"limit": leg_cap}
@@ -293,7 +274,6 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 leg_page,
                 None,
                 options=leg_opts,
-                return_count=False,
             )
             return name, page.hits, weight
 
@@ -398,48 +378,149 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             snapshot=handle_out,
         )
 
-    # ....................... #
-
-    @overload
-    async def search_with_cursor(
+    async def search(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-    ) -> CursorPage[FederatedSearchReadModel[M]]: ...
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[FederatedSearchReadModel[M]]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=None,
+            return_fields=None,
+        )
 
-    @overload
-    async def search_with_cursor(
+    async def search_page(
         self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[FederatedSearchReadModel[M]]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_search(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def project_search_page(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[JsonDict]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=tuple(fields),
+        )
+
+    async def select_search(
+        self,
         return_type: type[T],
-        return_fields: None = ...,
-    ) -> CursorPage[T]: ...
-
-    @overload
-    async def search_with_cursor(
-        self,
         query: str | Sequence[str],
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
         *,
-        options: SearchOptions | None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-    ) -> CursorPage[JsonDict]: ...
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> CountlessPage[T]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=False,
+            return_type=return_type,
+            return_fields=None,
+        )
 
-    async def search_with_cursor(
+    async def select_search_page(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> Page[T]:
+        return await self._offset_search_impl(
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            snapshot=snapshot,
+            return_count=True,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    def _raise_federated_cursor_not_supported(self) -> NoReturn:
+        raise CoreError(
+            "search_cursor is not implemented for federated (RRF) search; use "
+            "search or search_page with limit/offset.",
+        )
+
+    async def search_cursor(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -447,11 +528,32 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None = None,
         *,
         options: SearchOptions | None = None,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> CursorPage[FederatedSearchReadModel[M]] | CursorPage[T] | CursorPage[JsonDict]:
-        del query, filters, cursor, sorts, options, return_type, return_fields
-        raise CoreError(
-            "search_with_cursor is not implemented for federated (RRF) search; use search() "
-            "with limit/offset.",
-        )
+    ) -> CursorPage[FederatedSearchReadModel[M]]:
+        del query, filters, cursor, sorts, options
+        self._raise_federated_cursor_not_supported()
+
+    async def project_search_cursor(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[JsonDict]:
+        del fields, query, filters, cursor, sorts, options
+        self._raise_federated_cursor_not_supported()
+
+    async def select_search_cursor(
+        self,
+        return_type: type[T],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CursorPage[T]:
+        del return_type, query, filters, cursor, sorts, options
+        self._raise_federated_cursor_not_supported()

@@ -10,6 +10,7 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.base.errors import CoreError, ValidationError
 from forze.base.serialization import pydantic_cache_dump
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
@@ -69,7 +70,7 @@ class TestPostgresDocumentAdapter:
         result = await adapter.get(pk, for_update=True)
 
         assert result == expected
-        read_gw.get.assert_awaited_once_with(pk, for_update=True, return_fields=None)
+        read_gw.get.assert_awaited_once_with(pk, for_update=True)
         cache.set_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -115,7 +116,7 @@ class TestPostgresDocumentAdapter:
         result = await adapter.get(pk, skip_cache=True)
 
         assert result == expected
-        read_gw.get.assert_awaited_once_with(pk, for_update=False, return_fields=None)
+        read_gw.get.assert_awaited_once_with(pk, for_update=False)
         cache.get.assert_not_awaited()
         cache.set_versioned.assert_not_awaited()
 
@@ -144,7 +145,7 @@ class TestPostgresDocumentAdapter:
         result = await adapter.get_many(pks, skip_cache=True)
 
         assert result == expected
-        read_gw.get_many.assert_awaited_once_with(pks, return_fields=None)
+        read_gw.get_many.assert_awaited_once_with(pks)
         cache.get_many.assert_not_awaited()
         cache.set_many_versioned.assert_not_awaited()
 
@@ -170,7 +171,7 @@ class TestPostgresDocumentAdapter:
         result = await adapter.get_many(pks)
 
         assert result == expected
-        read_gw.get_many.assert_awaited_once_with(pks, return_fields=None)
+        read_gw.get_many.assert_awaited_once_with(pks)
         cache.set_many_versioned.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -342,10 +343,10 @@ class TestPostgresDocumentAdapterEffBatchSize:
 
 class TestPostgresDocumentAdapterGetPaths:
     @pytest.mark.asyncio
-    async def test_return_fields_bypasses_cache(self) -> None:
+    async def test_project_bypasses_cache(self) -> None:
         pk = uuid4()
         read_gw = _build_read_gateway()
-        read_gw.get.return_value = {"id": str(pk)}
+        read_gw.find = AsyncMock(return_value={"id": str(pk)})
 
         cache = MagicMock()
         cache.get = AsyncMock()
@@ -356,10 +357,13 @@ class TestPostgresDocumentAdapterGetPaths:
             cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
-        out = await adapter.get(pk, return_fields=["id"])
+        filt: dict = {"$fields": {ID_FIELD: pk}}
+        out = await adapter.project(filt, ["id"])
 
         assert out == {"id": str(pk)}
-        read_gw.get.assert_awaited_once_with(pk, for_update=False, return_fields=["id"])
+        read_gw.find.assert_awaited_once_with(
+            filt, for_update=False, return_fields=("id",)
+        )
         cache.get.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -451,10 +455,10 @@ class TestPostgresDocumentAdapterQueryDelegation:
         out = await adapter.find(filt, for_update=True)
 
         assert out == doc
-        read_gw.find.assert_awaited_once_with(filt, for_update=True, return_fields=None)
+        read_gw.find.assert_awaited_once_with(filt, for_update=True)
 
     @pytest.mark.asyncio
-    async def test_find_many_short_circuits_when_count_zero(self) -> None:
+    async def test_find_page_short_circuits_when_count_zero(self) -> None:
         read_gw = _read_gw_full()
         read_gw.count = AsyncMock(return_value=0)
 
@@ -464,16 +468,15 @@ class TestPostgresDocumentAdapterQueryDelegation:
             cache_coord=_pg_cc(read_gw, ds),
         )
 
-        page = await adapter.find_many(
+        page = await adapter.find_page(
             filters={"x": 1},
-            return_count=True,
         )
 
         assert page.hits == [] and page.count == 0
         read_gw.find_many.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_find_many_returns_rows_and_count(self) -> None:
+    async def test_find_page_returns_rows_and_count(self) -> None:
         read_gw = _read_gw_full()
         docs = [_tread(), _tread()]
         read_gw.count = AsyncMock(return_value=2)
@@ -485,8 +488,8 @@ class TestPostgresDocumentAdapterQueryDelegation:
             cache_coord=_pg_cc(read_gw, ds),
         )
 
-        page = await adapter.find_many(
-            filters=None, pagination={"limit": 10}, return_count=True
+        page = await adapter.find_page(
+            filters=None, pagination={"limit": 10}
         )
 
         assert page.hits == docs and page.count == 2
@@ -785,10 +788,10 @@ class TestPostgresDocumentAdapterGetManyBranches:
         read_gw.get_many.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_return_fields_bypasses_cache(self) -> None:
+    async def test_project_many_bypasses_cache(self) -> None:
         pks = [uuid4()]
         read_gw = _build_read_gateway()
-        read_gw.get_many.return_value = [{"id": str(pks[0])}]
+        read_gw.find_many = AsyncMock(return_value=[{"id": str(pks[0])}])
         cache = MagicMock()
         cache.get_many = AsyncMock()
 
@@ -798,10 +801,13 @@ class TestPostgresDocumentAdapterGetManyBranches:
             cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
-        out = await adapter.get_many(pks, return_fields=["id"])
+        page = await adapter.project_many(
+            ["id"],
+            filters={"$fields": {ID_FIELD: {"$in": pks}}},
+        )
 
-        assert out == [{"id": str(pks[0])}]
-        read_gw.get_many.assert_awaited_once_with(pks, return_fields=["id"])
+        assert page.hits == [{"id": str(pks[0])}]
+        read_gw.find_many.assert_awaited_once()
         cache.get_many.assert_not_awaited()
 
     @pytest.mark.asyncio

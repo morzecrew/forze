@@ -89,7 +89,7 @@ async def test_mock_shared_state_document_search_storage_cache_and_queue() -> No
     created = await docs.create(_ItemCreate(title="integrate-me"))
     assert created.title == "integrate-me"
 
-    __p = await search.search("integrate", return_count=True)
+    __p = await search.search_page("integrate")
     hits = __p.hits
     total = __p.count
     assert total >= 1

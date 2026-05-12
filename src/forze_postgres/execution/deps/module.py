@@ -1,6 +1,7 @@
 """Postgres dependency module for the application kernel."""
 
 from collections.abc import Callable
+from datetime import timedelta
 from enum import StrEnum
 from typing import Mapping, final
 
@@ -58,6 +59,9 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
     Required for correct catalog caching with database-per-tenant routing.
     """
 
+    introspector_cache_ttl: timedelta | None = attrs.field(default=None)
+    """Optional TTL for :class:`PostgresIntrospector` catalog caches (``None`` = no expiry)."""
+
     ro_documents: Mapping[K, PostgresReadOnlyDocumentConfig] | None = attrs.field(
         default=None
     )
@@ -91,6 +95,7 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
                 PostgresIntrospectorDepKey: PostgresIntrospector(
                     client=self.client,
                     cache_partition_key=self.introspector_cache_partition_key,
+                    cache_ttl=self.introspector_cache_ttl,
                 ),
             }
         )

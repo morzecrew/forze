@@ -108,11 +108,9 @@ async def test_empty_filter_jsonb_array_column(pg_client: PostgresClient) -> Non
     e = await query.find(empty_f)
     assert e is not None and e.title == "none" and e.characteristics == []
 
-    __p = await query.find_many(
-        nonempty_f,
+    __p = await query.find_page(nonempty_f,
         pagination={"limit": 10, "offset": 0},
         sorts={"title": "asc"},
-        return_count=True,
     )
     assert __p.count == 2
     assert {r.title for r in __p.hits} == {"one", "two"}

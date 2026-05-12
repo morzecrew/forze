@@ -78,23 +78,29 @@ Helper methods:
 |---------|---------|
 | Purpose | Reads documents by primary key, filters, sorting, and pagination. |
 | Import path | `from forze.application.contracts.document import DocumentQueryPort` |
-| Type parameters | `R`, the read model returned when no projection is requested. |
-| Required methods | `get`, `get_many`, `find`, `find_many`, `count`. |
-| Returned values | `R`, `Sequence[R]`, `Page[R]`, `CountlessPage[R]`, `int`, or JSON projections when `return_fields` is used. |
-| Common implementations | Mock, Postgres, Mongo document query adapters. |
+| Type parameters | `R`, the read model for full-document reads. |
+| Required methods | Identity: `get`, `get_many`. Single row by filters: `find`, `project`, `select`. Offset listing: `find_many`, `find_page`, `project_many`, `project_page`, `select_many`, `select_page`. Keyset: `find_cursor`, `project_cursor`. Aggregates: `aggregate_many`, `aggregate_page`, `select_many_aggregated`, `select_page_aggregated`. `count`. |
+| Returned values | `R`, `Sequence[R]`, `JsonDict`, `Page[...]`, `CountlessPage[...]`, `CursorPage[...]`, or `int` depending on the method. |
+| Common implementations | Mock, Postgres, Mongo document adapters (via `DocumentCoordinator`). |
 | Related dependency keys | `DocumentQueryDepKey`; resolve with `ctx.doc_query(spec)`. |
 | Minimal example | `project = await ctx.doc_query(project_spec).get(project_id)` |
 | Related pages | [Query Syntax](../query-syntax.md), [Cache contracts](cache.md). |
 
-Required methods:
+Methods (result shape is encoded in the name; use `pagination` / `sorts` keyword arguments where applicable):
 
-| Method | Parameters | Returns |
-|--------|------------|---------|
-| `get` | `pk`, optional `for_update`, `return_fields`, `skip_cache` | One model or JSON projection. |
-| `get_many` | `pks`, optional `return_fields`, `skip_cache` | Sequence of models or projections. |
-| `find` | `filters`, optional `for_update`, `return_fields` | One model/projection or `None`. |
-| `find_many` | Optional `filters`, `pagination`, `sorts`, `return_count`, `return_fields`, `return_type` | Page-like result of models, projections, or aggregates. |
-| `count` | Optional `filters` | Matching row count. |
+| Method | Role |
+|--------|------|
+| `get` / `get_many` | By primary key as `R` / `Sequence[R]` (optional `for_update`, `skip_cache` on `get` / `get_many`). |
+| `find` | One row by filters as `R \| None`. |
+| `project` | One row by filters as `JsonDict \| None` (`fields`). |
+| `select` | One row by filters as `return_type \| None`. |
+| `find_many` / `find_page` | Offset list as `CountlessPage[R]` / `Page[R]`. |
+| `project_many` / `project_page` | Offset list with projection. |
+| `select_many` / `select_page` | Offset list as `return_type`. |
+| `find_cursor` / `project_cursor` | Keyset page (`CursorPage[...]`). |
+| `aggregate_many` / `aggregate_page` | Aggregate rows as JSON (`CountlessPage` / `Page`). |
+| `select_many_aggregated` / `select_page_aggregated` | Aggregate rows as `return_type`. |
+| `count` | Matching row count. |
 
 ## `DocumentCommandPort[R, D, C, U]`
 

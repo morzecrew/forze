@@ -51,111 +51,33 @@ class BaseDocumentPort(Protocol[R, D, C, U]):
 
 @runtime_checkable
 class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
-    """Query operations for document aggregates."""
+    """Query operations for document aggregates.
 
-    @overload
+    Result shape is encoded in the method name: ``get*`` / ``find*`` return the
+    read model ``R``; ``project*`` returns ``JsonDict`` rows; ``select*`` uses an
+    explicit ``return_type``; ``*_many`` is countless offset pagination;
+    ``*_page`` includes a total count; ``*_cursor`` is keyset pagination;
+    ``aggregate_*`` returns aggregate rows as JSON; ``select_*_aggregated``
+    validates aggregate rows against ``return_type``.
+    """
+
     def get(
         self,
         pk: UUID,
         *,
-        for_update: bool = ...,
-        return_fields: Sequence[str],
-        skip_cache: bool = ...,
-    ) -> Awaitable[JsonDict]:
-        """Fetch a document and return selected fields as a JSON mapping."""
-        ...  # pragma: no cover
-
-    @overload
-    def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_fields: None = ...,
-        skip_cache: bool = ...,
+        for_update: bool = False,
+        skip_cache: bool = False,
     ) -> Awaitable[R]:
-        """Fetch a document and return the typed read model."""
+        """Fetch a single document by primary key as the typed read model."""
         ...  # pragma: no cover
 
-    def get(
+    def get_many(
         self,
-        pk: UUID,
+        pks: Sequence[UUID],
         *,
-        for_update: bool = False,
-        return_fields: Sequence[str] | None = None,
         skip_cache: bool = False,
-    ) -> Awaitable[R | JsonDict]:
-        """Fetch a single document by primary key.
-
-        :param pk: Document identifier.
-        :param for_update: When ``True``, lock the row for update when possible.
-        :param return_fields: Optional subset of fields to project.
-        :param skip_cache: When ``True``, bypass read-through cache (no read, no write).
-        :returns: Either the typed read model or a JSON mapping.
-        """
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    @overload
-    def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: Sequence[str],
-        skip_cache: bool = ...,
-    ) -> Awaitable[Sequence[JsonDict]]:
-        """Fetch multiple documents and project selected fields as JSON."""
-        ...  # pragma: no cover
-
-    @overload
-    def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: None = ...,
-        skip_cache: bool = ...,
     ) -> Awaitable[Sequence[R]]:
-        """Fetch multiple documents and return typed read models."""
-        ...  # pragma: no cover
-
-    def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_fields: Sequence[str] | None = None,
-        skip_cache: bool = False,
-    ) -> Awaitable[Sequence[R] | Sequence[JsonDict]]:
-        """Fetch multiple documents by primary key.
-
-        :param pks: Document identifiers in the desired result order.
-        :param return_fields: Optional subset of fields to project per row.
-        :param skip_cache: When ``True``, bypass read-through cache (no read, no write).
-        """
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    @overload
-    def find(
-        self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
-        *,
-        for_update: bool = ...,
-        return_fields: Sequence[str],
-    ) -> Awaitable[JsonDict | None]:
-        """Find a single document by filters and project selected fields."""
-        ...  # pragma: no cover
-
-    @overload
-    def find(
-        self,
-        filters: QueryFilterExpression,  # type: ignore[valid-type]
-        *,
-        for_update: bool = ...,
-        return_fields: None = ...,
-    ) -> Awaitable[R | None]:
-        """Find a single document by filters and return the typed read model."""
+        """Fetch multiple documents by primary key as typed read models."""
         ...  # pragma: no cover
 
     def find(
@@ -163,161 +85,28 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
         for_update: bool = False,
-        return_fields: Sequence[str] | None = None,
-    ) -> Awaitable[R | JsonDict | None]:
+    ) -> Awaitable[R | None]:
         """Find a single document by filters or return ``None`` when missing."""
         ...  # pragma: no cover
 
-    # ....................... #
-
-    @overload
-    def find_many(
+    def project(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        fields: Sequence[str],
         *,
-        aggregates: AggregatesExpression,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[JsonDict]]:
-        """Find many aggregate rows as JSON mappings (no count query)."""
+        for_update: bool = False,
+    ) -> Awaitable[JsonDict | None]:
+        """Find a single document by filters and project ``fields`` to a JSON mapping."""
         ...  # pragma: no cover
 
-    @overload
-    def find_many(
+    def select(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
         return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[T]]:
-        """Find many aggregate rows and validate them against ``return_type``."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
         *,
-        aggregates: AggregatesExpression,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Awaitable[Page[JsonDict]]:
-        """Find many aggregate rows as JSON mappings and return the total groups."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: AggregatesExpression,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Awaitable[Page[T]]:
-        """Find many typed aggregate rows and return the total groups."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[JsonDict]]:
-        """Find many documents and project selected fields as JSON (no count query)."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[R]]:
-        """Find many documents and return typed read models (no count query)."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: Sequence[str],
-        return_count: Literal[True],
-    ) -> Awaitable[Page[JsonDict]]:
-        """Find many documents, project as JSON, and return the total count."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: None = ...,
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Awaitable[Page[R]]:
-        """Find many documents and return typed read models and total count."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[False] = False,
-    ) -> Awaitable[CountlessPage[T]]:
-        """Find many documents and validate hits against ``return_type`` (no aggregates)."""
-        ...  # pragma: no cover
-
-    @overload
-    def find_many(
-        self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        aggregates: None = ...,
-        return_type: type[T],
-        return_fields: None = ...,
-        return_count: Literal[True],
-    ) -> Awaitable[Page[T]]:
-        """Find many documents as ``return_type`` with total row count."""
+        for_update: bool = False,
+    ) -> Awaitable[T | None]:
+        """Find a single document by filters and validate as ``return_type``."""
         ...  # pragma: no cover
 
     def find_many(
@@ -325,71 +114,119 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         pagination: PaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
-        *,
-        aggregates: AggregatesExpression | None = None,
-        return_type: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-        return_count: bool = False,
-    ) -> Awaitable[
-        Page[R]
-        | CountlessPage[R]
-        | Page[T]
-        | CountlessPage[T]
-        | Page[JsonDict]
-        | CountlessPage[JsonDict]
-    ]:
-        """Find many documents, optionally paginated and sorted.
-
-        When ``return_count`` is ``True``, runs a count query and returns
-        ``(results, total)``. Otherwise returns only ``results`` (default).
-        When ``aggregates`` is set, the total counts aggregate groups; otherwise it
-        counts matching documents. ``return_type`` without ``aggregates`` maps each
-        document row through the model (same shape as the list read model, optional
-        projection) without an aggregate query.
-        """
+    ) -> Awaitable[CountlessPage[R]]:
+        """List documents (offset pagination) without a total count query."""
         ...  # pragma: no cover
 
-    # ....................... #
-
-    @overload
-    def find_many_with_cursor(
+    def project_many(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        return_fields: Sequence[str],
-    ) -> Awaitable[CursorPage[JsonDict]]:
-        """Keyset / cursor page with field projection (opaque ``prev`` / ``next`` cursors)."""
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CountlessPage[JsonDict]]:
+        """List documents with field projection (no total count query)."""
         ...  # pragma: no cover
 
-    @overload
-    def find_many_with_cursor(
+    def select_many(
         self,
-        filters: QueryFilterExpression | None = ...,  # type: ignore[valid-type]
-        cursor: CursorPaginationExpression | None = ...,
-        sorts: QuerySortExpression | None = ...,
-        *,
-        return_fields: None = ...,
-    ) -> Awaitable[CursorPage[R]]:
-        """Keyset / cursor page with typed read models.
-
-        **Adapter note:** Opaque cursors require a stable sort order and encoded
-        key columns; production backends need spec/config for cursor keys
-        (see port module docstring on this file for outline).
-        """
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CountlessPage[T]]:
+        """List documents validating each row as ``return_type`` (no total count)."""
         ...  # pragma: no cover
 
-    def find_many_with_cursor(
+    def find_page(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[Page[R]]:
+        """List documents with offset pagination and total matching row count."""
+        ...  # pragma: no cover
+
+    def project_page(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[Page[JsonDict]]:
+        """List documents with projection and total matching row count."""
+        ...  # pragma: no cover
+
+    def select_page(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[Page[T]]:
+        """List documents as ``return_type`` with total matching row count."""
+        ...  # pragma: no cover
+
+    def find_cursor(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None = None,
         sorts: QuerySortExpression | None = None,
-        *,
-        return_fields: Sequence[str] | None = None,
-    ) -> Awaitable[CursorPage[R] | CursorPage[JsonDict]]: ...  # pragma: no cover
+    ) -> Awaitable[CursorPage[R]]:
+        """Keyset / cursor page of typed read models (opaque ``prev`` / ``next`` cursors)."""
+        ...  # pragma: no cover
 
-    # ....................... #
+    def project_cursor(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CursorPage[JsonDict]]:
+        """Keyset / cursor page with field projection."""
+        ...  # pragma: no cover
+
+    def aggregate_many(
+        self,
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CountlessPage[JsonDict]]:
+        """Aggregate query returning JSON rows (no total count query)."""
+        ...  # pragma: no cover
+
+    def aggregate_page(
+        self,
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[Page[JsonDict]]:
+        """Aggregate query returning JSON rows and total group count."""
+        ...  # pragma: no cover
+
+    def select_many_aggregated(
+        self,
+        return_type: type[T],
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CountlessPage[T]]:
+        """Aggregate query validating each row as ``return_type`` (no total count)."""
+        ...  # pragma: no cover
+
+    def select_page_aggregated(
+        self,
+        return_type: type[T],
+        aggregates: AggregatesExpression,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[Page[T]]:
+        """Aggregate query with typed rows and total group count."""
+        ...  # pragma: no cover
 
     def count(self, filters: QueryFilterExpression | None = None) -> Awaitable[int]:  # type: ignore[valid-type]
         """Count documents by filters."""
@@ -738,7 +575,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         ``_id`` sets). Semantics may differ from :meth:`update` when domain models derive
         fields during apply.
 
-        :param filters: Required filter expression (same shape as :meth:`DocumentQueryPort.find_many`).
+        :param filters: Required filter expression (same shape as :meth:`DocumentQueryPort.find_many` / :meth:`DocumentQueryPort.find_page`).
         :param dto: Patch applied uniformly to each matching row.
         :param return_new: When ``True``, reload and return read models for updated rows
             (Postgres: ``RETURNING``; Mongo: ``get_many`` per chunk). When ``False``, return
@@ -757,7 +594,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         return_new: Literal[True] = True,
         chunk_size: int | None = ...,
     ) -> Awaitable[Sequence[R]]:
-        """Match :meth:`update_many` semantics via chunked :meth:`find_many` + :meth:`update_many`."""
+        """Match :meth:`update_many` semantics via chunked :meth:`DocumentQueryPort.project_many` + :meth:`update_many`."""
         ...  # pragma: no cover
 
     @overload
@@ -769,7 +606,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         return_new: Literal[False],
         chunk_size: int | None = ...,
     ) -> Awaitable[int]:
-        """Match :meth:`update_many` semantics via chunked :meth:`find_many` + :meth:`update_many`."""
+        """Match :meth:`update_many` semantics via chunked :meth:`DocumentQueryPort.project_many` + :meth:`update_many`."""
         ...  # pragma: no cover
 
     def update_matching_strict(

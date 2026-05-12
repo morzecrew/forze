@@ -57,11 +57,11 @@ Runs **after** the usecase returns. May inspect or transform the result:
             logger.info("Created project %s", res.id)
             return res
 
-### Conditional guards and effects
+### ConditionalGuard and ConditionalEffect
 
-Run validation or post-processing only when a **synchronous** predicate holds.
+Run validation or post-processing only when a **synchronous** `condition` holds (`bool`).
 
-Subclass **`ConditionalGuard`** or **`ConditionalEffect`** when the skip logic belongs to one type. Implement **`main`**; override **`condition`** (default is always run):
+Subclass **`ConditionalGuard`** or **`ConditionalEffect`** when the skip logic belongs to one guard or effect type. Implement **`main`**; override **`condition`** (the default is always run):
 
     :::python
     from forze.application.execution import ConditionalGuard
@@ -73,7 +73,9 @@ Subclass **`ConditionalGuard`** or **`ConditionalEffect`** when the skip logic b
         async def main(self, args: MyArgs) -> None:
             ...
 
-Use **`WhenGuard`** / **`WhenEffect`** to wrap an existing guard or effect with a predicate at composition time (no subclass):
+### WhenGuard and WhenEffect
+
+Wrap an existing **`Guard`** or **`Effect`** with a predicate at **composition** time (no subclass). The `when` callable may return **`bool`** or **`Awaitable[bool]`**; the usecase runner awaits the result when needed, so predicates can call async ports (for example `await self.ctx.dep(...)` inside an `async def` wrapper).
 
     :::python
     from forze.application.execution import WhenGuard, WhenEffect
@@ -101,10 +103,10 @@ Full control over the chain — receives `next` and `args`:
 
 | Helper | Role |
 |--------|------|
-| `ConditionalGuard[Args]` | Abstract base: `condition` + `main`, unified `__call__` |
-| `ConditionalEffect[Args, R]` | Abstract base: same pattern; skip returns `res` |
-| `WhenGuard[Args]` | Wraps a `Guard`; runs inner guard when `when(args)` |
-| `WhenEffect[Args, R]` | Wraps an `Effect`; runs inner effect when `when(args, res)` |
+| `ConditionalGuard[Args]` | Abstract base: synchronous `condition(args)` + `main`, unified `__call__` |
+| `ConditionalEffect[Args, R]` | Abstract base: synchronous `condition(args, res)` + `main`; skip returns `res` |
+| `WhenGuard[Args]` | Wraps a `Guard`; runs inner guard when `when(args)` is true (sync or awaitable) |
+| `WhenEffect[Args, R]` | Wraps an `Effect`; runs inner effect when `when(args, res)` is true (sync or awaitable) |
 
 ## Built-in middleware implementations
 

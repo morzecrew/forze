@@ -107,22 +107,18 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
     spec = DocumentSpec(name="ro_many_ns", read=_ReadOnlyRow, write=None)
     q = ctx.doc_query(spec)
 
-    __p = await q.find_many(
-        None,
+    __p = await q.find_page(None,
         pagination={"limit": 10, "offset": 0},
         sorts={"title": "asc"},
-        return_count=True,
     )
     rows = __p.hits
     total = __p.count
     assert total == 3
     assert [r.title for r in rows] == ["alpha", "beta", "gamma"]
 
-    __p = await q.find_many(
-        None,
+    __p = await q.find_page(None,
         pagination={"limit": 1, "offset": 1},
         sorts={"title": "asc"},
-        return_count=True,
     )
     page = __p.hits
     total_p = __p.count

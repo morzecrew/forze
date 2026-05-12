@@ -198,9 +198,8 @@ async def test_mongo_document_find_many_benchmark(
         await document_adapter.create(PerfCreateDoc(name=f"find {i}"))
 
     async def run() -> None:
-        __p = await document_adapter.find_many(
+        __p = await document_adapter.find_page(
             pagination={"limit": 50},
-            return_count=True,
         )
         rows = __p.hits
         cnt = __p.count
@@ -225,9 +224,8 @@ async def test_mongo_document_find_many_large_benchmark(
         await document_adapter.create_many(chunk)
 
     async def run() -> None:
-        __p = await document_adapter.find_many(
+        __p = await document_adapter.find_page(
             pagination={"limit": 500},
-            return_count=True,
         )
         rows = __p.hits
         cnt = __p.count

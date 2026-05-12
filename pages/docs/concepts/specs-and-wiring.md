@@ -97,6 +97,8 @@ Each `PostgresDocumentConfig` supplies `(schema, table)` tuples for `read`, `wri
 
 Inside the app you only pass `project_spec`; adapters receive both the spec and the infra config that was registered under `project_spec.name`.
 
+**From specs to ports.** A `DocumentSpec` is metadata only; it does not perform I/O. After wiring, `ctx.doc_query(spec)` resolves the `DocumentQueryDepKey` factory for route `spec.name` and returns a **`DocumentQueryPort[read]`**; `ctx.doc_command(spec)` resolves **`DocumentCommandDepKey`** → **`DocumentCommandPort`**. For search, `ctx.search_query(search_spec)` resolves **`SearchQueryDepKey`** → **`SearchQueryPort`**. Method tables for those protocols are in [Contracts and adapters](contracts-adapters.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix | See also |

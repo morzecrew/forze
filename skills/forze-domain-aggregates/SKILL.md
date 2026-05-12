@@ -117,6 +117,8 @@ project_spec = DocumentSpec(
 )
 ```
 
+Once a `DepsPlan` registers document adapters for that `name`, usecases obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.doc_query(project_spec)`** / **`ctx.doc_command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [`pages/docs/core-package/contracts/document.md`](../../pages/docs/core-package/contracts/document.md).
+
 | Field | Purpose |
 |-------|---------|
 | `name` | Logical route id (`str | StrEnum`); must match infra config keys |

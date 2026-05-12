@@ -136,6 +136,16 @@ class TestPostgresDepsModule:
         assert deps.exists(PostgresClientDepKey)
         assert deps.exists(PostgresIntrospectorDepKey)
 
+    def test_introspector_receives_cache_ttl(self) -> None:
+        from datetime import timedelta
+
+        client = MagicMock(spec=PostgresClient)
+        ttl = timedelta(minutes=2)
+        module = PostgresDepsModule(client=client, introspector_cache_ttl=ttl)
+        ctx = ExecutionContext(deps=module())
+        intro = ctx.dep(PostgresIntrospectorDepKey)
+        assert intro.cache_ttl == ttl
+
     def test_registers_read_only_document_routes(self) -> None:
         client = MagicMock(spec=PostgresClient)
         module = PostgresDepsModule(

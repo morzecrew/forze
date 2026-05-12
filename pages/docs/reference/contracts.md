@@ -49,17 +49,24 @@ Documents are the primary data abstraction. Ports are split into read and write 
 
 ### DocumentQueryPort[R]
 
-Read-only operations for document aggregates:
+Read-only operations for document aggregates. Result shape is selected by the method name (for example `find_page` includes a total count; `find_many` does not). Projections use `project*`; arbitrary row models use `select*` with an explicit `return_type`.
 
-| Method | Signature | Returns |
-|--------|-----------|---------|
-| `get` | `(pk, *, for_update?, return_fields?)` | `R` or `JsonDict` |
-| `get_many` | `(pks, *, return_fields?)` | `Sequence[R]` or `Sequence[JsonDict]` |
-| `find` | `(filters, *, for_update?, return_fields?)` | `R \| None` or `JsonDict \| None` |
-| `find_many` | `(filters?, pagination?, sorts?, *, return_count?, return_fields?)` | `CountlessPage[R]` / `Page[R]` or JSON projections |
+| Method group | Typical signature | Returns |
+|--------------|-------------------|---------|
+| `get` | `(pk, *, for_update?, skip_cache?)` | `R` |
+| `get_many` | `(pks, *, skip_cache?)` | `Sequence[R]` |
+| `find` | `(filters, *, for_update?)` | `R \| None` |
+| `project` | `(filters, fields, *, for_update?)` | `JsonDict \| None` |
+| `select` | `(filters, return_type, *, for_update?)` | `T \| None` |
+| `find_many` / `find_page` | `(filters?, pagination?, sorts?)` | `CountlessPage[R]` / `Page[R]` |
+| `project_many` / `project_page` | `(fields, filters?, pagination?, sorts?)` | `CountlessPage[JsonDict]` / `Page[JsonDict]` |
+| `select_many` / `select_page` | `(return_type, filters?, pagination?, sorts?)` | `CountlessPage[T]` / `Page[T]` |
+| `find_cursor` / `project_cursor` | `(filters?, cursor?, sorts?)` / `(fields, ...)` | `CursorPage[R]` / `CursorPage[JsonDict]` |
+| `aggregate_many` / `aggregate_page` | `(aggregates, filters?, pagination?, sorts?)` | `CountlessPage[JsonDict]` / `Page[JsonDict]` |
+| `select_many_aggregated` / `select_page_aggregated` | `(return_type, aggregates, ...)` | `CountlessPage[T]` / `Page[T]` |
 | `count` | `(filters?)` | `int` |
 
-When `return_fields` is provided, methods return `JsonDict` projections instead of typed models. `for_update` locks the row when the backend supports it.
+`for_update` locks the row when the backend supports it.
 
 ### DocumentCommandPort[R, D, C, U]
 

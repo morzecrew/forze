@@ -137,14 +137,14 @@ async def test_fts_v2_result_snapshot_reread(
     adapter = ctx.search_query(spec)
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
-    p1 = await adapter.search(
-        "keyword", return_count=True, pagination={"limit": 5, "offset": 0}
+    p1 = await adapter.search_page(
+        "keyword",
+        pagination={"limit": 5, "offset": 0},
     )
     assert p1.snapshot is not None
     assert p1.count == 1
-    p2 = await adapter.search(
+    p2 = await adapter.search_page(
         "keyword",
-        return_count=True,
         pagination={"limit": 5, "offset": 0},
         snapshot={"id": p1.snapshot.id, "fingerprint": p1.snapshot.fingerprint},
     )
@@ -222,13 +222,13 @@ async def test_vector_v2_result_snapshot_reread(
     )
     adapter = ctx.search_query(spec)
     assert isinstance(adapter, PostgresVectorSearchAdapter)
-    p1 = await adapter.search(
-        "vecq", return_count=True, pagination={"limit": 3, "offset": 0}
+    p1 = await adapter.search_page(
+        "vecq",
+        pagination={"limit": 3, "offset": 0},
     )
     assert p1.snapshot is not None
-    p2 = await adapter.search(
+    p2 = await adapter.search_page(
         "vecq",
-        return_count=True,
         pagination={"limit": 3, "offset": 0},
         snapshot={"id": p1.snapshot.id, "fingerprint": p1.snapshot.fingerprint},
     )

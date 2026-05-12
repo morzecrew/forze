@@ -64,17 +64,16 @@ async def _ctx_spec(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_mongo_adapter_find_many_return_count_zero_short_circuit(
+async def test_mongo_adapter_find_page_return_count_zero_short_circuit(
     mongo_client: MongoClient,
 ) -> None:
-    """``return_count`` with no matches returns an empty page without listing."""
+    """Counted page with no matches returns an empty page without listing."""
     col = f"m_lc_{uuid4().hex[:8]}"
     ctx, spec = await _ctx_spec(mongo_client, col)
     q = ctx.doc_query(spec)
-    page = await q.find_many(
+    page = await q.find_page(
         {"$fields": {"label": "___none___"}},
         pagination={"limit": 5},
-        return_count=True,
     )
     assert page.count == 0
     assert page.hits == []
@@ -82,7 +81,7 @@ async def test_mongo_adapter_find_many_return_count_zero_short_circuit(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_mongo_adapter_find_many_with_cursor_tokens(
+async def test_mongo_adapter_find_cursor_tokens(
     mongo_client: MongoClient,
 ) -> None:
     """Adapter wraps gateway keyset results and builds next/prev cursor tokens."""
@@ -94,7 +93,7 @@ async def test_mongo_adapter_find_many_with_cursor_tokens(
     for i in range(4):
         await cmd.create(_ListCreate(label=f"L{i}"))
 
-    p1 = await q.find_many_with_cursor(
+    p1 = await q.find_cursor(
         None,
         cursor={"limit": 2},
         sorts=None,
@@ -103,32 +102,32 @@ async def test_mongo_adapter_find_many_with_cursor_tokens(
     assert p1.has_more is True
     assert p1.next_cursor is not None
 
-    p2 = await q.find_many_with_cursor(
+    p2 = await q.find_cursor(
         None,
         cursor={"limit": 2, "after": p1.next_cursor},
         sorts=None,
     )
     assert len(p2.hits) == 2
 
-    proj = await q.find_many_with_cursor(
+    proj = await q.project_cursor(
+        ["id", "label"],
         None,
         cursor={"limit": 3},
         sorts=None,
-        return_fields=["id", "label"],
     )
     assert len(proj.hits) == 3
     assert set(proj.hits[0].keys()) <= {"id", "label"}
 
     with pytest.raises(CoreError, match="projection must include"):
-        await q.find_many_with_cursor(
+        await q.project_cursor(
+            ["label"],
             None,
             cursor={"limit": 2},
             sorts=None,
-            return_fields=["label"],
         )
 
     with pytest.raises(CoreError, match="primary key"):
-        await q.find_many_with_cursor(
+        await q.find_cursor(
             None,
             cursor={"limit": 2},
             sorts={"label": "asc"},
