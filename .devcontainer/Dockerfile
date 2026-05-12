@@ -13,9 +13,9 @@ RUN apt-get update  \
     shellcheck=0.10.0-1 \
     && rm -rf /var/lib/apt/lists/*
 
-ARG JUST_VERSION=1.46.0
+ARG JUST_VERSION=1.51.0
 ARG D2_VERSION=v0.7.1
-ARG UV_VERSION=0.10.9
+ARG UV_VERSION=0.11.13
 
 RUN set -eux; \
     curl -LsSf -o /tmp/just.tar.gz \

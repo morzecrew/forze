@@ -103,6 +103,47 @@ attach_authn_endpoints(
 
 Password login uses `application/x-www-form-urlencoded`. The refresh endpoint reads the refresh token from the configured transport (cookie or header). Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless one is supplied via `SimpleHttpEndpointSpec[\"authn\"]`. To declare auth on document/search endpoints, set `SimpleHttpEndpointSpec[\"authn\"] = AuthnRequirement(...)` — the helper prepends `RequireAuthnFeature` and merges OpenAPI security in one shot.
 
+To require the same authn surface on **every** generated document/search endpoint, set the spec-level `authn` key (per-endpoint values still override it on the matching route):
+
+```python
+api_authn = AuthnRequirement(authn_route="api", token_header="Authorization")
+
+attach_document_endpoints(
+    router,
+    document=project_spec,
+    dtos=project_dtos,
+    registry=project_registry,
+    ctx_dep=ctx_dep,
+    endpoints={
+        "get_": True,
+        "list_": True,
+        "create": True,
+        "update": {"authn": AuthnRequirement(authn_route="api", api_key_header="X-API-Key")},
+        "authn": api_authn,
+    },
+)
+```
+
+For hand-rolled `APIRouter`s, build the matching FastAPI dependency once and attach it as a router-level guard so the OpenAPI padlock and the 401 enforcement stay consistent with Forze-built routes:
+
+```python
+from forze_fastapi.endpoints.http import (
+    AuthnRequirement,
+    build_authn_requirement_dependency,
+)
+
+custom = APIRouter(
+    prefix="/projects",
+    dependencies=[
+        build_authn_requirement_dependency(api_authn, ctx_dep=ctx_dep),
+    ],
+)
+
+@custom.post("/archive")
+async def archive(...):
+    ...
+```
+
 ## Custom HTTP operations
 
 Use `forze_fastapi.endpoints.http` when an operation is not document/search CRUD.

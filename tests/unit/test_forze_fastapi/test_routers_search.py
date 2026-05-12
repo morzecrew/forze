@@ -9,6 +9,7 @@ from forze.application.composition.search import (
     build_search_registry,
 )
 from forze.application.contracts.search import SearchSpec
+from forze_fastapi.endpoints.http import AuthnRequirement
 from forze_fastapi.endpoints.search import attach_search_endpoints
 
 # ----------------------- #
@@ -111,6 +112,104 @@ class TestAttachSearchRoutes:
         data = response.json()
         assert "hits" in data or "items" in data
         assert "count" in data or "total" in data
+
+    def test_base_authn_requirement_applies_to_all_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """``endpoints['authn']`` enforces 401 on every produced search route."""
+        spec = _minimal_search_spec()
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
+
+        def ctx_dep():
+            return composition_ctx
+
+        base_req = AuthnRequirement(
+            authn_route="api",
+            token_header="Authorization",
+        )
+
+        router = APIRouter(prefix="/api")
+        attach_search_endpoints(
+            router,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints={
+                "search": True,
+                "raw_search": True,
+                "authn": base_req,
+            },
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        assert client.post("/api/search", json={"query": ""}).status_code == 401
+        assert (
+            client.post(
+                "/api/raw-search",
+                json={"query": "", "return_fields": ["title"]},
+            ).status_code
+            == 401
+        )
+
+        openapi = app.openapi()
+        paths = openapi["paths"]
+        for path in ("/api/search", "/api/raw-search"):
+            op = paths[path]["post"]
+            assert any(base_req.scheme_name in entry for entry in op["security"])
+            assert base_req.scheme_name in op["components"]["securitySchemes"]
+
+    def test_per_endpoint_authn_overrides_base(
+        self,
+        composition_ctx,
+    ) -> None:
+        """Per-endpoint ``authn`` overrides the base on the matching route only."""
+        spec = _minimal_search_spec()
+        dtos = _minimal_search_dtos()
+        reg = build_search_registry(spec)
+        reg.finalize(spec.name, inplace=True)
+
+        def ctx_dep():
+            return composition_ctx
+
+        base_req = AuthnRequirement(
+            authn_route="api",
+            token_header="Authorization",
+        )
+        override_req = AuthnRequirement(
+            authn_route="api",
+            api_key_header="X-API-Key",
+        )
+
+        router = APIRouter(prefix="/api")
+        attach_search_endpoints(
+            router,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints={
+                "search": True,
+                "raw_search": {"authn": override_req},
+                "authn": base_req,
+            },
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        openapi = app.openapi()
+
+        paths = openapi["paths"]
+        search_security = paths["/api/search"]["post"]["security"]
+        raw_security = paths["/api/raw-search"]["post"]["security"]
+
+        assert any(base_req.scheme_name in entry for entry in search_security)
+        assert any(override_req.scheme_name in entry for entry in raw_security)
+        assert all(base_req.scheme_name not in entry for entry in raw_security)
 
     def test_can_disable_typed_search_endpoint(
         self,

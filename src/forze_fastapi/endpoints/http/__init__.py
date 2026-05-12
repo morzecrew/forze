@@ -38,6 +38,7 @@ from .mapping import (
 from .policy import (
     AnyFeature,
     apply_authn_requirement,
+    build_authn_requirement_dependency,
     merge_http_endpoint_features,
     with_default_http_features,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "AnyFeature",
     "apply_authn_requirement",
     "AuthnRequirement",
+    "build_authn_requirement_dependency",
     "merge_http_endpoint_features",
     "with_default_http_features",
     "BodyAsIsMapper",

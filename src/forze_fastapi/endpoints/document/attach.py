@@ -15,7 +15,12 @@ from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
 from .._logger import logger
-from ..http import HttpEndpointSpec, SimpleHttpEndpointSpec, attach_http_endpoint
+from ..http import (
+    AuthnRequirement,
+    HttpEndpointSpec,
+    SimpleHttpEndpointSpec,
+    attach_http_endpoint,
+)
 from ..http.policy import (
     AnyFeature,
     apply_authn_requirement,
@@ -56,15 +61,23 @@ def attach_document_endpoints(
 ) -> APIRouter:
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
+    base_authn: AuthnRequirement | None = endpoints.get("authn")
+
+    def _resolve_authn(
+        simple: SimpleHttpEndpointSpec | None,
+    ) -> AuthnRequirement | None:
+        if simple is not None:
+            per_endpoint = simple.get("authn")
+            if per_endpoint is not None:
+                return per_endpoint
+        return base_authn
 
     def _apply_defaults(
         spec: HttpEndSpec,
         simple: SimpleHttpEndpointSpec | None = None,
     ) -> HttpEndSpec:
         with_defaults = with_default_http_features(spec, default_http_features)
-        if simple is None:
-            return with_defaults
-        return apply_authn_requirement(with_defaults, simple.get("authn"))
+        return apply_authn_requirement(with_defaults, _resolve_authn(simple))
 
     get_endpoint = endpoints.get("get_", False)
     get_by_number_id_endpoint = endpoints.get("get_by_number_id", False)

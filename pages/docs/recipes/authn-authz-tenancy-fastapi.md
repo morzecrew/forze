@@ -107,6 +107,69 @@ OpenAPI cannot be inferred from arbitrary guard callables; **sharing** `AuthzPer
 
 Pass `default_http_features` into `attach_document_endpoints` / `attach_search_endpoints` to prepend guards (for example `RequireAuthnFeature()`, `RequirePermissionFeature(...)`) to every generated endpoint spec without editing each builder. Defaults remain **off** if you omit the argument.
 
+### Base `AuthnRequirement` on document / search specs
+
+`DocumentEndpointsSpec` and `SearchEndpointsSpec` accept a top-level `authn: AuthnRequirement` key that is applied to **every** generated endpoint. Per-endpoint values in `SimpleHttpEndpointSpec["authn"]` still take precedence on the matching route, so the base is a starting point — not a hard ceiling:
+
+```python
+from forze_fastapi.endpoints.http import AuthnRequirement
+from forze_fastapi.endpoints.document import attach_document_endpoints
+
+api_authn = AuthnRequirement(authn_route="api", token_header="Authorization")
+admin_authn = AuthnRequirement(authn_route="api", api_key_header="X-Admin-Key")
+
+attach_document_endpoints(
+    router,
+    document=project_spec,
+    dtos=project_dtos,
+    registry=project_registry,
+    ctx_dep=get_ctx,
+    endpoints={
+        "get_": True,
+        "list_": True,
+        "create": True,
+        # Per-endpoint override — uses ``admin_authn`` instead of the base.
+        "kill": {"authn": admin_authn},
+        # Base requirement inherited by every endpoint above that does not
+        # supply its own ``authn`` override.
+        "authn": api_authn,
+    },
+)
+```
+
+Each route also gets the matching OpenAPI security scheme (bearer / cookie / API-key header) merged into its operation, so the `/docs` and `/redoc` UIs reflect the declared transport without any extra wiring.
+
+### Dependency helper for hand-rolled routers
+
+Use `build_authn_requirement_dependency` when you want to mirror the same authentication surface on a custom `APIRouter` (for example because your route is not a document/search CRUD operation). The helper returns a `Depends(...)` that:
+
+- Reads `ExecutionContext` via your `ctx_dep` and raises HTTP 401 when no `AuthnIdentity` is bound (the binding still happens once, in `ContextBindingMiddleware`).
+- Declares the matching FastAPI security class (`HTTPBearer` / `APIKeyCookie` / `APIKeyHeader`) so the operation shows up under the same `components.securitySchemes` entry as Forze-built endpoints.
+
+```python
+from fastapi import APIRouter, Depends
+from forze_fastapi.endpoints.http import (
+    AuthnRequirement,
+    build_authn_requirement_dependency,
+)
+
+api_authn = AuthnRequirement(authn_route="api", token_header="Authorization")
+
+router = APIRouter(
+    prefix="/projects",
+    dependencies=[
+        build_authn_requirement_dependency(api_authn, ctx_dep=get_ctx),
+    ],
+)
+
+
+@router.post("/archive")
+async def archive_project(project_id: str) -> None:
+    ...
+```
+
+Attach the dependency at the **router** level for the common case (every route shares the same authn surface) or per-route via `dependencies=[...]` on `@router.get / @router.post / ...` when a single endpoint needs a different requirement than its siblings.
+
 ## Pre-built authn endpoints
 
 `attach_authn_endpoints` registers configurable **login**, **refresh**, **logout**, and **change-password** routes wired to the `AuthnUsecasesFacade`:

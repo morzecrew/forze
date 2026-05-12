@@ -15,7 +15,6 @@ from forze.base.validators import NoneValidator
 
 # ----------------------- #
 
-
 AuthnRequirementSchemeName = Literal["bearer", "api_key", "cookie"]
 """OpenAPI scheme classification used by :class:`AuthnRequirement`."""
 
@@ -63,18 +62,6 @@ class AuthnRequirement:
         if not self.authn_route:
             raise CoreError("AuthnRequirement.authn_route must be non-empty")
 
-        non_none = [
-            v
-            for v in (self.token_header, self.token_cookie, self.api_key_header)
-            if v is not None
-        ]
-
-        if len(non_none) != 1:
-            raise CoreError(
-                "AuthnRequirement requires exactly one of "
-                "token_header / token_cookie / api_key_header to be set",
-            )
-
         # Belt-and-suspenders: the same constraint expressed via NoneValidator
         # to keep the error surface consistent with the rest of the codebase.
         if not NoneValidator.exactly_one(
@@ -83,7 +70,8 @@ class AuthnRequirement:
             self.api_key_header,
         ):
             raise CoreError(
-                "AuthnRequirement transport fields are not mutually exclusive",
+                "AuthnRequirement requires exactly one of token_header, "
+                "token_cookie, api_key_header",
             )
 
     # ....................... #

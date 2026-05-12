@@ -1,7 +1,7 @@
 from datetime import timedelta
 from typing import TypedDict
 
-from ..http import SimpleHttpEndpointSpec
+from ..http import AuthnRequirement, SimpleHttpEndpointSpec
 
 # ----------------------- #
 
@@ -31,5 +31,14 @@ class DocumentEndpointsSpec(TypedDict, total=False):
     restore: SimpleHttpEndpointSpec | bool
 
     # ....................... #
+
+    authn: AuthnRequirement
+    """Base :class:`AuthnRequirement` applied to every generated endpoint.
+
+    Per-endpoint values supplied via ``SimpleHttpEndpointSpec.authn`` override
+    this default for the matching route. Endpoints without an explicit override
+    inherit the base requirement; when both are omitted, the produced route is
+    left unguarded (callers can still attach features manually).
+    """
 
     config: DocumentConfigSpec

@@ -15,6 +15,7 @@ from forze.application.execution import UsecasePlan
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.endpoints.document import attach_document_endpoints
+from forze_fastapi.endpoints.http import AuthnRequirement
 
 # ----------------------- #
 
@@ -355,6 +356,111 @@ class TestAttachDocumentRoutes:
         paths = {r.path for r in router.routes}
         assert any(path.endswith("/list-cursor") for path in paths)
         assert any(path.endswith("/raw-list-cursor") for path in paths)
+
+    def test_base_authn_requirement_applies_to_all_endpoints(
+        self,
+        composition_ctx,
+    ) -> None:
+        """``endpoints['authn']`` enforces 401 on every produced route and tags its OpenAPI operation."""
+        from uuid import uuid4
+
+        spec = _minimal_spec(supports_update=True)
+        dtos = _minimal_dtos(supports_update=True)
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        base_req = AuthnRequirement(
+            authn_route="api",
+            token_header="Authorization",
+        )
+
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints={
+                "get_": True,
+                "list_": True,
+                "update": True,
+                "authn": base_req,
+            },
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        assert client.get(f"/docs/get?id={uuid4()}").status_code == 401
+        assert client.post("/docs/list", json={}).status_code == 401
+
+        openapi = app.openapi()
+        paths = openapi["paths"]
+
+        for path, method in (("/docs/get", "get"), ("/docs/list", "post")):
+            op = paths[path][method]
+            assert any(base_req.scheme_name in entry for entry in op["security"])
+            op_schemes = op["components"]["securitySchemes"]
+            assert base_req.scheme_name in op_schemes
+            assert op_schemes[base_req.scheme_name]["type"] == "http"
+            assert op_schemes[base_req.scheme_name]["scheme"] == "bearer"
+
+    def test_per_endpoint_authn_overrides_base(
+        self,
+        composition_ctx,
+    ) -> None:
+        """Per-endpoint ``authn`` takes precedence over the base ``endpoints['authn']``."""
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
+        reg = _build_registry(spec, dtos)
+
+        def ctx_dep():
+            return composition_ctx
+
+        base_req = AuthnRequirement(
+            authn_route="api",
+            token_header="Authorization",
+        )
+        override_req = AuthnRequirement(
+            authn_route="api",
+            api_key_header="X-API-Key",
+        )
+
+        router = APIRouter(prefix="/docs")
+        attach_document_endpoints(
+            router,
+            document=spec,
+            dtos=dtos,
+            registry=reg,
+            ctx_dep=ctx_dep,
+            endpoints={
+                "get_": True,
+                "list_": {"authn": override_req},
+                "authn": base_req,
+            },
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        openapi = app.openapi()
+
+        paths = openapi["paths"]
+        get_security = paths["/docs/get"]["get"]["security"]
+        list_security = paths["/docs/list"]["post"]["security"]
+        get_schemes = paths["/docs/get"]["get"]["components"]["securitySchemes"]
+        list_schemes = paths["/docs/list"]["post"]["components"]["securitySchemes"]
+
+        assert any(base_req.scheme_name in entry for entry in get_security)
+        assert base_req.scheme_name in get_schemes
+
+        assert any(override_req.scheme_name in entry for entry in list_security)
+        assert all(base_req.scheme_name not in entry for entry in list_security)
+        assert override_req.scheme_name in list_schemes
+        assert base_req.scheme_name not in list_schemes
 
     def test_can_disable_metadata_and_write_related_endpoints(
         self,

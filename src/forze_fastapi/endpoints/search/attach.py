@@ -11,7 +11,12 @@ from fastapi import APIRouter
 from forze.application.composition.search import SearchDTOs
 from forze.application.execution import ExecutionContext, UsecaseRegistry
 
-from ..http import HttpEndpointSpec, SimpleHttpEndpointSpec, attach_http_endpoint
+from ..http import (
+    AuthnRequirement,
+    HttpEndpointSpec,
+    SimpleHttpEndpointSpec,
+    attach_http_endpoint,
+)
 from ..http.policy import (
     AnyFeature,
     apply_authn_requirement,
@@ -42,15 +47,23 @@ def attach_search_endpoints(
     default_http_features: Sequence[AnyFeature] | None = None,
 ) -> APIRouter:
     endpoints = endpoints or {}
+    base_authn: AuthnRequirement | None = endpoints.get("authn")
+
+    def _resolve_authn(
+        simple: SimpleHttpEndpointSpec | None,
+    ) -> AuthnRequirement | None:
+        if simple is not None:
+            per_endpoint = simple.get("authn")
+            if per_endpoint is not None:
+                return per_endpoint
+        return base_authn
 
     def _apply_defaults(
         spec: HttpEndSpec,
         simple: SimpleHttpEndpointSpec | None = None,
     ) -> HttpEndSpec:
         with_defaults = with_default_http_features(spec, default_http_features)
-        if simple is None:
-            return with_defaults
-        return apply_authn_requirement(with_defaults, simple.get("authn"))
+        return apply_authn_requirement(with_defaults, _resolve_authn(simple))
 
     search_endpoint = endpoints.get("search", False)
     raw_search_endpoint = endpoints.get("raw_search", False)
