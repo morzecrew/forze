@@ -401,7 +401,12 @@ def _resolve_guard_steps(
                 f"Expected GuardMiddleware in capability bucket {bucket!r}, got {type(mw)}"
             )
 
-        out.append((mw.guard, spec))
+        out.append(
+            (
+                mw.guard,  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                spec,
+            )
+        )
 
     return tuple(out)
 
@@ -422,7 +427,12 @@ def _resolve_effect_steps(
                 f"Expected EffectMiddleware in capability bucket {bucket!r}, got {type(mw)}"
             )
 
-        out.append((mw.effect, spec))
+        out.append(
+            (
+                mw.effect,  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                spec,
+            )
+        )
 
     return tuple(out)
 
@@ -481,7 +491,9 @@ def build_capability_middleware_chain(
         if not isinstance(mw, EffectMiddleware):
             raise CoreError(f"Expected EffectMiddleware, got {type(mw)}")
 
-        after_commit_effects.append(mw.effect)
+        after_commit_effects.append(
+            mw.effect,  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+        )
 
     after_commit_tuple = tuple(after_commit_effects)
 
