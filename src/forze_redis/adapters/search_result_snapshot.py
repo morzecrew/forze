@@ -18,6 +18,8 @@ from forze.application.contracts.search import (
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 
+from forze_redis.kernel.scripts import APPEND_SNAPSHOT_CHUNK
+
 from .base import RedisBaseAdapter
 from .codecs import default_json_codec
 
@@ -94,16 +96,22 @@ class RedisSearchResultSnapshotAdapter(
     # ....................... #
 
     async def __load_meta(self, run_id: str) -> JsonDict | None:
+        _raw, data = await self.__load_meta_raw(run_id)
+
+        return data
+
+    async def __load_meta_raw(self, run_id: str) -> tuple[bytes | None, JsonDict | None]:
         raw = await self.client.get(self.__key_meta(run_id))
+
         if raw is None:
-            return None
+            return None, None
 
         data = _decode_get_json(raw)
 
         if not isinstance(data, dict):
-            return None
+            return raw, None
 
-        return cast(JsonDict, data)
+        return raw, cast(JsonDict, data)
 
     # ....................... #
 
@@ -205,9 +213,10 @@ class RedisSearchResultSnapshotAdapter(
         ids: Sequence[str],
         is_last: bool,
     ) -> None:
-        meta = await self.__load_meta(run_id)
+        meta_key = self.__key_meta(run_id)
+        raw_meta, meta = await self.__load_meta_raw(run_id)
 
-        if meta is None:
+        if meta is None or raw_meta is None:
             raise CoreError("begin_run is required before append_chunk (missing meta).")
 
         if meta.get("complete"):
@@ -229,13 +238,7 @@ class RedisSearchResultSnapshotAdapter(
                 "All non-final chunks must contain exactly ``chunk_size`` ids."
             )
 
-        key = self.__key_chunk(run_id, chunk_index)
-        await self.client.set(
-            key,
-            _json_dumps_bytes(list(ids)),
-            ex=ex,
-        )
-
+        chunk_key = self.__key_chunk(run_id, chunk_index)
         total_ids = int(meta.get("total_ids", 0)) + len(ids)
         next_idx = chunk_index + 1
 
@@ -249,27 +252,29 @@ class RedisSearchResultSnapshotAdapter(
                 "complete": True,
             }
 
-            await self.client.set(
-                self.__key_meta(run_id),
-                _json_dumps_bytes(new_meta),
-                ex=ex,
-            )
-            return
+        else:
+            new_meta = {
+                "fingerprint": meta["fingerprint"],
+                "chunk_size": chunk_size,
+                "ttl_seconds": ex,
+                "complete": False,
+                "next_chunk_index": next_idx,
+                "total_ids": total_ids,
+            }
 
-        new_meta = {
-            "fingerprint": meta["fingerprint"],
-            "chunk_size": chunk_size,
-            "ttl_seconds": ex,
-            "complete": False,
-            "next_chunk_index": next_idx,
-            "total_ids": total_ids,
-        }
+        chunk_b = _json_dumps_bytes(list(ids))
+        new_meta_b = _json_dumps_bytes(new_meta)
 
-        await self.client.set(
-            self.__key_meta(run_id),
-            _json_dumps_bytes(new_meta),
-            ex=ex,
+        raw = await self.client.run_script(
+            APPEND_SNAPSHOT_CHUNK,
+            [meta_key, chunk_key],
+            [raw_meta, chunk_b, str(ex), new_meta_b],
         )
+
+        if str(raw).strip() != "1":
+            raise CoreError(
+                "Concurrent snapshot append detected (meta changed); retry append_chunk."
+            )
 
     # ....................... #
 

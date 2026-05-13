@@ -47,6 +47,8 @@ class PostgresHistoryGateway[D: Document](PostgresGateway[D]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
         if self.strategy not in get_args(PostgresBookkeepingStrategy):
             raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
 

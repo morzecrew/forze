@@ -150,11 +150,15 @@ See [CRUD with FastAPI, Postgres, and Redis](../recipes/crud-fastapi-postgres-re
 
 ### Pool settings
 
-`PostgresConfig` controls `min_size`, `max_size`, `max_lifetime`, `max_idle`, `reconnect_timeout`, `num_workers`, `pool_headroom`, and optional `max_concurrent_queries`. Keep `max_concurrent_queries` below pool capacity when large batch reads and writes run concurrently.
+`PostgresConfig` controls `min_size`, `max_size`, `max_lifetime`, `max_idle`, `reconnect_timeout`, `num_workers`, `pool_headroom`, and optional `max_concurrent_queries`. Keep `max_concurrent_queries` below pool capacity when large batch reads and writes run concurrently. Parallel batch helpers (`gather_db_work`) share one **pool-wide** semaphore from the active `PostgresClient` / `RoutedPostgresClient`, so many concurrent HTTP handlers cannot each multiply concurrent catalog or batch work against the same pool.
 
 ### Serialization settings
 
 Document adapters map Pydantic read/create/update models to PostgreSQL rows. Search adapters map configured field names to heap/read columns with `field_map`, `join_pairs`, and optional nested field hints.
+
+### JSON filters and GIN-friendly indexes
+
+Filters that drill into JSON/JSONB with nested `->` / `->>` paths are rendered as plain SQL expressions by the Postgres query layer (`PsycopgQueryRenderer`, nested field helpers). A **generic** GIN index on the whole JSON column only helps when the indexed expression matches how you filter (for example `@>` / containment-style predicates with `jsonb_ops` or `jsonb_path_ops`). Dot-path filters on nested keys often need a **matching** expression index or a dedicated generated column that you query instead of ad-hoc `->>` chains, or the planner may fall back to sequential scans.
 
 ### Retry/timeout behavior
 

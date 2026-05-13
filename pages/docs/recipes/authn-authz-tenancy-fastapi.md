@@ -75,6 +75,7 @@ app.add_middleware(
 ## Usecase-level authz and OpenAPI alignment
 
 - Register **guards** on `UsecasePlan` (for example `plan.before("ns.op", authz_permission_guard_factory(authz_spec, requirement))`, or `before_pipeline` for several factories) using a single frozen :class:`~forze.application.guards.authz.AuthzPermissionRequirement` instance.
+- Optional: enable **capability-driven** guard ordering with `UsecasePlan(use_capability_engine=True)` and pass `requires` / `provides` on `before` / `in_tx_before`, or use :class:`~forze.application.execution.plan.GuardStep` entries inside `before_pipeline` (see [Capability execution](../reference/capability-execution.md) and `authz_permission_capability_keys`). For a minimal “principal present” step before authz, wire :func:`~forze.application.guards.authn.authn_principal_capability_guard_factory` with `provides={AUTHN_PRINCIPAL}` on the same `before` / `GuardStep`.
 - Reuse that **same** `AuthzPermissionRequirement` in HTTP metadata so clients see the right contract:
 
 ```python

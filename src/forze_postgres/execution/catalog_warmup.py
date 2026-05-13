@@ -65,6 +65,11 @@ async def warm_postgres_catalog(
 
     Safe to skip when using a partitioned introspector without a tenant in scope
     (logs at trace and returns). Idempotent with respect to cache contents.
+
+    With ``cache_partition_key`` on the introspector, startup often has no tenant
+    context; in that case this hook intentionally no-ops and you should rely on
+    per-request catalog access (single-flight coalesces concurrent cold loads) or
+    run a tenant-scoped warmup job after authentication.
     """
 
     introspector = ctx.dep(PostgresIntrospectorDepKey)

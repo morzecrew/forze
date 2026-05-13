@@ -8,7 +8,7 @@ require_redis()
 
 import base64
 from datetime import timedelta
-from typing import Final, TypedDict, final
+from typing import Any, Final, TypedDict, final
 
 import attrs
 
@@ -24,23 +24,19 @@ from .codecs import default_json_codec
 _PENDING: Final[str] = "P"
 _DONE: Final[str] = "D"
 _IDEMPOTENCY_SCOPE: Final[str] = "idempotency"
+_BODY_SUFFIX: Final[str] = "body"
+
 
 # ....................... #
 
 
-class _Payload(TypedDict, total=False):
-    """Internal JSON envelope stored in Redis for each idempotency record.
-
-    All fields are optional so that a minimal pending record (only ``st`` and
-    ``ph``) can be written on :meth:`RedisIdempotencyAdapter.begin`, then
-    enriched with response data on :meth:`RedisIdempotencyAdapter.commit`.
-    """
+class _MetaPayload(TypedDict, total=False):
+    """JSON metadata stored at the primary idempotency key (no raw body)."""
 
     st: str
     ph: str
     code: int
     ct: str
-    body_b64: str
 
 
 # ....................... #
@@ -51,10 +47,9 @@ class _Payload(TypedDict, total=False):
 class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.idempotency.IdempotencyPort`.
 
-    Stores a JSON :class:`_Payload` per ``(op, key)`` pair using ``SET NX``
-    with a configurable TTL.  :meth:`begin` acquires the slot (pending state)
-    and returns a cached snapshot when the operation was already completed.
-    :meth:`commit` overwrites the slot with the final response snapshot.
+    Uses ``SET NX`` on a small JSON metadata key for :meth:`begin`, stores the
+    response body as raw bytes on a sibling key on :meth:`commit`, and keeps
+    metadata and body expiries aligned via a transactional pipeline.
     """
 
     ttl: timedelta = timedelta(seconds=30)
@@ -62,24 +57,17 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
 
     # ....................... #
 
-    def __key(self, op: str, key: str) -> str:
+    def __meta_key(self, op: str, key: str) -> str:
         return self.construct_key(_IDEMPOTENCY_SCOPE, op, key)
 
-    # ....................... #
-
-    def __decode_body(self, b64: str) -> bytes:  #! use codec instead
-        return base64.b64decode(b64.encode("ascii"))
+    def __body_key(self, op: str, key: str) -> str:
+        return self.construct_key(_IDEMPOTENCY_SCOPE, op, key, _BODY_SUFFIX)
 
     # ....................... #
 
-    def __encode_body(self, body: bytes) -> str:
-        return base64.b64encode(body).decode("ascii")
-
-    # ....................... #
-
-    async def __acuire(self, key: str, p: _Payload) -> bool:
+    async def __acquire_meta(self, meta_key: str, p: _MetaPayload) -> bool:
         return await self.client.set(
-            key,
+            meta_key,
             default_json_codec.dumps(p),
             ex=int(self.ttl.total_seconds()),
             nx=True,
@@ -99,27 +87,26 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
 
         logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[:9] + "...")
 
-        k = self.__key(op, key)
-        idem_p = _Payload(st=_PENDING, ph=payload_hash)
+        meta_k = self.__meta_key(op, key)
+        idem_p: _MetaPayload = {"st": _PENDING, "ph": payload_hash}
 
-        if await self.__acuire(k, idem_p):
+        if await self.__acquire_meta(meta_k, idem_p):
             logger.debug("Idempotency key is acquired")
             return None
 
-        raw = await self.client.get(k)
+        raw = await self.client.get(meta_k)
 
         if raw is None:
-            if await self.__acuire(k, idem_p):
+            if await self.__acquire_meta(meta_k, idem_p):
                 logger.debug("Idempotency key is acquired")
                 return None
 
             raise ConflictError("Idempotency is in progress (not readable)")
 
-        data: _Payload = default_json_codec.loads(raw)
+        data: dict[str, Any] = default_json_codec.loads(raw)
 
-        data_st = data.get("st", "")
-        data_ph = data.get("ph", "")
-        data_b64 = data.get("body_b64", None)
+        data_st = str(data.get("st", ""))
+        data_ph = str(data.get("ph", ""))
 
         if data_ph != payload_hash:
             raise ConflictError("Payload hash mismatch")
@@ -130,15 +117,28 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         if data_st != _DONE:
             raise ConflictError("Idempotency is in progress (unknown state)")
 
-        if data_b64 is None:
-            raise ConflictError("Idempotency is in progress (done without body)")
+        body_raw = await self.client.get(self.__body_key(op, key))
+        if body_raw is None:
+            # Legacy layout: body embedded as base64 in JSON.
+            legacy_b64 = data.get("body_b64")
+            if isinstance(legacy_b64, str):
+                body = base64.b64decode(legacy_b64.encode("ascii"))
+            else:
+                raise ConflictError("Idempotency is in progress (done without body)")
 
-        body = self.__decode_body(data_b64)
+        else:
+            body = (
+                body_raw
+                if isinstance(
+                    body_raw, (bytes, bytearray)
+                )  # pyright: ignore[reportUnnecessaryIsInstance]
+                else str(body_raw).encode("utf-8")
+            )
 
         return IdempotencySnapshot(
             code=int(data.get("code", 200)),
-            content_type=data.get("ct", "application/json"),
-            body=body,
+            content_type=str(data.get("ct", "application/json")),
+            body=bytes(body),
         )
 
     # ....................... #
@@ -160,21 +160,29 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
             key[:9] + "...",
         )
 
-        k = self.__key(op, key)
-        idem_p = _Payload(
-            st=_DONE,
-            ph=payload_hash,
-            code=snapshot.code,
-            ct=snapshot.content_type,
-            body_b64=self.__encode_body(snapshot.body),
-        )
+        meta_k = self.__meta_key(op, key)
+        body_k = self.__body_key(op, key)
+        ex = int(self.ttl.total_seconds())
+        meta_done: _MetaPayload = {
+            "st": _DONE,
+            "ph": payload_hash,
+            "code": snapshot.code,
+            "ct": snapshot.content_type,
+        }
 
-        ok = await self.client.set(
-            k,
-            default_json_codec.dumps(idem_p),
-            ex=int(self.ttl.total_seconds()),
-            xx=True,
-        )
+        async with self.client.pipeline(transaction=True):
+            await self.client.set(body_k, snapshot.body, ex=ex)
+            await self.client.set(
+                meta_k,
+                default_json_codec.dumps(meta_done),
+                ex=ex,
+                xx=True,
+            )
 
-        if not ok:
+        raw_check = await self.client.get(meta_k)
+        if raw_check is None:
+            raise ConflictError("Idempotency commit failed (key missing or expired)")
+
+        done_meta: dict[str, Any] = default_json_codec.loads(raw_check)
+        if str(done_meta.get("st", "")) != _DONE:
             raise ConflictError("Idempotency commit failed (key missing or expired)")

@@ -11,7 +11,9 @@ from typing import (
     Literal,
     Self,
     Sequence,
+    TypeAlias,
     TypeVar,
+    cast,
     final,
 )
 
@@ -21,6 +23,12 @@ from forze.application._logger import logger
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 
+from .capabilities import (
+    CapabilityExecutionEvent,
+    SchedulableCapabilitySpec,
+    build_capability_middleware_chain,
+)
+from .capability_keys import CapabilityKey
 from .context import ExecutionContext
 from .middleware import (
     Effect,
@@ -61,6 +69,94 @@ OpKey = str | StrEnum
 
 WILDCARD: Final[str] = "*"
 """Wildcard operation key for default/fallback plans."""
+
+
+def frozenset_capability_keys(
+    values: frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None,
+) -> frozenset[str]:
+    """Normalize ``requires`` / ``provides`` inputs to a ``frozenset[str]``.
+
+    Accepts :class:`~forze.application.execution.capability_keys.CapabilityKey`
+    values and other iterables of string-like keys used on plan builders and
+    :class:`MiddlewareSpec`.
+    """
+
+    if values is None:
+        return frozenset()
+
+    if isinstance(values, frozenset):
+        return frozenset(str(x) for x in values)
+
+    if isinstance(values, set):
+        return frozenset(str(x) for x in values)
+
+    return frozenset(str(x) for x in values)
+
+
+def _coerce_step_capability_caps(value: Any) -> frozenset[str]:
+    return frozenset_capability_keys(
+        cast(
+            "frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None",
+            value,
+        )
+    )
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class GuardStep:
+    """Guard slot for pipelines with explicit ``requires`` / ``provides`` / ``step_label``."""
+
+    factory: GuardFactory
+    requires: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=_coerce_step_capability_caps,
+    )
+    provides: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=_coerce_step_capability_caps,
+    )
+    step_label: str | None = None
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class EffectStep:
+    """Effect slot for pipelines with explicit ``requires`` / ``provides`` / ``step_label``."""
+
+    factory: EffectFactory
+    requires: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=_coerce_step_capability_caps,
+    )
+    provides: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=_coerce_step_capability_caps,
+    )
+    step_label: str | None = None
+
+
+PipelineGuardItem: TypeAlias = GuardFactory | GuardStep
+PipelineEffectItem: TypeAlias = EffectFactory | EffectStep
+
+
+def _normalize_pipeline_guard(
+    item: PipelineGuardItem,
+) -> tuple[GuardFactory, frozenset[str], frozenset[str], str | None]:
+    if isinstance(item, GuardStep):
+        return item.factory, item.requires, item.provides, item.step_label
+
+    return item, frozenset(), frozenset(), None
+
+
+def _normalize_pipeline_effect(
+    item: PipelineEffectItem,
+) -> tuple[EffectFactory, frozenset[str], frozenset[str], str | None]:
+    if isinstance(item, EffectStep):
+        return item.factory, item.requires, item.provides, item.step_label
+
+    return item, frozenset(), frozenset(), None
+
 
 PlanBucket = Literal[
     "outer_before",
@@ -113,6 +209,17 @@ innermost. ``after_commit`` is not included; it runs in ``build`` order (see
 :class:`TxMiddleware`).
 """
 
+CAPABILITY_SCHEDULER_BUCKETS: Final[frozenset[PlanBucket]] = frozenset(
+    {
+        "outer_before",
+        "in_tx_before",
+        "outer_after",
+        "in_tx_after",
+        "after_commit",
+    }
+)
+"""Buckets whose specs participate in :func:`~forze.application.execution.capabilities.schedule_capability_specs`."""
+
 # ....................... #
 
 
@@ -163,6 +270,10 @@ class MiddlewareSpec:
 
     Middlewares are ordered by ``priority`` (descending) and created lazily from a
     :class:`ExecutionContext` when a plan is resolved.
+
+    When :attr:`UsecasePlan.use_capability_engine` is enabled, guard and effect
+    buckets additionally order steps by ``requires`` / ``provides`` capability
+    keys (see the capability execution reference page).
     """
 
     priority: int = attrs.field(
@@ -179,6 +290,21 @@ class MiddlewareSpec:
         repr=False,
     )
     """Edges ``(source_op, target_op)`` derived for registry dispatch validation."""
+
+    requires: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset_capability_keys,
+    )
+    """Capability keys that must be ready before this step runs (per-bucket graph)."""
+
+    provides: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset_capability_keys,
+    )
+    """Capability keys this step marks ready on success, or missing when skipped."""
+
+    step_label: str | None = None
+    """Optional stable label for logs and :meth:`UsecasePlan.explain`."""
 
 
 # ....................... #
@@ -422,15 +548,266 @@ class OperationPlan:
         return type(self).merge(self, *plans)
 
 
-def _middleware_specs_for_usecase_tuple(
-    plan: OperationPlan, bucket: PlanBucket
+def middleware_specs_for_usecase_tuple(
+    plan: OperationPlan,
+    bucket: PlanBucket,
 ) -> tuple[MiddlewareSpec, ...]:
-    """Map :meth:`OperationPlan.build` output to `Usecase.middlewares` segment order."""
+    """Return specs for ``bucket`` in the order used when building ``Usecase.middlewares``.
+
+    Applies the same reversal rules as :meth:`UsecasePlan.resolve` (see
+    ``_EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE``). This is the tuple
+    passed into :func:`~forze.application.execution.capabilities.schedule_capability_specs`
+    for buckets in :data:`CAPABILITY_SCHEDULER_BUCKETS`.
+    """
 
     built = plan.build(bucket)
+
     if bucket in _EFFECT_OR_WRAP_BUCKETS_REVERSED_IN_USECASE_TUPLE:
         return tuple(reversed(built))
+
     return built
+
+
+# ....................... #
+
+StepExplainKind = Literal["guard", "effect", "wrap", "finally", "on_failure", "tx"]
+ScheduleMode = Literal["legacy_priority", "capability_topo"]
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StepExplainRow:
+    """One scheduled step in :class:`ExecutionPlanReport`."""
+
+    bucket: str
+    label: str
+    priority: int
+    requires: frozenset[str]
+    provides: frozenset[str]
+    schedule_index: int
+    kind: StepExplainKind
+    schedule_mode: ScheduleMode
+    dispatch_edge_count: int = 0
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ExecutionPlanReport:
+    """Static introspection for :meth:`UsecasePlan.explain`."""
+
+    op: str
+    use_capability_engine: bool
+    has_transaction: bool
+    steps: tuple[StepExplainRow, ...]
+
+
+# ....................... #
+
+
+def _factory_label(spec: MiddlewareSpec) -> str:
+    f = spec.factory
+    qn = getattr(f, "__qualname__", None)
+
+    if isinstance(qn, str) and qn:
+        return qn
+
+    name = getattr(f, "__name__", None)
+
+    if isinstance(name, str) and name:
+        return name
+
+    return repr(f)
+
+
+def _bucket_schedule_mode(
+    bucket: PlanBucket,
+    specs: tuple[MiddlewareSpec, ...],
+    *,
+    use_capability_engine: bool,
+) -> ScheduleMode:
+    if not use_capability_engine:
+        return "legacy_priority"
+
+    if bucket not in CAPABILITY_SCHEDULER_BUCKETS:
+        return "legacy_priority"
+
+    if any(s.requires or s.provides for s in specs):
+        return "capability_topo"
+
+    return "legacy_priority"
+
+
+def _ordered_specs_for_explain(
+    bucket: PlanBucket,
+    specs: tuple[MiddlewareSpec, ...],
+    *,
+    use_capability_engine: bool,
+) -> tuple[MiddlewareSpec, ...]:
+    from .capabilities import schedule_capability_specs
+
+    if use_capability_engine and bucket in CAPABILITY_SCHEDULER_BUCKETS:
+        return cast(
+            tuple[MiddlewareSpec, ...],
+            schedule_capability_specs(
+                cast(tuple[SchedulableCapabilitySpec, ...], specs),
+                bucket=bucket,
+            ),
+        )
+
+    return specs
+
+
+def _append_explain_rows(
+    rows: list[StepExplainRow],
+    bucket: PlanBucket | str,
+    specs: tuple[MiddlewareSpec, ...],
+    *,
+    kind: StepExplainKind,
+    schedule_mode: ScheduleMode,
+    start_idx: int,
+) -> int:
+    idx = start_idx
+
+    for s in specs:
+        rows.append(
+            StepExplainRow(
+                bucket=str(bucket),
+                label=s.step_label or _factory_label(s),
+                priority=s.priority,
+                requires=s.requires,
+                provides=s.provides,
+                schedule_index=idx,
+                kind=kind,
+                schedule_mode=schedule_mode,
+                dispatch_edge_count=len(s.dispatch_edges),
+            )
+        )
+
+        idx += 1
+
+    return idx
+
+
+def _build_execution_plan_report(
+    *,
+    plan: OperationPlan,
+    op: str,
+    use_capability_engine: bool,
+) -> ExecutionPlanReport:
+    rows: list[StepExplainRow] = []
+    idx = 0
+
+    outer_segments: tuple[tuple[PlanBucket, StepExplainKind], ...] = (
+        ("outer_before", "guard"),
+        ("outer_wrap", "wrap"),
+        ("outer_finally", "finally"),
+        ("outer_on_failure", "on_failure"),
+    )
+
+    for bucket, kind in outer_segments:
+        specs = middleware_specs_for_usecase_tuple(plan, bucket)
+        mode = _bucket_schedule_mode(
+            bucket, specs, use_capability_engine=use_capability_engine
+        )
+        ordered = _ordered_specs_for_explain(
+            bucket, specs, use_capability_engine=use_capability_engine
+        )
+        idx = _append_explain_rows(
+            rows, bucket, ordered, kind=kind, schedule_mode=mode, start_idx=idx
+        )
+
+    if plan.tx is not None:
+        rows.append(
+            StepExplainRow(
+                bucket="tx",
+                label=f"TxMiddleware(route={str(plan.tx.route)})",
+                priority=0,
+                requires=frozenset(),
+                provides=frozenset(),
+                schedule_index=idx,
+                kind="tx",
+                schedule_mode="legacy_priority",
+                dispatch_edge_count=0,
+            )
+        )
+        idx += 1
+
+        in_tx_segments: tuple[tuple[PlanBucket, StepExplainKind], ...] = (
+            ("in_tx_before", "guard"),
+            ("in_tx_finally", "finally"),
+            ("in_tx_on_failure", "on_failure"),
+            ("in_tx_wrap", "wrap"),
+        )
+
+        for bucket, kind in in_tx_segments:
+            specs = middleware_specs_for_usecase_tuple(plan, bucket)
+            mode = _bucket_schedule_mode(
+                bucket, specs, use_capability_engine=use_capability_engine
+            )
+            ordered = _ordered_specs_for_explain(
+                bucket, specs, use_capability_engine=use_capability_engine
+            )
+            idx = _append_explain_rows(
+                rows, bucket, ordered, kind=kind, schedule_mode=mode, start_idx=idx
+            )
+
+        ita_specs = middleware_specs_for_usecase_tuple(plan, "in_tx_after")
+        ita_mode = _bucket_schedule_mode(
+            "in_tx_after", ita_specs, use_capability_engine=use_capability_engine
+        )
+        ita_ordered = _ordered_specs_for_explain(
+            "in_tx_after", ita_specs, use_capability_engine=use_capability_engine
+        )
+        idx = _append_explain_rows(
+            rows,
+            "in_tx_after",
+            ita_ordered,
+            kind="effect",
+            schedule_mode=ita_mode,
+            start_idx=idx,
+        )
+
+        ac_specs = middleware_specs_for_usecase_tuple(plan, "after_commit")
+        ac_mode = _bucket_schedule_mode(
+            "after_commit", ac_specs, use_capability_engine=use_capability_engine
+        )
+        ac_ordered = _ordered_specs_for_explain(
+            "after_commit", ac_specs, use_capability_engine=use_capability_engine
+        )
+        idx = _append_explain_rows(
+            rows,
+            "after_commit",
+            ac_ordered,
+            kind="effect",
+            schedule_mode=ac_mode,
+            start_idx=idx,
+        )
+
+    oa_specs = middleware_specs_for_usecase_tuple(plan, "outer_after")
+    oa_mode = _bucket_schedule_mode(
+        "outer_after", oa_specs, use_capability_engine=use_capability_engine
+    )
+    oa_ordered = _ordered_specs_for_explain(
+        "outer_after", oa_specs, use_capability_engine=use_capability_engine
+    )
+    _append_explain_rows(
+        rows,
+        "outer_after",
+        oa_ordered,
+        kind="effect",
+        schedule_mode=oa_mode,
+        start_idx=idx,
+    )
+
+    return ExecutionPlanReport(
+        op=op,
+        use_capability_engine=use_capability_engine,
+        has_transaction=plan.tx is not None,
+        steps=tuple(rows),
+    )
 
 
 # ....................... #
@@ -444,10 +821,16 @@ class UsecasePlan:
     Maps operation keys to :class:`OperationPlan`. Use ``*`` (wildcard) for
     defaults applied to all operations. :meth:`resolve` merges base and
     op-specific plans, then builds the middleware chain.
+
+    Set :attr:`use_capability_engine` (or call :meth:`with_capability_engine`) to
+    derive guard/effect order from declared capability keys inside each bucket.
     """
 
     ops: dict[str, OperationPlan] = attrs.field(factory=dict)
     """Operation key to plan mapping."""
+
+    use_capability_engine: bool = False
+    """When ``True``, :meth:`resolve` composes guard/effect buckets via the capability scheduler."""
 
     # ....................... #
     # Helpers
@@ -457,6 +840,11 @@ class UsecasePlan:
 
     def _op(self, op: OpKey) -> OperationPlan:
         return self.ops.get(str(op), OperationPlan())
+
+    def merged_operation_plan(self, op: OpKey) -> OperationPlan:
+        """Merge the wildcard plan with the plan registered for ``op``."""
+
+        return OperationPlan.merge(self._base(), self._op(op))
 
     def _put(self, op: OpKey, plan: OperationPlan) -> Self:
         new_ops = dict(self.ops)
@@ -491,6 +879,38 @@ class UsecasePlan:
                     acc.update(spec.dispatch_edges)
 
         return frozenset(acc)
+
+    # ....................... #
+
+    def with_capability_engine(self, enabled: bool = True) -> Self:
+        """Return a plan that enables or disables capability-driven guard/effect ordering."""
+
+        return attrs.evolve(self, use_capability_engine=bool(enabled))
+
+    # ....................... #
+
+    def explain(self, op: OpKey) -> ExecutionPlanReport:
+        """Return a static report of merged middleware and capability schedules for ``op``.
+
+        Does not instantiate ports or call factories beyond reading attributes.
+
+        :param op: Concrete operation key (wildcard not allowed).
+        :returns: :class:`~forze.application.execution.capabilities.ExecutionPlanReport`
+        """
+
+        op_s = str(op)
+
+        if op_s == WILDCARD or op_s.endswith(WILDCARD):
+            raise CoreError("Explain on wildcard operation is not allowed")
+
+        plan = OperationPlan.merge(self._base(), self._op(op_s))
+        plan.validate()
+
+        return _build_execution_plan_report(
+            plan=plan,
+            op=op_s,
+            use_capability_engine=self.use_capability_engine,
+        )
 
     # ....................... #
 
@@ -545,9 +965,19 @@ class UsecasePlan:
         guard: GuardFactory,
         *,
         priority: int = 0,
+        requires: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        provides: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        step_label: str | None = None,
     ) -> Self:
         def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
+
+        req = frozenset_capability_keys(requires)
+        prov = frozenset_capability_keys(provides)
 
         out: Self = self
 
@@ -556,7 +986,15 @@ class UsecasePlan:
 
         for o in op:
             out = out._add(
-                o, "outer_before", MiddlewareSpec(factory=factory, priority=priority)
+                o,
+                "outer_before",
+                MiddlewareSpec(
+                    factory=factory,
+                    priority=priority,
+                    requires=req,
+                    provides=prov,
+                    step_label=step_label,
+                ),
             )
 
         return out
@@ -566,23 +1004,45 @@ class UsecasePlan:
     def before_pipeline(
         self,
         op: OpKey | list[OpKey],
-        guards: Sequence[GuardFactory],
+        guards: Sequence[PipelineGuardItem],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
 
-        for i, guard in enumerate(guards):
+        for i, item in enumerate(guards):
             priority = first_priority - i * 10
-            out = out.before(op, guard, priority=priority)
+            gf, req, prov, label = _normalize_pipeline_guard(item)
+            out = out.before(
+                op,
+                gf,
+                priority=priority,
+                requires=req,
+                provides=prov,
+                step_label=label,
+            )
 
         return out
 
     # ....................... #
 
     def after(
-        self, op: OpKey | list[OpKey], effect: EffectFactory, *, priority: int = 0
+        self,
+        op: OpKey | list[OpKey],
+        effect: EffectFactory,
+        *,
+        priority: int = 0,
+        requires: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        provides: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        step_label: str | None = None,
     ) -> Self:
+        req = frozenset_capability_keys(requires)
+        prov = frozenset_capability_keys(provides)
+
         out: Self = self
 
         if not isinstance(op, list):
@@ -602,6 +1062,9 @@ class UsecasePlan:
                     factory=factory,
                     priority=priority,
                     dispatch_edges=d_edges,
+                    requires=req,
+                    provides=prov,
+                    step_label=step_label,
                 ),
             )
 
@@ -612,15 +1075,23 @@ class UsecasePlan:
     def after_pipeline(
         self,
         op: OpKey | list[OpKey],
-        effects: Sequence[EffectFactory],
+        effects: Sequence[PipelineEffectItem],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
 
-        for i, effect in enumerate(effects):
+        for i, item in enumerate(effects):
             priority = first_priority - i * 10
-            out = out.after(op, effect, priority=priority)
+            ef, req, prov, label = _normalize_pipeline_effect(item)
+            out = out.after(
+                op,
+                ef,
+                priority=priority,
+                requires=req,
+                provides=prov,
+                step_label=label,
+            )
 
         return out
 
@@ -758,9 +1229,19 @@ class UsecasePlan:
         guard: GuardFactory,
         *,
         priority: int = 0,
+        requires: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        provides: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        step_label: str | None = None,
     ) -> Self:
         def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
             return GuardMiddleware[Any, Any](guard=guard(ctx))
+
+        req = frozenset_capability_keys(requires)
+        prov = frozenset_capability_keys(provides)
 
         out: Self = self
 
@@ -771,7 +1252,13 @@ class UsecasePlan:
             out = out._add(
                 o,
                 "in_tx_before",
-                MiddlewareSpec(factory=factory, priority=priority),
+                MiddlewareSpec(
+                    factory=factory,
+                    priority=priority,
+                    requires=req,
+                    provides=prov,
+                    step_label=step_label,
+                ),
             )
 
         return out
@@ -781,15 +1268,23 @@ class UsecasePlan:
     def in_tx_before_pipeline(
         self,
         op: OpKey | list[OpKey],
-        guards: Sequence[GuardFactory],
+        guards: Sequence[PipelineGuardItem],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
 
-        for i, guard in enumerate(guards):
+        for i, item in enumerate(guards):
             priority = first_priority - i * 10
-            out = out.in_tx_before(op, guard, priority=priority)
+            gf, req, prov, label = _normalize_pipeline_guard(item)
+            out = out.in_tx_before(
+                op,
+                gf,
+                priority=priority,
+                requires=req,
+                provides=prov,
+                step_label=label,
+            )
 
         return out
 
@@ -887,7 +1382,17 @@ class UsecasePlan:
         effect: EffectFactory,
         *,
         priority: int = 0,
+        requires: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        provides: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        step_label: str | None = None,
     ) -> Self:
+        req = frozenset_capability_keys(requires)
+        prov = frozenset_capability_keys(provides)
+
         out: Self = self
 
         if not isinstance(op, list):
@@ -907,6 +1412,9 @@ class UsecasePlan:
                     factory=factory,
                     priority=priority,
                     dispatch_edges=d_edges,
+                    requires=req,
+                    provides=prov,
+                    step_label=step_label,
                 ),
             )
 
@@ -917,15 +1425,23 @@ class UsecasePlan:
     def in_tx_after_pipeline(
         self,
         op: OpKey | list[OpKey],
-        effects: Sequence[EffectFactory],
+        effects: Sequence[PipelineEffectItem],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
 
-        for i, effect in enumerate(effects):
+        for i, item in enumerate(effects):
             priority = first_priority - i * 10
-            out = out.in_tx_after(op, effect, priority=priority)
+            ef, req, prov, label = _normalize_pipeline_effect(item)
+            out = out.in_tx_after(
+                op,
+                ef,
+                priority=priority,
+                requires=req,
+                provides=prov,
+                step_label=label,
+            )
 
         return out
 
@@ -976,7 +1492,17 @@ class UsecasePlan:
         effect: EffectFactory,
         *,
         priority: int = 0,
+        requires: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        provides: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        step_label: str | None = None,
     ) -> Self:
+        req = frozenset_capability_keys(requires)
+        prov = frozenset_capability_keys(provides)
+
         out: Self = self
 
         if not isinstance(op, list):
@@ -996,6 +1522,9 @@ class UsecasePlan:
                     factory=factory,
                     priority=priority,
                     dispatch_edges=d_edges,
+                    requires=req,
+                    provides=prov,
+                    step_label=step_label,
                 ),
             )
 
@@ -1006,15 +1535,23 @@ class UsecasePlan:
     def after_commit_pipeline(
         self,
         op: OpKey | list[OpKey],
-        effects: Sequence[EffectFactory],
+        effects: Sequence[PipelineEffectItem],
         *,
         first_priority: int = 0,
     ) -> Self:
         out: Self = self
 
-        for i, effect in enumerate(effects):
+        for i, item in enumerate(effects):
             priority = first_priority - i * 10
-            out = out.after_commit(op, effect, priority=priority)
+            ef, req, prov, label = _normalize_pipeline_effect(item)
+            out = out.after_commit(
+                op,
+                ef,
+                priority=priority,
+                requires=req,
+                provides=prov,
+                step_label=label,
+            )
 
         return out
 
@@ -1023,8 +1560,8 @@ class UsecasePlan:
     def in_tx_pipeline(
         self,
         op: OpKey | list[OpKey],
-        before: Sequence[GuardFactory] | None = None,
-        after: Sequence[EffectFactory] | None = None,
+        before: Sequence[PipelineGuardItem] | None = None,
+        after: Sequence[PipelineEffectItem] | None = None,
         wrap: Sequence[MiddlewareFactory] | None = None,
         on_failure: Sequence[OnFailureFactory] | None = None,
         finally_hooks: Sequence[FinallyFactory] | None = None,
@@ -1059,8 +1596,8 @@ class UsecasePlan:
     def outer_pipeline(
         self,
         op: OpKey | list[OpKey],
-        before: Sequence[GuardFactory] | None = None,
-        after: Sequence[EffectFactory] | None = None,
+        before: Sequence[PipelineGuardItem] | None = None,
+        after: Sequence[PipelineEffectItem] | None = None,
         wrap: Sequence[MiddlewareFactory] | None = None,
         on_failure: Sequence[OnFailureFactory] | None = None,
         finally_hooks: Sequence[FinallyFactory] | None = None,
@@ -1097,6 +1634,8 @@ class UsecasePlan:
         op: OpKey,
         ctx: ExecutionContext,
         factory: Callable[[ExecutionContext], U],
+        *,
+        capability_execution_trace: list[CapabilityExecutionEvent] | None = None,
     ) -> U:
         """Build a composed usecase instance for an operation.
 
@@ -1106,6 +1645,8 @@ class UsecasePlan:
         :param op: Operation key (wildcard not allowed).
         :param ctx: Execution context for factory resolution.
         :param factory: Usecase factory.
+        :param capability_execution_trace: When provided, append-only list filled
+            with capability segment events when the capability engine is enabled.
         :returns: Composed usecase with middlewares.
         :raises CoreError: If op is wildcard or plan is invalid.
         """
@@ -1120,59 +1661,83 @@ class UsecasePlan:
         plan = OperationPlan.merge(self._base(), self._op(op))
         plan.validate()
 
-        outer_before = _middleware_specs_for_usecase_tuple(plan, "outer_before")
-        outer_wrap = _middleware_specs_for_usecase_tuple(plan, "outer_wrap")
-        outer_finally = _middleware_specs_for_usecase_tuple(plan, "outer_finally")
-        outer_on_failure = _middleware_specs_for_usecase_tuple(plan, "outer_on_failure")
-        outer_after = _middleware_specs_for_usecase_tuple(plan, "outer_after")
+        outer_before = middleware_specs_for_usecase_tuple(plan, "outer_before")
+        outer_wrap = middleware_specs_for_usecase_tuple(plan, "outer_wrap")
+        outer_finally = middleware_specs_for_usecase_tuple(plan, "outer_finally")
+        outer_on_failure = middleware_specs_for_usecase_tuple(plan, "outer_on_failure")
+        outer_after = middleware_specs_for_usecase_tuple(plan, "outer_after")
 
-        in_tx_before = _middleware_specs_for_usecase_tuple(plan, "in_tx_before")
-        in_tx_finally = _middleware_specs_for_usecase_tuple(plan, "in_tx_finally")
-        in_tx_on_failure = _middleware_specs_for_usecase_tuple(plan, "in_tx_on_failure")
-        in_tx_wrap = _middleware_specs_for_usecase_tuple(plan, "in_tx_wrap")
-        in_tx_after = _middleware_specs_for_usecase_tuple(plan, "in_tx_after")
+        in_tx_before = middleware_specs_for_usecase_tuple(plan, "in_tx_before")
+        in_tx_finally = middleware_specs_for_usecase_tuple(plan, "in_tx_finally")
+        in_tx_on_failure = middleware_specs_for_usecase_tuple(plan, "in_tx_on_failure")
+        in_tx_wrap = middleware_specs_for_usecase_tuple(plan, "in_tx_wrap")
+        in_tx_after = middleware_specs_for_usecase_tuple(plan, "in_tx_after")
 
         after_commit = plan.build("after_commit")
 
         logger.trace("Built plan for '%s' (tx=%s)", op, plan.tx)
 
-        after_commit_effects: list[Effect[Any, Any]] = []
+        chain: list[Middleware[Any, Any]]
 
-        for s in after_commit:
-            mw = s.factory(ctx)
-
-            logger.trace(
-                "Built after_commit middleware %s (factory_id=%s)",
-                type(mw).__qualname__,
-                id(s.factory),
-            )
-
-            if not isinstance(mw, EffectMiddleware):
-                raise CoreError(f"Expected EffectMiddleware, got {type(mw)}")
-
-            after_commit_effects.append(mw.effect)
-
-        chain: list[Middleware[Any, Any]] = []
-
-        chain.extend(s.factory(ctx) for s in outer_before)
-        chain.extend(s.factory(ctx) for s in outer_wrap)
-        chain.extend(s.factory(ctx) for s in outer_finally)
-        chain.extend(s.factory(ctx) for s in outer_on_failure)
-
-        if plan.tx is not None:
-            chain.append(
-                TxMiddleware[Any, Any](
+        if self.use_capability_engine:
+            chain = list(
+                build_capability_middleware_chain(
                     ctx=ctx,
-                    route=plan.tx.route,
-                ).with_after_commit(*after_commit_effects)
+                    plan=plan,
+                    outer_before=outer_before,
+                    outer_wrap=outer_wrap,
+                    outer_finally=outer_finally,
+                    outer_on_failure=outer_on_failure,
+                    outer_after=outer_after,
+                    in_tx_before=in_tx_before,
+                    in_tx_finally=in_tx_finally,
+                    in_tx_on_failure=in_tx_on_failure,
+                    in_tx_wrap=in_tx_wrap,
+                    in_tx_after=in_tx_after,
+                    after_commit_specs=after_commit,
+                    capability_execution_trace=capability_execution_trace,
+                )
             )
-            chain.extend(s.factory(ctx) for s in in_tx_before)
-            chain.extend(s.factory(ctx) for s in in_tx_finally)
-            chain.extend(s.factory(ctx) for s in in_tx_on_failure)
-            chain.extend(s.factory(ctx) for s in in_tx_wrap)
-            chain.extend(s.factory(ctx) for s in in_tx_after)
 
-        chain.extend(s.factory(ctx) for s in outer_after)
+        else:
+            after_commit_effects: list[Effect[Any, Any]] = []
+
+            for s in after_commit:
+                mw = s.factory(ctx)
+
+                logger.trace(
+                    "Built after_commit middleware %s (factory_id=%s)",
+                    type(mw).__qualname__,
+                    id(s.factory),
+                )
+
+                if not isinstance(mw, EffectMiddleware):
+                    raise CoreError(f"Expected EffectMiddleware, got {type(mw)}")
+
+                after_commit_effects.append(mw.effect)
+
+            chain = []
+
+            chain.extend(s.factory(ctx) for s in outer_before)
+            chain.extend(s.factory(ctx) for s in outer_wrap)
+            chain.extend(s.factory(ctx) for s in outer_finally)
+            chain.extend(s.factory(ctx) for s in outer_on_failure)
+
+            if plan.tx is not None:
+                chain.append(
+                    TxMiddleware[Any, Any](
+                        ctx=ctx,
+                        route=plan.tx.route,
+                    ).with_after_commit(*after_commit_effects)
+                )
+                chain.extend(s.factory(ctx) for s in in_tx_before)
+                chain.extend(s.factory(ctx) for s in in_tx_finally)
+                chain.extend(s.factory(ctx) for s in in_tx_on_failure)
+                chain.extend(s.factory(ctx) for s in in_tx_wrap)
+                chain.extend(s.factory(ctx) for s in in_tx_after)
+
+            chain.extend(s.factory(ctx) for s in outer_after)
+
         logger.trace("Constructed middleware chain with %s middleware(s)", len(chain))
 
         uc = factory(ctx)
@@ -1200,13 +1765,16 @@ class UsecasePlan:
         """
 
         acc: dict[str, OperationPlan] = {}
+        use_engine = False
 
         for p in plans:
+            use_engine = use_engine or p.use_capability_engine
+
             for op, pl in p.ops.items():
                 cur = acc.get(op, OperationPlan())
                 acc[op] = cur.merge(pl)
 
-        return cls(ops=acc)
+        return cls(ops=acc, use_capability_engine=use_engine)
 
     # ....................... #
 

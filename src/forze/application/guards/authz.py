@@ -10,6 +10,10 @@ from forze.base.errors import AuthenticationError, AuthorizationError
 from .._logger import logger
 from ..contracts.authz import AuthzDepKey, AuthzSpec
 from ..execution import ExecutionContext, Guard
+from ..execution.capability_keys import (
+    AUTHN_PRINCIPAL,
+    authz_permits_capability,
+)
 from ..execution.plan import GuardFactory
 
 # ----------------------- #
@@ -121,3 +125,43 @@ def authz_permission_guard_factory(
         return AuthzPermissionGuard(ctx=ctx, spec=spec, requirement=requirement)
 
     return factory
+
+
+# ....................... #
+
+
+def authz_permission_capability_keys(
+    requirement: AuthzPermissionRequirement,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return ``(requires, provides)`` for :meth:`UsecasePlan.before` capability fields.
+
+    Use with :attr:`UsecasePlan.use_capability_engine` so authorization guards run
+    only after another step in the **same bucket** marks :data:`~forze.application.execution.capability_keys.AUTHN_PRINCIPAL` ready (for example a guard that
+        returns ``CapabilitySkip`` when
+    no identity is present instead of raising).
+
+    Example:
+
+    .. code-block:: python
+
+        req, prov = authz_permission_capability_keys(requirement)
+        plan = (
+            UsecasePlan(use_capability_engine=True)
+            .before("op", identity_guard, provides=frozenset({AUTHN_PRINCIPAL}))
+            .before("op", authz_permission_guard_factory(spec, requirement), requires=req, provides=prov)
+        )
+
+    :param requirement: Same instance passed to :func:`authz_permission_guard_factory`.
+    """
+
+    requires: frozenset[str] = (
+        frozenset({str(AUTHN_PRINCIPAL)})
+        if requirement.require_authn_identity
+        else frozenset()
+    )
+
+    provides: frozenset[str] = frozenset(
+        {str(authz_permits_capability(requirement.permission_key))}
+    )
+
+    return requires, provides

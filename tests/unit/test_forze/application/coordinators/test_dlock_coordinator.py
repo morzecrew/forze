@@ -65,3 +65,35 @@ async def test_scope_raises_when_acquire_times_out(monkeypatch: pytest.MonkeyPat
             pass
 
     assert cmd.acquire.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_acquire_retry_sleep_respects_interval_plus_jitter_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backoff must stay within ``retry_interval + retry_jitter`` (seconds), not seconds+ms."""
+    sleeps: list[float] = []
+
+    async def capture_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", capture_sleep)
+
+    cmd = MagicMock()
+    cmd.acquire = AsyncMock(side_effect=[False, False, True])
+
+    coord = DistributedLockCoordinator(
+        cmd=cmd,
+        owner_provider=lambda: "o",
+        wait_timeout=timedelta(seconds=10),
+        retry_interval=timedelta(milliseconds=100),
+        retry_jitter=timedelta(milliseconds=20),
+    )
+
+    async with coord.scope("k") as held:
+        assert held is True
+
+    assert len(sleeps) == 2
+    max_sleep = max(sleeps)
+    assert max_sleep <= 0.1 + 0.02 + 1e-9
+    assert min(sleeps) >= 0.1

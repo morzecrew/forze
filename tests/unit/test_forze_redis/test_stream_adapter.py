@@ -119,9 +119,9 @@ async def test_stream_group_adapter_read_and_ack(codec: RedisStreamCodec[_Payloa
         streams={"jobs": ">"},
         count=10,
         block_ms=None,
-        noack=True,
+        noack=False,
     )
 
     n = await adapter.ack("g1", "jobs", ["0-3"])
     assert n == 1
-    client.xack.assert_awaited_once_with(stream="jobs", group="g1", ids=["0-3"])
+    client.xack.assert_awaited_once_with("jobs", "g1", ["0-3"])

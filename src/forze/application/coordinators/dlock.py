@@ -70,12 +70,22 @@ class DistributedLockCoordinator:
                 if remaining <= 0:
                     return False
 
-                jitter_ms = int(self.retry_jitter.total_seconds() * 1000) + 1
+                # Base delay plus optional jitter, all in seconds. ``randbelow`` counts
+                # integer steps; previously ms-sized steps were added to ``retry_interval``
+                # in seconds, inflating sleeps by ~1000x.
+                retry_s = self.retry_interval.total_seconds()
+                jitter_s = max(0.0, self.retry_jitter.total_seconds())
+                if jitter_s > 0:
+                    jitter_max_ns = int(jitter_s * 1_000_000_000)
+                    extra_s = (
+                        secrets.randbelow(jitter_max_ns + 1) / 1_000_000_000
+                        if jitter_max_ns > 0
+                        else 0.0
+                    )
+                else:
+                    extra_s = 0.0
 
-                sleep_for = min(
-                    self.retry_interval.total_seconds() + secrets.randbelow(jitter_ms),
-                    remaining,
-                )
+                sleep_for = min(retry_s + extra_s, remaining)
 
                 attempt += 1
                 await asyncio.sleep(sleep_for)

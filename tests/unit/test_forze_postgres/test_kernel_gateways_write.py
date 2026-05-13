@@ -1,5 +1,6 @@
 """Unit tests for ``forze_postgres.kernel.gateways.write``."""
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -35,6 +36,9 @@ def _build_gateway() -> (
 ):
     client = MagicMock(spec=PostgresClient)
     client.fetch_all = AsyncMock()
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
 
     introspector = MagicMock(spec=PostgresIntrospector)
     introspector.get_column_types = AsyncMock(return_value={})
@@ -97,7 +101,7 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
         params = call.args[1]
         params_by_uuids.append([x for x in params if isinstance(x, UUID)])
         assert call.kwargs["row_factory"] == "dict"
-        assert call.kwargs["commit"] is True
+        assert call.kwargs["commit"] is False
 
     assert sorted(params_by_uuids, key=lambda u: u[0] if u else id1) == [
         [id1, id2],
@@ -222,6 +226,9 @@ def _build_tenant_aware_gateway() -> (
     tid = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     client = MagicMock(spec=PostgresClient)
     client.execute = AsyncMock(return_value=1)
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
 
     introspector = MagicMock(spec=PostgresIntrospector)
     introspector.get_column_types = AsyncMock(return_value={})

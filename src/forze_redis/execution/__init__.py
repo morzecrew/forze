@@ -1,6 +1,7 @@
 """Redis execution wiring for the application kernel."""
 
 from .deps import (
+    RedisBlockingClientDepKey,
     RedisCacheConfig,
     RedisClientDepKey,
     RedisCounterConfig,
@@ -16,6 +17,7 @@ from .lifecycle import redis_lifecycle_step, routed_redis_lifecycle_step
 __all__ = [
     "RedisDepsModule",
     "RedisClientDepKey",
+    "RedisBlockingClientDepKey",
     "redis_lifecycle_step",
     "routed_redis_lifecycle_step",
     "RedisCacheConfig",

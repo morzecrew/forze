@@ -120,7 +120,7 @@ class TestPsycopgErrorHandlerBranches:
             (lambda: errors.InvalidSqlStatementName(), InfrastructureError),
             (lambda: errors.InsufficientPrivilege(), InfrastructureError),
             (lambda: errors.QueryCanceled(), InfrastructureError),
-            (lambda: errors.TooManyConnections(), InfrastructureError),
+            (lambda: errors.TooManyConnections(), ConcurrencyError),
             (lambda: errors.OutOfMemory(), InfrastructureError),
             (lambda: errors.DiskFull(), InfrastructureError),
             (lambda: errors.IntegrityError(), ConflictError),
@@ -137,6 +137,12 @@ class TestPsycopgErrorHandlerBranches:
         exc = exc_factory()  # type: ignore[misc]
         out = platform_errors._psycopg_eh(exc, "test_op")
         assert isinstance(out, expected_cls)
+
+    def test_operational_error_transient_message_maps_to_concurrency(self) -> None:
+        exc = errors.OperationalError("connection closed unexpectedly")
+        out = platform_errors._psycopg_eh(exc, "op")
+        assert isinstance(out, ConcurrencyError)
+        assert out.code == "transient_operational"
 
     def test_unknown_exception_becomes_infrastructure_error(self) -> None:
         """Unhandled exceptions use the generic fallback (details in ``code``)."""

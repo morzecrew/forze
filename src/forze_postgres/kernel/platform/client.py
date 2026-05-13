@@ -12,10 +12,12 @@ require_psycopg()
 
 # ....................... #
 
+import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, AsyncIterator, Literal, Sequence, final, overload
+from uuid import uuid4
 
 import attrs
 from psycopg import AsyncConnection, Column, sql
@@ -27,12 +29,76 @@ from forze.base.primitives import JsonDict
 
 from .._logger import logger
 from .errors import psycopg_handled
-from .helpers import isolation_level_sql_fragment
+from .helpers import isolation_level_psycopg
 from .port import PostgresClientPort
 from .types import RowFactory
 from .value_objects import PostgresConfig, PostgresTransactionOptions
 
 # ----------------------- #
+
+
+def _timeout_ms(t: timedelta) -> int:
+    """Convert a timeout to a positive Postgres ``*_timeout`` millisecond value."""
+
+    ms = int(t.total_seconds() * 1000)
+
+    return max(1, ms)
+
+
+# ....................... #
+
+
+def _pool_configure_for_config(  # type: ignore[no-untyped-def]
+    cfg: PostgresConfig,
+):
+    """Return an async pool ``configure`` callback, or ``None`` if nothing to set."""
+
+    if not any(
+        (
+            cfg.statement_timeout,
+            cfg.lock_timeout,
+            cfg.idle_in_transaction_session_timeout,
+            cfg.application_name,
+        ),
+    ):
+        return None
+
+    async def configure(conn: AsyncConnection) -> None:
+        async with conn.cursor() as cur:
+            if cfg.application_name is not None:
+                await cur.execute(
+                    sql.SQL("SET application_name = {}").format(
+                        sql.Literal(cfg.application_name),
+                    ),
+                )
+
+            if cfg.statement_timeout is not None:
+                await cur.execute(
+                    sql.SQL("SET statement_timeout = {}").format(
+                        sql.Literal(_timeout_ms(cfg.statement_timeout)),
+                    ),
+                )
+
+            if cfg.lock_timeout is not None:
+                await cur.execute(
+                    sql.SQL("SET lock_timeout = {}").format(
+                        sql.Literal(_timeout_ms(cfg.lock_timeout)),
+                    ),
+                )
+
+            if cfg.idle_in_transaction_session_timeout is not None:
+                await cur.execute(
+                    sql.SQL("SET idle_in_transaction_session_timeout = {}").format(
+                        sql.Literal(
+                            _timeout_ms(cfg.idle_in_transaction_session_timeout)
+                        ),
+                    ),
+                )
+
+    return configure
+
+
+# ....................... #
 
 
 @final
@@ -61,11 +127,12 @@ class PostgresClient(PostgresClientPort):
     )
 
     # Connection options
-    __acquire_timeout: timedelta = attrs.field(
-        default=timedelta(seconds=0.5), init=False
-    )
+    __acquire_timeout: timedelta = attrs.field(default=timedelta(seconds=5), init=False)
     __max_concurrent_queries: int = attrs.field(default=1, init=False)
     """Cap for parallel operations that each checkout a pool connection."""
+
+    __gather_sem: asyncio.Semaphore | None = attrs.field(default=None, init=False)
+    """Pool-wide limiter for :func:`~forze_postgres.kernel.db_gather.gather_db_work`."""
 
     # ....................... #
     # Lifecycle
@@ -75,7 +142,7 @@ class PostgresClient(PostgresClientPort):
         dsn: str,
         *,
         config: PostgresConfig = PostgresConfig(),
-        acquire_timeout: timedelta = timedelta(seconds=0.5),
+        acquire_timeout: timedelta = timedelta(seconds=5),
     ) -> None:
         """Creates and opens the connection pool.
 
@@ -83,7 +150,7 @@ class PostgresClient(PostgresClientPort):
 
         :param dsn: Database connection string.
         :param config: Pool configuration. Defaults to :class:`PostgresConfig`.
-        :param acquire_timeout: Timeout in seconds when acquiring a connection.
+        :param acquire_timeout: Timeout when acquiring a connection from the pool.
         """
 
         if self.__pool is not None:
@@ -96,6 +163,8 @@ class PostgresClient(PostgresClientPort):
                 1, config.max_size - config.pool_headroom
             )
 
+        configure = _pool_configure_for_config(config)
+
         self.__pool = AsyncConnectionPool(
             conninfo=dsn,
             open=False,
@@ -105,9 +174,12 @@ class PostgresClient(PostgresClientPort):
             max_idle=config.max_idle.total_seconds(),
             reconnect_timeout=config.reconnect_timeout.total_seconds(),
             num_workers=config.num_workers,
+            configure=configure,
         )
 
         self.__acquire_timeout = acquire_timeout
+
+        self.__gather_sem = asyncio.Semaphore(self.__max_concurrent_queries)
 
         await self.__pool.open()
 
@@ -121,6 +193,7 @@ class PostgresClient(PostgresClientPort):
 
         await self.__pool.close()
         self.__pool = None
+        self.__gather_sem = None
 
     # ....................... #
 
@@ -190,6 +263,14 @@ class PostgresClient(PostgresClientPort):
 
         return self.__max_concurrent_queries
 
+    def gather_concurrency_semaphore(self) -> asyncio.Semaphore:
+        """Semaphore shared by all coroutines using this client for :func:`gather_db_work`."""
+
+        if self.__gather_sem is None:
+            raise InfrastructureError("Postgres client is not initialized")
+
+        return self.__gather_sem
+
     def require_transaction(self) -> None:
         """Raises :exc:`InfrastructureError` if the current context is not inside a transaction."""
 
@@ -233,6 +314,13 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    @staticmethod
+    async def _apply_transaction_options(
+        conn: AsyncConnection,
+        options: PostgresTransactionOptions,
+    ) -> None:
+        await conn.set_isolation_level(isolation_level_psycopg(options.isolation))
+
     @psycopg_handled("postgres.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(
@@ -242,10 +330,10 @@ class PostgresClient(PostgresClientPort):
     ) -> AsyncIterator[AsyncConnection]:
         """Enters a transaction (or nested savepoint), yielding the connection.
 
-        Nested calls use savepoints; the top-level call uses ``BEGIN`` /
-        ``COMMIT`` / ``ROLLBACK``. If a connection is already bound in context
-        (e.g. tests or UoW), that connection is used for the top-level
-        transaction instead of acquiring a new one.
+        Nested calls use savepoints; the top-level call uses psycopg's
+        :meth:`~psycopg.AsyncConnection.transaction`. If a connection is already
+        bound in context (e.g. tests or UoW), that connection is used for the
+        top-level transaction instead of acquiring a new one.
 
         :param options: Isolation level and read-only mode. All keys optional.
         :yields: The connection to use for the transaction.
@@ -257,73 +345,45 @@ class PostgresClient(PostgresClientPort):
         options = options if options is not None else PostgresTransactionOptions()
 
         if depth > 0 and parent_conn is not None:
-            sp_name = f"sp_{depth}"
-            self.__ctx_depth.set(depth + 1)
-
-            async with parent_conn.cursor() as cur:
-                await cur.execute(
-                    sql.SQL("SAVEPOINT {}").format(sql.Identifier(sp_name))
-                )
+            sp_name = f"fz_sp_{depth}_{uuid4().hex[:12]}"
+            token_depth = self.__ctx_depth.set(depth + 1)
 
             try:
-                yield parent_conn
-
-                async with parent_conn.cursor() as cur:
-                    await cur.execute(
-                        sql.SQL("RELEASE SAVEPOINT {}").format(sql.Identifier(sp_name))
-                    )
+                async with parent_conn.transaction(savepoint_name=sp_name):
+                    yield parent_conn
 
             except Exception:
                 logger.exception(
                     "Error in nested transaction, rolling back to savepoint '%s'",
                     sp_name,
                 )
-
-                async with parent_conn.cursor() as cur:
-                    await cur.execute(
-                        sql.SQL("ROLLBACK TO SAVEPOINT {}").format(
-                            sql.Identifier(sp_name)
-                        )
-                    )
-                    await cur.execute(
-                        sql.SQL("RELEASE SAVEPOINT {}").format(sql.Identifier(sp_name))
-                    )
-
                 raise
 
             finally:
-                self.__ctx_depth.set(depth)
+                self.__ctx_depth.reset(token_depth)
 
             return
 
         # If a connection is already bound in the context (e.g., tests / UoW),
         # run the top-level transaction on it instead of acquiring a new one.
         if depth == 0 and parent_conn is not None:
-            self.__ctx_depth.set(1)
+            token_depth = self.__ctx_depth.set(1)
 
             try:
-                async with parent_conn.cursor() as cur:
-                    await cur.execute("BEGIN")
+                await self._apply_transaction_options(parent_conn, options)
 
-                    await cur.execute(
-                        sql.SQL("SET TRANSACTION ISOLATION LEVEL {}").format(
-                            isolation_level_sql_fragment(options.isolation),
-                        ),
-                    )
+                if options.read_only:
+                    await parent_conn.set_read_only(True)
 
-                    if options.read_only:
-                        await cur.execute("SET TRANSACTION READ ONLY")
-
-                yield parent_conn
-                await parent_conn.commit()
+                async with parent_conn.transaction():
+                    yield parent_conn
 
             except Exception:
                 logger.exception("Error in top-level transaction, rolling back")
-                await parent_conn.rollback()
                 raise
 
             finally:
-                self.__ctx_depth.set(0)
+                self.__ctx_depth.reset(token_depth)
 
             return
 
@@ -334,25 +394,16 @@ class PostgresClient(PostgresClientPort):
             token_depth = self.__ctx_depth.set(1)
 
             try:
-                async with conn.cursor() as cur:
-                    await cur.execute("BEGIN")
+                await self._apply_transaction_options(conn, options)
 
-                    await cur.execute(
-                        sql.SQL("SET TRANSACTION ISOLATION LEVEL {}").format(
-                            isolation_level_sql_fragment(options.isolation),
-                        ),
-                    )
+                if options.read_only:
+                    await conn.set_read_only(True)
 
-                    if options.read_only:
-                        await cur.execute("SET TRANSACTION READ ONLY")
-
-                yield conn
-
-                await conn.commit()
+                async with conn.transaction():
+                    yield conn
 
             except Exception:
                 logger.exception("Error in transaction, rolling back")
-                await conn.rollback()
                 raise
 
             finally:

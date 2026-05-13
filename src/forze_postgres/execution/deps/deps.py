@@ -149,6 +149,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             read_gw=read,
             write_gw=None,
             cache_coord=cc,
+            batch_size=self.config.get("batch_size", 200),
         )
 
 

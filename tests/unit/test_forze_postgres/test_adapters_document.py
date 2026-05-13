@@ -495,6 +495,148 @@ class TestPostgresDocumentAdapterQueryDelegation:
         assert page.hits == docs and page.count == 2
 
     @pytest.mark.asyncio
+    async def test_find_many_unbounded_chunks_with_default_id_sort(self) -> None:
+        read_gw = _read_gw_full()
+        first = [_tread() for _ in range(10)]
+        second = [_tread()]
+        read_gw.find_many = AsyncMock(side_effect=[first, second])
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+            batch_size=10,
+        )
+
+        page = await adapter.find_many(filters={"x": 1})
+
+        assert page.hits == first + second
+        assert read_gw.find_many.await_count == 2
+        c0 = read_gw.find_many.await_args_list[0]
+        c1 = read_gw.find_many.await_args_list[1]
+        assert c0.kwargs["limit"] == 10 and c0.kwargs["offset"] == 0
+        assert c0.kwargs["sorts"] == {ID_FIELD: "asc"}
+        assert c1.kwargs["limit"] == 10 and c1.kwargs["offset"] == 10
+        assert c1.kwargs["sorts"] == {ID_FIELD: "asc"}
+
+    @pytest.mark.asyncio
+    async def test_find_many_unbounded_passes_explicit_sorts_each_chunk(self) -> None:
+        read_gw = _read_gw_full()
+        first = [_tread() for _ in range(10)]
+        second = [_tread()]
+        read_gw.find_many = AsyncMock(side_effect=[first, second])
+
+        sorts = {"title": "desc"}
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+            batch_size=10,
+        )
+
+        page = await adapter.find_many(filters=None, sorts=sorts)
+
+        assert page.hits == first + second
+        for call in read_gw.find_many.await_args_list:
+            assert call.kwargs["sorts"] == sorts
+
+    @pytest.mark.asyncio
+    async def test_find_many_with_limit_single_gateway_call(self) -> None:
+        read_gw = _read_gw_full()
+        docs = [_tread(), _tread()]
+        read_gw.find_many = AsyncMock(return_value=docs)
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+            batch_size=10,
+        )
+
+        page = await adapter.find_many(
+            filters={"a": 1},
+            pagination={"limit": 50},
+        )
+
+        assert page.hits == docs
+        read_gw.find_many.assert_awaited_once()
+        assert read_gw.find_many.await_args.kwargs["limit"] == 50
+        assert read_gw.find_many.await_args.kwargs["sorts"] is None
+
+    @pytest.mark.asyncio
+    async def test_find_many_unbounded_respects_initial_offset(self) -> None:
+        read_gw = _read_gw_full()
+        d0 = _tread()
+        read_gw.find_many = AsyncMock(return_value=[d0])
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+            batch_size=20,
+        )
+
+        page = await adapter.find_many(
+            filters={"k": "v"},
+            pagination={"offset": 7},
+        )
+
+        assert page.hits == [d0]
+        read_gw.find_many.assert_awaited_once_with(
+            filters={"k": "v"},
+            limit=20,
+            offset=7,
+            sorts={ID_FIELD: "asc"},
+            return_model=None,
+            return_fields=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_page_unbounded_chunks_after_count(self) -> None:
+        read_gw = _read_gw_full()
+        first = [_tread() for _ in range(10)]
+        second = [_tread()]
+        read_gw.count = AsyncMock(return_value=11)
+        read_gw.find_many = AsyncMock(side_effect=[first, second])
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+            batch_size=10,
+        )
+
+        page = await adapter.find_page(filters={"z": 1})
+
+        assert page.hits == first + second and page.count == 11
+        assert read_gw.find_many.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_aggregate_many_unbounded_chunks(self) -> None:
+        read_gw = _read_gw_full()
+        row_a = {"n": 1, "title": "a"}
+        row_b = {"n": 1, "title": "b"}
+        read_gw.find_many_aggregates = AsyncMock(
+            side_effect=[[row_a] * 10, [row_b]],
+        )
+        agg = {
+            "$fields": ["title"],
+            "$computed": {"n": {"$count": None}},
+        }
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+            batch_size=10,
+        )
+
+        page = await adapter.aggregate_many(agg, filters={"a": 1})
+
+        assert page.hits == [row_a] * 10 + [row_b]
+        assert read_gw.find_many_aggregates.await_count == 2
+        assert read_gw.find_many_aggregates.await_args_list[0].kwargs["offset"] == 0
+        assert read_gw.find_many_aggregates.await_args_list[1].kwargs["offset"] == 10
     async def test_count_delegates(self) -> None:
         read_gw = _read_gw_full()
         read_gw.count = AsyncMock(return_value=7)

@@ -5,7 +5,7 @@ and attach :class:`UsecasePlan` middleware composition. :meth:`resolve` builds
 a fully composed usecase for an operation.
 """
 
-from typing import Any, Literal, Self, final, overload
+from typing import Any, Literal, Self, cast, final, overload
 
 import attrs
 from structlog.contextvars import bind_contextvars
@@ -14,13 +14,20 @@ from forze.application._logger import logger
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 
+from .capabilities import SchedulableCapabilitySpec, schedule_capability_specs
 from .context import ExecutionContext
 from .dispatch import (
     assert_dispatch_edges_reference_registered_ops,
     assert_dispatch_graph_acyclic,
     expand_wildcard_dispatch_sources,
 )
-from .plan import WILDCARD, OpKey, UsecasePlan
+from .plan import (
+    CAPABILITY_SCHEDULER_BUCKETS,
+    WILDCARD,
+    OpKey,
+    UsecasePlan,
+    middleware_specs_for_usecase_tuple,
+)
 from .usecase import Usecase, UsecaseFactory
 
 # ----------------------- #
@@ -56,6 +63,11 @@ class UsecaseRegistry:
     )
     """Directed edges ``(from_op, to_op)`` for static dispatch cycle validation."""
 
+    strict_capability_middleware_without_engine: bool = attrs.field(default=False)
+    """When ``True``, :meth:`finalize` rejects plans that set capability metadata while the
+    merged :class:`UsecasePlan` disables :attr:`~forze.application.execution.plan.UsecasePlan.use_capability_engine`.
+    """
+
     # ....................... #
 
     def _raise_if_finalized(self) -> None:
@@ -79,6 +91,43 @@ class UsecaseRegistry:
         )
         assert_dispatch_graph_acyclic(expanded)
         assert_dispatch_edges_reference_registered_ops(expanded, registered)
+
+    def _validate_capability_plans_for_finalize(self) -> None:
+        """Run the capability scheduler on merged plans when the engine is enabled."""
+
+        plan = self._plan
+
+        if plan.use_capability_engine:
+            for op in sorted(self.defaults.keys()):
+                merged = plan.merged_operation_plan(op)
+                merged.validate()
+
+                for bucket in CAPABILITY_SCHEDULER_BUCKETS:
+                    specs = middleware_specs_for_usecase_tuple(merged, bucket)
+                    schedule_capability_specs(
+                        cast(tuple[SchedulableCapabilitySpec, ...], specs),
+                        bucket=bucket,
+                    )
+
+            return
+
+        if not self.strict_capability_middleware_without_engine:
+            return
+
+        for op in sorted(self.defaults.keys()):
+            merged = plan.merged_operation_plan(op)
+            merged.validate()
+
+            for bucket in CAPABILITY_SCHEDULER_BUCKETS:
+                specs = middleware_specs_for_usecase_tuple(merged, bucket)
+
+                for spec in specs:
+                    if spec.requires or spec.provides:
+                        raise CoreError(
+                            f"Operation {op!r} declares capability requires/provides in bucket "
+                            f"{bucket!r} but `UsecasePlan.use_capability_engine` is disabled. "
+                            "Enable the capability engine or remove capability metadata from specs."
+                        )
 
     # ....................... #
 
@@ -114,6 +163,7 @@ class UsecaseRegistry:
             raise CoreError("Registry id cannot be empty")
 
         self._validate_dispatch_graph_for_finalize()
+        self._validate_capability_plans_for_finalize()
 
         if inplace:
             self._finalized = True
@@ -690,6 +740,10 @@ class UsecaseRegistry:
                 *acc._dispatch_edges,
                 *[e for reg in registries for e in reg._dispatch_edges],
             }
+        )
+
+        acc.strict_capability_middleware_without_engine = any(
+            reg.strict_capability_middleware_without_engine for reg in registries
         )
 
         return acc

@@ -104,7 +104,7 @@ async def test_stream_group_ack(
     redis_client: RedisClient,
     stream_payload_cls,
 ) -> None:
-    """ack runs without error and returns an int (adapter uses noack=True)."""
+    """ack runs without error and returns an int (messages stay pending until ``XACK``)."""
     stream = _stream_name()
     group = "ack-group"
     consumer = "c1"

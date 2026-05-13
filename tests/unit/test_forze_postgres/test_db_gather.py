@@ -14,12 +14,18 @@ from forze_postgres.kernel.platform.client import PostgresClient
 @pytest.mark.asyncio
 async def test_gather_db_work_empty() -> None:
     client = MagicMock(spec=PostgresClient)
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
     assert await gather_db_work(client, []) == []
 
 
 @pytest.mark.asyncio
 async def test_gather_db_work_serializes_in_transaction() -> None:
     client = MagicMock(spec=PostgresClient)
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
     client.is_in_transaction.return_value = True
     client.query_concurrency_limit.return_value = 99
 
@@ -41,6 +47,9 @@ async def test_gather_db_work_serializes_in_transaction() -> None:
 @pytest.mark.asyncio
 async def test_gather_db_work_limit_one_serializes() -> None:
     client = MagicMock(spec=PostgresClient)
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
     client.is_in_transaction.return_value = False
     client.query_concurrency_limit.return_value = 1
 
@@ -63,6 +72,9 @@ async def test_gather_db_work_limit_one_serializes() -> None:
 async def test_gather_db_work_allows_parallel_when_limit_gt_one() -> None:
     """When limit > 1 and not in a transaction, multiple makers may run concurrently."""
     client = MagicMock(spec=PostgresClient)
+    client.gather_concurrency_semaphore = MagicMock(
+        return_value=asyncio.Semaphore(8),
+    )
     client.is_in_transaction.return_value = False
     client.query_concurrency_limit.return_value = 2
 

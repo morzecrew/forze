@@ -70,3 +70,32 @@ async def test_set_with_expiry(redis_client: RedisClient) -> None:
 
     assert await redis_client.set(key, "v", ex=1)
     assert await redis_client.get(key) == b"v"
+
+
+@pytest.mark.asyncio
+async def test_mset_with_ex_sets_all_keys(redis_client: RedisClient) -> None:
+    prefix = f"it:redis-client:mset-ex:{uuid4()}"
+    a, b = f"{prefix}:a", f"{prefix}:b"
+
+    assert await redis_client.mset({a: "1", b: "2"}, ex=3600) is True
+    assert await redis_client.get(a) == b"1"
+    assert await redis_client.get(b) == b"2"
+    assert await redis_client.pttl(a) is not None
+
+
+@pytest.mark.asyncio
+async def test_mset_nx_all_or_nothing(redis_client: RedisClient) -> None:
+    prefix = f"it:redis-client:mset-nx:{uuid4()}"
+    a, b, c = f"{prefix}:a", f"{prefix}:b", f"{prefix}:c"
+
+    await redis_client.set(c, "exists", ex=3600)
+
+    ok = await redis_client.mset({a: "na", b: "nb", c: "nc"}, ex=60, nx=True)
+    assert ok is False
+    assert await redis_client.get(a) is None
+    assert await redis_client.get(b) is None
+    assert await redis_client.get(c) == b"exists"
+
+    assert await redis_client.mset({a: "x", b: "y"}, ex=60, nx=True) is True
+    assert await redis_client.get(a) == b"x"
+    assert await redis_client.get(b) == b"y"

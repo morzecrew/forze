@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -19,6 +21,12 @@ def mock_redis_client() -> MagicMock:
     client = MagicMock()
     client.set = AsyncMock(return_value=True)
     client.get = AsyncMock(return_value=None)
+
+    @asynccontextmanager
+    async def _pipe(**_kwargs: object) -> AsyncIterator[MagicMock]:
+        yield client
+
+    client.pipeline = MagicMock(side_effect=_pipe)
     return client
 
 
@@ -50,16 +58,30 @@ def _expected_key_without_tenant() -> str:
     return f"idempotency:{_NS}:op:test-key"
 
 
+def _expected_body_with_tenant() -> str:
+    return f"{_expected_key_with_tenant()}:body"
+
+
+def _expected_body_without_tenant() -> str:
+    return f"{_expected_key_without_tenant()}:body"
+
+
 @pytest.mark.asyncio
 async def test_key_generation_with_tenant(adapter_with_tenant: RedisIdempotencyAdapter) -> None:
-    key = adapter_with_tenant._RedisIdempotencyAdapter__key("op", "test-key")
+    key = adapter_with_tenant._RedisIdempotencyAdapter__meta_key("op", "test-key")
     assert key == _expected_key_with_tenant()
 
 
 @pytest.mark.asyncio
 async def test_key_generation_without_tenant(adapter_without_tenant: RedisIdempotencyAdapter) -> None:
-    key = adapter_without_tenant._RedisIdempotencyAdapter__key("op", "test-key")
+    key = adapter_without_tenant._RedisIdempotencyAdapter__meta_key("op", "test-key")
     assert key == _expected_key_without_tenant()
+
+
+@pytest.mark.asyncio
+async def test_body_key_generation_with_tenant(adapter_with_tenant: RedisIdempotencyAdapter) -> None:
+    key = adapter_with_tenant._RedisIdempotencyAdapter__body_key("op", "test-key")
+    assert key == _expected_body_with_tenant()
 
 
 @pytest.mark.asyncio
@@ -88,16 +110,19 @@ async def test_commit_success_with_tenant(
     adapter_with_tenant: RedisIdempotencyAdapter,
     mock_redis_client: MagicMock,
 ) -> None:
-    mock_redis_client.set.return_value = True
+    done_meta = '{"st":"D","ph":"hash123","code":200,"ct":"application/json"}'
+    mock_redis_client.get.return_value = done_meta
     snapshot = IdempotencySnapshot(
         code=200, content_type="application/json", body=b"test-body"
     )
 
     await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)
 
-    mock_redis_client.set.assert_called_once()
-    args, _kwargs = mock_redis_client.set.call_args
-    assert args[0] == _expected_key_with_tenant()
+    assert mock_redis_client.set.await_count == 2
+    keys_written = {c.args[0] for c in mock_redis_client.set.await_args_list}
+    assert _expected_key_with_tenant() in keys_written
+    assert _expected_body_with_tenant() in keys_written
+    mock_redis_client.get.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -114,7 +139,7 @@ async def test_commit_failed_missing_or_expired(
     adapter_with_tenant: RedisIdempotencyAdapter,
     mock_redis_client: MagicMock,
 ) -> None:
-    mock_redis_client.set.return_value = False
+    mock_redis_client.get.return_value = None
     snapshot = IdempotencySnapshot(
         code=200, content_type="application/json", body=b"test-body"
     )

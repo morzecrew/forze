@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping as MappingABC
 from enum import StrEnum
-from typing import Any, Mapping, TypeGuard, final
+from typing import Any, Mapping, TypeGuard, cast, final
 
 import attrs
 
@@ -32,27 +32,41 @@ from .deps import (
     ConfigurableRedisIdempotency,
     ConfigurableRedisSearchResultSnapshot,
 )
-from .keys import RedisClientDepKey
+from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 
 # ----------------------- #
+
+
+def _idem_mapping_keys(config: Any) -> list[Any]:
+    if not isinstance(config, MappingABC):
+        return []
+
+    return list(config.keys())  # type: ignore[reportUnknownArgumentType]
 
 
 def _is_idem_routed(config: Any) -> TypeGuard[Mapping[Any, RedisIdempotencyConfig]]:
     if not isinstance(config, MappingABC):
         return False
 
-    k = list(config.keys())  # type: ignore
+    routes = cast(Mapping[Any, Any], config)  # type: ignore[redundant-cast]
 
-    return isinstance(config[k[0]], MappingABC)
+    if len(routes) < 1:
+        return False
+
+    for v in routes.values():
+        if not isinstance(v, MappingABC) or "namespace" not in v:
+            return False
+
+    return True
 
 
 def _is_idem_plain(config: Any) -> TypeGuard[RedisIdempotencyConfig]:
-    if not isinstance(config, MappingABC):
+    keys = _idem_mapping_keys(config)
+
+    if not keys:
         return False
 
-    k = list(config.keys())  # type: ignore
-
-    return not isinstance(config[k[0]], MappingABC)
+    return not isinstance(config[keys[0]], MappingABC)
 
 
 # ....................... #
@@ -65,6 +79,9 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
 
     client: RedisClientPort
     """Pre-constructed Redis client (single-DSN or routed, not initialized until lifecycle)."""
+
+    blocking_client: RedisClientPort | None = None
+    """Optional second client registered under :data:`RedisBlockingClientDepKey`."""
 
     caches: Mapping[K, RedisCacheConfig | RedisUniversalConfig] | None = attrs.field(
         default=None
@@ -110,7 +127,12 @@ class RedisDepsModule[K: str | StrEnum](DepsModule[K]):
     def __call__(self) -> Deps[K]:
         """Build a dependency container with Redis-backed ports."""
 
-        plain_deps = Deps[K].plain({RedisClientDepKey: self.client})
+        plain: dict[Any, Any] = {RedisClientDepKey: self.client}
+
+        if self.blocking_client is not None:
+            plain[RedisBlockingClientDepKey] = self.blocking_client
+
+        plain_deps = Deps[K].plain(plain)
 
         cache_deps = Deps[K]()
         counter_deps = Deps[K]()

@@ -259,6 +259,12 @@ class TestUsecaseRegistryMerge:
         assert isinstance(uc_get, StubUsecase)
         assert isinstance(uc_create, StubUsecase)
 
+    def test_merge_unions_strict_capability_flag(self) -> None:
+        reg_a = UsecaseRegistry(strict_capability_middleware_without_engine=True)
+        reg_b = UsecaseRegistry()
+        merged = UsecaseRegistry.merge(reg_a, reg_b)
+        assert merged.strict_capability_middleware_without_engine is True
+
     def test_merge_from_instance_equals_class_merge(self) -> None:
         """reg_a.merge(reg_b) equals UsecaseRegistry.merge(reg_a, reg_b)."""
         reg_a = UsecaseRegistry().register("get", _stub_factory)
@@ -308,3 +314,85 @@ class TestUsecaseRegistryMerge:
         assert reg2 is not reg
         assert reg._dispatch_edges == frozenset()
         assert ("a", "b") in reg2._dispatch_edges
+
+
+def _guard_mw_factory():
+    from forze.application.execution.middleware import GuardMiddleware
+
+    def factory(_ctx):
+        async def guard(_a):
+            return None
+
+        return GuardMiddleware(guard=guard)
+
+    return factory
+
+
+class TestUsecaseRegistryCapabilityFinalize:
+    def test_finalize_validates_capability_graph_when_engine_enabled(self) -> None:
+        from forze.application.execution.plan import UsecasePlan
+        from forze.base.errors import CoreError
+
+        plan = UsecasePlan(use_capability_engine=True).before(
+            "op",
+            _guard_mw_factory(),
+            priority=1,
+            requires=frozenset({"missing"}),
+        )
+        reg = UsecaseRegistry().register("op", _stub_factory).extend_plan(plan)
+        with pytest.raises(CoreError, match="provides it"):
+            reg.finalize("app")
+
+    def test_finalize_strict_rejects_capability_metadata_without_engine(self) -> None:
+        from forze.application.execution.plan import UsecasePlan
+        from forze.base.errors import CoreError
+
+        plan = UsecasePlan().before(
+            "op",
+            _guard_mw_factory(),
+            priority=1,
+            requires=frozenset({"k"}),
+        )
+        reg = (
+            UsecaseRegistry(strict_capability_middleware_without_engine=True)
+            .register("op", _stub_factory)
+            .extend_plan(plan)
+        )
+        with pytest.raises(CoreError, match="use_capability_engine"):
+            reg.finalize("app")
+
+    def test_finalize_duplicate_capability_provider_across_wildcard(self) -> None:
+        from forze.application.execution.plan import UsecasePlan
+        from forze.base.errors import CoreError
+
+        w = UsecasePlan(use_capability_engine=True).before(
+            "*",
+            _guard_mw_factory(),
+            priority=1,
+            provides=frozenset({"dup"}),
+        )
+        o = UsecasePlan().before(
+            "op",
+            _guard_mw_factory(),
+            priority=2,
+            provides=frozenset({"dup"}),
+        )
+        reg = UsecaseRegistry().register("op", _stub_factory).extend_plan(w).extend_plan(o)
+        with pytest.raises(CoreError, match="more than one step"):
+            reg.finalize("app")
+
+    def test_finalize_with_delegate_effect_and_engine(self) -> None:
+        from forze.application.execution import UsecaseDelegate, UsecasePlan
+
+        reg = (
+            UsecaseRegistry()
+            .register("parent", _stub_factory)
+            .register("child", _stub_factory)
+        )
+        fac = UsecaseDelegate[str, str, str, str](
+            target_op="child",
+            map_in=lambda x, y: x,
+        ).effect_factory(reg)
+        plan = UsecasePlan(use_capability_engine=True).after("parent", fac)
+        reg2 = reg.extend_plan(plan)
+        reg2.finalize("app", inplace=True)

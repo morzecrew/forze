@@ -35,7 +35,13 @@ class RedisClientPort(Protocol):
 
     def exists(self, key: str) -> Awaitable[bool]: ...  # pragma: no cover
 
-    def pttl(self, key: str) -> Awaitable[int | None]: ...  # pragma: no cover
+    def pttl(self, key: str) -> Awaitable[int | None]:
+        """Milliseconds until expiry, or ``None`` if missing (``-2``) or no TTL (``-1``)."""
+        ...  # pragma: no cover
+
+    def pttl_raw_ms(self, key: str) -> Awaitable[int]:
+        """Raw Redis ``PTTL`` in ms: ``>= 0`` time left, ``-1`` persistent, ``-2`` missing."""
+        ...  # pragma: no cover
 
     def run_script(
         self,
@@ -44,11 +50,11 @@ class RedisClientPort(Protocol):
         args: Sequence[Any],
     ) -> Awaitable[str]: ...  # pragma: no cover
 
-    def get(self, key: str) -> Awaitable[bytes | str | None]: ...  # pragma: no cover
+    def get(self, key: str) -> Awaitable[bytes | None]: ...  # pragma: no cover
 
     def mget(
         self, keys: Sequence[str]
-    ) -> Awaitable[list[bytes | str | None]]: ...  # pragma: no cover
+    ) -> Awaitable[list[bytes | None]]: ...  # pragma: no cover
 
     def set(
         self,

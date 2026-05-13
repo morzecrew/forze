@@ -9,7 +9,7 @@ from .configs import (
     RedisUniversalConfig,
 )
 from .deps import ConfigurableRedisDistributedLock, ConfigurableRedisSearchResultSnapshot
-from .keys import RedisClientDepKey
+from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 from .module import RedisDepsModule
 
 # ----------------------- #
@@ -17,6 +17,7 @@ from .module import RedisDepsModule
 __all__ = [
     "RedisDepsModule",
     "RedisClientDepKey",
+    "RedisBlockingClientDepKey",
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisDistributedLockConfig",

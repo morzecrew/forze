@@ -1,13 +1,30 @@
 import sys
 from unittest.mock import MagicMock
 
-# Mock 'redis' before it's imported via 'forze_redis'
-sys.modules["redis"] = MagicMock()
-sys.modules["redis.asyncio"] = MagicMock()
-sys.modules["redis.asyncio.client"] = MagicMock()
-sys.modules["redis.asyncio.connection"] = MagicMock()
+# Mock 'redis' before it's imported via 'forze_redis', then restore the original
+# entries so this module does not pollute ``sys.modules`` for tests that need the
+# real ``redis`` package (notably the integration tests that exercise
+# ``isinstance(client, Pipeline)`` inside ``redis-py`` itself).
+_MOCKED_REDIS_MODULES = (
+    "redis",
+    "redis.asyncio",
+    "redis.asyncio.client",
+    "redis.asyncio.connection",
+)
+_saved_redis_modules = {
+    name: sys.modules.get(name) for name in _MOCKED_REDIS_MODULES
+}
+for _name in _MOCKED_REDIS_MODULES:
+    sys.modules[_name] = MagicMock()
 
-from forze_redis.kernel.platform.utils import parse_stream_entries
+try:
+    from forze_redis.kernel.platform.utils import parse_stream_entries
+finally:
+    for _name, _original in _saved_redis_modules.items():
+        if _original is None:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _original
 
 def test_parse_stream_entries_empty() -> None:
     assert parse_stream_entries(None) == []

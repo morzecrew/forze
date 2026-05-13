@@ -7,8 +7,9 @@ require_psycopg()
 # ....................... #
 
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any, Sequence, final, get_args
+from typing import Any, AsyncIterator, Sequence, final, get_args
 from uuid import UUID
 
 import attrs
@@ -17,7 +18,7 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
+    wait_random_exponential,
 )
 
 from forze.application.contracts.query import QueryFilterExpression
@@ -61,7 +62,7 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
     return retry(
         retry=retry_if_exception_type(ConcurrencyError),
         stop=stop_after_attempt(attempts),
-        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
+        wait=wait_random_exponential(multiplier=0.05, max=2.0),
         reraise=True,
     )
 
@@ -99,6 +100,8 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
+
         if self.source_qname != self.read_gw.source_qname:
             raise CoreError(
                 f"Table specification mismatch. Write gateway and nested read gateway must have the same specification. Write: {self.source_qname}, Read: {self.read_gw.source_qname}"
@@ -132,6 +135,19 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         if self.strategy not in get_args(PostgresBookkeepingStrategy):
             raise CoreError(f"Invalid bookkeeping strategy: {self.strategy}")
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def _write_tx(self) -> AsyncIterator[None]:
+        """Use an outer transaction for multi-step writes when the caller has not opened one."""
+
+        if self.client.is_in_transaction():
+            yield
+            return
+
+        async with self.client.transaction():
+            yield
 
     # ....................... #
 
@@ -171,8 +187,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
             if len(hist_records) != len(to_check):
-                raise NotFoundError(
-                    "History records not found. Please retry with actual revision number."
+                raise ConcurrencyError(
+                    "History records not found. Please retry with actual revision number.",
+                    code="history_not_found_retry",
                 )
 
             for (c, _, u), h in zip(to_check, hist_records, strict=True):
@@ -206,35 +223,40 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     @optimistic_retry()  # type: ignore[untyped-decorator]
     async def create(self, dto: C) -> D:
-        model = pydantic_transform(self.model_type, dto)
-        insert_data_raw = pydantic_dump(model)
-        insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
-
-        cols = [sql.Identifier(k) for k in insert_data.keys()]
-        vals = [sql.Placeholder() for _ in insert_data.keys()]
-        params = list(insert_data.values())
-
-        stmt = sql.SQL(
-            "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}"
-        ).format(
-            table=self.source_qname.ident(),
-            cols=sql.SQL(", ").join(cols),
-            vals=sql.SQL(", ").join(vals),
-            ret=self.return_clause(),
-        )
-
-        row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
-
-        if row is None:
-            raise ConcurrencyError(
-                message="Failed to create a record",
-                code="create_failed",
+        async with self._write_tx():
+            model = pydantic_transform(self.model_type, dto)
+            insert_data_raw = pydantic_dump(model)
+            insert_data = await self.adapt_payload_for_write(
+                insert_data_raw, create=True
             )
 
-        res = pydantic_validate(self.model_type, row)
-        await self._write_history(res)
+            cols = [sql.Identifier(k) for k in insert_data.keys()]
+            vals = [sql.Placeholder() for _ in insert_data.keys()]
+            params = list(insert_data.values())
 
-        return res
+            stmt = sql.SQL(
+                "INSERT INTO {table} ({cols}) VALUES ({vals}) RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                cols=sql.SQL(", ").join(cols),
+                vals=sql.SQL(", ").join(vals),
+                ret=self.return_clause(),
+            )
+
+            row = await self.client.fetch_one(
+                stmt, params, row_factory="dict", commit=False
+            )
+
+            if row is None:
+                raise ConcurrencyError(
+                    message="Failed to create a record",
+                    code="create_failed",
+                )
+
+            res = pydantic_validate(self.model_type, row)
+            await self._write_history(res)
+
+            return res
 
     # ....................... #
 
@@ -248,73 +270,74 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not dtos:
             return []
 
-        models = pydantic_transform_many(self.model_type, dtos)
-        insert_data_raw = pydantic_dump_many(models)
-        insert_data = await self.adapt_many_payload_for_write(
-            insert_data_raw,
-            create=True,
-        )
-
-        keys = list(insert_data[0].keys())
-        col_idents = [sql.Identifier(k) for k in keys]
-
-        # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
-        # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
-        row_template = (
-            sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-            + sql.SQL(")")
-        )
-
-        async def _insert_batch(batch: Sequence[JsonDict]) -> list[JsonDict]:
-            # ⚡ Bolt: Duplicate the precomputed row template
-            value_parts = [row_template] * len(batch)
-            params = [b[k] for b in batch for k in keys]
-
-            stmt = sql.SQL(
-                "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
-            ).format(
-                table=self.source_qname.ident(),
-                cols=sql.SQL(", ").join(col_idents),
-                vals=sql.SQL(", ").join(value_parts),
-                ret=self.return_clause(),
+        async with self._write_tx():
+            models = pydantic_transform_many(self.model_type, dtos)
+            insert_data_raw = pydantic_dump_many(models)
+            insert_data = await self.adapt_many_payload_for_write(
+                insert_data_raw,
+                create=True,
             )
 
-            rows = await self.client.fetch_all(
-                stmt,
-                params,
-                row_factory="dict",
-                commit=True,
+            keys = list(insert_data[0].keys())
+            col_idents = [sql.Identifier(k) for k in keys]
+
+            # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
+            # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
+            row_template = (
+                sql.SQL("(")
+                + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                + sql.SQL(")")
             )
 
-            if len(rows) != len(batch):
-                raise ConcurrencyError(
-                    message="Failed to create records (mismatch in number of rows)",
-                    code="create_many_mismatch",
+            async def _insert_batch(batch: Sequence[JsonDict]) -> list[JsonDict]:
+                # ⚡ Bolt: Duplicate the precomputed row template
+                value_parts = [row_template] * len(batch)
+                params = [b[k] for b in batch for k in keys]
+
+                stmt = sql.SQL(
+                    "INSERT INTO {table} ({cols}) VALUES {vals} RETURNING {ret}"
+                ).format(
+                    table=self.source_qname.ident(),
+                    cols=sql.SQL(", ").join(col_idents),
+                    vals=sql.SQL(", ").join(value_parts),
+                    ret=self.return_clause(),
                 )
 
-            return rows
+                rows = await self.client.fetch_all(
+                    stmt,
+                    params,
+                    row_factory="dict",
+                    commit=False,
+                )
 
-        batches = [
-            insert_data[offset : offset + batch_size]
-            for offset in range(0, len(insert_data), batch_size)
-        ]
-        batch_results = await gather_db_work(
-            self.client,
-            [partial(_insert_batch, b) for b in batches],
-        )
+                if len(rows) != len(batch):
+                    raise ConcurrencyError(
+                        message="Failed to create records (mismatch in number of rows)",
+                        code="create_many_mismatch",
+                    )
 
-        result_raw: list[JsonDict] = []
-        for rows in batch_results:
-            result_raw.extend(rows)
+                return rows
 
-        if len(result_raw) != len(dtos):
-            raise CoreError("Failed to create all records")
+            batches = [
+                insert_data[offset : offset + batch_size]
+                for offset in range(0, len(insert_data), batch_size)
+            ]
+            batch_results = await gather_db_work(
+                self.client,
+                [partial(_insert_batch, b) for b in batches],
+            )
 
-        result = pydantic_validate_many(self.model_type, result_raw)
-        await self._write_history(*result)
+            result_raw: list[JsonDict] = []
+            for rows in batch_results:
+                result_raw.extend(rows)
 
-        return result
+            if len(result_raw) != len(dtos):
+                raise CoreError("Failed to create all records")
+
+            result = pydantic_validate_many(self.model_type, result_raw)
+            await self._write_history(*result)
+
+            return result
 
     # ....................... #
 
@@ -327,35 +350,40 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         existing rows.
         """
 
-        model = pydantic_transform(self.model_type, dto)
-        insert_data_raw = pydantic_dump(model)
-        insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
+        async with self._write_tx():
+            model = pydantic_transform(self.model_type, dto)
+            insert_data_raw = pydantic_dump(model)
+            insert_data = await self.adapt_payload_for_write(
+                insert_data_raw, create=True
+            )
 
-        cols = [sql.Identifier(k) for k in insert_data.keys()]
-        vals = [sql.Placeholder() for _ in insert_data.keys()]
-        params = list(insert_data.values())
+            cols = [sql.Identifier(k) for k in insert_data.keys()]
+            vals = [sql.Placeholder() for _ in insert_data.keys()]
+            params = list(insert_data.values())
 
-        stmt = sql.SQL(
-            "INSERT INTO {table} ({cols}) VALUES ({vals}) "
-            "ON CONFLICT ({pk}) DO NOTHING "
-            "RETURNING {ret}"
-        ).format(
-            table=self.source_qname.ident(),
-            cols=sql.SQL(", ").join(cols),
-            vals=sql.SQL(", ").join(vals),
-            pk=self.ident_pk(),
-            ret=self.return_clause(),
-        )
+            stmt = sql.SQL(
+                "INSERT INTO {table} ({cols}) VALUES ({vals}) "
+                "ON CONFLICT ({pk}) DO NOTHING "
+                "RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                cols=sql.SQL(", ").join(cols),
+                vals=sql.SQL(", ").join(vals),
+                pk=self.ident_pk(),
+                ret=self.return_clause(),
+            )
 
-        row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
+            row = await self.client.fetch_one(
+                stmt, params, row_factory="dict", commit=False
+            )
 
-        if row is not None:
-            res = pydantic_validate(self.model_type, row)
-            await self._write_history(res)
-            return res
+            if row is not None:
+                res = pydantic_validate(self.model_type, row)
+                await self._write_history(res)
+                return res
 
-        existing = await self.read_gw.get(model.id)
-        return existing
+            existing = await self.read_gw.get(model.id)
+            return existing
 
     # ....................... #
 
@@ -377,92 +405,93 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not dtos:
             return []
 
-        models = pydantic_transform_many(self.model_type, dtos)
-        insert_data_raw = pydantic_dump_many(models)
-        insert_data = await self.adapt_many_payload_for_write(
-            insert_data_raw,
-            create=True,
-        )
-
-        keys = list(insert_data[0].keys())
-        col_idents = [sql.Identifier(k) for k in keys]
-        row_template = (
-            sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-            + sql.SQL(")")
-        )
-
-        def _pk_from_row(r: JsonDict) -> UUID:
-            v = r[ID_FIELD]
-            if isinstance(v, UUID):
-                return v
-            return UUID(str(v))
-
-        async def _ensure_batch(
-            batch: Sequence[JsonDict],
-            model_batch: Sequence[D],
-        ) -> list[D]:
-            value_parts = [row_template] * len(batch)
-            params = [b[k] for b in batch for k in keys]
-
-            stmt = sql.SQL(
-                "INSERT INTO {table} ({cols}) VALUES {vals} "
-                "ON CONFLICT ({pk}) DO NOTHING "
-                "RETURNING {ret}"
-            ).format(
-                table=self.source_qname.ident(),
-                cols=sql.SQL(", ").join(col_idents),
-                vals=sql.SQL(", ").join(value_parts),
-                pk=self.ident_pk(),
-                ret=self.return_clause(),
+        async with self._write_tx():
+            models = pydantic_transform_many(self.model_type, dtos)
+            insert_data_raw = pydantic_dump_many(models)
+            insert_data = await self.adapt_many_payload_for_write(
+                insert_data_raw,
+                create=True,
             )
 
-            rows = await self.client.fetch_all(
-                stmt,
-                params,
-                row_factory="dict",
-                commit=True,
+            keys = list(insert_data[0].keys())
+            col_idents = [sql.Identifier(k) for k in keys]
+            row_template = (
+                sql.SQL("(")
+                + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                + sql.SQL(")")
             )
 
-            by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
-            need = [m.id for m in model_batch if m.id not in by_returned]
-            if need:
-                fetched = await self.read_gw.get_many(need)
-                by_existing = {d.id: d for d in fetched}
-            else:
-                by_existing = {}
+            def _pk_from_row(r: JsonDict) -> UUID:
+                v = r[ID_FIELD]
+                if isinstance(v, UUID):
+                    return v
+                return UUID(str(v))
 
-            ordered: list[D] = []
-            inserted: list[D] = []
-            for m in model_batch:
-                rj = by_returned.get(m.id)
-                if rj is not None:
-                    dom = pydantic_validate(self.model_type, rj)
-                    inserted.append(dom)
-                    ordered.append(dom)
+            async def _ensure_batch(
+                batch: Sequence[JsonDict],
+                model_batch: Sequence[D],
+            ) -> list[D]:
+                value_parts = [row_template] * len(batch)
+                params = [b[k] for b in batch for k in keys]
+
+                stmt = sql.SQL(
+                    "INSERT INTO {table} ({cols}) VALUES {vals} "
+                    "ON CONFLICT ({pk}) DO NOTHING "
+                    "RETURNING {ret}"
+                ).format(
+                    table=self.source_qname.ident(),
+                    cols=sql.SQL(", ").join(col_idents),
+                    vals=sql.SQL(", ").join(value_parts),
+                    pk=self.ident_pk(),
+                    ret=self.return_clause(),
+                )
+
+                rows = await self.client.fetch_all(
+                    stmt,
+                    params,
+                    row_factory="dict",
+                    commit=False,
+                )
+
+                by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
+                need = [m.id for m in model_batch if m.id not in by_returned]
+                if need:
+                    fetched = await self.read_gw.get_many(need)
+                    by_existing = {d.id: d for d in fetched}
                 else:
-                    ex = by_existing.get(m.id)
-                    if ex is None:
-                        raise NotFoundError(
-                            f"Record not found after ensure_many conflict: {m.id!s}",
-                        )
-                    ordered.append(ex)
+                    by_existing = {}
 
-            if inserted:
-                await self._write_history(*inserted)
+                ordered: list[D] = []
+                inserted: list[D] = []
+                for m in model_batch:
+                    rj = by_returned.get(m.id)
+                    if rj is not None:
+                        dom = pydantic_validate(self.model_type, rj)
+                        inserted.append(dom)
+                        ordered.append(dom)
+                    else:
+                        ex = by_existing.get(m.id)
+                        if ex is None:
+                            raise NotFoundError(
+                                f"Record not found after ensure_many conflict: {m.id!s}",
+                            )
+                        ordered.append(ex)
 
-            return ordered
+                if inserted:
+                    await self._write_history(*inserted)
 
-        out: list[D] = []
-        for offset in range(0, len(insert_data), batch_size):
-            data_batch = insert_data[offset : offset + batch_size]
-            model_batch = models[offset : offset + batch_size]
-            out.extend(await _ensure_batch(data_batch, model_batch))
+                return ordered
 
-        if len(out) != len(dtos):
-            raise CoreError("ensure_many result length does not match input")
+            out: list[D] = []
+            for offset in range(0, len(insert_data), batch_size):
+                data_batch = insert_data[offset : offset + batch_size]
+                model_batch = models[offset : offset + batch_size]
+                out.extend(await _ensure_batch(data_batch, model_batch))
 
-        return out
+            if len(out) != len(dtos):
+                raise CoreError("ensure_many result length does not match input")
+
+            return out
 
     # ....................... #
 
@@ -477,36 +506,41 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         self._require_update_cmd()
 
-        model = pydantic_transform(self.model_type, create_dto)
-        insert_data_raw = pydantic_dump(model)
-        insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
+        async with self._write_tx():
+            model = pydantic_transform(self.model_type, create_dto)
+            insert_data_raw = pydantic_dump(model)
+            insert_data = await self.adapt_payload_for_write(
+                insert_data_raw, create=True
+            )
 
-        cols = [sql.Identifier(k) for k in insert_data.keys()]
-        vals = [sql.Placeholder() for _ in insert_data.keys()]
-        params = list(insert_data.values())
+            cols = [sql.Identifier(k) for k in insert_data.keys()]
+            vals = [sql.Placeholder() for _ in insert_data.keys()]
+            params = list(insert_data.values())
 
-        stmt = sql.SQL(
-            "INSERT INTO {table} ({cols}) VALUES ({vals}) "
-            "ON CONFLICT ({pk}) DO NOTHING "
-            "RETURNING {ret}"
-        ).format(
-            table=self.source_qname.ident(),
-            cols=sql.SQL(", ").join(cols),
-            vals=sql.SQL(", ").join(vals),
-            pk=self.ident_pk(),
-            ret=self.return_clause(),
-        )
+            stmt = sql.SQL(
+                "INSERT INTO {table} ({cols}) VALUES ({vals}) "
+                "ON CONFLICT ({pk}) DO NOTHING "
+                "RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                cols=sql.SQL(", ").join(cols),
+                vals=sql.SQL(", ").join(vals),
+                pk=self.ident_pk(),
+                ret=self.return_clause(),
+            )
 
-        row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
+            row = await self.client.fetch_one(
+                stmt, params, row_factory="dict", commit=False
+            )
 
-        if row is not None:
-            res = pydantic_validate(self.model_type, row)
-            await self._write_history(res)
+            if row is not None:
+                res = pydantic_validate(self.model_type, row)
+                await self._write_history(res)
+                return res
+
+            current = await self.read_gw.get(model.id)
+            res, _ = await self.update(model.id, update_dto, rev=current.rev)
             return res
-
-        current = await self.read_gw.get(model.id)
-        res, _ = await self.update(model.id, update_dto, rev=current.rev)
-        return res
 
     # ....................... #
 
@@ -524,115 +558,116 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not pairs:
             return []
 
-        creates = [c for c, _ in pairs]
-        models = pydantic_transform_many(self.model_type, creates)
-        insert_data_raw = pydantic_dump_many(models)
-        insert_data = await self.adapt_many_payload_for_write(
-            insert_data_raw,
-            create=True,
-        )
-
-        keys = list(insert_data[0].keys())
-        col_idents = [sql.Identifier(k) for k in keys]
-        row_template = (
-            sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-            + sql.SQL(")")
-        )
-
-        def _pk_from_row(r: JsonDict) -> UUID:
-            v = r[ID_FIELD]
-            if isinstance(v, UUID):
-                return v
-            return UUID(str(v))
-
-        u_seq = [u for _, u in pairs]
-
-        async def _upsert_batch(
-            batch: Sequence[JsonDict],
-            model_batch: Sequence[D],
-            u_for_batch: Sequence[U],
-        ) -> list[D]:
-            value_parts = [row_template] * len(batch)
-            params_in = [b[k] for b in batch for k in keys]
-
-            stmt = sql.SQL(
-                "INSERT INTO {table} ({cols}) VALUES {vals} "
-                "ON CONFLICT ({pk}) DO NOTHING "
-                "RETURNING {ret}"
-            ).format(
-                table=self.source_qname.ident(),
-                cols=sql.SQL(", ").join(col_idents),
-                vals=sql.SQL(", ").join(value_parts),
-                pk=self.ident_pk(),
-                ret=self.return_clause(),
+        async with self._write_tx():
+            creates = [c for c, _ in pairs]
+            models = pydantic_transform_many(self.model_type, creates)
+            insert_data_raw = pydantic_dump_many(models)
+            insert_data = await self.adapt_many_payload_for_write(
+                insert_data_raw,
+                create=True,
             )
 
-            rows = await self.client.fetch_all(
-                stmt,
-                params_in,
-                row_factory="dict",
-                commit=True,
+            keys = list(insert_data[0].keys())
+            col_idents = [sql.Identifier(k) for k in keys]
+            row_template = (
+                sql.SQL("(")
+                + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                + sql.SQL(")")
             )
 
-            by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
+            def _pk_from_row(r: JsonDict) -> UUID:
+                v = r[ID_FIELD]
+                if isinstance(v, UUID):
+                    return v
+                return UUID(str(v))
 
-            inserted: list[D] = []
-            for m in model_batch:
-                rj = by_returned.get(m.id)
-                if rj is not None:
-                    inserted.append(pydantic_validate(self.model_type, rj))
+            u_seq = [u for _, u in pairs]
 
-            if inserted:
-                await self._write_history(*inserted)
+            async def _upsert_batch(
+                batch: Sequence[JsonDict],
+                model_batch: Sequence[D],
+                u_for_batch: Sequence[U],
+            ) -> list[D]:
+                value_parts = [row_template] * len(batch)
+                params_in = [b[k] for b in batch for k in keys]
 
-            need_u: list[tuple[UUID, U]] = []
-            u_list = list(u_for_batch)
-            for i, m in enumerate(model_batch):
-                if m.id not in by_returned:
-                    need_u.append((m.id, u_list[i]))
-
-            by_updated: dict[UUID, D] = {}
-            if need_u:
-                pks_u = [a[0] for a in need_u]
-                u_dtos = [a[1] for a in need_u]
-                currents = await self.read_gw.get_many(pks_u)
-                by_cur = {c.id: c for c in currents}
-                revs = [by_cur[pk].rev for pk in pks_u]
-                updated, _ = await self.update_many(
-                    pks_u,
-                    u_dtos,
-                    revs=revs,
-                    batch_size=batch_size,
+                stmt = sql.SQL(
+                    "INSERT INTO {table} ({cols}) VALUES {vals} "
+                    "ON CONFLICT ({pk}) DO NOTHING "
+                    "RETURNING {ret}"
+                ).format(
+                    table=self.source_qname.ident(),
+                    cols=sql.SQL(", ").join(col_idents),
+                    vals=sql.SQL(", ").join(value_parts),
+                    pk=self.ident_pk(),
+                    ret=self.return_clause(),
                 )
-                by_updated = {d.id: d for d in updated}
 
-            ordered: list[D] = []
-            for i, m in enumerate(model_batch):
-                rj = by_returned.get(m.id)
-                if rj is not None:
-                    ordered.append(pydantic_validate(self.model_type, rj))
-                else:
-                    u_one = by_updated.get(m.id)
-                    if u_one is None:
-                        raise NotFoundError(
-                            f"Record not found after upsert_many conflict: {m.id!s}",
-                        )
-                    ordered.append(u_one)
+                rows = await self.client.fetch_all(
+                    stmt,
+                    params_in,
+                    row_factory="dict",
+                    commit=False,
+                )
 
-            return ordered
+                by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
 
-        out: list[D] = []
-        for offset in range(0, len(insert_data), batch_size):
-            data_b = insert_data[offset : offset + batch_size]
-            model_b = models[offset : offset + batch_size]
-            u_b = u_seq[offset : offset + batch_size]
-            out.extend(await _upsert_batch(data_b, model_b, u_b))
+                inserted: list[D] = []
+                for m in model_batch:
+                    rj = by_returned.get(m.id)
+                    if rj is not None:
+                        inserted.append(pydantic_validate(self.model_type, rj))
 
-        if len(out) != len(pairs):
-            raise CoreError("upsert_many result length does not match input")
+                if inserted:
+                    await self._write_history(*inserted)
 
-        return out
+                need_u: list[tuple[UUID, U]] = []
+                u_list = list(u_for_batch)
+                for i, m in enumerate(model_batch):
+                    if m.id not in by_returned:
+                        need_u.append((m.id, u_list[i]))
+
+                by_updated: dict[UUID, D] = {}
+                if need_u:
+                    pks_u = [a[0] for a in need_u]
+                    u_dtos = [a[1] for a in need_u]
+                    currents = await self.read_gw.get_many(pks_u)
+                    by_cur = {c.id: c for c in currents}
+                    revs = [by_cur[pk].rev for pk in pks_u]
+                    updated, _ = await self.update_many(
+                        pks_u,
+                        u_dtos,
+                        revs=revs,
+                        batch_size=batch_size,
+                    )
+                    by_updated = {d.id: d for d in updated}
+
+                ordered: list[D] = []
+                for i, m in enumerate(model_batch):
+                    rj = by_returned.get(m.id)
+                    if rj is not None:
+                        ordered.append(pydantic_validate(self.model_type, rj))
+                    else:
+                        u_one = by_updated.get(m.id)
+                        if u_one is None:
+                            raise NotFoundError(
+                                f"Record not found after upsert_many conflict: {m.id!s}",
+                            )
+                        ordered.append(u_one)
+
+                return ordered
+
+            out: list[D] = []
+            for offset in range(0, len(insert_data), batch_size):
+                data_b = insert_data[offset : offset + batch_size]
+                model_b = models[offset : offset + batch_size]
+                u_b = u_seq[offset : offset + batch_size]
+                out.extend(await _upsert_batch(data_b, model_b, u_b))
+
+            if len(out) != len(pairs):
+                raise CoreError("upsert_many result length does not match input")
+
+            return out
 
     # ....................... #
 
@@ -652,56 +687,59 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         *,
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
-        current = await self.read_gw.get(pk)
+        async with self._write_tx():
+            current = await self.read_gw.get(pk)
 
-        if update is not None:
-            if rev is not None:
-                await self._validate_history((current, rev, update))
+            if update is not None:
+                if rev is not None:
+                    await self._validate_history((current, rev, update))
 
-            _, diff = current.update(update)
+                _, diff = current.update(update)
 
-        else:
-            # Always historically consistent because we update only the revision and update timestamp
-            _, diff = current.touch()
+            else:
+                # Always historically consistent because we update only the revision and update timestamp
+                _, diff = current.touch()
 
-        if not diff:
-            return current, diff
+            if not diff:
+                return current, diff
 
-        diff = self.__bump_rev(current, diff)
+            diff = self.__bump_rev(current, diff)
 
-        diff = await self.adapt_payload_for_write(diff, create=False)
-        set_parts: list[sql.Composable] = []
-        params: list[Any] = []
+            diff = await self.adapt_payload_for_write(diff, create=False)
+            set_parts: list[sql.Composable] = []
+            params: list[Any] = []
 
-        for k, v in diff.items():
-            set_parts.append(
-                sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
+            for k, v in diff.items():
+                set_parts.append(
+                    sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
+                )
+                params.append(v)
+
+            where_sql = self._where_pk_rev()
+            where_params: list[Any] = [current.id, current.rev]
+            where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
+            params.extend(where_params)
+
+            stmt = sql.SQL(
+                "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                sets=sql.SQL(", ").join(set_parts),
+                where=where_sql,
+                ret=self.return_clause(),
             )
-            params.append(v)
 
-        where_sql = self._where_pk_rev()
-        where_params: list[Any] = [current.id, current.rev]
-        where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
-        params.extend(where_params)
+            row = await self.client.fetch_one(
+                stmt, params, row_factory="dict", commit=False
+            )
 
-        stmt = sql.SQL(
-            "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
-        ).format(
-            table=self.source_qname.ident(),
-            sets=sql.SQL(", ").join(set_parts),
-            where=where_sql,
-            ret=self.return_clause(),
-        )
+            if row is None:
+                raise ConcurrencyError("Failed to update record")
 
-        row = await self.client.fetch_one(stmt, params, row_factory="dict", commit=True)
+            res = pydantic_validate(self.model_type, row)
+            await self._write_history(res)
 
-        if row is None:
-            raise ConcurrencyError("Failed to update record")
-
-        res = pydantic_validate(self.model_type, row)
-        await self._write_history(res)
-
-        return res, diff
+            return res, diff
 
     # ....................... #
 
@@ -797,7 +835,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             stmt,
             params,
             row_factory="dict",
-            commit=True,
+            commit=False,
         )
         updated_ids = {row[ID_FIELD] for row in rows}
         expected_ids = {_id for _id, _, _ in batch}
@@ -828,103 +866,106 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        currents = await self.read_gw.get_many(pks)
+        async with self._write_tx():
+            currents = await self.read_gw.get_many(pks)
 
-        await self.column_types()
+            await self.column_types()
 
-        groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = defaultdict(
-            list
-        )
-
-        if updates is None:
-
-            async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
-                _, diff = c.touch()
-                diff = self.__bump_rev(c, diff)
-                adapted_diff = await self.adapt_payload_for_write(diff, create=False)
-
-                return c.id, c.rev, adapted_diff
-
-            results = await gather_db_work(
-                self.client,
-                [partial(_prepare_touch, c) for c in currents],
+            groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = (
+                defaultdict(list)
             )
-            for cid, crev, diff in results:
-                # always the same key so we can handle only one group
-                key = tuple(sorted(diff.keys()))
-                groups[key].append((cid, crev, diff))
 
-        else:
-            # if revisions are provided, validate historical consistency
-            if revs is not None:
-                data = [
-                    (c, r, u)
-                    for c, r, u in zip(
-                        currents,
-                        revs,
-                        updates,
-                        strict=True,
+            if updates is None:
+
+                async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
+                    _, diff = c.touch()
+                    diff = self.__bump_rev(c, diff)
+                    adapted_diff = await self.adapt_payload_for_write(
+                        diff, create=False
                     )
-                ]
-                await self._validate_history(*data)
 
-            async def _prepare_update(
-                c: D,
-                u: JsonDict,
-            ) -> tuple[UUID, int, JsonDict] | None:
-                _, diff = c.update(u)
-                if not diff:
-                    return None
+                    return c.id, c.rev, adapted_diff
 
-                diff = self.__bump_rev(c, diff)
-
-                return (
-                    c.id,
-                    c.rev,
-                    await self.adapt_payload_for_write(diff, create=False),
+                results = await gather_db_work(
+                    self.client,
+                    [partial(_prepare_touch, c) for c in currents],
                 )
-
-            results = await gather_db_work(
-                self.client,
-                [
-                    partial(_prepare_update, c, u)  # type: ignore[misc]
-                    for c, u in zip(currents, updates, strict=True)
-                ],
-            )
-            for r in results:
-                if r:
-                    cid, crev, diff = r
+                for cid, crev, diff in results:
                     # always the same key so we can handle only one group
                     key = tuple(sorted(diff.keys()))
                     groups[key].append((cid, crev, diff))
 
-        if not groups:
-            return currents, [{} for _ in currents]
+            else:
+                # if revisions are provided, validate historical consistency
+                if revs is not None:
+                    data = [
+                        (c, r, u)
+                        for c, r, u in zip(
+                            currents,
+                            revs,
+                            updates,
+                            strict=True,
+                        )
+                    ]
+                    await self._validate_history(*data)
 
-        updated_models: dict[UUID, D] = {}
-        update_diffs: dict[UUID, JsonDict] = {}
+                async def _prepare_update(
+                    c: D,
+                    u: JsonDict,
+                ) -> tuple[UUID, int, JsonDict] | None:
+                    _, diff = c.update(u)
+                    if not diff:
+                        return None
 
-        work: list[tuple[tuple[str, ...], list[tuple[UUID, int, JsonDict]]]] = []
-        for fields_key, rows in groups.items():
-            for start in range(0, len(rows), batch_size):
-                work.append((fields_key, rows[start : start + batch_size]))
+                    diff = self.__bump_rev(c, diff)
 
-        batch_results = await gather_db_work(
-            self.client,
-            [partial(self.__patch_group, fk, bb) for fk, bb in work],
-        )
-        for (_, batch), updated in zip(work, batch_results, strict=True):
-            updated_models.update({m.id: m for m in updated})
+                    return (
+                        c.id,
+                        c.rev,
+                        await self.adapt_payload_for_write(diff, create=False),
+                    )
 
-            for m, d in zip(updated, batch, strict=True):
-                update_diffs[m.id] = d[-1]
+                results = await gather_db_work(
+                    self.client,
+                    [
+                        partial(_prepare_update, c, u)  # type: ignore[misc]
+                        for c, u in zip(currents, updates, strict=True)
+                    ],
+                )
+                for r in results:
+                    if r:
+                        cid, crev, diff = r
+                        # always the same key so we can handle only one group
+                        key = tuple(sorted(diff.keys()))
+                        groups[key].append((cid, crev, diff))
 
-        res = [updated_models.get(c.id, c) for c in currents]
-        res_diffs = [update_diffs.get(c.id, {}) for c in res]
+            if not groups:
+                return currents, [{} for _ in currents]
 
-        await self._write_history(*res)
+            updated_models: dict[UUID, D] = {}
+            update_diffs: dict[UUID, JsonDict] = {}
 
-        return res, res_diffs
+            work: list[tuple[tuple[str, ...], list[tuple[UUID, int, JsonDict]]]] = []
+            for fields_key, rows in groups.items():
+                for start in range(0, len(rows), batch_size):
+                    work.append((fields_key, rows[start : start + batch_size]))
+
+            batch_results = await gather_db_work(
+                self.client,
+                [partial(self.__patch_group, fk, bb) for fk, bb in work],
+            )
+            for (_, batch), updated in zip(work, batch_results, strict=True):
+                updated_models.update({m.id: m for m in updated})
+
+                for m, d in zip(updated, batch, strict=True):
+                    update_diffs[m.id] = d[-1]
+
+            res = [updated_models.get(c.id, c) for c in currents]
+            res_diffs = [update_diffs.get(c.id, {}) for c in res]
+
+            await self._write_history(*res)
+
+            return res, res_diffs
 
     # ....................... #
 
@@ -978,46 +1019,47 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if not adapted:
             return 0, []
 
-        set_parts: list[sql.Composable] = []
-        params: list[Any] = []
+        async with self._write_tx():
+            set_parts: list[sql.Composable] = []
+            params: list[Any] = []
 
-        for k, v in adapted.items():
-            set_parts.append(
-                sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
-            )
-            params.append(v)
-
-        if self.strategy == "application":
-            set_parts.append(
-                sql.SQL("{} = {} + 1").format(
-                    self._ident_rev(),
-                    self._ident_rev(),
+            for k, v in adapted.items():
+                set_parts.append(
+                    sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder())
                 )
+                params.append(v)
+
+            if self.strategy == "application":
+                set_parts.append(
+                    sql.SQL("{} = {} + 1").format(
+                        self._ident_rev(),
+                        self._ident_rev(),
+                    )
+                )
+
+            where_sql, where_params = await self.where_clause(filters)
+            params.extend(where_params)
+
+            stmt = sql.SQL(
+                "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
+            ).format(
+                table=self.source_qname.ident(),
+                sets=sql.SQL(", ").join(set_parts),
+                where=where_sql,
+                ret=self.return_clause(),
             )
 
-        where_sql, where_params = await self.where_clause(filters)
-        params.extend(where_params)
+            rows = await self.client.fetch_all(
+                stmt,
+                params,
+                row_factory="dict",
+                commit=False,
+            )
 
-        stmt = sql.SQL(
-            "UPDATE {table} SET {sets} WHERE {where} RETURNING {ret}"
-        ).format(
-            table=self.source_qname.ident(),
-            sets=sql.SQL(", ").join(set_parts),
-            where=where_sql,
-            ret=self.return_clause(),
-        )
+            doms = pydantic_validate_many(self.model_type, rows)
+            await self._write_history(*doms)
 
-        rows = await self.client.fetch_all(
-            stmt,
-            params,
-            row_factory="dict",
-            commit=True,
-        )
-
-        doms = pydantic_validate_many(self.model_type, rows)
-        await self._write_history(*doms)
-
-        return len(doms), doms
+            return len(doms), doms
 
     # ....................... #
 
@@ -1131,40 +1173,41 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise ValidationError("Primary keys must be unique")
 
-        where_sql = sql.SQL("{pk} = ANY({ids})").format(
-            pk=self.ident_pk(),
-            ids=sql.Placeholder(),
-        )
-        trailing_params: list[Any] = []
-        where_sql, trailing_params = self._add_tenant_where(  # type: ignore[assignment]
-            where_sql,
-            trailing_params,
-        )
+        async with self._write_tx():
+            where_sql = sql.SQL("{pk} = ANY({ids})").format(
+                pk=self.ident_pk(),
+                ids=sql.Placeholder(),
+            )
+            trailing_params: list[Any] = []
+            where_sql, trailing_params = self._add_tenant_where(  # type: ignore[assignment]
+                where_sql,
+                trailing_params,
+            )
 
-        stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
-            table=self.source_qname.ident(),
-            where=where_sql,
-        )
+            stmt = sql.SQL("DELETE FROM {table} WHERE {where}").format(
+                table=self.source_qname.ident(),
+                where=where_sql,
+            )
 
-        async def _delete_batch(batch: list[UUID]) -> None:
-            params: list[Any] = [list(batch), *trailing_params]
+            async def _delete_batch(batch: list[UUID]) -> None:
+                params: list[Any] = [list(batch), *trailing_params]
 
-            if self.tenant_aware:
-                n = await self.client.execute(stmt, params, return_rowcount=True)
+                if self.tenant_aware:
+                    n = await self.client.execute(stmt, params, return_rowcount=True)
 
-                if n != len(batch):
-                    raise NotFoundError(
-                        "Some records not found or not accessible in this tenant scope"
-                    )
-            else:
-                await self.client.execute(stmt, params)
+                    if n != len(batch):
+                        raise NotFoundError(
+                            "Some records not found or not accessible in this tenant scope"
+                        )
+                else:
+                    await self.client.execute(stmt, params)
 
-        batches = [
-            list(pks[start : start + batch_size])
-            for start in range(0, len(pks), batch_size)
-        ]
+            batches = [
+                list(pks[start : start + batch_size])
+                for start in range(0, len(pks), batch_size)
+            ]
 
-        await gather_db_work(
-            self.client,
-            [partial(_delete_batch, b) for b in batches],
-        )
+            await gather_db_work(
+                self.client,
+                [partial(_delete_batch, b) for b in batches],
+            )

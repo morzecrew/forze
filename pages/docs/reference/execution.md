@@ -1,6 +1,6 @@
 # Execution
 
-The execution engine manages dependency injection, context creation, and application lifecycle. It connects domain models and contracts to infrastructure adapters at runtime. For the conceptual overview, see [Application Layer](../concepts/application-layer.md).
+The execution engine manages dependency injection, context creation, and application lifecycle. It connects domain models and contracts to infrastructure adapters at runtime. For the conceptual overview, see [Application Layer](../concepts/application-layer.md). Optional **capability-driven** guard/effect ordering lives on `UsecasePlan`; see [Capability execution](capability-execution.md).
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/deps-resolution.svg" alt="Dependency resolution from DepsPlan through modules, Deps, keys, and ports">

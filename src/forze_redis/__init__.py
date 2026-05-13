@@ -7,6 +7,7 @@ require_redis()
 # ....................... #
 
 from .execution import (
+    RedisBlockingClientDepKey,
     RedisCacheConfig,
     RedisClientDepKey,
     RedisCounterConfig,
@@ -27,6 +28,7 @@ __all__ = [
     "RedisConfig",
     "RoutedRedisClient",
     "RedisClientDepKey",
+    "RedisBlockingClientDepKey",
     "RedisDepsModule",
     "redis_lifecycle_step",
     "routed_redis_lifecycle_step",

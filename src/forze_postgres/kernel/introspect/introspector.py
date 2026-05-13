@@ -6,11 +6,12 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from time import monotonic
-from typing import Any, cast, final
+from typing import Any, TypeVar, cast, final
 
+import asyncio
 import attrs
 from psycopg import sql
 
@@ -31,6 +32,8 @@ from .types import (
 from .utils import extract_index_expr_from_indexdef, normalize_pg_type
 
 # ----------------------- #
+
+T_co = TypeVar("T_co")
 
 
 @final
@@ -64,7 +67,20 @@ class PostgresIntrospector:
     :meth:`invalidate_relation`, :meth:`invalidate_index`, or :meth:`clear`.
     """
 
+    max_cache_entries_per_kind: int | None = None
+    """When set, cap each of the relation, column, and index caches at this many keys.
+
+    When a cap is exceeded, the oldest inserted key in that cache is evicted
+    (FIFO by insertion order). ``None`` means unbounded per-kind growth.
+    """
+
     # Non initable fields
+    __inflight_guard: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __inflight_tasks: dict[tuple[Any, ...], asyncio.Task[Any]] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+
     __column_cache: PostgresColumnCache = attrs.field(factory=dict, init=False)
     __index_cache: PostgresIndexCache = attrs.field(factory=dict, init=False)
     __relation_cache: PostgresRelationCache = attrs.field(factory=dict, init=False)
@@ -81,6 +97,38 @@ class PostgresIntrospector:
         factory=dict,
         init=False,
     )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        mx = self.max_cache_entries_per_kind
+
+        if mx is not None and mx < 1:
+            raise CoreError("max_cache_entries_per_kind must be at least 1 when set")
+
+    # ....................... #
+
+    async def _await_singleflight(
+        self,
+        inflight_key: tuple[Any, ...],
+        factory: Callable[[], Coroutine[Any, Any, T_co]],
+    ) -> T_co:
+        async with self.__inflight_guard:
+            existing = self.__inflight_tasks.get(inflight_key)
+
+            if existing is None:
+                existing = asyncio.create_task(factory())
+                self.__inflight_tasks[inflight_key] = existing
+
+            my_task = existing
+
+        try:
+            return await my_task
+
+        finally:
+            async with self.__inflight_guard:
+                if self.__inflight_tasks.get(inflight_key) is my_task:
+                    self.__inflight_tasks.pop(inflight_key, None)
 
     # ....................... #
 
@@ -138,6 +186,35 @@ class PostgresIntrospector:
         if self._ttl_seconds() is not None:
             self.__relation_cache_ts[key] = monotonic()
 
+        self._trim_cache(self.__relation_cache, self.__relation_cache_ts)
+
+    def _trim_cache(
+        self,
+        cache: dict[tuple[str, str, str], Any],
+        ts: dict[tuple[str, str, str], float] | None,
+    ) -> None:
+        mx = self.max_cache_entries_per_kind
+
+        if mx is None:
+            return
+
+        while len(cache) > mx:
+            k = next(iter(cache))
+            cache.pop(k, None)
+
+            if ts is not None:
+                ts.pop(k, None)
+
+    def _trim_index_caches(self) -> None:
+        mx = self.max_cache_entries_per_kind
+
+        if mx is None:
+            return
+
+        while len(self.__index_cache) > mx:
+            k = next(iter(self.__index_cache))
+            self._index_bundle_evict(k)
+
     def _column_ttl_expired(self, key: tuple[str, str, str]) -> bool:
         ttl = self._ttl_seconds()
 
@@ -157,6 +234,8 @@ class PostgresIntrospector:
         if self._ttl_seconds() is not None:
             self.__column_cache_ts[key] = monotonic()
 
+        self._trim_cache(self.__column_cache, self.__column_cache_ts)
+
     def _index_bundle_ttl_expired(self, key: tuple[str, str, str]) -> bool:
         ttl = self._ttl_seconds()
 
@@ -174,6 +253,8 @@ class PostgresIntrospector:
         if self._ttl_seconds() is not None:
             self.__index_cache_ts[key] = monotonic()
 
+        self._trim_index_caches()
+
     def _index_bundle_evict(self, key: tuple[str, str, str]) -> None:
         self.__index_cache.pop(key, None)
         self.__index_def_cache.pop(key, None)
@@ -181,31 +262,12 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def get_relation(
+    async def _fetch_relation_kind(
         self,
-        *,
-        schema: str | None,
+        schema: str,
         relation: str,
+        key: tuple[str, str, str],
     ) -> PostgresRelationKind:
-        """Return the :data:`PostgresRelationKind` of a relation, using the cache when available.
-
-        :param schema: Schema name (defaults to ``"public"`` when ``None``).
-        :param relation: Relation (table/view) name.
-        :returns: Classified relation kind.
-        :raises CoreError: If the relation does not exist.
-        """
-
-        schema = self.__normalize_schema(schema)
-        key = self._rel_key(schema, relation)
-
-        if key in self.__relation_cache:
-            if self._relation_ttl_expired(key):
-                self.__relation_cache.pop(key, None)
-                self.__relation_cache_ts.pop(key, None)
-
-            else:
-                return self.__relation_cache[key]
-
         stmt = sql.SQL(
             """
             SELECT c.relkind
@@ -246,6 +308,38 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def get_relation(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> PostgresRelationKind:
+        """Return the :data:`PostgresRelationKind` of a relation, using the cache when available.
+
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :param relation: Relation (table/view) name.
+        :returns: Classified relation kind.
+        :raises CoreError: If the relation does not exist.
+        """
+
+        schema = self.__normalize_schema(schema)
+        key = self._rel_key(schema, relation)
+
+        if key in self.__relation_cache:
+            if self._relation_ttl_expired(key):
+                self.__relation_cache.pop(key, None)
+                self.__relation_cache_ts.pop(key, None)
+
+            else:
+                return self.__relation_cache[key]
+
+        return await self._await_singleflight(
+            ("pg_rel_kind", *key),
+            lambda: self._fetch_relation_kind(schema, relation, key),
+        )
+
+    # ....................... #
+
     async def require_relation(
         self,
         *,
@@ -280,32 +374,12 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def get_column_types(
+    async def _fetch_column_types_uncached(
         self,
-        *,
-        schema: str | None,
+        schema: str,
         relation: str,
+        key: tuple[str, str, str],
     ) -> PostgresColumnTypes:
-        """Return the column type map for a relation, using the cache when available.
-
-        :param schema: Schema name (defaults to ``"public"`` when ``None``).
-        :param relation: Relation name.
-        :returns: Mapping of column names to :class:`PostgresType`.
-        :raises CoreError: If the relation does not exist or has no columns.
-        """
-
-        schema = self.__normalize_schema(schema)
-        key = self._rel_key(schema, relation)
-
-        if key in self.__column_cache:
-            if self._column_ttl_expired(key):
-                self.__column_cache.pop(key, None)
-                self.__column_cache_ts.pop(key, None)
-
-            else:
-                return self.__column_cache[key]
-
-        # Fail fast if relation doesn't exist
         await self.require_relation(schema=schema, relation=relation)
 
         stmt = sql.SQL(
@@ -373,25 +447,44 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def get_index_def(self, *, index: str, schema: str | None = None) -> str:
-        """Return the raw ``CREATE INDEX`` definition for an index.
+    async def get_column_types(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> PostgresColumnTypes:
+        """Return the column type map for a relation, using the cache when available.
 
-        :param index: Index name.
         :param schema: Schema name (defaults to ``"public"`` when ``None``).
-        :returns: The full index definition string.
-        :raises CoreError: If the index does not exist.
+        :param relation: Relation name.
+        :returns: Mapping of column names to :class:`PostgresType`.
+        :raises CoreError: If the relation does not exist or has no columns.
         """
 
         schema = self.__normalize_schema(schema)
-        key = self._idx_key(schema, index)
+        key = self._rel_key(schema, relation)
 
-        if key in self.__index_def_cache:
-            if self._index_bundle_ttl_expired(key):
-                self._index_bundle_evict(key)
+        if key in self.__column_cache:
+            if self._column_ttl_expired(key):
+                self.__column_cache.pop(key, None)
+                self.__column_cache_ts.pop(key, None)
 
             else:
-                return self.__index_def_cache[key]
+                return self.__column_cache[key]
 
+        return await self._await_singleflight(
+            ("pg_col_types", *key),
+            lambda: self._fetch_column_types_uncached(schema, relation, key),
+        )
+
+    # ....................... #
+
+    async def _fetch_index_def_uncached(
+        self,
+        schema: str,
+        index: str,
+        key: tuple[str, str, str],
+    ) -> str:
         stmt = sql.SQL(
             """
             SELECT pg_get_indexdef(c.oid) AS indexdef
@@ -416,35 +509,38 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def get_index_info(
-        self,
-        *,
-        index: str,
-        schema: str | None = None,
-    ) -> PostgresIndexInfo:
-        """Return full :class:`PostgresIndexInfo` for an index, classifying its engine.
-
-        Populates both the index cache and the index definition cache.
+    async def get_index_def(self, *, index: str, schema: str | None = None) -> str:
+        """Return the raw ``CREATE INDEX`` definition for an index.
 
         :param index: Index name.
         :param schema: Schema name (defaults to ``"public"`` when ``None``).
-        :returns: Index metadata with classified engine.
+        :returns: The full index definition string.
         :raises CoreError: If the index does not exist.
         """
 
         schema = self.__normalize_schema(schema)
         key = self._idx_key(schema, index)
 
-        if key in self.__index_cache:
+        if key in self.__index_def_cache:
             if self._index_bundle_ttl_expired(key):
                 self._index_bundle_evict(key)
 
             else:
-                return self.__index_cache[key]
+                return self.__index_def_cache[key]
 
-        # NOTE:
-        # - pg_get_expr(ix.indexprs, ix.indrelid) gives expression for expression indexes
-        # - columns extracted from indkey -> pg_attribute
+        return await self._await_singleflight(
+            ("pg_idxdef", *key),
+            lambda: self._fetch_index_def_uncached(schema, index, key),
+        )
+
+    # ....................... #
+
+    async def _fetch_index_info_uncached(
+        self,
+        schema: str,
+        index: str,
+        key: tuple[str, str, str],
+    ) -> PostgresIndexInfo:
         stmt = sql.SQL(
             """
             SELECT
@@ -533,6 +629,39 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def get_index_info(
+        self,
+        *,
+        index: str,
+        schema: str | None = None,
+    ) -> PostgresIndexInfo:
+        """Return full :class:`PostgresIndexInfo` for an index, classifying its engine.
+
+        Populates both the index cache and the index definition cache.
+
+        :param index: Index name.
+        :param schema: Schema name (defaults to ``"public"`` when ``None``).
+        :returns: Index metadata with classified engine.
+        :raises CoreError: If the index does not exist.
+        """
+
+        schema = self.__normalize_schema(schema)
+        key = self._idx_key(schema, index)
+
+        if key in self.__index_cache:
+            if self._index_bundle_ttl_expired(key):
+                self._index_bundle_evict(key)
+
+            else:
+                return self.__index_cache[key]
+
+        return await self._await_singleflight(
+            ("pg_idxinfo", *key),
+            lambda: self._fetch_index_info_uncached(schema, index, key),
+        )
+
+    # ....................... #
+
     def invalidate_relation(self, *, schema: str | None, relation: str) -> None:
         """Evict cached relation kind and column types for a specific relation."""
 
@@ -564,3 +693,4 @@ class PostgresIntrospector:
         self.__relation_cache_ts.clear()
         self.__column_cache_ts.clear()
         self.__index_cache_ts.clear()
+        self.__inflight_tasks.clear()

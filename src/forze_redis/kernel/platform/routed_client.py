@@ -105,29 +105,42 @@ class RoutedRedisClient(RedisClientPort):
                 self._clients.move_to_end(tid)
                 return client
 
-            ref = self.secret_ref_for_tenant(tid)
+        ref = self.secret_ref_for_tenant(tid)
 
-            try:
-                dsn = await self.secrets.resolve_str(ref)
+        try:
+            dsn = await self.secrets.resolve_str(ref)
 
-            except SecretNotFoundError:
-                raise
+        except SecretNotFoundError:
+            raise
 
-            except Exception as e:
-                raise InfrastructureError(
-                    f"Failed to resolve Redis secret for tenant {tid}: {e}",
-                ) from e
+        except Exception as e:
+            raise InfrastructureError(
+                f"Failed to resolve Redis secret for tenant {tid}: {e}",
+            ) from e
 
-            client = RedisClient()
-            await client.initialize(dsn, config=self.pool_config)
-            self._clients[tid] = client
+        fresh = RedisClient()
+        await fresh.initialize(dsn, config=self.pool_config)
+
+        evicted: list[RedisClient] = []
+
+        async with self._lock:
+            if tid in self._clients:
+                await fresh.close()
+                client = self._clients[tid]
+                self._clients.move_to_end(tid)
+                return client
+
+            self._clients[tid] = fresh
             self._clients.move_to_end(tid)
 
             while len(self._clients) > self.max_cached_tenants:
                 _, old = self._clients.popitem(last=False)
-                await old.close()
+                evicted.append(old)
 
-            return client
+        for old in evicted:
+            await old.close()
+
+        return fresh
 
     # ....................... #
 
@@ -157,6 +170,10 @@ class RoutedRedisClient(RedisClientPort):
         inner = await self._get_client()
         return await inner.pttl(key)
 
+    async def pttl_raw_ms(self, key: str) -> int:
+        inner = await self._get_client()
+        return await inner.pttl_raw_ms(key)
+
     async def run_script(
         self,
         script: str,
@@ -166,11 +183,11 @@ class RoutedRedisClient(RedisClientPort):
         inner = await self._get_client()
         return await inner.run_script(script, keys, args)
 
-    async def get(self, key: str) -> bytes | str | None:
+    async def get(self, key: str) -> bytes | None:
         inner = await self._get_client()
         return await inner.get(key)
 
-    async def mget(self, keys: Sequence[str]) -> list[bytes | str | None]:
+    async def mget(self, keys: Sequence[str]) -> list[bytes | None]:
         inner = await self._get_client()
         return await inner.mget(keys)
 

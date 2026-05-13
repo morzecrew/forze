@@ -10,6 +10,7 @@ from forze.application.contracts.authz import AuthzDepKey, AuthzSpec
 from forze.application.execution import CallContext, Deps, ExecutionContext
 from forze.application.guards.authz import (
     AuthzPermissionRequirement,
+    authz_permission_capability_keys,
     authz_permission_guard_factory,
 )
 from forze.base.errors import AuthenticationError, AuthorizationError
@@ -77,3 +78,18 @@ async def test_authz_permission_guard_requires_identity_by_default() -> None:
         await guard(None)
 
     port.permits.assert_not_called()
+
+
+def test_authz_permission_capability_keys() -> None:
+    req = AuthzPermissionRequirement(permission_key="doc.write")
+    r, p = authz_permission_capability_keys(req)
+    assert "authn.principal" in r
+    assert "authz.permits:doc.write" in p
+
+    req2 = AuthzPermissionRequirement(
+        permission_key="doc.read",
+        require_authn_identity=False,
+    )
+    r2, p2 = authz_permission_capability_keys(req2)
+    assert r2 == frozenset()
+    assert "authz.permits:doc.read" in p2

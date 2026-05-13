@@ -42,6 +42,10 @@ class PostgresReadOnlyDocumentConfig(_BasePostgresConfig):
     """Optional Python types (``type`` objects) for dot-separated filter/sort paths when
     the read model alone does not resolve a leaf type (e.g. ``dict`` / ``Any``)."""
 
+    batch_size: NotRequired[int]
+    """Chunk size for bulk writes and for internal chunked offset reads when pagination
+    omits ``limit``. Optional; defaults to 200."""
+
 
 # ....................... #
 
@@ -58,9 +62,6 @@ class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):
 
     history: NotRequired[tuple[str, str]]
     """History relation (schema, table), optional."""
-
-    batch_size: NotRequired[int]
-    """Batch size for writing, optional. Defaults to 200."""
 
 
 # ....................... #

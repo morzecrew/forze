@@ -67,6 +67,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
                     res[k] = loads(rv)
 
                 except (ValueError, TypeError):
+                    logger.warning("Cache decode failed for key=%s", k, exc_info=False)
                     continue
 
         return res
@@ -276,10 +277,9 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     # ....................... #
 
     async def set_versioned(self, key: str, version: str, value: Any) -> None:
-        await asyncio.gather(
-            self.__mset_pointers({key: version}, ttl=self.ttl_pointer),
-            self.__mset_bodies({(key, version): value}, ttl=self.ttl_body),
-        )
+        async with self.client.pipeline(transaction=True):
+            await self.__mset_bodies({(key, version): value}, ttl=self.ttl_body)
+            await self.__mset_pointers({key: version}, ttl=self.ttl_pointer)
 
     # ....................... #
 
@@ -302,10 +302,9 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             key: version for (key, version) in key_version_mapping.keys()
         }
 
-        await asyncio.gather(
-            self.__mset_pointers(pointer_mapping, ttl=self.ttl_pointer),
-            self.__mset_bodies(key_version_mapping, ttl=self.ttl_body),
-        )
+        async with self.client.pipeline(transaction=True):
+            await self.__mset_bodies(key_version_mapping, ttl=self.ttl_body)
+            await self.__mset_pointers(pointer_mapping, ttl=self.ttl_pointer)
 
     # ....................... #
 

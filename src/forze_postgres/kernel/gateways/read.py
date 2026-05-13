@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Never, Sequence, TypeVar, final, overload
+from typing import Any, Literal, Never, Sequence, TypeVar, final, overload
 from uuid import UUID
 
 from psycopg import sql
@@ -35,6 +35,27 @@ from .base import PostgresGateway
 
 # ----------------------- #
 
+ForUpdateMode = bool | Literal["nowait", "skip_locked"]
+
+
+def _for_update_sql(mode: ForUpdateMode) -> sql.SQL | None:
+    if mode is False:
+        return None
+
+    if mode is True:
+        return sql.SQL(" FOR UPDATE")
+
+    if mode == "nowait":
+        return sql.SQL(" FOR UPDATE NOWAIT")
+
+    if mode == "skip_locked":
+        return sql.SQL(" FOR UPDATE SKIP LOCKED")
+
+    raise CoreError(f"Invalid for_update mode: {mode!r}")
+
+
+# ----------------------- #
+
 T = TypeVar("T", bound=BaseModel)
 
 # ....................... #
@@ -44,12 +65,20 @@ T = TypeVar("T", bound=BaseModel)
 class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
     """Read-only gateway providing single/batch lookups, filtered queries, and counting."""
 
+    def _effective_sql_limit(self, limit: int | None) -> int | None:
+        """Apply :attr:`~forze_postgres.kernel.gateways.base.PostgresGateway.find_many_implicit_limit` when *limit* is omitted."""
+
+        if limit is not None:
+            return limit
+
+        return self.find_many_implicit_limit
+
     @overload
     async def get(
         self,
         pk: UUID,
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M: ...
@@ -59,7 +88,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         pk: UUID,
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T: ...
@@ -69,7 +98,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         pk: UUID,
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict: ...
@@ -79,7 +108,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         pk: UUID,
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never: ...
@@ -88,7 +117,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: ForUpdateMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict:
@@ -106,9 +135,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             where=where_sql,
         )
 
-        if for_update:
+        fu = _for_update_sql(for_update)
+
+        if fu is not None:
             self.client.require_transaction()
-            stmt += sql.SQL(" FOR UPDATE")
+            stmt += fu
 
         row = await self.client.fetch_one(stmt, where_params, row_factory="dict")
 
@@ -209,7 +240,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None: ...
@@ -219,7 +250,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None: ...
@@ -229,7 +260,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None: ...
@@ -239,7 +270,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: ForUpdateMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never: ...
@@ -248,7 +279,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: ForUpdateMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None:
@@ -261,9 +292,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             where=where,
         )
 
-        if for_update:
+        fu = _for_update_sql(for_update)
+
+        if fu is not None:
             self.client.require_transaction()
-            stmt += sql.SQL(" FOR UPDATE")
+            stmt += fu
 
         row = await self.client.fetch_one(stmt, params, row_factory="dict")
 
@@ -393,9 +426,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         if sort_clause is not None:
             stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
 
-        if limit is not None:
+        eff_limit = self._effective_sql_limit(limit)
+
+        if eff_limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(limit)
+            params.append(eff_limit)
 
         if offset is not None:
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
@@ -456,9 +491,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         if sort_clause is not None:
             stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
 
-        if limit is not None:
+        eff_limit = self._effective_sql_limit(limit)
+
+        if eff_limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(limit)
+            params.append(eff_limit)
 
         if offset is not None:
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())

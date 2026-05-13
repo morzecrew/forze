@@ -1,6 +1,6 @@
 # Middleware & Plans
 
-The middleware system wraps usecases with cross-cutting behavior: authorization, transaction boundaries, logging, side effects. Plans and registries provide a declarative way to compose these into per-operation chains. For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Usecase Composition](../concepts/usecase-composition.md).
+The middleware system wraps usecases with cross-cutting behavior: authorization, transaction boundaries, logging, side effects. Plans and registries provide a declarative way to compose these into per-operation chains. For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Usecase Composition](../concepts/usecase-composition.md). For optional **capability-driven** guard/effect ordering and `UsecasePlan.explain`, see [Capability execution](capability-execution.md).
 
 ## Usecase
 
@@ -199,18 +199,25 @@ Within a bucket, middlewares are sorted by priority (descending). Higher priorit
         .before("create", auth_guard, priority=100)   # runs second
     )
 
+When `UsecasePlan.use_capability_engine` is **enabled**, guard/effect buckets listed on the [Capability execution](capability-execution.md) page are collapsed into **segment** middlewares (`CapabilityGuardSegmentMiddleware` / `CapabilityEffectSegmentMiddleware`) plus unchanged `wrap` / `finally` / `on_failure` entries, so the composed `Usecase.middlewares` tuple is shorter than the legacy flat `GuardMiddleware` / `EffectMiddleware` per-step tuple — troubleshooting should start from `UsecasePlan.explain(op)` rather than assuming one tuple entry per plan row.
+
 ### Plan methods
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
 | `tx(op, *, route)` | `(OpKey, route) -> Self` | Enable transaction wrapping |
-| `before(op, guard, *, priority=0)` | `(OpKey, GuardFactory, priority) -> Self` | Add to `outer_before` |
-| `after(op, effect, *, priority=0)` | `(OpKey, EffectFactory, priority) -> Self` | Add to `outer_after` |
+| `before(op, guard, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, GuardFactory, …) -> Self` | Add to `outer_before` |
+| `before_pipeline(op, guards, *, first_priority=0)` | `(OpKey, Sequence[GuardFactory \| GuardStep], …) -> Self` | Add several `outer_before` guards |
+| `after(op, effect, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, EffectFactory, …) -> Self` | Add to `outer_after` |
+| `after_pipeline(op, effects, *, first_priority=0)` | `(OpKey, Sequence[EffectFactory \| EffectStep], …) -> Self` | Add several `outer_after` effects |
 | `wrap(op, mw, *, priority=0)` | `(OpKey, MiddlewareFactory, priority) -> Self` | Add to `outer_wrap` |
-| `in_tx_before(op, guard, *, priority=0)` | `(OpKey, GuardFactory, priority) -> Self` | Add to `in_tx_before` |
-| `in_tx_after(op, effect, *, priority=0)` | `(OpKey, EffectFactory, priority) -> Self` | Add to `in_tx_after` |
+| `in_tx_before(op, guard, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, GuardFactory, …) -> Self` | Add to `in_tx_before` |
+| `in_tx_before_pipeline(op, guards, *, first_priority=0)` | `(OpKey, Sequence[GuardFactory \| GuardStep], …) -> Self` | Add several `in_tx_before` guards |
+| `in_tx_after(op, effect, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, EffectFactory, …) -> Self` | Add to `in_tx_after` |
+| `in_tx_after_pipeline(op, effects, *, first_priority=0)` | `(OpKey, Sequence[EffectFactory \| EffectStep], …) -> Self` | Add several `in_tx_after` effects |
 | `in_tx_wrap(op, mw, *, priority=0)` | `(OpKey, MiddlewareFactory, priority) -> Self` | Add to `in_tx_wrap` |
-| `after_commit(op, effect, *, priority=0)` | `(OpKey, EffectFactory, priority) -> Self` | Add to `after_commit` |
+| `after_commit(op, effect, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, EffectFactory, …) -> Self` | Add to `after_commit` |
+| `after_commit_pipeline(op, effects, *, first_priority=0)` | `(OpKey, Sequence[EffectFactory \| EffectStep], …) -> Self` | Add several `after_commit` effects |
 
 Factory types:
 

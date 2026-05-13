@@ -58,6 +58,18 @@ class PostgresConfig:
     ``None`` means ``max(1, max_size - pool_headroom)``.
     """
 
+    statement_timeout: timedelta | None = None
+    """If set, ``SET statement_timeout`` on each new pool connection (milliseconds)."""
+
+    lock_timeout: timedelta | None = None
+    """If set, ``SET lock_timeout`` on each new pool connection (milliseconds)."""
+
+    idle_in_transaction_session_timeout: timedelta | None = None
+    """If set, ``SET idle_in_transaction_session_timeout`` on each new pool connection."""
+
+    application_name: str | None = None
+    """If set, ``SET application_name`` on each new pool connection."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -91,4 +103,7 @@ class PostgresConfig:
                 self.max_size,
             )
 
-        #! add warnings for timeouts
+        if self.application_name is not None and len(self.application_name) > 63:
+            raise CoreError(
+                "application_name must be at most 63 characters for Postgres"
+            )

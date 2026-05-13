@@ -1,5 +1,6 @@
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 
 import attrs
 
@@ -22,7 +23,7 @@ class FakeRedisClient:
 
     store: dict[str, bytes] = attrs.Factory(dict)
 
-    async def mget(self, keys: Sequence[str]) -> list[bytes | str | None]:
+    async def mget(self, keys: Sequence[str]) -> list[bytes | None]:
         return [self.store.get(k) for k in keys]
 
     async def mset(
@@ -48,6 +49,10 @@ class FakeRedisClient:
                 removed += 1
 
         return removed
+
+    @asynccontextmanager
+    async def pipeline(self, *, transaction: bool = True) -> AsyncIterator["FakeRedisClient"]:
+        yield self
 
 
 def test_redis_cache_adapter_keys_no_tenant() -> None:

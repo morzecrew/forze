@@ -31,7 +31,7 @@ from forze_redis.execution.deps.deps import (
     ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
 )
-from forze_redis.execution.deps.keys import RedisClientDepKey
+from forze_redis.execution.deps.keys import RedisBlockingClientDepKey, RedisClientDepKey
 from forze_redis.execution.deps.module import RedisDepsModule
 from forze_redis.kernel.platform import RedisClient
 
@@ -61,8 +61,15 @@ class TestRedisDepsModule:
         assert deps.exists(DistributedLockQueryDepKey, route="dl1")
         assert deps.exists(DistributedLockCommandDepKey, route="dl1")
 
+    def test_registers_optional_blocking_client(self) -> None:
+        main = MagicMock(spec=RedisClient)
+        blocking = MagicMock(spec=RedisClient)
+        module = RedisDepsModule(client=main, blocking_client=blocking)
 
-class TestConfigurableRedisFactories:
+        deps = module()
+
+        assert deps.provide(RedisClientDepKey) is main
+        assert deps.provide(RedisBlockingClientDepKey) is blocking
     def test_cache_adapter(self) -> None:
         factory = ConfigurableRedisCache(
             config={"namespace": "acme", "tenant_aware": True},

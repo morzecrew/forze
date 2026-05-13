@@ -4,18 +4,24 @@ require_redis()
 
 # ....................... #
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, Awaitable, Mapping, Sequence, cast, final
+from typing import Any, AsyncIterator, Mapping, Sequence, TypeVar, cast, final
 
 import attrs
 from redis.asyncio.client import Pipeline, Redis
 from redis.asyncio.connection import ConnectionPool
+from redis.commands.core import AsyncScript
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
-from forze.base.errors import InfrastructureError
+from forze.base.errors import CoreError, InfrastructureError
 from forze.base.primitives import JsonDict
 from forze_redis.kernel._logger import logger
+from forze_redis.kernel.scripts import MSET_BULK_SET
 
 from .errors import redis_handled
 from .port import RedisClientPort
@@ -24,6 +30,34 @@ from .utils import parse_pubsub_message, parse_stream_entries
 from .value_objects import RedisConfig
 
 # ----------------------- #
+
+T = TypeVar("T")
+
+_READ_RETRY_EXC: tuple[type[BaseException], ...] = (
+    RedisConnectionError,
+    RedisTimeoutError,
+    TimeoutError,
+    OSError,
+)
+
+_MGET_CHUNK_SIZE = 2000
+
+_SCRIPT_AWAIT_MAX = 16
+
+# ....................... #
+
+
+def _bytes_or_none(value: bytes | str | None) -> bytes | None:
+    if value is None:
+        return None
+
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+
+    return str(value).encode("utf-8")
+
+
+# ....................... #
 
 
 @final
@@ -49,6 +83,10 @@ class RedisClient(RedisClientPort):
         init=False,
     )
 
+    __script_registry: dict[str, AsyncScript] = attrs.field(factory=dict, init=False)
+
+    __redis_config: RedisConfig = attrs.field(factory=RedisConfig, init=False)
+
     # ....................... #
     # Lifecycle
 
@@ -68,6 +106,11 @@ class RedisClient(RedisClientPort):
         connect_timeout = (
             config.connect_timeout.total_seconds() if config.connect_timeout else None
         )
+        health_check_interval = (
+            int(config.health_check_interval.total_seconds())
+            if config.health_check_interval
+            else None
+        )
 
         self.__pool = (
             ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
@@ -77,16 +120,60 @@ class RedisClient(RedisClientPort):
                 socket_connect_timeout=connect_timeout,
                 decode_responses=False,
                 encoding="utf-8",
+                health_check_interval=health_check_interval,
+                socket_keepalive=config.socket_keepalive,
+                retry_on_timeout=config.retry_on_timeout,
+                client_name=config.client_name,
             )
         )
         self.__client = Redis(connection_pool=self.__pool)
         await self.__client.ping()  # type: ignore[misc]
 
+        self.__redis_config = config
+
         logger.trace("Client initialized successfully")
 
     # ....................... #
 
+    def __in_pipeline(self) -> bool:
+        return self.__current_pipe() is not None
+
+    async def __maybe_read_retry(self, op: str, fn: Callable[[], Awaitable[T]]) -> T:
+        if self.__in_pipeline():
+            return await fn()
+
+        cfg = self.__redis_config
+        attempts = max(0, cfg.read_retry_attempts)
+        base = max(0.0, cfg.read_retry_base_delay.total_seconds())
+        last: BaseException | None = None
+
+        for i in range(attempts + 1):
+            try:
+                return await fn()
+
+            except _READ_RETRY_EXC as e:
+                last = e
+
+                if i >= attempts:
+                    raise
+
+                hook = cfg.on_read_retry
+
+                if hook is not None:
+                    hook(op, i + 1)
+
+                await asyncio.sleep(base * (2**i))
+
+        if last is None:
+            raise CoreError("Last exception is None")
+
+        raise last
+
+    # ....................... #
+
     async def close(self) -> None:
+        self.__script_registry.clear()
+
         if self.__client is not None:
             logger.trace("Client found, closing")
             await self.__client.aclose()
@@ -166,18 +253,35 @@ class RedisClient(RedisClientPort):
 
     @redis_handled("redis.exists")  # type: ignore[untyped-decorator]
     async def exists(self, key: str) -> bool:
-        res = await self.__executor().exists(key)
+        async def _call() -> bool:
+            res = await self.__executor().exists(key)
 
-        return res == 1
+            return res == 1
+
+        return await self.__maybe_read_retry("exists", _call)
 
     # ....................... #
 
     @redis_handled("redis.pttl")  # type: ignore[untyped-decorator]
     async def pttl(self, key: str) -> int | None:
-        raw_res = await self.__executor().pttl(key)
-        res = cast(int, raw_res)
+        """Milliseconds until expiry, or ``None`` if the key is missing or has no TTL."""
 
-        return res if res >= 0 else None
+        raw = await self.pttl_raw_ms(key)
+
+        return raw if raw >= 0 else None
+
+    # ....................... #
+
+    @redis_handled("redis.pttl")  # type: ignore[untyped-decorator]
+    async def pttl_raw_ms(self, key: str) -> int:
+        """Return the raw Redis ``PTTL`` value in milliseconds (``>= 0`` time left, ``-1`` persistent, ``-2`` missing)."""
+
+        async def _call() -> int:
+            raw_res = await self.__executor().pttl(key)
+
+            return int(cast(int, raw_res))
+
+        return await self.__maybe_read_retry("pttl_raw_ms", _call)
 
     # ....................... #
 
@@ -188,26 +292,78 @@ class RedisClient(RedisClientPort):
         keys: Sequence[str],
         args: Sequence[Any],
     ) -> str:
-        numkeys = len(keys)
-        keys_and_args = [*keys, *args]
-        raw_res = self.__executor().eval(script, numkeys, *keys_and_args)
+        pipe = self.__current_pipe()
+        raw_res: Any
+
+        if pipe is None:
+            reg = self.__script_registry.get(script)
+
+            if reg is None:
+                reg = self.__require_client().register_script(script)
+                self.__script_registry[script] = reg
+
+            raw_res = reg(  # pyright: ignore[reportUnknownVariableType]
+                keys=list(keys), args=list(args)
+            )
+
+        else:
+            numkeys = len(keys)
+            keys_and_args = [*keys, *args]
+            raw_res = pipe.eval(script, numkeys, *keys_and_args)
 
         if isinstance(raw_res, Awaitable):
-            raw_res = await raw_res
+            raw_res = await raw_res  # pyright: ignore[reportUnknownVariableType]
 
-        return raw_res
+        if raw_res is True:
+            return "1"
+
+        if raw_res is False:
+            return "0"
+
+        if type(raw_res) is int:  # pyright: ignore[reportUnknownArgumentType]
+            return str(raw_res)
+
+        if type(raw_res) is bytes:  # pyright: ignore[reportUnknownArgumentType]
+            return raw_res.decode("utf-8")
+
+        if type(raw_res) is bytearray:  # pyright: ignore[reportUnknownArgumentType]
+            return bytes(raw_res).decode("utf-8")
+
+        return str(raw_res)  # pyright: ignore[reportUnknownArgumentType]
 
     # ....................... #
 
     @redis_handled("redis.get")  # type: ignore[untyped-decorator]
-    async def get(self, key: str) -> bytes | str | None:
-        return await self.__executor().get(key)
+    async def get(self, key: str) -> bytes | None:
+        async def _call() -> bytes | None:
+            return _bytes_or_none(await self.__executor().get(key))
+
+        return await self.__maybe_read_retry("get", _call)
 
     # ....................... #
 
     @redis_handled("redis.mget")  # type: ignore[untyped-decorator]
-    async def mget(self, keys: Sequence[str]) -> list[bytes | str | None]:
-        return await self.__executor().mget(*keys)
+    async def mget(self, keys: Sequence[str]) -> list[bytes | None]:
+        if not keys:
+            return []
+
+        async def _one_batch(batch: Sequence[str]) -> list[bytes | None]:
+            async def _call() -> list[bytes | None]:
+                raw = await self.__executor().mget(*batch)
+
+                return [_bytes_or_none(x) for x in raw]
+
+            return await self.__maybe_read_retry("mget", _call)
+
+        if len(keys) <= _MGET_CHUNK_SIZE:
+            return await _one_batch(keys)
+
+        out: list[bytes | None] = []
+
+        for i in range(0, len(keys), _MGET_CHUNK_SIZE):
+            out.extend(await _one_batch(keys[i : i + _MGET_CHUNK_SIZE]))
+
+        return out
 
     # ....................... #
 
@@ -241,17 +397,32 @@ class RedisClient(RedisClientPort):
         if not mapping:
             return True
 
-        # MSET command doesn't support expiration or conditional flags.
-        # If any are used, we fallback to pipelining individual SET calls.
+        # MSET does not support EX/PX/NX/XX natively. Use one Lua script so NX/XX
+        # semantics are all-or-nothing and optional expiries apply atomically.
         if ex is None and px is None and not nx and not xx:
             await self.__executor().mset(mapping)
             return True
 
-        async with self.pipeline(transaction=True) as pipe:
-            for key, value in mapping.items():
-                await pipe.set(key, value, ex=ex, px=px, nx=nx, xx=xx)
+        if nx and xx:
+            raise CoreError("Redis mset does not allow nx and xx together")
 
-        return True
+        keys_list = list(mapping.keys())
+        argv: list[Any] = [
+            str(-1 if ex is None else ex),
+            str(-1 if px is None else px),
+            "1" if nx else "0",
+            "1" if xx else "0",
+            *[mapping[k] for k in keys_list],
+        ]
+
+        raw = await self.run_script(MSET_BULK_SET, keys_list, argv)
+
+        try:
+            code = int(str(raw).strip())
+        except ValueError:
+            return False
+
+        return code == 1
 
     # ....................... #
 
@@ -333,35 +504,103 @@ class RedisClient(RedisClientPort):
         if not channels:
             return
 
-        pubsub = (
-            self.__require_client().pubsub()  # pyright: ignore[reportUnknownMemberType]
-        )
-        await pubsub.subscribe(*channels)  # pyright: ignore[reportUnknownMemberType]
+        cfg = self.__redis_config
 
-        try:
-            while True:
-                raw = await pubsub.get_message(  # pyright: ignore[reportUnknownVariableType]
-                    ignore_subscribe_messages=True,
-                    timeout=timeout.total_seconds() if timeout else None,
-                )
-
-                if raw is None:
-                    continue
-
-                parsed = parse_pubsub_message(
-                    raw  # pyright: ignore[reportUnknownArgumentType]
-                )
-
-                if parsed is None:
-                    continue
-
-                yield parsed
-
-        finally:
-            await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
+        if not cfg.pubsub_auto_reconnect:
+            pubsub = (
+                self.__require_client().pubsub()  # pyright: ignore[reportUnknownMemberType]
+            )
+            await pubsub.subscribe(  # pyright: ignore[reportUnknownMemberType]
                 *channels
             )
-            await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+            try:
+                while True:
+                    raw = await pubsub.get_message(  # pyright: ignore[reportUnknownVariableType]
+                        ignore_subscribe_messages=True,
+                        timeout=timeout.total_seconds() if timeout else None,
+                    )
+
+                    if raw is None:
+                        if timeout is None:
+                            await asyncio.sleep(0)
+                        continue
+
+                    parsed = parse_pubsub_message(
+                        raw  # pyright: ignore[reportUnknownArgumentType]
+                    )
+
+                    if parsed is None:
+                        if timeout is None:
+                            await asyncio.sleep(0)
+                        continue
+
+                    yield parsed
+
+            finally:
+                await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
+                    *channels
+                )
+                await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+        else:
+            max_delay = max(0.05, cfg.pubsub_reconnect_max_delay.total_seconds())
+            backoff = 0.05
+
+            while True:
+                pubsub = (
+                    self.__require_client().pubsub()  # pyright: ignore[reportUnknownMemberType]
+                )
+                await pubsub.subscribe(  # pyright: ignore[reportUnknownMemberType]
+                    *channels
+                )
+
+                reconnect = False
+
+                try:
+                    while True:
+                        try:
+                            raw = await pubsub.get_message(  # pyright: ignore[reportUnknownVariableType]
+                                ignore_subscribe_messages=True,
+                                timeout=timeout.total_seconds() if timeout else None,
+                            )
+
+                        except _READ_RETRY_EXC:
+                            hook = cfg.on_pubsub_reconnect
+
+                            if hook is not None:
+                                hook()
+
+                            await asyncio.sleep(min(max_delay, backoff))
+                            backoff = min(max_delay, backoff * 2)
+                            reconnect = True
+                            break
+
+                        if raw is None:
+                            if timeout is None:
+                                await asyncio.sleep(0)
+                            continue
+
+                        parsed = parse_pubsub_message(
+                            raw  # pyright: ignore[reportUnknownArgumentType]
+                        )
+
+                        if parsed is None:
+                            if timeout is None:
+                                await asyncio.sleep(0)
+                            continue
+
+                        backoff = 0.05
+                        yield parsed
+
+                finally:
+                    await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
+                        *channels
+                    )
+                    await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+                if not reconnect:
+                    return
 
     # ....................... #
     # Stream methods

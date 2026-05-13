@@ -513,7 +513,7 @@ class DocumentCoordinator(
     """Unified read/write cache semantics for documents."""
 
     batch_size: int = 200
-    """Batch size for writing."""
+    """Chunk size for bulk writes and internal chunked offset reads when pagination omits ``limit``."""
 
     tx_scope: TxScopeKey
     """Transaction scope marker for callers."""
@@ -828,7 +828,37 @@ class DocumentCoordinator(
 
         res: list[Any]
 
-        if aggregates is not None:
+        if limit is None:
+            chunk = self.eff_batch_size
+            off = 0 if offset is None else offset
+            sorts_for_scan: QuerySortExpression = (
+                sorts if sorts else {ID_FIELD: "asc"}
+            )
+            res = []
+            while True:
+                if aggregates is not None:
+                    batch = await self.read_gw.find_many_aggregates(
+                        filters=filters,
+                        limit=chunk,
+                        offset=off,
+                        sorts=sorts_for_scan,
+                        aggregates=aggregates,
+                        return_model=return_model,
+                    )
+                else:
+                    batch = await self.read_gw.find_many(  # type: ignore[misc]
+                        filters=filters,
+                        limit=chunk,
+                        offset=off,
+                        sorts=sorts_for_scan,
+                        return_model=return_model,  # type: ignore[arg-type]
+                        return_fields=return_fields,  # type: ignore[arg-type]
+                    )
+                res.extend(batch)
+                if len(batch) < chunk:
+                    break
+                off += chunk
+        elif aggregates is not None:
             res = await self.read_gw.find_many_aggregates(
                 filters=filters,
                 limit=limit,

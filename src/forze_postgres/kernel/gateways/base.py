@@ -6,7 +6,6 @@ require_psycopg()
 
 # ....................... #
 
-from functools import cached_property
 from typing import Any, Mapping, Self, Sequence, final
 
 import attrs
@@ -115,11 +114,28 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     filter_table_alias: str | None = attrs.field(default=None)
     """SQL alias for the filtered relation (e.g. search projection ``v``)."""
 
+    find_many_implicit_limit: int | None = 10_000
+    """When ``limit`` is omitted on :meth:`~forze_postgres.kernel.gateways.read.PostgresReadGateway.find_many` (and aggregate variants), cap rows at this count.
+
+    ``None`` disables the cap (unbounded reads). Defaults to ``10_000`` to reduce
+    accidental full-table scans in application code.
+    """
+
     # ....................... #
 
-    @cached_property  #! hmmmm.....
+    def __attrs_post_init__(self) -> None:
+        cap = self.find_many_implicit_limit
+
+        if cap is not None and cap < 1:
+            raise CoreError("find_many_implicit_limit must be at least 1 when set")
+
+    # ....................... #
+
+    @property
     def read_fields(self) -> frozenset[str]:
-        return pydantic_field_names(self.model_type)
+        """Pydantic field names for :attr:`model_type` (safe for frozen attrs subclasses)."""
+
+        return frozenset(pydantic_field_names(self.model_type))
 
     # ....................... #
 

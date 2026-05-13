@@ -63,7 +63,11 @@ class RedisDistributedLockAdapter(
         if res is None:
             return None
 
-        return res.decode("utf-8") if isinstance(res, bytes) else res
+        return (
+            res.decode("utf-8")
+            if isinstance(res, bytes)  # pyright: ignore[reportUnnecessaryIsInstance]
+            else res
+        )
 
     # ....................... #
 

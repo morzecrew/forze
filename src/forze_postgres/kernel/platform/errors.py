@@ -147,7 +147,10 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             return InfrastructureError("Database query canceled (timeout).")
 
         case errors.TooManyConnections():
-            return InfrastructureError("Database is overloaded (too many connections).")
+            return ConcurrencyError(
+                message="Database is overloaded (too many connections). Please retry.",
+                code="too_many_connections",
+            )
 
         case errors.OutOfMemory() | errors.DiskFull():
             return InfrastructureError("Database resource exhaustion.")
@@ -158,7 +161,25 @@ def _psycopg_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             # any other constraint-ish problem
             return ConflictError("Integrity constraint violation.")
 
-        case errors.OperationalError():
+        case errors.OperationalError() as oe:
+            msg = str(oe).lower()
+            transient_markers = (
+                "connection",
+                "closed",
+                "timeout",
+                "eof",
+                "reset",
+                "broken pipe",
+                "server closed",
+                "could not receive",
+                "could not send",
+            )
+            if any(s in msg for s in transient_markers):
+                return ConcurrencyError(
+                    message="Transient database connectivity issue. Please retry.",
+                    code="transient_operational",
+                )
+
             return InfrastructureError("Database operational error.")
 
         case errors.ProgrammingError():

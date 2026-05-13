@@ -54,7 +54,7 @@ class MongoDocumentAdapter(DocumentCoordinator[R, D, C, U]):
     """Unified read/write cache semantics for documents."""
 
     batch_size: int = 200
-    """Batch size for writing."""
+    """Chunk size for bulk writes and internal chunked offset reads when pagination omits ``limit``."""
 
     # Non initable fields
     tx_scope: TxScopeKey = attrs.field(default=MongoTxScopeKey, init=False)

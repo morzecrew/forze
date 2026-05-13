@@ -87,6 +87,7 @@ nav:
       - Idempotency: core-package/contracts/idempotency.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
+    - Capability execution: reference/capability-execution.md
     - Composition & Mapping: reference/composition.md
     - Query Syntax: reference/query-syntax.md
 

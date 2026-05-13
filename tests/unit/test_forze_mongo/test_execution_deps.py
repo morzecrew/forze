@@ -133,6 +133,34 @@ def test_configurable_mongo_document_batch_size() -> None:
     assert adapter.batch_size == 444
 
 
+def test_configurable_mongo_read_only_document_batch_size() -> None:
+    factory = ConfigurableMongoReadOnlyDocument(
+        config={
+            "read": ("db", "c"),
+            "batch_size": 555,
+        },
+    )
+    ctx = _ctx()
+    adapter = factory(ctx, DocumentSpec(name="ro", read=_R))
+
+    assert isinstance(adapter, MongoDocumentAdapter)
+    assert adapter.batch_size == 555
+
+
+def test_document_config_to_read_only_preserves_batch_size() -> None:
+    from forze_mongo.execution.deps.module import _document_config_to_read_only
+
+    rw: dict = {
+        "read": ("db", "c"),
+        "write": ("db", "c"),
+        "batch_size": 999,
+    }
+    ro = _document_config_to_read_only(rw)  # type: ignore[arg-type]
+
+    assert ro["read"] == ("db", "c")
+    assert ro.get("batch_size") == 999
+
+
 def test_mongo_txmanager() -> None:
     tx = mongo_txmanager(_ctx())
 

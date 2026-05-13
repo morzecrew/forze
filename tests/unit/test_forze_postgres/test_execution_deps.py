@@ -218,6 +218,19 @@ class TestConfigurablePostgresDocumentFactories:
         assert adapter.read_gw.source_qname.schema == "public"
         assert adapter.read_gw.source_qname.name == "v_docs"
 
+    def test_read_only_builds_adapter_with_batch_size(self) -> None:
+        factory = ConfigurablePostgresReadOnlyDocument(
+            config={
+                "read": ("public", "v_docs"),
+                "batch_size": 321,
+            },
+        )
+        ctx = _ctx()
+        adapter = factory(ctx, DocumentSpec(name="x", read=_R))
+
+        assert isinstance(adapter, PostgresDocumentAdapter)
+        assert adapter.batch_size == 321
+
     def test_command_requires_write_spec(self) -> None:
         factory = ConfigurablePostgresDocument(
             config={
