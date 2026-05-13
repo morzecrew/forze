@@ -1,5 +1,15 @@
 """Execution kernel for usecases, dependency injection, and lifecycle."""
 
+from .bucket import (
+    ALL_BUCKETS,
+    BUCKET_REGISTRY,
+    Bucket,
+    BucketMeta,
+    CAPABILITY_SCHEDULABLE_BUCKETS,
+    DISPATCH_EDGE_BUCKETS,
+    coerce_bucket,
+    iter_capability_schedulable_buckets,
+)
 from .context import CallContext, ExecutionContext
 from .delegate import UsecaseDelegate, delegated_usecase_effect
 from .deps import Deps, DepsModule, DepsPlan
@@ -28,10 +38,13 @@ from .middleware import (
     WhenGuard,
 )
 from .capabilities import (
+    CapabilityAfterCommitRunner,
+    CapabilityChainBuilder,
     CapabilityExecutionEvent,
     CapabilitySkip,
     CapabilityStore,
     GuardSkip,
+    LegacyChainBuilder,
     SchedulableCapabilitySpec,
     schedule_capability_specs,
 )
@@ -43,7 +56,6 @@ from .capability_keys import (
     authz_permits_capability,
 )
 from .plan import (
-    CAPABILITY_SCHEDULER_BUCKETS,
     DispatchDeclaringEffectFactory,
     EffectStep,
     ExecutionPlanReport,
@@ -63,13 +75,21 @@ from .usecase import Usecase, UsecaseFactory
 # ----------------------- #
 
 __all__ = [
+    "ALL_BUCKETS",
     "AUTHN_PRINCIPAL",
     "AUTHZ_PERMITS_PREFIX",
+    "BUCKET_REGISTRY",
+    "Bucket",
+    "BucketMeta",
+    "CAPABILITY_SCHEDULABLE_BUCKETS",
+    "DISPATCH_EDGE_BUCKETS",
+    "coerce_bucket",
     "CapabilityKey",
     "TENANCY_TENANT",
     "authz_permits_capability",
-    "CAPABILITY_SCHEDULER_BUCKETS",
     "CallContext",
+    "CapabilityAfterCommitRunner",
+    "CapabilityChainBuilder",
     "CapabilityExecutionEvent",
     "CapabilitySkip",
     "CapabilityStore",
@@ -92,6 +112,8 @@ __all__ = [
     "Guard",
     "GuardSkip",
     "GuardStep",
+    "iter_capability_schedulable_buckets",
+    "LegacyChainBuilder",
     "LifecycleHook",
     "LifecyclePlan",
     "LifecycleStep",

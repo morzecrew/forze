@@ -22,10 +22,10 @@ from .dispatch import (
     expand_wildcard_dispatch_sources,
 )
 from .plan import (
-    CAPABILITY_SCHEDULER_BUCKETS,
     WILDCARD,
     OpKey,
     UsecasePlan,
+    iter_capability_schedulable_buckets,
     middleware_specs_for_usecase_tuple,
 )
 from .usecase import Usecase, UsecaseFactory
@@ -102,11 +102,11 @@ class UsecaseRegistry:
                 merged = plan.merged_operation_plan(op)
                 merged.validate()
 
-                for bucket in CAPABILITY_SCHEDULER_BUCKETS:
+                for bucket in iter_capability_schedulable_buckets():
                     specs = middleware_specs_for_usecase_tuple(merged, bucket)
                     schedule_capability_specs(
                         cast(tuple[SchedulableCapabilitySpec, ...], specs),
-                        bucket=bucket,
+                        bucket=bucket.value,
                     )
 
             return
@@ -118,14 +118,14 @@ class UsecaseRegistry:
             merged = plan.merged_operation_plan(op)
             merged.validate()
 
-            for bucket in CAPABILITY_SCHEDULER_BUCKETS:
+            for bucket in iter_capability_schedulable_buckets():
                 specs = middleware_specs_for_usecase_tuple(merged, bucket)
 
                 for spec in specs:
                     if spec.requires or spec.provides:
                         raise CoreError(
                             f"Operation {op!r} declares capability requires/provides in bucket "
-                            f"{bucket!r} but `UsecasePlan.use_capability_engine` is disabled. "
+                            f"{bucket.value!r} but `UsecasePlan.use_capability_engine` is disabled. "
                             "Enable the capability engine or remove capability metadata from specs."
                         )
 
