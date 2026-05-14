@@ -1,10 +1,10 @@
 """Build middleware tuple when the capability engine is enabled."""
 
-from typing import Any, cast
+from typing import Any
 
 import attrs
 
-from forze.application.execution.bucket import Bucket
+from forze.application.execution.bucket import BucketKey
 from forze.base.errors import CoreError
 
 from ..context import ExecutionContext
@@ -19,7 +19,7 @@ from .segments import (
     CapabilityGuardSegmentMiddleware,
     resolve_after_commit_effects,
 )
-from .trace import CapabilityExecutionEvent, CapabilityStore, SchedulableCapabilitySpec
+from .trace import CapabilityExecutionEvent, CapabilityStore
 
 # ----------------------- #
 
@@ -31,9 +31,6 @@ class CapabilityChainBuilder:
     ctx: ExecutionContext
     """Execution context."""
 
-    plan: OperationPlan
-    """Operation plan."""
-
     capability_execution_trace: list[CapabilityExecutionEvent] | None = None
     """Capability execution trace."""
 
@@ -42,24 +39,15 @@ class CapabilityChainBuilder:
     def _segment_guards(
         self,
         store: CapabilityStore,
-        bucket: Bucket,
+        key: BucketKey,
         specs: tuple[MiddlewareSpec, ...],
     ) -> Middleware[Any, Any]:
-        ordered = cast(
-            tuple[MiddlewareSpec, ...],
-            schedule_capability_specs(
-                cast(tuple[SchedulableCapabilitySpec, ...], specs),
-                bucket=bucket.value,
-            ),
-        )
-        steps = resolve_guard_steps(
-            self.ctx,
-            cast(tuple[SchedulableCapabilitySpec, ...], ordered),
-            bucket=bucket.value,
-        )
+        label = key.label
+        ordered = schedule_capability_specs(specs, bucket=label)
+        steps = resolve_guard_steps(self.ctx, ordered, bucket=label)
 
         return CapabilityGuardSegmentMiddleware[Any, Any](
-            bucket=bucket.value,
+            bucket=label,
             store=store,
             steps=steps,
         )
@@ -69,50 +57,42 @@ class CapabilityChainBuilder:
     def _segment_effects(
         self,
         store: CapabilityStore,
-        bucket: Bucket,
+        key: BucketKey,
         specs: tuple[MiddlewareSpec, ...],
     ) -> Middleware[Any, Any]:
-        ordered = cast(
-            tuple[MiddlewareSpec, ...],
-            schedule_capability_specs(
-                cast(tuple[SchedulableCapabilitySpec, ...], specs),
-                bucket=bucket.value,
-            ),
-        )
-        steps = resolve_effect_steps(
-            self.ctx,
-            cast(tuple[SchedulableCapabilitySpec, ...], ordered),
-            bucket=bucket.value,
-        )
+        label = key.label
+        ordered = schedule_capability_specs(specs, bucket=label)
+        steps = resolve_effect_steps(self.ctx, ordered, bucket=label)
 
         return CapabilityEffectSegmentMiddleware[Any, Any](
-            bucket=bucket.value,
+            bucket=label,
             store=store,
             steps=steps,
         )
 
     # ....................... #
 
-    def build(
-        self,
-        *,
-        outer_before: tuple[MiddlewareSpec, ...],
-        outer_wrap: tuple[MiddlewareSpec, ...],
-        outer_finally: tuple[MiddlewareSpec, ...],
-        outer_on_failure: tuple[MiddlewareSpec, ...],
-        outer_after: tuple[MiddlewareSpec, ...],
-        in_tx_before: tuple[MiddlewareSpec, ...],
-        in_tx_finally: tuple[MiddlewareSpec, ...],
-        in_tx_on_failure: tuple[MiddlewareSpec, ...],
-        in_tx_wrap: tuple[MiddlewareSpec, ...],
-        in_tx_after: tuple[MiddlewareSpec, ...],
-        after_commit_specs: tuple[MiddlewareSpec, ...],
-    ) -> tuple[Middleware[Any, Any], ...]:
+    def build(self, plan: OperationPlan) -> tuple[Middleware[Any, Any], ...]:
+        def _s(k: BucketKey) -> tuple[MiddlewareSpec, ...]:
+            return plan.specs_for_chain(k)
+
+        outer_before = _s(BucketKey.OUTER_BEFORE)
+        outer_wrap = _s(BucketKey.OUTER_WRAP)
+        outer_finally = _s(BucketKey.OUTER_FINALLY)
+        outer_on_failure = _s(BucketKey.OUTER_ON_FAILURE)
+        outer_after = _s(BucketKey.OUTER_AFTER)
+        in_tx_before = _s(BucketKey.IN_TX_BEFORE)
+        in_tx_finally = _s(BucketKey.IN_TX_FINALLY)
+        in_tx_on_failure = _s(BucketKey.IN_TX_ON_FAILURE)
+        in_tx_wrap = _s(BucketKey.IN_TX_WRAP)
+        in_tx_after = _s(BucketKey.IN_TX_AFTER)
+        after_commit_specs = _s(BucketKey.AFTER_COMMIT)
+
         store = CapabilityStore(trace_events=self.capability_execution_trace)
 
         after_commit_ordered = schedule_capability_specs(
-            cast(tuple[SchedulableCapabilitySpec, ...], after_commit_specs),
-            bucket=Bucket.after_commit.value,
+            after_commit_specs,
+            bucket=BucketKey.AFTER_COMMIT.label,
         )
 
         after_commit_effects = resolve_after_commit_effects(
@@ -128,14 +108,16 @@ class CapabilityChainBuilder:
         chain: list[Middleware[Any, Any]] = []
 
         if outer_before:
-            chain.append(self._segment_guards(store, Bucket.outer_before, outer_before))
+            chain.append(
+                self._segment_guards(store, BucketKey.OUTER_BEFORE, outer_before)
+            )
 
         chain.extend(s.factory(self.ctx) for s in outer_wrap)
         chain.extend(s.factory(self.ctx) for s in outer_finally)
         chain.extend(s.factory(self.ctx) for s in outer_on_failure)
 
-        if self.plan.tx is not None:
-            tx = TxMiddleware[Any, Any](ctx=self.ctx, route=self.plan.tx.route)
+        if plan.tx is not None:
+            tx = TxMiddleware[Any, Any](ctx=self.ctx, route=plan.tx.route)
 
             if after_commit_effects:
                 tx = tx.with_after_commit(runner)
@@ -144,7 +126,7 @@ class CapabilityChainBuilder:
 
             if in_tx_before:
                 chain.append(
-                    self._segment_guards(store, Bucket.in_tx_before, in_tx_before)
+                    self._segment_guards(store, BucketKey.IN_TX_BEFORE, in_tx_before)
                 )
 
             chain.extend(s.factory(self.ctx) for s in in_tx_finally)
@@ -153,7 +135,7 @@ class CapabilityChainBuilder:
 
             if in_tx_after:
                 chain.append(
-                    self._segment_effects(store, Bucket.in_tx_after, in_tx_after)
+                    self._segment_effects(store, BucketKey.IN_TX_AFTER, in_tx_after)
                 )
 
         elif after_commit_specs:
@@ -162,6 +144,8 @@ class CapabilityChainBuilder:
             )
 
         if outer_after:
-            chain.append(self._segment_effects(store, Bucket.outer_after, outer_after))
+            chain.append(
+                self._segment_effects(store, BucketKey.OUTER_AFTER, outer_after)
+            )
 
         return tuple(chain)

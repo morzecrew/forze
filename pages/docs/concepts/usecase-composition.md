@@ -51,7 +51,7 @@ The `UsecasePlan` describes how each operation is composed with middleware. It m
 
 ### Plan buckets
 
-Each operation has seven middleware buckets, executed in this order:
+Each operation has multiple middleware buckets (a :class:`~forze.application.execution.bucket.Phase` × :class:`~forze.application.execution.bucket.Slot` placement, represented by :class:`~forze.application.execution.bucket.BucketKey`), executed in this order:
 
 | Bucket | When it runs | Use case |
 |--------|-------------|----------|

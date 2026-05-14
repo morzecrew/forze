@@ -1,27 +1,23 @@
 """Resolve guard/effect callables from scheduled specs."""
 
-from typing import Any, TypeVar
+from typing import Any
 
 from forze.base.errors import CoreError
 
 from ..context import ExecutionContext
 from ..middleware import Effect, EffectMiddleware, Guard, GuardMiddleware
-from .trace import SchedulableCapabilitySpec
+from ..plan.spec import MiddlewareSpec
 
 # ----------------------- #
-
-_Sched = TypeVar("_Sched", bound=SchedulableCapabilitySpec)
-
-# ....................... #
 
 
 def resolve_guard_steps(
     ctx: ExecutionContext,
-    specs: tuple[_Sched, ...],
+    specs: tuple[MiddlewareSpec, ...],
     *,
     bucket: str,
-) -> tuple[tuple[Guard[Any], _Sched], ...]:
-    out: list[tuple[Guard[Any], _Sched]] = []
+) -> tuple[tuple[Guard[Any], MiddlewareSpec], ...]:
+    out: list[tuple[Guard[Any], MiddlewareSpec]] = []
 
     for spec in specs:
         mw = spec.factory(ctx)
@@ -46,11 +42,11 @@ def resolve_guard_steps(
 
 def resolve_effect_steps(
     ctx: ExecutionContext,
-    specs: tuple[_Sched, ...],
+    specs: tuple[MiddlewareSpec, ...],
     *,
     bucket: str,
-) -> tuple[tuple[Effect[Any, Any], _Sched], ...]:
-    out: list[tuple[Effect[Any, Any], _Sched]] = []
+) -> tuple[tuple[Effect[Any, Any], MiddlewareSpec], ...]:
+    out: list[tuple[Effect[Any, Any], MiddlewareSpec]] = []
 
     for spec in specs:
         mw = spec.factory(ctx)

@@ -1,12 +1,12 @@
 """Declarative per-operation middleware composition."""
 
 from enum import StrEnum
-from typing import Callable, Iterable, Self, Sequence, final
+from typing import Callable, Iterable, Self, Sequence, cast, final
 
 import attrs
 
 from forze.application._logger import logger
-from forze.application.execution.bucket import ALL_BUCKETS, Bucket
+from forze.application.execution.bucket import BucketKey, Slot
 from forze.application.execution.capability_keys import CapabilityKey
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
@@ -22,7 +22,6 @@ from .builders import (
     on_failure_middleware_factory,
 )
 from .operation import OperationPlan
-from .ordering import middleware_specs_for_usecase_tuple
 from .report import ExecutionPlanReport, build_execution_plan_report
 from .spec import (
     MiddlewareSpec,
@@ -100,13 +99,13 @@ class UsecasePlan:
 
     # ....................... #
 
-    def _add(self, op: OpKey, bucket: Bucket, spec: MiddlewareSpec) -> Self:
-        b = bucket.value
+    def _add(self, op: OpKey, key: BucketKey, spec: MiddlewareSpec) -> Self:
+        label = key.label
 
         logger.trace(
             "Adding middleware to usecase plan (op=%s, bucket=%s, priority=%s, factory_id=%s)",
             op,
-            b,
+            label,
             spec.priority,
             id(spec.factory),
         )
@@ -114,7 +113,7 @@ class UsecasePlan:
         cur = self._op(op)
         logger.trace("Current operation tx=%s", cur.tx)
 
-        return self._put(op, cur.add(bucket, spec))
+        return self._put(op, cur.add(key, spec))
 
     # ....................... #
 
@@ -124,11 +123,155 @@ class UsecasePlan:
         acc: set[tuple[str, str]] = set()
 
         for oplan in self.ops.values():
-            for bucket in ALL_BUCKETS:
-                for spec in getattr(oplan, bucket.value):
+            for bk in BucketKey.iter_dispatch_edge_buckets():
+                for spec in oplan.buckets[bk]:
                     acc.update(spec.dispatch_edges)
 
         return frozenset(acc)
+
+    # ....................... #
+
+    def add_step(
+        self,
+        op: OpKey | list[OpKey],
+        key: BucketKey,
+        factory: GuardFactory
+        | EffectFactory
+        | MiddlewareFactory
+        | FinallyFactory
+        | OnFailureFactory,
+        *,
+        priority: int = 0,
+        requires: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        provides: (
+            frozenset[str] | set[str] | Iterable[str | CapabilityKey] | None
+        ) = None,
+        step_label: str | None = None,
+    ) -> Self:
+        """Add one middleware step to ``key`` (slot selects factory wrapping and capability fields)."""
+
+        slot = key.slot
+        if slot is Slot.before:
+            return self._add_guard(
+                op,
+                key,
+                cast(GuardFactory, factory),
+                priority=priority,
+                requires=requires,
+                provides=provides,
+                step_label=step_label,
+            )
+        if slot is Slot.after:
+            return self._add_effect(
+                op,
+                key,
+                cast(EffectFactory, factory),
+                priority=priority,
+                requires=requires,
+                provides=provides,
+                step_label=step_label,
+            )
+        if slot is Slot.wrap:
+            out: Self = self
+            mw = cast(MiddlewareFactory, factory)
+            for o in _op_list(op):
+                out = out._add(
+                    o,
+                    key,
+                    MiddlewareSpec(factory=mw, priority=priority),
+                )
+            return out
+        if slot is Slot.finally_:
+            finally_hook = cast(FinallyFactory, factory)
+            mw_factory = finally_middleware_factory(finally_hook)
+            out = self
+            for o in _op_list(op):
+                out = out._add(
+                    o,
+                    key,
+                    MiddlewareSpec(factory=mw_factory, priority=priority),
+                )
+            return out
+        if slot is Slot.on_failure:
+            on_failure_hook = cast(OnFailureFactory, factory)
+            mw_factory = on_failure_middleware_factory(on_failure_hook)
+            out = self
+            for o in _op_list(op):
+                out = out._add(
+                    o,
+                    key,
+                    MiddlewareSpec(factory=mw_factory, priority=priority),
+                )
+            return out
+
+        raise CoreError(f"Unsupported bucket slot: {slot!r}")
+
+    # ....................... #
+
+    def add_pipeline(
+        self,
+        op: OpKey | list[OpKey],
+        key: BucketKey,
+        items: Sequence[object],
+        *,
+        first_priority: int = 0,
+    ) -> Self:
+        """Append multiple steps to ``key`` (pipeline item shape depends on ``key.slot``)."""
+
+        slot = key.slot
+        out: Self = self
+
+        if slot is Slot.before:
+            for i, guard_item in enumerate(cast(Sequence[PipelineGuardItem], items)):
+                priority = first_priority - i * 10
+                gf, req, prov, label = normalize_pipeline_guard(guard_item)
+                out = out.add_step(
+                    op,
+                    key,
+                    gf,
+                    priority=priority,
+                    requires=req,
+                    provides=prov,
+                    step_label=label,
+                )
+            return out
+
+        if slot is Slot.after:
+            for i, effect_item in enumerate(cast(Sequence[PipelineEffectItem], items)):
+                priority = first_priority - i * 10
+                ef, req, prov, label = normalize_pipeline_effect(effect_item)
+                out = out.add_step(
+                    op,
+                    key,
+                    ef,
+                    priority=priority,
+                    requires=req,
+                    provides=prov,
+                    step_label=label,
+                )
+            return out
+
+        if slot is Slot.wrap:
+            for i, middleware in enumerate(cast(Sequence[MiddlewareFactory], items)):
+                priority = first_priority - i * 10
+                out = out.add_step(op, key, middleware, priority=priority)
+            return out
+
+        if slot is Slot.finally_:
+            for i, finally_hook in enumerate(cast(Sequence[FinallyFactory], items)):
+                priority = first_priority - i * 10
+                out = out.add_step(op, key, finally_hook, priority=priority)
+            return out
+
+        if slot is Slot.on_failure:
+            for i, on_failure_hook in enumerate(cast(Sequence[OnFailureFactory], items)):
+                priority = first_priority - i * 10
+                out = out.add_step(op, key, on_failure_hook, priority=priority)
+            return out
+
+        raise CoreError(f"Unsupported bucket slot for pipeline: {slot!r}")
 
     # ....................... #
 
@@ -187,7 +330,7 @@ class UsecasePlan:
     def _add_guard(
         self,
         op: OpKey | list[OpKey],
-        bucket: Bucket,
+        key: BucketKey,
         guard: GuardFactory,
         *,
         priority: int,
@@ -204,7 +347,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                bucket,
+                key,
                 MiddlewareSpec(
                     factory=factory,
                     priority=priority,
@@ -234,7 +377,7 @@ class UsecasePlan:
     ) -> Self:
         return self._add_guard(
             op,
-            Bucket.outer_before,
+            BucketKey.OUTER_BEFORE,
             guard,
             priority=priority,
             requires=requires,
@@ -272,7 +415,7 @@ class UsecasePlan:
     def _add_effect(
         self,
         op: OpKey | list[OpKey],
-        bucket: Bucket,
+        key: BucketKey,
         effect: EffectFactory,
         *,
         priority: int,
@@ -292,7 +435,7 @@ class UsecasePlan:
 
             out = out._add(
                 o,
-                bucket,
+                key,
                 MiddlewareSpec(
                     factory=factory,
                     priority=priority,
@@ -323,7 +466,7 @@ class UsecasePlan:
     ) -> Self:
         return self._add_effect(
             op,
-            Bucket.outer_after,
+            BucketKey.OUTER_AFTER,
             effect,
             priority=priority,
             requires=requires,
@@ -370,7 +513,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                Bucket.outer_wrap,
+                BucketKey.OUTER_WRAP,
                 MiddlewareSpec(factory=middleware, priority=priority),
             )
 
@@ -408,7 +551,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                Bucket.outer_finally,
+                BucketKey.OUTER_FINALLY,
                 MiddlewareSpec(factory=factory, priority=priority),
             )
 
@@ -446,7 +589,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                Bucket.outer_on_failure,
+                BucketKey.OUTER_ON_FAILURE,
                 MiddlewareSpec(factory=factory, priority=priority),
             )
 
@@ -487,7 +630,7 @@ class UsecasePlan:
     ) -> Self:
         return self._add_guard(
             op,
-            Bucket.in_tx_before,
+            BucketKey.IN_TX_BEFORE,
             guard,
             priority=priority,
             requires=requires,
@@ -535,7 +678,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                Bucket.in_tx_finally,
+                BucketKey.IN_TX_FINALLY,
                 MiddlewareSpec(factory=factory, priority=priority),
             )
 
@@ -573,7 +716,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                Bucket.in_tx_on_failure,
+                BucketKey.IN_TX_ON_FAILURE,
                 MiddlewareSpec(factory=factory, priority=priority),
             )
 
@@ -614,7 +757,7 @@ class UsecasePlan:
     ) -> Self:
         return self._add_effect(
             op,
-            Bucket.in_tx_after,
+            BucketKey.IN_TX_AFTER,
             effect,
             priority=priority,
             requires=requires,
@@ -661,7 +804,7 @@ class UsecasePlan:
         for o in _op_list(op):
             out = out._add(
                 o,
-                Bucket.in_tx_wrap,
+                BucketKey.IN_TX_WRAP,
                 MiddlewareSpec(factory=middleware, priority=priority),
             )
 
@@ -702,7 +845,7 @@ class UsecasePlan:
     ) -> Self:
         return self._add_effect(
             op,
-            Bucket.after_commit,
+            BucketKey.AFTER_COMMIT,
             effect,
             priority=priority,
             requires=requires,
@@ -829,63 +972,18 @@ class UsecasePlan:
         plan = OperationPlan.merge(self._base(), self._op(op_s))
         plan.validate()
 
-        outer_before = middleware_specs_for_usecase_tuple(plan, Bucket.outer_before)
-        outer_wrap = middleware_specs_for_usecase_tuple(plan, Bucket.outer_wrap)
-        outer_finally = middleware_specs_for_usecase_tuple(plan, Bucket.outer_finally)
-        outer_on_failure = middleware_specs_for_usecase_tuple(
-            plan, Bucket.outer_on_failure
-        )
-        outer_after = middleware_specs_for_usecase_tuple(plan, Bucket.outer_after)
-
-        in_tx_before = middleware_specs_for_usecase_tuple(plan, Bucket.in_tx_before)
-        in_tx_finally = middleware_specs_for_usecase_tuple(plan, Bucket.in_tx_finally)
-        in_tx_on_failure = middleware_specs_for_usecase_tuple(
-            plan, Bucket.in_tx_on_failure
-        )
-        in_tx_wrap = middleware_specs_for_usecase_tuple(plan, Bucket.in_tx_wrap)
-        in_tx_after = middleware_specs_for_usecase_tuple(plan, Bucket.in_tx_after)
-
-        after_commit = plan.build(Bucket.after_commit)
-
         logger.trace("Built plan for '%s' (tx=%s)", op_s, plan.tx)
 
         if self.use_capability_engine:
             chain = list(
                 CapabilityChainBuilder(
                     ctx=ctx,
-                    plan=plan,
                     capability_execution_trace=capability_execution_trace,
-                ).build(
-                    outer_before=outer_before,
-                    outer_wrap=outer_wrap,
-                    outer_finally=outer_finally,
-                    outer_on_failure=outer_on_failure,
-                    outer_after=outer_after,
-                    in_tx_before=in_tx_before,
-                    in_tx_finally=in_tx_finally,
-                    in_tx_on_failure=in_tx_on_failure,
-                    in_tx_wrap=in_tx_wrap,
-                    in_tx_after=in_tx_after,
-                    after_commit_specs=after_commit,
-                )
+                ).build(plan)
             )
 
         else:
-            chain = list(
-                LegacyChainBuilder(ctx=ctx, plan=plan).build(
-                    outer_before=outer_before,
-                    outer_wrap=outer_wrap,
-                    outer_finally=outer_finally,
-                    outer_on_failure=outer_on_failure,
-                    outer_after=outer_after,
-                    in_tx_before=in_tx_before,
-                    in_tx_finally=in_tx_finally,
-                    in_tx_on_failure=in_tx_on_failure,
-                    in_tx_wrap=in_tx_wrap,
-                    in_tx_after=in_tx_after,
-                    after_commit=after_commit,
-                )
-            )
+            chain = list(LegacyChainBuilder(ctx=ctx).build(plan))
 
         logger.trace("Constructed middleware chain with %s middleware(s)", len(chain))
 

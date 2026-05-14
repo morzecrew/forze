@@ -1,24 +1,19 @@
 """Topological sort for capability ``requires`` / ``provides`` within a bucket."""
 
 from collections import defaultdict
-from typing import TypeVar
 
 from forze.base.errors import CoreError
 
-from .trace import SchedulableCapabilitySpec
+from ..plan.spec import MiddlewareSpec
 
 # ----------------------- #
 
-SchedT = TypeVar("SchedT", bound=SchedulableCapabilitySpec)
-
-# ....................... #
-
 
 def schedule_capability_specs(
-    specs: tuple[SchedT, ...],
+    specs: tuple[MiddlewareSpec, ...],
     *,
     bucket: str,
-) -> tuple[SchedT, ...]:
+) -> tuple[MiddlewareSpec, ...]:
     """Return ``specs`` reordered for capability constraints (per-bucket graph)."""
 
     if not specs:

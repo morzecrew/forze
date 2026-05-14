@@ -160,7 +160,7 @@ Declares how each operation is composed with middleware. Maps operation keys to 
 
 ### Plan buckets
 
-Each operation has seven middleware buckets, executed in this order:
+Each operation has multiple middleware buckets (a :class:`~forze.application.execution.bucket.Phase` × :class:`~forze.application.execution.bucket.Slot` placement, represented by :class:`~forze.application.execution.bucket.BucketKey`), executed in this order:
 
 | Bucket | When it runs | Typical use |
 |--------|-------------|-------------|
@@ -298,19 +298,25 @@ When `inplace=True`, the registry is mutated; otherwise a new instance is return
 
 ## OperationPlan
 
-Internal building block for `UsecasePlan`. Each operation maps to an `OperationPlan` with per-bucket middleware specs:
+Internal building block for `UsecasePlan`. Each operation maps to an `OperationPlan` with a ``buckets`` mapping from :class:`~forze.application.execution.bucket.BucketKey` to middleware spec tuples, plus optional ``tx``:
 
     :::python
-    from forze.application.execution.plan import OperationPlan, MiddlewareSpec
+    from forze.application.execution.bucket import BucketKey
+    from forze.application.execution.plan import MiddlewareSpec, OperationPlan, TransactionSpec
 
-    op_plan = OperationPlan(tx=True)
-    op_plan = op_plan.add("outer_before", MiddlewareSpec(priority=100, factory=my_factory))
+    op_plan = OperationPlan(tx=TransactionSpec(route="default"))
+    op_plan = op_plan.add(
+        BucketKey.OUTER_BEFORE,
+        MiddlewareSpec(priority=100, factory=my_factory),
+    )
 
 | Method | Purpose |
 |--------|---------|
-| `add(bucket, spec)` | Add a middleware spec to a bucket |
-| `build(bucket)` | Return deduplicated, priority-sorted specs for a bucket |
-| `validate()` | Ensure in-tx buckets are only used when tx is enabled |
+| `add(key, spec)` | Add a middleware spec to bucket ``key`` |
+| `specs(key)` | Raw tuple for ``key`` (append order) |
+| `build(key)` | Dedupe and sort by priority (descending) for ``key`` |
+| `specs_for_chain(key)` | Order used when composing the flat middleware tuple |
+| `validate()` | Ensure in-tx / after-commit buckets are only used when tx is enabled |
 | `merge(*plans)` | Combine multiple operation plans |
 
 You typically interact with `UsecasePlan` rather than `OperationPlan` directly.

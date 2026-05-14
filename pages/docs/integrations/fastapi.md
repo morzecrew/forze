@@ -2,7 +2,7 @@
 
 ## Page opening
 
-`forze_fastapi` exposes Forze application contracts over typed FastAPI routes without making domain code depend on HTTP. It provides route attach helpers for document CRUD, search, custom usecase endpoints, request context middleware, exception handlers, and Scalar API docs integration.
+`forze_fastapi` exposes Forze application contracts over typed FastAPI routes without making domain code depend on HTTP. It provides route attach helpers for document CRUD, search, object storage, custom usecase endpoints, request context middleware, exception handlers, and Scalar API docs integration.
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, usecase, port, and adapter">
@@ -12,7 +12,7 @@
 | Topic | Details |
 |------|---------|
 | What it provides | FastAPI routers and middleware that resolve Forze dependencies from `ExecutionContext` and call registered usecases. |
-| Supported Forze contracts | `DocumentSpec` and `SearchSpec` through generated endpoints; arbitrary `Usecase` classes through HTTP endpoint specs; optional ETag and idempotency behaviors through endpoint features. |
+| Supported Forze contracts | `DocumentSpec` and `SearchSpec` through generated endpoints; `StorageSpec` via `attach_storage_endpoints` (multipart upload, list, binary download, delete); arbitrary `Usecase` classes through HTTP endpoint specs; optional ETag and idempotency behaviors through endpoint features. |
 | When to use it | Use this integration when FastAPI is the delivery layer for a Forze service, when you want generated CRUD/search routes, or when custom HTTP operations should still run through `ExecutionRuntime`. |
 | Authn / authz / tenancy | [Recipe: boundary vs feature guards, resolver policy, default features on generated routes](../recipes/authn-authz-tenancy-fastapi.md). |
 
@@ -44,16 +44,22 @@ app = FastAPI(title="Projects API")
 
 ### Config
 
-Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, and endpoint options. Keep HTTP DTOs at the edge and keep domain/application code framework-independent.
+Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, `build_storage_registry`, and endpoint options. Keep HTTP DTOs at the edge and keep domain/application code framework-independent.
 
 ```python
 from fastapi import APIRouter
 from forze.application.composition.document import DocumentDTOs, build_document_registry
+from forze.application.composition.storage import build_storage_registry
+from forze.application.contracts.storage import StorageSpec
 from forze_fastapi.endpoints.document import attach_document_endpoints
+from forze_fastapi.endpoints.storage import attach_storage_endpoints
 
 projects = APIRouter(prefix="/projects", tags=["projects"])
+files = APIRouter(prefix="/files", tags=["files"])
 project_dtos = DocumentDTOs(read=ProjectReadModel, create=CreateProjectCmd, update=UpdateProjectCmd)
 registry = build_document_registry(project_spec, project_dtos)
+files_spec = StorageSpec(name="files")
+file_registry = build_storage_registry(files_spec)
 ```
 
 ### Deps module
@@ -71,7 +77,14 @@ attach_document_endpoints(
     registry=registry,
     ctx_dep=context_dependency,
 )
+attach_storage_endpoints(
+    files,
+    registry=file_registry,
+    ctx_dep=context_dependency,
+    storage=files_spec,
+)
 app.include_router(projects)
+app.include_router(files)
 ```
 
 ### Lifecycle step
@@ -99,6 +112,7 @@ app = FastAPI(lifespan=lifespan)
 |----------------|------------------------|--------------------------|-------------|
 | `DocumentSpec` | `attach_document_endpoints` creates CRUD/list HTTP handlers backed by a `DocumentUsecasesFacade`. | Uses the `DocumentSpec.name` and the storage dependency keys configured by the runtime, commonly `DocumentQueryDepKey` and `DocumentCommandDepKey`. | Routes are generated only for supported DTO/spec features; soft-delete routes require a soft-deletion-capable document spec. |
 | `SearchSpec` | `attach_search_endpoints` creates typed and raw search routes. | Uses the `SearchSpec.name` and runtime search dependencies, commonly `SearchQueryDepKey`. | Search execution still depends on a search adapter such as Postgres; FastAPI only exposes the route. |
+| `StorageSpec` | `attach_storage_endpoints` creates list, multipart upload, binary download, and delete routes backed by a `StorageUsecasesFacade`. | Uses the `StorageSpec.name` for `StorageDepKey` routing and optional upload idempotency naming. | Download returns raw bytes (`application/octet-stream`); register `register_exception_handlers` (or equivalent) so `NotFoundError` maps to HTTP 404. |
 | `Usecase` | `attach_http_endpoint` with `build_http_endpoint_spec`. | The endpoint spec identifies the usecase, request/response DTOs, and context dependency. | You own request/response mapping and status-code choices for custom endpoints. |
 | Idempotency feature | HTTP idempotency feature for mutating endpoints. | Requires an idempotency dependency such as `IdempotencyDepKey` when enabled. | Requires clients to send stable idempotency keys; storage and TTL behavior come from the configured idempotency adapter. |
 | ETag feature | HTTP ETag handling for reads. | Uses document revision/version data exposed by the document usecase. | Only useful when the read model exposes stable revision metadata. |

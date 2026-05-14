@@ -1,13 +1,12 @@
 # Capability-driven usecase execution
 
 This page describes the optional **capability engine** for ordering and skipping
-guards and effects inside a single `UsecasePlan` bucket. Bucket names and
-metadata (phase, reversal for the flat `Usecase.middlewares` tuple, whether the
-capability scheduler applies) live in :class:`~forze.application.execution.bucket.Bucket`
-and :class:`~forze.application.execution.bucket.BucketMeta` (`BUCKET_REGISTRY`).
-The capability-scheduler buckets are exposed as
-:data:`~forze.application.execution.bucket.CAPABILITY_SCHEDULABLE_BUCKETS` and
-:func:`~forze.application.execution.bucket.iter_capability_schedulable_buckets`.
+guards and effects inside a single `UsecasePlan` bucket. Placement is a product of
+:class:`~forze.application.execution.bucket.Phase` (where the step runs relative to
+``TxMiddleware``) and :class:`~forze.application.execution.bucket.Slot` (guard, effect,
+wrap, finally, on_failure). The 11 legal combinations are :class:`~forze.application.execution.bucket.BucketKey`
+members; each exposes ``label`` (stable string id, e.g. ``outer_before``), ``capability_schedulable``,
+``explain_kind``, and iterators such as :meth:`~forze.application.execution.bucket.BucketKey.iter_capability_segments`.
 It complements
 [Middleware and plans](middleware-plans.md) and [Execution](execution.md).
 

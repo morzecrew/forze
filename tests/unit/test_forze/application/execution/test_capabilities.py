@@ -12,6 +12,7 @@ from forze.application.execution.capabilities import (
 )
 from forze.application.execution.capability_keys import CapabilityKey
 from forze.application.execution.plan import (
+    BucketKey,
     GuardStep,
     MiddlewareSpec,
     UsecasePlan,
@@ -297,7 +298,7 @@ def test_before_pipeline_guard_step_carries_caps() -> None:
         [GuardStep(factory=inner, requires=frozenset({"a"}), provides=frozenset({"b"}))],
         first_priority=5,
     )
-    spec = plan.ops["op"].outer_before[0]
+    spec = plan.ops["op"].buckets[BucketKey.OUTER_BEFORE][0]
     assert spec.requires == frozenset({"a"})
     assert spec.provides == frozenset({"b"})
 

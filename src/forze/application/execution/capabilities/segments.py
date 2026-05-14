@@ -15,11 +15,11 @@ from ..middleware import (
     Middleware,
     NextCall,
 )
+from ..plan.spec import MiddlewareSpec
 from .async_util import maybe_await
 from .trace import (
     CapabilitySkip,
     CapabilityStore,
-    SchedulableCapabilitySpec,
     capability_step_label,
 )
 
@@ -37,7 +37,7 @@ class CapabilityGuardSegmentMiddleware(Middleware[ArgsT, ResT]):
 
     bucket: str
     store: CapabilityStore
-    steps: tuple[tuple[Guard[ArgsT], SchedulableCapabilitySpec], ...]
+    steps: tuple[tuple[Guard[ArgsT], MiddlewareSpec], ...]
 
     # ....................... #
 
@@ -115,7 +115,7 @@ class CapabilityEffectSegmentMiddleware(Middleware[ArgsT, ResT]):
 
     bucket: str
     store: CapabilityStore
-    steps: tuple[tuple[Effect[ArgsT, ResT], SchedulableCapabilitySpec], ...]
+    steps: tuple[tuple[Effect[ArgsT, ResT], MiddlewareSpec], ...]
 
     # ....................... #
 
@@ -192,7 +192,7 @@ class CapabilityEffectSegmentMiddleware(Middleware[ArgsT, ResT]):
 
 def resolve_after_commit_effects(
     ctx: ExecutionContext,
-    ordered_specs: tuple[SchedulableCapabilitySpec, ...],
+    ordered_specs: tuple[MiddlewareSpec, ...],
 ) -> tuple[Any, ...]:
     effects: list[Any] = []
 

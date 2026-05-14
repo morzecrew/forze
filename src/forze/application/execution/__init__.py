@@ -1,15 +1,6 @@
 """Execution kernel for usecases, dependency injection, and lifecycle."""
 
-from .bucket import (
-    ALL_BUCKETS,
-    BUCKET_REGISTRY,
-    Bucket,
-    BucketMeta,
-    CAPABILITY_SCHEDULABLE_BUCKETS,
-    DISPATCH_EDGE_BUCKETS,
-    coerce_bucket,
-    iter_capability_schedulable_buckets,
-)
+from .bucket import BucketKey, Phase, Slot
 from .context import CallContext, ExecutionContext
 from .delegate import UsecaseDelegate, delegated_usecase_effect
 from .deps import Deps, DepsModule, DepsPlan
@@ -62,11 +53,11 @@ from .plan import (
     GuardStep,
     MiddlewareSpec,
     ScheduleMode,
+    STEP_EXPLAIN_TX_BUCKET,
     StepExplainKind,
     StepExplainRow,
     UsecasePlan,
     frozenset_capability_keys,
-    middleware_specs_for_usecase_tuple,
 )
 from .registry import UsecaseRegistry
 from .runtime import ExecutionRuntime
@@ -75,15 +66,9 @@ from .usecase import Usecase, UsecaseFactory
 # ----------------------- #
 
 __all__ = [
-    "ALL_BUCKETS",
     "AUTHN_PRINCIPAL",
     "AUTHZ_PERMITS_PREFIX",
-    "BUCKET_REGISTRY",
-    "Bucket",
-    "BucketMeta",
-    "CAPABILITY_SCHEDULABLE_BUCKETS",
-    "DISPATCH_EDGE_BUCKETS",
-    "coerce_bucket",
+    "BucketKey",
     "CapabilityKey",
     "TENANCY_TENANT",
     "authz_permits_capability",
@@ -112,19 +97,20 @@ __all__ = [
     "Guard",
     "GuardSkip",
     "GuardStep",
-    "iter_capability_schedulable_buckets",
     "LegacyChainBuilder",
     "LifecycleHook",
     "LifecyclePlan",
     "LifecycleStep",
     "Middleware",
     "MiddlewareSpec",
-    "middleware_specs_for_usecase_tuple",
     "NextCall",
     "OnFailure",
     "OnFailureMiddleware",
+    "Phase",
     "ScheduleMode",
     "SchedulableCapabilitySpec",
+    "Slot",
+    "STEP_EXPLAIN_TX_BUCKET",
     "StepExplainKind",
     "StepExplainRow",
     "Successful",

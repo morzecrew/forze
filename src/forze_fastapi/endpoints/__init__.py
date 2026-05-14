@@ -7,12 +7,14 @@ from .http import (
     build_http_endpoint_spec,
 )
 from .search import attach_search_endpoints
+from .storage import attach_storage_endpoints
 
 # ----------------------- #
 
 __all__ = [
     "attach_document_endpoints",
     "attach_search_endpoints",
+    "attach_storage_endpoints",
     "attach_http_endpoint",
     "attach_http_endpoints",
     "build_http_endpoint_spec",

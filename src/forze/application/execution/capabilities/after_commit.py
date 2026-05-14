@@ -6,11 +6,11 @@ import attrs
 
 from forze.application._logger import logger
 
+from ..plan.spec import MiddlewareSpec
 from .async_util import maybe_await
 from .trace import (
     CapabilitySkip,
     CapabilityStore,
-    SchedulableCapabilitySpec,
     capability_step_label,
 )
 
@@ -27,7 +27,7 @@ class CapabilityAfterCommitRunner:
     effects: tuple[Any, ...]
     """After-commit effects."""
 
-    specs: tuple[SchedulableCapabilitySpec, ...]
+    specs: tuple[MiddlewareSpec, ...]
     """After-commit specs."""
 
     bucket_label: str = "after_commit"

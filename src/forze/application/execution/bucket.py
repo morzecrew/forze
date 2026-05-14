@@ -1,203 +1,165 @@
-"""Middleware placement buckets and per-bucket scheduling metadata."""
+"""Middleware placement as ``Phase`` × ``Slot`` (:class:`BucketKey`)."""
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Final, Literal, Mapping
-
-import attrs
+from enum import Enum, StrEnum, auto
+from typing import Final
 
 from forze.application.execution.plan_kinds import StepExplainKind
-from forze.base.errors import CoreError
 
 # ----------------------- #
 
-BucketPhase = Literal["outer", "in_tx", "after_commit"]
-"""Where the bucket runs relative to :class:`~forze.application.execution.middleware.TxMiddleware`."""
 
-MiddlewareShape = Literal["guard", "effect", "wrap", "finally", "on_failure"]
-"""What kind of factory/wrapper the bucket holds for plan builders."""
+class Phase(StrEnum):
+    """Where middleware runs relative to :class:`~forze.application.execution.middleware.TxMiddleware`."""
 
-# ....................... #
-
-
-class Bucket(StrEnum):
-    """Placement bucket for middleware specs on an :class:`~forze.application.execution.plan.OperationPlan`."""
-
-    outer_before = "outer_before"
-    outer_wrap = "outer_wrap"
-    outer_finally = "outer_finally"
-    outer_on_failure = "outer_on_failure"
-    outer_after = "outer_after"
-    in_tx_before = "in_tx_before"
-    in_tx_finally = "in_tx_finally"
-    in_tx_on_failure = "in_tx_on_failure"
-    in_tx_wrap = "in_tx_wrap"
-    in_tx_after = "in_tx_after"
+    outer = "outer"
+    in_tx = "in_tx"
     after_commit = "after_commit"
 
 
-# ....................... #
+class Slot(StrEnum):
+    """Placement role within a phase (factory shape and capability scheduling)."""
+
+    before = "before"
+    wrap = "wrap"
+    finally_ = "finally"  # ``finally`` is reserved; value remains ``finally`` for labels/API.
+    on_failure = "on_failure"
+    after = "after"
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class BucketMeta:
-    """Static rules for one :class:`Bucket`."""
-
-    phase: BucketPhase
-    """Whether the bucket is outside tx, inside tx, or runs after commit."""
-
-    reverse_for_usecase_tuple: bool
-    """When ``True``, :func:`middleware_specs_for_usecase_tuple` reverses :meth:`OperationPlan.build` order."""
-
-    capability_schedulable: bool
-    """When ``True``, :func:`~forze.application.execution.capabilities.schedule_capability_specs` may reorder."""
-
-    middleware_shape: MiddlewareShape
-    """Shape used by :class:`~forze.application.execution.plan.UsecasePlan` builders."""
-
-    explain_kind: StepExplainKind
-    """``kind`` field for :class:`~forze.application.execution.plan.StepExplainRow` (never ``tx``)."""
-
-
-# ....................... #
-
-
-def _meta(
-    *,
-    phase: BucketPhase,
-    reverse_for_usecase_tuple: bool,
-    capability_schedulable: bool,
-    middleware_shape: MiddlewareShape,
-    explain_kind: StepExplainKind,
-) -> BucketMeta:
-    return BucketMeta(
-        phase=phase,
-        reverse_for_usecase_tuple=reverse_for_usecase_tuple,
-        capability_schedulable=capability_schedulable,
-        middleware_shape=middleware_shape,
-        explain_kind=explain_kind,
-    )
-
-
-# ....................... #
-
-
-BUCKET_REGISTRY: Final[Mapping[Bucket, BucketMeta]] = {
-    Bucket.outer_before: _meta(
-        phase="outer",
-        reverse_for_usecase_tuple=False,
-        capability_schedulable=True,
-        middleware_shape="guard",
-        explain_kind="guard",
-    ),
-    Bucket.outer_wrap: _meta(
-        phase="outer",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=False,
-        middleware_shape="wrap",
-        explain_kind="wrap",
-    ),
-    Bucket.outer_finally: _meta(
-        phase="outer",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=False,
-        middleware_shape="finally",
-        explain_kind="finally",
-    ),
-    Bucket.outer_on_failure: _meta(
-        phase="outer",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=False,
-        middleware_shape="on_failure",
-        explain_kind="on_failure",
-    ),
-    Bucket.outer_after: _meta(
-        phase="outer",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=True,
-        middleware_shape="effect",
-        explain_kind="effect",
-    ),
-    Bucket.in_tx_before: _meta(
-        phase="in_tx",
-        reverse_for_usecase_tuple=False,
-        capability_schedulable=True,
-        middleware_shape="guard",
-        explain_kind="guard",
-    ),
-    Bucket.in_tx_finally: _meta(
-        phase="in_tx",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=False,
-        middleware_shape="finally",
-        explain_kind="finally",
-    ),
-    Bucket.in_tx_on_failure: _meta(
-        phase="in_tx",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=False,
-        middleware_shape="on_failure",
-        explain_kind="on_failure",
-    ),
-    Bucket.in_tx_wrap: _meta(
-        phase="in_tx",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=False,
-        middleware_shape="wrap",
-        explain_kind="wrap",
-    ),
-    Bucket.in_tx_after: _meta(
-        phase="in_tx",
-        reverse_for_usecase_tuple=True,
-        capability_schedulable=True,
-        middleware_shape="effect",
-        explain_kind="effect",
-    ),
-    Bucket.after_commit: _meta(
-        phase="after_commit",
-        reverse_for_usecase_tuple=False,
-        capability_schedulable=True,
-        middleware_shape="effect",
-        explain_kind="effect",
-    ),
+_SLOT_TO_EXPLAIN_KIND: Final[dict[Slot, StepExplainKind]] = {
+    Slot.before: StepExplainKind.guard,
+    Slot.after: StepExplainKind.effect,
+    Slot.wrap: StepExplainKind.wrap,
+    Slot.finally_: StepExplainKind.finally_,
+    Slot.on_failure: StepExplainKind.on_failure,
 }
 
-# ....................... #
 
-ALL_BUCKETS: Final[tuple[Bucket, ...]] = tuple(BUCKET_REGISTRY.keys())
+class BucketKey(Enum):
+    """One of 11 legal ``(Phase, Slot)`` placements on an :class:`~forze.application.execution.plan.OperationPlan`."""
 
-# ....................... #
+    OUTER_BEFORE = auto()
+    OUTER_WRAP = auto()
+    OUTER_FINALLY = auto()
+    OUTER_ON_FAILURE = auto()
+    OUTER_AFTER = auto()
+    IN_TX_BEFORE = auto()
+    IN_TX_FINALLY = auto()
+    IN_TX_ON_FAILURE = auto()
+    IN_TX_WRAP = auto()
+    IN_TX_AFTER = auto()
+    AFTER_COMMIT = auto()
+
+    # ....................... #
+
+    @property
+    def phase(self) -> Phase:
+        return _BUCKET_PHASE[self]
+
+    @property
+    def slot(self) -> Slot:
+        return _BUCKET_SLOT[self]
+
+    @property
+    def label(self) -> str:
+        """Stable string id (matches former :class:`Bucket` ``StrEnum`` values)."""
+
+        if self is BucketKey.AFTER_COMMIT:
+            return "after_commit"
+        p, s = self.phase, self.slot
+        slot_s = "finally" if s is Slot.finally_ else s.value
+        return f"{p.value}_{slot_s}"
+
+    @property
+    def reverse_for_usecase_tuple(self) -> bool:
+        """When ``True``, :meth:`~forze.application.execution.plan.OperationPlan.specs_for_chain` reverses build order."""
+
+        return self.slot is not Slot.before and self.phase is not Phase.after_commit
+
+    @property
+    def capability_schedulable(self) -> bool:
+        """When ``True``, :func:`~forze.application.execution.capabilities.schedule_capability_specs` may reorder."""
+
+        return self.slot in (Slot.before, Slot.after)
+
+    @property
+    def is_dispatch_edge_bucket(self) -> bool:
+        """Buckets whose effect specs may contribute dispatch graph edges."""
+
+        return self.slot is Slot.after
+
+    @property
+    def explain_kind(self) -> StepExplainKind:
+        """Row ``kind`` for :class:`~forze.application.execution.plan.StepExplainRow` (never ``tx``)."""
+
+        return _SLOT_TO_EXPLAIN_KIND[self.slot]
+
+    # ....................... #
+
+    @classmethod
+    def iter_all(cls) -> tuple[BucketKey, ...]:
+        """All keys in enum declaration order."""
+
+        return tuple(cls)
+
+    @classmethod
+    def iter_capability_segments(cls) -> tuple[BucketKey, ...]:
+        """Schedulable buckets (capability topo), stable order matching former ``iter_capability_schedulable_buckets``."""
+
+        sched = [k for k in cls.iter_all() if k.capability_schedulable]
+        return tuple(sorted(sched, key=lambda k: cls.iter_all().index(k)))
+
+    @classmethod
+    def iter_dispatch_edge_buckets(cls) -> tuple[BucketKey, ...]:
+        """Buckets that may carry ``dispatch_edges`` on effect specs."""
+
+        return tuple(k for k in cls.iter_all() if k.is_dispatch_edge_bucket)
+
+    @classmethod
+    def iter_chain_order(cls) -> tuple[BucketKey, ...]:
+        """Canonical emission order for chain building and ``explain``."""
+
+        return (
+            cls.OUTER_BEFORE,
+            cls.OUTER_WRAP,
+            cls.OUTER_FINALLY,
+            cls.OUTER_ON_FAILURE,
+            cls.IN_TX_BEFORE,
+            cls.IN_TX_FINALLY,
+            cls.IN_TX_ON_FAILURE,
+            cls.IN_TX_WRAP,
+            cls.IN_TX_AFTER,
+            cls.AFTER_COMMIT,
+            cls.OUTER_AFTER,
+        )
 
 
-def coerce_bucket(bucket: Bucket | str) -> Bucket:
-    """Return :class:`Bucket` for ``bucket`` (enum member or string value)."""
+_BUCKET_PHASE: Final[dict[BucketKey, Phase]] = {
+    BucketKey.OUTER_BEFORE: Phase.outer,
+    BucketKey.OUTER_WRAP: Phase.outer,
+    BucketKey.OUTER_FINALLY: Phase.outer,
+    BucketKey.OUTER_ON_FAILURE: Phase.outer,
+    BucketKey.OUTER_AFTER: Phase.outer,
+    BucketKey.IN_TX_BEFORE: Phase.in_tx,
+    BucketKey.IN_TX_FINALLY: Phase.in_tx,
+    BucketKey.IN_TX_ON_FAILURE: Phase.in_tx,
+    BucketKey.IN_TX_WRAP: Phase.in_tx,
+    BucketKey.IN_TX_AFTER: Phase.in_tx,
+    BucketKey.AFTER_COMMIT: Phase.after_commit,
+}
 
-    if isinstance(bucket, Bucket):
-        return bucket
-
-    try:
-        return Bucket(bucket)
-    except ValueError as e:
-        raise CoreError(f"Invalid bucket: {bucket!r}") from e
-
-
-# ....................... #
-
-CAPABILITY_SCHEDULABLE_BUCKETS: Final[frozenset[Bucket]] = frozenset(
-    b for b, m in BUCKET_REGISTRY.items() if m.capability_schedulable
-)
-
-DISPATCH_EDGE_BUCKETS: Final[frozenset[Bucket]] = frozenset(
-    b for b, m in BUCKET_REGISTRY.items() if m.middleware_shape == "effect"
-)
-
-# ....................... #
-
-
-def iter_capability_schedulable_buckets() -> tuple[Bucket, ...]:
-    """Buckets passed to the capability scheduler (finalize + explain + chain)."""
-
-    return tuple(
-        sorted(CAPABILITY_SCHEDULABLE_BUCKETS, key=lambda b: ALL_BUCKETS.index(b))
-    )
+_BUCKET_SLOT: Final[dict[BucketKey, Slot]] = {
+    BucketKey.OUTER_BEFORE: Slot.before,
+    BucketKey.OUTER_WRAP: Slot.wrap,
+    BucketKey.OUTER_FINALLY: Slot.finally_,
+    BucketKey.OUTER_ON_FAILURE: Slot.on_failure,
+    BucketKey.OUTER_AFTER: Slot.after,
+    BucketKey.IN_TX_BEFORE: Slot.before,
+    BucketKey.IN_TX_FINALLY: Slot.finally_,
+    BucketKey.IN_TX_ON_FAILURE: Slot.on_failure,
+    BucketKey.IN_TX_WRAP: Slot.wrap,
+    BucketKey.IN_TX_AFTER: Slot.after,
+    BucketKey.AFTER_COMMIT: Slot.after,
+}

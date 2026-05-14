@@ -4,6 +4,7 @@ from typing import Any
 
 import attrs
 
+from forze.application.execution.bucket import BucketKey
 from forze.base.errors import CoreError
 
 from ..context import ExecutionContext
@@ -21,26 +22,13 @@ class LegacyChainBuilder:
     ctx: ExecutionContext
     """Execution context."""
 
-    plan: OperationPlan
-    """Operation plan."""
-
     # ....................... #
 
-    def build(
-        self,
-        *,
-        outer_before: tuple[MiddlewareSpec, ...],
-        outer_wrap: tuple[MiddlewareSpec, ...],
-        outer_finally: tuple[MiddlewareSpec, ...],
-        outer_on_failure: tuple[MiddlewareSpec, ...],
-        outer_after: tuple[MiddlewareSpec, ...],
-        in_tx_before: tuple[MiddlewareSpec, ...],
-        in_tx_finally: tuple[MiddlewareSpec, ...],
-        in_tx_on_failure: tuple[MiddlewareSpec, ...],
-        in_tx_wrap: tuple[MiddlewareSpec, ...],
-        in_tx_after: tuple[MiddlewareSpec, ...],
-        after_commit: tuple[MiddlewareSpec, ...],
-    ) -> tuple[Middleware[Any, Any], ...]:
+    def build(self, plan: OperationPlan) -> tuple[Middleware[Any, Any], ...]:
+        def _s(k: BucketKey) -> tuple[MiddlewareSpec, ...]:
+            return plan.specs_for_chain(k)
+
+        after_commit = _s(BucketKey.AFTER_COMMIT)
         after_commit_effects: list[Effect[Any, Any]] = []
 
         for s in after_commit:
@@ -53,24 +41,24 @@ class LegacyChainBuilder:
 
         chain: list[Middleware[Any, Any]] = []
 
-        chain.extend(s.factory(self.ctx) for s in outer_before)
-        chain.extend(s.factory(self.ctx) for s in outer_wrap)
-        chain.extend(s.factory(self.ctx) for s in outer_finally)
-        chain.extend(s.factory(self.ctx) for s in outer_on_failure)
+        chain.extend(s.factory(self.ctx) for s in _s(BucketKey.OUTER_BEFORE))
+        chain.extend(s.factory(self.ctx) for s in _s(BucketKey.OUTER_WRAP))
+        chain.extend(s.factory(self.ctx) for s in _s(BucketKey.OUTER_FINALLY))
+        chain.extend(s.factory(self.ctx) for s in _s(BucketKey.OUTER_ON_FAILURE))
 
-        if self.plan.tx is not None:
+        if plan.tx is not None:
             chain.append(
                 TxMiddleware[Any, Any](
                     ctx=self.ctx,
-                    route=self.plan.tx.route,
+                    route=plan.tx.route,
                 ).with_after_commit(*after_commit_effects)
             )
-            chain.extend(s.factory(self.ctx) for s in in_tx_before)
-            chain.extend(s.factory(self.ctx) for s in in_tx_finally)
-            chain.extend(s.factory(self.ctx) for s in in_tx_on_failure)
-            chain.extend(s.factory(self.ctx) for s in in_tx_wrap)
-            chain.extend(s.factory(self.ctx) for s in in_tx_after)
+            chain.extend(s.factory(self.ctx) for s in _s(BucketKey.IN_TX_BEFORE))
+            chain.extend(s.factory(self.ctx) for s in _s(BucketKey.IN_TX_FINALLY))
+            chain.extend(s.factory(self.ctx) for s in _s(BucketKey.IN_TX_ON_FAILURE))
+            chain.extend(s.factory(self.ctx) for s in _s(BucketKey.IN_TX_WRAP))
+            chain.extend(s.factory(self.ctx) for s in _s(BucketKey.IN_TX_AFTER))
 
-        chain.extend(s.factory(self.ctx) for s in outer_after)
+        chain.extend(s.factory(self.ctx) for s in _s(BucketKey.OUTER_AFTER))
 
         return tuple(chain)

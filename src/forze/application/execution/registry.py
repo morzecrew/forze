@@ -5,16 +5,17 @@ and attach :class:`UsecasePlan` middleware composition. :meth:`resolve` builds
 a fully composed usecase for an operation.
 """
 
-from typing import Any, Literal, Self, cast, final, overload
+from typing import Any, Literal, Self, final, overload
 
 import attrs
 from structlog.contextvars import bind_contextvars
 
 from forze.application._logger import logger
+from forze.application.execution.bucket import BucketKey
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 
-from .capabilities import SchedulableCapabilitySpec, schedule_capability_specs
+from .capabilities import schedule_capability_specs
 from .context import ExecutionContext
 from .dispatch import (
     assert_dispatch_edges_reference_registered_ops,
@@ -25,8 +26,6 @@ from .plan import (
     WILDCARD,
     OpKey,
     UsecasePlan,
-    iter_capability_schedulable_buckets,
-    middleware_specs_for_usecase_tuple,
 )
 from .usecase import Usecase, UsecaseFactory
 
@@ -102,12 +101,9 @@ class UsecaseRegistry:
                 merged = plan.merged_operation_plan(op)
                 merged.validate()
 
-                for bucket in iter_capability_schedulable_buckets():
-                    specs = middleware_specs_for_usecase_tuple(merged, bucket)
-                    schedule_capability_specs(
-                        cast(tuple[SchedulableCapabilitySpec, ...], specs),
-                        bucket=bucket.value,
-                    )
+                for key in BucketKey.iter_capability_segments():
+                    specs = merged.specs_for_chain(key)
+                    schedule_capability_specs(specs, bucket=key.label)
 
             return
 
@@ -118,14 +114,14 @@ class UsecaseRegistry:
             merged = plan.merged_operation_plan(op)
             merged.validate()
 
-            for bucket in iter_capability_schedulable_buckets():
-                specs = middleware_specs_for_usecase_tuple(merged, bucket)
+            for key in BucketKey.iter_capability_segments():
+                specs = merged.specs_for_chain(key)
 
                 for spec in specs:
                     if spec.requires or spec.provides:
                         raise CoreError(
                             f"Operation {op!r} declares capability requires/provides in bucket "
-                            f"{bucket.value!r} but `UsecasePlan.use_capability_engine` is disabled. "
+                            f"{key.label!r} but `UsecasePlan.use_capability_engine` is disabled. "
                             "Enable the capability engine or remove capability metadata from specs."
                         )
 

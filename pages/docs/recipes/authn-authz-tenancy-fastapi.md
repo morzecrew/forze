@@ -106,7 +106,7 @@ OpenAPI cannot be inferred from arbitrary guard callables; **sharing** `AuthzPer
 
 ## Generated routes and default guards
 
-Pass `default_http_features` into `attach_document_endpoints` / `attach_search_endpoints` to prepend guards (for example `RequireAuthnFeature()`, `RequirePermissionFeature(...)`) to every generated endpoint spec without editing each builder. Defaults remain **off** if you omit the argument.
+Pass `default_http_features` into `attach_document_endpoints` / `attach_search_endpoints` / `attach_storage_endpoints` to prepend guards (for example `RequireAuthnFeature()`, `RequirePermissionFeature(...)`) to every generated endpoint spec without editing each builder. Defaults remain **off** if you omit the argument.
 
 ### Base `AuthnRequirement` on document / search specs
 

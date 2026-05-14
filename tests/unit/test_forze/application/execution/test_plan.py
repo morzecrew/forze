@@ -7,6 +7,7 @@ import pytest
 from forze.application.execution import Deps, ExecutionContext, Usecase
 from forze.application.execution.plan import (
     WILDCARD,
+    BucketKey,
     MiddlewareSpec,
     OperationPlan,
     TransactionSpec,
@@ -71,12 +72,12 @@ class TestOperationPlan:
 
     def test_default_operation_plan_has_empty_buckets(self) -> None:
         op = OperationPlan()
-        assert op.outer_before == ()
-        assert op.outer_after == ()
-        assert op.outer_finally == ()
-        assert op.outer_on_failure == ()
-        assert op.in_tx_finally == ()
-        assert op.in_tx_on_failure == ()
+        assert op.buckets[BucketKey.OUTER_BEFORE] == ()
+        assert op.buckets[BucketKey.OUTER_AFTER] == ()
+        assert op.buckets[BucketKey.OUTER_FINALLY] == ()
+        assert op.buckets[BucketKey.OUTER_ON_FAILURE] == ()
+        assert op.buckets[BucketKey.IN_TX_FINALLY] == ()
+        assert op.buckets[BucketKey.IN_TX_ON_FAILURE] == ()
         assert op.tx is None
 
     def test_add_appends_to_bucket(self) -> None:
@@ -84,19 +85,19 @@ class TestOperationPlan:
             return None
 
         spec = MiddlewareSpec(priority=1, factory=factory)
-        plan = OperationPlan().add("outer_before", spec)
-        assert len(plan.outer_before) == 1
-        assert plan.outer_before[0].priority == 1
+        plan = OperationPlan().add(BucketKey.OUTER_BEFORE, spec)
+        assert len(plan.buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert plan.buckets[BucketKey.OUTER_BEFORE][0].priority == 1
 
     def test_add_invalid_bucket_raises(self) -> None:
+        from typing import Any, cast
+
         from forze.base.errors import CoreError
 
-        def factory(ctx):
-            return None
-
-        spec = MiddlewareSpec(priority=1, factory=factory)
-        with pytest.raises(CoreError, match="Invalid bucket"):
-            OperationPlan().add("invalid_bucket", spec)
+        base = cast(dict[Any, Any], {k: () for k in BucketKey.iter_all()})
+        base["invalid_bucket"] = ()
+        with pytest.raises(CoreError, match="Unknown bucket"):
+            OperationPlan(buckets=base)
 
     def test_validate_in_tx_without_tx_raises(self) -> None:
         from forze.application.execution.middleware import GuardMiddleware
@@ -109,7 +110,7 @@ class TestOperationPlan:
             return GuardMiddleware(guard=noop_guard)
 
         spec = MiddlewareSpec(priority=1, factory=factory)
-        plan = OperationPlan(in_tx_before=(spec,))
+        plan = OperationPlan().add(BucketKey.IN_TX_BEFORE, spec)
         with pytest.raises(CoreError, match="tx.*not enabled"):
             plan.validate()
 
@@ -124,7 +125,7 @@ class TestOperationPlan:
             return FinallyMiddleware(hook=hook)
 
         spec = MiddlewareSpec(priority=1, factory=factory)
-        plan = OperationPlan(in_tx_finally=(spec,))
+        plan = OperationPlan().add(BucketKey.IN_TX_FINALLY, spec)
         with pytest.raises(CoreError, match="tx.*not enabled"):
             plan.validate()
 
@@ -139,7 +140,7 @@ class TestOperationPlan:
             return OnFailureMiddleware(hook=hook)
 
         spec = MiddlewareSpec(priority=1, factory=factory)
-        plan = OperationPlan(in_tx_on_failure=(spec,))
+        plan = OperationPlan().add(BucketKey.IN_TX_ON_FAILURE, spec)
         with pytest.raises(CoreError, match="tx.*not enabled"):
             plan.validate()
 
@@ -152,8 +153,12 @@ class TestOperationPlan:
 
         s1 = MiddlewareSpec(priority=10, factory=f1)
         s2 = MiddlewareSpec(priority=5, factory=f2)
-        plan = OperationPlan(outer_before=(s1, s2))
-        built = plan.build("outer_before")
+        plan = (
+            OperationPlan()
+            .add(BucketKey.OUTER_BEFORE, s1)
+            .add(BucketKey.OUTER_BEFORE, s2)
+        )
+        built = plan.build(BucketKey.OUTER_BEFORE)
         assert built[0].priority == 10
         assert built[1].priority == 5
 
@@ -164,10 +169,14 @@ class TestOperationPlan:
         def f2(ctx):
             return None
 
-        p1 = OperationPlan(outer_before=(MiddlewareSpec(priority=1, factory=f1),))
-        p2 = OperationPlan(outer_before=(MiddlewareSpec(priority=2, factory=f2),))
+        p1 = OperationPlan().add(
+            BucketKey.OUTER_BEFORE, MiddlewareSpec(priority=1, factory=f1)
+        )
+        p2 = OperationPlan().add(
+            BucketKey.OUTER_BEFORE, MiddlewareSpec(priority=2, factory=f2)
+        )
         merged = OperationPlan.merge(p1, p2)
-        assert len(merged.outer_before) == 2
+        assert len(merged.buckets[BucketKey.OUTER_BEFORE]) == 2
 
     def test_build_priority_collision_raises(self) -> None:
         from forze.base.errors import CoreError
@@ -180,24 +189,24 @@ class TestOperationPlan:
 
         s1 = MiddlewareSpec(priority=5, factory=f1)
         s2 = MiddlewareSpec(priority=5, factory=f2)
-        plan = OperationPlan(outer_before=(s1, s2))
+        plan = OperationPlan().add(BucketKey.OUTER_BEFORE, s1).add(BucketKey.OUTER_BEFORE, s2)
         with pytest.raises(CoreError, match="Priority collision"):
-            plan.build("outer_before")
+            plan.build(BucketKey.OUTER_BEFORE)
 
     def test_build_invalid_bucket_raises(self) -> None:
-        from forze.base.errors import CoreError
-
         plan = OperationPlan()
-        with pytest.raises(CoreError, match="Invalid bucket"):
-            plan.build("invalid_bucket")
+        with pytest.raises(KeyError):
+            plan.build("invalid_bucket")  # type: ignore[arg-type]
 
     def test_build_dedupes_same_factory_priority(self) -> None:
         def f1(ctx):
             return None
 
         spec = MiddlewareSpec(priority=1, factory=f1)
-        plan = OperationPlan(outer_before=(spec, spec))
-        built = plan.build("outer_before")
+        plan = OperationPlan().add(BucketKey.OUTER_BEFORE, spec).add(
+            BucketKey.OUTER_BEFORE, spec
+        )
+        built = plan.build(BucketKey.OUTER_BEFORE)
         assert len(built) == 1
 
     def test_merge_preserves_tx(self) -> None:
@@ -225,14 +234,17 @@ class TestOperationPlan:
         def f2(ctx):
             return None
 
-        p1 = OperationPlan(
-            outer_before=(MiddlewareSpec(priority=1, factory=f1),),
-            tx=TransactionSpec(route="mock"),
+        p1 = OperationPlan(tx=TransactionSpec(route="mock")).add(
+            BucketKey.OUTER_BEFORE,
+            MiddlewareSpec(priority=1, factory=f1),
         )
-        p2 = OperationPlan(outer_after=(MiddlewareSpec(priority=2, factory=f2),))
+        p2 = OperationPlan().add(
+            BucketKey.OUTER_AFTER,
+            MiddlewareSpec(priority=2, factory=f2),
+        )
         merged = p1.merge(p2)
-        assert len(merged.outer_before) == 1
-        assert len(merged.outer_after) == 1
+        assert len(merged.buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert len(merged.buckets[BucketKey.OUTER_AFTER]) == 1
         assert merged.tx is not None
 
     def test_merge_from_instance_single_arg(self) -> None:
@@ -244,11 +256,17 @@ class TestOperationPlan:
         def f2(ctx):
             return None
 
-        p1 = OperationPlan(outer_before=(MiddlewareSpec(priority=1, factory=f1),))
-        p2 = OperationPlan(outer_before=(MiddlewareSpec(priority=2, factory=f2),))
+        p1 = OperationPlan().add(
+            BucketKey.OUTER_BEFORE, MiddlewareSpec(priority=1, factory=f1)
+        )
+        p2 = OperationPlan().add(
+            BucketKey.OUTER_BEFORE, MiddlewareSpec(priority=2, factory=f2)
+        )
         via_class = OperationPlan.merge(p1, p2)
         via_instance = p1.merge(p2)
-        assert len(via_class.outer_before) == len(via_instance.outer_before) == 2
+        assert len(via_class.buckets[BucketKey.OUTER_BEFORE]) == len(
+            via_instance.buckets[BucketKey.OUTER_BEFORE]
+        ) == 2
 
 
 class TestUsecasePlan:
@@ -262,8 +280,8 @@ class TestUsecasePlan:
             return _guard
 
         plan = UsecasePlan().before("get", guard, priority=1)
-        assert len(plan.ops["get"].outer_before) == 1
-        assert plan.ops["get"].outer_before[0].priority == 1
+        assert len(plan.ops["get"].buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert plan.ops["get"].buckets[BucketKey.OUTER_BEFORE][0].priority == 1
 
     def test_after_adds_effect(self) -> None:
         def effect(ctx: ExecutionContext):
@@ -273,8 +291,8 @@ class TestUsecasePlan:
             return _effect
 
         plan = UsecasePlan().after("get", effect, priority=2)
-        assert len(plan.ops["get"].outer_after) == 1
-        assert plan.ops["get"].outer_after[0].priority == 2
+        assert len(plan.ops["get"].buckets[BucketKey.OUTER_AFTER]) == 1
+        assert plan.ops["get"].buckets[BucketKey.OUTER_AFTER][0].priority == 2
 
     def test_merge_combines_plans(self) -> None:
         def guard_a(ctx: ExecutionContext):
@@ -292,8 +310,8 @@ class TestUsecasePlan:
         plan_a = UsecasePlan().before("get", guard_a, priority=1)
         plan_b = UsecasePlan().before("create", guard_b, priority=1)
         merged = UsecasePlan.merge(plan_a, plan_b)
-        assert len(merged.ops["get"].outer_before) == 1
-        assert len(merged.ops["create"].outer_before) == 1
+        assert len(merged.ops["get"].buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert len(merged.ops["create"].buckets[BucketKey.OUTER_BEFORE]) == 1
 
     def test_merge_with_wildcard_base(self) -> None:
         def base_guard(ctx):
@@ -313,8 +331,8 @@ class TestUsecasePlan:
         merged = UsecasePlan.merge(base, op_specific)
         assert WILDCARD in merged.ops
         assert "get" in merged.ops
-        assert len(merged.ops[WILDCARD].outer_before) == 1
-        assert len(merged.ops["get"].outer_before) == 1
+        assert len(merged.ops[WILDCARD].buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert len(merged.ops["get"].buckets[BucketKey.OUTER_BEFORE]) == 1
 
     def test_merge_from_instance_includes_self(self) -> None:
         """Instance merge (plan_a.merge(plan_b)) includes plan_a in the result."""
@@ -336,8 +354,8 @@ class TestUsecasePlan:
         merged = plan_a.merge(plan_b)
         assert "get" in merged.ops
         assert "create" in merged.ops
-        assert len(merged.ops["get"].outer_before) == 1
-        assert len(merged.ops["create"].outer_before) == 1
+        assert len(merged.ops["get"].buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert len(merged.ops["create"].buckets[BucketKey.OUTER_BEFORE]) == 1
 
     def test_merge_from_instance_equals_class_merge(self) -> None:
         """plan_a.merge(plan_b) equals UsecasePlan.merge(plan_a, plan_b)."""
@@ -359,8 +377,8 @@ class TestUsecasePlan:
         via_class = UsecasePlan.merge(plan_a, plan_b)
         via_instance = plan_a.merge(plan_b)
         assert set(via_class.ops.keys()) == set(via_instance.ops.keys())
-        assert len(via_instance.ops["get"].outer_before) == 1
-        assert len(via_instance.ops["create"].outer_before) == 1
+        assert len(via_instance.ops["get"].buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert len(via_instance.ops["create"].buckets[BucketKey.OUTER_BEFORE]) == 1
 
     def test_tx_enables_transaction(self) -> None:
         plan = UsecasePlan().tx("create", route="mock")
@@ -434,7 +452,7 @@ class TestUsecasePlan:
             return GuardMiddleware(guard=guard)
 
         plan = UsecasePlan().wrap("get", mw_factory, priority=1)
-        assert len(plan.ops["get"].outer_wrap) == 1
+        assert len(plan.ops["get"].buckets[BucketKey.OUTER_WRAP]) == 1
 
     def test_in_tx_before_adds_guard(self) -> None:
         def guard_factory(ctx):
@@ -447,7 +465,7 @@ class TestUsecasePlan:
             UsecasePlan().tx("create", route="mock").in_tx_before("create", guard_factory, priority=1)
         )
         assert plan.ops["create"].tx is not None
-        assert len(plan.ops["create"].in_tx_before) == 1
+        assert len(plan.ops["create"].buckets[BucketKey.IN_TX_BEFORE]) == 1
 
     def test_in_tx_after_adds_effect(self) -> None:
         def effect_factory(ctx):
@@ -459,7 +477,7 @@ class TestUsecasePlan:
         plan = (
             UsecasePlan().tx("create", route="mock").in_tx_after("create", effect_factory, priority=1)
         )
-        assert len(plan.ops["create"].in_tx_after) == 1
+        assert len(plan.ops["create"].buckets[BucketKey.IN_TX_AFTER]) == 1
 
     def test_in_tx_wrap_adds_middleware(self) -> None:
         from forze.application.execution.middleware import GuardMiddleware
@@ -471,7 +489,7 @@ class TestUsecasePlan:
             return GuardMiddleware(guard=guard)
 
         plan = UsecasePlan().tx("create", route="mock").in_tx_wrap("create", mw_factory, priority=1)
-        assert len(plan.ops["create"].in_tx_wrap) == 1
+        assert len(plan.ops["create"].buckets[BucketKey.IN_TX_WRAP]) == 1
 
     def test_after_commit_adds_effect(self) -> None:
         def effect_factory(ctx):
@@ -485,7 +503,7 @@ class TestUsecasePlan:
             .tx("create", route="mock")
             .after_commit("create", effect_factory, priority=1)
         )
-        assert len(plan.ops["create"].after_commit) == 1
+        assert len(plan.ops["create"].buckets[BucketKey.AFTER_COMMIT]) == 1
 
     @pytest.mark.asyncio
     async def test_resolve_with_tx_and_after_commit(self, stub_ctx) -> None:
@@ -548,7 +566,7 @@ class TestUsecasePlan:
             return GuardMiddleware(guard=guard)
 
         op_plan = OperationPlan(tx=TransactionSpec(route="mock")).add(
-            "after_commit",
+            BucketKey.AFTER_COMMIT,
             MiddlewareSpec(priority=1, factory=bad_factory),
         )
         plan = UsecasePlan(ops={"create": op_plan})
@@ -606,13 +624,13 @@ class TestUsecasePlanPipelines:
     def test_before_pipeline_adds_guards_with_stepped_priority(self) -> None:
         g0, g1, g2 = _guards3()
         plan = UsecasePlan().before_pipeline("get", [g0, g1, g2], first_priority=100)
-        specs = plan.ops["get"].outer_before
+        specs = plan.ops["get"].buckets[BucketKey.OUTER_BEFORE]
         assert [s.priority for s in specs] == [100, 90, 80]
 
     def test_after_pipeline_adds_effects_with_stepped_priority(self) -> None:
         e0, e1, e2 = _effects3()
         plan = UsecasePlan().after_pipeline("get", [e0, e1, e2], first_priority=50)
-        assert [s.priority for s in plan.ops["get"].outer_after] == [50, 40, 30]
+        assert [s.priority for s in plan.ops["get"].buckets[BucketKey.OUTER_AFTER]] == [50, 40, 30]
 
     def test_wrap_pipeline_adds_middlewares_with_stepped_priority(self) -> None:
         from forze.application.execution.middleware import GuardMiddleware
@@ -630,7 +648,7 @@ class TestUsecasePlanPipelines:
             return GuardMiddleware(guard=guard)
 
         plan = UsecasePlan().wrap_pipeline("get", [m0, m1], first_priority=7)
-        assert [s.priority for s in plan.ops["get"].outer_wrap] == [7, -3]
+        assert [s.priority for s in plan.ops["get"].buckets[BucketKey.OUTER_WRAP]] == [7, -3]
 
     def test_in_tx_before_pipeline(self) -> None:
         g0, g1, _ = _guards3()
@@ -639,7 +657,7 @@ class TestUsecasePlanPipelines:
             .tx("create", route="mock")
             .in_tx_before_pipeline("create", [g0, g1], first_priority=20)
         )
-        assert [s.priority for s in plan.ops["create"].in_tx_before] == [20, 10]
+        assert [s.priority for s in plan.ops["create"].buckets[BucketKey.IN_TX_BEFORE]] == [20, 10]
 
     def test_in_tx_after_pipeline(self) -> None:
         e0, e1, e2 = _effects3()
@@ -648,7 +666,7 @@ class TestUsecasePlanPipelines:
             .tx("create", route="mock")
             .in_tx_after_pipeline("create", [e0, e1, e2], first_priority=0)
         )
-        assert [s.priority for s in plan.ops["create"].in_tx_after] == [0, -10, -20]
+        assert [s.priority for s in plan.ops["create"].buckets[BucketKey.IN_TX_AFTER]] == [0, -10, -20]
 
     def test_in_tx_wrap_pipeline(self) -> None:
         from forze.application.execution.middleware import GuardMiddleware
@@ -670,7 +688,7 @@ class TestUsecasePlanPipelines:
             .tx("create", route="mock")
             .in_tx_wrap_pipeline("create", [m0, m1], first_priority=15)
         )
-        assert [s.priority for s in plan.ops["create"].in_tx_wrap] == [15, 5]
+        assert [s.priority for s in plan.ops["create"].buckets[BucketKey.IN_TX_WRAP]] == [15, 5]
 
     def test_after_commit_pipeline(self) -> None:
         e0, e1, _e2 = _effects3()
@@ -679,7 +697,7 @@ class TestUsecasePlanPipelines:
             .tx("create", route="mock")
             .after_commit_pipeline("create", [e0, e1], first_priority=2)
         )
-        assert [s.priority for s in plan.ops["create"].after_commit] == [2, -8]
+        assert [s.priority for s in plan.ops["create"].buckets[BucketKey.AFTER_COMMIT]] == [2, -8]
 
     def test_outer_finally_pipeline_priorities(self) -> None:
         def f0(ctx: ExecutionContext):
@@ -695,7 +713,7 @@ class TestUsecasePlanPipelines:
             return _hook
 
         plan = UsecasePlan().outer_finally_pipeline("get", [f0, f1], first_priority=11)
-        assert [s.priority for s in plan.ops["get"].outer_finally] == [11, 1]
+        assert [s.priority for s in plan.ops["get"].buckets[BucketKey.OUTER_FINALLY]] == [11, 1]
 
     def test_outer_on_failure_pipeline_priorities(self) -> None:
         def h0(ctx: ExecutionContext):
@@ -711,7 +729,7 @@ class TestUsecasePlanPipelines:
             return _hook
 
         plan = UsecasePlan().outer_on_failure_pipeline("get", [h0, h1], first_priority=4)
-        assert [s.priority for s in plan.ops["get"].outer_on_failure] == [4, -6]
+        assert [s.priority for s in plan.ops["get"].buckets[BucketKey.OUTER_ON_FAILURE]] == [4, -6]
 
     def test_in_tx_finally_pipeline_priorities(self) -> None:
         def f0(ctx: ExecutionContext):
@@ -731,7 +749,7 @@ class TestUsecasePlanPipelines:
             .tx("create", route="mock")
             .in_tx_finally_pipeline("create", [f0, f1], first_priority=8)
         )
-        assert [s.priority for s in plan.ops["create"].in_tx_finally] == [8, -2]
+        assert [s.priority for s in plan.ops["create"].buckets[BucketKey.IN_TX_FINALLY]] == [8, -2]
 
     def test_in_tx_on_failure_pipeline_priorities(self) -> None:
         def h0(ctx: ExecutionContext):
@@ -751,7 +769,7 @@ class TestUsecasePlanPipelines:
             .tx("create", route="mock")
             .in_tx_on_failure_pipeline("create", [h0, h1], first_priority=3)
         )
-        assert [s.priority for s in plan.ops["create"].in_tx_on_failure] == [3, -7]
+        assert [s.priority for s in plan.ops["create"].buckets[BucketKey.IN_TX_ON_FAILURE]] == [3, -7]
 
     def test_empty_pipeline_does_not_create_op(self) -> None:
         base = UsecasePlan()
@@ -764,7 +782,7 @@ class TestUsecasePlanPipelines:
         base = UsecasePlan()
         derived = base.before_pipeline("get", [g0, g1])
         assert "get" not in base.ops
-        assert len(derived.ops["get"].outer_before) == 2
+        assert len(derived.ops["get"].buckets[BucketKey.OUTER_BEFORE]) == 2
 
     @pytest.mark.asyncio
     async def test_resolve_before_pipeline_runs_guards_in_order(self) -> None:
@@ -885,15 +903,15 @@ class TestUsecasePlanListOp:
 
         plan = UsecasePlan().before(["get", "list"], guard, priority=3)
         for k in ("get", "list"):
-            assert len(plan.ops[k].outer_before) == 1
-            assert plan.ops[k].outer_before[0].priority == 3
+            assert len(plan.ops[k].buckets[BucketKey.OUTER_BEFORE]) == 1
+            assert plan.ops[k].buckets[BucketKey.OUTER_BEFORE][0].priority == 3
 
     def test_after_with_list(self) -> None:
         e0, _e1, _e2 = _effects3()
         plan = UsecasePlan().after(["x", "y"], e0, priority=4)
         for k in ("x", "y"):
-            assert len(plan.ops[k].outer_after) == 1
-            assert plan.ops[k].outer_after[0].priority == 4
+            assert len(plan.ops[k].buckets[BucketKey.OUTER_AFTER]) == 1
+            assert plan.ops[k].buckets[BucketKey.OUTER_AFTER][0].priority == 4
 
     def test_wrap_with_list(self) -> None:
         from forze.application.execution.middleware import GuardMiddleware
@@ -906,7 +924,7 @@ class TestUsecasePlanListOp:
 
         plan = UsecasePlan().wrap(["p", "q"], mw, priority=2)
         for k in ("p", "q"):
-            assert len(plan.ops[k].outer_wrap) == 1
+            assert len(plan.ops[k].buckets[BucketKey.OUTER_WRAP]) == 1
 
     def test_before_pipeline_with_list(self) -> None:
         g0, g1, _ = _guards3()
@@ -916,7 +934,7 @@ class TestUsecasePlanListOp:
             first_priority=50,
         )
         for k in ("get", "list"):
-            assert [s.priority for s in plan.ops[k].outer_before] == [50, 40]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.OUTER_BEFORE]] == [50, 40]
 
     def test_in_tx_variants_with_list(self) -> None:
         g0, _g1, _ = _guards3()
@@ -937,9 +955,9 @@ class TestUsecasePlanListOp:
             .in_tx_wrap(["create", "update"], wrap_mw, priority=1)
         )
         for k in ("create", "update"):
-            assert len(plan.ops[k].in_tx_before) == 1
-            assert len(plan.ops[k].in_tx_after) == 1
-            assert len(plan.ops[k].in_tx_wrap) == 1
+            assert len(plan.ops[k].buckets[BucketKey.IN_TX_BEFORE]) == 1
+            assert len(plan.ops[k].buckets[BucketKey.IN_TX_AFTER]) == 1
+            assert len(plan.ops[k].buckets[BucketKey.IN_TX_WRAP]) == 1
 
     def test_in_tx_pipelines_with_list(self) -> None:
         g0, g1, _ = _guards3()
@@ -966,9 +984,9 @@ class TestUsecasePlanListOp:
             .in_tx_wrap_pipeline(["create", "update"], [mw0, mw1], first_priority=0)
         )
         for k in ("create", "update"):
-            assert [s.priority for s in plan.ops[k].in_tx_before] == [10, 0]
-            assert [s.priority for s in plan.ops[k].in_tx_after] == [3, -7]
-            assert [s.priority for s in plan.ops[k].in_tx_wrap] == [0, -10]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_BEFORE]] == [10, 0]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_AFTER]] == [3, -7]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_WRAP]] == [0, -10]
 
     def test_after_commit_with_list(self) -> None:
         e0, e1, _ = _effects3()
@@ -979,8 +997,8 @@ class TestUsecasePlanListOp:
             .after_commit_pipeline(["a", "b"], [e0, e1], first_priority=1)
         )
         for k in ("a", "b"):
-            assert len(plan.ops[k].after_commit) == 3
-            assert [s.priority for s in plan.ops[k].after_commit] == [5, 1, -9]
+            assert len(plan.ops[k].buckets[BucketKey.AFTER_COMMIT]) == 3
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.AFTER_COMMIT]] == [5, 1, -9]
 
     def test_outer_pipeline_with_list(self) -> None:
         g0, _g1, _ = _guards3()
@@ -1001,9 +1019,9 @@ class TestUsecasePlanListOp:
             first_priority=6,
         )
         for k in ("a", "b"):
-            assert [s.priority for s in plan.ops[k].outer_before] == [6]
-            assert [s.priority for s in plan.ops[k].outer_after] == [6]
-            assert [s.priority for s in plan.ops[k].outer_wrap] == [6]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.OUTER_BEFORE]] == [6]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.OUTER_AFTER]] == [6]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.OUTER_WRAP]] == [6]
 
     def test_in_tx_pipeline_with_list(self) -> None:
         """``in_tx_pipeline`` with ``op`` list wires in-tx buckets for each key."""
@@ -1031,12 +1049,12 @@ class TestUsecasePlanListOp:
         )
         for k in ("a", "b"):
             assert plan.ops[k].tx is not None
-            assert [s.priority for s in plan.ops[k].in_tx_before] == [2]
-            assert [s.priority for s in plan.ops[k].in_tx_after] == [2]
-            assert [s.priority for s in plan.ops[k].in_tx_wrap] == [2]
-            assert plan.ops[k].outer_before == ()
-            assert plan.ops[k].outer_after == ()
-            assert plan.ops[k].outer_wrap == ()
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_BEFORE]] == [2]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_AFTER]] == [2]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_WRAP]] == [2]
+            assert plan.ops[k].buckets[BucketKey.OUTER_BEFORE] == ()
+            assert plan.ops[k].buckets[BucketKey.OUTER_AFTER] == ()
+            assert plan.ops[k].buckets[BucketKey.OUTER_WRAP] == ()
 
     def test_in_tx_pipeline_list_multiple_ops_stepped_priorities(self) -> None:
         g0, g1, _ = _guards3()
@@ -1068,12 +1086,12 @@ class TestUsecasePlanListOp:
             )
         )
         for k in keys:
-            assert [s.priority for s in plan.ops[k].in_tx_before] == [20, 10]
-            assert [s.priority for s in plan.ops[k].in_tx_after] == [20, 10]
-            assert [s.priority for s in plan.ops[k].in_tx_wrap] == [20, 10]
-            assert plan.ops[k].outer_before == ()
-            assert plan.ops[k].outer_after == ()
-            assert plan.ops[k].outer_wrap == ()
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_BEFORE]] == [20, 10]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_AFTER]] == [20, 10]
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_WRAP]] == [20, 10]
+            assert plan.ops[k].buckets[BucketKey.OUTER_BEFORE] == ()
+            assert plan.ops[k].buckets[BucketKey.OUTER_AFTER] == ()
+            assert plan.ops[k].buckets[BucketKey.OUTER_WRAP] == ()
 
     def test_in_tx_pipeline_list_partial_sections(self) -> None:
         """Only pass ``before`` / ``after`` / ``wrap`` sections that are needed."""
@@ -1087,11 +1105,11 @@ class TestUsecasePlanListOp:
             .in_tx_pipeline(["p", "q"], before=[g0], first_priority=5)
         )
         for k in ("p", "q"):
-            assert [s.priority for s in plan.ops[k].in_tx_before] == [5]
-            assert plan.ops[k].in_tx_after == ()
-            assert plan.ops[k].in_tx_wrap == ()
-            assert plan.ops[k].in_tx_finally == ()
-            assert plan.ops[k].in_tx_on_failure == ()
+            assert [s.priority for s in plan.ops[k].buckets[BucketKey.IN_TX_BEFORE]] == [5]
+            assert plan.ops[k].buckets[BucketKey.IN_TX_AFTER] == ()
+            assert plan.ops[k].buckets[BucketKey.IN_TX_WRAP] == ()
+            assert plan.ops[k].buckets[BucketKey.IN_TX_FINALLY] == ()
+            assert plan.ops[k].buckets[BucketKey.IN_TX_ON_FAILURE] == ()
 
         plan2 = (
             UsecasePlan()
@@ -1099,11 +1117,11 @@ class TestUsecasePlanListOp:
             .in_tx_pipeline(["u", "v"], after=[e0, e1], first_priority=0)
         )
         for k in ("u", "v"):
-            assert [s.priority for s in plan2.ops[k].in_tx_after] == [0, -10]
-            assert plan2.ops[k].in_tx_before == ()
-            assert plan2.ops[k].in_tx_wrap == ()
-            assert plan2.ops[k].in_tx_finally == ()
-            assert plan2.ops[k].in_tx_on_failure == ()
+            assert [s.priority for s in plan2.ops[k].buckets[BucketKey.IN_TX_AFTER]] == [0, -10]
+            assert plan2.ops[k].buckets[BucketKey.IN_TX_BEFORE] == ()
+            assert plan2.ops[k].buckets[BucketKey.IN_TX_WRAP] == ()
+            assert plan2.ops[k].buckets[BucketKey.IN_TX_FINALLY] == ()
+            assert plan2.ops[k].buckets[BucketKey.IN_TX_ON_FAILURE] == ()
 
     @pytest.mark.asyncio
     async def test_resolve_in_tx_pipeline_list_runs_in_tx_guards(self, stub_ctx) -> None:
@@ -1159,8 +1177,8 @@ class TestUsecasePlanListOp:
         plan = UsecasePlan().before([Route.MOCK, "other"], guard, priority=0)
         assert "mock" in plan.ops
         assert "other" in plan.ops
-        assert len(plan.ops["mock"].outer_before) == 1
-        assert len(plan.ops["other"].outer_before) == 1
+        assert len(plan.ops["mock"].buckets[BucketKey.OUTER_BEFORE]) == 1
+        assert len(plan.ops["other"].buckets[BucketKey.OUTER_BEFORE]) == 1
 
 
 class TestUsecasePlanFinallyOnFailure:

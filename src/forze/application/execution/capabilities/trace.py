@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Literal, Protocol
+from typing import Literal, TypeAlias
 
 import attrs
 
-from ..context import ExecutionContext
+from ..plan.spec import MiddlewareSpec
 
 # ----------------------- #
 
@@ -15,18 +15,8 @@ CapabilityTraceAction = Literal["ran", "skipped_missing", "skipped_return", "err
 
 # ....................... #
 
-
-class SchedulableCapabilitySpec(Protocol):
-    """Structural type for middleware specs in capability scheduling and segments."""
-
-    priority: int
-    requires: frozenset[str]
-    provides: frozenset[str]
-    step_label: str | None
-    factory: Callable[[ExecutionContext], Any]
-
-
-# ....................... #
+SchedulableCapabilitySpec: TypeAlias = MiddlewareSpec
+"""Alias for specs passed through capability scheduling and segment middleware."""
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
