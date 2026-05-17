@@ -1,3 +1,4 @@
+from forze.application.execution import OperationNamespace, OperationRef, operation_namespace_for
 from .facades import SearchDTOs, SearchUsecasesFacade
 from .factories import (
     build_federated_search_registry,
@@ -8,13 +9,16 @@ from .factories import (
     build_search_raw_mapper,
     build_search_typed_mapper,
 )
-from .operations import SearchOperation
+from .operations import SearchKernelOp
 
 # ----------------------- #
 
 __all__ = [
     "SearchUsecasesFacade",
-    "SearchOperation",
+    "SearchKernelOp",
+    "OperationNamespace",
+    "OperationRef",
+    "operation_namespace_for",
     "build_search_registry",
     "build_search_typed_mapper",
     "build_search_raw_mapper",

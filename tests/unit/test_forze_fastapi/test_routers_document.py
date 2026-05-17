@@ -11,7 +11,6 @@ from forze.application.composition.document import (
     build_document_registry,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import UsecasePlan
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.endpoints.document import attach_document_endpoints
@@ -89,10 +88,8 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
     """Build registry with plan merged and id set (required for attach_http_endpoint)."""
-    reg = build_document_registry(spec, dtos).extend_plan(
-        UsecasePlan().tx("*", route="mock")
-    )
-    reg.finalize(spec.name, inplace=True)
+    reg = build_document_registry(spec, dtos).tx("*", route="mock")
+    reg.finalize(spec.name)
     return reg
 
 

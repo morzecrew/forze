@@ -2,7 +2,7 @@
 name: forze-wiring
 description: >-
   Wires Forze ExecutionRuntime, DepsPlan, lifecycle, built-in deps modules,
-  document/search composition, UsecasePlan transactions, and interface entry
+  document/search composition, registry stage authoring, and interface entry
   points. Use when bootstrapping an app or composing runtime, lifecycle, and
   usecase registries.
 ---
@@ -104,12 +104,12 @@ async with runtime.scope():
 
 ### Registry and transaction plan
 
-`build_document_registry` registers standard CRUD usecases. **Transactions are not implicit** — attach a `UsecasePlan` with `.tx(..., route=...)` / `DocumentOperation` keys, or use `build_default_tx_document_plan`:
+`build_document_registry` registers standard CRUD usecases. **Transactions are not implicit** — author them directly on the registry with `.tx(..., route=...)` using keys from :func:`~forze.application.execution.operation_namespace_for`, or call `apply_default_tx_document_registry(...)`:
 
 ```python
 from forze.application.composition.document import (
     DocumentDTOs,
-    build_default_tx_document_plan,
+    apply_default_tx_document_registry,
     build_document_registry,
 )
 
@@ -120,31 +120,33 @@ project_dtos = DocumentDTOs(
 )
 
 registry = build_document_registry(project_spec, project_dtos)
-registry.extend_plan(build_default_tx_document_plan(TxRoute.DEFAULT), inplace=True)
+apply_default_tx_document_registry(registry, project_spec, "default")
 ```
 
 Equivalent explicit plan:
 
 ```python
-from forze.application.composition.document import DocumentOperation
-from forze.application.execution import UsecasePlan
+from forze.application.composition.document import DocumentKernelOp
+from forze.application.execution import operation_namespace_for
 
-document_plan = (
-    UsecasePlan()
-    .tx(DocumentOperation.CREATE, route=TxRoute.DEFAULT)
-    .tx(DocumentOperation.UPDATE, route=TxRoute.DEFAULT)
-    .tx(DocumentOperation.KILL, route=TxRoute.DEFAULT)
-    .tx(DocumentOperation.DELETE, route=TxRoute.DEFAULT)
-    .tx(DocumentOperation.RESTORE, route=TxRoute.DEFAULT)
-)
-registry.extend_plan(document_plan, inplace=True)
+_ops = operation_namespace_for(project_spec)
+_K = DocumentKernelOp
+
+registry.tx(_ops.op(_K.CREATE), route="default")
+registry.tx(_ops.op(_K.UPDATE), route="default")
+registry.tx(_ops.op(_K.KILL), route="default")
+registry.tx(_ops.op(_K.DELETE), route="default")
+registry.tx(_ops.op(_K.RESTORE), route="default")
 ```
 
 ### Custom usecases and middleware
 
 ```python
-from forze.application.composition.document import DocumentOperation
-from forze.application.execution import UsecasePlan
+from forze.application.composition.document import DocumentKernelOp
+from forze.application.execution import operation_namespace_for
+
+_ops = operation_namespace_for(project_spec)
+_K = DocumentKernelOp
 
 
 def auth_guard(ctx):
@@ -154,12 +156,8 @@ def auth_guard(ctx):
     return guard
 
 
-extra_plan = (
-    UsecasePlan()
-    .before(DocumentOperation.CREATE, auth_guard, priority=100)
-    .after_commit(DocumentOperation.CREATE, notify_effect)
-)
-registry.extend_plan(extra_plan, inplace=True)
+registry.before(_ops.op(_K.CREATE), auth_guard, priority=100)
+registry.after_commit(_ops.op(_K.CREATE), notify_effect)
 ```
 
 Custom operations use **string** keys merged into the same registry/plan:
@@ -168,12 +166,8 @@ Custom operations use **string** keys merged into the same registry/plan:
 registry.register(
     "archive",
     lambda ctx: ArchiveProject(ctx=ctx),
-    inplace=True,
 )
-registry.extend_plan(
-    UsecasePlan().tx("archive", route=TxRoute.DEFAULT),
-    inplace=True,
-)
+registry.tx("archive", route="default")
 ```
 
 ### Plan buckets (order)
@@ -260,16 +254,14 @@ async with runtime.scope():
 
 ```python
 from forze.application.composition.search import (
-    SearchDTOs,
     SearchUsecasesFacade,
     build_search_registry,
 )
 from forze.application.dto.search import SearchRequestDTO
 
-search_dtos = SearchDTOs(read=ProjectReadModel)
-search_registry = build_search_registry(project_search_spec, search_dtos)
+search_registry = build_search_registry(project_search_spec)
 
-facade = SearchUsecasesFacade(ctx=ctx, reg=search_registry)
+facade = SearchUsecasesFacade(ctx=ctx, registry=search_registry)
 result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 ```
 
@@ -279,7 +271,7 @@ result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 2. **Skipping lifecycle** — real adapters need pools started/stopped.
 3. **`get_context()` outside `runtime.scope()`** — raises `RuntimeError`.
 4. **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.
-5. **Expecting `tx_document_plan`** — use `build_default_tx_document_plan` or an explicit `UsecasePlan`.
+5. **Expecting `tx_document_plan`** — use `apply_default_tx_document_registry(...)` or direct `registry.tx(...)` calls.
 6. **Duplicating literal route strings** — use shared `StrEnum` values for spec names and transaction routes.
 
 ## Reference

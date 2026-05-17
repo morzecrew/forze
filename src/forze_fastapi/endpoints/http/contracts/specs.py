@@ -3,7 +3,7 @@ from typing import Any, Generic, Literal, NotRequired, Sequence, TypedDict
 import attrs
 
 from forze.application.contracts.mapping import MapperPort
-from forze.application.execution import FacadeOpRef
+from forze.application.execution import OperationRef
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO
 
@@ -133,7 +133,7 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R, F]):
     facade_type: type[F]
     """The type of the usecases facade to use for the endpoint."""
 
-    call: FacadeOpRef[In, Raw]
+    call: OperationRef[In, Raw]
     """The call operation to use for the endpoint."""
 
     # ....................... #

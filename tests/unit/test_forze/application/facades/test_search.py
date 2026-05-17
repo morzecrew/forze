@@ -1,33 +1,35 @@
-"""Unit tests for SearchOperation and SearchUsecasesFacade."""
+"""Unit tests for SearchKernelOp and SearchUsecasesFacade."""
 
 import pytest
 
 from forze.application.composition.search import (
-    SearchOperation,
+    SearchKernelOp,
     SearchUsecasesFacade,
 )
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.execution import ExecutionContext, OperationNamespace, UsecaseRegistry
 
 # ----------------------- #
 
+_SEARCH_KEYS = OperationNamespace(prefix="search")
 
-class TestSearchOperation:
-    """Tests for SearchOperation enum."""
 
-    def test_typed_search_value(self) -> None:
-        assert SearchOperation.TYPED_SEARCH == "search.typed"
+class TestSearchKernelOp:
+    """Tests for :class:`SearchKernelOp` and default keyspace."""
 
-    def test_raw_search_value(self) -> None:
-        assert SearchOperation.RAW_SEARCH == "search.raw"
+    def test_typed_search_wire_key(self) -> None:
+        assert _SEARCH_KEYS.op(SearchKernelOp.TYPED) == "search.typed"
 
-    def test_typed_search_cursor_value(self) -> None:
-        assert SearchOperation.TYPED_SEARCH_CURSOR == "search.typed_cursor"
+    def test_raw_search_wire_key(self) -> None:
+        assert _SEARCH_KEYS.op(SearchKernelOp.RAW) == "search.raw"
 
-    def test_raw_search_cursor_value(self) -> None:
-        assert SearchOperation.RAW_SEARCH_CURSOR == "search.raw_cursor"
+    def test_typed_search_cursor_wire_key(self) -> None:
+        assert _SEARCH_KEYS.op(SearchKernelOp.TYPED_CURSOR) == "search.typed_cursor"
+
+    def test_raw_search_cursor_wire_key(self) -> None:
+        assert _SEARCH_KEYS.op(SearchKernelOp.RAW_CURSOR) == "search.raw_cursor"
 
     def test_all_members_string_values(self) -> None:
-        for op in SearchOperation:
+        for op in SearchKernelOp:
             assert isinstance(op.value, str)
             assert len(op.value) > 0
 
@@ -37,7 +39,7 @@ class TestSearchUsecasesFacade:
 
     @pytest.fixture
     def mock_raw_search_usecase(self) -> UsecaseRegistry:
-        """Registry with RAW_SEARCH operation only."""
+        """Registry with raw search operation only."""
         from forze.application.execution import Usecase
 
         class StubRawSearchUsecase(Usecase[dict, dict]):
@@ -45,10 +47,10 @@ class TestSearchUsecasesFacade:
                 return {"hits": [], "count": 0}
 
         reg = UsecaseRegistry().register(
-            SearchOperation.RAW_SEARCH,
+            _SEARCH_KEYS.op(SearchKernelOp.RAW),
             lambda ctx: StubRawSearchUsecase(ctx=ctx),
         )
-        reg.finalize("search_facade", inplace=True)
+        reg.finalize("search_facade")
         return reg
 
     def test_raw_search_returns_usecase(
@@ -56,7 +58,11 @@ class TestSearchUsecasesFacade:
         stub_ctx: ExecutionContext,
         mock_raw_search_usecase: UsecaseRegistry,
     ) -> None:
-        facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
+        facade = SearchUsecasesFacade(
+            ctx=stub_ctx,
+            registry=mock_raw_search_usecase,
+            namespace=_SEARCH_KEYS,
+        )
         uc = facade.raw_search
         assert uc is not None
 
@@ -67,7 +73,11 @@ class TestSearchUsecasesFacade:
     ) -> None:
         from forze.base.errors import CoreError
 
-        facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
+        facade = SearchUsecasesFacade(
+            ctx=stub_ctx,
+            registry=mock_raw_search_usecase,
+            namespace=_SEARCH_KEYS,
+        )
         with pytest.raises(
             CoreError, match="not registered for operation: search.typed"
         ):

@@ -1,23 +1,17 @@
-"""Unit tests for forze.application.execution.usecase."""
+"""Unit tests for :mod:`forze.application.execution.usecase`."""
 
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext, Usecase
-from forze.application.execution.middleware import EffectMiddleware, GuardMiddleware
-
-# ----------------------- #
+from forze.application.execution.middleware import GuardMiddleware, SuccessHookMiddleware
 
 
 class ConcreteUsecase(Usecase[str, str]):
-    """Concrete usecase for testing."""
-
     async def main(self, args: str) -> str:
         return f"result:{args}"
 
 
 class TestUsecase:
-    """Tests for Usecase base class."""
-
     @pytest.fixture
     def stub_ctx(self) -> ExecutionContext:
         return ExecutionContext(deps=Deps())
@@ -25,12 +19,12 @@ class TestUsecase:
     @pytest.mark.asyncio
     async def test_call_invokes_main(self, stub_ctx: ExecutionContext) -> None:
         uc = ConcreteUsecase(ctx=stub_ctx)
-        result = await uc("foo")
-        assert result == "result:foo"
+        assert await uc("foo") == "result:foo"
 
     @pytest.mark.asyncio
     async def test_with_middlewares_runs_guard_before_main(
-        self, stub_ctx: ExecutionContext
+        self,
+        stub_ctx: ExecutionContext,
     ) -> None:
         seen: list[str] = []
 
@@ -40,23 +34,24 @@ class TestUsecase:
         uc = ConcreteUsecase(ctx=stub_ctx).with_middlewares(
             GuardMiddleware(guard=guard)
         )
-        result = await uc("x")
+
+        assert await uc("x") == "result:x"
         assert seen == ["guard:x"]
-        assert result == "result:x"
 
     @pytest.mark.asyncio
-    async def test_with_middlewares_runs_effect_after_main(
-        self, stub_ctx: ExecutionContext
+    async def test_with_middlewares_runs_success_hook_after_main_without_replacing_result(
+        self,
+        stub_ctx: ExecutionContext,
     ) -> None:
         seen: list[str] = []
 
-        async def effect(args: str, res: str) -> str:
-            seen.append(f"effect:{args}:{res}")
-            return res.upper()
+        async def hook(args: str, result: str) -> None:
+            seen.append(f"hook:{args}:{result}")
+            return None
 
         uc = ConcreteUsecase(ctx=stub_ctx).with_middlewares(
-            EffectMiddleware(effect=effect)
+            SuccessHookMiddleware(hook=hook)
         )
-        result = await uc("x")
-        assert seen == ["effect:x:result:x"]
-        assert result == "RESULT:X"
+
+        assert await uc("x") == "result:x"
+        assert seen == ["hook:x:result:x"]

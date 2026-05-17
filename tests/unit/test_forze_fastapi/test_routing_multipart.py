@@ -10,10 +10,10 @@ from starlette.testclient import TestClient
 from forze.application.execution import (
     Deps,
     ExecutionContext,
+    OperationRef,
     Usecase,
     UsecaseRegistry,
     UsecasesFacade,
-    facade_op,
 )
 from forze_fastapi.endpoints.http import (
     HttpRequestDTO,
@@ -85,12 +85,12 @@ class BatchUsecase(Usecase[BatchIn, BatchOut]):
 
 def _reg() -> UsecaseRegistry:
     reg = UsecaseRegistry(
-        defaults={
+        {
             UP_OP: lambda ctx: UploadUsecase(ctx=ctx),
             BATCH_OP: lambda ctx: BatchUsecase(ctx=ctx),
         }
     )
-    reg.finalize("mp", inplace=True)
+    reg.finalize("mp")
     return reg
 
 
@@ -130,8 +130,11 @@ async def _map_batch(
 
 
 class UploadFacade(UsecasesFacade):
-    upload = facade_op(UP_OP, uc=UploadUsecase)
-    batch = facade_op(BATCH_OP, uc=BatchUsecase)
+    pass
+
+
+UPLOAD_CALL = OperationRef(UP_OP, uc=UploadUsecase)
+BATCH_CALL = OperationRef(BATCH_OP, uc=BatchUsecase)
 
 
 # ----------------------- #
@@ -145,7 +148,7 @@ class TestMultipartHttpEndpoint:
         }
         spec = build_http_endpoint_spec(
             UploadFacade,
-            UploadFacade.upload,
+            UPLOAD_CALL,
             http={"method": "POST", "path": "/upload"},
             request=_request,
             response=UploadOut,
@@ -182,7 +185,7 @@ class TestMultipartHttpEndpoint:
         }
         spec = build_http_endpoint_spec(
             UploadFacade,
-            UploadFacade.batch,
+            BATCH_CALL,
             http={"method": "POST", "path": "/batch"},
             request=_request,
             response=BatchOut,

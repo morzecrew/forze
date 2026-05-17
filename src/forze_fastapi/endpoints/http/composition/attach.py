@@ -6,11 +6,11 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence, cast
 
 from fastapi import APIRouter, Depends, Request
 
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.execution import ExecutionContext, OperationRef, UsecaseRegistry
 from forze.base.errors import CoreError
 
 from ..._utils import facade_dependency
@@ -58,6 +58,7 @@ def attach_http_endpoint(
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,
+    facade_init_kwargs: Mapping[str, Any] | None = None,
 ) -> APIRouter:
     # Fail fast if route already exists
     path = spec.http["path"]
@@ -71,10 +72,12 @@ def attach_http_endpoint(
 
     facade_dep = facade_dependency(
         facade=spec.facade_type,
-        reg=registry,
+        registry=registry,
         ctx_dep=ctx_dep,
+        **dict(facade_init_kwargs or {}),
     )
-    operation_id = registry.qualify_operation(spec.call.op)
+    call = cast(OperationRef[In, Raw], getattr(spec, "call"))
+    operation_id = registry.operation_id_for(call)
     base_handler = UsecaseHttpEndpointHandler[Q, P, H, C, B, In, Raw, R, F]()
     handler = compose_endpoint_features(base_handler, spec.features)
 
@@ -160,6 +163,7 @@ def attach_http_endpoints(
     registry: UsecaseRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,
+    facade_init_kwargs: Mapping[str, Any] | None = None,
 ) -> APIRouter:
     for spec in specs:
         attach_http_endpoint(
@@ -168,6 +172,7 @@ def attach_http_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=facade_init_kwargs,
         )
 
     return router

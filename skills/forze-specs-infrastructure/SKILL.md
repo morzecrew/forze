@@ -116,7 +116,7 @@ temporal_module = TemporalDepsModule(
 
 ## Transaction routes
 
-Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.transaction(TxRoute.DEFAULT):` and `UsecasePlan().tx(..., route=TxRoute.DEFAULT)`.
+Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.transaction(TxRoute.DEFAULT):` and `UsecaseRegistry().tx(..., route=TxRoute.DEFAULT)`.
 
 ## Gotchas
 

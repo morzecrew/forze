@@ -4,7 +4,7 @@ import pytest
 
 from forze.application.composition.document import (
     DocumentDTOs,
-    DocumentOperation,
+    DocumentKernelOp,
     build_document_create_mapper,
     build_document_registry,
 )
@@ -14,7 +14,7 @@ from forze.application.composition.document.factories import (
     build_document_update_mapper,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import UsecasePlan, UsecaseRegistry
+from forze.application.execution import OperationNamespace, UsecaseRegistry, operation_namespace_for
 from forze.application.composition.mapping import DTOMapper
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
@@ -166,21 +166,22 @@ class TestBuildDocumentRegistry:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.GET)
-        assert reg.exists(DocumentOperation.CREATE)
-        assert reg.exists(DocumentOperation.KILL)
+        ops = operation_namespace_for(spec)
+        assert reg.exists(ops.op(DocumentKernelOp.GET))
+        assert reg.exists(ops.op(DocumentKernelOp.CREATE))
+        assert reg.exists(ops.op(DocumentKernelOp.KILL))
 
     def test_update_registered_when_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=True)
         dtos = _minimal_dtos(supports_update=True)
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.UPDATE)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.UPDATE))
 
     def test_update_not_registered_when_no_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=False)
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        assert not reg.exists(DocumentOperation.UPDATE)
+        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.UPDATE))
 
     def test_resolve_get_returns_usecase(
         self,
@@ -189,9 +190,17 @@ class TestBuildDocumentRegistry:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        reg.finalize("document", inplace=True)
-        uc = reg.resolve(DocumentOperation.GET, composition_ctx)
+        reg.finalize("document")
+        uc = reg.resolve(operation_namespace_for(spec).op(DocumentKernelOp.GET), composition_ctx)
         assert uc is not None
+
+    def test_custom_op_key_space_registers_prefixed_keys(self) -> None:
+        spec = _minimal_spec()
+        dtos = _minimal_dtos()
+        custom = OperationNamespace(prefix="orders.document")
+        reg = build_document_registry(spec, dtos, namespace=custom)
+        assert reg.exists(custom.op(DocumentKernelOp.GET))
+        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.GET))
 
 
 class TestDocumentFacadeWithRegistry:
@@ -206,10 +215,12 @@ class TestDocumentFacadeWithRegistry:
 
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
-        reg = build_document_registry(spec, dtos).extend_plan(
-            UsecasePlan().tx("*", route="mock")
+        reg = build_document_registry(spec, dtos).tx("*", route="mock")
+        reg.finalize("document")
+        facade = DocumentUsecasesFacade(
+            ctx=composition_ctx,
+            registry=reg,
+            namespace=operation_namespace_for(spec),
         )
-        reg.finalize("document", inplace=True)
-        facade = DocumentUsecasesFacade(ctx=composition_ctx, reg=reg)
         uc = facade.get
         assert uc is not None

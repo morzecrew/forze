@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextvars import Token
-from typing import Any, Protocol, Self, final, runtime_checkable
+from typing import Any, Protocol, Self, Sequence, final, runtime_checkable
 
 import attrs
 
@@ -9,13 +9,13 @@ from forze.application._logger import logger
 from forze.base.errors import CoreError
 
 from .context import ExecutionContext
-from .middleware import (
-    EffectMiddleware,
+from .middlewares import (
     FinallyMiddleware,
     GuardMiddleware,
     Middleware,
     NextCall,
     OnFailureMiddleware,
+    OnSuccessMiddleware,
 )
 
 # ----------------------- #
@@ -32,6 +32,9 @@ class UsecaseFactory(Protocol):
 
 
 # ....................... #
+#! Usecase itself doesn't resolve anything from ExecutionContext, so we need
+#! to unbind it and feed only required methods if any (e.g. for dispatching or so)
+#! but it might be even not required once we have a proper cross-op graph
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -39,15 +42,16 @@ class Usecase[Args, R]:
     """Base class for asynchronous application usecases.
 
     Subclasses implement :meth:`main`. The ``middlewares`` tuple is built by
-    :class:`~forze.application.execution.plan.UsecasePlan` so that priority and
-    pipeline list order have consistent semantics; see :meth:`_build_chain` for
-    how that tuple is wrapped. Invoke via :meth:`__call__`.
+    :class:`~forze.application.execution.UsecaseRegistry` stage authoring and
+    resolution so that priority and pipeline list order have consistent
+    semantics; see :meth:`_build_chain` for how that tuple is wrapped. Invoke
+    via :meth:`__call__`.
     """
 
     ctx: ExecutionContext
     """Execution context for resolving ports and transactions."""
 
-    middlewares: tuple[Middleware[Args, R], ...] = attrs.field(factory=tuple)
+    middlewares: Sequence[Middleware[Args, R]] = attrs.field(factory=tuple)
     """Wrapping middlewares, outer-to-inner in resolve order; see :meth:`_build_chain`."""
 
     operation_id: str | None = attrs.field(default=None)
@@ -121,16 +125,13 @@ class Usecase[Args, R]:
             prev = fn
 
             if isinstance(mw, GuardMiddleware):
-                qualname = type(mw.guard).__qualname__
+                qualname = type(mw.inner).__qualname__
 
-            elif isinstance(mw, EffectMiddleware):
-                qualname = type(mw.effect).__qualname__
+            elif isinstance(mw, OnSuccessMiddleware):
+                qualname = type(mw.inner).__qualname__
 
-            elif isinstance(mw, OnFailureMiddleware):
-                qualname = type(mw.hook).__qualname__
-
-            elif isinstance(mw, FinallyMiddleware):
-                qualname = type(mw.hook).__qualname__
+            elif isinstance(mw, OnFailureMiddleware | FinallyMiddleware):
+                qualname = type(mw.inner).__qualname__
 
             else:
                 qualname = type(mw).__qualname__

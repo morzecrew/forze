@@ -13,10 +13,11 @@ from structlog.contextvars import bound_contextvars
 
 from forze.application._logger import logger
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..contracts.authn import AuthnIdentity
-from ..contracts.base import DepKey, DepsPort
+from ..contracts.base import DepKey
 from ..contracts.cache import CacheDepKey, CachePort, CacheSpec
 from ..contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from ..contracts.dlock import (
@@ -57,6 +58,7 @@ from ..contracts.tenancy import (
     TenantResolverPort,
 )
 from ..contracts.tx import TxHandle, TxManagerDepKey, TxManagerPort
+from .deps import Deps
 
 # ----------------------- #
 # TypeVars for consistency
@@ -97,7 +99,7 @@ class ExecutionContext:
     :class:`DepsPort` used to resolve infrastructure-specific ports.
     """
 
-    deps: DepsPort[Any]
+    deps: Deps[Any]
     """Dependencies container."""
 
     # Non initable fields
@@ -248,7 +250,7 @@ class ExecutionContext:
         :meth:`pop_usecase_dispatch` with the returned token when the usecase
         finishes.
 
-        :param operation_id: Qualified operation id (see :meth:`UsecaseRegistry.qualify_operation`).
+        :param operation_id: Operation id for this resolution (see :meth:`UsecaseRegistry.operation_id_for`), either the logical key or ``"{prefix}.{logical}"`` when a prefix was set at finalize.
         :returns: Opaque token for :meth:`pop_usecase_dispatch`.
         :raises CoreError: When ``operation_id`` is already on the stack.
         """
@@ -272,6 +274,14 @@ class ExecutionContext:
         """Restore the usecase dispatch stack after :meth:`push_usecase_dispatch`."""
 
         self.__usecase_dispatch_stack.reset(token)
+
+    # ....................... #
+
+    @property
+    def usecase_dispatch_stack(self) -> tuple[str, ...]:
+        """Qualified operation ids for nested usecase invocation (outer to inner)."""
+
+        return self.__usecase_dispatch_stack.get()
 
     # ....................... #
 
@@ -315,7 +325,7 @@ class ExecutionContext:
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self, route: str | StrEnum) -> AsyncIterator[None]:
+    async def transaction(self, route: StrKey) -> AsyncIterator[None]:
         """Enter a transaction scope.
 
         On the **root** scope, after a successful commit, runs callbacks queued
@@ -406,7 +416,7 @@ class ExecutionContext:
 
     # ....................... #
 
-    def dep[T](self, key: DepKey[T], *, route: str | StrEnum | None = None) -> T:
+    def dep[T](self, key: DepKey[T], *, route: StrKey | None = None) -> T:
         """Resolve a dependency by key using the underlying container.
 
         :param key: Dependency key.

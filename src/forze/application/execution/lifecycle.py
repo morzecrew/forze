@@ -10,9 +10,9 @@ from typing import Protocol, Self, final
 
 import attrs
 
+from forze.application._logger import logger
 from forze.base.errors import CoreError
 
-from forze.application._logger import logger
 from .context import ExecutionContext
 
 # ----------------------- #
@@ -125,9 +125,10 @@ class LifecyclePlan:
         logger.trace("Existing steps: %s", tuple(step.name for step in self.steps))
         logger.trace("New steps: %s", tuple(step.name for step in steps))
 
-        self._check_name_collision(*self.steps, *steps)
+        new_steps = (*self.steps, *steps)
+        self._check_name_collision(*new_steps)
 
-        return attrs.evolve(self, steps=(*self.steps, *steps))
+        return attrs.evolve(self, steps=new_steps)
 
     # ....................... #
 

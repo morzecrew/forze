@@ -2,15 +2,16 @@
 
 import pytest
 
-from forze.application.composition.document import DocumentDTOs
-from forze.application.composition.document.factories import (
+from forze.application.composition.document import (
+    DocumentDTOs,
+    DocumentKernelOp,
     build_document_create_mapper,
     build_document_registry,
 )
-from forze.application.composition.document.operations import DocumentOperation
 from forze.application.contracts.document import DocumentSpec
 from forze.application.composition.mapping import DTOMapper, NumberIdStep
 from forze.application.contracts.counter import CounterSpec
+from forze.application.execution import operation_namespace_for
 from forze.base.errors import CoreError
 from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -94,49 +95,49 @@ class TestBuildDocumentRegistry:
         spec = _write_spec()
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.GET)
-        assert reg.exists(DocumentOperation.LIST_CURSOR)
-        assert reg.exists(DocumentOperation.RAW_LIST_CURSOR)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.GET))
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.LIST_CURSOR))
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.RAW_LIST_CURSOR))
 
     def test_registers_create_and_kill(self) -> None:
         spec = _write_spec()
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.CREATE)
-        assert reg.exists(DocumentOperation.KILL)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.CREATE))
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.KILL))
 
     def test_registers_update_when_update_cmd_has_fields(self) -> None:
         spec = _write_spec(update_cmd=_UpdateCmd)
         dtos = _write_dtos(update_cmd=_UpdateCmd)
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.UPDATE)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.UPDATE))
 
     def test_skips_update_when_update_cmd_empty(self) -> None:
         spec = _write_spec(update_cmd=_EmptyUpdateCmd)
         dtos = _write_dtos(update_cmd=_EmptyUpdateCmd)
         reg = build_document_registry(spec, dtos)
-        assert not reg.exists(DocumentOperation.UPDATE)
+        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.UPDATE))
 
     def test_registers_delete_restore_for_soft_delete(self) -> None:
         spec = _write_spec(domain=_SoftDoc)
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.DELETE)
-        assert reg.exists(DocumentOperation.RESTORE)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.DELETE))
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.RESTORE))
 
     def test_no_delete_restore_without_soft_delete(self) -> None:
         spec = _write_spec(domain=Document)
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert not reg.exists(DocumentOperation.DELETE)
-        assert not reg.exists(DocumentOperation.RESTORE)
+        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.DELETE))
+        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.RESTORE))
 
     def test_read_only_spec_only_get(self) -> None:
         spec = _read_only_spec()
         dtos = _read_only_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.GET)
-        assert not reg.exists(DocumentOperation.CREATE)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.GET))
+        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.CREATE))
 
     def test_custom_create_steps(self) -> None:
         spec = _write_spec()
@@ -144,4 +145,4 @@ class TestBuildDocumentRegistry:
         reg = build_document_registry(
             spec, dtos, create_steps=(NumberIdStep(spec=CounterSpec(name="test")),)
         )
-        assert reg.exists(DocumentOperation.CREATE)
+        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.CREATE))

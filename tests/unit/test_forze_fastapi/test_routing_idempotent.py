@@ -10,7 +10,6 @@ from forze.application.contracts.idempotency import IdempotencyDepKey, Idempoten
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.composition.document import DocumentDTOs, build_document_registry
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import UsecasePlan
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.http import IDEMPOTENCY_KEY_HEADER
@@ -99,10 +98,8 @@ class TestDocumentCreateIdempotencyIntegration:
             )
 
         spec, dtos = _doc_spec_and_dtos()
-        reg = build_document_registry(spec, dtos).extend_plan(
-            UsecasePlan().tx("*", route="mock")
-        )
-        reg.finalize(spec.name, inplace=True)
+        reg = build_document_registry(spec, dtos).tx("*", route="mock")
+        reg.finalize(spec.name)
 
         app = FastAPI()
         router = APIRouter(prefix="/api")

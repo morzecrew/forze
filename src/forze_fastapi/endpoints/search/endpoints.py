@@ -8,7 +8,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from forze.application.composition.search import SearchDTOs, SearchUsecasesFacade
+from forze.application.composition.search import (
+    SearchDTOs,
+    SearchKernelOp,
+    SearchUsecasesFacade,
+)
 from forze.application.dto import (
     CursorPaginated,
     CursorSearchRequestDTO,
@@ -19,6 +23,7 @@ from forze.application.dto import (
     RawSearchRequestDTO,
     SearchRequestDTO,
 )
+from forze.application.execution import OperationNamespace, OperationRef
 
 from .._utils import path_coerce
 from ..http import (
@@ -53,6 +58,7 @@ type TypedSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
 def build_typed_search_endpoint_spec[M: BaseModel](
     dtos: TypedSearchDTOs[M],
     *,
+    namespace: OperationNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> TypedSearchEndpointSpec[M]:
@@ -66,7 +72,7 @@ def build_typed_search_endpoint_spec[M: BaseModel](
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.search,  # type: ignore[misc]
+        OperationRef(namespace.key(SearchKernelOp.TYPED)),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
@@ -94,6 +100,7 @@ type RawSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
 def build_raw_search_endpoint_spec[M: BaseModel](
     dtos: RawSearchDTOs[M],
     *,
+    namespace: OperationNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> RawSearchEndpointSpec[M]:
@@ -107,7 +114,7 @@ def build_raw_search_endpoint_spec[M: BaseModel](
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.raw_search,  # type: ignore[misc]
+        OperationRef(namespace.key(SearchKernelOp.RAW)),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
@@ -135,6 +142,7 @@ type TypedSearchCursorEndpointSpec[M: BaseModel] = HttpEndpointSpec[
 def build_typed_search_cursor_endpoint_spec[M: BaseModel](
     dtos: TypedSearchCursorDTOs[M],
     *,
+    namespace: OperationNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> TypedSearchCursorEndpointSpec[M]:
@@ -148,7 +156,7 @@ def build_typed_search_cursor_endpoint_spec[M: BaseModel](
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.search_cursor,  # type: ignore[misc]
+        OperationRef(namespace.key(SearchKernelOp.TYPED_CURSOR)),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
@@ -176,6 +184,7 @@ type RawSearchCursorEndpointSpec[M: BaseModel] = HttpEndpointSpec[
 def build_raw_search_cursor_endpoint_spec[M: BaseModel](
     dtos: RawSearchCursorDTOs[M],
     *,
+    namespace: OperationNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> RawSearchCursorEndpointSpec[M]:
@@ -189,7 +198,7 @@ def build_raw_search_cursor_endpoint_spec[M: BaseModel](
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.raw_search_cursor,  # type: ignore[misc]
+        OperationRef(namespace.key(SearchKernelOp.RAW_CURSOR)),
         http=http_spec,
         request=request_spec,
         metadata=metadata,

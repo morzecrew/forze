@@ -59,7 +59,13 @@ attach_document_endpoints(
 
 search_dtos = SearchDTOs(read=ProjectRead)
 search_registry = build_search_registry(project_search_spec, search_dtos)
-attach_search_endpoints(router, dtos=search_dtos, registry=search_registry, ctx_dep=ctx_dep)
+attach_search_endpoints(
+    router,
+    search=search_spec,
+    dtos=search_dtos,
+    registry=search_registry,
+    ctx_dep=ctx_dep,
+)
 ```
 
 Document routes are attached only when the spec/DTOs support the operation. Use separate prefixes or explicit endpoint specs when document and search paths would collide.

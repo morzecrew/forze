@@ -1,7 +1,13 @@
-"""Composition layer for assembling usecases, registries, and facades.
+"""Composition helpers built on top of the execution registry API."""
 
-Provides document composition (:mod:`document`) and storage composition
-(:mod:`storage`). Document composition includes facades, factories for plans
-and registries, and operation identifiers. Storage composition provides
-facades, factories, and operation identifiers for object storage usecases.
-"""
+from forze.application.execution import (
+    OperationNamespace,
+    OperationRef,
+    operation_namespace_for,
+)
+
+__all__ = [
+    "OperationNamespace",
+    "OperationRef",
+    "operation_namespace_for",
+]

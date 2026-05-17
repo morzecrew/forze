@@ -1,12 +1,19 @@
-"""Unit tests for forze.application.execution.registry."""
+"""Unit tests for :mod:`forze.application.execution.registry`."""
 
 from enum import StrEnum
 
+import attrs
 import pytest
 
-from forze.application.execution import Deps, ExecutionContext, Usecase, UsecaseRegistry
-
-# ----------------------- #
+from forze.application.execution import (
+    Deps,
+    ExecutionContext,
+    OperationRef,
+    Usecase,
+    UsecaseRegistry,
+)
+from forze.application.execution.engine import Stage
+from forze.base.errors import CoreError
 
 
 def _stub_factory(ctx: ExecutionContext) -> Usecase[str, str]:
@@ -21,169 +28,174 @@ class StubUsecase(Usecase[str, str]):
 
 
 class TestUsecaseRegistry:
-    """Tests for UsecaseRegistry."""
+    def test_is_attrs_class_with_expected_init(self) -> None:
+        assert attrs.has(UsecaseRegistry)
+        names = {f.name for f in attrs.fields(UsecaseRegistry)}
+        assert "_init_factories" in names
+        assert "_namespace" in names
+        assert "_factories" in names
 
-    def test_register_returns_new_instance(self) -> None:
-        reg = UsecaseRegistry()
-        new = reg.register("get", lambda ctx: StubUsecase(ctx=ctx))
-        assert new is not reg
-        assert new.exists("get")
-        assert not reg.exists("get")
+    def test_construct_with_factories_kw_and_namespace(self) -> None:
+        reg = UsecaseRegistry(
+            factories={"get": _stub_factory},
+            namespace="svc",
+        )
+        assert reg.exists("svc.get")
+        assert "svc.get" in reg.factories
 
-    def test_register_inplace_mutates(self) -> None:
+    def test_construct_with_positional_factories(self) -> None:
+        reg = UsecaseRegistry({"get": _stub_factory})
+        assert reg.exists("get")
+
+    def test_register_mutates_and_returns_self(self) -> None:
         reg = UsecaseRegistry()
-        reg.register("get", lambda ctx: StubUsecase(ctx=ctx), inplace=True)
+        returned = reg.register("get", _stub_factory)
+        assert returned is reg
         assert reg.exists("get")
 
     def test_register_duplicate_raises(self) -> None:
-        from forze.base.errors import CoreError
-
         reg = UsecaseRegistry().register("get", _stub_factory)
         with pytest.raises(CoreError, match="already registered"):
             reg.register("get", _stub_factory)
 
-    def test_register_inplace_returns_none(self) -> None:
-        reg = UsecaseRegistry()
-        result = reg.register("get", _stub_factory, inplace=True)
-        assert result is None
+    def test_override_mutates_and_returns_self(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        returned = reg.override("get", lambda ctx: StubUsecase(ctx=ctx))
+        assert returned is reg
         assert reg.exists("get")
-
-    def test_override_replaces_factory(self) -> None:
-        reg = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
-        new = reg.override("get", lambda ctx: StubUsecase(ctx=ctx))
-        assert new is not reg
-        assert new.exists("get")
 
     def test_override_unregistered_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        reg = UsecaseRegistry()
         with pytest.raises(CoreError, match="not registered"):
-            reg.override("get", _stub_factory)
+            UsecaseRegistry().override("get", _stub_factory)
 
-    def test_override_inplace_mutates(self) -> None:
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        result = reg.override("get", _stub_factory, inplace=True)
-        assert result is None
-        assert reg.exists("get")
-
-    def test_register_many_adds_multiple(self) -> None:
+    def test_register_many_mutates_and_returns_self(self) -> None:
         reg = UsecaseRegistry()
-        new = reg.register_many({"get": _stub_factory, "create": _stub_factory})
-        assert new.exists("get")
-        assert new.exists("create")
+        returned = reg.register_many({"get": _stub_factory, "create": _stub_factory})
+        assert returned is reg
+        assert reg.exists("get")
+        assert reg.exists("create")
 
     def test_register_many_duplicate_raises(self) -> None:
-        from forze.base.errors import CoreError
-
         reg = UsecaseRegistry().register("get", _stub_factory)
         with pytest.raises(CoreError, match="already registered"):
             reg.register_many({"get": _stub_factory, "create": _stub_factory})
 
-    def test_register_many_inplace_mutates(self) -> None:
-        reg = UsecaseRegistry()
-        result = reg.register_many(
-            {"get": _stub_factory, "create": _stub_factory},
-            inplace=True,
-        )
-        assert result is None
-        assert reg.exists("get")
-        assert reg.exists("create")
-
-    def test_override_many_replaces_multiple(self) -> None:
+    def test_override_many_mutates_and_returns_self(self) -> None:
         reg = (
             UsecaseRegistry()
             .register("get", _stub_factory)
             .register("create", _stub_factory)
         )
-        new = reg.override_many({"get": _stub_factory, "create": _stub_factory})
-        assert new.exists("get")
-        assert new.exists("create")
+        returned = reg.override_many({"get": _stub_factory, "create": _stub_factory})
+        assert returned is reg
+        assert reg.exists("get")
+        assert reg.exists("create")
 
     def test_override_many_unregistered_raises(self) -> None:
-        from forze.base.errors import CoreError
-
         reg = UsecaseRegistry().register("get", _stub_factory)
         with pytest.raises(CoreError, match="not registered"):
             reg.override_many({"get": _stub_factory, "create": _stub_factory})
 
-    def test_override_many_inplace_mutates(self) -> None:
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        result = reg.override_many({"get": _stub_factory}, inplace=True)
-        assert result is None
-        assert reg.exists("get")
+    def test_add_dispatch_edge_mutates_and_returns_self(self) -> None:
+        reg = UsecaseRegistry().register("a", _stub_factory)
+        returned = reg.add_dispatch_edge("a", "b")
+        assert returned is reg
+        assert ("a", "b") in reg._dispatch_graph.edges()
 
-    def test_exists_returns_true_for_registered(self) -> None:
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        assert reg.exists("get")
+    def test_stage_authoring_mutates_and_returns_self(self) -> None:
+        async def noop(_args: str) -> None:
+            return None
 
-    def test_exists_returns_false_for_unregistered(self) -> None:
-        reg = UsecaseRegistry()
-        assert not reg.exists("get")
+        def guard_factory(_ctx: ExecutionContext):
+            return noop
+
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        returned = reg.before("get", guard_factory, priority=1)
+        assert returned is reg
+        assert len(reg._stages["get"].specs(Stage.before)) == 1
+
+    def test_finalize_without_prefix_uses_logical_operation_ids(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory).finalize()
+        assert reg.operation_id_for("get") == "get"
+
+    def test_finalize_rejects_whitespace_only_prefix(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        with pytest.raises(CoreError, match="operation_id_prefix must be non-empty"):
+            reg.finalize("   ")
+
+    def test_operation_id_for_before_finalize_raises(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        with pytest.raises(CoreError, match="Registry is not finalized"):
+            reg.operation_id_for("get")
+
+    def test_finalize_mutates_and_returns_self(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory)
+        returned = reg.finalize("test")
+        assert returned is reg
+        assert reg.operation_id_for("get") == "test.get"
+
+    def test_finalize_freezes_dispatch_graph(self) -> None:
+        reg = UsecaseRegistry().register("get", _stub_factory).finalize("test")
+        assert reg._dispatch_graph.is_frozen
+        with pytest.raises(CoreError, match="Registry is finalized"):
+            reg.add_dispatch_edge("get", "x")
 
     def test_resolve_returns_usecase(self) -> None:
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        reg.finalize("test", inplace=True)
+        reg = UsecaseRegistry().register("get", _stub_factory).finalize("test")
         ctx = ExecutionContext(deps=Deps())
         uc = reg.resolve("get", ctx)
         assert isinstance(uc, StubUsecase)
 
     def test_resolve_unregistered_raises(self) -> None:
-        from forze.base.errors import CoreError
-
-        reg = UsecaseRegistry()
-        reg.finalize("test", inplace=True)
+        reg = UsecaseRegistry().finalize("test")
         ctx = ExecutionContext(deps=Deps())
         with pytest.raises(CoreError, match="not registered for operation"):
             reg.resolve("get", ctx)
 
-    def test_finalize_and_qualify_operation_accept_str_enum_registry_id(self) -> None:
+    def test_finalize_and_operation_id_for_accept_str_enum_prefix(self) -> None:
         class RegistryId(StrEnum):
             NS = "my-doc"
 
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        reg.finalize(RegistryId.NS, inplace=True)
-        assert reg.qualify_operation("get") == "my-doc.get"
+        reg = UsecaseRegistry().register("get", _stub_factory).finalize(RegistryId.NS)
+        assert reg.operation_id_for("get") == "my-doc.get"
 
-    def test_extend_plan_returns_new_instance(self) -> None:
-        from forze.application.execution.plan import UsecasePlan
+    def test_namespace_qualifies_bare_suffixes(self) -> None:
+        reg = UsecaseRegistry(namespace="test")
+        reg.register("get", _stub_factory)
 
-        reg = UsecaseRegistry().register("get", _stub_factory)
-
-        async def noop(args):
-            pass
-
-        def guard_factory(ctx):
-            return noop
-
-        plan = UsecasePlan().before("get", guard_factory, priority=1)
-        new = reg.extend_plan(plan)
-        assert new is not reg
-        assert new.exists("get")
-
-    def test_extend_plan_inplace_mutates(self) -> None:
-        from forze.application.execution.plan import UsecasePlan
-
-        reg = UsecaseRegistry().register("get", _stub_factory)
-
-        async def noop(args):
-            pass
-
-        def guard_factory(ctx):
-            return noop
-
-        plan = UsecasePlan().before("get", guard_factory, priority=1)
-        result = reg.extend_plan(plan, inplace=True)
-        assert result is None
         assert reg.exists("get")
+        assert reg.exists("test.get")
+        assert "test.get" in reg.factories
+
+    def test_namespace_preserves_full_keys(self) -> None:
+        reg = UsecaseRegistry(namespace="test")
+        reg.register("other.get", _stub_factory)
+
+        assert reg.exists("other.get")
+        assert not reg.exists("test.other.get")
+
+    def test_ref_uses_registry_namespace_for_relative_keys(self) -> None:
+        reg = UsecaseRegistry(namespace="test")
+        assert reg.ref("get").op == "test.get"
+
+    def test_operation_ref_full_key_resolves_without_namespace(self) -> None:
+        ref = OperationRef.absolute("test.get")
+        assert ref.op == "test.get"
+
+    def test_ref_without_namespace_requires_full_key(self) -> None:
+        reg = UsecaseRegistry()
+
+        with pytest.raises(
+            CoreError,
+            match="Registry.ref requires a full operation key when registry.namespace is None",
+        ):
+            reg.ref("get")
 
 
 class TestUsecaseRegistryMerge:
-    """Tests for UsecaseRegistry.merge."""
-
     def test_merge_empty_returns_empty_registry(self) -> None:
         merged = UsecaseRegistry.merge()
-        assert merged.defaults == {}
+        assert merged.factories == {}
         assert not merged.exists("get")
 
     def test_merge_single_registry_returns_copy(self) -> None:
@@ -191,7 +203,7 @@ class TestUsecaseRegistryMerge:
         merged = UsecaseRegistry.merge(reg)
         assert merged is not reg
         assert merged.exists("get")
-        assert merged.defaults["get"] is reg.defaults["get"]
+        assert merged.factories["get"] is reg.factories["get"]
 
     def test_merge_multiple_no_conflicts(self) -> None:
         reg_a = UsecaseRegistry().register("get", _stub_factory)
@@ -199,99 +211,61 @@ class TestUsecaseRegistryMerge:
         merged = UsecaseRegistry.merge(reg_a, reg_b)
         assert merged.exists("get")
         assert merged.exists("create")
-        assert merged.defaults["get"] is reg_a.defaults["get"]
-        assert merged.defaults["create"] is reg_b.defaults["create"]
-
-    def test_merge_multiple_from_instance_no_conflicts(self) -> None:
-        reg_a = UsecaseRegistry().register("get", _stub_factory)
-        reg_b = UsecaseRegistry().register("create", _stub_factory)
-        merged = reg_a.merge(reg_b)
-        assert merged.exists("get")
-        assert merged.exists("create")
-        assert merged.defaults["get"] is reg_a.defaults["get"]
-        assert merged.defaults["create"] is reg_b.defaults["create"]
+        assert merged.factories["get"] is reg_a.factories["get"]
+        assert merged.factories["create"] is reg_b.factories["create"]
 
     def test_merge_conflict_raises_when_error(self) -> None:
-        from forze.base.errors import CoreError
-
         reg_a = UsecaseRegistry().register("get", _stub_factory)
         reg_b = UsecaseRegistry().register("get", lambda ctx: StubUsecase(ctx=ctx))
         with pytest.raises(CoreError, match="already registered for operation"):
             UsecaseRegistry.merge(reg_a, reg_b, on_conflict="error")
 
     def test_merge_conflict_overwrites_when_overwrite(self) -> None:
-        def other_factory(ctx):
+        def other_factory(ctx: ExecutionContext) -> StubUsecase:
             return StubUsecase(ctx=ctx)
 
         reg_a = UsecaseRegistry().register("get", _stub_factory)
         reg_b = UsecaseRegistry().register("get", other_factory)
         merged = UsecaseRegistry.merge(reg_a, reg_b, on_conflict="overwrite")
         assert merged.exists("get")
-        assert merged.defaults["get"] is other_factory
+        assert merged.factories["get"] is other_factory
 
-    def test_merge_plans_combined(self) -> None:
-        from forze.application.execution.plan import UsecasePlan
+    def test_merge_combines_stage_authoring(self) -> None:
+        async def noop(_args: str) -> None:
+            return None
 
-        async def noop(args):
-            pass
-
-        def guard_a(ctx):
+        def guard_a(_ctx: ExecutionContext):
             return noop
 
-        def guard_b(ctx):
+        def guard_b(_ctx: ExecutionContext):
             return noop
 
-        plan_a = UsecasePlan().before("get", guard_a, priority=1)
-        plan_b = UsecasePlan().before("create", guard_b, priority=2)
+        reg_a = (
+            UsecaseRegistry()
+            .register("get", _stub_factory)
+            .before(
+                "get",
+                guard_a,
+                priority=1,
+            )
+        )
+        reg_b = (
+            UsecaseRegistry()
+            .register("create", _stub_factory)
+            .before(
+                "create",
+                guard_b,
+                priority=2,
+            )
+        )
 
-        reg_a = UsecaseRegistry().register("get", _stub_factory)
-        reg_a.extend_plan(plan_a, inplace=True)
-        reg_b = UsecaseRegistry().register("create", _stub_factory)
-        reg_b.extend_plan(plan_b, inplace=True)
-
-        merged = UsecaseRegistry.merge(reg_a, reg_b)
-        merged.finalize("merged", inplace=True)
+        merged = UsecaseRegistry.merge(reg_a, reg_b).finalize("merged")
         assert merged.exists("get")
         assert merged.exists("create")
+
         ctx = ExecutionContext(deps=Deps())
-        uc_get = merged.resolve("get", ctx)
-        uc_create = merged.resolve("create", ctx)
-        assert isinstance(uc_get, StubUsecase)
-        assert isinstance(uc_create, StubUsecase)
-
-    def test_merge_unions_strict_capability_flag(self) -> None:
-        reg_a = UsecaseRegistry(strict_capability_middleware_without_engine=True)
-        reg_b = UsecaseRegistry()
-        merged = UsecaseRegistry.merge(reg_a, reg_b)
-        assert merged.strict_capability_middleware_without_engine is True
-
-    def test_merge_from_instance_equals_class_merge(self) -> None:
-        """reg_a.merge(reg_b) equals UsecaseRegistry.merge(reg_a, reg_b)."""
-        reg_a = UsecaseRegistry().register("get", _stub_factory)
-        reg_b = UsecaseRegistry().register("create", _stub_factory)
-        via_class = UsecaseRegistry.merge(reg_a, reg_b)
-        via_instance = reg_a.merge(reg_b)
-        assert via_class.exists("get") and via_instance.exists("get")
-        assert via_class.exists("create") and via_instance.exists("create")
-
-    def test_merge_from_instance_with_on_conflict_overwrite(self) -> None:
-        """Instance merge supports on_conflict parameter."""
-
-        def other_factory(ctx):
-            return StubUsecase(ctx=ctx)
-
-        reg_a = UsecaseRegistry().register("get", _stub_factory)
-        reg_b = UsecaseRegistry().register("get", other_factory)
-        merged = reg_a.merge(reg_b, on_conflict="overwrite")
-        assert merged.exists("get")
-        assert merged.defaults["get"] is other_factory
-
-    def test_merge_from_instance_empty_returns_self(self) -> None:
-        """reg.merge() with no args returns registry containing only self."""
-        reg = UsecaseRegistry().register("get", _stub_factory)
-        merged = reg.merge()
-        assert merged is not reg
-        assert merged.exists("get")
+        assert isinstance(merged.resolve("get", ctx), StubUsecase)
+        assert isinstance(merged.resolve("create", ctx), StubUsecase)
 
     def test_merge_unions_dispatch_edges(self) -> None:
         reg_a = (
@@ -305,22 +279,38 @@ class TestUsecaseRegistryMerge:
             .add_dispatch_edge("create", "get")
         )
         merged = UsecaseRegistry.merge(reg_a, reg_b, on_conflict="overwrite")
-        assert ("get", "create") in merged._dispatch_edges
-        assert ("create", "get") in merged._dispatch_edges
+        assert ("get", "create") in merged._dispatch_graph.edges()
+        assert ("create", "get") in merged._dispatch_graph.edges()
 
-    def test_add_dispatch_edge_returns_new_registry_by_default(self) -> None:
-        reg = UsecaseRegistry().register("a", _stub_factory)
-        reg2 = reg.add_dispatch_edge("a", "b")
-        assert reg2 is not reg
-        assert reg._dispatch_edges == frozenset()
-        assert ("a", "b") in reg2._dispatch_edges
+    def test_merge_different_namespaces_drops_default_namespace(self) -> None:
+        reg_a = UsecaseRegistry(namespace="a").register("get", _stub_factory)
+        reg_b = UsecaseRegistry(namespace="b").register("get", _stub_factory)
+
+        merged = UsecaseRegistry.merge(reg_a, reg_b, on_conflict="overwrite")
+
+        assert merged.namespace is None
+        assert merged.exists("a.get")
+        assert merged.exists("b.get")
+
+    def test_merge_without_default_namespace_requires_full_key_for_ref(self) -> None:
+        reg_a = UsecaseRegistry(namespace="a").register("get", _stub_factory)
+        reg_b = UsecaseRegistry(namespace="b").register("get", _stub_factory)
+        merged = UsecaseRegistry.merge(reg_a, reg_b, on_conflict="overwrite")
+
+        with pytest.raises(
+            CoreError,
+            match="Registry.ref requires a full operation key when registry.namespace is None",
+        ):
+            merged.ref("get")
+
+        assert merged.ref("a.get").op == "a.get"
 
 
 def _guard_mw_factory():
     from forze.application.execution.middleware import GuardMiddleware
 
-    def factory(_ctx):
-        async def guard(_a):
+    def factory(_ctx: ExecutionContext):
+        async def guard(_args: str) -> None:
             return None
 
         return GuardMiddleware(guard=guard)
@@ -329,70 +319,51 @@ def _guard_mw_factory():
 
 
 class TestUsecaseRegistryCapabilityFinalize:
-    def test_finalize_validates_capability_graph_when_engine_enabled(self) -> None:
-        from forze.application.execution.plan import UsecasePlan
-        from forze.base.errors import CoreError
-
-        plan = UsecasePlan(use_capability_engine=True).before(
-            "op",
-            _guard_mw_factory(),
-            priority=1,
-            requires=frozenset({"missing"}),
+    def test_finalize_validates_capability_graph(self) -> None:
+        reg = (
+            UsecaseRegistry()
+            .register("op", _stub_factory)
+            .before(
+                "op",
+                _guard_mw_factory(),
+                priority=1,
+                requires=frozenset({"missing"}),
+            )
         )
-        reg = UsecaseRegistry().register("op", _stub_factory).extend_plan(plan)
         with pytest.raises(CoreError, match="provides it"):
             reg.finalize("app")
 
-    def test_finalize_strict_rejects_capability_metadata_without_engine(self) -> None:
-        from forze.application.execution.plan import UsecasePlan
-        from forze.base.errors import CoreError
-
-        plan = UsecasePlan().before(
-            "op",
-            _guard_mw_factory(),
-            priority=1,
-            requires=frozenset({"k"}),
-        )
-        reg = (
-            UsecaseRegistry(strict_capability_middleware_without_engine=True)
-            .register("op", _stub_factory)
-            .extend_plan(plan)
-        )
-        with pytest.raises(CoreError, match="use_capability_engine"):
-            reg.finalize("app")
-
     def test_finalize_duplicate_capability_provider_across_wildcard(self) -> None:
-        from forze.application.execution.plan import UsecasePlan
-        from forze.base.errors import CoreError
-
-        w = UsecasePlan(use_capability_engine=True).before(
-            "*",
-            _guard_mw_factory(),
-            priority=1,
-            provides=frozenset({"dup"}),
+        reg = (
+            UsecaseRegistry()
+            .register("op", _stub_factory)
+            .before(
+                "*",
+                _guard_mw_factory(),
+                priority=1,
+                provides=frozenset({"dup"}),
+            )
+            .before(
+                "op",
+                _guard_mw_factory(),
+                priority=2,
+                provides=frozenset({"dup"}),
+            )
         )
-        o = UsecasePlan().before(
-            "op",
-            _guard_mw_factory(),
-            priority=2,
-            provides=frozenset({"dup"}),
-        )
-        reg = UsecaseRegistry().register("op", _stub_factory).extend_plan(w).extend_plan(o)
         with pytest.raises(CoreError, match="more than one step"):
             reg.finalize("app")
 
-    def test_finalize_with_delegate_effect_and_engine(self) -> None:
-        from forze.application.execution import UsecaseDelegate, UsecasePlan
-
+    def test_finalize_with_dispatch_success_hook(self) -> None:
         reg = (
             UsecaseRegistry()
             .register("parent", _stub_factory)
             .register("child", _stub_factory)
         )
-        fac = UsecaseDelegate[str, str, str, str](
-            target_op="child",
-            map_in=lambda x, y: x,
-        ).effect_factory(reg)
-        plan = UsecasePlan(use_capability_engine=True).after("parent", fac)
-        reg2 = reg.extend_plan(plan)
-        reg2.finalize("app", inplace=True)
+        reg.add_dispatch_edge("parent", "child")
+        reg.after_success(
+            "parent",
+            reg.dispatch_success_hook(
+                "child",
+                map_in=lambda x, y: x,
+            ),
+        ).finalize("app")

@@ -92,7 +92,7 @@ async with self.ctx.transaction(TxRoute.DEFAULT):
     self.ctx.defer_after_commit(lambda: notify_project_created(created.id))
 ```
 
-Optional guards and effects in `UsecasePlan` chains can use `WhenGuard` / `WhenEffect`; the `when` callable may return `bool` or `Awaitable[bool]`. See [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
+Optional guards and effects in `UsecaseRegistry` stage chains can use `WhenGuard` / `WhenEffect`; the `when` callable may return `bool` or `Awaitable[bool]`. See [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
 
 ### Identity and tenancy
 

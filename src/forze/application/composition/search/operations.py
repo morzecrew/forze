@@ -1,3 +1,5 @@
+"""Search operation kernel suffixes for usecase registration and resolution."""
+
 from enum import StrEnum
 from typing import final
 
@@ -5,17 +7,17 @@ from typing import final
 
 
 @final
-class SearchOperation(StrEnum):
-    """Logical operation identifiers for search usecases."""
+class SearchKernelOp(StrEnum):
+    """Kernel segments (suffix only) for search usecase operation keys."""
 
-    TYPED_SEARCH = "search.typed"
+    TYPED = "typed"
     """Search with typed paginated results."""
 
-    RAW_SEARCH = "search.raw"
+    RAW = "raw"
     """Search with field-projected raw results."""
 
-    TYPED_SEARCH_CURSOR = "search.typed_cursor"
+    TYPED_CURSOR = "typed_cursor"
     """Search with typed results and cursor-based pagination."""
 
-    RAW_SEARCH_CURSOR = "search.raw_cursor"
+    RAW_CURSOR = "raw_cursor"
     """Search with field-projected raw results and cursor-based pagination."""

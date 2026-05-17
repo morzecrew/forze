@@ -1,33 +1,25 @@
-"""Dependency injection container and plans.
-
-Provides :class:`Deps` (in-memory container implementing :class:`DepsPort`),
-:class:`DepsModule` protocol, and :class:`DepsPlan` for declarative assembly.
-"""
-
-from enum import StrEnum
-from typing import Any, Mapping, Protocol, Self, TypeVar, cast, final
+from typing import Any, Mapping, Self, cast, final
 
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.base import DepKey
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
-
-from ..contracts.base import DepKey, DepsPort
+from forze.base.primitives import StrKey
 
 # ----------------------- #
 
-T = TypeVar("T")
-
-PlainDepsMap = Mapping[DepKey[Any], Any]
+type PlainDepsMap = Mapping[DepKey[Any], Any]
 type RoutedDeps[K] = Mapping[DepKey[Any], Mapping[K, Any]]
 
 # ....................... #
+#! Maybe rename Deps -> DepsContainer or so ? To be explicit
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class Deps[K: str | StrEnum = str](DepsPort[K]):
+class Deps[K: StrKey]:
     """In-memory dependency container used by the kernel.
 
     Supports two registration modes:
@@ -92,7 +84,7 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
 
     # ....................... #
 
-    def provide(
+    def provide[T](
         self,
         key: DepKey[T],
         *,
@@ -139,7 +131,7 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
 
     # ....................... #
 
-    def exists(self, key: DepKey[T], *, route: K | None = None) -> bool:
+    def exists[T](self, key: DepKey[T], *, route: K | None = None) -> bool:
         """Return ``True`` if the dependency is registered."""
 
         if route is None:
@@ -195,7 +187,7 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
 
             plain_acc.update(d.plain_deps or {})
 
-            # 3. merge affine
+            # 3. merge routed
             for key, routes in (d.routed_deps or {}).items():
                 existing = routed_acc.get(key)
 
@@ -232,7 +224,7 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
 
     # ....................... #
 
-    def without(self, key: DepKey[T]) -> Self:
+    def without[T](self, key: DepKey[T]) -> Self:
         """Create a new dependency container without the given key.
 
         :param key: Key to remove.
@@ -251,7 +243,7 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
 
     # ....................... #
 
-    def without_route(self, key: DepKey[T], route: K) -> Self:
+    def without_route[T](self, key: DepKey[T], route: K) -> Self:
         """Create a new dependency container without one routed route."""
 
         logger.trace(
@@ -297,98 +289,3 @@ class Deps[K: str | StrEnum = str](DepsPort[K]):
         return len(self.plain_deps or {}) + sum(
             len(routes) for routes in (self.routed_deps or {}).values()
         )
-
-
-# ....................... #
-
-
-class DepsModule[K: str | StrEnum](Protocol):
-    """Protocol for a module that returns a dependency container.
-
-    Callables are invoked to produce a :class:`Deps` instance; multiple
-    modules are merged via :meth:`Deps.merge` when building a plan.
-    """
-
-    def __call__(self) -> Deps[K]:
-        """Return a dependency container."""
-        ...
-
-
-# ....................... #
-#! It's not really a plan and basically just defers 'merge' call
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class DepsPlan:
-    """Declarative plan for building dependency containers.
-
-    Collects :class:`DepsModule` callables and merges them into a single
-    :class:`Deps` instance on :meth:`build`. Merging fails if any module
-    registers a conflicting dependency key.
-    """
-
-    modules: tuple[DepsModule[Any], ...] = attrs.field(factory=tuple)
-    """Modules to invoke and merge when building."""
-
-    # ....................... #
-
-    @classmethod
-    def from_modules(cls, *modules: DepsModule[Any]) -> Self:
-        """Create a plan from modules.
-
-        :param modules: Modules to include.
-        :returns: New plan instance.
-        """
-
-        return cls(modules=modules)
-
-    # ....................... #
-
-    def with_modules(self, *modules: DepsModule[Any]) -> Self:
-        """Return a new plan with additional modules appended.
-
-        :param modules: Modules to append.
-        :returns: New plan instance.
-        """
-
-        logger.trace(
-            "Appending %s module(s) to deps plan with %s existing module(s)",
-            len(modules),
-            len(self.modules),
-        )
-
-        return attrs.evolve(self, modules=(*self.modules, *modules))
-
-    # ....................... #
-
-    def build(self) -> Deps[Any]:
-        """Build a merged dependency container from all modules.
-
-        :returns: Merged :class:`Deps` instance.
-        :raises CoreError: If any module registers a conflicting key.
-        """
-
-        logger.trace(
-            "Building dependency container from %s module(s)",
-            len(self.modules),
-        )
-
-        if not self.modules:
-            logger.trace("Deps plan is empty; returning empty container")
-            return Deps[Any]()
-
-        built: list[Deps[Any]] = []
-
-        for i, module in enumerate(self.modules, 1):
-            deps = module()
-            logger.trace(
-                "Built deps module #%s with %s dependency(ies)",
-                i,
-                deps.count(),
-            )
-            built.append(deps)
-
-        merged = Deps[Any].merge(*built)
-
-        return merged

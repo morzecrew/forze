@@ -9,7 +9,7 @@ require_psycopg()
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any, AsyncIterator, Sequence, final, get_args
+from typing import Any, AsyncIterator, LiteralString, Sequence, cast, final, get_args
 from uuid import UUID
 
 import attrs
@@ -43,6 +43,7 @@ from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..db_gather import gather_db_work
+from ..introspect import PostgresColumnTypes, PostgresType
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
@@ -65,6 +66,42 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
         wait=wait_random_exponential(multiplier=0.05, max=2.0),
         reraise=True,
     )
+
+
+# ....................... #
+
+
+def _pg_cast_type_sql(pg: PostgresType) -> sql.Composable:
+    """Return the ``CAST`` target type for a column (names come from introspection only)."""
+
+    base = cast(LiteralString, pg.base)  # type: ignore[redundant-cast]
+
+    if pg.is_array:
+        return sql.SQL(cast(LiteralString, pg.base + "[]"))  # type: ignore[redundant-cast]
+
+    return sql.SQL(base)
+
+
+def _values_placeholder_for_patch_group(
+    *,
+    column: str,
+    expected_rev_alias: str,
+    column_types: PostgresColumnTypes,
+) -> sql.Composable:
+    """Placeholder for one ``VALUES`` cell, typed so all-``NULL`` columns are not inferred as ``text``."""
+
+    ph = sql.Placeholder()
+    if column == ID_FIELD:
+        pg_t = column_types.get(ID_FIELD)
+    elif column == expected_rev_alias:
+        pg_t = column_types.get(REV_FIELD)
+    else:
+        pg_t = column_types.get(column)
+
+    if pg_t is None:
+        return ph
+
+    return sql.SQL("CAST({} AS {})").format(ph, _pg_cast_type_sql(pg_t))
 
 
 # ....................... #
@@ -785,11 +822,20 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         values_rows: list[sql.Composable] = []
         params: list[Any] = []
 
+        column_types = await self.column_types()
+
         # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
         row_template = (
             sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in value_cols)
+            + sql.SQL(", ").join(
+                _values_placeholder_for_patch_group(
+                    column=c,
+                    expected_rev_alias=expected_rev_alias,
+                    column_types=column_types,
+                )
+                for c in value_cols
+            )
             + sql.SQL(")")
         )
 

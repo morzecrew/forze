@@ -3,7 +3,7 @@
 from pydantic import BaseModel
 
 from forze.application.contracts.idempotency import IdempotencySpec
-from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+from forze.application.execution import Deps, ExecutionContext, OperationRef, UsecaseRegistry, UsecasesFacade
 from forze_fastapi.endpoints.http import (
     IDEMPOTENCY_KEY_HEADER,
     BodyAsIsMapper,
@@ -30,24 +30,25 @@ class TestIdempotencyHeaderOnSignature:
         class BodyDTO(BaseModel):
             name: str
 
-        class Facade:
-            pass
-
         spec = HttpEndpointSpec(
             http={"method": "POST", "path": "/create"},
             features=[IdempotencyFeature(spec=IdempotencySpec(name="test"))],
             request={"body_type": BodyDTO},
             response=None,
             mapper=BodyAsIsMapper(BodyDTO),
-            facade_type=Facade,
-            call=FacadeOpRef(op="test.create"),
+            facade_type=UsecasesFacade,
+            call=OperationRef.absolute("test.create"),
         )
 
         def ctx_dep() -> ExecutionContext:
             return ExecutionContext(deps=Deps())
 
-        def facade_dep(_ctx: ExecutionContext) -> Facade:
-            return Facade()
+        def facade_dep(_ctx: ExecutionContext) -> UsecasesFacade:
+            return UsecasesFacade(
+                ctx=_ctx,
+                registry=UsecaseRegistry(),
+                namespace=None,
+            )
 
         sig = build_http_endpoint_signature(
             spec=spec,

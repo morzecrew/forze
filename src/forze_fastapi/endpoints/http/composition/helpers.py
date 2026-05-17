@@ -1,7 +1,7 @@
 from typing import Sequence, TypeVar, overload
 
 from forze.application.contracts.mapping import MapperPort
-from forze.application.execution import facade_call, facade_op
+from forze.application.execution import OperationRef
 from forze.base.errors import CoreError
 from forze_fastapi.endpoints.http.mapping import EmptyMapper
 
@@ -59,7 +59,7 @@ def validate_http_features(
 @overload
 def build_http_endpoint_spec(
     facade_type: type[F],
-    call: facade_op[In, Raw],
+    call: OperationRef[In, Raw],
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
@@ -79,7 +79,7 @@ def build_http_endpoint_spec(
 @overload
 def build_http_endpoint_spec(
     facade_type: type[F],
-    call: facade_op[In, Raw],
+    call: OperationRef[In, Raw],
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
@@ -99,7 +99,7 @@ def build_http_endpoint_spec(
 @overload
 def build_http_endpoint_spec(
     facade_type: type[F],
-    call: facade_op[In, Raw],
+    call: OperationRef[In, Raw],
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
@@ -119,7 +119,7 @@ def build_http_endpoint_spec(
 @overload
 def build_http_endpoint_spec(
     facade_type: type[F],
-    call: facade_op[In, Raw],
+    call: OperationRef[In, Raw],
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
@@ -138,7 +138,7 @@ def build_http_endpoint_spec(
 
 def build_http_endpoint_spec(
     facade_type: type[F],
-    call: facade_op[In, Raw],
+    call: OperationRef[In, Raw],
     *,
     http: HttpSpec,
     request: HttpRequestSpec[Q, P, H, C, B] | None = None,
@@ -163,7 +163,7 @@ def build_http_endpoint_spec(
         mapper=mapper,
         response_mapper=response_mapper,
         facade_type=facade_type,
-        call=facade_call(call),
+        call=call,
     )
 
 

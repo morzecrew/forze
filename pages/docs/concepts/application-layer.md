@@ -17,7 +17,7 @@ The application layer is built around a few core concepts:
 
 - **Execution context**: the single point through which usecases resolve all dependencies. No usecase ever imports an adapter directly.
 - **Usecases**: self-contained operations that implement one business action. Each usecase receives an execution context and resolves typed ports from it.
-- **Middleware**: composable wrappers (guards, effects, transaction boundaries) that run before, around, or after a usecase without modifying its core logic.
+- **Middleware**: composable wrappers (guards, success hooks, transaction boundaries) that run before, around, or after a usecase without modifying its core logic.
 - **Runtime**: the container that manages dependency injection, lifecycle hooks, and context creation.
 
 Together these ensure that business logic remains independent of infrastructure choices.
@@ -69,12 +69,12 @@ A **usecase** is a single, well-defined business action. It subclasses `Usecase[
 Every usecase has:
 
 - `ctx`: the execution context for resolving ports
-- `middlewares`: a tuple of middleware wrappers (guards, effects, transaction)
+- `middlewares`: a tuple of middleware wrappers (guards, hooks, transaction)
 - `with_middlewares(*mw)`: returns a new usecase with additional middlewares appended
 
 ## Middleware system
 
-Middlewares wrap the usecase call chain. Three protocol types exist:
+Middlewares wrap the usecase call chain. The main protocol types are:
 
 **Guard**: runs before the usecase. Raises to abort:
 
@@ -89,19 +89,36 @@ Middlewares wrap the usecase call chain. Three protocol types exist:
             if project.is_deleted:
                 raise ValidationError("Project is archived.")
 
-**Effect**: runs after the usecase returns. May transform the result:
+**SuccessHook**: runs after the usecase returns successfully. It observes the result but does not replace it:
 
     :::python
-    from forze.application.execution import Effect
+    from forze.application.execution import SuccessHook
 
-    class LogCreation(Effect[CreateProjectCmd, ProjectReadModel]):
+    class LogCreation(SuccessHook[CreateProjectCmd, ProjectReadModel]):
         async def __call__(
             self,
             args: CreateProjectCmd,
             res: ProjectReadModel,
-        ) -> ProjectReadModel:
+        ) -> None:
             logger.info("Created project %s", res.id)
-            return res
+
+**OnFailure / Finally**: observe failure and cleanup paths without changing the domain result:
+
+    :::python
+    from forze.application.execution import Failed, Finally, OnFailure, Successful
+
+    class ReportFailure(OnFailure[CreateProjectCmd]):
+        async def __call__(self, args: CreateProjectCmd, exc: Exception) -> None:
+            logger.warning("Create failed: %s", exc)
+
+
+    class RecordOutcome(Finally[CreateProjectCmd, ProjectReadModel]):
+        async def __call__(
+            self,
+            args: CreateProjectCmd,
+            outcome: Successful[ProjectReadModel] | Failed,
+        ) -> None:
+            logger.info("Create flow finished")
 
 **Middleware**: wraps the next call with full control:
 
@@ -122,8 +139,8 @@ Built-in middleware implementations:
 | Class | Purpose |
 |-------|---------|
 | `GuardMiddleware` | Wraps a `Guard`: runs it before `next` |
-| `EffectMiddleware` | Wraps an `Effect`: runs it after `next` |
-| `TxMiddleware` | Wraps `next` inside `ctx.transaction("default")`, supports after-commit effects |
+| `SuccessHookMiddleware` | Wraps a `SuccessHook`: runs it after `next` succeeds |
+| `TxMiddleware` | Wraps `next` inside `ctx.transaction("default")`, supports after-commit hooks |
 
 ## Execution runtime
 
@@ -227,7 +244,7 @@ A `DocumentUsecasesFacade` ties together an execution context and a registry. It
 
     registry = build_document_registry(project_spec, project_dtos)
 
-    facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
+    facade = DocumentUsecasesFacade(ctx=ctx, registry=registry)
     project = await facade.create(CreateProjectCmd(title="New"))
 
 The facade exposes typed attributes: `get`, `create`, `update`, `kill`, `delete`, `restore`. Each resolves a composed `Usecase` from the registry.

@@ -1,12 +1,12 @@
 """Unit tests for forze.application.composition.storage."""
 
 from forze.application.composition.storage import (
-    StorageOperation,
+    StorageKernelOp,
     StorageUsecasesFacade,
     build_storage_registry,
 )
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution import UsecaseRegistry
+from forze.application.execution import UsecaseRegistry, operation_namespace_for
 
 # ----------------------- #
 
@@ -22,18 +22,19 @@ class TestBuildStorageRegistry:
 
     def test_has_core_operations(self) -> None:
         reg = build_storage_registry(_FILES)
-        assert reg.exists(StorageOperation.UPLOAD)
-        assert reg.exists(StorageOperation.LIST)
-        assert reg.exists(StorageOperation.DOWNLOAD)
-        assert reg.exists(StorageOperation.DELETE)
+        ops = operation_namespace_for(_FILES)
+        assert reg.exists(ops.op(StorageKernelOp.UPLOAD))
+        assert reg.exists(ops.op(StorageKernelOp.LIST))
+        assert reg.exists(ops.op(StorageKernelOp.DOWNLOAD))
+        assert reg.exists(ops.op(StorageKernelOp.DELETE))
 
     def test_resolve_upload_returns_usecase(
         self,
         composition_ctx,
     ) -> None:
         reg = build_storage_registry(_FILES)
-        reg.finalize("storage", inplace=True)
-        uc = reg.resolve(StorageOperation.UPLOAD, composition_ctx)
+        reg.finalize("storage")
+        uc = reg.resolve(operation_namespace_for(_FILES).op(StorageKernelOp.UPLOAD), composition_ctx)
         assert uc is not None
 
 
@@ -45,7 +46,11 @@ class TestStorageFacadeWithRegistry:
         composition_ctx,
     ) -> None:
         reg = build_storage_registry(_FILES)
-        reg.finalize("storage", inplace=True)
-        facade = StorageUsecasesFacade(ctx=composition_ctx, reg=reg)
+        reg.finalize("storage")
+        facade = StorageUsecasesFacade(
+            ctx=composition_ctx,
+            registry=reg,
+            namespace=operation_namespace_for(_FILES),
+        )
         uc = facade.upload
         assert uc is not None

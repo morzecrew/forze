@@ -14,9 +14,9 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import (
     Deps,
     ExecutionContext,
+    OperationRef,
     Usecase,
     UsecasesFacade,
-    facade_op,
 )
 from forze.application.execution.context import CallContext
 from forze.base.errors import CoreError
@@ -48,15 +48,20 @@ class _NoopUsecase(Usecase[None, None]):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _DummyFacade(UsecasesFacade):
-    noop = facade_op("dummy.noop", uc=_NoopUsecase)
+    pass
 
 
-def _stub_endpoint_spec() -> HttpEndpointSpec[Any, Any, Any, Any, Any, None, None, None, _DummyFacade]:
+_NOOP_CALL = OperationRef("dummy.noop", uc=_NoopUsecase)
+
+
+def _stub_endpoint_spec() -> (
+    HttpEndpointSpec[Any, Any, Any, Any, Any, None, None, None, _DummyFacade]
+):
     http: HttpSpec = {"method": "GET", "path": "/dummy"}
 
     return build_http_endpoint_spec(
         _DummyFacade,
-        _DummyFacade.noop,  # type: ignore[arg-type]
+        _NOOP_CALL,
         http=http,
         mapper=EmptyMapper(),
     )

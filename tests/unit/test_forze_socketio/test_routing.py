@@ -9,7 +9,6 @@ from forze.application.execution import (
     Deps,
     ExecutionContext,
     Usecase,
-    UsecasePlan,
     UsecaseRegistry,
 )
 from forze.base.errors import CoreError
@@ -72,7 +71,7 @@ class TestSocketIORouting:
     """Tests for namespace routing and usecase dispatch."""
 
     @pytest.mark.asyncio
-    async def test_event_dispatch_validates_and_runs_usecase_with_plan(self) -> None:
+    async def test_event_dispatch_validates_and_runs_usecase_with_registry_stages(self) -> None:
         sio = StubSocketIOServer()
         registry = UsecaseRegistry().register(
             "chat.echo", lambda ctx: EchoUsecase(ctx=ctx)
@@ -87,9 +86,8 @@ class TestSocketIORouting:
         def guard_factory(ctx: ExecutionContext):
             return guard
 
-        plan = UsecasePlan().before("chat.echo", guard_factory, priority=10)
-        registry = registry.extend_plan(plan)
-        registry.finalize("socketio", inplace=True)
+        registry.before("chat.echo", guard_factory, priority=10)
+        registry.finalize("socketio")
         resolver = make_registry_usecase_resolver(registry)
 
         def context_factory(request: SocketIORequest) -> ExecutionContext:
@@ -174,7 +172,7 @@ class TestSocketIORouting:
 async def test_event_dispatch_without_ack_type_returns_raw_value() -> None:
     sio = StubSocketIOServer()
     registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
-    registry.finalize("socketio", inplace=True)
+    registry.finalize("socketio")
     resolver = make_registry_usecase_resolver(registry)
 
     def context_factory(request: SocketIORequest) -> ExecutionContext:
@@ -246,7 +244,7 @@ def test_adapter_include_routers() -> None:
 async def test_async_context_factory() -> None:
     sio = StubSocketIOServer()
     registry = UsecaseRegistry().register("chat.echo", lambda ctx: EchoUsecase(ctx=ctx))
-    registry.finalize("socketio", inplace=True)
+    registry.finalize("socketio")
     resolver = make_registry_usecase_resolver(registry)
 
     async def async_context_factory(request: SocketIORequest) -> ExecutionContext:

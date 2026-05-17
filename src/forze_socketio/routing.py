@@ -14,11 +14,10 @@ from socketio.async_server import AsyncServer
 from forze.application.execution import (
     ExecutionContext,
     Usecase,
-    UsecasePlan,
     UsecaseRegistry,
 )
-from forze.application.execution.plan import OpKey
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
 
 # ----------------------- #
 
@@ -28,7 +27,7 @@ ExecutionContextFactoryPort = Callable[
 ]
 """Factory that builds request-scoped :class:`ExecutionContext` instances."""
 
-UsecaseResolverPort = Callable[[ExecutionContext, OpKey], Usecase[Any, Any]]
+UsecaseResolverPort = Callable[[ExecutionContext, StrKey], Usecase[Any, Any]]
 """Resolver that maps operation keys to composed usecases."""
 
 # ....................... #
@@ -60,7 +59,7 @@ class SocketIOCommandRoute[Args, Ack]:
     event: str
     """Socket.IO event name."""
 
-    operation: OpKey
+    operation: StrKey
     """Usecase operation key resolved by :class:`UsecaseRegistry`."""
 
     payload_type: Any
@@ -148,7 +147,7 @@ class SocketIONamespaceRouter:
         self,
         *,
         event: str,
-        operation: OpKey,
+        operation: StrKey,
         payload_type: Any,
         ack_type: Any = None,
     ) -> "SocketIONamespaceRouter":
@@ -289,19 +288,14 @@ class ForzeSocketIOAdapter:
 
 def make_registry_usecase_resolver(
     registry: UsecaseRegistry,
-    *,
-    plan: UsecasePlan | None = None,
 ) -> UsecaseResolverPort:
     """Build a resolver backed by :class:`UsecaseRegistry`.
 
     :param registry: Base usecase registry.
-    :param plan: Optional extra plan merged before resolution.
     :returns: Callable resolver suitable for :class:`ForzeSocketIOAdapter`.
     """
-    resolved_registry = registry.extend_plan(plan) if plan is not None else registry
-
-    def resolver(ctx: ExecutionContext, operation: OpKey) -> Usecase[Any, Any]:
-        return resolved_registry.resolve(operation, ctx)
+    def resolver(ctx: ExecutionContext, operation: StrKey) -> Usecase[Any, Any]:
+        return registry.resolve(operation, ctx)
 
     return resolver
 

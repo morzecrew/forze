@@ -1,30 +1,32 @@
-"""Unit tests for StorageOperation and StorageUsecasesFacade."""
+"""Unit tests for StorageKernelOp and StorageUsecasesFacade."""
 
 import pytest
 
 from forze.application.composition.storage import (
-    StorageOperation,
+    StorageKernelOp,
     StorageUsecasesFacade,
 )
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.execution import ExecutionContext, OperationNamespace, UsecaseRegistry
 
 # ----------------------- #
 
+_STORAGE_KEYS = OperationNamespace(prefix="storage")
 
-class TestStorageOperation:
-    """Tests for StorageOperation enum."""
 
-    def test_upload_value(self) -> None:
-        assert StorageOperation.UPLOAD == "storage.upload"
+class TestStorageKernelOp:
+    """Tests for :class:`StorageKernelOp` and default keyspace."""
 
-    def test_list_value(self) -> None:
-        assert StorageOperation.LIST == "storage.list"
+    def test_upload_wire_key(self) -> None:
+        assert _STORAGE_KEYS.op(StorageKernelOp.UPLOAD) == "storage.upload"
 
-    def test_download_value(self) -> None:
-        assert StorageOperation.DOWNLOAD == "storage.download"
+    def test_list_wire_key(self) -> None:
+        assert _STORAGE_KEYS.op(StorageKernelOp.LIST) == "storage.list"
 
-    def test_delete_value(self) -> None:
-        assert StorageOperation.DELETE == "storage.delete"
+    def test_download_wire_key(self) -> None:
+        assert _STORAGE_KEYS.op(StorageKernelOp.DOWNLOAD) == "storage.download"
+
+    def test_delete_wire_key(self) -> None:
+        assert _STORAGE_KEYS.op(StorageKernelOp.DELETE) == "storage.delete"
 
 
 class TestStorageUsecasesFacade:
@@ -40,10 +42,10 @@ class TestStorageUsecasesFacade:
                 return {"ok": True}
 
         reg = UsecaseRegistry().register(
-            StorageOperation.UPLOAD,
+            _STORAGE_KEYS.op(StorageKernelOp.UPLOAD),
             lambda ctx: StubUploadUsecase(ctx=ctx),
         )
-        reg.finalize("storage_facade", inplace=True)
+        reg.finalize("storage_facade")
         return reg
 
     def test_upload_descriptor_resolves_usecase(
@@ -51,7 +53,11 @@ class TestStorageUsecasesFacade:
         stub_ctx: ExecutionContext,
         mock_upload_usecase: UsecaseRegistry,
     ) -> None:
-        facade = StorageUsecasesFacade(ctx=stub_ctx, reg=mock_upload_usecase)
+        facade = StorageUsecasesFacade(
+            ctx=stub_ctx,
+            registry=mock_upload_usecase,
+            namespace=_STORAGE_KEYS,
+        )
         uc = facade.upload
 
         assert uc is not None
@@ -63,7 +69,11 @@ class TestStorageUsecasesFacade:
     ) -> None:
         from forze.base.errors import CoreError
 
-        facade = StorageUsecasesFacade(ctx=stub_ctx, reg=mock_upload_usecase)
+        facade = StorageUsecasesFacade(
+            ctx=stub_ctx,
+            registry=mock_upload_usecase,
+            namespace=_STORAGE_KEYS,
+        )
 
         with pytest.raises(
             CoreError,

@@ -1,20 +1,20 @@
-"""Factories for :class:`MiddlewareSpec` used by :class:`UsecasePlan` builders."""
+"""Factories for :class:`MiddlewareSpec` used by registry stage authoring."""
 
 from typing import Any
 
 from ..context import ExecutionContext
-from ..middleware import (
-    EffectMiddleware,
+from ..middleware import (  # type: ignore[import-not-found]
     FinallyMiddleware,
     GuardMiddleware,
     OnFailureMiddleware,
+    SuccessHookMiddleware,
 )
-from .types import (
-    EffectFactory,
+from .types import (  # type: ignore[import-not-found]
     FinallyFactory,
     GuardFactory,
     MiddlewareFactory,
     OnFailureFactory,
+    SuccessHookFactory,
 )
 
 # ----------------------- #
@@ -30,9 +30,9 @@ def guard_middleware_factory(guard: GuardFactory) -> MiddlewareFactory:
 # ....................... #
 
 
-def effect_middleware_factory(effect: EffectFactory) -> MiddlewareFactory:
-    def factory(ctx: ExecutionContext) -> EffectMiddleware[Any, Any]:
-        return EffectMiddleware[Any, Any](effect=effect(ctx))
+def success_hook_middleware_factory(hook: SuccessHookFactory) -> MiddlewareFactory:
+    def factory(ctx: ExecutionContext) -> SuccessHookMiddleware[Any, Any]:
+        return SuccessHookMiddleware[Any, Any](hook=hook(ctx))
 
     return factory
 

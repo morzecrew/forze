@@ -4,15 +4,15 @@ from typing import final
 
 import attrs
 
-from forze.application.execution.bucket import BucketKey, Phase
-from forze.application.execution.plan_kinds import (
+from forze.application.execution.engine.stages import (
     STEP_EXPLAIN_TX_BUCKET,
     ScheduleMode,
+    Stage,
     StepExplainKind,
 )
 
-from ..capabilities.scheduler import schedule_capability_specs
-from .operation import OperationPlan
+from ..engine.model import OperationStages
+from ..registry.graph import DispatchGraph
 from .spec import MiddlewareSpec
 
 # ----------------------- #
@@ -23,7 +23,7 @@ from .spec import MiddlewareSpec
 class StepExplainRow:
     """One scheduled step in :class:`ExecutionPlanReport`."""
 
-    bucket: str
+    stage: str
     label: str
     priority: int
     requires: frozenset[str]
@@ -34,80 +34,60 @@ class StepExplainRow:
     dispatch_edge_count: int = 0
 
 
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ExecutionPlanReport:
-    """Static introspection for :meth:`UsecasePlan.explain`."""
+    """Static introspection for :meth:`UsecaseRegistry.explain`."""
 
     op: str
-    use_capability_engine: bool
     has_transaction: bool
     steps: tuple[StepExplainRow, ...]
-
-
-# ....................... #
+    inter_op_outgoing_edges: frozenset[tuple[str, str]] = frozenset()
 
 
 def factory_label(spec: MiddlewareSpec) -> str:
-    f = spec.factory
-    qn = getattr(f, "__qualname__", None)
+    fact = spec.factory
+    qualname = getattr(fact, "__qualname__", None)
 
-    if isinstance(qn, str) and qn:
-        return qn
+    if isinstance(qualname, str) and qualname:
+        return qualname
 
-    name = getattr(f, "__name__", None)
+    name = getattr(fact, "__name__", None)
 
     if isinstance(name, str) and name:
         return name
 
-    return repr(f)
+    return repr(fact)
 
 
-# ....................... #
-
-
-def bucket_schedule_mode(
-    key: BucketKey,
+def stage_schedule_mode(
+    stage: Stage,
     specs: tuple[MiddlewareSpec, ...],
-    *,
-    use_capability_engine: bool,
 ) -> ScheduleMode:
-    if not use_capability_engine:
+    if not stage.schedulable:
         return ScheduleMode.legacy_priority
 
-    if not key.capability_schedulable:
-        return ScheduleMode.legacy_priority
-
-    if any(s.requires or s.provides for s in specs):
+    if any(spec.requires or spec.provides for spec in specs):
         return ScheduleMode.capability_topo
 
     return ScheduleMode.legacy_priority
 
 
-# ....................... #
-
-
 def ordered_specs_for_explain(
-    key: BucketKey,
+    stage: Stage,
     specs: tuple[MiddlewareSpec, ...],
-    *,
-    use_capability_engine: bool,
 ) -> tuple[MiddlewareSpec, ...]:
-    if use_capability_engine and key.capability_schedulable:
-        return schedule_capability_specs(specs, bucket=key.label)
+    if stage.schedulable:
+        from ..engine.capabilities import execution_ordered_specs
+
+        return execution_ordered_specs(specs, stage=stage.value)
 
     return specs
 
 
-# ....................... #
-
-
 def append_explain_rows(
     rows: list[StepExplainRow],
-    bucket_label: str,
+    stage: Stage,
     specs: tuple[MiddlewareSpec, ...],
     *,
     kind: StepExplainKind,
@@ -116,45 +96,41 @@ def append_explain_rows(
 ) -> int:
     idx = start_idx
 
-    for s in specs:
+    for spec in specs:
         rows.append(
             StepExplainRow(
-                bucket=bucket_label,
-                label=s.step_label or factory_label(s),
-                priority=s.priority,
-                requires=s.requires,
-                provides=s.provides,
+                stage=stage.value,
+                label=spec.step_label or factory_label(spec),
+                priority=spec.priority,
+                requires=spec.requires,
+                provides=spec.provides,
                 schedule_index=idx,
                 kind=kind,
                 schedule_mode=schedule_mode,
-                dispatch_edge_count=len(s.dispatch_edges),
+                dispatch_edge_count=0,
             )
         )
-
         idx += 1
 
     return idx
 
 
-# ....................... #
-
-
 def build_execution_plan_report(
     *,
-    plan: OperationPlan,
+    plan: OperationStages,
     op: str,
-    use_capability_engine: bool,
+    registry_graph: DispatchGraph | None = None,
 ) -> ExecutionPlanReport:
     rows: list[StepExplainRow] = []
     idx = 0
     tx_emitted = False
 
-    for key in BucketKey.iter_chain_order():
-        if plan.tx is not None and key.phase is Phase.in_tx and not tx_emitted:
+    for stage in Stage.iter_chain_order():
+        if plan.tx_route is not None and stage.requires_tx and not tx_emitted:
             rows.append(
                 StepExplainRow(
-                    bucket=STEP_EXPLAIN_TX_BUCKET,
-                    label=f"TxMiddleware(route={str(plan.tx.route)})",
+                    stage=STEP_EXPLAIN_TX_BUCKET,
+                    label=f"TxMiddleware(route={plan.tx_route})",
                     priority=0,
                     requires=frozenset(),
                     provides=frozenset(),
@@ -167,29 +143,37 @@ def build_execution_plan_report(
             idx += 1
             tx_emitted = True
 
-        if plan.tx is None:
-            if key.phase is Phase.in_tx or key is BucketKey.AFTER_COMMIT:
-                continue
+        specs = plan.specs_for_chain(stage)
 
-        specs = plan.specs_for_chain(key)
-        mode = bucket_schedule_mode(
-            key, specs, use_capability_engine=use_capability_engine
-        )
-        ordered = ordered_specs_for_explain(
-            key, specs, use_capability_engine=use_capability_engine
-        )
+        if stage is Stage.after_commit and plan.tx_route is None:
+            continue
+
+        if not specs:
+            continue
+
+        if stage is Stage.after_commit and plan.tx_route is None:
+            continue
+
+        mode = stage_schedule_mode(stage, specs)
+        ordered = ordered_specs_for_explain(stage, specs)
         idx = append_explain_rows(
             rows,
-            key.label,
+            stage,
             ordered,
-            kind=key.explain_kind,
+            kind=stage.explain_kind,
             schedule_mode=mode,
             start_idx=idx,
         )
 
+    outgoing = (
+        registry_graph.outgoing_edges_for(op)
+        if registry_graph is not None
+        else frozenset[tuple[str, str]]()
+    )
+
     return ExecutionPlanReport(
         op=op,
-        use_capability_engine=use_capability_engine,
-        has_transaction=plan.tx is not None,
+        has_transaction=plan.has_transaction,
         steps=tuple(rows),
+        inter_op_outgoing_edges=outgoing,
     )

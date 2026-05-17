@@ -1,9 +1,6 @@
-"""Common Pydantic-based primitive types used across the application.
+"""Common primitive types used across the library."""
 
-:data:`String` and :data:`LongString` apply normalization and length constraints.
-:data:`JsonDict` is a type alias for JSON-compatible dictionaries.
-"""
-
+from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, StringConstraints
@@ -11,6 +8,7 @@ from pydantic import BeforeValidator, StringConstraints
 from .string import normalize_string
 
 # ----------------------- #
+#! TODO: move pydantic-based ones somewhere else to contrib or so (shouldn't be part of the core layer)
 
 String = Annotated[
     str,
@@ -23,7 +21,6 @@ String = Annotated[
 ]
 """Normalized short string for titles, names and similar user-facing text."""
 
-
 LongString = Annotated[
     str,
     StringConstraints(
@@ -34,6 +31,8 @@ LongString = Annotated[
 ]
 """Normalized long-form string for descriptions, notes and content bodies."""
 
-
 JsonDict = dict[str, Any]
-"""JSON compatible dictionary."""
+"""JSON compatible dictionary type alias."""
+
+StrKey = str | StrEnum
+"""String-compatible key type alias."""

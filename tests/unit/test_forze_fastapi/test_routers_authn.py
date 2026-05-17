@@ -10,7 +10,7 @@ from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.composition.authn import (
-    AuthnOperation,
+    AuthnKernelOp,
 )
 from forze.application.contracts.authn import AuthnSpec
 from forze.application.dto import (
@@ -22,8 +22,8 @@ from forze.application.dto import (
 from forze.application.execution import (
     ExecutionContext,
     Usecase,
-    UsecasePlan,
     UsecaseRegistry,
+    operation_namespace_for,
 )
 
 from forze_fastapi.endpoints.authn import (
@@ -81,6 +81,20 @@ class _StubChangePassword(Usecase[AuthnChangePasswordRequestDTO, None]):
 # ....................... #
 
 
+def _login_response() -> AuthnTokenResponseDTO:
+    return AuthnTokenResponseDTO(
+        access_token="ACCESS-1",
+        refresh_token="REFRESH-1",
+        access_token_type="Bearer",
+        access_expires_in=900,
+        refresh_expires_in=86400,
+    )
+
+
+def _spec() -> AuthnSpec:
+    return AuthnSpec(name="main", enabled_methods=("password",))
+
+
 def _make_registry(
     *,
     login_response: AuthnTokenResponseDTO | None = None,
@@ -90,37 +104,36 @@ def _make_registry(
     change_password_capture: list[str] | None = None,
 ) -> UsecaseRegistry:
     factories: dict[str, Any] = {}
+    ops = operation_namespace_for(_spec())
 
     if login_response is not None:
-        factories[AuthnOperation.PASSWORD_LOGIN] = lambda ctx: _StubLogin(
+        factories[ops.op(AuthnKernelOp.PASSWORD_LOGIN)] = lambda ctx: _StubLogin(
             ctx=ctx,
             response=login_response,
         )
 
     if refresh_response is not None:
         rc = refresh_capture if refresh_capture is not None else []
-        factories[AuthnOperation.REFRESH_TOKENS] = lambda ctx: _StubRefresh(
+        factories[ops.op(AuthnKernelOp.REFRESH_TOKENS)] = lambda ctx: _StubRefresh(
             ctx=ctx,
             response=refresh_response,
             captured=rc,
         )
 
     if logout_calls is not None:
-        factories[AuthnOperation.LOGOUT] = lambda ctx: _StubLogout(
+        factories[ops.op(AuthnKernelOp.LOGOUT)] = lambda ctx: _StubLogout(
             ctx=ctx,
             called=logout_calls,
         )
 
     if change_password_capture is not None:
-        factories[AuthnOperation.CHANGE_PASSWORD] = lambda ctx: _StubChangePassword(
+        factories[ops.op(AuthnKernelOp.CHANGE_PASSWORD)] = lambda ctx: _StubChangePassword(
             ctx=ctx,
             captured=change_password_capture,
         )
 
-    reg = UsecaseRegistry(factories).extend_plan(
-        UsecasePlan().tx("*", route="mock"),
-    )
-    reg.finalize("authn", inplace=True)
+    reg = UsecaseRegistry(factories).tx("*", route="mock")
+    reg.finalize("authn")
     return reg
 
 
@@ -135,23 +148,6 @@ def _ctx_dep(ctx: ExecutionContext):
 def authn_ctx(composition_mock_state: MockState) -> ExecutionContext:
     deps = MockDepsModule(state=composition_mock_state)()
     return ExecutionContext(deps=deps)
-
-
-# ....................... #
-
-
-def _login_response() -> AuthnTokenResponseDTO:
-    return AuthnTokenResponseDTO(
-        access_token="ACCESS-1",
-        refresh_token="REFRESH-1",
-        access_token_type="Bearer",
-        access_expires_in=900,
-        refresh_expires_in=86400,
-    )
-
-
-def _spec() -> AuthnSpec:
-    return AuthnSpec(name="main", enabled_methods=("password",))
 
 
 # ....................... #

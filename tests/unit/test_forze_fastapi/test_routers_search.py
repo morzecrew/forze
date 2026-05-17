@@ -47,7 +47,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -55,6 +55,7 @@ class TestAttachSearchRoutes:
         router = APIRouter(prefix="/api")
         result = attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
@@ -81,7 +82,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -89,6 +90,7 @@ class TestAttachSearchRoutes:
         router = APIRouter(prefix="/api")
         attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
@@ -121,7 +123,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -134,6 +136,7 @@ class TestAttachSearchRoutes:
         router = APIRouter(prefix="/api")
         attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
@@ -172,7 +175,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -189,6 +192,7 @@ class TestAttachSearchRoutes:
         router = APIRouter(prefix="/api")
         attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
@@ -219,7 +223,7 @@ class TestAttachSearchRoutes:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -227,6 +231,7 @@ class TestAttachSearchRoutes:
         router = APIRouter(prefix="/api")
         attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
@@ -252,7 +257,7 @@ class TestBuildSearchRouter:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -260,6 +265,7 @@ class TestBuildSearchRouter:
         router = APIRouter(prefix="/search")
         attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,
@@ -292,7 +298,7 @@ class TestBuildSearchRouter:
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
         reg = build_search_registry(spec)
-        reg.finalize(spec.name, inplace=True)
+        reg.finalize(spec.name)
 
         def ctx_dep():
             return composition_ctx
@@ -300,6 +306,7 @@ class TestBuildSearchRouter:
         router = APIRouter(prefix="/search")
         attach_search_endpoints(
             router,
+            search=spec,
             dtos=dtos,
             registry=reg,
             ctx_dep=ctx_dep,

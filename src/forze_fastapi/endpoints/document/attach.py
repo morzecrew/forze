@@ -12,7 +12,11 @@ from fastapi import APIRouter
 from forze.application.composition.document import DocumentDTOs
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.idempotency import IdempotencySpec
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.execution import (
+    ExecutionContext,
+    UsecaseRegistry,
+    operation_namespace_for,
+)
 
 from .._logger import logger
 from ..http import (
@@ -62,6 +66,8 @@ def attach_document_endpoints(
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
     base_authn: AuthnRequirement | None = endpoints.get("authn")
+    _doc_namespace = registry.namespace or operation_namespace_for(document)
+    _doc_facade_init: dict[str, Any] = {"namespace": _doc_namespace}
 
     def _resolve_authn(
         simple: SimpleHttpEndpointSpec | None,
@@ -96,6 +102,7 @@ def attach_document_endpoints(
         _get = get_endpoint if get_endpoint is not True else SimpleHttpEndpointSpec()
 
         get_endpoint_spec = build_document_get_endpoint_spec(
+            namespace=_doc_namespace,
             dtos=dtos,
             path_override=_get.get("path_override"),
             metadata=_get.get("metadata"),
@@ -108,6 +115,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=_doc_facade_init,
         )
 
     if get_by_number_id_endpoint is not False:
@@ -126,6 +134,7 @@ def attach_document_endpoints(
         else:
             get_by_number_id_endpoint_spec = (
                 build_document_get_by_number_id_endpoint_spec(
+                    namespace=_doc_namespace,
                     dtos=dtos,
                     path_override=_get_by_number_id.get("path_override"),
                     metadata=_get_by_number_id.get("metadata"),
@@ -139,12 +148,14 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
+                facade_init_kwargs=_doc_facade_init,
             )
 
     if list_endpoint is not False:
         _list = list_endpoint if list_endpoint is not True else SimpleHttpEndpointSpec()
 
         list_endpoint_spec = build_document_list_endpoint_spec(
+            namespace=_doc_namespace,
             dtos=dtos,
             path_override=_list.get("path_override"),
             metadata=_list.get("metadata"),
@@ -155,6 +166,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=_doc_facade_init,
         )
 
     if raw_list_endpoint is not False:
@@ -165,6 +177,7 @@ def attach_document_endpoints(
         )
 
         raw_list_endpoint_spec = build_document_raw_list_endpoint_spec(
+            namespace=_doc_namespace,
             dtos=dtos,
             path_override=_raw_list.get("path_override"),
             metadata=_raw_list.get("metadata"),
@@ -175,6 +188,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=_doc_facade_init,
         )
 
     if aggregated_list_endpoint is not False:
@@ -185,6 +199,7 @@ def attach_document_endpoints(
         )
 
         aggregated_list_endpoint_spec = build_document_aggregated_list_endpoint_spec(
+            namespace=_doc_namespace,
             dtos=dtos,
             path_override=_aggregated_list.get("path_override"),
             metadata=_aggregated_list.get("metadata"),
@@ -195,6 +210,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=_doc_facade_init,
         )
 
     if list_cursor_endpoint is not False:
@@ -205,6 +221,7 @@ def attach_document_endpoints(
         )
 
         list_cursor_endpoint_spec = build_document_list_cursor_endpoint_spec(
+            namespace=_doc_namespace,
             dtos=dtos,
             path_override=_list_c.get("path_override"),
             metadata=_list_c.get("metadata"),
@@ -215,6 +232,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=_doc_facade_init,
         )
 
     if raw_list_cursor_endpoint is not False:
@@ -225,6 +243,7 @@ def attach_document_endpoints(
         )
 
         raw_list_cursor_endpoint_spec = build_document_raw_list_cursor_endpoint_spec(
+            namespace=_doc_namespace,
             dtos=dtos,
             path_override=_raw_list_c.get("path_override"),
             metadata=_raw_list_c.get("metadata"),
@@ -235,6 +254,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
+            facade_init_kwargs=_doc_facade_init,
         )
 
     if create_endpoint is not False:
@@ -265,6 +285,7 @@ def attach_document_endpoints(
             )
 
             create_endpoint_spec = build_document_create_endpoint_spec(
+                namespace=_doc_namespace,
                 dtos=dtos,
                 path_override=_create.get("path_override"),
                 metadata=_create.get("metadata"),
@@ -276,6 +297,7 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
+                facade_init_kwargs=_doc_facade_init,
             )
 
     if update_endpoint is not False:
@@ -303,6 +325,7 @@ def attach_document_endpoints(
 
         else:
             update_endpoint_spec = build_document_update_endpoint_spec(
+                namespace=_doc_namespace,
                 dtos=dtos,
                 path_override=_update.get("path_override"),
                 metadata=_update.get("metadata"),
@@ -313,6 +336,7 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
+                facade_init_kwargs=_doc_facade_init,
             )
 
     if kill_endpoint is not False:
@@ -326,6 +350,7 @@ def attach_document_endpoints(
 
         else:
             kill_endpoint_spec = build_document_kill_endpoint_spec(
+                namespace=_doc_namespace,
                 path_override=_kill.get("path_override"),
                 metadata=_kill.get("metadata"),
             )
@@ -335,6 +360,7 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
+                facade_init_kwargs=_doc_facade_init,
             )
 
     if delete_endpoint is not False:
@@ -356,6 +382,7 @@ def attach_document_endpoints(
 
         else:
             delete_endpoint_spec = build_document_delete_endpoint_spec(
+                namespace=_doc_namespace,
                 dtos=dtos,
                 path_override=_delete.get("path_override"),
                 metadata=_delete.get("metadata"),
@@ -366,6 +393,7 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
+                facade_init_kwargs=_doc_facade_init,
             )
 
     if restore_endpoint is not False:
@@ -389,6 +417,7 @@ def attach_document_endpoints(
 
         else:
             restore_endpoint_spec = build_document_restore_endpoint_spec(
+                namespace=_doc_namespace,
                 dtos=dtos,
                 path_override=_restore.get("path_override"),
                 metadata=_restore.get("metadata"),
@@ -399,6 +428,7 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
+                facade_init_kwargs=_doc_facade_init,
             )
 
     return router

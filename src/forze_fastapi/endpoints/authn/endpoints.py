@@ -6,13 +6,14 @@ require_fastapi()
 
 from typing import Any
 
-from forze.application.composition.authn import AuthnUsecasesFacade
+from forze.application.composition.authn import AuthnKernelOp, AuthnUsecasesFacade
 from forze.application.dto import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
     AuthnTokenResponseDTO,
 )
+from forze.application.execution import OperationNamespace, OperationRef
 from forze.domain.models import BaseDTO
 
 from .._utils import path_coerce
@@ -56,6 +57,7 @@ PasswordLoginEndpointSpec = HttpEndpointSpec[
 
 def build_authn_password_login_endpoint_spec(
     *,
+    namespace: OperationNamespace,
     access_transport: TokenTransportSpec,
     refresh_transport: TokenTransportSpec | None = None,
     path_override: str | None = None,
@@ -95,7 +97,7 @@ def build_authn_password_login_endpoint_spec(
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.password_login,  # type: ignore[arg-type]
+        OperationRef(namespace.key(AuthnKernelOp.PASSWORD_LOGIN)),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
@@ -123,6 +125,7 @@ RefreshEndpointSpec = HttpEndpointSpec[
 
 def build_authn_refresh_endpoint_spec(
     *,
+    namespace: OperationNamespace,
     access_transport: TokenTransportSpec,
     refresh_transport: TokenTransportSpec,
     path_override: str | None = None,
@@ -168,7 +171,7 @@ def build_authn_refresh_endpoint_spec(
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.refresh_tokens,  # type: ignore[arg-type]
+        OperationRef(namespace.key(AuthnKernelOp.REFRESH_TOKENS)),
         http=http_spec,
         metadata=metadata,
         response=AuthnTokenResponseDTO,
@@ -226,6 +229,7 @@ LogoutEndpointSpec = HttpEndpointSpec[
 
 def build_authn_logout_endpoint_spec(
     *,
+    namespace: OperationNamespace,
     access_transport: TokenTransportSpec,
     refresh_transport: TokenTransportSpec | None = None,
     path_override: str | None = None,
@@ -252,7 +256,7 @@ def build_authn_logout_endpoint_spec(
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.logout,  # type: ignore[arg-type]
+        OperationRef(namespace.key(AuthnKernelOp.LOGOUT)),
         http=http_spec,
         metadata=metadata,
         mapper=EmptyMapper(),
@@ -278,6 +282,7 @@ ChangePasswordEndpointSpec = HttpEndpointSpec[
 
 def build_authn_change_password_endpoint_spec(
     *,
+    namespace: OperationNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
     body_mode: HttpBodyMode = "form",
@@ -301,7 +306,7 @@ def build_authn_change_password_endpoint_spec(
 
     return build_http_endpoint_spec(
         Facade,
-        Facade.change_password,  # type: ignore[arg-type]
+        OperationRef(namespace.key(AuthnKernelOp.CHANGE_PASSWORD)),
         http=http_spec,
         request=request_spec,
         metadata=metadata,

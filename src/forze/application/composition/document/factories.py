@@ -11,7 +11,11 @@ from forze.application.dto import (
     RawCursorListRequestDTO,
     RawListRequestDTO,
 )
-from forze.application.execution import UsecasePlan, UsecaseRegistry
+from forze.application.execution import (
+    OperationNamespace,
+    UsecaseRegistry,
+    operation_namespace_for,
+)
 from forze.application.usecases.document import (
     AggregatedListDocuments,
     CreateDocument,
@@ -30,7 +34,7 @@ from forze.base.errors import CoreError
 
 from ..mapping import DTOMapper, DTOMapperStep
 from .facades import DocumentDTOs
-from .operations import DocumentOperation
+from .operations import DocumentKernelOp
 
 # ----------------------- #
 
@@ -187,6 +191,7 @@ def build_document_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
     *,
+    namespace: OperationNamespace | None = None,
     create_steps: tuple[DTOMapperStep[Any], ...] = (),
     update_steps: tuple[DTOMapperStep[Any], ...] = (),
     list_steps: tuple[DTOMapperStep[Any], ...] = (),
@@ -199,6 +204,7 @@ def build_document_registry(
 
     :param spec: Document specification.
     :param dto_spec: Document DTO specification.
+    :param namespace: Operation namespace; defaults to :func:`operation_namespace_for` ``(spec)``.
     :param create_steps: Optional mapping steps to append to the create mapper.
     :param update_steps: Optional mapping steps to append to the update mapper.
     :param list_steps: Optional mapping steps to append to the list mapper.
@@ -208,6 +214,8 @@ def build_document_registry(
     :param raw_list_cursor_steps: Optional mapping steps for raw cursor list requests.
     :returns: Usecase registry with all supported operations.
     """
+
+    ops = namespace or operation_namespace_for(spec)
 
     list_mapper = build_document_list_mapper(steps=list_steps)
     raw_list_mapper = build_document_raw_list_mapper(steps=raw_list_steps)
@@ -221,46 +229,46 @@ def build_document_registry(
 
     reg = UsecaseRegistry(
         {
-            DocumentOperation.GET: lambda ctx: GetDocument(
+            DocumentKernelOp.GET: lambda ctx: GetDocument(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
             ),
-            DocumentOperation.LIST: lambda ctx: TypedListDocuments(
+            DocumentKernelOp.LIST: lambda ctx: TypedListDocuments(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=list_mapper,
             ),
-            DocumentOperation.RAW_LIST: lambda ctx: RawListDocuments(
+            DocumentKernelOp.RAW_LIST: lambda ctx: RawListDocuments(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=raw_list_mapper,
             ),
-            DocumentOperation.LIST_CURSOR: lambda ctx: TypedCursorListDocuments(
+            DocumentKernelOp.LIST_CURSOR: lambda ctx: TypedCursorListDocuments(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=list_cursor_mapper,
             ),
-            DocumentOperation.RAW_LIST_CURSOR: lambda ctx: RawCursorListDocuments(
+            DocumentKernelOp.RAW_LIST_CURSOR: lambda ctx: RawCursorListDocuments(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=raw_list_cursor_mapper,
             ),
-            DocumentOperation.AGG_LIST: lambda ctx: AggregatedListDocuments(
+            DocumentKernelOp.AGG_LIST: lambda ctx: AggregatedListDocuments(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
                 mapper=aggregated_list_mapper,
             ),
-        }
+        },
+        namespace=ops,
     )
 
     if spec.supports_number_id():
         reg.register(
-            DocumentOperation.GET_BY_NUMBER_ID,
+            DocumentKernelOp.GET_BY_NUMBER_ID,
             lambda ctx: GetDocumentByNumberId(
                 ctx=ctx,
                 doc=ctx.doc_query(spec),
             ),
-            inplace=True,
         )
 
     if spec.write is not None:
@@ -271,22 +279,20 @@ def build_document_registry(
                 steps=create_steps,
             )
             reg.register(
-                DocumentOperation.CREATE,
+                DocumentKernelOp.CREATE,
                 lambda ctx: CreateDocument(
                     ctx=ctx,
                     doc=ctx.doc_command(spec),
                     mapper=create_mapper,
                 ),
-                inplace=True,
             )
 
         reg.register(
-            DocumentOperation.KILL,
+            DocumentKernelOp.KILL,
             lambda ctx: KillDocument(
                 ctx=ctx,
                 doc=ctx.doc_command(spec),
             ),
-            inplace=True,
         )
 
         if spec.supports_update() and dtos.update is not None:
@@ -297,28 +303,26 @@ def build_document_registry(
             )
 
             reg.register(
-                DocumentOperation.UPDATE,
+                DocumentKernelOp.UPDATE,
                 lambda ctx: UpdateDocument[Any, Any, Any](
                     ctx=ctx,
                     doc=ctx.doc_command(spec),
                     mapper=update_mapper,
                 ),
-                inplace=True,
             )
 
         if spec.supports_soft_delete():
             reg.register_many(
                 {
-                    DocumentOperation.DELETE: lambda ctx: DeleteDocument(
+                    DocumentKernelOp.DELETE: lambda ctx: DeleteDocument(
                         ctx=ctx,
                         doc=ctx.doc_command(spec),
                     ),
-                    DocumentOperation.RESTORE: lambda ctx: RestoreDocument(
+                    DocumentKernelOp.RESTORE: lambda ctx: RestoreDocument(
                         ctx=ctx,
                         doc=ctx.doc_command(spec),
                     ),
                 },
-                inplace=True,
             )
 
     return reg
@@ -327,16 +331,31 @@ def build_document_registry(
 # ....................... #
 
 
-def build_default_tx_document_plan(route: str | StrEnum) -> UsecasePlan:
-    """Build a default transaction plan for document operations."""
+def apply_default_tx_document_registry(
+    registry: UsecaseRegistry,
+    spec: DocumentSpec[Any, Any, Any, Any],
+    route: str | StrEnum,
+    *,
+    namespace: OperationNamespace | None = None,
+) -> UsecaseRegistry:
+    """Apply the default transaction layout for document write operations.
 
-    return UsecasePlan().tx(
+    :param registry: Registry to mutate.
+    :param spec: Document specification (used to derive the namespace when ``namespace`` is omitted).
+    :param route: Transaction route label.
+    :param namespace: Optional override; defaults to :func:`operation_namespace_for` ``(spec)``.
+    """
+
+    ops = namespace or operation_namespace_for(spec)
+
+    registry.tx(
         [
-            DocumentOperation.CREATE,
-            DocumentOperation.UPDATE,
-            DocumentOperation.DELETE,
-            DocumentOperation.RESTORE,
-            DocumentOperation.KILL,
+            ops.key(DocumentKernelOp.CREATE),
+            ops.key(DocumentKernelOp.UPDATE),
+            ops.key(DocumentKernelOp.DELETE),
+            ops.key(DocumentKernelOp.RESTORE),
+            ops.key(DocumentKernelOp.KILL),
         ],
         route=route,
     )
+    return registry

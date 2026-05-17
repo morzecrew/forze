@@ -128,7 +128,7 @@ class TestETagFeature:
     @pytest.mark.asyncio
     async def test_adds_etag_header(self) -> None:
         from forze.application.contracts.mapping import MapperPort
-        from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+        from forze.application.execution import Deps, ExecutionContext, OperationRef
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
         class Item(BaseModel):
@@ -144,7 +144,7 @@ class TestETagFeature:
             response=Item,
             mapper=_PassMapper(),
             facade_type=object,
-            call=FacadeOpRef(op="x"),
+            call=OperationRef.absolute("x"),
         )
 
         ctx = HttpEndpointContext(
@@ -174,7 +174,7 @@ class TestETagFeature:
             id: int
 
         from forze.application.contracts.mapping import MapperPort
-        from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+        from forze.application.execution import Deps, ExecutionContext, OperationRef
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
         class _PassMapper(MapperPort[HttpRequestDTO, Item]):
@@ -186,7 +186,7 @@ class TestETagFeature:
             response=Item,
             mapper=_PassMapper(),
             facade_type=object,
-            call=FacadeOpRef(op="x"),
+            call=OperationRef.absolute("x"),
         )
 
         ctx = HttpEndpointContext(
@@ -216,7 +216,7 @@ class TestETagFeature:
             id: int
 
         from forze.application.contracts.mapping import MapperPort
-        from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+        from forze.application.execution import Deps, ExecutionContext, OperationRef
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
         class _PassMapper(MapperPort[HttpRequestDTO, Item]):
@@ -228,7 +228,7 @@ class TestETagFeature:
             response=Item,
             mapper=_PassMapper(),
             facade_type=object,
-            call=FacadeOpRef(op="x"),
+            call=OperationRef.absolute("x"),
         )
 
         ctx = HttpEndpointContext(

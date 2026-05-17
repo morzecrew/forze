@@ -6,7 +6,12 @@ import pytest
 from fastapi import Depends
 from starlette.testclient import TestClient
 
-from forze.application.execution import Deps, ExecutionContext, UsecaseRegistry
+from forze.application.execution import (
+    Deps,
+    ExecutionContext,
+    OperationNamespace,
+    UsecaseRegistry,
+)
 from forze_fastapi.endpoints._utils import facade_dependency, path_coerce
 
 # ----------------------- #
@@ -36,11 +41,19 @@ class TestFacadeDependency:
         """Depends() wiring returns the facade built from registry + context."""
 
         class _Facade:
-            def __init__(self, *, ctx: ExecutionContext, reg: UsecaseRegistry) -> None:
+            def __init__(
+                self,
+                *,
+                ctx: ExecutionContext,
+                registry: UsecaseRegistry,
+                namespace: OperationNamespace | None = None,
+            ) -> None:
                 self.ctx = ctx
-                self.reg = reg
+                self.registry = registry
+                self.namespace = namespace
 
         reg = MagicMock(spec=UsecaseRegistry)
+        reg.namespace = None
         ctx = ExecutionContext(deps=Deps())
 
         def ctx_dep():
@@ -64,10 +77,17 @@ class TestFacadeDependency:
         """If ctx_dep does not inject ExecutionContext, dependency resolution fails."""
 
         class _Facade:
-            def __init__(self, *, ctx: ExecutionContext, reg: UsecaseRegistry) -> None:
+            def __init__(
+                self,
+                *,
+                ctx: ExecutionContext,
+                registry: UsecaseRegistry,
+                namespace: OperationNamespace | None = None,
+            ) -> None:
                 pass
 
         reg = MagicMock(spec=UsecaseRegistry)
+        reg.namespace = None
 
         def bad_ctx_dep():
             raise RuntimeError("no ctx")
@@ -85,3 +105,40 @@ class TestFacadeDependency:
         client = TestClient(app, raise_server_exceptions=True)
         with pytest.raises(RuntimeError, match="no ctx"):
             client.get("/y")
+
+    def test_forwards_facade_init_kwargs(self) -> None:
+        """Extra kwargs are passed through to the facade constructor."""
+
+        class _Facade:
+            def __init__(
+                self,
+                *,
+                ctx: ExecutionContext,
+                registry: UsecaseRegistry,
+                namespace: OperationNamespace | None = None,
+                marker: str = "",
+            ) -> None:
+                self.ctx = ctx
+                self.registry = registry
+                self.namespace = namespace
+                self.marker = marker
+
+        reg = MagicMock(spec=UsecaseRegistry)
+        reg.namespace = None
+        ctx = ExecutionContext(deps=Deps())
+
+        def ctx_dep():
+            return ctx
+
+        dep = facade_dependency(_Facade, reg, ctx_dep, marker="x")
+
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.get("/z")
+        async def route(f: _Facade = Depends(dep)) -> dict:
+            return {"marker": f.marker}
+
+        client = TestClient(app)
+        assert client.get("/z").json() == {"marker": "x"}

@@ -2,245 +2,174 @@
 
 ## What problem this solves
 
-Repeated guards, effects, transactions, and operation wiring become noisy when every usecase assembles them by hand.
+Repeated guards, transaction setup, follow-up hooks, and operation wiring become noisy when every usecase assembles them by hand.
 
-## When you need this
+## Core model
 
-Use this when you want reusable middleware plans, operation registries, or document/search facades.
+Forze composition has three parts:
 
-
-Forze provides a declarative system for composing usecases with middleware. Instead of manually wiring guards and effects into every operation, you declare them in **plans** and **registries** that are resolved at runtime.
-
-## How composition works
-
-The composition model has three parts:
-
-1. **Registry**: maps operation names to usecase factories
-2. **Plan**: describes which middleware (guards, effects, transactions) wraps each operation
-3. **Facade**: ties registry, plan, and spec together into a single entry point
-
-When a request arrives, the facade resolves the usecase factory from the registry, wraps it with the middleware chain from the plan, and returns a callable ready to execute.
+1. `UsecaseRegistry`: maps operation names to usecase factories and owns stage authoring.
+2. `OperationNamespace` / `facade_op(...)`: keep facade operation names suffix-based while still producing stable full keys.
+3. `OperationRef`: carries already-qualified operation keys for endpoint metadata and other plain-data call sites.
+4. `UsecasesFacade`: resolves a usecase from the registry through a namespace-aware facade.
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/operation-registry.svg" alt="Operation registry and plan resolution">
   <img class="d2-dark" src="/forze/assets/diagrams/dark/operation-registry.svg" alt="Operation registry and plan resolution">
 </div>
 
-## Operation registry
+## Registry
 
-The `UsecaseRegistry` maps operation keys to usecase factories. Each factory receives an `ExecutionContext` and returns a `Usecase` instance:
+`UsecaseRegistry` is a fluent mutable builder. Register factories, add stage hooks, then finalize once:
 
     :::python
     from forze.application.execution import UsecaseRegistry
 
+    registry = (
+        UsecaseRegistry()
+        .register("get", lambda ctx: GetProject(ctx=ctx))
+        .register("create", lambda ctx: CreateProject(ctx=ctx))
+        .finalize("projects")
+    )
 
-    registry = UsecaseRegistry()
-    registry = registry.register("get", lambda ctx: GetProject(ctx=ctx))
-    registry = registry.register("create", lambda ctx: CreateProject(ctx=ctx))
+For document and search aggregates, `build_document_registry(...)` and `build_search_registry(...)` create the default operation registry for you.
 
-For document aggregates, `build_document_registry(spec, dtos)` creates a registry pre-populated with standard CRUD operations (GET, CREATE, UPDATE, KILL, DELETE, RESTORE).
+## Stage authoring
 
-## Usecase plan
+`UsecaseRegistry` has two authoring paths:
 
-The `UsecasePlan` describes how each operation is composed with middleware. It maps operation keys to middleware buckets that run at specific stages.
+- simple composition with explicit stage methods
+- explicit DAG composition with `PlanDag` and stage-specific `*_dag(...)` methods
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/operation-composition.svg" alt="Operation composition flow">
   <img class="d2-dark" src="/forze/assets/diagrams/dark/operation-composition.svg" alt="Operation composition flow">
 </div>
 
-### Plan buckets
-
-Each operation has multiple middleware buckets (a :class:`~forze.application.execution.bucket.Phase` × :class:`~forze.application.execution.bucket.Slot` placement, represented by :class:`~forze.application.execution.bucket.BucketKey`), executed in this order:
-
-| Bucket | When it runs | Use case |
-|--------|-------------|----------|
-| `outer_before` | Before everything | Authorization, input validation |
-| `outer_wrap` | Wraps the entire chain | Metrics, retries, error handling |
-| Transaction boundary | (automatic when tx=True) | |
-| `in_tx_before` | Inside tx, before usecase | Lock acquisition, pre-checks |
-| `in_tx_wrap` | Inside tx, wraps usecase | In-transaction cross-cutting |
-| `in_tx_after` | Inside tx, after usecase | Audit logging inside tx |
-| `outer_after` | After everything | Response transformation |
-| `after_commit` | After successful commit | Notifications, event publishing |
-
-The `in_tx_*` and `after_commit` buckets only activate when `tx=True` for the operation.
-
-### Building a plan
+### Simple composition
 
     :::python
-    from forze.application.execution import UsecasePlan
+    from forze.application.execution import UsecaseRegistry
 
-
-    plan = (
-        UsecasePlan()
+    registry = (
+        UsecaseRegistry()
         .tx("create", route="default")
-        .tx("update", route="default")
-        .before("create", auth_guard, priority=100)
-        .after("create", log_effect, priority=0)
-        .after_commit("create", notify_effect)
         .before("*", rate_limit_guard, priority=200)
+        .before("create", auth_guard, priority=100)
+        .tx_before("create", lock_guard, priority=50)
+        .after_commit("create", publish_event)
     )
 
-The wildcard `"*"` applies to all operations as a base plan. Per-operation plans extend the base. When resolved, the base and operation-specific plans are merged.
+Use `"*"` as a wildcard base plan. Operation-specific stages are merged on top when the usecase resolves.
 
-### Priority ordering
+### Result ownership
 
-Middlewares within a bucket are sorted by priority (descending). Higher priority runs first (outermost). Priority values must be unique within a bucket to avoid ambiguity.
+`Usecase.main()` defines the domain result.
 
-### Merging plans
+- `before` and `tx_before` only observe `args`
+- `after_success`, `tx_after_success`, and `after_commit` observe `args` and `result`
+- `on_failure` observes `args` and `exc`
+- `finally_` and `tx_finally` observe `args` and `outcome`
 
-Multiple plans can be merged for modular composition:
+Hooks may raise, return `Skip` where capability scheduling allows it, and publish capabilities. They do not replace the usecase result.
 
-    :::python
-    auth_plan = build_auth_plan()
-    audit_plan = build_audit_plan()
+### DAG composition
 
-    final_plan = UsecasePlan.merge(base_plan, auth_plan, audit_plan)
-
-### Inspecting a plan
-
-Use `explain()` to see the resolved middleware chain for an operation:
+Use a DAG when one schedulable stage has multiple capability dependencies and you want the graph to stay explicit:
 
     :::python
-    explanation = plan.explain("create")
-    print(explanation.pretty_format())
+    from forze.application.execution import AUTHN_PRINCIPAL, DagNode, PlanDag, UsecaseRegistry
 
-This outputs the full chain with bucket names, priorities, and factory references, useful for debugging composition issues.
+    registry = UsecaseRegistry().before_dag(
+        "create",
+        PlanDag(
+            nodes=(
+                DagNode(
+                    id="authn",
+                    factory=principal_guard,
+                    provides={AUTHN_PRINCIPAL},
+                ),
+                DagNode(
+                    id="authz",
+                    factory=permission_guard,
+                    requires={AUTHN_PRINCIPAL},
+                ),
+            ),
+            edges=(("authn", "authz"),),
+        ),
+    )
 
-## Document composition
+This is the only DAG authoring path. For one-off steps, use `before(...)`, `after_success(...)`, or `after_commit(...)` directly.
 
-For document aggregates, Forze provides a pre-built composition layer:
+### Stage order
+
+These are the user-facing stages:
+
+| Stage | When it runs | Typical use |
+|-------|--------------|-------------|
+| `before` | Before everything | auth, input checks, rate limiting |
+| `wrap` | Around the whole chain | metrics, retries, logging |
+| `on_failure` / `finally_` | Around the outer chain outcome | cleanup, error hooks |
+| `tx_before` | Inside the transaction, before the usecase | locks, preconditions |
+| `tx_wrap` | Around the transactional segment | tx-scoped middleware |
+| `tx_on_failure` / `tx_finally` | Around the in-tx outcome | tx-scoped cleanup or error hooks |
+| `tx_after_success` | Inside the transaction, after successful `main()` | writes that must commit with the tx |
+| `after_commit` | After a successful root commit | notifications, event publishing |
+| `after_success` | After everything else succeeded | out-of-tx follow-up work |
+
+`UsecaseRegistry.explain(op)` shows the merged runtime order for one operation.
+
+## Facades
+
+Facades provide typed entry points over a registry:
 
     :::python
     from forze.application.composition.document import (
-        DocumentDTOs,
         DocumentUsecasesFacade,
-        build_document_registry,
     )
+    from forze.application.execution import operation_namespace_for
 
-    project_dtos = DocumentDTOs(
-        read=ProjectReadModel,
-        create=CreateProjectCmd,
-        update=UpdateProjectCmd,
+    facade = DocumentUsecasesFacade(
+        ctx=ctx,
+        registry=registry,
+        namespace=operation_namespace_for(project_spec),
     )
-
-    registry = build_document_registry(project_spec, project_dtos)
-
-`build_document_registry(spec, dtos)` registers standard usecase factories for all `DocumentOperation` variants.
-
-Transaction middleware is composed explicitly with `UsecasePlan` and merged into the registry when needed.
-
-
-Create a facade from an execution context and the registry:
-
-    :::python
-    from forze.application.dto import DocumentIdDTO
-
-    facade = DocumentUsecasesFacade(ctx=ctx, reg=registry)
     project = await facade.create(CreateProjectCmd(title="New"))
     fetched = await facade.get(DocumentIdDTO(id=project.id))
 
-### Document operations
+Built-in facades define their operations with `facade_op(...)` descriptors, so instance access resolves through `namespace` while class-level metadata stays explicit.
 
-The `DocumentOperation` enum defines the standard operation keys:
+## Document and search composition
 
-| Key | Operation |
-|-----|-----------|
-| `GET` | Fetch a document by ID |
-| `CREATE` | Create a new document |
-| `UPDATE` | Apply a partial update |
-| `KILL` | Hard-delete a document |
-| `DELETE` | Soft-delete a document |
-| `RESTORE` | Restore a soft-deleted document |
-| `LIST` | List documents with typed results |
-| `RAW_LIST` | List documents with raw results |
-
-### Extending document composition
-
-Add custom middleware to the default plan:
+The built-in composition helpers follow the same model:
 
     :::python
     from forze.application.composition.document import (
-        DocumentOperation,
+        DocumentKernelOp,
+        build_document_registry,
     )
-    from forze.application.execution import UsecasePlan
-
-
-    def my_auth_guard(ctx):
-        async def guard(args):
-            if not is_authorized(ctx):
-                raise PermissionError("Not authorized")
-        return guard
-
-
-    plan = (
-        UsecasePlan()
-        .before(DocumentOperation.CREATE, my_auth_guard, priority=100)
-        .before(DocumentOperation.UPDATE, my_auth_guard, priority=100)
-        .after_commit(DocumentOperation.CREATE, my_notification_effect)
-    )
-
-## Search composition
-
-Search follows the same pattern:
-
-    :::python
-    from forze.application.composition.search import (
-        SearchDTOs,
-        SearchUsecasesFacade,
-        build_search_registry,
-    )
-
-    search_dtos = SearchDTOs(read=ProjectReadModel)
-    search_registry = build_search_registry(project_search_spec, search_dtos)
-
-    facade = SearchUsecasesFacade(ctx=ctx, reg=search_registry)
-    result = await facade.search(
-        SearchRequestDTO(query="roadmap", limit=20)
-    )
-
-## DTO mapping
-
-The mapping pipeline transforms incoming DTOs before they reach the usecase:
-
-    :::python
-    from forze.application.mapping import DTOMapper, NumberIdStep, CreatorIdStep
-
-    mapper = (
-        build_document_create_mapper(project_spec, project_dtos)
-        .with_steps(NumberIdStep(), CreatorIdStep())
-    )
-
-Each `MappingStep` can inject computed fields (like `number_id` from a counter or `creator_id` from the actor context) into the DTO before it reaches the create usecase.
-
-## Custom usecases
-
-You can register entirely custom usecases alongside the standard ones:
-
-    :::python
-    from forze.application.execution import Usecase, UsecasePlan, UsecaseRegistry
-    from forze.domain.models import BaseDTO
-
-
-    class ArchiveProjectArgs(BaseDTO):
-        id: UUID
-        rev: int
-
-
-    class ArchiveProject(Usecase[ArchiveProjectArgs, ProjectReadModel]):
-        async def main(self, args: ArchiveProjectArgs) -> ProjectReadModel:
-            doc = self.ctx.doc_command(project_spec)
-            return await doc.update(args.id, args.rev, UpdateProjectCmd(status="archived"))
-
+    from forze.application.execution import operation_namespace_for
 
     registry = build_document_registry(project_spec, project_dtos)
-    registry = registry.register("archive", lambda ctx: ArchiveProject(ctx=ctx))
+    _ops = operation_namespace_for(project_spec)
 
-    plan = (
-        UsecasePlan()
-        .tx("archive", route="default")
-        .before("archive", auth_guard, priority=100)
-    )
+    registry.tx(_ops.op(DocumentKernelOp.CREATE), route="default")
+    registry.tx(_ops.op(DocumentKernelOp.UPDATE), route="default")
+    registry.finalize("projects")
 
-The custom operation integrates into the same composition system as built-in operations and benefits from the same middleware infrastructure.
+Custom operations plug into the same registry:
+
+    :::python
+    registry.register("archive", lambda ctx: ArchiveProject(ctx=ctx))
+    registry.tx("archive", route="default")
+    registry.before("archive", auth_guard, priority=100)
+
+## Mental model
+
+Start simple:
+
+1. register operations
+2. add stage methods such as `before(...)`, `tx_before(...)`, and `after_commit(...)`
+3. switch to `PlanDag` only when one schedulable stage needs explicit graph structure
+
+Everything else in the execution engine exists to support those two authoring paths, not to be the normal way you compose applications.

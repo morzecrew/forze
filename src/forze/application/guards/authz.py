@@ -14,7 +14,7 @@ from ..execution.capability_keys import (
     AUTHN_PRINCIPAL,
     authz_permits_capability,
 )
-from ..execution.plan import GuardFactory
+from ..execution.middlewares import GuardFactory
 
 # ----------------------- #
 
@@ -23,9 +23,10 @@ from ..execution.plan import GuardFactory
 class AuthzPermissionRequirement:
     """Declarative permission check shared by usecase guards and HTTP/OpenAPI hints.
 
-    Use the same frozen instance when registering a :class:`~forze.application.execution.plan.UsecasePlan`
-    guard and when documenting the matching HTTP route (for example ``openapi_extra``),
-    so tests can assert both stay aligned.
+    Use the same frozen instance when registering a
+    :class:`~forze.application.execution.UsecaseRegistry` guard and when
+    documenting the matching HTTP route (for example ``openapi_extra``), so
+    tests can assert both stay aligned.
     """
 
     permission_key: str
@@ -111,7 +112,7 @@ def authz_permission_guard_factory(
     spec: AuthzSpec,
     requirement: AuthzPermissionRequirement,
 ) -> GuardFactory:
-    """Return a :class:`~forze.application.execution.plan.GuardFactory` for :meth:`UsecasePlan.before`.
+    """Return a guard factory for :meth:`UsecaseRegistry.before`.
 
     The guard resolves :class:`~forze.application.contracts.authz.AuthzPort` from ``ctx`` using
     ``requirement.authz_route`` and calls :meth:`~forze.application.contracts.authz.AuthzPort.permits`
@@ -133,20 +134,21 @@ def authz_permission_guard_factory(
 def authz_permission_capability_keys(
     requirement: AuthzPermissionRequirement,
 ) -> tuple[frozenset[str], frozenset[str]]:
-    """Return ``(requires, provides)`` for :meth:`UsecasePlan.before` capability fields.
+    """Return ``(requires, provides)`` for registry ``before(...)`` capability fields.
 
-    Use with :attr:`UsecasePlan.use_capability_engine` so authorization guards run
-    only after another step in the **same bucket** marks :data:`~forze.application.execution.capability_keys.AUTHN_PRINCIPAL` ready (for example a guard that
-        returns ``CapabilitySkip`` when
-    no identity is present instead of raising).
+    Use these sets on ``requires`` / ``provides`` so authorization guards run only
+    after another step in the **same bucket** marks
+    :data:`~forze.application.execution.capability_keys.AUTHN_PRINCIPAL` ready (for
+    example a guard that returns ``CapabilitySkip`` when no identity is present
+    instead of raising).
 
     Example:
 
     .. code-block:: python
 
         req, prov = authz_permission_capability_keys(requirement)
-        plan = (
-            UsecasePlan(use_capability_engine=True)
+        registry = (
+            UsecaseRegistry()
             .before("op", identity_guard, provides=frozenset({AUTHN_PRINCIPAL}))
             .before("op", authz_permission_guard_factory(spec, requirement), requires=req, provides=prov)
         )
@@ -155,13 +157,13 @@ def authz_permission_capability_keys(
     """
 
     requires: frozenset[str] = (
-        frozenset({str(AUTHN_PRINCIPAL)})
+        frozenset({AUTHN_PRINCIPAL})
         if requirement.require_authn_identity
         else frozenset()
     )
 
     provides: frozenset[str] = frozenset(
-        {str(authz_permits_capability(requirement.permission_key))}
+        {authz_permits_capability(requirement.permission_key)}
     )
 
     return requires, provides

@@ -1,4 +1,4 @@
-"""Storage operation identifiers for object storage usecases."""
+"""Storage operation kernel suffixes for usecase registration and resolution."""
 
 from enum import StrEnum
 from typing import final
@@ -7,21 +7,17 @@ from typing import final
 
 
 @final
-class StorageOperation(StrEnum):
-    """Logical operation identifiers for storage usecases.
+class StorageKernelOp(StrEnum):
+    """Kernel segments (suffix only) for storage usecase operation keys."""
 
-    Used as keys in registries when wiring storage-related usecases (upload,
-    list, download, delete). Values are dot-prefixed for namespacing.
-    """
-
-    UPLOAD = "storage.upload"
+    UPLOAD = "upload"
     """Upload an object to a bucket."""
 
-    LIST = "storage.list"
+    LIST = "list"
     """List objects in a bucket."""
 
-    DOWNLOAD = "storage.download"
+    DOWNLOAD = "download"
     """Download an object from a bucket."""
 
-    DELETE = "storage.delete"
+    DELETE = "delete"
     """Delete an object from a bucket."""

@@ -183,7 +183,7 @@ class MockDepsModule(DepsModule[Any]):
     # ....................... #
 
     def __call__(self) -> Deps[Any]:
-        return Deps.plain(
+        return Deps[Any].plain(
             {
                 MockStateDepKey: self.state,
                 DocumentQueryDepKey: mock_document,

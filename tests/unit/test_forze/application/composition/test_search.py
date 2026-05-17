@@ -3,12 +3,12 @@
 from pydantic import BaseModel
 
 from forze.application.composition.search import (
-    SearchOperation,
+    SearchKernelOp,
     SearchUsecasesFacade,
     build_search_registry,
 )
 from forze.application.contracts.search import SearchSpec
-from forze.application.execution import UsecaseRegistry
+from forze.application.execution import UsecaseRegistry, operation_namespace_for
 
 # ----------------------- #
 
@@ -39,10 +39,10 @@ class TestBuildSearchRegistry:
     def test_has_core_operations(self) -> None:
         spec = _minimal_search_spec()
         reg = build_search_registry(spec)
-        assert reg.exists(SearchOperation.TYPED_SEARCH)
-        assert reg.exists(SearchOperation.RAW_SEARCH)
-        assert reg.exists(SearchOperation.TYPED_SEARCH_CURSOR)
-        assert reg.exists(SearchOperation.RAW_SEARCH_CURSOR)
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.TYPED))
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.RAW))
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.TYPED_CURSOR))
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.RAW_CURSOR))
 
     def test_resolve_raw_returns_usecase(
         self,
@@ -50,8 +50,8 @@ class TestBuildSearchRegistry:
     ) -> None:
         spec = _minimal_search_spec()
         reg = build_search_registry(spec)
-        reg.finalize("search", inplace=True)
-        uc = reg.resolve(SearchOperation.RAW_SEARCH, composition_ctx)
+        reg.finalize("search")
+        uc = reg.resolve(operation_namespace_for(spec).op(SearchKernelOp.RAW), composition_ctx)
         assert uc is not None
 
 
@@ -66,7 +66,11 @@ class TestSearchFacadeWithRegistry:
 
         spec = _minimal_search_spec()
         reg = build_search_registry(spec)
-        reg.finalize("search", inplace=True)
-        facade = SearchUsecasesFacade(ctx=composition_ctx, reg=reg)
+        reg.finalize("search")
+        facade = SearchUsecasesFacade(
+            ctx=composition_ctx,
+            registry=reg,
+            namespace=operation_namespace_for(spec),
+        )
         uc = facade.raw_search
         assert uc is not None

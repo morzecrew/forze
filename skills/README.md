@@ -25,7 +25,7 @@ Skills are automatically available once installed. The agent will use them when 
 | **forze-framework-usage** | ExecutionContext, ports, direct dep-key resolution, identity, after-commit hooks, and transactions in usecases. |
 | **forze-documents-search** | `DocumentQueryPort`, `DocumentCommandPort`, `SearchQueryPort`, query DSL, cache-aware `DocumentSpec` / `SearchSpec`, and Postgres/Mongo/mock search behavior. |
 | **forze-domain-aggregates** | Document aggregates, mixins, validators, kernel `DocumentSpec` / `SearchSpec`, and composition DTOs. |
-| **forze-wiring** | Runtime, deps modules, lifecycle, document/search composition, `UsecasePlan`, FastAPI endpoints, mapping. |
+| **forze-wiring** | Runtime, deps modules, lifecycle, document/search composition, registry stage authoring, FastAPI endpoints, mapping. |
 | **forze-specs-infrastructure** | Mapping logical `StrEnum` spec names to Postgres/Mongo/Redis/S3/queue/workflow configs and routes. |
 | **forze-deps-modules** | Custom dependency keys, `Deps`, routed/plain registrations, lifecycle separation, and `DepsModule` authoring. |
 | **forze-fastapi-interface** | FastAPI context dependencies, document/search/custom endpoints, middleware, idempotency, ETags, forms, and docs. |

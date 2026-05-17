@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import BaseModel
 
-from forze.application.composition.search import SearchOperation
+from forze.application.composition.search import SearchKernelOp
 from forze.application.composition.search.factories import (
     build_hub_search_registry,
     build_search_raw_cursor_mapper,
@@ -27,7 +27,7 @@ from forze.application.dto import (
     RawSearchRequestDTO,
     SearchRequestDTO,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps, ExecutionContext, operation_namespace_for
 from forze.application.usecases.search.query import (
     RawCursorSearch,
     RawSearch,
@@ -106,47 +106,47 @@ class TestSearchRegistryFactories:
     def test_build_search_registry_registers_operations(self) -> None:
         spec = _search_spec()
         reg = build_search_registry(spec)
-        assert reg.exists(SearchOperation.TYPED_SEARCH)
-        assert reg.exists(SearchOperation.RAW_SEARCH)
-        assert reg.exists(SearchOperation.TYPED_SEARCH_CURSOR)
-        assert reg.exists(SearchOperation.RAW_SEARCH_CURSOR)
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.TYPED))
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.RAW))
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.TYPED_CURSOR))
+        assert reg.exists(operation_namespace_for(spec).op(SearchKernelOp.RAW_CURSOR))
 
     def test_factory_builds_typed_search(self) -> None:
         spec = _search_spec()
         reg = build_search_registry(spec)
         ctx = _ctx_for_search(spec)
-        uc = reg.defaults[str(SearchOperation.TYPED_SEARCH)](ctx)
+        uc = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.TYPED)](ctx)
         assert isinstance(uc, TypedSearch)
 
     def test_factory_builds_raw_search(self) -> None:
         spec = _search_spec()
         reg = build_search_registry(spec)
         ctx = _ctx_for_search(spec)
-        uc = reg.defaults[str(SearchOperation.RAW_SEARCH)](ctx)
+        uc = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.RAW)](ctx)
         assert isinstance(uc, RawSearch)
 
     def test_factory_builds_typed_cursor_search(self) -> None:
         spec = _search_spec()
         reg = build_search_registry(spec)
         ctx = _ctx_for_search(spec)
-        uc = reg.defaults[str(SearchOperation.TYPED_SEARCH_CURSOR)](ctx)
+        uc = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.TYPED_CURSOR)](ctx)
         assert isinstance(uc, TypedCursorSearch)
 
     def test_factory_builds_raw_cursor_search(self) -> None:
         spec = _search_spec()
         reg = build_search_registry(spec)
         ctx = _ctx_for_search(spec)
-        uc = reg.defaults[str(SearchOperation.RAW_SEARCH_CURSOR)](ctx)
+        uc = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.RAW_CURSOR)](ctx)
         assert isinstance(uc, RawCursorSearch)
 
     def test_hub_registry_factories_use_hub_search_query(self) -> None:
         spec = _hub_spec()
         reg = build_hub_search_registry(spec)
         ctx = _ctx_for_hub(spec)
-        typed = reg.defaults[str(SearchOperation.TYPED_SEARCH)](ctx)
-        raw = reg.defaults[str(SearchOperation.RAW_SEARCH)](ctx)
-        tcur = reg.defaults[str(SearchOperation.TYPED_SEARCH_CURSOR)](ctx)
-        rcur = reg.defaults[str(SearchOperation.RAW_SEARCH_CURSOR)](ctx)
+        typed = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.TYPED)](ctx)
+        raw = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.RAW)](ctx)
+        tcur = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.TYPED_CURSOR)](ctx)
+        rcur = reg.factories[operation_namespace_for(spec).op(SearchKernelOp.RAW_CURSOR)](ctx)
         assert isinstance(typed, TypedSearch)
         assert isinstance(raw, RawSearch)
         assert isinstance(tcur, TypedCursorSearch)

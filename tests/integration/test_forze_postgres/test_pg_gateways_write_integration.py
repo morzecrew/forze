@@ -1,5 +1,6 @@
 """Integration tests for :class:`~forze_postgres.kernel.gateways.write.PostgresWriteGateway` with a real Postgres instance."""
 
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,6 +34,30 @@ def _write_types() -> DocumentWriteTypes[PgGwDoc, PgGwCreate, PgGwUpdate]:
         domain=PgGwDoc,
         create_cmd=PgGwCreate,
         update_cmd=PgGwUpdate,
+    )
+
+
+class PgGwDocDeadline(Document):
+    name: str
+    deadline: datetime | None = None
+
+
+class PgGwCreateDeadline(CreateDocumentCmd):
+    name: str
+    deadline: datetime | None = None
+
+
+class PgGwUpdateDeadline(BaseDTO):
+    deadline: datetime | None = None
+
+
+def _write_types_deadline() -> (
+    DocumentWriteTypes[PgGwDocDeadline, PgGwCreateDeadline, PgGwUpdateDeadline]
+):
+    return DocumentWriteTypes(
+        domain=PgGwDocDeadline,
+        create_cmd=PgGwCreateDeadline,
+        update_cmd=PgGwUpdateDeadline,
     )
 
 
@@ -495,3 +520,63 @@ async def test_postgres_write_gateway_create_many_empty_is_noop(
     )
     assert await write.create_many(()) == []
     assert await write.create_many([]) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_write_gateway_update_many_nullable_timestamptz_all_null(
+    pg_client: PostgresClient,
+) -> None:
+    """Batched ``UPDATE … FROM (VALUES…)`` must type ``NULL`` cells (not infer ``text``).
+
+    PostgreSQL assigns ``text`` to a ``VALUES`` column whose expressions are all
+    untyped nulls; ``SET deadline = v.deadline`` then fails for ``timestamptz``.
+    """
+
+    table = f"pg_gw_ts_{uuid4().hex[:8]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            deadline timestamptz
+        );
+        """
+    )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    write = doc_write_gw(
+        ctx,
+        write_types=_write_types_deadline(),
+        write_relation=("public", table),
+        bookkeeping_strategy="application",
+        tenant_aware=False,
+    )
+    read = write.read_gw
+
+    a = await write.create(PgGwCreateDeadline(name="a"))
+    b = await write.create(PgGwCreateDeadline(name="b"))
+    assert a.deadline is None and b.deadline is None
+
+    res, _ = await write.update_many(
+        [a.id, b.id],
+        [PgGwUpdateDeadline(deadline=None), PgGwUpdateDeadline(deadline=None)],
+        revs=[a.rev, b.rev],
+        batch_size=10,
+    )
+    assert len(res) == 2
+    assert all(r.deadline is None for r in res)
+
+    ra = await read.get(a.id)
+    rb = await read.get(b.id)
+    assert ra.deadline is None and rb.deadline is None

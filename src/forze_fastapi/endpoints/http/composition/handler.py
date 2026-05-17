@@ -1,6 +1,8 @@
-from typing import final
+from typing import cast, final
 
 import attrs
+
+from forze.application.execution import OperationRef, UsecasesFacade
 
 from ..contracts import HttpEndpointContext, HttpEndpointHandlerPort
 from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
@@ -15,7 +17,9 @@ class UsecaseHttpEndpointHandler(HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw,
         self,
         ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
     ) -> R:
-        uc = ctx.spec.call.bind(ctx.facade)
+        call = cast(OperationRef[In, Raw], getattr(ctx.spec, "call"))
+        facade = cast(UsecasesFacade, ctx.facade)
+        uc = facade.resolve(call)
         raw = await uc(ctx.input)
         mapper = ctx.spec.response_mapper
         if mapper is None:

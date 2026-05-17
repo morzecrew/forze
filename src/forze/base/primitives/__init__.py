@@ -4,7 +4,7 @@ from .buffer import ContextualBuffer
 from .datetime import utcnow
 from .runtime import RuntimeVar
 from .string import normalize_string
-from .types import JsonDict, LongString, String
+from .types import JsonDict, LongString, String, StrKey
 from .uuid import uuid4, uuid7
 
 # ----------------------- #
@@ -16,6 +16,7 @@ __all__ = [
     "JsonDict",
     "LongString",
     "String",
+    "StrKey",
     "uuid4",
     "uuid7",
     "RuntimeVar",

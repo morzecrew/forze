@@ -11,7 +11,11 @@ from forze.application.dto import (
     RawSearchRequestDTO,
     SearchRequestDTO,
 )
-from forze.application.execution import UsecaseRegistry
+from forze.application.execution import (
+    OperationNamespace,
+    UsecaseRegistry,
+    operation_namespace_for,
+)
 from forze.application.usecases.search import (
     RawCursorSearch,
     RawSearch,
@@ -20,7 +24,7 @@ from forze.application.usecases.search import (
 )
 
 from ..mapping import DTOMapper, DTOMapperStep
-from .operations import SearchOperation
+from .operations import SearchKernelOp
 
 # ----------------------- #
 
@@ -92,11 +96,14 @@ def build_search_raw_cursor_mapper(
 def build_search_registry(
     spec: SearchSpec[Any],
     *,
+    namespace: OperationNamespace | None = None,
     search_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_search_steps: tuple[DTOMapperStep[Any], ...] = (),
     search_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_search_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
+    ops = namespace or operation_namespace_for(spec)
+
     typed_mapper = build_search_typed_mapper(steps=search_steps)
     raw_mapper = build_search_raw_mapper(steps=raw_search_steps)
     typed_cursor_mapper = build_search_typed_cursor_mapper(steps=search_cursor_steps)
@@ -104,27 +111,28 @@ def build_search_registry(
 
     reg = UsecaseRegistry(
         {
-            SearchOperation.TYPED_SEARCH: lambda ctx: TypedSearch(
+            SearchKernelOp.TYPED: lambda ctx: TypedSearch(
                 ctx=ctx,
                 search=ctx.search_query(spec),
                 mapper=typed_mapper,
             ),
-            SearchOperation.RAW_SEARCH: lambda ctx: RawSearch(
+            SearchKernelOp.RAW: lambda ctx: RawSearch(
                 ctx=ctx,
                 search=ctx.search_query(spec),
                 mapper=raw_mapper,
             ),
-            SearchOperation.TYPED_SEARCH_CURSOR: lambda ctx: TypedCursorSearch(
+            SearchKernelOp.TYPED_CURSOR: lambda ctx: TypedCursorSearch(
                 ctx=ctx,
                 search=ctx.search_query(spec),
                 mapper=typed_cursor_mapper,
             ),
-            SearchOperation.RAW_SEARCH_CURSOR: lambda ctx: RawCursorSearch(
+            SearchKernelOp.RAW_CURSOR: lambda ctx: RawCursorSearch(
                 ctx=ctx,
                 search=ctx.search_query(spec),
                 mapper=raw_cursor_mapper,
             ),
-        }
+        },
+        namespace=ops,
     )
 
     return reg
@@ -136,11 +144,14 @@ def build_search_registry(
 def build_hub_search_registry(
     spec: HubSearchSpec[Any],
     *,
+    namespace: OperationNamespace | None = None,
     search_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_search_steps: tuple[DTOMapperStep[Any], ...] = (),
     search_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
     raw_search_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
+    ops = namespace or operation_namespace_for(spec)
+
     typed_mapper = build_search_typed_mapper(steps=search_steps)
     raw_mapper = build_search_raw_mapper(steps=raw_search_steps)
     typed_cursor_mapper = build_search_typed_cursor_mapper(steps=search_cursor_steps)
@@ -148,27 +159,28 @@ def build_hub_search_registry(
 
     reg = UsecaseRegistry(
         {
-            SearchOperation.TYPED_SEARCH: lambda ctx: TypedSearch(
+            SearchKernelOp.TYPED: lambda ctx: TypedSearch(
                 ctx=ctx,
                 search=ctx.hub_search_query(spec),
                 mapper=typed_mapper,
             ),
-            SearchOperation.RAW_SEARCH: lambda ctx: RawSearch(
+            SearchKernelOp.RAW: lambda ctx: RawSearch(
                 ctx=ctx,
                 search=ctx.hub_search_query(spec),
                 mapper=raw_mapper,
             ),
-            SearchOperation.TYPED_SEARCH_CURSOR: lambda ctx: TypedCursorSearch(
+            SearchKernelOp.TYPED_CURSOR: lambda ctx: TypedCursorSearch(
                 ctx=ctx,
                 search=ctx.hub_search_query(spec),
                 mapper=typed_cursor_mapper,
             ),
-            SearchOperation.RAW_SEARCH_CURSOR: lambda ctx: RawCursorSearch(
+            SearchKernelOp.RAW_CURSOR: lambda ctx: RawCursorSearch(
                 ctx=ctx,
                 search=ctx.hub_search_query(spec),
                 mapper=raw_cursor_mapper,
             ),
-        }
+        },
+        namespace=ops,
     )
     return reg
 
@@ -179,24 +191,28 @@ def build_hub_search_registry(
 def build_federated_search_registry(
     spec: FederatedSearchSpec[Any],
     *,
+    namespace: OperationNamespace | None = None,
     search_steps: tuple[DTOMapperStep[Any], ...] = (),
     search_cursor_steps: tuple[DTOMapperStep[Any], ...] = (),
 ) -> UsecaseRegistry:
+    ops = namespace or operation_namespace_for(spec)
+
     typed_mapper = build_search_typed_mapper(steps=search_steps)
     typed_cursor_mapper = build_search_typed_cursor_mapper(steps=search_cursor_steps)
 
     reg = UsecaseRegistry(
         {
-            SearchOperation.TYPED_SEARCH: lambda ctx: TypedSearch(
+            SearchKernelOp.TYPED: lambda ctx: TypedSearch(
                 ctx=ctx,
                 search=ctx.federated_search_query(spec),
                 mapper=typed_mapper,
             ),
-            SearchOperation.TYPED_SEARCH_CURSOR: lambda ctx: TypedCursorSearch(
+            SearchKernelOp.TYPED_CURSOR: lambda ctx: TypedCursorSearch(
                 ctx=ctx,
                 search=ctx.federated_search_query(spec),
                 mapper=typed_cursor_mapper,
             ),
-        }
+        },
+        namespace=ops,
     )
     return reg

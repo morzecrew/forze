@@ -1,11 +1,13 @@
 """Unit tests for forze_fastapi.endpoints.storage."""
 
+import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.composition.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution import UsecasePlan, UsecaseRegistry
+from forze.application.execution import UsecaseRegistry
+from forze.base.errors import CoreError
 from forze_fastapi.endpoints.storage import attach_storage_endpoints
 from forze_fastapi.exceptions import register_exception_handlers
 
@@ -15,8 +17,8 @@ _FILES = StorageSpec(name="files")
 
 
 def _build_registry() -> UsecaseRegistry:
-    reg = build_storage_registry(_FILES).extend_plan(UsecasePlan().tx("*", route="mock"))
-    reg.finalize(_FILES.name, inplace=True)
+    reg = build_storage_registry(_FILES).tx("*", route="mock")
+    reg.finalize(_FILES.name)
     return reg
 
 
@@ -122,3 +124,18 @@ class TestAttachStorageEndpoints:
         paths = {r.path for r in router.routes if hasattr(r, "path")}
         assert "/store/list" in paths
         assert "/store/upload" not in paths
+
+    def test_requires_storage_or_op_key_space(self, composition_ctx) -> None:
+        reg = UsecaseRegistry().finalize("storage")
+
+        def ctx_dep():
+            return composition_ctx
+
+        router = APIRouter(prefix="/store")
+        with pytest.raises(CoreError, match="attach_storage_endpoints requires"):
+            attach_storage_endpoints(
+                router,
+                registry=reg,
+                ctx_dep=ctx_dep,
+                endpoints={"list_": True},
+            )

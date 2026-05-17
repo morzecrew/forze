@@ -6,7 +6,12 @@ from forze.application.contracts.authn import (
     PasswordLifecycleDepKey,
     TokenLifecycleDepKey,
 )
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.execution import (
+    ExecutionContext,
+    OperationNamespace,
+    UsecaseRegistry,
+    operation_namespace_for,
+)
 from forze.application.usecases.authn import (
     AuthnChangePassword,
     AuthnLogout,
@@ -14,12 +19,16 @@ from forze.application.usecases.authn import (
     AuthnRefreshTokens,
 )
 
-from .operations import AuthnOperation
+from .operations import AuthnKernelOp
 
 # ----------------------- #
 
 
-def build_authn_registry(spec: AuthnSpec) -> UsecaseRegistry:
+def build_authn_registry(
+    spec: AuthnSpec,
+    *,
+    namespace: OperationNamespace | None = None,
+) -> UsecaseRegistry:
     """Build a usecase registry for the given :class:`AuthnSpec`.
 
     Each lambda resolves the matching dependency factories at runtime via the
@@ -31,8 +40,11 @@ def build_authn_registry(spec: AuthnSpec) -> UsecaseRegistry:
     :class:`~forze_authn.execution.deps.module.AuthnDepsModule`.
 
     :param spec: Authn specification (route name + enabled methods).
+    :param namespace: Operation namespace; defaults to :func:`operation_namespace_for` ``(spec)``.
     :returns: Usecase registry with all authn operations.
     """
+
+    ops = namespace or operation_namespace_for(spec)
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
@@ -64,9 +76,10 @@ def build_authn_registry(spec: AuthnSpec) -> UsecaseRegistry:
 
     return UsecaseRegistry(
         {
-            AuthnOperation.PASSWORD_LOGIN: _password_login,
-            AuthnOperation.REFRESH_TOKENS: _refresh_tokens,
-            AuthnOperation.LOGOUT: _logout,
-            AuthnOperation.CHANGE_PASSWORD: _change_password,
-        }
+            AuthnKernelOp.PASSWORD_LOGIN: _password_login,
+            AuthnKernelOp.REFRESH_TOKENS: _refresh_tokens,
+            AuthnKernelOp.LOGOUT: _logout,
+            AuthnKernelOp.CHANGE_PASSWORD: _change_password,
+        },
+        namespace=ops,
     )

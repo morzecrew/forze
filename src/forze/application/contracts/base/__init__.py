@@ -1,4 +1,4 @@
-from .deps import BaseDepPort, DepKey, DepsPort
+from .deps import BaseDepPort, DepKey
 from .specs import BaseSpec
 from .value_objects import (
     CountlessPage,
@@ -12,7 +12,6 @@ from .value_objects import (
 
 __all__ = [
     "DepKey",
-    "DepsPort",
     "BaseSpec",
     "BaseDepPort",
     "CountlessPage",

@@ -6,8 +6,8 @@ from typing import Any
 
 import attrs
 
-from ..execution import CapabilitySkip, ExecutionContext, Guard
-from ..execution.plan import GuardFactory
+from ..execution import ExecutionContext, Guard, Skip
+from ..execution.middlewares import GuardFactory
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -19,7 +19,7 @@ class _AuthnPrincipalCapabilityGuard(Guard[Any]):
 
     async def __call__(self, args: Any) -> Any:  # noqa: ARG002
         if self.ctx.get_authn_identity() is None:
-            return CapabilitySkip(reason=self.skip_reason)
+            return Skip(reason=self.skip_reason)
 
         return None
 
@@ -31,8 +31,8 @@ def authn_principal_capability_guard_factory(
     """Return a guard that yields :class:`~forze.application.execution.capabilities.CapabilitySkip` without identity.
 
     Declare ``provides`` (for example ``{AUTHN_PRINCIPAL}``) on the enclosing
-    :class:`~forze.application.execution.plan.UsecasePlan` step so downstream
-    guards can ``require`` the same capability key.
+    :class:`~forze.application.execution.UsecaseRegistry` stage entry so
+    downstream guards can ``require`` the same capability key.
     """
 
     def factory(ctx: ExecutionContext) -> Guard[Any]:
