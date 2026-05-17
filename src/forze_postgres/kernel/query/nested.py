@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Mapping, Union, get_args, get_origin
@@ -39,22 +40,96 @@ def _is_basemodel_type(obj: Any) -> bool:
     return isinstance(obj, type) and issubclass(obj, BaseModel)
 
 
-def walk_pydantic_path(model: type[BaseModel], segments: list[str]) -> Any | None:
+def _mapping_key_value_types(annotation: Any) -> tuple[Any, Any] | None:
+    """If *annotation* is ``dict[K, V]`` or ``Mapping[K, V]``, return ``(K, V)``."""
+
+    origin = get_origin(annotation)
+    if origin is not dict and origin is not MappingABC:
+        return None
+    args = get_args(annotation)
+    if len(args) < 2:
+        return None
+    return args[0], args[1]
+
+
+def _is_str_like_mapping_key(key_ann: Any) -> bool:
+    """Whether *key_ann* is suitable for JSON object keys in dot paths (string keys)."""
+
+    if key_ann is Any:
+        return True
+    k = _unwrap_optional(key_ann)
+    if k is str:
+        return True
+    return isinstance(k, type) and issubclass(k, str)
+
+
+def _mapping_key_must_be_str_for_json_path(*, filter_path: str, key_ann: Any) -> None:
+    if not _is_str_like_mapping_key(key_ann):
+        raise CoreError(
+            f"Nested filter path {filter_path!r}: mapping key type {key_ann!r} is not "
+            "supported; dot-separated JSON paths assume string object keys.",
+        )
+
+
+def _walk_field_chain(
+    model: type[BaseModel],
+    segments: list[str],
+    *,
+    filter_path: str | None,
+) -> Any | None:
+    """Walk ``model.model_fields`` for the first segment, then dispatch into nested types."""
+
+    if not segments:
+        return None
+    head, *tail = segments
+    info = model.model_fields.get(head)
+    if info is None:
+        return None
+    ann = _unwrap_optional(info.annotation)
+    if not tail:
+        return ann
+    return _walk_through_ann(ann, tail, filter_path=filter_path)
+
+
+def _walk_through_ann(ann: Any, segments: list[str], *, filter_path: str | None) -> Any | None:
+    """Follow *segments* inside annotation *ann* (nested model, mapping hop, or leaf)."""
+
+    if not segments:
+        return ann
+    if _is_basemodel_type(ann):
+        return _walk_field_chain(ann, segments, filter_path=filter_path)
+
+    kv = _mapping_key_value_types(ann)
+    if kv is not None:
+        key_t, val_t = kv
+        if filter_path is not None:
+            _mapping_key_must_be_str_for_json_path(filter_path=filter_path, key_ann=key_t)
+        elif not _is_str_like_mapping_key(key_t):
+            return None
+        if not segments:
+            return None
+        _, *rest = segments
+        val_ann = _unwrap_optional(val_t)
+        if not rest:
+            return val_ann
+        return _walk_through_ann(val_ann, rest, filter_path=filter_path)
+
+    origin = get_origin(ann)
+    if origin is list:
+        return None
+
+    return None
+
+
+def walk_pydantic_path(
+    model: type[BaseModel],
+    segments: list[str],
+    *,
+    filter_path: str | None = None,
+) -> Any | None:
     """Return the leaf annotation for *segments* or ``None`` if the path is not walkable."""
 
-    current: type[BaseModel] = model
-    for i, seg in enumerate(segments):
-        info = current.model_fields.get(seg)
-        if info is None:
-            return None
-        ann = _unwrap_optional(info.annotation)
-        if i == len(segments) - 1:
-            return ann
-        if _is_basemodel_type(ann):
-            current = ann
-            continue
-        return None
-    return None
+    return _walk_field_chain(model, segments, filter_path=filter_path)
 
 
 def _is_any_like(annotation: Any) -> bool:
@@ -83,8 +158,11 @@ def resolve_leaf_python_type(
             f"{model_type.__name__}.",
         )
 
-    walked = walk_pydantic_path(model_type, segments)
     hint = hints.get(path)
+    if hint is not None:
+        return hint
+
+    walked = walk_pydantic_path(model_type, segments, filter_path=path)
 
     if walked is not None and not _is_any_like(walked):
         if _is_basemodel_type(walked):
@@ -98,22 +176,18 @@ def resolve_leaf_python_type(
                 f"Nested filter path {path!r}: array-typed leaves in JSON columns are "
                 "not supported yet; use a top-level Postgres array column.",
             )
-        if origin is dict:
-            if hint is None:
-                raise CoreError(
-                    f"Nested filter path {path!r}: cannot infer scalar type from mapping "
-                    f"annotation on {model_type.__name__}. Set nested_field_hints[{path!r}].",
-                )
-            return hint
+        if origin is dict or origin is MappingABC:
+            raise CoreError(
+                f"Nested filter path {path!r}: cannot infer scalar type from mapping "
+                f"annotation on {model_type.__name__}. Set nested_field_hints[{path!r}].",
+            )
         return walked
-
-    if hint is not None:
-        return hint
 
     if walked is None:
         raise CoreError(
-            f"Nested filter path {path!r}: not found under {model_type.__name__} "
-            f"(intermediate fields must be nested Pydantic models). "
+            f"Nested filter path {path!r}: not found under {model_type.__name__}. "
+            f"Intermediate fields must be nested Pydantic models or parameterized "
+            f"``dict[str, ...]`` / ``Mapping[str, ...]`` with a dynamic key segment. "
             f"Fix the path or set nested_field_hints[{path!r}].",
         )
 

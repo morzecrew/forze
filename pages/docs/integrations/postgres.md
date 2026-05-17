@@ -130,7 +130,7 @@ lifecycle = LifecyclePlan.from_steps(
 
 | Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
 |----------------|------------------------|--------------------------|-------------|
-| Document queries | `ConfigurablePostgresReadOnlyDocument` / `PostgresDocumentAdapter` | `DocumentQueryDepKey`, route usually equal to `DocumentSpec.name`. | Requires a read relation; nested filtering may need `nested_field_hints` for ambiguous JSON/dict fields. |
+| Document queries | `ConfigurablePostgresReadOnlyDocument` / `PostgresDocumentAdapter` | `DocumentQueryDepKey`, route usually equal to `DocumentSpec.name`. | Requires a read relation; `nested_field_hints` may still be needed for bare `dict` / `Any` / ambiguous unions on JSON columns, or to override a path's inferred type. |
 | Document commands | `ConfigurablePostgresDocument` / `PostgresDocumentAdapter` | `DocumentCommandDepKey`, route usually equal to `DocumentSpec.name`. | Requires a write relation and bookkeeping strategy; history is used only when both schema and spec enable it. |
 | Search queries | `ConfigurablePostgresSearch` with PGroonga, FTS, or vector adapter. | `SearchQueryDepKey`, route usually equal to `SearchSpec.name`. | Engine-specific schema/index requirements apply; vector search requires an embedding provider and matching dimensions. |
 | Hub search | `ConfigurablePostgresHubSearch` | `HubSearchQueryDepKey`, route usually equal to the hub search spec name. | Member relations and hub foreign-key mappings must be configured consistently. |
@@ -158,7 +158,7 @@ Document adapters map Pydantic read/create/update models to PostgreSQL rows. Sea
 
 ### JSON filters and GIN-friendly indexes
 
-Filters that drill into JSON/JSONB with nested `->` / `->>` paths are rendered as plain SQL expressions by the Postgres query layer (`PsycopgQueryRenderer`, nested field helpers). A **generic** GIN index on the whole JSON column only helps when the indexed expression matches how you filter (for example `@>` / containment-style predicates with `jsonb_ops` or `jsonb_path_ops`). Dot-path filters on nested keys often need a **matching** expression index or a dedicated generated column that you query instead of ad-hoc `->>` chains, or the planner may fall back to sequential scans.
+Filters that drill into JSON/JSONB with nested `->` / `->>` paths are rendered as plain SQL expressions by the Postgres query layer (`PsycopgQueryRenderer`, nested field helpers). Read-model types drive scalar coercion: nested Pydantic fields use model metadata; parameterized `dict[str, V]` / `Mapping[str, V]` treat one dot segment as the JSON object key and infer `V` (including nested models and nested mappings). A **generic** GIN index on the whole JSON column only helps when the indexed expression matches how you filter (for example `@>` / containment-style predicates with `jsonb_ops` or `jsonb_path_ops`). Dot-path filters on nested keys often need a **matching** expression index or a dedicated generated column that you query instead of ad-hoc `->>` chains, or the planner may fall back to sequential scans.
 
 ### Retry/timeout behavior
 

@@ -40,7 +40,15 @@ class PostgresReadOnlyDocumentConfig(_BasePostgresConfig):
 
     nested_field_hints: NotRequired[Mapping[str, Any]]
     """Optional Python types (``type`` objects) for dot-separated filter/sort paths when
-    the read model alone does not resolve a leaf type (e.g. ``dict`` / ``Any``)."""
+    the read model alone does not resolve a leaf type.
+
+    Parameterized ``dict[str, V]`` / ``Mapping[str, V]`` annotations are walked
+    automatically: one path segment is treated as the JSON object key, then types
+    are inferred from ``V`` (including nested ``BaseModel`` fields or further
+    ``dict[str, …]`` / ``Mapping[str, …]`` nesting). Use hints for bare ``dict``,
+    ``Any``, multi-branch unions, filters that end on a mapping without a key
+    segment, or to override the inferred type for a specific path.
+    """
 
     batch_size: NotRequired[int]
     """Chunk size for bulk writes and for internal chunked offset reads when pagination
