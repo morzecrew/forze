@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -88,6 +89,9 @@ class QueryValueCaster:
             raise ValidationError("Expected float, got bool")
 
         if isinstance(v, (int, float)):
+            return float(v)
+
+        if isinstance(v, Decimal):
             return float(v)
 
         if isinstance(v, str):

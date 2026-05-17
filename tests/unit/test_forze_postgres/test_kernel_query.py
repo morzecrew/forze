@@ -64,11 +64,14 @@ class TestPsycopgValueCoercer:
             assert coercer.scalar(456.0, t=t) == 456
 
     def test_scalar_float_types(self) -> None:
+        from decimal import Decimal
+
         coercer = PsycopgValueCoercer()
         for base in ["float4", "float8", "numeric"]:
             t = PostgresType(base=base, is_array=False, not_null=False)
             assert coercer.scalar("123.45", t=t) == 123.45
             assert coercer.scalar(456, t=t) == 456.0
+            assert coercer.scalar(Decimal("10.5"), t=t) == 10.5
 
     def test_scalar_date_type(self) -> None:
         coercer = PsycopgValueCoercer()

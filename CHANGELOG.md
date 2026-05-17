@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Postgres (`forze_postgres`):** `PostgresWriteGateway` batched ``update_many`` applies introspector-driven casts on ``VALUES`` assignments and coerces write payloads by column type, so nullable numeric, timestamp, UUID, and related columns can be cleared to ``NULL`` without ``DatatypeMismatch``.
 - **Postgres (`forze_postgres`):** `PostgresClient.transaction` applies ``read_only`` via ``set_read_only`` before opening the psycopg transaction context, matching driver rules (avoids ``can't change 'read_only' now`` during ``connection.transaction()``).
 - **Redis (`forze_redis`):** `RedisClient.run_script` normalizes script results without ``isinstance`` on primitive unions (uses ``inspect.isawaitable`` in a bounded loop, then ``is`` / ``type(...) is ...`` for ``bool`` / ``int`` / ``bytes`` / ``bytearray``), avoiding rare ``TypeError: isinstance() arg 2 must be a type...`` failures when resolving ``AsyncScript`` / pipeline results.
 

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from forze.base.errors import CoreError
 
 from ..introspect import PostgresColumnTypes, PostgresType
+from ..type_cast import cast_sql_for_column_type
 
 # ----------------------- #
 
@@ -247,28 +248,6 @@ def _json_path_expr(
     return expr
 
 
-def _cast_sql_for_json_text(pg: PostgresType) -> sql.Composable | None:
-    if pg.is_array:
-        return None
-    match pg.base:
-        case "uuid":
-            return sql.SQL("uuid")
-        case "int2" | "int4" | "int8":
-            return sql.SQL(pg.base)
-        case "float4" | "float8" | "numeric":
-            return sql.SQL(pg.base)
-        case "bool":
-            return sql.SQL("boolean")
-        case "date":
-            return sql.SQL("date")
-        case "timestamptz" | "timestamp":
-            return sql.SQL(pg.base)
-        case "text" | "varchar" | "char" | "citext":
-            return None
-        case _:
-            return None
-
-
 def build_nested_json_scalar_expr(
     *,
     path: str,
@@ -316,7 +295,9 @@ def build_nested_json_scalar_expr(
         else sql.Identifier(root)
     )
     text_expr = _json_path_expr(base_ident, inner)
-    cast_name = _cast_sql_for_json_text(leaf_pg) if leaf_pg is not None else None
+    cast_name = (
+        cast_sql_for_column_type(leaf_pg) if leaf_pg is not None else None
+    )
 
     if cast_name is None:
         return text_expr, PostgresType(base="text", is_array=False, not_null=False)
