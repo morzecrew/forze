@@ -9,7 +9,7 @@ from forze.base.primitives import StrKey
 
 @attrs.define(slots=True)
 class CapabilityReadiness:
-    """Tracks which capability keys are satistied for one chain invocation."""
+    """Tracks which capability keys are satisfied for one chain invocation."""
 
     _ready: set[StrKey] = attrs.field(factory=set, repr=False)
     _skipped: set[StrKey] = attrs.field(factory=set, repr=False)

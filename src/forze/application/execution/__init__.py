@@ -1,10 +1,10 @@
 """Execution kernel for usecases, dependency injection, and lifecycle."""
 
-from .capabilities import (  # type: ignore[import-not-found]
-    CapabilityAfterCommitRunner,
-    CapabilityExecutionEvent,
-    CapabilityStore,
-    ExecutionChainCompiler,
+from .capabilities import (  # type: ignore[import-not-found, attr-defined]
+    CapabilityAfterCommitRunner,  # type: ignore[attr-defined]
+    CapabilityExecutionEvent,  # type: ignore[attr-defined]
+    CapabilityStore,  # type: ignore[attr-defined]
+    ExecutionChainCompiler,  # type: ignore[attr-defined]
 )
 from .capability_keys import (
     AUTHN_PRINCIPAL,
