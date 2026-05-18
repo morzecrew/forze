@@ -24,7 +24,6 @@ from .dispatch import (
 from .engine.compiler import ExecutionChainCompiler
 from .engine.model import OperationStages
 from .engine.stages import Stage
-from .middleware import SuccessHook  # type: ignore[import-not-found]
 from .plan.builders import (  # type: ignore[import-not-found]
     finally_middleware_factory,
     guard_middleware_factory,
@@ -40,6 +39,7 @@ from .plan.types import (  # type: ignore[import-not-found]
     GuardFactory,
     MiddlewareFactory,
     OnFailureFactory,
+    SuccessHook,
     SuccessHookFactory,
 )
 from .registry.graph import DispatchGraph

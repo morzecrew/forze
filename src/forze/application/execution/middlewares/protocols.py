@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
 
+from forze.base.errors import CoreError
+
 from .value_objects import Failure, Skip, Success
 
 if TYPE_CHECKING:
@@ -83,3 +85,27 @@ type FinallyFactory = Callable[[ExecutionContext], Finally[Any, Any]]
 
 type MiddlewareFactory = Callable[[ExecutionContext], Middleware[Any, Any]]
 """Factory that builds a middleware from execution context."""
+
+# ....................... #
+# Validators
+
+
+def validate_guard_output(v: Any) -> None:
+    if v is not None and not isinstance(v, Skip):
+        raise CoreError(
+            f"Guard must return None or Skip, got {type(v).__qualname__!r}."
+        )
+
+
+def validate_success_hook_output(v: Any) -> None:
+    if v is not None and not isinstance(v, Skip):
+        raise CoreError(
+            f"Success hook must return None or Skip, got {type(v).__qualname__!r}."
+        )
+
+
+def validate_after_commit_output(v: Any) -> None:
+    if v is not None and not isinstance(v, Skip):
+        raise CoreError(
+            f"After-commit hook must return None or Skip, got {type(v).__qualname__!r}."
+        )

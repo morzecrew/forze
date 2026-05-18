@@ -16,6 +16,8 @@ from .protocols import (
     OnFailureFactory,
     OnSuccess,
     OnSuccessFactory,
+    validate_guard_output,
+    validate_success_hook_output,
 )
 from .value_objects import Failure, Success
 
@@ -35,7 +37,9 @@ class GuardMiddleware[Args, R](Middleware[Args, R]):
 
     async def __call__(self, next: NextCall[Args, R], args: Args) -> R:
         logger.debug("Running guard: '%s'", type(self.inner).__qualname__)
-        await self.inner(args)
+        out = await self.inner(args)
+
+        validate_guard_output(out)
 
         return await next(args)
 
@@ -64,7 +68,9 @@ class OnSuccessMiddleware[Args, R](Middleware[Args, R]):
         result = await next(args)
 
         logger.debug("Running on success: '%s'", type(self.inner).__qualname__)
-        await self.inner(args, result)
+        out = await self.inner(args, result)
+
+        validate_success_hook_output(out)
 
         return result
 

@@ -544,7 +544,7 @@ class TestRegistryStagesFinallyOnFailure:
 
         await uc("x")
 
-        assert seen == ["Successful"]
+        assert seen == ["Success"]
 
     @pytest.mark.asyncio
     async def test_after_commit_skipped_when_main_raises(
@@ -637,10 +637,10 @@ class TestRegistryStagesFinallyOnFailure:
                 authored, "solo", stub_ctx, lambda ctx: BoomUsecase(ctx=ctx)
             )("z")
 
-        assert seen == ["fail", "Failed"]
+        assert seen == ["fail", "Failure"]
 
         seen.clear()
         await _resolve_authored(
             authored, "solo", stub_ctx, lambda ctx: StubUsecase(ctx=ctx)
         )("z")
-        assert seen == ["Successful"]
+        assert seen == ["Success"]

@@ -65,6 +65,7 @@ from ...kernel.introspect import PostgresIntrospector
 from ...kernel.query.nested import sort_key_expr
 from ...pagination import build_seek_condition
 from ..txmanager import PostgresTxScopeKey
+from ._materialize_hits import materialize_search_page
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,
@@ -1193,62 +1194,41 @@ class PostgresHubSearchAdapter[M: BaseModel](
         rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
 
         handle_h = None
+        pool_h: list[M] | None = None
+        u_h = int(pagination.get("offset") or 0)
+
         if want_sn and self.snapshot_coord is not None and rs_spec is not None:
             plh = len(rows)
+            pool_h = pydantic_validate_many(self.model_type, rows)
             handle_h = await self.snapshot_coord.put_simple_ordered_hits(
-                pydantic_validate_many(self.model_type, rows),
+                pool_h,
                 snap_opt=snapshot,
                 rs_spec=rs_spec,
                 fp_computed=fp_fingerprint,
                 pool_len_before_cap=plh,
             )
-            u_h = int(pagination.get("offset") or 0)
             rows = rows[u_h : u_h + page_limit]
 
-        if return_type is not None:
-            v = pydantic_validate_many(return_type, rows)
+        page = materialize_search_page(
+            page_rows=rows,
+            pool=pool_h,
+            u=u_h,
+            page_limit=page_limit,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=self.model_type,
+        )
 
-            if return_count:
-                return page_from_limit_offset(
-                    v,
-                    pagination,
-                    total=total,
-                    snapshot=handle_h,
-                )
-
-            return page_from_limit_offset(
-                v,
-                pagination,
-                total=None,
-                snapshot=handle_h,
-            )
-
-        if return_fields is not None:
-            raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
-            if return_count:
-                return page_from_limit_offset(
-                    raw,
-                    pagination,
-                    total=total,
-                    snapshot=handle_h,
-                )
-            return page_from_limit_offset(
-                raw,
-                pagination,
-                total=None,
-                snapshot=handle_h,
-            )
-
-        m = pydantic_validate_many(self.model_type, rows)
         if return_count:
             return page_from_limit_offset(
-                m,
+                page,
                 pagination,
                 total=total,
                 snapshot=handle_h,
             )
+
         return page_from_limit_offset(
-            m,
+            page,
             pagination,
             total=None,
             snapshot=handle_h,

@@ -5,7 +5,7 @@ from typing import Any, Literal
 import attrs
 
 from ..context import ExecutionContext
-from ..middleware import Middleware, TxMiddleware  # type: ignore[import-not-found]
+from ..middlewares import Middleware, TxMiddleware
 from ..plan.spec import MiddlewareSpec
 from .capabilities import (
     CapabilityAfterCommitRunner,
@@ -92,7 +92,10 @@ class ExecutionChainCompiler:
 
         for stage in Stage.iter_chain_order():
             if stage.requires_tx and not tx_inserted and stages.tx_route is not None:
-                tx = TxMiddleware[Any, Any](ctx=self.ctx, route=stages.tx_route)
+                tx = TxMiddleware[Any, Any](
+                    runnable=self.ctx.transaction,
+                    route=stages.tx_route,
+                )
 
                 if after_commit is not None:
                     tx = tx.with_after_commit(after_commit)

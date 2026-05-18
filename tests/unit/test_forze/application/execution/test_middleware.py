@@ -1,24 +1,29 @@
-"""Unit tests for :mod:`forze.application.execution.middleware`."""
+"""Unit tests for :mod:`forze.application.execution.middlewares`."""
+
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 import pytest
 
-from forze.application.execution import ExecutionContext
-from forze.application.execution.middleware import (
+from forze.application.execution.middlewares import (
     ConditionalGuard,
-    ConditionalSuccessHook,
-    Failed,
+    ConditionalOnSuccess,
+    Failure,
     FinallyMiddleware,
     GuardMiddleware,
     OnFailureMiddleware,
+    OnSuccessMiddleware,
     Skip,
-    Successful,
-    SuccessHookMiddleware,
+    Success,
     TxMiddleware,
-    WhenGuard,
-    WhenSuccessHook,
-    mapped_success_hook,
 )
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
+
+
+@asynccontextmanager
+async def _noop_transaction(_route: StrKey) -> AsyncIterator[None]:
+    yield
 
 
 class TestGuardMiddleware:
@@ -33,7 +38,7 @@ class TestGuardMiddleware:
             seen.append("next")
             return "done"
 
-        result = await GuardMiddleware(guard=guard)(next_fn, "x")
+        result = await GuardMiddleware(inner=guard)(next_fn, "x")
 
         assert result == "done"
         assert seen == ["guard:x", "next"]
@@ -47,10 +52,10 @@ class TestGuardMiddleware:
             return "never"
 
         with pytest.raises(CoreError, match="Guard must return None or Skip"):
-            await GuardMiddleware(guard=guard)(next_fn, "x")
+            await GuardMiddleware(inner=guard)(next_fn, "x")
 
 
-class TestSuccessHookMiddleware:
+class TestOnSuccessMiddleware:
     @pytest.mark.asyncio
     async def test_success_hook_runs_after_next_and_preserves_result(self) -> None:
         seen: list[str] = []
@@ -63,7 +68,7 @@ class TestSuccessHookMiddleware:
             seen.append("next")
             return "done"
 
-        out = await SuccessHookMiddleware(hook=hook)(next_fn, "x")
+        out = await OnSuccessMiddleware(inner=hook)(next_fn, "x")
 
         assert out == "done"
         assert seen == ["next", "hook:x:done"]
@@ -76,7 +81,7 @@ class TestSuccessHookMiddleware:
         async def next_fn(_args: str) -> str:
             return "done"
 
-        assert await SuccessHookMiddleware(hook=hook)(next_fn, "x") == "done"
+        assert await OnSuccessMiddleware(inner=hook)(next_fn, "x") == "done"
 
     @pytest.mark.asyncio
     async def test_success_hook_invalid_return_raises(self) -> None:
@@ -87,7 +92,7 @@ class TestSuccessHookMiddleware:
             return "done"
 
         with pytest.raises(CoreError, match="Success hook must return None or Skip"):
-            await SuccessHookMiddleware(hook=hook)(next_fn, "x")
+            await OnSuccessMiddleware(inner=hook)(next_fn, "x")
 
 
 class TestFailureAndFinallyMiddleware:
@@ -102,7 +107,7 @@ class TestFailureAndFinallyMiddleware:
             raise ValueError("boom")
 
         with pytest.raises(ValueError, match="boom"):
-            await OnFailureMiddleware(hook=hook)(next_fn, "x")
+            await OnFailureMiddleware(inner=hook)(next_fn, "x")
 
         assert seen == ["x:boom"]
 
@@ -110,7 +115,7 @@ class TestFailureAndFinallyMiddleware:
     async def test_finally_observes_success_and_failure(self) -> None:
         seen: list[object] = []
 
-        async def hook(_args: str, outcome: Successful[str] | Failed) -> None:
+        async def hook(_args: str, outcome: Success[str] | Failure) -> None:
             seen.append(outcome)
 
         async def ok(_args: str) -> str:
@@ -119,35 +124,32 @@ class TestFailureAndFinallyMiddleware:
         async def boom(_args: str) -> str:
             raise ValueError("boom")
 
-        mw = FinallyMiddleware[str, str](hook=hook)
+        mw = FinallyMiddleware[str, str](inner=hook)
 
         assert await mw(ok, "x") == "done"
-        assert isinstance(seen[0], Successful)
+        assert isinstance(seen[0], Success)
         assert seen[0].value == "done"
 
         with pytest.raises(ValueError, match="boom"):
             await mw(boom, "y")
 
-        assert isinstance(seen[1], Failed)
+        assert isinstance(seen[1], Failure)
         assert str(seen[1].exc) == "boom"
 
 
 class TestTxMiddleware:
     @pytest.mark.asyncio
-    async def test_invokes_next_inside_transaction_scope(
-        self,
-        stub_ctx: ExecutionContext,
-    ) -> None:
+    async def test_invokes_next_inside_transaction_scope(self) -> None:
         async def next_fn(_args: str) -> str:
             return "ok"
 
-        assert await TxMiddleware(ctx=stub_ctx, route="mock")(next_fn, "x") == "ok"
+        assert (
+            await TxMiddleware(route="mock", runnable=_noop_transaction)(next_fn, "x")
+            == "ok"
+        )
 
     @pytest.mark.asyncio
-    async def test_with_after_commit_runs_hooks_and_preserves_result(
-        self,
-        stub_ctx: ExecutionContext,
-    ) -> None:
+    async def test_with_after_commit_runs_hooks_and_preserves_result(self) -> None:
         seen: list[str] = []
 
         async def first(args: str, result: str) -> None:
@@ -158,7 +160,10 @@ class TestTxMiddleware:
             seen.append("second")
             return Skip(reason="skip")
 
-        mw = TxMiddleware(ctx=stub_ctx, route="mock").with_after_commit(first, second)
+        mw = TxMiddleware(
+            route="mock",
+            runnable=_noop_transaction,
+        ).with_after_commit(first, second)
 
         async def next_fn(_args: str) -> str:
             return "result"
@@ -167,80 +172,82 @@ class TestTxMiddleware:
         assert seen == ["first:x:result", "second"]
 
     @pytest.mark.asyncio
-    async def test_after_commit_invalid_return_raises(
-        self,
-        stub_ctx: ExecutionContext,
-    ) -> None:
+    async def test_after_commit_invalid_return_raises(self) -> None:
         async def bad(_args: str, _result: str) -> object:
             return "bad"
 
-        mw = TxMiddleware(ctx=stub_ctx, route="mock").with_after_commit(bad)
+        mw = TxMiddleware(
+            route="mock",
+            runnable=_noop_transaction,
+        ).with_after_commit(bad)
 
         async def next_fn(_args: str) -> str:
             return "result"
 
-        with pytest.raises(CoreError, match="After-commit hook must return None or Skip"):
+        with pytest.raises(
+            CoreError, match="After-commit hook must return None or Skip"
+        ):
             await mw(next_fn, "x")
 
 
-class TestMappedAndConditionalHooks:
+class TestConditionalHooks:
     @pytest.mark.asyncio
-    async def test_mapped_success_hook_maps_args_and_result(self) -> None:
+    async def test_mapped_success_hook_inline(self) -> None:
         touched: list[tuple[int, int]] = []
 
         async def inner(args: int, result: int) -> None:
             touched.append((args, result))
             return None
 
-        outer = mapped_success_hook(
-            inner,
-            args_mapper=lambda s: len(s),
-            result_mapper=lambda _s, result: result + 1,
-        )
+        async def outer(s: str, result: int) -> None:
+            mapped_args = len(s)
+            mapped_result = result + 1
+            return await inner(mapped_args, mapped_result)
 
         assert await outer("ab", 10) is None
         assert touched == [(2, 11)]
 
     @pytest.mark.asyncio
-    async def test_conditional_guard_and_when_guard(self) -> None:
+    async def test_conditional_guard(self) -> None:
         seen: list[str] = []
 
-        class SampleGuard(ConditionalGuard[str]):
-            def condition(self, args: str) -> bool:
-                return args == "run"
+        async def main(args: str) -> None:
+            seen.append(args)
 
-            async def main(self, args: str) -> None:
-                seen.append(args)
+        guard = ConditionalGuard(inner=main, predicate=lambda a: a == "run")
 
-        await SampleGuard()("skip")
-        await SampleGuard()("run")
+        await guard("skip")
+        await guard("run")
 
         async def inner(args: str) -> None:
             seen.append(f"when:{args}")
 
-        await WhenGuard(guard=inner, when=lambda args: args == "go")("stop")
-        await WhenGuard(guard=inner, when=lambda args: args == "go")("go")
+        when_guard = ConditionalGuard(inner=inner, predicate=lambda a: a == "go")
+        await when_guard("stop")
+        await when_guard("go")
 
         assert seen == ["run", "when:go"]
 
     @pytest.mark.asyncio
-    async def test_conditional_success_hook_and_when_success_hook(self) -> None:
+    async def test_conditional_on_success(self) -> None:
         seen: list[str] = []
 
-        class SampleHook(ConditionalSuccessHook[str, int]):
-            def condition(self, _args: str, result: int) -> bool:
-                return result > 0
+        async def main(args: str, result: int) -> None:
+            seen.append(f"{args}:{result}")
 
-            async def main(self, args: str, result: int) -> None:
-                seen.append(f"{args}:{result}")
+        hook = ConditionalOnSuccess(inner=main, predicate=lambda _a, r: r > 0)
 
-        await SampleHook()("x", -1)
-        await SampleHook()("x", 2)
+        await hook("x", -1)
+        await hook("x", 2)
 
         async def inner(args: str, result: int) -> None:
             seen.append(f"when:{args}:{result}")
 
-        await WhenSuccessHook(hook=inner, when=lambda _a, r: r == 3)("y", 1)
-        await WhenSuccessHook(hook=inner, when=lambda _a, r: r == 3)("y", 3)
+        when_hook = ConditionalOnSuccess(
+            inner=inner,
+            predicate=lambda _a, r: r == 3,
+        )
+        await when_hook("y", 1)
+        await when_hook("y", 3)
 
         assert seen == ["x:2", "when:y:3"]

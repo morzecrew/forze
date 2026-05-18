@@ -1,6 +1,8 @@
 """Static execution plan introspection (`explain`)."""
 
-from typing import final
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, final
 
 import attrs
 
@@ -12,8 +14,10 @@ from forze.application.execution.engine.stages import (
 )
 
 from ..engine.model import OperationStages
-from ..registry.graph import DispatchGraph
 from .spec import MiddlewareSpec
+
+if TYPE_CHECKING:
+    from ..registry.graph import DispatchGraph
 
 # ----------------------- #
 

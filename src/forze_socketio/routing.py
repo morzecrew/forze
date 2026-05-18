@@ -68,6 +68,33 @@ class SocketIOCommandRoute[Args, Ack]:
     ack_type: Any = None
     """Optional validation type for acknowledgement payload."""
 
+    _payload_adapter: TypeAdapter[Any] = attrs.field(init=False, repr=False, eq=False)
+    """Cached :class:`~pydantic.TypeAdapter` for ``payload_type``."""
+
+    _ack_adapter: TypeAdapter[Any] | None = attrs.field(
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Cached adapter for ``ack_type``, or :obj:`None` when acknowledgements are untyped."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_payload_adapter",
+            TypeAdapter[Any](self.payload_type),
+        )
+        if self.ack_type is None:
+            object.__setattr__(self, "_ack_adapter", None)
+        else:
+            object.__setattr__(
+                self,
+                "_ack_adapter",
+                TypeAdapter[Any](self.ack_type),
+            )
+
     # ....................... #
 
     def parse_payload(self, payload: Any) -> Args:
@@ -76,7 +103,7 @@ class SocketIOCommandRoute[Args, Ack]:
         :param payload: Raw event payload from Socket.IO.
         :returns: Parsed payload value passed to the usecase.
         """
-        return TypeAdapter[Any](self.payload_type).validate_python(payload)
+        return self._payload_adapter.validate_python(payload)
 
     # ....................... #
 
@@ -86,13 +113,12 @@ class SocketIOCommandRoute[Args, Ack]:
         :param value: Raw usecase result.
         :returns: JSON-compatible acknowledgement payload.
         """
-        if self.ack_type is None:
+        if self._ack_adapter is None:
             return value
 
-        adapter = TypeAdapter[Any](self.ack_type)
-        validated = adapter.validate_python(value)
+        validated = self._ack_adapter.validate_python(value)
 
-        return adapter.dump_python(validated, mode="json")
+        return self._ack_adapter.dump_python(validated, mode="json")
 
 
 # ....................... #

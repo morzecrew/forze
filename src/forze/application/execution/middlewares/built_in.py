@@ -5,7 +5,7 @@ import attrs
 
 from forze.base.primitives import StrKey
 
-from .protocols import Middleware, NextCall, OnSuccess
+from .protocols import Middleware, NextCall, OnSuccess, validate_after_commit_output
 
 # ----------------------- #
 
@@ -35,6 +35,7 @@ class TxMiddleware[Args, R](Middleware[Args, R]):
             result = await next(args)
 
         for hook in self.after_commit:
-            await hook(args, result)
+            out = await hook(args, result)
+            validate_after_commit_output(out)
 
         return result

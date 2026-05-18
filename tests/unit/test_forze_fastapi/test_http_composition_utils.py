@@ -24,8 +24,9 @@ from forze_fastapi.endpoints.http.composition.attach import (
     attach_http_endpoint,
     attach_http_endpoints,
 )
-from forze_fastapi.endpoints.http.composition.signature import build_http_endpoint_signature
-from forze_fastapi.openapi.security import http_bearer_scheme, openapi_operation_security
+from forze_fastapi.endpoints.http.composition.signature import (
+    build_http_endpoint_signature,
+)
 from forze_fastapi.endpoints.http.composition.utils import (
     build_body_parameters,
     build_dependency_parameter,
@@ -43,7 +44,13 @@ from forze_fastapi.endpoints.http.composition.utils import (
 from forze_fastapi.endpoints.http.contracts import HTTP_BODY_KEY, HTTP_REQUEST_KEY
 from forze_fastapi.endpoints.http.contracts.specs import HttpEndpointSpec
 from forze_fastapi.endpoints.http.features.etag import ETagFeature
-from forze_fastapi.endpoints.http.features.etag.constants import IF_NONE_MATCH_HEADER_KEY
+from forze_fastapi.endpoints.http.features.etag.constants import (
+    IF_NONE_MATCH_HEADER_KEY,
+)
+from forze_fastapi.openapi.security import (
+    http_bearer_scheme,
+    openapi_operation_security,
+)
 
 # ----------------------- #
 
@@ -214,7 +221,7 @@ class TestBuildHttpEndpointSignatureEtag:
             response=None,
             mapper=EmptyMapper(),
             facade_type=UsecasesFacade,
-            call=OperationRef.absolute("test.read"),
+            call=OperationRef("test.read"),
         )
 
         def ctx_dep() -> ExecutionContext:
@@ -251,7 +258,7 @@ def _minimal_get_spec(
         response=None,
         mapper=EmptyMapper(),
         facade_type=UsecasesFacade,
-        call=OperationRef.absolute("ns.op"),
+        call=OperationRef("ns.op"),
     )
 
 
@@ -345,13 +352,13 @@ class TestAttachHttpEndpoint:
             http={"method": "GET", "path": "/a"},
             mapper=EmptyMapper(),
             facade_type=UsecasesFacade,
-            call=OperationRef.absolute("a"),
+            call=OperationRef("a"),
         )
         s2 = HttpEndpointSpec(
             http={"method": "GET", "path": "/b"},
             mapper=EmptyMapper(),
             facade_type=UsecasesFacade,
-            call=OperationRef.absolute("b"),
+            call=OperationRef("b"),
         )
 
         def ctx_dep() -> ExecutionContext:
@@ -395,7 +402,7 @@ class TestSignaturePathQueryHeaderCookie:
             response=None,
             mapper=BodyAsIsMapper(out=In),
             facade_type=UsecasesFacade,
-            call=OperationRef.absolute("x.create"),
+            call=OperationRef("x.create"),
         )
 
         def ctx_dep() -> ExecutionContext:
@@ -414,6 +421,11 @@ class TestSignaturePathQueryHeaderCookie:
             ctx_dep=ctx_dep,
         )
         names = {p.name for p in sig.parameters.values()}
-        assert {"q", "item_id", "trace", "sid", HTTP_BODY_KEY, HTTP_REQUEST_KEY}.issubset(
-            names
-        )
+        assert {
+            "q",
+            "item_id",
+            "trace",
+            "sid",
+            HTTP_BODY_KEY,
+            HTTP_REQUEST_KEY,
+        }.issubset(names)

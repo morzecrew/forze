@@ -1,27 +1,17 @@
 """Type aliases for usecase plans."""
 
-from typing import Any, Callable, Final, TypeVar
+from typing import Any, Callable, Final
 
 from ..context import ExecutionContext
-from ..middleware import (  # type: ignore[import-not-found]
-    Finally,
-    Guard,
-    Middleware,
-    OnFailure,
-    SuccessHook,
-)
-from ..usecase import Usecase
+from ..middlewares import Finally, Guard, Middleware, OnFailure, OnSuccess
 
-# ----------------------- #
-
-U = TypeVar("U", bound=Usecase[Any, Any])
-
-# ....................... #
+# Backward-compatible alias used by registry DAG typing and dispatch hooks.
+SuccessHook = OnSuccess
 
 GuardFactory = Callable[[ExecutionContext], Guard[Any]]
 """Factory that builds a guard from execution context."""
 
-SuccessHookFactory = Callable[[ExecutionContext], SuccessHook[Any, Any]]
+SuccessHookFactory = Callable[[ExecutionContext], OnSuccess[Any, Any]]
 """Factory that builds a success hook from execution context."""
 
 FinallyFactory = Callable[[ExecutionContext], Finally[Any, Any]]

@@ -12,12 +12,12 @@ from forze.base.asyncio import maybe_await
 from forze.base.errors import CoreError
 
 from ..context import ExecutionContext
-from ..middleware import (  # type: ignore[import-not-found]
+from ..middlewares import (
     GuardMiddleware,
     Middleware,
     NextCall,
+    OnSuccessMiddleware,
     Skip,
-    SuccessHookMiddleware,
     ensure_schedulable_control,
 )
 from ..plan.spec import MiddlewareSpec
@@ -248,7 +248,7 @@ def resolve_capability_steps(
                 args: Any,
                 _result: Any,
                 *,
-                guard: Any = mw.guard,
+                guard: Any = mw.inner,
             ) -> None | Skip:
                 return ensure_schedulable_control(
                     await maybe_await(guard(args)),
@@ -258,23 +258,23 @@ def resolve_capability_steps(
             out.append(
                 CapabilityResolvedStep(
                     spec=spec,
-                    impl=mw.guard,
+                    impl=mw.inner,
                     kind=kind,
                     invoke=invoke_guard,
                 )
             )
             continue
 
-        if not isinstance(mw, SuccessHookMiddleware):
+        if not isinstance(mw, OnSuccessMiddleware):
             raise CoreError(
-                f"Expected SuccessHookMiddleware in capability stage {stage!r}, got {type(mw)}",
+                f"Expected OnSuccessMiddleware in capability stage {stage!r}, got {type(mw)}",
             )
 
         async def invoke_hook(
             args: Any,
             result: Any,
             *,
-            hook: Any = mw.hook,
+            hook: Any = mw.inner,
         ) -> None | Skip:
             return ensure_schedulable_control(
                 await maybe_await(hook(args, result)),
@@ -284,7 +284,7 @@ def resolve_capability_steps(
         out.append(
             CapabilityResolvedStep(
                 spec=spec,
-                impl=mw.hook,
+                impl=mw.inner,
                 kind=kind,
                 invoke=invoke_hook,
             )

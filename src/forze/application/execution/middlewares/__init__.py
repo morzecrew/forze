@@ -14,6 +14,7 @@ from .protocols import (
     OnSuccessFactory,
 )
 from .value_objects import Failure, Skip, Success
+from .schedulable import ensure_schedulable_control
 from .wrappers import (
     FinallyMiddleware,
     GuardMiddleware,
@@ -45,4 +46,5 @@ __all__ = [
     "OnFailureFactory",
     "FinallyFactory",
     "MiddlewareFactory",
+    "ensure_schedulable_control",
 ]

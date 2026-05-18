@@ -37,7 +37,7 @@ class TestIdempotencyHeaderOnSignature:
             response=None,
             mapper=BodyAsIsMapper(BodyDTO),
             facade_type=UsecasesFacade,
-            call=OperationRef.absolute("test.create"),
+            call=OperationRef("test.create"),
         )
 
         def ctx_dep() -> ExecutionContext:

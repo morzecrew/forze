@@ -570,6 +570,48 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    @psycopg_handled("postgres.fetch_all_batched")  # type: ignore[untyped-decorator]
+    async def fetch_all_batched(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        batch_size: int = 2000,
+        row_factory: RowFactory = "dict",
+        commit: bool = False,
+    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+        """Execute *query* and yield row chunks of at most *batch_size* rows.
+
+        Uses :meth:`psycopg.AsyncCursor.fetchmany` on a forward-only cursor so
+        rows are materialized incrementally. Prefer :meth:`transaction` for long
+        scans so the connection remains scoped for the full iteration.
+        """
+
+        if batch_size < 1:
+            msg = "batch_size must be >= 1"
+            raise ValueError(msg)
+
+        async with self.__acquire_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+
+                while True:
+                    chunk = await cur.fetchmany(batch_size)
+
+                    if not chunk:
+                        break
+
+                    if row_factory == "tuple":
+                        yield list(chunk)
+
+                    else:
+                        yield self._rows_to_dicts(cur.description, chunk)
+
+            if commit and self.__current_conn() is None:
+                await conn.commit()
+
+    # ....................... #
+
     @overload
     async def fetch_one(
         self,

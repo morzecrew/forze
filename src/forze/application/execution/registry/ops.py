@@ -93,3 +93,17 @@ class OperationRef[Args, R]:
     op: str = attrs.field(converter=_normalize_key)
     uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
     name: str | None = attrs.field(default=None, kw_only=True)
+
+    # ....................... #
+
+    @classmethod
+    def absolute(
+        cls,
+        op: StrKey,
+        *,
+        uc: type[Usecase[Args, R]] | None = None,
+        name: str | None = None,
+    ) -> OperationRef[Args, R]:
+        """Build a reference from a fully-qualified operation key (no registry namespace)."""
+
+        return cls(op=op, uc=uc, name=name)

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Postgres search (`forze_postgres.adapters.search`):** Offset search with result snapshots reuses the validated hit pool for the response page when ``return_type`` matches the adapter model, avoiding a second full ``pydantic_validate_many`` pass on the same row dicts.
 - **Breaking (`forze.application.execution`, `forze.application.composition`, `forze_fastapi.endpoints`, `forze_socketio`):** Refactored execution around a registry-centered engine. `UsecaseRegistry` now owns stage authoring (`before` / `tx_before` / `after_commit` and DAG variants), dispatch edges, nested dispatch, explain/report output, and operation namespaces/refs. Composition facades and registries now use execution-level `OperationNamespace` / `OperationRef`, FastAPI and Socket.IO integrations resolve against registry-owned authoring state, and the internal execution model is unified around one `OperationStages` stage map instead of duplicated region containers.
 - **Breaking (`forze.application.execution`, `forze.application.composition`, `forze_fastapi.endpoints`):** Public composition is now explicit about roles: `OperationNamespace` is only a full-key builder, `facade_op(...)` is the facade descriptor surface, and `OperationRef` is an absolute-key metadata value. Built-in facades require a runtime namespace, FastAPI endpoint specs use `OperationRef.absolute(...)`, and `PlanDag` / `DagNode` are the only public DAG names.
 
@@ -42,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Serialization (`forze.base.serialization`):** `pydantic_validate_many_batched` and `pydantic_dump_many_batched` for chunked validation/dumping; `pydantic_validate_many` / `pydantic_dump_many` avoid copying when the input is already a ``list``.
+- **Postgres (`forze_postgres`):** `PostgresClient.fetch_all_batched` / `RoutedPostgresClient.fetch_all_batched` (cursor ``fetchmany`` chunks) and `PostgresReadGateway.find_many_chunked` for streaming large reads. `create_many`, `ensure_many`, and `upsert_many` transform/dump per insert batch; `create_many` still parallelizes inserts after chunked preparation; `update_many` dumps DTOs in slices aligned with ``batch_size``.
+- **Socket.IO (`forze_socketio`):** `SocketIOCommandRoute` caches `TypeAdapter` instances for payload and ack types (one adapter per route instead of per parse call).
 - **Composition (`forze.application.composition`):** Execution-level `OperationNamespace`, `OperationRef`, and `operation_namespace_for(...)` are the single operation keyspace abstractions shared by document, search, storage, and authn composition helpers.
 - **Execution (`forze.application.execution`):** `FacadeOperationDescriptor` and `facade_op(...)` as the canonical facade authoring surface for namespace-relative operation access.
 - **Execution (`forze.application.execution`):** `UsecaseRegistry.dispatch(...)`, `UsecaseRegistry.dispatch_success_hook(...)`, `UsecaseRegistry.operation_id_for(...)`, and registry-owned `explain(...)` output as the canonical nested-dispatch and introspection surface.

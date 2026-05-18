@@ -220,6 +220,25 @@ def test_adapter_routers_property() -> None:
     assert adapter.routers == (router1, router2)
 
 
+def test_command_route_reuses_cached_type_adapters() -> None:
+    router = (
+        SocketIONamespaceRouter(namespace="/chat")
+        .command(
+            event="echo",
+            operation="chat.echo",
+            payload_type=EchoPayload,
+            ack_type=EchoAck,
+        )
+    )
+    route = router.commands[0]
+    payload_ad = route._payload_adapter
+    ack_ad = route._ack_adapter
+    assert route.parse_payload({"text": "x"}).text == "x"
+    assert route._payload_adapter is payload_ad
+    assert route._ack_adapter is ack_ad
+    assert route.parse_ack(EchoAck(echoed="y")) == {"echoed": "y"}
+
+
 def test_adapter_include_routers() -> None:
     sio = StubSocketIOServer()
 

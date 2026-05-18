@@ -537,6 +537,27 @@ class RoutedPostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    async def fetch_all_batched(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        batch_size: int = 2000,
+        row_factory: RowFactory = "dict",
+        commit: bool = False,
+    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+        async with self._client_scope() as inner:
+            async for chunk in inner.fetch_all_batched(
+                query,
+                params,
+                batch_size=batch_size,
+                row_factory=row_factory,
+                commit=commit,
+            ):
+                yield chunk
+
+    # ....................... #
+
     @overload
     async def fetch_one(
         self,

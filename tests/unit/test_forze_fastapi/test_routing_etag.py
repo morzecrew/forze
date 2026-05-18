@@ -144,7 +144,7 @@ class TestETagFeature:
             response=Item,
             mapper=_PassMapper(),
             facade_type=object,
-            call=OperationRef.absolute("x"),
+            call=OperationRef("x"),
         )
 
         ctx = HttpEndpointContext(
@@ -186,7 +186,7 @@ class TestETagFeature:
             response=Item,
             mapper=_PassMapper(),
             facade_type=object,
-            call=OperationRef.absolute("x"),
+            call=OperationRef("x"),
         )
 
         ctx = HttpEndpointContext(
@@ -228,7 +228,7 @@ class TestETagFeature:
             response=Item,
             mapper=_PassMapper(),
             facade_type=object,
-            call=OperationRef.absolute("x"),
+            call=OperationRef("x"),
         )
 
         ctx = HttpEndpointContext(

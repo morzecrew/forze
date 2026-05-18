@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Never, Sequence, TypeVar, final, overload
+from typing import Any, AsyncIterator, Literal, Never, Sequence, TypeVar, cast, final, overload
 from uuid import UUID
 
 from psycopg import sql
@@ -445,6 +445,72 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             return [{k: row.get(k, None) for k in return_fields} for row in rows]
 
         return pydantic_validate_many(self.model_type, rows)
+
+    # ....................... #
+
+    async def find_many_chunked(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        limit: int | None = None,
+        offset: int | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        fetch_batch_size: int = 2000,
+        return_model: type[T] | None = None,
+        return_fields: Sequence[str] | None = None,
+    ) -> AsyncIterator[list[M] | list[T] | list[JsonDict]]:
+        """Like :meth:`find_many` but yield validated row batches from the driver.
+
+        Each yielded list has at most ``fetch_batch_size`` rows (except possibly
+        the last). Requires the same ``return_model`` / ``return_fields`` rules
+        as :meth:`find_many`; aggregates are not supported.
+        """
+
+        if return_model is not None and return_fields is not None:
+            raise CoreError("return_model and return_fields cannot be combined")
+
+        where, params = await self.where_clause(filters)
+        sort_clause = await self.order_by_clause(sorts)
+
+        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
+            cols=self.return_clause(return_model, return_fields),
+            table=self.source_qname.ident(),
+            where=where,
+        )
+
+        if sort_clause is not None:
+            stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
+
+        eff_limit = self._effective_sql_limit(limit)
+
+        if eff_limit is not None:
+            stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+            params.append(eff_limit)
+
+        if offset is not None:
+            stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            params.append(offset)
+
+        async for raw_chunk in self.client.fetch_all_batched(
+            stmt,
+            params,
+            row_factory="dict",
+            batch_size=fetch_batch_size,
+        ):
+            dict_chunk: list[JsonDict] = cast(list[JsonDict], raw_chunk)
+            if not dict_chunk:
+                continue
+
+            if return_fields is not None:
+                yield [
+                    {k: row.get(k, None) for k in return_fields} for row in dict_chunk
+                ]
+
+            elif return_model is not None:
+                yield pydantic_validate_many(return_model, dict_chunk)
+
+            else:
+                yield pydantic_validate_many(self.model_type, dict_chunk)
 
     # ....................... #
 

@@ -3,7 +3,7 @@
 import pytest
 
 from forze.application.execution import Deps, ExecutionContext, Usecase
-from forze.application.execution.middleware import GuardMiddleware, SuccessHookMiddleware
+from forze.application.execution.middlewares import GuardMiddleware, OnSuccessMiddleware
 
 
 class ConcreteUsecase(Usecase[str, str]):
@@ -32,7 +32,7 @@ class TestUsecase:
             seen.append(f"guard:{args}")
 
         uc = ConcreteUsecase(ctx=stub_ctx).with_middlewares(
-            GuardMiddleware(guard=guard)
+            GuardMiddleware(inner=guard)
         )
 
         assert await uc("x") == "result:x"
@@ -50,7 +50,7 @@ class TestUsecase:
             return None
 
         uc = ConcreteUsecase(ctx=stub_ctx).with_middlewares(
-            SuccessHookMiddleware(hook=hook)
+            OnSuccessMiddleware(inner=hook)
         )
 
         assert await uc("x") == "result:x"

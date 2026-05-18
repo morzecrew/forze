@@ -11,12 +11,14 @@ from .pydantic import (
     pydantic_cache_dump_many,
     pydantic_dump,
     pydantic_dump_many,
+    pydantic_dump_many_batched,
     pydantic_field_names,
     pydantic_model_hash,
     pydantic_transform,
     pydantic_transform_many,
     pydantic_validate,
     pydantic_validate_many,
+    pydantic_validate_many_batched,
 )
 
 # ----------------------- #
@@ -33,7 +35,9 @@ __all__ = [
     "split_touches_from_merge_patch",
     "has_hybrid_patch_conflict",
     "pydantic_validate_many",
+    "pydantic_validate_many_batched",
     "pydantic_dump_many",
+    "pydantic_dump_many_batched",
     "pydantic_transform",
     "pydantic_transform_many",
 ]

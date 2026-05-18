@@ -1,5 +1,6 @@
 """Public plan helpers for registry-driven execution."""
 
+from ..engine.model import OperationStages
 from .builders import (
     finally_middleware_factory,
     guard_middleware_factory,
@@ -24,6 +25,9 @@ from .types import (
 
 # ----------------------- #
 
+# Backward-compatible name for tests and older docs.
+OperationPlan = OperationStages
+
 __all__ = [
     "DagNode",
     "ExecutionPlanReport",
@@ -32,6 +36,7 @@ __all__ = [
     "MiddlewareFactory",
     "MiddlewareSpec",
     "OnFailureFactory",
+    "OperationPlan",
     "PlanDag",
     "StepExplainRow",
     "SuccessHookFactory",

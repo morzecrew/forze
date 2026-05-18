@@ -3,11 +3,11 @@
 from typing import Any
 
 from ..context import ExecutionContext
-from ..middleware import (  # type: ignore[import-not-found]
+from ..middlewares import (  # type: ignore[import-not-found]
     FinallyMiddleware,
     GuardMiddleware,
     OnFailureMiddleware,
-    SuccessHookMiddleware,
+    OnSuccessMiddleware,
 )
 from .types import (  # type: ignore[import-not-found]
     FinallyFactory,
@@ -22,7 +22,7 @@ from .types import (  # type: ignore[import-not-found]
 
 def guard_middleware_factory(guard: GuardFactory) -> MiddlewareFactory:
     def factory(ctx: ExecutionContext) -> GuardMiddleware[Any, Any]:
-        return GuardMiddleware[Any, Any](guard=guard(ctx))
+        return GuardMiddleware[Any, Any](inner=guard(ctx))
 
     return factory
 
@@ -31,8 +31,8 @@ def guard_middleware_factory(guard: GuardFactory) -> MiddlewareFactory:
 
 
 def success_hook_middleware_factory(hook: SuccessHookFactory) -> MiddlewareFactory:
-    def factory(ctx: ExecutionContext) -> SuccessHookMiddleware[Any, Any]:
-        return SuccessHookMiddleware[Any, Any](hook=hook(ctx))
+    def factory(ctx: ExecutionContext) -> OnSuccessMiddleware[Any, Any]:
+        return OnSuccessMiddleware[Any, Any](inner=hook(ctx))
 
     return factory
 
@@ -42,7 +42,7 @@ def success_hook_middleware_factory(hook: SuccessHookFactory) -> MiddlewareFacto
 
 def finally_middleware_factory(hook: FinallyFactory) -> MiddlewareFactory:
     def factory(ctx: ExecutionContext) -> FinallyMiddleware[Any, Any]:
-        return FinallyMiddleware[Any, Any](hook=hook(ctx))
+        return FinallyMiddleware[Any, Any](inner=hook(ctx))
 
     return factory
 
@@ -52,6 +52,6 @@ def finally_middleware_factory(hook: FinallyFactory) -> MiddlewareFactory:
 
 def on_failure_middleware_factory(hook: OnFailureFactory) -> MiddlewareFactory:
     def factory(ctx: ExecutionContext) -> OnFailureMiddleware[Any, Any]:
-        return OnFailureMiddleware[Any, Any](hook=hook(ctx))
+        return OnFailureMiddleware[Any, Any](inner=hook(ctx))
 
     return factory

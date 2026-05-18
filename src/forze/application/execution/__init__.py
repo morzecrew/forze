@@ -1,10 +1,10 @@
 """Execution kernel for usecases, dependency injection, and lifecycle."""
 
-from .capabilities import (  # type: ignore[import-not-found, attr-defined]
-    CapabilityAfterCommitRunner,  # type: ignore[attr-defined]
-    CapabilityExecutionEvent,  # type: ignore[attr-defined]
-    CapabilityStore,  # type: ignore[attr-defined]
-    ExecutionChainCompiler,  # type: ignore[attr-defined]
+from .engine import (
+    CapabilityAfterCommitRunner,
+    CapabilityExecutionEvent,
+    CapabilityStore,
+    ExecutionChainCompiler,
 )
 from .capability_keys import (
     AUTHN_PRINCIPAL,
@@ -48,6 +48,9 @@ from .middlewares import (
     Success,
     TxMiddleware,
 )
+
+CapabilitySkip = Skip
+
 from .plan import (
     DagNode,
     ExecutionPlanReport,
@@ -66,6 +69,7 @@ __all__ = [
     "CapabilityAfterCommitRunner",
     "CapabilityExecutionEvent",
     "CapabilityStore",
+    "CapabilitySkip",
     "CallContext",
     "ConditionalGuard",
     "DagNode",
