@@ -1,15 +1,15 @@
 from typing import Any
 
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import PubSubCommandPort, PubSubQueryPort
 from .specs import PubSubSpec
 
 # ----------------------- #
 
-PubSubQueryDepPort = BaseDepPort[PubSubSpec[Any], PubSubQueryPort[Any]]
+PubSubQueryDepPort = ConfigurableDepPort[PubSubSpec[Any], PubSubQueryPort[Any]]
 """Pubsub query dependency port."""
 
-PubSubCommandDepPort = BaseDepPort[PubSubSpec[Any], PubSubCommandPort[Any]]
+PubSubCommandDepPort = ConfigurableDepPort[PubSubSpec[Any], PubSubCommandPort[Any]]
 """Pubsub command dependency port."""
 
 PubSubQueryDepKey = DepKey[PubSubQueryDepPort]("pubsub_query")

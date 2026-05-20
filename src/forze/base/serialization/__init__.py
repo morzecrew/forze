@@ -1,4 +1,4 @@
-"""Helpers for diffing and serializing data structures and Pydantic models."""
+"""Helpers for diffing, record-mapping codecs, and Pydantic serialization."""
 
 from .diff import (
     apply_dict_patch,
@@ -6,6 +6,19 @@ from .diff import (
     has_hybrid_patch_conflict,
     split_touches_from_merge_patch,
 )
+from .model_codec import RecordMappingCodec, RecordMappingDumpExcludeOptions
+from .msgspec import (
+    msgspec_dump,
+    msgspec_dump_many,
+    msgspec_dump_many_batched,
+    msgspec_field_names,
+    msgspec_transform,
+    msgspec_transform_many,
+    msgspec_validate,
+    msgspec_validate_many,
+    msgspec_validate_many_batched,
+)
+from .msgspec_model_codec import MsgspecRecordMappingCodec
 from .pydantic import (
     pydantic_cache_dump,
     pydantic_cache_dump_many,
@@ -20,12 +33,26 @@ from .pydantic import (
     pydantic_validate_many,
     pydantic_validate_many_batched,
 )
+from .pydantic_model_codec import PydanticRecordMappingCodec
 
 # ----------------------- #
 
 __all__ = [
     "apply_dict_patch",
     "calculate_dict_difference",
+    "RecordMappingCodec",
+    "RecordMappingDumpExcludeOptions",
+    "PydanticRecordMappingCodec",
+    "MsgspecRecordMappingCodec",
+    "msgspec_dump",
+    "msgspec_dump_many",
+    "msgspec_dump_many_batched",
+    "msgspec_field_names",
+    "msgspec_transform",
+    "msgspec_transform_many",
+    "msgspec_validate",
+    "msgspec_validate_many",
+    "msgspec_validate_many_batched",
     "pydantic_dump",
     "pydantic_cache_dump",
     "pydantic_cache_dump_many",

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, Mapping, Self, cast, final
 
 import attrs
@@ -28,10 +30,10 @@ class Deps[K: StrKey]:
     - routed dependencies: ``DepKey -> {routing_key -> provider}``
     """
 
-    plain_deps: PlainDepsMap | None = attrs.field(default=None)
+    plain_deps: PlainDepsMap = attrs.field(factory=dict[DepKey[Any], Any])
     """Dependencies registered without affinity."""
 
-    routed_deps: RoutedDeps[K] | None = attrs.field(default=None)
+    routed_deps: RoutedDeps[K] = attrs.field(factory=dict[DepKey[Any], dict[K, Any]])
     """Dependencies registered for specific affinity groups."""
 
     # ....................... #
@@ -45,28 +47,28 @@ class Deps[K: StrKey]:
     # ....................... #
 
     @classmethod
-    def plain(cls, deps: PlainDepsMap) -> Self:
+    def plain(cls, deps: PlainDepsMap) -> Deps[Any]:
         """Create a new dependency container from plain dependencies."""
 
-        return cls(plain_deps=deps or None)
+        return cls(plain_deps=deps)
 
     # ....................... #
 
     @classmethod
-    def routed(cls, deps: RoutedDeps[K]) -> Self:
+    def routed[X: StrKey](cls, deps: RoutedDeps[X]) -> Deps[X]:
         """Create a new dependency container from routed dependencies."""
 
-        return cls(routed_deps=deps or None)
+        return cast(type[Deps[X]], cls)(routed_deps=deps)
 
     # ....................... #
 
     @classmethod
-    def routed_group(
+    def routed_group[X: StrKey](
         cls,
         deps: PlainDepsMap,
         *,
-        routes: set[K] | frozenset[K],
-    ) -> Self:
+        routes: set[X] | frozenset[X],
+    ) -> Deps[X]:
         """Create routed dependencies by expanding one provider per many routing keys.
 
         This is a convenience helper only. Internally routed dependencies are
@@ -76,11 +78,11 @@ class Deps[K: StrKey]:
         if not routes:
             raise CoreError("Routes must not be empty")
 
-        expanded: RoutedDeps[K] = {
+        expanded: RoutedDeps[X] = {
             key: {name: dep for name in routes} for key, dep in deps.items()
         }
 
-        return cls(routed_deps=expanded or None)
+        return cast(type[Deps[X]], cls)(routed_deps=expanded)
 
     # ....................... #
 
@@ -101,13 +103,13 @@ class Deps[K: StrKey]:
         """
 
         if route is None:
-            dep = (self.plain_deps or {}).get(key)
+            dep = self.plain_deps.get(key)
 
             if not dep:
                 raise CoreError(f"Plain dependency '{key.name}' not found")
 
         else:
-            routes = (self.routed_deps or {}).get(key)
+            routes = self.routed_deps.get(key)
 
             if routes is None:
                 if fallback_to_plain:
@@ -135,9 +137,9 @@ class Deps[K: StrKey]:
         """Return ``True`` if the dependency is registered."""
 
         if route is None:
-            return key in (self.plain_deps or {})
+            return key in self.plain_deps
 
-        routes = (self.routed_deps or {}).get(key)
+        routes = self.routed_deps.get(key)
 
         if routes is None:
             return False
@@ -147,7 +149,7 @@ class Deps[K: StrKey]:
     # ....................... #
 
     @hybridmethod
-    def merge(cls: type[Self], *deps: Self) -> Self:  # type: ignore[misc, override]
+    def merge[X: StrKey](cls: type[Deps[X]], *deps: Deps[X]) -> Deps[X]:  # type: ignore[misc, override]
         """Merge multiple dependency containers into a single container.
 
         :param deps: Containers to merge.
@@ -157,19 +159,19 @@ class Deps[K: StrKey]:
 
         logger.trace("Merging %s dependency container(s)", len(deps))
 
-        plain_acc: dict[DepKey[Any], Any] = {}
-        routed_acc: dict[DepKey[Any], dict[K, Any]] = {}
+        plain_acc: PlainDepsMap = {}
+        routed_acc: RoutedDeps[X] = {}
 
         for d in deps:
             # 1. merge plain
-            plain_overlap = set(plain_acc).intersection(d.plain_deps or {})
+            plain_overlap = set(plain_acc).intersection(d.plain_deps)
 
             if plain_overlap:
                 names = ", ".join(sorted(k.name for k in plain_overlap))
                 raise CoreError(f"Conflicting plain dependencies: {names}")
 
             # 2. plain vs routed conflicts
-            cross_overlap_left = set(plain_acc).intersection(d.routed_deps or {})
+            cross_overlap_left = set(plain_acc).intersection(d.routed_deps)
 
             if cross_overlap_left:
                 names = ", ".join(sorted(k.name for k in cross_overlap_left))
@@ -177,7 +179,7 @@ class Deps[K: StrKey]:
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
-            cross_overlap_right = set(routed_acc).intersection(d.plain_deps or {})
+            cross_overlap_right = set(routed_acc).intersection(d.plain_deps)
 
             if cross_overlap_right:
                 names = ", ".join(sorted(k.name for k in cross_overlap_right))
@@ -185,10 +187,10 @@ class Deps[K: StrKey]:
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
-            plain_acc.update(d.plain_deps or {})
+            plain_acc.update(d.plain_deps)
 
             # 3. merge routed
-            for key, routes in (d.routed_deps or {}).items():
+            for key, routes in d.routed_deps.items():
                 existing = routed_acc.get(key)
 
                 if existing is None:
@@ -207,12 +209,12 @@ class Deps[K: StrKey]:
                 existing.update(routes)
                 routed_acc[key] = existing
 
-        return cls(plain_deps=plain_acc or None, routed_deps=routed_acc or None)
+        return cls(plain_deps=plain_acc, routed_deps=routed_acc)
 
     # ....................... #
 
     @merge.instancemethod
-    def _merge_instance(self: Self, *deps: Self) -> Self:  # type: ignore[misc, override]
+    def _merge_instance[X: StrKey](self: Deps[X], *deps: Deps[X]) -> Deps[X]:  # type: ignore[misc, override]
         """Merge this dependency container with another containers.
 
         :param deps: Containers to merge.
@@ -239,7 +241,7 @@ class Deps[K: StrKey]:
         new_plain.pop(key, None)
         new_routed.pop(key, None)
 
-        return type(self)(plain_deps=new_plain or None, routed_deps=new_routed or None)
+        return type(self)(plain_deps=new_plain, routed_deps=new_routed)
 
     # ....................... #
 
@@ -266,8 +268,8 @@ class Deps[K: StrKey]:
             new_routed.pop(key)
 
         return type(self)(
-            plain_deps=dict(self.plain_deps or {}) or None,
-            routed_deps=new_routed or None,
+            plain_deps=dict(self.plain_deps),
+            routed_deps=new_routed,
         )
 
     # ....................... #
@@ -275,7 +277,7 @@ class Deps[K: StrKey]:
     def empty(self) -> bool:
         """Return ``True`` if the dependency container is empty."""
 
-        return not (self.plain_deps or {}) and not (self.routed_deps or {})
+        return not self.plain_deps and not self.routed_deps
 
     # ....................... #
 
@@ -286,6 +288,6 @@ class Deps[K: StrKey]:
         Routed deps count as 1 entry per route.
         """
 
-        return len(self.plain_deps or {}) + sum(
-            len(routes) for routes in (self.routed_deps or {}).values()
+        return len(self.plain_deps) + sum(
+            len(routes) for routes in self.routed_deps.values()
         )

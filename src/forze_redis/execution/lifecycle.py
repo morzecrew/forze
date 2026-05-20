@@ -30,7 +30,7 @@ class RedisStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        redis_client = cast(RedisClient, ctx.dep(RedisClientDepKey))
+        redis_client = cast(RedisClient, ctx.deps.provide(RedisClientDepKey))
         await redis_client.initialize(self.dsn, config=self.config)
 
 
@@ -46,7 +46,7 @@ class RedisShutdownHook(LifecycleHook):
     """
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        redis_client = ctx.dep(RedisClientDepKey)
+        redis_client = ctx.deps.provide(RedisClientDepKey)
         await redis_client.close()
 
 

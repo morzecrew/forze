@@ -39,7 +39,6 @@ from forze.application.contracts.search import (
     ranked_search_cursor_key_spec,
     search_options_for_simple_adapter,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -53,8 +52,6 @@ from forze_postgres.pagination import (
 )
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ..txmanager import PostgresTxScopeKey
-from ._materialize_hits import materialize_search_page
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,
@@ -66,6 +63,7 @@ from ._fts_sql import (
     fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
+from ._materialize_hits import materialize_search_page
 
 # ----------------------- #
 
@@ -89,7 +87,6 @@ _RANK_COLUMN: Final[str] = "_fts_rank"
 class PostgresFTSSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
-    TxScopedPort,
 ):
     """FTS :class:`SearchQueryPort` using a projection relation and index heap.
 
@@ -136,9 +133,6 @@ class PostgresFTSSearchAdapter[M: BaseModel](
 
     snapshot_coord: SearchResultSnapshotCoordinator | None = None
     """Coordinator for KV ordered-ID snapshots (same request surface as before)."""
-
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
-    """Transaction scope."""
 
     # ....................... #
 

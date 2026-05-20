@@ -10,20 +10,20 @@ from fastapi import Request
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext, ExecutionContext
+from forze.application.execution import ExecutionContext, InvocationMetadata
 
 # ----------------------- #
 
 
-class CallContextCodecPort(Protocol):
-    """Codec for encoding and decoding the call context."""
+class InvocationMetadataCodecPort(Protocol):
+    """Codec for encoding and decoding the invocation metadata."""
 
-    def decode(self, request: Request) -> CallContext: ...  # pragma: no cover
+    def decode(self, request: Request) -> InvocationMetadata: ...  # pragma: no cover
 
     def encode(
         self,
         headers: list[tuple[bytes, bytes]],
-        ctx: CallContext,
+        metadata: InvocationMetadata,
     ) -> list[tuple[bytes, bytes]]: ...  # pragma: no cover
 
 

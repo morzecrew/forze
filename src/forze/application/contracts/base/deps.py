@@ -2,10 +2,12 @@ from typing import TYPE_CHECKING, Protocol, TypeVar, final
 
 import attrs
 
+from forze.base.errors import CoreError
+
 from .specs import BaseSpec
 
 if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -30,11 +32,53 @@ class DepKey[T]:
 # ....................... #
 
 
-class BaseDepPort[S: BaseSpec, Port](Protocol):
-    """Base protocol for building resource ports."""
+class ConfigurableDepPort[S: BaseSpec, Port](Protocol):
+    """Configurable protocol for building resource ports."""
 
     def __call__(
         self,
         ctx: "ExecutionContext",
         spec: S,
     ) -> Port: ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class SimpleDepPort[T](Protocol):
+    """Simple dependency port."""
+
+    def __call__(self, ctx: "ExecutionContext") -> T:
+        """Build a dependency port instance."""
+        ...
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True)
+class ConvenientDeps:
+    """Convenient wrapper for dependencies."""
+
+    ctx: "ExecutionContext | None" = attrs.field(default=None)
+    """Execution context."""
+
+    _locked: bool = attrs.field(default=False, init=False)
+    """Whether the dependencies are locked and cannot be modified."""
+
+    # ....................... #
+
+    def lock(self, ctx: "ExecutionContext") -> None:
+        if self._locked:
+            raise CoreError("Convenience layer already locked")
+
+        self._locked = True
+        self.ctx = ctx
+
+    # ....................... #
+
+    def _require_ctx(self) -> "ExecutionContext":
+        if self.ctx is None:
+            raise CoreError("Execution context is not set")
+
+        return self.ctx

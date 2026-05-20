@@ -26,7 +26,7 @@ class SQSStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        sqs_client = cast(SQSClient, ctx.dep(SQSClientDepKey))
+        sqs_client = cast(SQSClient, ctx.deps.provide(SQSClientDepKey))
 
         await sqs_client.initialize(
             endpoint=self.endpoint,
@@ -78,7 +78,7 @@ class SQSShutdownHook(LifecycleHook):
     """Shutdown hook that closes the SQS session (await :meth:`SQSClient.close`)."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        sqs_client = ctx.dep(SQSClientDepKey)
+        sqs_client = ctx.deps.provide(SQSClientDepKey)
         await sqs_client.close()
 
 

@@ -52,7 +52,6 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     prepare_hub_search_options,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -64,8 +63,6 @@ from ...kernel.hub_fk_columns import normalize_hub_fk_columns
 from ...kernel.introspect import PostgresIntrospector
 from ...kernel.query.nested import sort_key_expr
 from ...pagination import build_seek_condition
-from ..txmanager import PostgresTxScopeKey
-from ._materialize_hits import materialize_search_page
 from ._fts_sql import (
     FtsGroupLetter,
     fts_effective_group_weights,
@@ -77,6 +74,7 @@ from ._fts_sql import (
     fts_tsquery_expr_conjunction,
     fts_tsquery_expr_disjunction,
 )
+from ._materialize_hits import materialize_search_page
 from ._pgroonga_sql import (
     pgroonga_match_clause,
     pgroonga_phrase_match_text,
@@ -577,7 +575,6 @@ def hub_leg_engine_for(
 class PostgresHubSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
-    TxScopedPort,
 ):
     """Search over a hub row type with one or more legs and merged per-leg scores.
 
@@ -601,8 +598,6 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
     score_merge: Literal["max", "sum"] = "max"
     """Score merge mode for leg scores."""
-
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
 

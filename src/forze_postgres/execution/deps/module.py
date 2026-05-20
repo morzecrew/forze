@@ -16,7 +16,7 @@ from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     SearchQueryDepKey,
 )
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.introspect import PostgresIntrospector
@@ -180,7 +180,11 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
         if self.tx:
             tx_deps = tx_deps.merge(
                 Deps[K].routed(
-                    {TxManagerDepKey: {name: postgres_txmanager for name in self.tx}}
+                    {
+                        TransactionManagerDepKey: {
+                            name: postgres_txmanager for name in self.tx
+                        }
+                    }
                 )
             )
 

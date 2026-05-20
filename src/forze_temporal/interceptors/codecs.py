@@ -12,7 +12,7 @@ from temporalio.api.common.v1 import Payload
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext
+from forze.application.execution import InvocationMetadata
 from forze.base.primitives import uuid7
 
 # ----------------------- #
@@ -44,30 +44,30 @@ class TemporalContextCodec:
     def encode(
         self,
         *,
-        call: CallContext | None = None,
-        identity: AuthnIdentity | None = None,
-        tenancy: TenantIdentity | None = None,
+        metadata: InvocationMetadata | None = None,
+        authn: AuthnIdentity | None = None,
+        tenant: TenantIdentity | None = None,
     ) -> Mapping[str, Payload]:
         headers: dict[str, Payload] = {}
 
-        if call is not None:
+        if metadata is not None:
             headers[_EXEC_HEADER] = Payload(
-                data=str(call.execution_id).encode(_ENCODING)
+                data=str(metadata.execution_id).encode(_ENCODING)
             )
             headers[_CORR_HEADER] = Payload(
-                data=str(call.correlation_id).encode(_ENCODING)
+                data=str(metadata.correlation_id).encode(_ENCODING)
             )
 
             # We don't encode causation id here
 
-        if identity is not None:
+        if authn is not None:
             headers[_PRINCIPAL_HEADER] = Payload(
-                data=str(identity.principal_id).encode(_ENCODING)
+                data=str(authn.principal_id).encode(_ENCODING)
             )
 
-        if tenancy is not None:
+        if tenant is not None:
             headers[_TENANT_HEADER] = Payload(
-                data=str(tenancy.tenant_id).encode(_ENCODING)
+                data=str(tenant.tenant_id).encode(_ENCODING)
             )
 
         return headers
@@ -107,11 +107,11 @@ class TemporalContextBinder:
     def bind(
         self,
         decoded: TemporalDecodedContext,
-    ) -> tuple[CallContext, AuthnIdentity | None, TenantIdentity | None]:
+    ) -> tuple[InvocationMetadata, AuthnIdentity | None, TenantIdentity | None]:
         execution_id = self.execution_id_factory()
         correlation_id = decoded.correlation_id or execution_id
 
-        call = CallContext(
+        metadata = InvocationMetadata(
             execution_id=execution_id,
             correlation_id=correlation_id,
             causation_id=decoded.execution_id,
@@ -129,4 +129,4 @@ class TemporalContextBinder:
         else:
             tenant = TenantIdentity(tenant_id=decoded.tenant_id)
 
-        return call, identity, tenant
+        return metadata, identity, tenant

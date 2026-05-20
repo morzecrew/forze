@@ -1,15 +1,5 @@
-from .ports import (
-    BatchMapperPort,
-    FanOutMapperPort,
-    MapperPort,
-    ReducerMapperPort,
-)
+from .ports import Mapper, MapperFactory
 
 # ----------------------- #
 
-__all__ = [
-    "MapperPort",
-    "BatchMapperPort",
-    "FanOutMapperPort",
-    "ReducerMapperPort",
-]
+__all__ = ["Mapper", "MapperFactory"]

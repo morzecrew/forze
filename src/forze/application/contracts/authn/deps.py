@@ -1,4 +1,4 @@
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import (
     ApiKeyLifecyclePort,
     ApiKeyVerifierPort,
@@ -14,31 +14,31 @@ from .specs import AuthnSpec
 
 # ----------------------- #
 
-AuthnDepPort = BaseDepPort[AuthnSpec, AuthnPort]
+AuthnDepPort = ConfigurableDepPort[AuthnSpec, AuthnPort]
 """Authentication dependency port (orchestration facade)."""
 
-PasswordVerifierDepPort = BaseDepPort[AuthnSpec, PasswordVerifierPort]
+PasswordVerifierDepPort = ConfigurableDepPort[AuthnSpec, PasswordVerifierPort]
 """Password verifier dependency port."""
 
-TokenVerifierDepPort = BaseDepPort[AuthnSpec, TokenVerifierPort]
+TokenVerifierDepPort = ConfigurableDepPort[AuthnSpec, TokenVerifierPort]
 """Token verifier dependency port (one per profile/IdP)."""
 
-ApiKeyVerifierDepPort = BaseDepPort[AuthnSpec, ApiKeyVerifierPort]
+ApiKeyVerifierDepPort = ConfigurableDepPort[AuthnSpec, ApiKeyVerifierPort]
 """API key verifier dependency port."""
 
-PrincipalResolverDepPort = BaseDepPort[AuthnSpec, PrincipalResolverPort]
+PrincipalResolverDepPort = ConfigurableDepPort[AuthnSpec, PrincipalResolverPort]
 """Principal resolver dependency port (one per profile)."""
 
-PasswordLifecycleDepPort = BaseDepPort[AuthnSpec, PasswordLifecyclePort]
+PasswordLifecycleDepPort = ConfigurableDepPort[AuthnSpec, PasswordLifecyclePort]
 """Password lifecycle dependency port."""
 
-TokenLifecycleDepPort = BaseDepPort[AuthnSpec, TokenLifecyclePort]
+TokenLifecycleDepPort = ConfigurableDepPort[AuthnSpec, TokenLifecyclePort]
 """Token lifecycle dependency port."""
 
-ApiKeyLifecycleDepPort = BaseDepPort[AuthnSpec, ApiKeyLifecyclePort]
+ApiKeyLifecycleDepPort = ConfigurableDepPort[AuthnSpec, ApiKeyLifecyclePort]
 """API key lifecycle dependency port."""
 
-PasswordAccountProvisioningDepPort = BaseDepPort[
+PasswordAccountProvisioningDepPort = ConfigurableDepPort[
     AuthnSpec, PasswordAccountProvisioningPort
 ]
 """Password account provisioning dependency port."""

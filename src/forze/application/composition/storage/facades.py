@@ -1,11 +1,11 @@
 import attrs
 
-from forze.application.execution import (
-    FacadeOperationDescriptor,
-    UsecasesFacade,
+from forze.application.execution.facade import (
+    OperationFacade,
+    facade_op,
     namespaced_facade,
 )
-from forze.application.usecases.storage import (
+from forze.application.handlers.storage import (
     DeleteObject,
     DownloadObject,
     ListObjects,
@@ -19,28 +19,28 @@ from .operations import StorageKernelOp
 
 @namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class StorageUsecasesFacade(UsecasesFacade):
+class StorageFacade(OperationFacade):
     """Typed facade for storage usecases."""
 
-    upload = FacadeOperationDescriptor(
+    upload = facade_op(
         StorageKernelOp.UPLOAD,
         uc=UploadObject,
     )
     """Upload object usecase."""
 
-    list = FacadeOperationDescriptor(
+    list = facade_op(
         StorageKernelOp.LIST,
         uc=ListObjects,
     )
     """List objects usecase."""
 
-    download = FacadeOperationDescriptor(
+    download = facade_op(
         StorageKernelOp.DOWNLOAD,
         uc=DownloadObject,
     )
     """Download object usecase."""
 
-    delete = FacadeOperationDescriptor(
+    delete = facade_op(
         StorageKernelOp.DELETE,
         uc=DeleteObject,
     )

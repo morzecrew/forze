@@ -85,7 +85,7 @@ class PostgresDocumentSchemaValidationHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        introspector = ctx.dep(PostgresIntrospectorDepKey)
+        introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
         try:
             await validate_postgres_document_schemas(introspector, self.specs)

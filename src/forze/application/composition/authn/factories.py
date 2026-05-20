@@ -12,7 +12,7 @@ from forze.application.execution import (
     UsecaseRegistry,
     operation_namespace_for,
 )
-from forze.application.usecases.authn import (
+from forze.application.handlers.authn import (
     AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,

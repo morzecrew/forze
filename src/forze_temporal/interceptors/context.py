@@ -38,7 +38,7 @@ from temporalio.worker import Interceptor as WorkerInterceptor
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext, ExecutionContext
+from forze.application.execution import ExecutionContext, InvocationMetadata
 
 from .codecs import TemporalContextBinder, TemporalContextCodec
 
@@ -119,8 +119,9 @@ class BaseContextInterceptor:
     def inject_headers(self, input: InputWithHeaders) -> None:
         ctx = self.ctx_dep()
         context_headers = self.codec.encode(
-            call=ctx.get_call_ctx(),
-            identity=ctx.get_authn_identity(),
+            metadata=ctx.inv.get_metadata(),
+            authn=ctx.inv.get_authn(),
+            tenant=ctx.inv.get_tenant(),
         )
         headers = dict(input.headers or {})
 
@@ -134,7 +135,7 @@ class BaseContextInterceptor:
     def bind_headers(
         self,
         headers: Mapping[str, Payload],
-    ) -> tuple[CallContext, AuthnIdentity | None, TenantIdentity | None]:
+    ) -> tuple[InvocationMetadata, AuthnIdentity | None, TenantIdentity | None]:
         decoded = self.codec.decode(headers)
 
         return self.binder.bind(decoded)
@@ -147,9 +148,9 @@ class BaseContextInterceptor:
         next: Callable[[], Awaitable[Any]],
     ) -> Any:
         ctx = self.ctx_dep()
-        call_ctx, identity, tenant = self.bind_headers(headers)
+        metadata, authn, tenant = self.bind_headers(headers)
 
-        with ctx.bind_call(call=call_ctx, identity=identity, tenancy=tenant):
+        with ctx.inv.bind(metadata=metadata, authn=authn, tenant=tenant):
             return await next()
 
     # ....................... #
@@ -160,9 +161,9 @@ class BaseContextInterceptor:
         next: Callable[[], Any],
     ) -> Any:
         ctx = self.ctx_dep()
-        call_ctx, identity, tenant = self.bind_headers(headers)
+        metadata, authn, tenant = self.bind_headers(headers)
 
-        with ctx.bind_call(call=call_ctx, identity=identity, tenancy=tenant):
+        with ctx.inv.bind(metadata=metadata, authn=authn, tenant=tenant):
             return next()
 
 

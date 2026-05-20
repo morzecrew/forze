@@ -29,7 +29,6 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     prepare_federated_search_options,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -37,7 +36,6 @@ from forze.base.serialization import pydantic_validate_many
 
 from ...kernel.db_gather import gather_db_work
 from ...kernel.platform import PostgresClientPort
-from ..txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
@@ -56,7 +54,6 @@ _DEFAULT_PER_LEG_LIMIT: Final[int] = 5000
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresFederatedSearchAdapter[M: BaseModel](
     SearchQueryPort[FederatedSearchReadModel[M]],
-    TxScopedPort,
 ):
     """Search several independent indexes and merge results using weighted RRF.
 
@@ -90,8 +87,6 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     snapshot_coord: SearchResultSnapshotCoordinator | None = None
     """Coordinator for federation snapshot runs."""
-
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
 

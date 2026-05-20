@@ -84,7 +84,7 @@ class HeaderTokenAuthnIdentityResolver(AuthnIdentityResolverPort):
         else:
             creds = AccessTokenCredentials(token=token, scheme=scheme)
 
-        auth = ctx.dep(AuthnDepKey, route=self.spec.name)(ctx, self.spec)
+        auth = ctx.deps.provide(AuthnDepKey, route=self.spec.name)(ctx, self.spec)
 
         return await auth.authenticate_with_token(creds)
 
@@ -139,7 +139,7 @@ class CookieTokenAuthnIdentityResolver(AuthnIdentityResolverPort):
             scheme=self.scheme,
         )
 
-        auth = ctx.dep(AuthnDepKey, route=self.spec.name)(ctx, self.spec)
+        auth = ctx.deps.provide(AuthnDepKey, route=self.spec.name)(ctx, self.spec)
 
         return await auth.authenticate_with_token(creds)
 
@@ -191,6 +191,6 @@ class HeaderApiKeyAuthnIdentityResolver(AuthnIdentityResolverPort):
         else:
             creds = ApiKeyCredentials(key=key, prefix=prefix)
 
-        auth = ctx.dep(AuthnDepKey, route=self.spec.name)(ctx, self.spec)
+        auth = ctx.deps.provide(AuthnDepKey, route=self.spec.name)(ctx, self.spec)
 
         return await auth.authenticate_with_api_key(creds)

@@ -75,7 +75,7 @@ class TenantIdentityResolver(TenantIdentityResolverPort):
         )
 
         resolved = None
-        ten = ctx.tenant_resolver()
+        ten = ctx.tenancy.resolver()
 
         if ten is not None and identity is not None:
             resolved = await ten.resolve_from_principal(identity.principal_id)

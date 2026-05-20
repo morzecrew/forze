@@ -296,6 +296,32 @@ These are used internally by `Document.update()` to compute minimal diffs and by
 
 The `exclude` parameter for `pydantic_dump` accepts a `TypedDict` with optional keys: `unset`, `none`, `defaults`, `computed_fields` (all `bool`).
 
+### Record mapping codecs
+
+    :::python
+    import msgspec
+    from forze.base.serialization import (
+        MsgspecRecordMappingCodec,
+        PydanticRecordMappingCodec,
+        RecordMappingCodec,
+    )
+
+    pydantic_codec: RecordMappingCodec[MyPydanticModel, MyPydanticSource]
+    pydantic_codec = PydanticRecordMappingCodec(MyPydanticModel)
+
+    msgspec_codec: RecordMappingCodec[MyMsgspecStruct, msgspec.Struct]
+    msgspec_codec = MsgspecRecordMappingCodec(MyMsgspecStruct)
+
+| Type / factory | Purpose |
+|----------------|---------|
+| `RecordMappingCodec[...]` | Protocol for mapping decode/encode, batched operations, transforms, and stored-field introspection |
+| `PydanticRecordMappingCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
+| `MsgspecRecordMappingCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
+
+Use the codec API when a component should depend on a record-mapping abstraction. The `pydantic_*` and `msgspec_*` helpers remain available as the low-level function APIs and are the single behavior sources used by the codec classes.
+
+The msgspec codec intentionally does **not** support `exclude={"unset": True}` because msgspec structs do not track unset-versus-default state. Strip unset fields at the Pydantic application boundary before constructing or transcoding msgspec models.
+
 ## File I/O
 
 Simple helpers for reading YAML and text files:

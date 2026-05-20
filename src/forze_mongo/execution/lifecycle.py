@@ -29,7 +29,7 @@ class MongoStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        mongo_client = cast(MongoClient, ctx.dep(MongoClientDepKey))
+        mongo_client = cast(MongoClient, ctx.deps.provide(MongoClientDepKey))
         await mongo_client.initialize(
             self.uri, db_name=self.db_name, config=self.config
         )
@@ -44,7 +44,7 @@ class MongoShutdownHook(LifecycleHook):
     """Shutdown hook that closes the Mongo client."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        mongo_client = ctx.dep(MongoClientDepKey)
+        mongo_client = ctx.deps.provide(MongoClientDepKey)
         await mongo_client.close()
 
 

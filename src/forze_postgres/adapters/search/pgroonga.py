@@ -39,7 +39,6 @@ from forze.application.contracts.search import (
     ranked_search_cursor_key_spec,
     search_options_for_simple_adapter,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -53,7 +52,6 @@ from forze_postgres.pagination import (
 )
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ..txmanager import PostgresTxScopeKey
 from ._materialize_hits import materialize_search_page
 from ._pgroonga_sql import (
     pgroonga_match_clause,
@@ -83,7 +81,6 @@ _RANK_COLUMN: Final[str] = "_pgroonga_rank"
 class PostgresPGroongaSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
-    TxScopedPort,
 ):
     """PGroonga :class:`SearchQueryPort` using a projection relation and index heap.
 
@@ -134,9 +131,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     snapshot_coord: SearchResultSnapshotCoordinator | None = None
     """Coordinator for KV ordered-ID snapshots."""
-
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
-    """Transaction scope."""
 
     # ....................... #
 

@@ -1,6 +1,6 @@
 from typing import Any
 
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import WorkflowCommandPort, WorkflowQueryPort
 from .specs import WorkflowSpec
 
@@ -18,10 +18,10 @@ WfQueryPort = WorkflowQueryPort[Any, Any]
 # ....................... #
 
 
-WorkflowCommandDepPort = BaseDepPort[WfSpec, WfCommandPort]
+WorkflowCommandDepPort = ConfigurableDepPort[WfSpec, WfCommandPort]
 """Workflow command dependency port."""
 
-WorkflowQueryDepPort = BaseDepPort[WfSpec, WfQueryPort]
+WorkflowQueryDepPort = ConfigurableDepPort[WfSpec, WfQueryPort]
 """Workflow query dependency port."""
 
 # ....................... #

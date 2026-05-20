@@ -10,7 +10,10 @@ from forze.application.contracts.document import (
     DocumentQueryDepPort,
     DocumentSpec,
 )
-from forze.application.contracts.tx import AfterCommitPort, TxManagerPort
+from forze.application.contracts.transaction import (
+    AfterCommitPort,
+    TransactionManagerPort,
+)
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
@@ -59,7 +62,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.run_after_commit_or_now
+            after_commit = ctx.tx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -135,7 +138,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.run_after_commit_or_now
+            after_commit = ctx.tx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -157,9 +160,9 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
 
 
 #! convert to a simple class maybe
-def mongo_txmanager(context: ExecutionContext) -> TxManagerPort:
+def mongo_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     """Build a Mongo-backed transaction manager for the execution context."""
 
-    client = context.dep(MongoClientDepKey)
+    client = context.deps.provide(MongoClientDepKey)
 
     return MongoTxManagerAdapter(client=client)

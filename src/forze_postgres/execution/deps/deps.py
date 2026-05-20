@@ -26,7 +26,10 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.application.contracts.tx import AfterCommitPort, TxManagerPort
+from forze.application.contracts.transaction import (
+    AfterCommitPort,
+    TransactionManagerPort,
+)
 from forze.application.coordinators import (
     DocumentCacheCoordinator,
     SearchResultSnapshotCoordinator,
@@ -89,7 +92,12 @@ def _resolve_result_snapshot(
     ):
         return None
 
-    return context.dep(SearchResultSnapshotDepKey, route=spec.name)(context, spec)
+    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(
+        context, spec
+    )
+
+
+# ....................... #
 
 
 def _snapshot_coord(
@@ -135,7 +143,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.run_after_commit_or_now
+            after_commit = ctx.tx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -214,7 +222,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
         after_commit: AfterCommitPort | None = None
 
         if cache is not None:
-            after_commit = ctx.run_after_commit_or_now
+            after_commit = ctx.tx.run_or_defer
 
         cc = DocumentCacheCoordinator[R](
             read_model_type=read.model_type,
@@ -314,7 +322,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                     raise CoreError(
                         "vector hub leg requires vector_column, embedding_dimensions, and embeddings_name.",
                     )
-                vector_embedders[i] = context.embeddings_provider(
+                vector_embedders[i] = context.embeddings.provider(
                     EmbeddingsSpec(
                         name=str(e_name),
                         dimensions=int(v_dim),
@@ -366,10 +374,10 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
             combine=self.config.get("combine_strategy", "or"),
             score_merge=self.config.get("merge_strategy", "max"),
             source_qname=hub,
-            client=context.dep(PostgresClientDepKey),
+            client=context.deps.provide(PostgresClientDepKey),
             model_type=spec.model_type,
-            introspector=context.dep(PostgresIntrospectorDepKey),
-            tenant_provider=context.get_tenancy_identity,
+            introspector=context.deps.provide(PostgresIntrospectorDepKey),
+            tenant_provider=context.inv.get_tenant,
             tenant_aware=tenant_aware,
             filter_table_alias="h",
             nested_field_hints=self.config.get("nested_field_hints"),
@@ -408,10 +416,10 @@ def _postgres_search_port_for_config(
                 join_pairs=c.get("join_pairs"),
                 index_field_map=c.get("field_map"),
                 pgroonga_score_version=c.get("pgroonga_score_version", "v2"),
-                client=context.dep(PostgresClientDepKey),
+                client=context.deps.provide(PostgresClientDepKey),
                 model_type=member_spec.model_type,
-                introspector=context.dep(PostgresIntrospectorDepKey),
-                tenant_provider=context.get_tenancy_identity,
+                introspector=context.deps.provide(PostgresIntrospectorDepKey),
+                tenant_provider=context.inv.get_tenant,
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
@@ -434,10 +442,10 @@ def _postgres_search_port_for_config(
                 fts_groups=fts_groups,
                 join_pairs=c.get("join_pairs"),
                 index_field_map=c.get("field_map"),
-                client=context.dep(PostgresClientDepKey),
+                client=context.deps.provide(PostgresClientDepKey),
                 model_type=member_spec.model_type,
-                introspector=context.dep(PostgresIntrospectorDepKey),
-                tenant_provider=context.get_tenancy_identity,
+                introspector=context.deps.provide(PostgresIntrospectorDepKey),
+                tenant_provider=context.inv.get_tenant,
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
@@ -461,16 +469,16 @@ def _postgres_search_port_for_config(
                 index_qname=index_qname,
                 source_qname=read_qname,
                 index_heap_qname=heap_qname,
-                embedder=context.embeddings_provider(es),
+                embedder=context.embeddings.provider(es),
                 embeddings_spec=es,
                 vector_column=str(vcol),
                 vector_distance=c.get("vector_distance", "l2"),
                 join_pairs=c.get("join_pairs"),
                 index_field_map=c.get("field_map"),
-                client=context.dep(PostgresClientDepKey),
+                client=context.deps.provide(PostgresClientDepKey),
                 model_type=member_spec.model_type,
-                introspector=context.dep(PostgresIntrospectorDepKey),
-                tenant_provider=context.get_tenancy_identity,
+                introspector=context.deps.provide(PostgresIntrospectorDepKey),
+                tenant_provider=context.inv.get_tenant,
                 tenant_aware=tenant_aware,
                 filter_table_alias="v",
                 nested_field_hints=c.get("nested_field_hints"),
@@ -560,7 +568,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             legs=tuple(legs),
             rrf_k=int(self.config.get("rrf_k", 60)),
             rrf_per_leg_limit=int(self.config.get("rrf_per_leg_limit", 5000)),
-            postgres_client=context.dep(PostgresClientDepKey),
+            postgres_client=context.deps.provide(PostgresClientDepKey),
             snapshot_coord=_snapshot_coord(context, spec.snapshot),
         )
 
@@ -569,13 +577,13 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
 
 
 #! convert to a simple class maybe
-def postgres_txmanager(context: ExecutionContext) -> TxManagerPort:
+def postgres_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     """Build a Postgres-backed transaction manager for the execution context.
 
     :param context: Execution context for resolving the Postgres client.
     :returns: Tx manager port backed by :class:`PostgresTxManagerAdapter`.
     """
 
-    client = context.dep(PostgresClientDepKey)
+    client = context.deps.provide(PostgresClientDepKey)
 
     return PostgresTxManagerAdapter(client=client)

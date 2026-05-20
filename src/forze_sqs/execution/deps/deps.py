@@ -33,7 +33,7 @@ class ConfigurableSQSQueueRead(QueueQueryDepPort):
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
     ) -> SQSQueueAdapter[Any]:
-        client = ctx.dep(SQSClientDepKey)
+        client = ctx.deps.provide(SQSClientDepKey)
         codec = SQSQueueCodec(model=spec.model)
 
         return SQSQueueAdapter(
@@ -41,7 +41,7 @@ class ConfigurableSQSQueueRead(QueueQueryDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )
 
 
@@ -63,7 +63,7 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
     ) -> SQSQueueAdapter[Any]:
-        client = ctx.dep(SQSClientDepKey)
+        client = ctx.deps.provide(SQSClientDepKey)
         codec = SQSQueueCodec(model=spec.model)
 
         return SQSQueueAdapter(
@@ -71,5 +71,5 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )

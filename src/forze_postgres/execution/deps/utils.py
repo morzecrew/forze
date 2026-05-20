@@ -38,15 +38,15 @@ def read_gw(
     :returns: Postgres read gateway.
     """
 
-    client = ctx.dep(PostgresClientDepKey)
-    introspector = ctx.dep(PostgresIntrospectorDepKey)
+    client = ctx.deps.provide(PostgresClientDepKey)
+    introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     return PostgresReadGateway(
         source_qname=PostgresQualifiedName(*read_relation),
         client=client,
         model_type=read_type,
         introspector=introspector,
-        tenant_provider=ctx.get_tenancy_identity,
+        tenant_provider=ctx.inv.get_tenant,
         tenant_aware=tenant_aware,
         nested_field_hints=nested_field_hints,
     )
@@ -75,8 +75,8 @@ def _doc_history_gw(
     :returns: Postgres history gateway.
     """
 
-    client = ctx.dep(PostgresClientDepKey)
-    introspector = ctx.dep(PostgresIntrospectorDepKey)
+    client = ctx.deps.provide(PostgresClientDepKey)
+    introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     return PostgresHistoryGateway(
         source_qname=PostgresQualifiedName(*history_relation),
@@ -85,7 +85,7 @@ def _doc_history_gw(
         client=client,
         model_type=domain_type,
         introspector=introspector,
-        tenant_provider=ctx.get_tenancy_identity,
+        tenant_provider=ctx.inv.get_tenant,
         tenant_aware=tenant_aware,
     )
 
@@ -116,8 +116,8 @@ def doc_write_gw(
     :returns: Postgres write gateway.
     """
 
-    client = ctx.dep(PostgresClientDepKey)
-    introspector = ctx.dep(PostgresIntrospectorDepKey)
+    client = ctx.deps.provide(PostgresClientDepKey)
+    introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     read = read_gw(
         ctx,
@@ -148,6 +148,6 @@ def doc_write_gw(
         update_cmd_type=write_types.get("update_cmd"),
         history_gw=hist,
         strategy=bookkeeping_strategy,
-        tenant_provider=ctx.get_tenancy_identity,
+        tenant_provider=ctx.inv.get_tenant,
         tenant_aware=tenant_aware,
     )

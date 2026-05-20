@@ -4,12 +4,14 @@ import hashlib
 from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any, Final, Literal, TypedDict
+from typing import Any, Final, Literal
 
 import orjson
 from pydantic import BaseModel, TypeAdapter
 
 from .._logger import logger
+from ..primitives import JsonDict
+from .model_codec import RecordMappingDumpExcludeOptions
 
 # ----------------------- #
 
@@ -24,7 +26,7 @@ def _list_adapter[M: BaseModel](cls: type[M]) -> TypeAdapter[list[M]]:
 
 def pydantic_validate[M: BaseModel](
     cls: type[M],
-    data: dict[str, Any],
+    data: JsonDict,
     *,
     forbid_extra: bool = False,
 ) -> M:
@@ -59,7 +61,7 @@ def _sequence_as_list[T](seq: Sequence[T]) -> list[T]:
 
 def pydantic_validate_many[M: BaseModel](
     cls: type[M],
-    data: Sequence[dict[str, Any]],
+    data: Sequence[JsonDict],
     *,
     forbid_extra: bool = False,
 ) -> list[M]:
@@ -83,7 +85,7 @@ def pydantic_validate_many[M: BaseModel](
 
 def pydantic_validate_many_batched[M: BaseModel](
     cls: type[M],
-    data: Sequence[dict[str, Any]],
+    data: Sequence[JsonDict],
     *,
     batch_size: int = 2000,
     forbid_extra: bool = False,
@@ -121,31 +123,12 @@ def pydantic_validate_many_batched[M: BaseModel](
 # ....................... #
 
 
-class _PydanticDumpExcludeOptions(TypedDict, total=False):
-    """Options controlling which fields to exclude from :func:`pydantic_dump`."""
-
-    unset: bool
-    """Exclude fields that were never explicitly set."""
-
-    none: bool
-    """Exclude fields whose value is ``None``."""
-
-    defaults: bool
-    """Exclude fields still equal to their default value."""
-
-    computed_fields: bool
-    """Exclude computed (derived) fields."""
-
-
-# ....................... #
-
-
 def pydantic_dump(
     obj: BaseModel,
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: _PydanticDumpExcludeOptions = {},
-) -> dict[str, Any]:
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> JsonDict:
     """Dump a Pydantic model into a JSON-compatible ``dict``.
 
     :param obj: Model instance to serialize.
@@ -177,8 +160,8 @@ def pydantic_dump_many(
     objs: Sequence[BaseModel],
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: _PydanticDumpExcludeOptions = {},
-) -> list[dict[str, Any]]:
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> list[JsonDict]:
     """Dump a list of Pydantic models into a list of JSON-compatible ``dict``.
 
     :param objs: List of models to serialize.
@@ -220,15 +203,15 @@ def pydantic_dump_many_batched(
     *,
     batch_size: int = 2000,
     mode: Literal["json", "python"] = "python",
-    exclude: _PydanticDumpExcludeOptions = {},
-) -> Iterator[list[dict[str, Any]]]:
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> Iterator[list[JsonDict]]:
     """Dump models in fixed-size chunks to cap peak memory.
 
     :param objs: Homogeneous sequence of model instances (same concrete type).
     :param batch_size: Maximum models per yielded chunk (must be >= 1).
     :param mode: Serialization mode forwarded to :class:`~pydantic.TypeAdapter`.
     :param exclude: Fine-grained field omission options.
-    :yields: Consecutive ``list[dict[str, Any]]`` chunks in original order.
+    :yields: Consecutive ``list[JsonDict]`` chunks in original order.
     """
 
     if batch_size < 1:
@@ -317,7 +300,7 @@ def _normalize_for_hashing(value: Any) -> Any:
 def pydantic_model_hash(
     model: BaseModel,
     *,
-    exclude: _PydanticDumpExcludeOptions = {},
+    exclude: RecordMappingDumpExcludeOptions = {},
 ) -> str:
     """Return a stable SHA-256 hash for the serialized model.
 
@@ -342,20 +325,22 @@ def pydantic_model_hash(
 
 # ....................... #
 
-_CACHE_EXCLUDE_OPTS: Final[_PydanticDumpExcludeOptions] = _PydanticDumpExcludeOptions(
-    none=True,
-    defaults=True,
-    computed_fields=True,
+_CACHE_EXCLUDE_OPTS: Final[RecordMappingDumpExcludeOptions] = (
+    RecordMappingDumpExcludeOptions(
+        none=True,
+        defaults=True,
+        computed_fields=True,
+    )
 )
 
 
-def pydantic_cache_dump(obj: BaseModel) -> dict[str, Any]:
+def pydantic_cache_dump(obj: BaseModel) -> JsonDict:
     """Convenience helper for dumping a Pydantic model for cache storage."""
 
     return pydantic_dump(obj, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
 
 
-def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[dict[str, Any]]:
+def pydantic_cache_dump_many(objs: Sequence[BaseModel]) -> list[JsonDict]:
     """Convenience helper for dumping a list of Pydantic models for cache storage."""
 
     return pydantic_dump_many(objs, exclude=_CACHE_EXCLUDE_OPTS, mode="json")
@@ -369,7 +354,7 @@ def pydantic_transform[Out: BaseModel](
     model: BaseModel,
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: _PydanticDumpExcludeOptions = {"unset": True},
+    exclude: RecordMappingDumpExcludeOptions = {"unset": True},
 ) -> Out:
     """Convenience helper for model-to-model transformations."""
 
@@ -386,7 +371,7 @@ def pydantic_transform_many[Out: BaseModel](
     models: Sequence[BaseModel],
     *,
     mode: Literal["json", "python"] = "python",
-    exclude: _PydanticDumpExcludeOptions = {"unset": True},
+    exclude: RecordMappingDumpExcludeOptions = {"unset": True},
 ) -> list[Out]:
     """Batch model-to-model transformation.
 

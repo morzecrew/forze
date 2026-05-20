@@ -1,4 +1,4 @@
-from .deps import CacheDepKey, CacheDepPort
+from .deps import CacheDepKey, CacheDepPort, CacheDeps
 from .ports import CachePort
 from .specs import CacheSpec
 
@@ -9,4 +9,5 @@ __all__ = [
     "CacheDepKey",
     "CachePort",
     "CacheSpec",
+    "CacheDeps",
 ]

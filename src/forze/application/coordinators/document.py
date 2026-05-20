@@ -40,7 +40,6 @@ from forze.application.contracts.query import (
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_with_id,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError, InvalidOperationError
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD, REV_FIELD
@@ -494,7 +493,6 @@ class DocumentWriteGatewayPort[D_co: Document, C_co: CreateDocumentCmd, U_co: Ba
 class DocumentCoordinator(
     DocumentQueryPort[R],
     DocumentCommandPort[R, D, C, U],
-    TxScopedPort,
 ):
     """Orchestrate :class:`~forze.application.contracts.document.DocumentQueryPort`
     / :class:`~forze.application.contracts.document.DocumentCommandPort` over gateways.
@@ -514,9 +512,6 @@ class DocumentCoordinator(
 
     batch_size: int = 200
     """Chunk size for bulk writes and internal chunked offset reads when pagination omits ``limit``."""
-
-    tx_scope: TxScopeKey
-    """Transaction scope marker for callers."""
 
     enforce_primary_key_cursor_sort: bool = False
     """When ``True``, reject cursor queries unless sorted solely by ``id``."""
@@ -831,9 +826,7 @@ class DocumentCoordinator(
         if limit is None:
             chunk = self.eff_batch_size
             off = 0 if offset is None else offset
-            sorts_for_scan: QuerySortExpression = (
-                sorts if sorts else {ID_FIELD: "asc"}
-            )
+            sorts_for_scan: QuerySortExpression = sorts if sorts else {ID_FIELD: "asc"}
             res = []
             while True:
                 if aggregates is not None:

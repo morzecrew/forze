@@ -29,10 +29,12 @@ class ConfigurableTenantResolver(TenantResolverDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext) -> TenantResolverPort:
-        tenant_qry = ctx.doc_query(tenant_spec) if self.verify_tenant_active else None
+        tenant_qry = (
+            ctx.document.query(tenant_spec) if self.verify_tenant_active else None
+        )
 
         return TenantResolverAdapter(
-            binding_qry=ctx.doc_query(principal_tenant_binding_spec),
+            binding_qry=ctx.document.query(principal_tenant_binding_spec),
             tenant_qry=tenant_qry,
         )
 
@@ -49,8 +51,8 @@ class ConfigurableTenantManagement(TenantManagementDepPort):
 
     def __call__(self, ctx: ExecutionContext) -> TenantManagementPort:
         return TenantManagementAdapter(
-            tenant_qry=ctx.doc_query(tenant_spec),
-            tenant_cmd=ctx.doc_command(tenant_spec),
-            binding_qry=ctx.doc_query(principal_tenant_binding_spec),
-            binding_cmd=ctx.doc_command(principal_tenant_binding_spec),
+            tenant_qry=ctx.document.query(tenant_spec),
+            tenant_cmd=ctx.document.command(tenant_spec),
+            binding_qry=ctx.document.query(principal_tenant_binding_spec),
+            binding_cmd=ctx.document.command(principal_tenant_binding_spec),
         )

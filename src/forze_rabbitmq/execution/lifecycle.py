@@ -23,7 +23,7 @@ class RabbitMQStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        rabbitmq_client = cast(RabbitMQClient, ctx.dep(RabbitMQClientDepKey))
+        rabbitmq_client = cast(RabbitMQClient, ctx.deps.provide(RabbitMQClientDepKey))
         await rabbitmq_client.initialize(self.dsn, config=self.config)
 
 
@@ -36,7 +36,7 @@ class RabbitMQShutdownHook(LifecycleHook):
     """Shutdown hook that closes the RabbitMQ connection."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        rabbitmq_client = ctx.dep(RabbitMQClientDepKey)
+        rabbitmq_client = ctx.deps.provide(RabbitMQClientDepKey)
         await rabbitmq_client.close()
 
 

@@ -26,7 +26,7 @@ class TemporalStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        temporal_client = cast(TemporalClient, ctx.dep(TemporalClientDepKey))
+        temporal_client = cast(TemporalClient, ctx.deps.provide(TemporalClientDepKey))
         await temporal_client.initialize(self.host, config=self.config)
 
 
@@ -39,7 +39,7 @@ class TemporalShutdownHook(LifecycleHook):
     """Shutdown hook that releases the Temporal client reference."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        temporal_client = ctx.dep(TemporalClientDepKey)
+        temporal_client = ctx.deps.provide(TemporalClientDepKey)
         await temporal_client.close()
 
 

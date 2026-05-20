@@ -1,45 +1,19 @@
-"""Lifecycle hooks and plans for startup and shutdown.
+"""Lifecycle hooks and plans for startup and shutdown."""
 
-Provides :class:`LifecycleHook` protocol, :class:`LifecycleStep` (named
-startup/shutdown pair), and :class:`LifecyclePlan` (ordered sequence of steps).
-Startup runs in order; shutdown runs in reverse. On startup failure, already-
-executed steps are shut down in reverse before re-raising.
-"""
-
-from typing import Protocol, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 import attrs
 
 from forze.application._logger import logger
 from forze.base.errors import CoreError
 
-from .context import ExecutionContext
+from .core.contracts import LifecycleHook
+from .core.defaults import noop_lifecycle_hook
+
+if TYPE_CHECKING:
+    from .context import ExecutionContext
 
 # ----------------------- #
-
-
-class LifecycleHook(Protocol):
-    """Protocol for a startup or shutdown hook.
-
-    Receives the execution context. May perform setup (startup) or teardown
-    (shutdown). Exceptions propagate unless swallowed by the plan.
-    """
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        """Execute the hook during startup or shutdown."""
-        ...
-
-
-# ....................... #
-
-
-async def noop_hook(ctx: ExecutionContext) -> None:
-    """No-op startup/shutdown hook."""
-
-    return
-
-
-# ....................... #
 
 
 @final
@@ -54,14 +28,17 @@ class LifecycleStep:
     name: str
     """Unique name for the step (used for collision detection)."""
 
-    startup: LifecycleHook = noop_hook
+    startup: LifecycleHook = noop_lifecycle_hook
     """Hook to run on startup."""
 
-    shutdown: LifecycleHook = noop_hook
+    shutdown: LifecycleHook = noop_lifecycle_hook
     """Hook to run on shutdown."""
 
 
 # ....................... #
+#! Maybe integrate graph approach, but that's not really necessary
+#! parallel execution might be helpful
+#! at least pipelining would be helpful
 
 
 @final
@@ -132,7 +109,7 @@ class LifecyclePlan:
 
     # ....................... #
 
-    async def startup(self, ctx: ExecutionContext) -> None:
+    async def startup(self, ctx: "ExecutionContext") -> None:
         """Run startup hooks in order.
 
         On failure, runs shutdown for already-executed steps in reverse, then
@@ -168,7 +145,7 @@ class LifecyclePlan:
 
     # ....................... #
 
-    async def shutdown(self, ctx: ExecutionContext) -> None:
+    async def shutdown(self, ctx: "ExecutionContext") -> None:
         """Run shutdown hooks in reverse order.
 
         Exceptions are swallowed so all steps are attempted.

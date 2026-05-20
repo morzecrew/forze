@@ -1,4 +1,5 @@
 from .deps import (
+    TenancyDeps,
     TenantManagementDepKey,
     TenantManagementDepPort,
     TenantResolverDepKey,
@@ -13,6 +14,7 @@ from .value_objects import TenantIdentity
 __all__ = [
     "TenantIdentity",
     "TenantManagementPort",
+    "TenancyDeps",
     "TenantManagementDepKey",
     "TenantManagementDepPort",
     "TenantResolverPort",

@@ -26,7 +26,7 @@ class PostgresStartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        postgres_client = cast(PostgresClient, ctx.dep(PostgresClientDepKey))
+        postgres_client = cast(PostgresClient, ctx.deps.provide(PostgresClientDepKey))
         await postgres_client.initialize(self.dsn, config=self.config)
 
 
@@ -42,7 +42,7 @@ class PostgresShutdownHook(LifecycleHook):
     """
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        postgres_client = ctx.dep(PostgresClientDepKey)
+        postgres_client = ctx.deps.provide(PostgresClientDepKey)
         await postgres_client.close()
 
 

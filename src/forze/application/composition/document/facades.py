@@ -3,17 +3,16 @@ from typing import Any, Generic, TypeVar
 import attrs
 from pydantic import BaseModel
 
-from forze.application.execution import (
-    FacadeOperationDescriptor,
-    UsecasesFacade,
+from forze.application.execution.facade import (
+    OperationFacade,
+    facade_op,
     namespaced_facade,
 )
-from forze.application.usecases.document import (
+from forze.application.handlers.document import (
     AggregatedListDocuments,
     CreateDocument,
     DeleteDocument,
     GetDocument,
-    GetDocumentByNumberId,
     KillDocument,
     RawCursorListDocuments,
     RawListDocuments,
@@ -33,6 +32,7 @@ C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
 # ....................... #
+#! Review dtos ...
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -54,77 +54,71 @@ class DocumentDTOs(Generic[R, C, U]):
 
 @namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
-    """Typed facade for document usecases."""
+class DocumentFacade(OperationFacade, Generic[R, C, U]):
+    """Typed facade for document operations."""
 
-    get = FacadeOperationDescriptor(
+    get = facade_op(
         DocumentKernelOp.GET,
         uc=GetDocument[R],
     )
-    """Get document usecase."""
+    """Get document operation."""
 
-    get_by_number_id = FacadeOperationDescriptor(
-        DocumentKernelOp.GET_BY_NUMBER_ID,
-        uc=GetDocumentByNumberId[R],
-    )
-    """Get document by number ID usecase."""
-
-    list = FacadeOperationDescriptor(
+    list = facade_op(
         DocumentKernelOp.LIST,
         uc=TypedListDocuments[R],
     )
-    """List documents usecase."""
+    """List documents operation."""
 
-    raw_list = FacadeOperationDescriptor(
+    raw_list = facade_op(
         DocumentKernelOp.RAW_LIST,
         uc=RawListDocuments,
     )
-    """Raw list documents usecase."""
+    """Raw list documents operation."""
 
-    list_cursor = FacadeOperationDescriptor(
+    list_cursor = facade_op(
         DocumentKernelOp.LIST_CURSOR,
         uc=TypedCursorListDocuments[R],
     )
-    """List documents with cursor (keyset) pagination."""
+    """List documents with cursor (keyset) pagination operation."""
 
-    raw_list_cursor = FacadeOperationDescriptor(
+    raw_list_cursor = facade_op(
         DocumentKernelOp.RAW_LIST_CURSOR,
         uc=RawCursorListDocuments,
     )
-    """Raw list with cursor (keyset) pagination."""
+    """Raw list with cursor (keyset) pagination operation."""
 
-    agg_list = FacadeOperationDescriptor(
+    agg_list = facade_op(
         DocumentKernelOp.AGG_LIST,
         uc=AggregatedListDocuments,
     )
-    """List documents with aggregates."""
+    """List documents with aggregates operation."""
 
-    create = FacadeOperationDescriptor(
+    create = facade_op(
         DocumentKernelOp.CREATE,
         uc=CreateDocument[C, Any, R],
     )
-    """Create document usecase."""
+    """Create document operation."""
 
-    update = FacadeOperationDescriptor(
+    update = facade_op(
         DocumentKernelOp.UPDATE,
         uc=UpdateDocument[U, Any, R],
     )
-    """Update document usecase."""
+    """Update document operation."""
 
-    kill = FacadeOperationDescriptor(
+    kill = facade_op(
         DocumentKernelOp.KILL,
         uc=KillDocument,
     )
-    """Kill document usecase."""
+    """Kill document operation."""
 
-    delete = FacadeOperationDescriptor(
+    delete = facade_op(
         DocumentKernelOp.DELETE,
         uc=DeleteDocument[R],
     )
-    """Delete document usecase."""
+    """Delete document operation."""
 
-    restore = FacadeOperationDescriptor(
+    restore = facade_op(
         DocumentKernelOp.RESTORE,
         uc=RestoreDocument[R],
     )
-    """Restore document usecase."""
+    """Restore document operation."""

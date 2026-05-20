@@ -38,7 +38,7 @@ class S3StartupHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        s3_client = cast(S3Client, ctx.dep(S3ClientDepKey))
+        s3_client = cast(S3Client, ctx.deps.provide(S3ClientDepKey))
 
         await s3_client.initialize(
             self.endpoint,
@@ -60,7 +60,7 @@ class S3ShutdownHook(LifecycleHook):
     """
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        s3_client = ctx.dep(S3ClientDepKey)
+        s3_client = ctx.deps.provide(S3ClientDepKey)
         await s3_client.close()
 
 

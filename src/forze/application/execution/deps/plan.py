@@ -1,4 +1,4 @@
-from typing import Any, Self, Sequence, final
+from typing import Any, Self, final
 
 import attrs
 
@@ -20,7 +20,7 @@ class DepsPlan:
     registers a conflicting dependency key.
     """
 
-    modules: Sequence[DepsModule[Any]] = attrs.field(factory=tuple)
+    modules: tuple[DepsModule[Any], ...] = attrs.field(factory=tuple)
     """Modules to invoke and merge when building."""
 
     # ....................... #

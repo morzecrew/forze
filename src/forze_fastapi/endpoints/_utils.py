@@ -4,33 +4,27 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import Depends
 
-from forze.application.execution import (
-    ExecutionContext,
-    OperationNamespace,
-    UsecaseRegistry,
-    UsecasesFacade,
-)
+from forze.application.execution import ExecutionContext
+from forze.application.execution.facade import OperationFacade
+from forze.application.execution.registry import FrozenOperationRegistry
 
 # ----------------------- #
+#! TODO: most likely need to simplify this shit
 
 
-def facade_dependency[F: UsecasesFacade](
+def facade_dependency[F: OperationFacade](
     facade: type[F],
-    registry: UsecaseRegistry,
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
-    **facade_init: Any,
 ) -> Callable[[ExecutionContext], F]:
-    """Build a FastAPI dependency that resolves a :class:`UsecasesFacade`."""
+    """Build a FastAPI dependency that resolves a :class:`OperationFacade`."""
 
     def dependency(ctx: ExecutionContext = Depends(ctx_dep)) -> F:
-        init = dict(facade_init)
-        namespace = registry.namespace if isinstance(registry.namespace, OperationNamespace) else None
-        init.setdefault("namespace", namespace)
-        return facade(ctx=ctx, registry=registry, **init)
+        return facade(ctx=ctx, registry=registry)
 
     return dependency
 

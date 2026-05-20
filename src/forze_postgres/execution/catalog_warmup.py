@@ -72,7 +72,7 @@ async def warm_postgres_catalog(
     run a tenant-scoped warmup job after authentication.
     """
 
-    introspector = ctx.dep(PostgresIntrospectorDepKey)
+    introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     try:
         if searches:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Base serialization (`forze.base.serialization`):** Added the additive record-mapping codec API (`RecordMappingCodec`, `PydanticRecordMappingCodec`, `MsgspecRecordMappingCodec`) plus low-level `msgspec_*` helpers. The msgspec codec intentionally rejects `exclude={"unset": True}`; unset filtering must happen at the Pydantic application boundary before models cross into the msgspec layer.
+
 ### Removed
 
 - **Execution (`forze.application.execution`):** Legacy `bucket` module (`BucketKey`, phase/slot helpers) — it was unused after the region-and-stage execution model.

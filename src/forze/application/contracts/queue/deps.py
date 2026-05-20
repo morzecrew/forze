@@ -1,15 +1,15 @@
 from typing import Any
 
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import QueueCommandPort, QueueQueryPort
 from .specs import QueueSpec
 
 # ----------------------- #
 
-QueueQueryDepPort = BaseDepPort[QueueSpec[Any], QueueQueryPort[Any]]
+QueueQueryDepPort = ConfigurableDepPort[QueueSpec[Any], QueueQueryPort[Any]]
 """Queue query dependency port."""
 
-QueueCommandDepPort = BaseDepPort[QueueSpec[Any], QueueCommandPort[Any]]
+QueueCommandDepPort = ConfigurableDepPort[QueueSpec[Any], QueueCommandPort[Any]]
 """Queue command dependency port."""
 
 QueueQueryDepKey = DepKey[QueueQueryDepPort]("queue_query")

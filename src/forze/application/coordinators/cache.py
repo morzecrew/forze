@@ -7,7 +7,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.cache import CachePort
-from forze.application.contracts.tx import AfterCommitPort
+from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.serialization import (
     pydantic_cache_dump,
     pydantic_cache_dump_many,
