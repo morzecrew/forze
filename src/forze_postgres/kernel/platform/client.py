@@ -6,6 +6,8 @@ pooling. Query methods use :meth:`PostgresClient.execute`-style API with
 optional dict/tuple row factories.
 """
 
+from pydantic import SecretStr
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -139,7 +141,7 @@ class PostgresClient(PostgresClientPort):
 
     async def initialize(
         self,
-        dsn: str,
+        dsn: str | SecretStr,
         *,
         config: PostgresConfig = PostgresConfig(),
         acquire_timeout: timedelta = timedelta(seconds=5),
@@ -164,6 +166,9 @@ class PostgresClient(PostgresClientPort):
             )
 
         configure = _pool_configure_for_config(config)
+
+        if isinstance(dsn, SecretStr):
+            dsn = dsn.get_secret_value()
 
         self.__pool = AsyncConnectionPool(
             conninfo=dsn,

@@ -5,6 +5,8 @@ import attrs
 from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 
+from forze.base.serialization import pydantic_secret_converter
+
 # ----------------------- #
 
 
@@ -65,6 +67,9 @@ class S3ConnectionOpts:
     """S3 connection options."""
 
     endpoint: str
-    access_key_id: str
-    secret_access_key: str | SecretStr
-    config: AioConfig | None = attrs.field(default=None)
+    access_key_id: str = attrs.field(repr=False)
+    secret_access_key: SecretStr = attrs.field(
+        repr=False,
+        converter=pydantic_secret_converter,
+    )
+    config: AioConfig | None = attrs.field(default=None, repr=False)

@@ -21,7 +21,7 @@ class TemporalStartupHook(LifecycleHook):
     host: str
     """Connection host for the Temporal server."""
 
-    config: TemporalConfig = TemporalConfig()
+    config: TemporalConfig = attrs.field(factory=TemporalConfig, repr=False)
     """Configuration for the Temporal client."""
 
     # ....................... #

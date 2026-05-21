@@ -3,9 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import MongoClient, MongoConfig, RoutedMongoClient
 from .deps import MongoClientDepKey
@@ -18,13 +20,13 @@ from .deps import MongoClientDepKey
 class MongoStartupHook(LifecycleHook):
     """Startup hook that initializes the Mongo client from the deps container."""
 
-    uri: str
+    uri: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
     """Connection URI for the Mongo database."""
 
     db_name: str
     """Database name passed to :meth:`MongoClient.initialize`."""
 
-    config: MongoConfig = MongoConfig()
+    config: MongoConfig = attrs.field(factory=MongoConfig, repr=False)
     """Pool configuration for the client."""
 
     # ....................... #
@@ -87,7 +89,7 @@ class RoutedMongoShutdownHook(LifecycleHook):
 def mongo_lifecycle_step(
     name: str = "mongo_lifecycle",
     *,
-    uri: str,
+    uri: str | SecretStr,
     db_name: str,
     config: MongoConfig = MongoConfig(),
 ) -> LifecycleStep:

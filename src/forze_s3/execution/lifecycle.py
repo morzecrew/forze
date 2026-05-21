@@ -3,9 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedS3Client, S3Client, S3Config
 from .deps import S3ClientDepKey
@@ -27,13 +29,16 @@ class S3StartupHook(LifecycleHook):
     endpoint: str
     """S3-compatible endpoint URL."""
 
-    access_key_id: str
+    access_key_id: str = attrs.field(repr=False)
     """Access key for authentication."""
 
-    secret_access_key: str
+    secret_access_key: SecretStr = attrs.field(
+        converter=pydantic_secret_converter,
+        repr=False,
+    )
     """Secret key for authentication."""
 
-    config: S3Config | None = attrs.field(default=None)
+    config: S3Config | None = attrs.field(default=None, repr=False)
     """Optional botocore config for retries, timeouts, etc."""
 
     # ....................... #
@@ -105,7 +110,7 @@ def s3_lifecycle_step(
     *,
     endpoint: str,
     access_key_id: str,
-    secret_access_key: str,
+    secret_access_key: str | SecretStr,
     config: S3Config | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for S3 client init and shutdown.

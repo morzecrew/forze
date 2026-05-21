@@ -157,6 +157,7 @@ def _get_path_with_query_string(scope: dict[str, Any]) -> str:
     res = urllib.parse.quote(scope["path"])
 
     query_string: bytes = scope.get("query_string", b"")
+
     if query_string:
         # The query_string in ASGI scope is already bytes that are usually url-encoded.
         # However, we cannot trust it to be safely encoded for logging.

@@ -3,9 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedSQSClient, SQSClient, SQSConfig
 from .deps import SQSClientDepKey
@@ -20,9 +22,11 @@ class SQSStartupHook(LifecycleHook):
 
     endpoint: str
     region_name: str
-    access_key_id: str
-    secret_access_key: str
-    config: SQSConfig | None = attrs.field(default=None)
+    access_key_id: str = attrs.field(repr=False)
+    secret_access_key: SecretStr = attrs.field(
+        converter=pydantic_secret_converter, repr=False
+    )
+    config: SQSConfig | None = attrs.field(default=None, repr=False)
 
     # ....................... #
 
@@ -92,7 +96,7 @@ def sqs_lifecycle_step(
     endpoint: str,
     region_name: str,
     access_key_id: str,
-    secret_access_key: str,
+    secret_access_key: str | SecretStr,
     config: SQSConfig | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for SQS client init and shutdown."""

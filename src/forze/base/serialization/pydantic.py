@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Any, Final, Literal
 
 import orjson
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, SecretStr, TypeAdapter
 
 from .._logger import logger
 from ..primitives import JsonDict
@@ -385,3 +385,13 @@ def pydantic_transform_many[Out: BaseModel](
     dumps = pydantic_dump_many(models, mode=mode, exclude=exclude)
 
     return pydantic_validate_many(cls, dumps)
+
+
+# ....................... #
+
+
+def pydantic_secret_converter(v: str | SecretStr) -> SecretStr:
+    if isinstance(v, SecretStr):
+        return v
+
+    return SecretStr(v)

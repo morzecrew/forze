@@ -3,9 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
 from .deps import PostgresClientDepKey
@@ -18,10 +20,10 @@ from .deps import PostgresClientDepKey
 class PostgresStartupHook(LifecycleHook):
     """Startup hook that initializes the Postgres client from the deps container."""
 
-    dsn: str
+    dsn: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
     """Connection DSN for the Postgres database."""
 
-    config: PostgresConfig = PostgresConfig()
+    config: PostgresConfig = attrs.field(factory=PostgresConfig, repr=False)
     """Pool configuration for the client."""
 
     # ....................... #
@@ -87,7 +89,7 @@ class RoutedPostgresShutdownHook(LifecycleHook):
 def postgres_lifecycle_step(
     name: str = "postgres_lifecycle",
     *,
-    dsn: str,
+    dsn: str | SecretStr,
     config: PostgresConfig = PostgresConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for Postgres client init and shutdown.

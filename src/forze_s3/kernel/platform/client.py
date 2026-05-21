@@ -83,6 +83,7 @@ class S3Client(S3ClientPort):
         # Convert timedelta to float seconds for botocore
         for key in ("connect_timeout", "read_timeout"):
             val = aio_params.get(key)
+
             if isinstance(val, timedelta):
                 aio_params[key] = val.total_seconds()  # type: ignore
 
@@ -158,16 +159,11 @@ class S3Client(S3ClientPort):
         if opts is None:
             raise CoreError("S3 client options are not initialized")
 
-        sec_key = opts.secret_access_key
-
-        if isinstance(sec_key, SecretStr):
-            sec_key = sec_key.get_secret_value()
-
         cm = session.client(  # type: ignore
             "s3",
             endpoint_url=opts.endpoint,
             aws_access_key_id=opts.access_key_id,
-            aws_secret_access_key=sec_key,
+            aws_secret_access_key=opts.secret_access_key.get_secret_value(),
             config=opts.config,  # type: ignore
         )
         cm = cast(AsyncS3Client, cm)

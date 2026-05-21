@@ -5,6 +5,8 @@ client sessions and optional transactions. Query methods attach the current
 session automatically when inside a transaction.
 """
 
+from pydantic import SecretStr
+
 from forze_mongo._compat import require_mongo
 
 require_mongo()
@@ -65,7 +67,7 @@ class MongoClient(MongoClientPort):
 
     async def initialize(
         self,
-        uri: str,
+        uri: str | SecretStr,
         *,
         db_name: str,
         config: MongoConfig = MongoConfig(),
@@ -79,6 +81,9 @@ class MongoClient(MongoClientPort):
 
         if self.__client is not None:
             return
+
+        if isinstance(uri, SecretStr):
+            uri = uri.get_secret_value()
 
         self.__db_name = db_name
         self.__client = AsyncMongoClient(

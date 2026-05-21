@@ -10,6 +10,8 @@ from typing import Awaitable, Callable, Mapping
 import attrs
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from forze.base.asyncio import maybe_await
+
 # ----------------------- #
 
 
@@ -44,12 +46,7 @@ class CustomHeadersMiddleware:
 
         if self.dynamic_headers is not None:
             for key, fn in self.dynamic_headers.items():
-                value = fn()
-
-                if isinstance(value, Awaitable):
-                    value = await value
-
-                headers[key] = str(value)
+                headers[key] = await maybe_await(fn())
 
         return [
             (

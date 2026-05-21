@@ -3,9 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RedisClient, RedisConfig, RoutedRedisClient
 from .deps import RedisClientDepKey
@@ -22,10 +24,10 @@ class RedisStartupHook(LifecycleHook):
     with the DSN and config. The client must be registered before startup runs.
     """
 
-    dsn: str
+    dsn: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
     """Connection DSN or URL for the Redis instance."""
 
-    config: RedisConfig = RedisConfig()
+    config: RedisConfig = attrs.field(factory=RedisConfig, repr=False)
     """Connection pool configuration for the client."""
 
     # ....................... #
@@ -89,7 +91,7 @@ class RoutedRedisShutdownHook(LifecycleHook):
 def redis_lifecycle_step(
     name: str = "redis_lifecycle",
     *,
-    dsn: str,
+    dsn: str | SecretStr,
     config: RedisConfig = RedisConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for Redis client init and shutdown.

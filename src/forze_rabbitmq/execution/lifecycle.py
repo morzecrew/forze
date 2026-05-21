@@ -3,9 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
 from .deps import RabbitMQClientDepKey
@@ -18,8 +20,8 @@ from .deps import RabbitMQClientDepKey
 class RabbitMQStartupHook(LifecycleHook):
     """Startup hook that initializes the RabbitMQ client from the deps container."""
 
-    dsn: str
-    config: RabbitMQConfig = RabbitMQConfig()
+    dsn: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
+    config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, repr=False)
 
     # ....................... #
 
@@ -79,7 +81,7 @@ class RoutedRabbitMQShutdownHook(LifecycleHook):
 def rabbitmq_lifecycle_step(
     name: str = "rabbitmq_lifecycle",
     *,
-    dsn: str,
+    dsn: str | SecretStr,
     config: RabbitMQConfig = RabbitMQConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for RabbitMQ client init and shutdown."""

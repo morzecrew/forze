@@ -1,4 +1,4 @@
-"""Helpers for diffing, record-mapping codecs, and Pydantic serialization."""
+"""Helpers for diffing, record-mapping codecs, and serialization."""
 
 from .diff import (
     apply_dict_patch,
@@ -27,6 +27,7 @@ from .pydantic import (
     pydantic_dump_many_batched,
     pydantic_field_names,
     pydantic_model_hash,
+    pydantic_secret_converter,
     pydantic_transform,
     pydantic_transform_many,
     pydantic_validate,
@@ -67,4 +68,5 @@ __all__ = [
     "pydantic_dump_many_batched",
     "pydantic_transform",
     "pydantic_transform_many",
+    "pydantic_secret_converter",
 ]

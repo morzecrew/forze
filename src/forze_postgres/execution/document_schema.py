@@ -102,6 +102,9 @@ class PostgresDocumentSchemaValidationHook(LifecycleHook):
             raise
 
 
+# ....................... #
+
+
 def postgres_document_schema_validation_lifecycle_step(
     name: str = "postgres_document_schema_validate",
     *,
