@@ -6,7 +6,8 @@ from typing import Any, cast, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
+from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.errors import CoreError
 
 from ..kernel.introspect import PostgresIntrospector

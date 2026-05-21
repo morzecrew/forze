@@ -160,3 +160,12 @@ class LifecyclePlan:
 
             except Exception:
                 logger.exception("Lifecycle shutdown failed for '%s'", step.name)
+
+
+# ....................... #
+
+__all__ = [
+    "LifecycleStep",
+    "LifecyclePlan",
+    "LifecycleHook",
+]

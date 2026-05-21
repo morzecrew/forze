@@ -6,7 +6,7 @@ from pydantic import BaseModel as BM
 from forze.application.contracts.document import DocumentCommandPort
 from forze.application.contracts.mapping import Mapper
 from forze.application.dto import DocumentUpdateDTO, DocumentUpdateRes
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -26,7 +26,7 @@ class UpdateDocument[In: BaseDTO, Cmd: BaseDTO, Out: BM](
 
     # ....................... #
 
-    async def main(self, args: DocumentUpdateDTO[In]) -> DocumentUpdateRes[Out]:
+    async def __call__(self, args: DocumentUpdateDTO[In]) -> DocumentUpdateRes[Out]:
         """Update a document from the mapped command and return a result with diff.
 
         :param args: Update arguments (pk, dto, rev).

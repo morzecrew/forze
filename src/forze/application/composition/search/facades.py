@@ -18,17 +18,6 @@ from .operations import SearchKernelOp
 # ----------------------- #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchDTOs[M: BaseModel]:
-    """DTO type mapping for a search aggregate."""
-
-    read: type[M]
-    """Read DTO type."""
-
-
-# ....................... #
-
-
 @namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchFacade[M: BaseModel](OperationFacade):

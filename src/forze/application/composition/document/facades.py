@@ -32,24 +32,6 @@ C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
 # ....................... #
-#! Review dtos ...
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentDTOs(Generic[R, C, U]):
-    """DTO type mapping for a document aggregate."""
-
-    read: type[R]
-    """Get command type."""
-
-    create: type[C] | None = attrs.field(default=None)
-    """Create command type; optional when create is not supported."""
-
-    update: type[U] | None = attrs.field(default=None)
-    """Update command type; optional when update is not supported."""
-
-
-# ....................... #
 
 
 @namespaced_facade
@@ -110,6 +92,8 @@ class DocumentFacade(OperationFacade, Generic[R, C, U]):
         uc=KillDocument,
     )
     """Kill document operation."""
+
+    #! should not be here (all below) ...
 
     delete = facade_op(
         DocumentKernelOp.DELETE,

@@ -3,7 +3,7 @@ from typing import Callable
 import attrs
 
 from forze.application.contracts.authn import AuthnIdentity, TokenLifecyclePort
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 from forze.base.errors import AuthenticationError
 
 # ----------------------- #
@@ -28,7 +28,7 @@ class AuthnLogout(Handler[None, None]):
 
     # ....................... #
 
-    async def main(self, args: None) -> None:
+    async def __call__(self, args: None) -> None:
         _ = args
 
         identity = self.resolver()

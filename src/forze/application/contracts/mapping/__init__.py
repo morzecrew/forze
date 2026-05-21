@@ -1,5 +1,5 @@
-from .ports import Mapper, MapperFactory
+from .ports import Mapper
 
 # ----------------------- #
 
-__all__ = ["Mapper", "MapperFactory"]
+__all__ = ["Mapper"]

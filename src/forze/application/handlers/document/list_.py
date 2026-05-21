@@ -16,7 +16,7 @@ from forze.application.dto import (
     RawListRequestDTO,
     RawPaginated,
 )
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -41,7 +41,7 @@ class TypedListDocuments[Out: BM](Handler[LRD, Paginated[Out]]):
 
     # ....................... #
 
-    async def main(self, args: LRD) -> Paginated[Out]:
+    async def __call__(self, args: LRD) -> Paginated[Out]:
         """Fetch multiple documents by filters and sorts.
 
         :param args: List arguments (body, page, size).
@@ -84,7 +84,7 @@ class RawListDocuments(Handler[RRD, RawPaginated]):
 
     # ....................... #
 
-    async def main(self, args: RRD) -> RawPaginated:
+    async def __call__(self, args: RRD) -> RawPaginated:
         """Fetch multiple documents by filters and sorts with raw results.
 
         :param args: List arguments (body, page, size).
@@ -128,7 +128,7 @@ class TypedCursorListDocuments[Out: BM](Handler[CLD, CursorPaginated[Out]]):
 
     # ....................... #
 
-    async def main(self, args: CLD) -> CursorPaginated[Out]:
+    async def __call__(self, args: CLD) -> CursorPaginated[Out]:
         body = args
 
         if self.mapper:
@@ -158,7 +158,7 @@ class RawCursorListDocuments(Handler[RCD, RawCursorPaginated]):
 
     # ....................... #
 
-    async def main(self, args: RCD) -> RawCursorPaginated:
+    async def __call__(self, args: RCD) -> RawCursorPaginated:
         body = args
 
         if self.mapper:
@@ -189,7 +189,7 @@ class AggregatedListDocuments(Handler[ALD, RawPaginated]):
 
     # ....................... #
 
-    async def main(self, args: ALD) -> RawPaginated:
+    async def __call__(self, args: ALD) -> RawPaginated:
         page = args.page
         size = args.size
         limit = size

@@ -4,7 +4,8 @@ from typing import cast, final
 
 import attrs
 
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
+from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 
 from ..kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
 from .deps import PostgresClientDepKey

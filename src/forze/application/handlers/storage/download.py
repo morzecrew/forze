@@ -1,7 +1,7 @@
 import attrs
 
 from forze.application.contracts.storage import DownloadedObject, StoragePort
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -15,7 +15,7 @@ class DownloadObject(Handler[str, DownloadedObject]):
 
     # ....................... #
 
-    async def main(self, args: str) -> DownloadedObject:
+    async def __call__(self, args: str) -> DownloadedObject:
         """Download an object by storage key."""
 
         return await self.storage.download(args)

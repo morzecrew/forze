@@ -6,7 +6,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.dto import AuthnRefreshRequestDTO, AuthnTokenResponseDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 from ._utils import token_response_from_issued_tokens
 
@@ -22,7 +22,7 @@ class AuthnRefreshTokens(Handler[AuthnRefreshRequestDTO, AuthnTokenResponseDTO])
 
     # ....................... #
 
-    async def main(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
+    async def __call__(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
         creds = RefreshTokenCredentials(token=args.refresh_token)
 
         tokens: IssuedTokens = await self.token_lifecycle.refresh_tokens(creds)

@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.authn import AuthnIdentity, PasswordLifecyclePort
 from forze.application.dto import AuthnChangePasswordRequestDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 from forze.base.errors import AuthenticationError
 
 # ----------------------- #
@@ -22,7 +22,7 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
 
     # ....................... #
 
-    async def main(self, args: AuthnChangePasswordRequestDTO) -> None:
+    async def __call__(self, args: AuthnChangePasswordRequestDTO) -> None:
         identity = self.resolver()
 
         if identity is None:

@@ -5,7 +5,7 @@ from pydantic import BaseModel as BM
 
 from forze.application.contracts.document import DocumentCommandPort
 from forze.application.dto import DocumentIdDTO, DocumentIdRevDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -19,7 +19,7 @@ class KillDocument(Handler[DocumentIdDTO, None]):
 
     # ....................... #
 
-    async def main(self, args: DocumentIdDTO) -> None:
+    async def __call__(self, args: DocumentIdDTO) -> None:
         """Permanently delete a document.
 
         :param args: Document primary key.
@@ -41,7 +41,7 @@ class DeleteDocument[Out: BM](Handler[DocumentIdRevDTO, Out]):
 
     # ....................... #
 
-    async def main(self, args: DocumentIdRevDTO) -> Out:
+    async def __call__(self, args: DocumentIdRevDTO) -> Out:
         """Soft-delete a document.
 
         :param args: Delete arguments (pk, optional rev).
@@ -63,7 +63,7 @@ class RestoreDocument[Out: BM](Handler[DocumentIdRevDTO, Out]):
 
     # ....................... #
 
-    async def main(self, args: DocumentIdRevDTO) -> Out:
+    async def __call__(self, args: DocumentIdRevDTO) -> Out:
         """Restore a soft-deleted document.
 
         :param args: Restore arguments (pk, optional rev).

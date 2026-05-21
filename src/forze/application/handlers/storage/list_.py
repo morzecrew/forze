@@ -2,7 +2,7 @@ import attrs
 
 from forze.application.contracts.storage import StoragePort, StoredObject
 from forze.application.dto import ListObjectsRequestDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -36,7 +36,7 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
 
     # ....................... #
 
-    async def main(self, args: ListObjectsRequestDTO) -> ListedObjects:
+    async def __call__(self, args: ListObjectsRequestDTO) -> ListedObjects:
         """List objects for the requested page and optional prefix."""
 
         page = args.page

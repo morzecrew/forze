@@ -3,7 +3,7 @@ from pydantic import BaseModel as BM
 
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.dto import DocumentIdDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -21,7 +21,7 @@ class GetDocument[R: BM](Handler[DocumentIdDTO, R]):
 
     # ....................... #
 
-    async def main(self, args: DocumentIdDTO) -> R:
+    async def __call__(self, args: DocumentIdDTO) -> R:
         """Fetch a document by primary key.
 
         :param args: Document primary key.

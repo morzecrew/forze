@@ -15,7 +15,7 @@ from forze.application.dto import (
     RawSearchRequestDTO,
     SearchRequestDTO,
 )
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -39,7 +39,7 @@ class TypedSearch[Out: BM](Handler[SRD, Paginated[Out]]):
 
     # ....................... #
 
-    async def main(self, args: SRD) -> Paginated[Out]:
+    async def __call__(self, args: SRD) -> Paginated[Out]:
         """Search with typed paginated results.
 
         :param args: Search arguments (body, page, size).
@@ -85,7 +85,7 @@ class RawSearch(Handler[RRD, RawPaginated]):
 
     # ....................... #
 
-    async def main(self, args: RRD) -> RawPaginated:
+    async def __call__(self, args: RRD) -> RawPaginated:
         """Search with raw results.
 
         :param args: Search arguments (body, page, size).
@@ -132,7 +132,7 @@ class TypedCursorSearch[Out: BM](Handler[CSR, CursorPaginated[Out]]):
 
     # ....................... #
 
-    async def main(self, args: CSR) -> CursorPaginated[Out]:
+    async def __call__(self, args: CSR) -> CursorPaginated[Out]:
         body = args
 
         if self.mapper:
@@ -164,7 +164,7 @@ class RawCursorSearch(Handler[RCD, RawCursorPaginated]):
 
     # ....................... #
 
-    async def main(self, args: RCD) -> RawCursorPaginated:
+    async def __call__(self, args: RCD) -> RawCursorPaginated:
         body = args
 
         if self.mapper:

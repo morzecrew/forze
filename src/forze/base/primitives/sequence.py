@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from typing import Self
+from typing import Iterator, Self
 
 import attrs
 
 from forze.base.descriptors import hybridmethod
 
 # ----------------------- #
-#! Maybe add unique: bool or dedupe callable
+#! Maybe add 'unique: bool' or dedupe callable
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AbstractSequence[X]:
-    """Typed sequence of abstract items with merging capabilities."""
+    """Typed sequence of items with merging capabilities."""
 
     items: tuple[X, ...] = attrs.field(factory=tuple)
     """Items for this sequence."""
@@ -44,3 +44,8 @@ class AbstractSequence[X]:
     @merge.instancemethod
     def _merge_instance(self: AbstractSequence[X], *sequences: AbstractSequence[X]) -> AbstractSequence[X]:  # type: ignore[misc, override]
         return type(self).merge(self, *sequences)
+
+    # ....................... #
+
+    def __iter__(self) -> Iterator[X]:
+        return iter(self.items)

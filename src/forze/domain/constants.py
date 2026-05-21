@@ -1,8 +1,4 @@
-"""Shared string constants for core domain field names.
-
-Used as keys in serialization, validation, and infrastructure layers to ensure
-consistent naming across the application.
-"""
+"""Shared string constants for core domain field names."""
 
 from typing import Final
 
@@ -14,13 +10,13 @@ ID_FIELD: Final[str] = "id"
 REV_FIELD: Final[str] = "rev"
 """Document revision field."""
 
-SOFT_DELETE_FIELD: Final[str] = "is_deleted"
+SOFT_DELETE_FIELD: Final[str] = "is_deleted"  #! get rid of this
 """Soft delete field."""
 
-NUMBER_ID_FIELD: Final[str] = "number_id"
+NUMBER_ID_FIELD: Final[str] = "number_id"  #! get rid of this
 """Number identifier field."""
 
-CREATOR_ID_FIELD: Final[str] = "creator_id"
+CREATOR_ID_FIELD: Final[str] = "creator_id"  #! get rid of this
 """Creator identifier field."""
 
 # ....................... #

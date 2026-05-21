@@ -1,7 +1,7 @@
 import attrs
 
 from forze.application.contracts.storage import StoragePort
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -15,7 +15,7 @@ class DeleteObject(Handler[str, None]):
 
     # ....................... #
 
-    async def main(self, args: str) -> None:
+    async def __call__(self, args: str) -> None:
         """Delete an object by storage key."""
 
         return await self.storage.delete(args)

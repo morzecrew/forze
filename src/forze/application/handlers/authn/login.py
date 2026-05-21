@@ -7,7 +7,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.dto import AuthnLoginRequestDTO, AuthnTokenResponseDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 from ._utils import token_response_from_issued_tokens
 
@@ -26,7 +26,7 @@ class AuthnPasswordLogin(Handler[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
 
     # ....................... #
 
-    async def main(self, args: AuthnLoginRequestDTO) -> AuthnTokenResponseDTO:
+    async def __call__(self, args: AuthnLoginRequestDTO) -> AuthnTokenResponseDTO:
         creds = PasswordCredentials(
             login=args.login,
             password=args.password,

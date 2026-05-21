@@ -2,7 +2,7 @@ import attrs
 
 from forze.application.contracts.storage import StoragePort, StoredObject
 from forze.application.dto import UploadObjectRequestDTO
-from forze.application.execution import Handler
+from forze.application.execution.core import Handler
 
 # ----------------------- #
 
@@ -16,7 +16,7 @@ class UploadObject(Handler[UploadObjectRequestDTO, StoredObject]):
 
     # ....................... #
 
-    async def main(self, args: UploadObjectRequestDTO) -> StoredObject:
+    async def __call__(self, args: UploadObjectRequestDTO) -> StoredObject:
         """Upload an object and return stored object metadata."""
 
         return await self.storage.upload(
