@@ -1,13 +1,28 @@
 from datetime import datetime
 from typing import Mapping
 
-import attrs
+import msgspec
 
 # ----------------------- #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class UploadedObject:
+class _InternalMetadata(msgspec.Struct):
+    """Optional metadata for an object."""
+
+    filename: str
+    """Original filename associated with the object."""
+
+    created_at: datetime
+    """Backend timestamp when the object was created."""
+
+    size: int
+    """Object size in bytes."""
+
+
+# ....................... #
+
+
+class UploadedObject(msgspec.Struct):
     """Value object for an uploaded object."""
 
     filename: str
@@ -16,18 +31,20 @@ class UploadedObject:
     data: bytes
     """Raw bytes payload to store."""
 
-    description: str | None = attrs.field(default=None)
+    description: str | None = None
     """Optional human-readable description."""
 
-    tags: Mapping[str, str] | None = attrs.field(default=None)
+    tags: Mapping[str, str] | None = None
     """Optional tags associated with the object."""
+
+    prefix: str | None = None
+    """Optional key prefix (folder-like namespace)."""
 
 
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class DownloadedObject:
+class DownloadedObject(msgspec.Struct):
     """Value object for a downloaded object."""
 
     data: bytes
@@ -43,27 +60,27 @@ class DownloadedObject:
 # ....................... #
 
 
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class StoredObject:
+class ObjectMetadata(_InternalMetadata):
+    """Value object for an object metadata."""
+
+    description: str | None = None
+    """Optional human-readable description."""
+
+
+# ....................... #
+
+
+class StoredObject(_InternalMetadata):
     """Value object for a stored object."""
 
     key: str
     """Opaque storage key used to retrieve the object later."""
 
-    filename: str
-    """Original filename associated with the upload."""
-
-    description: str | None = attrs.field(default=None)
-    """Optional human-readable description."""
-
-    tags: Mapping[str, str] | None = attrs.field(default=None)
-    """Optional tags associated with the object."""
-
     content_type: str
     """MIME content type of the stored data."""
 
-    size: int
-    """Object size in bytes."""
+    tags: Mapping[str, str] | None = None
+    """Optional tags associated with the object."""
 
-    created_at: datetime
-    """Backend timestamp when the object was created."""
+    description: str | None = None
+    """Optional human-readable description."""

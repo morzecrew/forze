@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
 from forze.base.errors import ConcurrencyError
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import (
     MockCounterAdapter,
@@ -21,7 +21,7 @@ from forze_mock.adapters import (
 # ----------------------- #
 
 
-class _ProductDoc(Document, SoftDeletionMixin):
+class _ProductDoc(DocWithSoftDeletion):
     title: str
     category: str
     price: float = 0.0
@@ -115,7 +115,7 @@ async def test_document_filter_sort_projection_and_search() -> None:
     # Filter by scalar shortcut and sort descending by title.
     page = await doc.project_page(
         ["title", "category"],
-        filters={"$fields": {"category": "books"}},
+        filters={"$values": {"category": "books"}},
         sorts={"title": "desc"},
     )
     assert page.count == 2
@@ -123,10 +123,23 @@ async def test_document_filter_sort_projection_and_search() -> None:
 
     # $in shortcut over list fields.
     page = await doc.find_page(
-        filters={"$fields": {"tags": {"$in": ["rust"]}}},
+        filters={"$values": {"tags": {"$in": ["rust"]}}},
     )
     assert page.count == 1
     assert page.hits[0].title == "Rust Book"
+
+    # Field-to-field compare ($compare).
+    page = await doc.find_page(
+        filters={"$fields": {"title": "category"}},
+    )
+    assert page.count == 0
+    await doc.create(
+        _ProductCreate(title="books", category="books", price=1.0),
+    )
+    page = await doc.find_page(
+        filters={"$fields": {"title": "category"}},
+    )
+    assert page.count == 1
 
     # Search sees the same namespace as document adapter.
     s_page = await search.search_page("rust")
@@ -180,18 +193,18 @@ async def test_document_aggregates_group_and_validate_return_type() -> None:
     page = await doc.select_page_aggregated(
         _CategoryStats,
         {
-            "$fields": {"category": "category"},
+            "$groups": {"category": "category"},
             "$computed": {
                 "products": {"$count": None},
                 "revenue": {"$sum": "price"},
                 "median_price": {"$median": "price"},
                 "expensive_products": {
-                    "$count": {"filter": {"$fields": {"price": {"$gte": 30}}}},
+                    "$count": {"filter": {"$values": {"price": {"$gte": 30}}}},
                 },
                 "expensive_revenue": {
                     "$sum": {
                         "field": "price",
-                        "filter": {"$fields": {"price": {"$gte": 30}}},
+                        "filter": {"$values": {"price": {"$gte": 30}}},
                     },
                 },
             },

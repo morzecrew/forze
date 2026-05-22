@@ -1,48 +1,48 @@
 import attrs
 from pydantic import BaseModel
 
-from forze.application.execution import UsecasesFacade, facade_op
-from forze.application.usecases.search import (
-    RawCursorSearch,
-    RawSearch,
-    TypedCursorSearch,
-    TypedSearch,
+from forze.application.execution.facade import (
+    OperationFacade,
+    facade_op,
+    namespaced_facade,
+)
+from forze.application.handlers.search import (
+    CursorSearch,
+    ProjectedCursorSearch,
+    ProjectedSearch,
+    Search,
 )
 
-from .operations import SearchOperation
+from .operations import SearchKernelOp
 
 # ----------------------- #
 
 
+@namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchDTOs[M: BaseModel]:
-    """DTO type mapping for a search aggregate."""
+class SearchFacade[M: BaseModel](OperationFacade):
+    """Typed facade for search operations."""
 
-    read: type[M]
-    """Read DTO type."""
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class SearchUsecasesFacade[M: BaseModel](UsecasesFacade):
-    """Typed facade for search usecases."""
-
-    raw_search = facade_op(SearchOperation.RAW_SEARCH, uc=RawSearch)
-    """Raw search usecase."""
-
-    search = facade_op(SearchOperation.TYPED_SEARCH, uc=TypedSearch[M])
-    """Typed search usecase."""
-
-    search_cursor = facade_op(
-        SearchOperation.TYPED_SEARCH_CURSOR,
-        uc=TypedCursorSearch[M],
+    projected_search = facade_op(
+        SearchKernelOp.RAW,
+        uc=ProjectedSearch,
     )
-    """Typed search with cursor (keyset) pagination."""
+    """Projected search operation."""
 
-    raw_search_cursor = facade_op(
-        SearchOperation.RAW_SEARCH_CURSOR,
-        uc=RawCursorSearch,
+    search = facade_op(
+        SearchKernelOp.TYPED,
+        uc=Search[M],
     )
-    """Raw search with cursor (keyset) pagination."""
+    """Search operation."""
+
+    cursor_search = facade_op(
+        SearchKernelOp.TYPED_CURSOR,
+        uc=CursorSearch[M],
+    )
+    """Cursor search operation."""
+
+    projected_cursor_search = facade_op(
+        SearchKernelOp.RAW_CURSOR,
+        uc=ProjectedCursorSearch,
+    )
+    """Projected cursor search operation."""

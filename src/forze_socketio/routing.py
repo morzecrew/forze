@@ -11,14 +11,14 @@ import attrs
 from pydantic import TypeAdapter
 from socketio.async_server import AsyncServer
 
-from forze.application.execution import (
-    ExecutionContext,
-    Usecase,
-    UsecasePlan,
-    UsecaseRegistry,
+from forze.application.contracts.execution import Handler
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import (
+    FrozenOperationRegistry,
+    make_registry_operation_resolver,
 )
-from forze.application.execution.plan import OpKey
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
 
 # ----------------------- #
 
@@ -28,7 +28,7 @@ ExecutionContextFactoryPort = Callable[
 ]
 """Factory that builds request-scoped :class:`ExecutionContext` instances."""
 
-UsecaseResolverPort = Callable[[ExecutionContext, OpKey], Usecase[Any, Any]]
+HandlerResolverPort = Callable[[ExecutionContext, StrKey], Handler[Any, Any]]
 """Resolver that maps operation keys to composed usecases."""
 
 # ....................... #
@@ -60,7 +60,7 @@ class SocketIOCommandRoute[Args, Ack]:
     event: str
     """Socket.IO event name."""
 
-    operation: OpKey
+    operation: StrKey
     """Usecase operation key resolved by :class:`UsecaseRegistry`."""
 
     payload_type: Any
@@ -68,6 +68,33 @@ class SocketIOCommandRoute[Args, Ack]:
 
     ack_type: Any = None
     """Optional validation type for acknowledgement payload."""
+
+    _payload_adapter: TypeAdapter[Any] = attrs.field(init=False, repr=False, eq=False)
+    """Cached :class:`~pydantic.TypeAdapter` for ``payload_type``."""
+
+    _ack_adapter: TypeAdapter[Any] | None = attrs.field(
+        init=False,
+        repr=False,
+        eq=False,
+    )
+    """Cached adapter for ``ack_type``, or :obj:`None` when acknowledgements are untyped."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_payload_adapter",
+            TypeAdapter[Any](self.payload_type),
+        )
+        if self.ack_type is None:
+            object.__setattr__(self, "_ack_adapter", None)
+        else:
+            object.__setattr__(
+                self,
+                "_ack_adapter",
+                TypeAdapter[Any](self.ack_type),
+            )
 
     # ....................... #
 
@@ -77,7 +104,7 @@ class SocketIOCommandRoute[Args, Ack]:
         :param payload: Raw event payload from Socket.IO.
         :returns: Parsed payload value passed to the usecase.
         """
-        return TypeAdapter[Any](self.payload_type).validate_python(payload)
+        return self._payload_adapter.validate_python(payload)
 
     # ....................... #
 
@@ -87,13 +114,12 @@ class SocketIOCommandRoute[Args, Ack]:
         :param value: Raw usecase result.
         :returns: JSON-compatible acknowledgement payload.
         """
-        if self.ack_type is None:
+        if self._ack_adapter is None:
             return value
 
-        adapter = TypeAdapter[Any](self.ack_type)
-        validated = adapter.validate_python(value)
+        validated = self._ack_adapter.validate_python(value)
 
-        return adapter.dump_python(validated, mode="json")
+        return self._ack_adapter.dump_python(validated, mode="json")
 
 
 # ....................... #
@@ -148,7 +174,7 @@ class SocketIONamespaceRouter:
         self,
         *,
         event: str,
-        operation: OpKey,
+        operation: StrKey,
         payload_type: Any,
         ack_type: Any = None,
     ) -> "SocketIONamespaceRouter":
@@ -160,6 +186,7 @@ class SocketIONamespaceRouter:
         :param ack_type: Optional type used to validate acknowledgement payload.
         :returns: Current router for chaining.
         """
+
         return self.register(
             SocketIOCommandRoute[Any, Any](
                 event=event,
@@ -176,7 +203,7 @@ class SocketIONamespaceRouter:
         sio: AsyncServer,
         *,
         context_factory: ExecutionContextFactoryPort,
-        usecase_resolver: UsecaseResolverPort,
+        usecase_resolver: HandlerResolverPort,
     ) -> "SocketIONamespaceRouter":
         """Bind registered command routes to a Socket.IO server.
 
@@ -227,7 +254,7 @@ class ForzeSocketIOAdapter:
     context_factory: ExecutionContextFactoryPort
     """Factory that builds request-scoped execution contexts."""
 
-    usecase_resolver: UsecaseResolverPort
+    usecase_resolver: HandlerResolverPort
     """Operation resolver used to build composed usecases."""
 
     __routers: dict[str, SocketIONamespaceRouter] = attrs.field(
@@ -242,6 +269,7 @@ class ForzeSocketIOAdapter:
     @property
     def routers(self) -> tuple[SocketIONamespaceRouter, ...]:
         """Return namespace routers currently attached to the adapter."""
+
         return tuple(self.__routers.values())
 
     # ....................... #
@@ -288,22 +316,15 @@ class ForzeSocketIOAdapter:
 
 
 def make_registry_usecase_resolver(
-    registry: UsecaseRegistry,
-    *,
-    plan: UsecasePlan | None = None,
-) -> UsecaseResolverPort:
-    """Build a resolver backed by :class:`UsecaseRegistry`.
+    registry: FrozenOperationRegistry,
+) -> HandlerResolverPort:
+    """Build a resolver backed by :class:`FrozenOperationRegistry`.
 
-    :param registry: Base usecase registry.
-    :param plan: Optional extra plan merged before resolution.
+    :param registry: Frozen operation registry.
     :returns: Callable resolver suitable for :class:`ForzeSocketIOAdapter`.
     """
-    resolved_registry = registry.extend_plan(plan) if plan is not None else registry
 
-    def resolver(ctx: ExecutionContext, operation: OpKey) -> Usecase[Any, Any]:
-        return resolved_registry.resolve(operation, ctx)
-
-    return resolver
+    return make_registry_operation_resolver(registry)
 
 
 # ....................... #

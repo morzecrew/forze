@@ -117,15 +117,15 @@ Kernel specification: model types, logical `name`, optional `history_enabled`, o
 
 Helper methods:
 
-- `supports_soft_delete()` — `True` when the domain model inherits from `SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when the domain model inherits from `forze_contrib.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when the update command has writable fields
 
 ### Dependency keys
 
 | Key | Resolved via |
 |-----|--------------|
-| `DocumentQueryDepKey` | `ctx.doc_query(spec)` |
-| `DocumentCommandDepKey` | `ctx.doc_command(spec)` |
+| `DocumentQueryDepKey` | `ctx.document.query(spec)` (alias `ctx.doc.query`) |
+| `DocumentCommandDepKey` | `ctx.document.command(spec)` (alias `ctx.doc.command`) |
 
 ## Transaction management
 
@@ -150,7 +150,7 @@ Value object holding the active transaction's scope key. Used internally to dete
 
 | Key | Resolved via |
 |-----|-------------|
-| `TxManagerDepKey` | `ctx.txmanager()` |
+| `TxManagerDepKey` | `ctx.tx.resolver()` |
 
 ## Cache
 
@@ -238,7 +238,7 @@ Postgres index and heap names belong in `PostgresDepsModule.searches[name]` (`Po
 
 | Key | Resolved via |
 |-----|-------------|
-| `SearchQueryDepKey` | `ctx.search_query(spec)` |
+| `SearchQueryDepKey` | `ctx.search.query(spec)` |
 
 ## Object storage
 
@@ -452,8 +452,8 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 
 ## Context handling
 
-Execution identity is represented by `CallContext`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
-`AuthnIdentity` carries the authenticated `principal_id`; `TenantIdentity` carries the current `tenant_id`. Bind them at the boundary via `ctx.bind_call(..., identity=..., tenancy=...)`.
+Execution identity is represented by `InvocationMetadata`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
+`AuthnIdentity` carries the authenticated `principal_id`; `TenantIdentity` carries the current `tenant_id`. Bind them at the boundary via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
 
 The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_authn` first-party stack, and `forze_oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
 
@@ -465,18 +465,18 @@ All ports are resolved through `ExecutionContext`. Contracts with convenience me
     from forze.application.contracts.counter import CounterSpec
     from forze.application.contracts.storage import StorageSpec
 
-    doc_q = ctx.doc_query(project_spec)
-    doc_c = ctx.doc_command(project_spec)
+    doc_q = ctx.document.query(project_spec)
+    doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(CounterSpec(name="tickets"))
     storage = ctx.storage(StorageSpec(name="attachments"))
-    search = ctx.search_query(search_spec)
-    tx = ctx.txmanager("default")
+    search = ctx.search.query(search_spec)
+    tx = ctx.tx.resolver("default")
 
 For contracts without a convenience method, use `dep()` with the dep key:
 
     :::python
     from forze.application.contracts.pubsub import PubSubCommandDepKey
 
-    publisher = ctx.dep(PubSubCommandDepKey)(ctx, events_spec)
+    publisher = ctx.deps.resolve_configurable(ctx, PubSubCommandDepKey, events_spec, route=events_spec.name)
     await publisher.publish("events.created", payload)

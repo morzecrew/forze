@@ -49,7 +49,7 @@ A minimal aggregate definition using the core package:
         ReadDocument,
         BaseDTO,
     )
-    from forze.domain.mixins import SoftDeletionMixin
+    from forze_contrib.soft_deletion import SoftDeletionMixin
     from forze.application.contracts.cache import CacheSpec
     from forze.application.contracts.document import DocumentSpec
 

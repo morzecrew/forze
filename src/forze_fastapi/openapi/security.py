@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # ----------------------- #
+#! Most likely useless (?)
 
 
 def http_bearer_scheme(*, auto_error: bool = False) -> HTTPBearer:

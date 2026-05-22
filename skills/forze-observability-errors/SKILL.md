@@ -69,6 +69,12 @@ configure_logging(level="info", render_mode="json", logger_names=["forze"])
 attach_foreign_loggers(["uvicorn", "fastapi"], render_mode="json")
 ```
 
+Log event fields are scrubbed by default (`sanitize_logs=True`; Logfire-aligned log string rules when `text_scrub=True`, uniform `**********` placeholder). API/error payloads use `forze.base.scrubbing.sanitize(..., context="egress")`, not the log context.
+
+```python
+from forze.base.scrubbing import dump_for_error_context, sanitize_pydantic_errors
+```
+
 Use `Logger` instances in modules and bind stable context:
 
 ```python
@@ -78,7 +84,7 @@ logger = Logger("app.projects").bind(component="projects")
 logger.info("project_created", project_id=str(project_id))
 ```
 
-`ExecutionContext.bind_call(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `principal_id`, and `tenant_id` into logging context.
+`ExecutionContext.inv.bind(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `principal_id`, and `tenant_id` into logging context.
 
 ## FastAPI mapping
 

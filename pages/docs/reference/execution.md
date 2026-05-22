@@ -1,6 +1,6 @@
 # Execution
 
-The execution engine manages dependency injection, context creation, and application lifecycle. It connects domain models and contracts to infrastructure adapters at runtime. For the conceptual overview, see [Application Layer](../concepts/application-layer.md). Optional **capability-driven** guard/effect ordering lives on `UsecasePlan`; see [Capability execution](capability-execution.md).
+The execution engine manages dependency injection, context creation, and application lifecycle. It connects domain models and contracts to infrastructure adapters at runtime. For the conceptual overview, see [Application Layer](../concepts/application-layer.md). Stage hooks and operation plans live on `OperationRegistry`; see [Middleware & Plans](middleware-plans.md) and [Capability execution](capability-execution.md).
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/deps-resolution.svg" alt="Dependency resolution from DepsPlan through modules, Deps, keys, and ports">
@@ -9,59 +9,117 @@ The execution engine manages dependency injection, context creation, and applica
 
 ## ExecutionContext
 
-The central dependency resolution point. Every usecase and factory receives an `ExecutionContext` to resolve infrastructure ports:
+The central dependency resolution point. Every handler factory and lifecycle hook receives an `ExecutionContext` to resolve infrastructure ports:
 
     :::python
     from forze.application.execution import ExecutionContext
 
-    doc = ctx.doc_query(project_spec)
+    doc = ctx.document.query(project_spec)
     result = await doc.get(some_id)
 
-### Resolution methods
+`ExecutionContext` exposes nested convenience layers:
 
-| Method | Returns | Purpose |
-|--------|---------|---------|
-| `dep(key)` | `T` | Resolve any dependency by typed key |
-| `doc_query(spec)` | `DocumentQueryPort` | Read-only document port |
-| `doc_command(spec)` | `DocumentCommandPort` | Read-write document port |
-| `cache(spec)` | `CachePort` | Cache port for a namespace |
-| `counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
-| `txmanager(route)` | `TxManagerPort` | Transaction manager for a registered route |
-| `storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
-| `search_query(spec)` | `SearchQueryPort` | Full-text search port |
+| Attribute | Purpose |
+|-----------|---------|
+| `deps` | Underlying `Deps` container (`provide`, `resolve_configurable`, …) |
+| `document` / `doc` | Document query and command ports |
+| `search` | Search, hub search, federated search, and snapshot ports |
+| `cache`, `counter`, `storage`, `embeddings`, `dlock` | Other configurable ports |
+| `tenancy` | Tenant resolver and management ports |
+| `tx` | Transaction scope and manager resolution |
+| `inv` | Invocation metadata, authn, and tenant binding |
+
+### Port resolution
+
+| API | Returns | Purpose |
+|-----|---------|---------|
+| `ctx.deps.provide(key, route=...)` | `T` | Resolve a registered simple dependency |
+| `ctx.document.query(spec)` | `DocumentQueryPort` | Read-only document port |
+| `ctx.document.command(spec)` | `DocumentCommandPort` | Read-write document port |
+| `ctx.doc.query` / `ctx.doc.command` | same | Alias for `document` |
+| `ctx.cache(spec)` | `CachePort` | Cache port for a namespace |
+| `ctx.counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
+| `ctx.storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
+| `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
+| `ctx.search.hub(spec)` | `SearchQueryPort` | Hub (multi-leg) search |
+| `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
+| `ctx.tx.resolver(route)` | `TransactionManagerPort` | Transaction manager for a registered route |
 
 When `DocumentSpec.cache` is set, the document dep factory resolves `ctx.cache(spec.cache)` while building the adapter. TTL defaults come from `CacheSpec`.
 
 ### Transactions
 
-`transaction()` returns an async context manager that scopes a transaction:
+Use `ctx.tx.scope(route)` as an async context manager:
 
     :::python
-    async with ctx.transaction("default"):
-        doc = ctx.doc_command(project_spec)
+    async with ctx.tx.scope("default"):
+        doc = ctx.document.command(project_spec)
         await doc.create(CreateProjectCmd(title="New"))
         await doc.create(CreateProjectCmd(title="Another"))
         # Both creates commit or roll back together
 
-Nested calls reuse the same transaction. Savepoints are used when the backend supports them:
+Nested scopes reuse the same transaction. Savepoints are used when the backend supports them:
 
     :::python
-    async with ctx.transaction("default"):
+    async with ctx.tx.scope("default"):
         # outer transaction
-        async with ctx.transaction("default"):
+        async with ctx.tx.scope("default"):
             # nested: same transaction, savepoint
 
 The context validates that ports resolved inside a transaction match the active transaction scope — mixing different transaction managers (e.g. Postgres and Mongo) raises `CoreError`.
 
+Queue work to run after a successful root commit with `ctx.tx.defer_after_commit(callback)` (see transaction context helpers in source).
+
+### Invocation metadata
+
+Bind per-request metadata, authn, and tenant context for the duration of a call:
+
+    :::python
+    from forze.application.execution import ExecutionContext, InvocationMetadata
+
+    metadata = InvocationMetadata(
+        execution_id=...,
+        correlation_id=...,
+        causation_id=...,
+    )
+    with ctx.inv.bind(metadata=metadata, authn=identity, tenant=tenant):
+        # handlers and ports see bound identity / tenant
+        principal = ctx.inv.get_authn()
+        tenant_ctx = ctx.inv.get_tenant()
+
+| Method | Purpose |
+|--------|---------|
+| `ctx.inv.bind(metadata=..., authn=..., tenant=...)` | Context manager; merges structlog context vars |
+| `ctx.inv.get_metadata()` | Current `InvocationMetadata` or `None` |
+| `ctx.inv.get_authn()` | Current `AuthnIdentity` or `None` |
+| `ctx.inv.get_tenant()` | Current `TenantIdentity` or `None` |
+
 ### Cycle detection
 
-`dep()` tracks the resolution stack per async task. If a dependency resolution chain encounters the same `DepKey` twice, it raises `CoreError` with the full cycle chain for diagnostics.
+Each `Deps` container owns a resolution stack per async task (via a per-instance `ContextVar`). Stacks are isolated across containers: two `Deps` instances in the same task do not share cycle state. A resolution frame is `(DepKey.name, optional route)` — for example `document_query@items` or `postgres_client` when no route is used.
+
+| API | When to use |
+|-----|-------------|
+| `resolve_configurable(ctx, key, spec, route=...)` | Configurable ports: lookup factory and call `factory(ctx, spec)` under a scope |
+| `resolve_simple(ctx, key, route=...)` | Simple ports: lookup factory and call `factory(ctx)` under a scope |
+| `resolution_scope(key, route=...)` | When the caller owns factory invocation (for example transaction manager resolution) |
+| `provide(key, route=...)` | Plain lookup; raises `CoreError` if the same frame is already on this container's stack |
+
+If a factory (or misconfigured container) requests the same frame again while it is still resolving, Forze raises `CoreError` with a chain such as `Cyclic dependency resolution: document_query@test -> tx_manager@mock -> document_query@test` instead of exhausting the Python stack.
+
+Plain singleton lookups (lifecycle hooks fetching a shared client) use `provide()` when no conflicting frame is active — nested `provide(PostgresClientDepKey)` inside an outer port factory is allowed because the frames differ. When resolution tracing is enabled, `provide()` under an active stack still records an observed edge to the looked-up frame (without pushing it).
+
+#### Observed resolution graph (development)
+
+Enable tracing on a container with `Deps(trace_resolution=True)` or set `FORZE_DEPS_TRACE=1` (or `true` / `yes`) before `DepsPlan.build()` (unless `build(trace_resolution=False)` overrides it). While resolving, Forze records directed edges `(parent, child)` where the child depends on the parent — on scope push and on `provide()` under an active stack.
+
+Read the current task's trace with `deps.resolution_trace()` and export a snapshot via `trace.to_dag()` (`DirectedAcyclicGraph` for topological order). `registered_frames()` lists all statically registered frames. Tracing is diagnostic only; runtime stack checks remain the production guard.
 
 ## Dependencies
 
 ### DepKey
 
-A typed key identifying a dependency. Used for both registration (in dep modules) and resolution (via `ctx.dep(key)`):
+A typed key identifying a dependency. Used for both registration (in dep modules) and resolution (via `ctx.deps`):
 
     :::python
     from forze.application.contracts.base import DepKey
@@ -82,8 +140,13 @@ In-memory dependency container implementing `DepsPort`:
 
 | Method | Purpose |
 |--------|---------|
-| `provide(key)` | Return the dependency; raises `CoreError` if missing |
-| `exists(key)` | Check registration |
+| `provide(key, route=...)` | Look up a registered provider or instance; cycle-check only |
+| `resolve_configurable(ctx, key, spec, route=...)` | Resolve a configurable port under a scope |
+| `resolve_simple(ctx, key, route=...)` | Resolve a simple port under a scope |
+| `resolution_scope(key, route=...)` | Context manager for custom lookup + invoke |
+| `resolution_trace()` | Observed edges for the current task when tracing is enabled |
+| `registered_frames()` | Static inventory of registered frames |
+| `exists(key, route=...)` | Check registration |
 | `merge(*deps)` | Combine containers; raises `CoreError` on key conflicts |
 | `without(key)` | Return a container without the given key |
 | `empty()` | Check if the container is empty |
@@ -136,11 +199,11 @@ Protocol for startup/shutdown hooks. Receives the `ExecutionContext`:
 
     :::python
     async def startup_postgres(ctx: ExecutionContext) -> None:
-        client = ctx.dep(PostgresClientKey)
+        client = ctx.deps.provide(PostgresClientKey)
         await client.connect()
 
     async def shutdown_postgres(ctx: ExecutionContext) -> None:
-        client = ctx.dep(PostgresClientKey)
+        client = ctx.deps.provide(PostgresClientKey)
         await client.disconnect()
 
 ### LifecycleStep
@@ -233,6 +296,27 @@ The runtime is typically created once at application startup (e.g. in a FastAPI 
 
     app = FastAPI(lifespan=lifespan)
 
+## Operation registry (summary)
+
+Transport layers resolve handlers from a **frozen** `FrozenOperationRegistry`:
+
+    :::python
+    from forze.application.execution import OperationRegistry, make_registry_operation_resolver
+
+    registry = (
+        OperationRegistry(handlers={"projects.get": lambda ctx: GetProject(ctx.doc.query(spec))})
+        .bind("projects.get")
+        .bind_outer()
+        .before(before_step)
+        .finish(deep=True)
+        .freeze()
+    )
+    resolver = make_registry_operation_resolver(registry)
+    handler = resolver("projects.get", ctx)
+    result = await handler(args)
+
+See [Middleware & Plans](middleware-plans.md) for stage authoring and [Composition & Mapping](composition.md) for built-in document/search/storage registries.
+
 ## Putting it together
 
 A complete wiring example showing deps, lifecycle, and runtime:
@@ -278,14 +362,16 @@ A complete wiring example showing deps, lifecycle, and runtime:
     # 4. Use in application
     async with runtime.scope():
         ctx = runtime.get_context()
-        doc = ctx.doc_query(project_spec)
-        page = await doc.find_many(pagination={"limit": 10, "offset": 0})
+        doc = ctx.document.query(project_spec)
+        page = await doc.find_page(pagination={"limit": 10, "offset": 0})
         projects = page.hits
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix | See also |
 |---------|--------------|-----|----------|
-| A lifecycle startup step did not run before a request or usecase. | The runtime scope was not entered, or `startup()` was not called from the application lifespan. | Use `async with runtime.scope()` for tests and workers, or call `runtime.startup()`/`runtime.shutdown()` from the framework lifespan. | [FastAPI integration](../integrations/fastapi.md#lifecycle-step) |
-| Resolving `ctx.dep(...)`, `ctx.doc_query(...)`, or another helper raises a missing dependency error. | The `DepsPlan` does not include the module that registers that key/route, or the route does not match the spec name. | Add the correct integration deps module and verify the spec name, dependency key, and route are registered together. | [Specs and wiring](../concepts/specs-and-wiring.md) |
+| A lifecycle startup step did not run before a request or handler. | The runtime scope was not entered, or `startup()` was not called from the application lifespan. | Use `async with runtime.scope()` for tests and workers, or call `runtime.startup()`/`runtime.shutdown()` from the framework lifespan. | [FastAPI integration](../integrations/fastapi.md#lifecycle-step) |
+| Resolving `ctx.document.query(...)`, `ctx.deps.provide(...)`, or another helper raises a missing dependency error. | The `DepsPlan` does not include the module that registers that key/route, or the route does not match the spec name. | Add the correct integration deps module and verify the spec name, dependency key, and route are registered together. | [Specs and wiring](../concepts/specs-and-wiring.md) |
+| `Cyclic dependency resolution: ...` from `Deps`. | A factory calls back into a dependency that is already on the resolution stack (same key and route). | Break the cycle in module wiring or split dependencies; do not rely on infinite recursion. | [Cycle detection](#cycle-detection) |
 | `Deps.merge()` raises a key collision while building the plan. | Multiple modules provide the same dependency key and route. | Register only one provider per key/route, or separate providers with routed names before merging modules. | [Dependencies](#dependencies) |
+| FastAPI attach raises about unfrozen registry. | `attach_*_endpoints` requires `FrozenOperationRegistry`. | Call `.freeze()` after `.finish(deep=True)` on the registry binder chain. | [FastAPI integration](../integrations/fastapi.md) |

@@ -1,4 +1,4 @@
-from .deps import CounterDepKey, CounterDepPort
+from .deps import CounterDepKey, CounterDepPort, CounterDeps
 from .ports import CounterPort
 from .specs import CounterSpec
 
@@ -9,4 +9,5 @@ __all__ = [
     "CounterDepPort",
     "CounterDepKey",
     "CounterSpec",
+    "CounterDeps",
 ]

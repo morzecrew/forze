@@ -14,7 +14,7 @@ from forze.application.contracts.base import (
     SearchSnapshotHandle,
     page_from_limit_offset,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -29,7 +29,6 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     prepare_federated_search_options,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -37,7 +36,6 @@ from forze.base.serialization import pydantic_validate_many
 
 from ...kernel.db_gather import gather_db_work
 from ...kernel.platform import PostgresClientPort
-from ..txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
@@ -48,7 +46,6 @@ T = TypeVar("T", bound=BaseModel)
 _DEFAULT_RRF_K: Final[int] = 60
 _DEFAULT_PER_LEG_LIMIT: Final[int] = 5000
 
-
 # ....................... #
 
 
@@ -56,7 +53,6 @@ _DEFAULT_PER_LEG_LIMIT: Final[int] = 5000
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresFederatedSearchAdapter[M: BaseModel](
     SearchQueryPort[FederatedSearchReadModel[M]],
-    TxScopedPort,
 ):
     """Search several independent indexes and merge results using weighted RRF.
 
@@ -90,8 +86,6 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     snapshot_coord: SearchResultSnapshotCoordinator | None = None
     """Coordinator for federation snapshot runs."""
-
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
 
@@ -378,6 +372,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             snapshot=handle_out,
         )
 
+    # ....................... #
+
     async def search(
         self,
         query: str | Sequence[str],
@@ -400,6 +396,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def search_page(
         self,
         query: str | Sequence[str],
@@ -421,6 +419,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search(
         self,
@@ -445,6 +445,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def project_search_page(
         self,
         fields: Sequence[str],
@@ -467,6 +469,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select_search(
         self,
@@ -491,6 +495,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def select_search_page(
         self,
         return_type: type[T],
@@ -513,6 +519,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     def _raise_federated_cursor_not_supported(self) -> NoReturn:
         raise CoreError(

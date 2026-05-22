@@ -1,16 +1,20 @@
-"""Unit tests for forze.application.contracts.query.internal."""
+"""Unit tests for forze.application.contracts.querying.internal."""
 
 from datetime import date, datetime, timezone
 from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.query import AggregatesExpressionParser
-from forze.application.contracts.query.internal import (
+from forze.application.contracts.querying import AggregatesExpressionParser
+from forze.application.contracts.querying.internal import (
+    GroupRef,
+    GroupTrunc,
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QueryOr,
     QueryValueCaster,
 )
@@ -23,7 +27,7 @@ class TestAggregatesExpressionParser:
     def test_parses_group_fields_and_computed_fields(self) -> None:
         parsed = AggregatesExpressionParser.parse(
             {
-                "$fields": {"category": "category"},
+                "$groups": {"category": "category"},
                 "$computed": {
                     "rows": {"$count": None},
                     "revenue": {"$sum": "price"},
@@ -32,18 +36,19 @@ class TestAggregatesExpressionParser:
         )
 
         assert parsed.aliases == {"category", "rows", "revenue"}
-        assert parsed.fields[0].field == "category"
+        assert isinstance(parsed.groups[0].expr, GroupRef)
+        assert parsed.groups[0].expr.field == "category"
         assert parsed.computed_fields[0].function == "$count"
 
     def test_parses_group_fields_as_name_sequence(self) -> None:
         parsed = AggregatesExpressionParser.parse(
             {
-                "$fields": ["detail_id", "warehouse_id"],
+                "$groups": ["detail_id", "warehouse_id"],
                 "$computed": {"n": {"$count": None}},
             },
         )
-        assert [f.alias for f in parsed.fields] == ["detail_id", "warehouse_id"]
-        assert [f.field for f in parsed.fields] == ["detail_id", "warehouse_id"]
+        assert [g.alias for g in parsed.groups] == ["detail_id", "warehouse_id"]
+        assert [g.expr.field for g in parsed.groups] == ["detail_id", "warehouse_id"]
 
     def test_rejects_invalid_count_argument(self) -> None:
         with pytest.raises(CoreError, match="expects no field"):
@@ -59,8 +64,8 @@ class TestAggregatesExpressionParser:
                         "$count": {
                             "filter": {
                                 "$and": [
-                                    {"$fields": {"price": {"$gte": 10}}},
-                                    {"$fields": {"price": {"$lte": 20}}},
+                                    {"$values": {"price": {"$gte": 10}}},
+                                    {"$values": {"price": {"$lte": 20}}},
                                 ],
                             },
                         },
@@ -68,7 +73,7 @@ class TestAggregatesExpressionParser:
                     "book_revenue": {
                         "$sum": {
                             "field": "price",
-                            "filter": {"$fields": {"category": "books"}},
+                            "filter": {"$values": {"category": "books"}},
                         },
                     },
                 },
@@ -78,7 +83,7 @@ class TestAggregatesExpressionParser:
         assert parsed.computed_fields[0].filter is not None
         assert parsed.computed_fields[1].field == "price"
         assert parsed.computed_fields[1].filter == {
-            "$fields": {"category": "books"},
+            "$values": {"category": "books"},
         }
 
     def test_rejects_conditional_value_aggregate_without_field(self) -> None:
@@ -87,7 +92,7 @@ class TestAggregatesExpressionParser:
                 {
                     "$computed": {
                         "revenue": {
-                            "$sum": {"filter": {"$fields": {"category": "books"}}},
+                            "$sum": {"filter": {"$values": {"category": "books"}}},
                         },
                     },
                 },
@@ -97,46 +102,84 @@ class TestAggregatesExpressionParser:
         with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
-                    "$fields": {"total": "category"},
+                    "$groups": {"total": "category"},
                     "$computed": {"total": {"$sum": "price"}},
                 },
             )
 
     def test_rejects_invalid_group_keys_type(self) -> None:
-        with pytest.raises(CoreError, match=r"Invalid aggregate \$fields"):
+        with pytest.raises(CoreError, match=r"Invalid aggregate \$groups"):
             AggregatesExpressionParser.parse(
                 {
-                    "$fields": "category",
+                    "$groups": "category",
                     "$computed": {"n": {"$count": None}},
                 },
             )
 
-    def test_parses_time_bucket(self) -> None:
+    def test_parses_trunc_group(self) -> None:
         parsed = AggregatesExpressionParser.parse(
             {
-                "$fields": {"item": "item_id"},
-                "$time_bucket": {
-                    "field": "ts",
-                    "unit": "day",
-                    "timezone": "+3",
-                    "alias": "day_start",
+                "$groups": {
+                    "item": "item_id",
+                    "day_start": {
+                        "$trunc": {
+                            "field": "ts",
+                            "unit": "day",
+                            "timezone": "+3",
+                        },
+                    },
                 },
                 "$computed": {"avg_p": {"$avg": "price"}},
             },
         )
-        assert parsed.time_bucket is not None
-        assert parsed.time_bucket.field == "ts"
-        assert parsed.time_bucket.unit == "day"
-        assert parsed.time_bucket.alias == "day_start"
-        assert parsed.time_bucket.timezone.mode == "fixed"
+        assert len(parsed.groups) == 2
+        trunc = parsed.groups[1]
+        assert trunc.alias == "day_start"
+        assert isinstance(trunc.expr, GroupTrunc)
+        assert trunc.expr.field == "ts"
+        assert trunc.expr.unit == "day"
+        assert trunc.expr.timezone.mode == "fixed"
         assert "day_start" in parsed.aliases
 
-    def test_rejects_duplicate_time_bucket_alias(self) -> None:
+    def test_parses_multiple_trunc_groups(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {
+                    "by_day": {"$trunc": {"field": "ts", "unit": "day"}},
+                    "by_hour": {"$trunc": {"field": "ts", "unit": "hour"}},
+                },
+                "$computed": {"n": {"$count": None}},
+            },
+        )
+        assert len(parsed.groups) == 2
+        assert all(isinstance(g.expr, GroupTrunc) for g in parsed.groups)
+
+    def test_rejects_duplicate_trunc_alias(self) -> None:
         with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
-                    "$fields": {"bucket": "item_id"},
-                    "$time_bucket": {"field": "ts", "unit": "hour"},
+                    "$groups": {
+                        "bucket": "item_id",
+                        "week": {"$trunc": {"field": "ts", "unit": "hour"}},
+                    },
+                    "$computed": {"bucket": {"$count": None}},
+                },
+            )
+
+    def test_rejects_unknown_group_operator(self) -> None:
+        with pytest.raises(CoreError, match="Invalid \\$groups operator"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": {"$unknown": {"field": "ts"}}},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_bare_trunc_spec_without_operator(self) -> None:
+        with pytest.raises(CoreError, match="exactly one operator"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"day": {"field": "ts", "unit": "day"}},
                     "$computed": {"n": {"$count": None}},
                 },
             )
@@ -381,7 +424,7 @@ class TestQueryValueCaster:
 class TestQueryFilterExpressionParser:
     # Predicate shortcuts
     def test_parse_eq_shortcut(self) -> None:
-        expr = {"$fields": {"name": "foo"}}
+        expr = {"$values": {"name": "foo"}}
         result = QueryFilterExpressionParser.parse(expr)
         assert isinstance(result, QueryAnd)
         f = result.items[0]
@@ -389,14 +432,14 @@ class TestQueryFilterExpressionParser:
         assert f.op == "$eq" and f.value == "foo"
 
     def test_parse_null_shortcut(self) -> None:
-        expr = {"$fields": {"deleted_at": None}}
+        expr = {"$values": {"deleted_at": None}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
         assert f.op == "$null" and f.value is True
 
     def test_parse_in_shortcut(self) -> None:
-        expr = {"$fields": {"status": ["a", "b"]}}
+        expr = {"$values": {"status": ["a", "b"]}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
@@ -404,14 +447,14 @@ class TestQueryFilterExpressionParser:
 
     # Operator-based predicates
     def test_parse_eq_operator(self) -> None:
-        expr = {"$fields": {"x": {"$eq": 42}}}
+        expr = {"$values": {"x": {"$eq": 42}}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
         assert f.op == "$eq"
 
     def test_parse_neq_operator(self) -> None:
-        expr = {"$fields": {"x": {"$neq": 42}}}
+        expr = {"$values": {"x": {"$neq": 42}}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
@@ -419,35 +462,35 @@ class TestQueryFilterExpressionParser:
 
     def test_parse_ord_operators(self) -> None:
         for op in ("$gt", "$gte", "$lt", "$lte"):
-            expr = {"$fields": {"age": {op: 18}}}
+            expr = {"$values": {"age": {op: 18}}}
             result = QueryFilterExpressionParser.parse(expr)
             f = result.items[0]
             assert isinstance(f, QueryField)
             assert f.op == op
 
     def test_parse_in_operator(self) -> None:
-        expr = {"$fields": {"x": {"$in": [1, 2, 3]}}}
+        expr = {"$values": {"x": {"$in": [1, 2, 3]}}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
         assert f.op == "$in"
 
     def test_parse_nin_operator(self) -> None:
-        expr = {"$fields": {"x": {"$nin": [1, 2]}}}
+        expr = {"$values": {"x": {"$nin": [1, 2]}}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
         assert f.op == "$nin"
 
     def test_parse_null_operator(self) -> None:
-        expr = {"$fields": {"x": {"$null": True}}}
+        expr = {"$values": {"x": {"$null": True}}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
         assert f.op == "$null"
 
     def test_parse_empty_operator(self) -> None:
-        expr = {"$fields": {"x": {"$empty": False}}}
+        expr = {"$values": {"x": {"$empty": False}}}
         result = QueryFilterExpressionParser.parse(expr)
         f = result.items[0]
         assert isinstance(f, QueryField)
@@ -455,7 +498,7 @@ class TestQueryFilterExpressionParser:
 
     def test_parse_set_rel_operators(self) -> None:
         for op in ("$superset", "$subset", "$disjoint", "$overlaps"):
-            expr = {"$fields": {"tags": {op: ["a", "b"]}}}
+            expr = {"$values": {"tags": {op: ["a", "b"]}}}
             result = QueryFilterExpressionParser.parse(expr)
             f = result.items[0]
             assert isinstance(f, QueryField)
@@ -463,13 +506,13 @@ class TestQueryFilterExpressionParser:
 
     # Conjunction / disjunction
     def test_parse_conjunction(self) -> None:
-        expr = {"$and": [{"$fields": {"a": 1}}, {"$fields": {"b": 2}}]}
+        expr = {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}
         result = QueryFilterExpressionParser.parse(expr)
         assert isinstance(result, QueryAnd)
         assert len(result.items) == 2
 
     def test_parse_disjunction(self) -> None:
-        expr = {"$or": [{"$fields": {"a": 1}}, {"$fields": {"b": 2}}]}
+        expr = {"$or": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}
         result = QueryFilterExpressionParser.parse(expr)
         assert isinstance(result, QueryOr)
         assert len(result.items) == 2
@@ -477,8 +520,8 @@ class TestQueryFilterExpressionParser:
     def test_parse_nested(self) -> None:
         expr = {
             "$and": [
-                {"$fields": {"a": 1}},
-                {"$or": [{"$fields": {"b": 2}}, {"$fields": {"c": 3}}]},
+                {"$values": {"a": 1}},
+                {"$or": [{"$values": {"b": 2}}, {"$values": {"c": 3}}]},
             ]
         }
         result = QueryFilterExpressionParser.parse(expr)
@@ -487,7 +530,7 @@ class TestQueryFilterExpressionParser:
 
     # Multiple operators per field
     def test_parse_multiple_ops_same_field(self) -> None:
-        expr = {"$fields": {"age": {"$gte": 18, "$lte": 65}}}
+        expr = {"$values": {"age": {"$gte": 18, "$lte": 65}}}
         result = QueryFilterExpressionParser.parse(expr)
         assert isinstance(result, QueryAnd)
         assert len(result.items) == 2
@@ -502,47 +545,47 @@ class TestQueryFilterExpressionParser:
             QueryFilterExpressionParser.parse({"$unknown": []})
 
     def test_parse_empty_field_map_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Empty field map"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {}}})
+        with pytest.raises(ValidationError, match="Empty \\$values"):
+            QueryFilterExpressionParser.parse({"$values": {"x": {}}})
 
     def test_parse_eq_invalid_value_raises(self) -> None:
         with pytest.raises(ValidationError, match="Invalid value for"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {"$eq": [1, 2]}}})
+            QueryFilterExpressionParser.parse({"$values": {"x": {"$eq": [1, 2]}}})
 
     def test_parse_ord_invalid_value_raises(self) -> None:
         with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
-                {"$fields": {"x": {"$gte": "not-numeric"}}}
+                {"$values": {"x": {"$gte": "not-numeric"}}}
             )
 
     def test_parse_in_invalid_value_raises(self) -> None:
         with pytest.raises(ValidationError, match="Invalid value for"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {"$in": "not-a-list"}}})
+            QueryFilterExpressionParser.parse({"$values": {"x": {"$in": "not-a-list"}}})
 
     def test_parse_null_invalid_value_raises(self) -> None:
         with pytest.raises(ValidationError, match="Invalid value for"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {"$null": "not-bool"}}})
+            QueryFilterExpressionParser.parse({"$values": {"x": {"$null": "not-bool"}}})
 
     def test_parse_invalid_operator_raises(self) -> None:
         with pytest.raises(ValidationError, match="Invalid operator"):
-            QueryFilterExpressionParser.parse({"$fields": {"x": {"$unknown": 1}}})
+            QueryFilterExpressionParser.parse({"$values": {"x": {"$unknown": 1}}})
 
     def test_parse_set_rel_invalid_value_raises(self) -> None:
         with pytest.raises(ValidationError, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
-                {"$fields": {"x": {"$superset": "not-list"}}}
+                {"$values": {"x": {"$superset": "not-list"}}}
             )
 
     # Validate null=True with other ops
     def test_null_true_with_other_ops_raises(self) -> None:
         with pytest.raises(ValidationError, match="cannot be null"):
             QueryFilterExpressionParser.parse(
-                {"$fields": {"x": {"$null": True, "$eq": 1}}}
+                {"$values": {"x": {"$null": True, "$eq": 1}}}
             )
 
     def test_null_false_with_other_ops_ok(self) -> None:
         result = QueryFilterExpressionParser.parse(
-            {"$fields": {"x": {"$null": False, "$eq": 1}}}
+            {"$values": {"x": {"$null": False, "$eq": 1}}}
         )
         assert isinstance(result, QueryAnd)
 
@@ -550,21 +593,147 @@ class TestQueryFilterExpressionParser:
     def test_empty_true_with_other_ops_raises(self) -> None:
         with pytest.raises(ValidationError, match="cannot be empty"):
             QueryFilterExpressionParser.parse(
-                {"$fields": {"x": {"$empty": True, "$eq": 1}}}
+                {"$values": {"x": {"$empty": True, "$eq": 1}}}
             )
 
     def test_empty_false_with_other_ops_ok(self) -> None:
         result = QueryFilterExpressionParser.parse(
-            {"$fields": {"x": {"$empty": False, "$eq": 1}}}
+            {"$values": {"x": {"$empty": False, "$eq": 1}}}
         )
         assert isinstance(result, QueryAnd)
 
     # Multiple fields in predicate
     def test_multiple_fields_in_predicate(self) -> None:
-        expr = {"$fields": {"a": 1, "b": "hello"}}
+        expr = {"$values": {"a": 1, "b": "hello"}}
         result = QueryFilterExpressionParser.parse(expr)
         assert isinstance(result, QueryAnd)
         assert len(result.items) == 2
+
+
+class TestQueryCompareExpressionParser:
+    def test_parse_compare_eq_shortcut(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$fields": {"starts_at": "ends_at"}},
+        )
+        assert isinstance(result, QueryAnd)
+        node = result.items[0]
+        assert isinstance(node, QueryCompare)
+        assert node.left == "starts_at"
+        assert node.op == "$eq"
+        assert node.right == "ends_at"
+
+    def test_parse_compare_ord_operator(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$fields": {"a": {"$lte": "b"}}},
+        )
+        node = result.items[0]
+        assert isinstance(node, QueryCompare)
+        assert node.op == "$lte"
+
+    def test_parse_compare_multiple_ops_same_left(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$fields": {"a": {"$gte": "b", "$lte": "c"}}},
+        )
+        assert isinstance(result, QueryAnd)
+        assert len(result.items) == 2
+        assert all(isinstance(n, QueryCompare) for n in result.items)
+
+    def test_parse_compare_multiple_left_fields(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$fields": {"a": {"$eq": "b"}, "x": {"$neq": "y"}}},
+        )
+        assert isinstance(result, QueryAnd)
+        assert len(result.items) == 2
+
+    def test_parse_compare_in_conjunction(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {
+                "$and": [
+                    {"$values": {"status": "active"}},
+                    {"$fields": {"starts_at": {"$lte": "ends_at"}}},
+                ],
+            },
+        )
+        assert isinstance(result, QueryAnd)
+        assert len(result.items) == 2
+
+    def test_parse_combined_values_and_fields(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {
+                "$values": {"status": "active"},
+                "$fields": {"starts_at": {"$lte": "ends_at"}},
+            },
+        )
+        assert isinstance(result, QueryAnd)
+        assert len(result.items) == 2
+        assert isinstance(result.items[0], QueryField)
+        assert isinstance(result.items[1], QueryCompare)
+
+    def test_parse_constraint_with_and_raises(self) -> None:
+        with pytest.raises(ValidationError, match="cannot mix"):
+            QueryFilterExpressionParser.parse(
+                {"$and": [], "$values": {"a": 1}},
+            )
+
+    def test_parse_empty_fields_map_raises(self) -> None:
+        with pytest.raises(ValidationError, match="Empty \\$fields"):
+            QueryFilterExpressionParser.parse({"$fields": {}})
+
+    def test_parse_compare_invalid_operator_raises(self) -> None:
+        with pytest.raises(ValidationError, match="Invalid field compare operator"):
+            QueryFilterExpressionParser.parse(
+                {"$fields": {"a": {"$in": "b"}}},
+            )
+
+    def test_parse_compare_scalar_rhs_raises(self) -> None:
+        with pytest.raises(ValidationError, match="field path string"):
+            QueryFilterExpressionParser.parse(
+                {"$fields": {"a": {"$eq": 1}}},
+            )
+
+    def test_parse_compare_empty_rhs_raises(self) -> None:
+        with pytest.raises(ValidationError, match="field path string"):
+            QueryFilterExpressionParser.parse(
+                {"$fields": {"a": {"$eq": ""}}},
+            )
+
+    def test_parse_exceeds_max_depth(self) -> None:
+        expr: dict[str, object] = {"$values": {"x": 1}}
+        for _ in range(5):
+            expr = {"$and": [expr]}
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=3, max_clauses=100, max_in_size=100),
+        )
+        with pytest.raises(ValidationError, match="maximum depth"):
+            parser.parse_filter(expr)  # type: ignore[arg-type]
+
+    def test_parse_exceeds_max_clauses(self) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=2, max_in_size=100),
+        )
+        expr = {
+            "$and": [
+                {"$values": {"a": 1}},
+                {"$values": {"b": 2}},
+                {"$values": {"c": 3}},
+            ],
+        }
+        with pytest.raises(ValidationError, match="maximum clause count"):
+            parser.parse_filter(expr)  # type: ignore[arg-type]
+
+    def test_parse_exceeds_max_in_size(self) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=2),
+        )
+        with pytest.raises(ValidationError, match="maximum size"):
+            parser.parse_filter({"$values": {"x": [1, 2, 3]}})  # type: ignore[arg-type]
+
+    def test_parse_exceeds_max_in_size_operator_form(self) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=1),
+        )
+        with pytest.raises(ValidationError, match="maximum size"):
+            parser.parse_filter({"$values": {"x": {"$in": [1, 2]}}})  # type: ignore[arg-type]
 
 
 # ----------------------- #
@@ -589,7 +758,14 @@ class TestQueryNodes:
         node = QueryOr((f1, f2))
         assert len(node.items) == 2
 
+    def test_query_compare(self) -> None:
+        node = QueryCompare("a", "$lte", "b")
+        assert node.left == "a"
+        assert node.op == "$lte"
+        assert node.right == "b"
+
     def test_inheritance(self) -> None:
         assert issubclass(QueryField, QueryExpr)
+        assert issubclass(QueryCompare, QueryExpr)
         assert issubclass(QueryAnd, QueryExpr)
         assert issubclass(QueryOr, QueryExpr)

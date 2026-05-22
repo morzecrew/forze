@@ -16,13 +16,12 @@ from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
-    page_from_limit_offset,
 )
 from forze.application.contracts.embeddings import (
     EmbeddingsProviderPort,
     EmbeddingsSpec,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -43,7 +42,6 @@ from forze.application.contracts.search import (
     ranked_search_cursor_key_spec,
     search_options_for_simple_adapter,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.application.coordinators import SearchResultSnapshotCoordinator
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
@@ -57,14 +55,22 @@ from forze_postgres.pagination import (
 )
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ..txmanager import PostgresTxScopeKey
-from ._vector_sql import (
-    VectorDistanceKind,
-    assert_embedding_shape,
-    vector_knn_multi_score_expr,
-    vector_knn_score_expr,
-    vector_param_literal,
+from ._leg_vector import build_vector_leg
+from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
+from ._pipeline_sql import (
+    PipelineAliases,
+    build_filtered_cte,
+    build_outer_from,
+    build_pipeline_with_clause,
+    build_rank_first_order,
+    build_scored_cte,
+    filtered_select_list,
+    outer_join_on_scored,
+    scored_join_on_filtered,
+    scored_key_columns,
+    validate_join_pairs,
 )
+from ._vector_sql import VectorDistanceKind
 
 # ----------------------- #
 
@@ -74,11 +80,9 @@ T = TypeVar("T", bound=BaseModel)
 
 _DEFAULT_JOIN: Final[tuple[tuple[str, str], ...]] = ((ID_FIELD, ID_FIELD),)
 
-_FILTERED_CTE_ALIAS: Final[str] = "f"
-_INDEX_ALIAS: Final[str] = "t"
 _PROJECTION_ALIAS: Final[str] = "v"
-_SCORED_CTE_ALIAS: Final[str] = "s"
 _RANK_COLUMN: Final[str] = "_vector_rank"
+_PIPELINE: Final[PipelineAliases] = PipelineAliases(rank_column=_RANK_COLUMN)
 
 # ....................... #
 
@@ -88,7 +92,6 @@ _RANK_COLUMN: Final[str] = "_vector_rank"
 class PostgresVectorSearchAdapter[M: BaseModel](
     PostgresGateway[M],
     SearchQueryPort[M],
-    TxScopedPort,
 ):
     """pgvector :class:`SearchQueryPort`: KNN on a heap column with projection filters."""
 
@@ -122,9 +125,6 @@ class PostgresVectorSearchAdapter[M: BaseModel](
     snapshot_coord: SearchResultSnapshotCoordinator | None = None
     """Coordinator for KV ordered-ID snapshots."""
 
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
-    """Transaction scope."""
-
     # ....................... #
 
     @property
@@ -134,11 +134,9 @@ class PostgresVectorSearchAdapter[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         _ = self.index_qname, self.index_field_map
-        proj_keys = {pc for pc, _ in self._safe_join_pairs}
-
-        if len(proj_keys) != len(self._safe_join_pairs):
-            raise CoreError("join_pairs must use unique projection column names.")
+        validate_join_pairs(self._safe_join_pairs)
 
     # ....................... #
 
@@ -147,56 +145,6 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
         return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
-
-    # ....................... #
-
-    def _filtered_select_list(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_PROJECTION_ALIAS, pc),
-                sql.Identifier(pc),
-            )
-            for pc, _ in self._safe_join_pairs
-        ]
-
-        return sql.SQL(", ").join(parts)
-
-    # ....................... #
-
-    def _scored_join_on_filtered(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} = {}").format(
-                sql.Identifier(_INDEX_ALIAS, ic),
-                sql.Identifier(_FILTERED_CTE_ALIAS, pc),
-            )
-            for pc, ic in self._safe_join_pairs
-        ]
-
-        return sql.SQL(" AND ").join(parts)
-
-    # ....................... #
-
-    def _outer_join_on_scored(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} = {}").format(
-                sql.Identifier(_PROJECTION_ALIAS, pc),
-                sql.Identifier(_SCORED_CTE_ALIAS, pc),
-            )
-            for pc, _ in self._safe_join_pairs
-        ]
-
-        return sql.SQL(" AND ").join(parts)
-
-    # ....................... #
-
-    def _scored_key_columns(self) -> sql.Composable:
-        return sql.SQL(", ").join(
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_INDEX_ALIAS, ic),
-                sql.Identifier(pc),
-            )
-            for pc, ic in self._safe_join_pairs
-        )
 
     # ....................... #
 
@@ -304,291 +252,88 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
+        fw, fp = await self.where_clause(filters)
+        terms = tuple(normalize_search_queries(query))
+        join = self._safe_join_pairs
 
-        rs_spec = self.spec.snapshot
-        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
-            query,
-            filters,
-            sorts,
-            spec_name=self.spec.name,
+        sw, scored_rank, leg_params = await build_vector_leg(
+            embedder=self.embedder,
+            introspector=self.introspector,
+            index_alias=_PIPELINE.index,
+            vector_column=self.vector_column,
+            vector_distance=self.vector_distance,
+            embedding_dimensions=self.embeddings_spec.dimensions,
+            queries=terms,
+            options=options,
+            score_column=_RANK_COLUMN,
+        )
+        scored_keys = scored_key_columns(join, index_alias=_PIPELINE.index)
+        params_body = [*fp, *leg_params]
+
+        key_sel = filtered_select_list(join, projection_alias=_PIPELINE.projection)
+        filtered_cte = build_filtered_cte(
+            aliases=_PIPELINE,
+            key_sel=key_sel,
+            proj_ident=self.source_qname.ident(),
+            fw=fw,
+        )
+        join_sf = scored_join_on_filtered(
+            join,
+            index_alias=_PIPELINE.index,
+            filtered_alias=_PIPELINE.filtered,
+        )
+        scored_cte = build_scored_cte(
+            aliases=_PIPELINE,
+            scored_keys=scored_keys,
+            scored_rank=scored_rank,
+            heap_ident=self.index_heap_qname.ident(),
+            join_sf=join_sf,
+            sw=sw,
+        )
+        join_vs = outer_join_on_scored(
+            join,
+            projection_alias=_PIPELINE.projection,
+            scored_alias=_PIPELINE.scored,
+        )
+        from_outer = build_outer_from(
+            aliases=_PIPELINE,
+            proj_ident=self.source_qname.ident(),
+            join_vs=join_vs,
+        )
+        extra_ob = await self._projection_order_by_clause(sorts)
+        order_sql = build_rank_first_order(aliases=_PIPELINE, extra_order=extra_ob)
+        with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
+
+        plan = RankedOffsetPlan(
+            with_clause=with_clause,
+            from_outer=from_outer,
+            order_sql=order_sql,
+            params=params_body,
+            select_table_alias=_PROJECTION_ALIAS,
+        )
+
+        return await execute_simple_ranked_offset_search(
+            self,
+            plan=plan,
+            query=query,
+            filters=filters,
+            sorts=sorts,
+            spec=self.spec,
             variant="vector",
-            extras={
+            fingerprint_extras={
                 "phrase_combine": str(effective_phrase_combine(options)),
                 "embeddings": str(self.embeddings_spec.name),
                 "vector_column": str(self.vector_column),
                 "vector_distance": str(self.vector_distance),
                 "embeddings_dim": int(self.embeddings_spec.dimensions),
             },
-        )
-        if self.snapshot_coord is not None and rs_spec is not None:
-            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
-                rs_spec=rs_spec,
-                snap_opt=snapshot,
-                fp_computed=fp_fingerprint,
-                spec=self.spec,
-                pagination=dict(pagination or {}),
-                return_type=return_type,
-                return_fields=return_fields,
-                return_count=return_count,
-            )
-            if maybe_snap is not None:
-                return maybe_snap
-
-        combine = effective_phrase_combine(options)
-        fw, fp = await self.where_clause(filters)
-
-        key_cols = self._scored_key_columns()
-        scored_rank: sql.Composable
-        terms = normalize_search_queries(query)
-
-        if not terms:
-            sw = sql.SQL("TRUE")
-            scored_rank = sql.SQL("(0)::double precision AS {}").format(
-                sql.Identifier(_RANK_COLUMN),
-            )
-            params_body: list[Any] = [*fp]
-
-        elif len(terms) == 1:
-            one = await self.embedder.embed_one(terms[0], input_kind="query")
-            assert_embedding_shape(
-                one,
-                expect_dim=self.embeddings_spec.dimensions,
-            )
-            sw = sql.SQL("TRUE")
-            scored_rank = vector_knn_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-            )
-            params_body = [*fp, vector_param_literal(one)]
-
-        else:
-            vecs = await self.embedder.embed(terms, input_kind="query")
-
-            for vec in vecs:
-                assert_embedding_shape(
-                    vec,
-                    expect_dim=self.embeddings_spec.dimensions,
-                )
-
-            sw = sql.SQL("TRUE")
-            scored_rank = vector_knn_multi_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-                n_queries=len(vecs),
-                phrase_combine=combine,
-            )
-            params_body = [*fp, *[vector_param_literal(v) for v in vecs]]
-
-        key_sel = self._filtered_select_list()
-
-        filtered_cte = sql.SQL(
-            """
-            {filtered} AS (
-                SELECT {key_sel}
-                FROM {proj} {pa}
-                WHERE {fw}
-            )"""
-        ).format(
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            key_sel=key_sel,
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            fw=fw,
-        )
-
-        join_sf = self._scored_join_on_filtered()
-        scored_cte = sql.SQL(
-            """
-            ,
-            {scored} AS (
-                SELECT {scored_keys}, {scored_rank}
-                FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
-            )"""
-        ).format(
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            scored_keys=key_cols,
-            scored_rank=scored_rank,
-            heap=self.index_heap_qname.ident(),
-            ia=sql.Identifier(_INDEX_ALIAS),
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            fa=sql.Identifier(_FILTERED_CTE_ALIAS),
-            join_sf=join_sf,
-            sw=sw,
-        )
-
-        join_vs = self._outer_join_on_scored()
-        from_outer = sql.SQL(
-            """
-            FROM {proj} {pa}
-            INNER JOIN {scored} {sa} ON ({join_vs})
-            """
-        ).format(
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            sa=sql.Identifier(_SCORED_CTE_ALIAS),
-            join_vs=join_vs,
-        )
-
-        order_parts: list[sql.Composable] = [
-            sql.SQL("{} DESC NULLS LAST").format(
-                sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
-            )
-        ]
-        extra_ob = await self._projection_order_by_clause(sorts)
-
-        if extra_ob is not None:
-            order_parts.append(extra_ob)
-
-        order_sql = sql.SQL(", ").join(order_parts)
-        with_clause = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
-
-        count_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT COUNT(*) {from_outer}
-            """
-        ).format(with_clause=with_clause, from_outer=from_outer)
-
-        total = 0
-
-        if return_count:
-            total = int(
-                await self.client.fetch_value(count_stmt, params_body, default=0),
-            )
-
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
-                )
-
-        cols = self.return_clause(
-            return_type,
-            return_fields,
-            table_alias=_PROJECTION_ALIAS,
-        )
-
-        data_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT {cols} {from_outer}
-            ORDER BY {order}
-            """
-        ).format(
-            with_clause=with_clause,
-            cols=cols,
-            from_outer=from_outer,
-            order=order_sql,
-        )
-
-        params = list(params_body)
-
-        pagination = pagination or {}
-
-        want_sn = (
-            self.snapshot_coord is not None
-            and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
-        )
-        max_nv = (
-            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-            if want_sn and self.snapshot_coord is not None
-            else 0
-        )
-
-        sql_limit, sql_offset, page_limit = (
-            SearchResultSnapshotCoordinator.snapshot_pagination(
-                want_sn, max_nv, dict(pagination)
-            )
-        )
-        if sql_limit is not None:
-            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(sql_limit))
-
-        if want_sn:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(sql_offset))
-
-        elif pagination.get("offset") is not None:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(pagination.get("offset") or 0))
-
-        rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-        handle_out = None
-
-        if want_sn and self.snapshot_coord is not None and rs_spec is not None:
-            pl = len(rows)
-            pool = pydantic_validate_many(self.model_type, rows)
-            handle_out = await self.snapshot_coord.put_simple_ordered_hits(
-                pool,
-                snap_opt=snapshot,
-                rs_spec=rs_spec,
-                fp_computed=fp_fingerprint,
-                pool_len_before_cap=pl,
-            )
-            uo = int(pagination.get("offset") or 0)
-            rows = rows[uo : uo + page_limit]
-
-        if return_type is not None:
-            v = pydantic_validate_many(return_type, rows)
-
-            if return_count:
-                return page_from_limit_offset(
-                    v,
-                    pagination,
-                    total=total,
-                    snapshot=handle_out,
-                )
-
-            return page_from_limit_offset(
-                v,
-                pagination,
-                total=None,
-                snapshot=handle_out,
-            )
-
-        if return_fields is not None:
-            raw = [{k: r.get(k, None) for k in return_fields} for r in rows]
-
-            if return_count:
-                return page_from_limit_offset(
-                    raw,
-                    pagination,
-                    total=total,
-                    snapshot=handle_out,
-                )
-
-            return page_from_limit_offset(
-                raw,
-                pagination,
-                total=None,
-                snapshot=handle_out,
-            )
-
-        m = pydantic_validate_many(self.model_type, rows)
-
-        if return_count:
-            return page_from_limit_offset(
-                m,
-                pagination,
-                total=total,
-                snapshot=handle_out,
-            )
-
-        return page_from_limit_offset(
-            m,
-            pagination,
-            total=None,
-            snapshot=handle_out,
+            pagination=pagination,
+            snapshot=snapshot,
+            return_count=return_count,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=self.model_type,
+            snapshot_coord=self.snapshot_coord,
         )
 
     # ....................... #
@@ -615,6 +360,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def search_page(
         self,
         query: str | Sequence[str],
@@ -636,6 +383,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search(
         self,
@@ -660,6 +409,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def project_search_page(
         self,
         fields: Sequence[str],
@@ -683,6 +434,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_search(
         self,
         return_type: type[T],
@@ -705,6 +458,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_search_page(
         self,
@@ -801,6 +556,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         use_after = c.get("after") is not None
         use_before = c.get("before") is not None
 
+        parsed_filters = self.compile_filters(filters)
+
         if not terms:
             if sorts is None:
                 first = sorted(self.read_fields)[0]
@@ -821,7 +578,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             else:
                 select_rf = None
 
-            fw, fp = await self.where_clause(filters)
+            fw, fp = await self.where_clause(filters, parsed=parsed_filters)
             types = await self.column_types()
 
             exprs = [
@@ -943,44 +700,23 @@ class PostgresVectorSearchAdapter[M: BaseModel](
                 has_more=has_more,
             )
 
-        combine = effective_phrase_combine(options)
-        fw_r, fp_r = await self.where_clause(filters)
-        key_cols_r = self._scored_key_columns()
+        fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
+        join_r = self._safe_join_pairs
+        term_tuple = tuple(terms)
 
-        if len(terms) == 1:
-            one = await self.embedder.embed_one(terms[0], input_kind="query")
-            assert_embedding_shape(
-                one,
-                expect_dim=self.embeddings_spec.dimensions,
-            )
-            sw_r = sql.SQL("TRUE")
-            scored_rank_r = vector_knn_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-            )
-            params_base_r: list[Any] = [*fp_r, vector_param_literal(one)]
-
-        else:
-            vecs = await self.embedder.embed(terms, input_kind="query")
-
-            for vec in vecs:
-                assert_embedding_shape(
-                    vec,
-                    expect_dim=self.embeddings_spec.dimensions,
-                )
-
-            sw_r = sql.SQL("TRUE")
-            scored_rank_r = vector_knn_multi_score_expr(
-                index_alias=_INDEX_ALIAS,
-                column=self.vector_column,
-                kind=self.vector_distance,
-                score_name=_RANK_COLUMN,
-                n_queries=len(vecs),
-                phrase_combine=combine,
-            )
-            params_base_r = [*fp_r, *[vector_param_literal(v) for v in vecs]]
+        sw_r, scored_rank_r, leg_params_r = await build_vector_leg(
+            embedder=self.embedder,
+            introspector=self.introspector,
+            index_alias=_PIPELINE.index,
+            vector_column=self.vector_column,
+            vector_distance=self.vector_distance,
+            embedding_dimensions=self.embeddings_spec.dimensions,
+            queries=term_tuple,
+            options=options,
+            score_column=_RANK_COLUMN,
+        )
+        key_cols_r = scored_key_columns(join_r, index_alias=_PIPELINE.index)
+        params_base_r = [*fp_r, *leg_params_r]
 
         key_spec_r = ranked_search_cursor_key_spec(
             rank_field=_RANK_COLUMN,
@@ -989,66 +725,46 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         sort_keys_r = [k for k, _ in key_spec_r]
         directions_r = [d for _, d in key_spec_r]
 
-        key_sel_r = self._filtered_select_list()
-
-        filtered_cte = sql.SQL(
-            """
-            {filtered} AS (
-                SELECT {key_sel}
-                FROM {proj} {pa}
-                WHERE {fw}
-            )"""
-        ).format(
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
+        key_sel_r = filtered_select_list(join_r, projection_alias=_PIPELINE.projection)
+        filtered_cte_r = build_filtered_cte(
+            aliases=_PIPELINE,
             key_sel=key_sel_r,
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
+            proj_ident=self.source_qname.ident(),
             fw=fw_r,
         )
-
-        join_sf_r = self._scored_join_on_filtered()
-        scored_cte = sql.SQL(
-            """
-            ,
-            {scored} AS (
-                SELECT {scored_keys}, {scored_rank}
-                FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
-            )"""
-        ).format(
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_sf_r = scored_join_on_filtered(
+            join_r,
+            index_alias=_PIPELINE.index,
+            filtered_alias=_PIPELINE.filtered,
+        )
+        scored_cte_r = build_scored_cte(
+            aliases=_PIPELINE,
             scored_keys=key_cols_r,
             scored_rank=scored_rank_r,
-            heap=self.index_heap_qname.ident(),
-            ia=sql.Identifier(_INDEX_ALIAS),
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            fa=sql.Identifier(_FILTERED_CTE_ALIAS),
+            heap_ident=self.index_heap_qname.ident(),
             join_sf=join_sf_r,
             sw=sw_r,
         )
-
-        join_vs_r = self._outer_join_on_scored()
-        from_outer_r = sql.SQL(
-            """
-            FROM {proj} {pa}
-            INNER JOIN {scored} {sa} ON ({join_vs})
-            """
-        ).format(
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            sa=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_vs_r = outer_join_on_scored(
+            join_r,
+            projection_alias=_PIPELINE.projection,
+            scored_alias=_PIPELINE.scored,
+        )
+        from_outer_r = build_outer_from(
+            aliases=_PIPELINE,
+            proj_ident=self.source_qname.ident(),
             join_vs=join_vs_r,
         )
 
-        with_clause_r = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
+        with_clause_r = build_pipeline_with_clause(filtered_cte_r, scored_cte_r)
 
         types_r = await self.column_types()
         exprs_r: list[sql.Composable] = []
+
         for k in sort_keys_r:
             if k == _RANK_COLUMN:
-                exprs_r.append(sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN))
+                exprs_r.append(sql.Identifier(_PIPELINE.scored, _RANK_COLUMN))
+
             else:
                 exprs_r.append(
                     sort_key_expr(
@@ -1093,14 +809,17 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         )
 
         return_fields_sql_r: Sequence[str] | None
+
         if return_fields is not None:
             return_fields_sql_r = cursor_return_fields_for_select(
                 sort_keys=sort_keys_r,
                 rank_field=_RANK_COLUMN,
                 return_fields=return_fields,
             )
+
             if not return_fields_sql_r:
                 return_fields_sql_r = None
+
         else:
             return_fields_sql_r = None
 
@@ -1109,10 +828,11 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_fields_sql_r,
             table_alias=_PROJECTION_ALIAS,
         )
+
         cols_r = sql.SQL("{}, {}").format(
             base_cols_r,
             sql.SQL("{} AS {}").format(
-                sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
+                sql.Identifier(_PIPELINE.scored, _RANK_COLUMN),
                 sql.Identifier(_RANK_COLUMN),
             ),
         )
@@ -1198,6 +918,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             has_more=has_more_r,
         )
 
+    # ....................... #
+
     async def search_cursor(
         self,
         query: str | Sequence[str],
@@ -1216,6 +938,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search_cursor(
         self,
@@ -1236,6 +960,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select_search_cursor(
         self,

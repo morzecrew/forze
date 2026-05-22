@@ -77,5 +77,5 @@ plain reads and consumer-group reads with acknowledgments.
     from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 
     audit_stream = StreamSpec(name="audit", model=AuditEntry)
-    writer = ctx.dep(StreamCommandDepKey)(ctx, audit_stream)
+    writer = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, audit_stream, route=audit_stream.name)
     entry_id = await writer.append("audit", AuditEntry(action="created"))

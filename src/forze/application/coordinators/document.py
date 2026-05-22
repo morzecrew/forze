@@ -30,17 +30,17 @@ from forze.application.contracts.document import (
     require_create_id,
     require_create_id_for_many,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_with_id,
 )
-from forze.application.contracts.tx import TxScopedPort, TxScopeKey
 from forze.base.errors import CoreError, InvalidOperationError
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD, REV_FIELD
@@ -65,6 +65,13 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
 
     @property
     def model_type(self) -> type[M]: ...
+
+    def compile_filters(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    ) -> QueryExpr | None:
+        """Parse *filters* once for reuse across count/list gateway calls."""
+        ...
 
     # ....................... #
 
@@ -227,6 +234,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -240,6 +248,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]: ...
 
     @overload
@@ -253,6 +262,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[M]: ...
 
     @overload
@@ -266,6 +276,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]: ...
 
     @overload
@@ -279,6 +290,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -292,6 +304,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> Never: ...
 
     async def find_many(
@@ -304,6 +317,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression | None = None,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]: ...
 
     # ....................... #
@@ -318,6 +332,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[T] | list[JsonDict]: ...
 
     # ....................... #
@@ -327,6 +342,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         *,
         aggregates: AggregatesExpression,
+        parsed: QueryExpr | None = None,
     ) -> int: ...
 
     # ....................... #
@@ -390,6 +406,8 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
     async def count(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None = None,
     ) -> int: ...
 
 
@@ -466,26 +484,6 @@ class DocumentWriteGatewayPort[D_co: Document, C_co: CreateDocumentCmd, U_co: Ba
 
     async def kill_many(self, pks: Sequence[UUID], *, batch_size: int) -> None: ...
 
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> D_co: ...
-
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D_co]: ...
-
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> D_co: ...
-
-    async def restore_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int,
-    ) -> Sequence[D_co]: ...
-
 
 # ....................... #
 
@@ -494,7 +492,6 @@ class DocumentWriteGatewayPort[D_co: Document, C_co: CreateDocumentCmd, U_co: Ba
 class DocumentCoordinator(
     DocumentQueryPort[R],
     DocumentCommandPort[R, D, C, U],
-    TxScopedPort,
 ):
     """Orchestrate :class:`~forze.application.contracts.document.DocumentQueryPort`
     / :class:`~forze.application.contracts.document.DocumentCommandPort` over gateways.
@@ -514,9 +511,6 @@ class DocumentCoordinator(
 
     batch_size: int = 200
     """Chunk size for bulk writes and internal chunked offset reads when pagination omits ``limit``."""
-
-    tx_scope: TxScopeKey
-    """Transaction scope marker for callers."""
 
     enforce_primary_key_cursor_sort: bool = False
     """When ``True``, reject cursor queries unless sorted solely by ``id``."""
@@ -632,6 +626,8 @@ class DocumentCoordinator(
 
         return await self.read_gw.find(filters, for_update=for_update)
 
+    # ....................... #
+
     async def project(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
@@ -646,6 +642,8 @@ class DocumentCoordinator(
             for_update=for_update,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select(
         self,
@@ -809,12 +807,17 @@ class DocumentCoordinator(
             raise CoreError("Aggregates cannot be combined with return_fields")
 
         pagination = pagination or {}
+        parsed_filters = self.read_gw.compile_filters(filters)
         cnt = 0
         if return_count:
             cnt = (
-                await self.read_gw.count_aggregates(filters, aggregates=aggregates)
+                await self.read_gw.count_aggregates(
+                    filters,
+                    aggregates=aggregates,
+                    parsed=parsed_filters,
+                )
                 if aggregates is not None
-                else await self.read_gw.count(filters)
+                else await self.read_gw.count(filters, parsed=parsed_filters)
             )
             if not cnt:
                 return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
@@ -831,10 +834,9 @@ class DocumentCoordinator(
         if limit is None:
             chunk = self.eff_batch_size
             off = 0 if offset is None else offset
-            sorts_for_scan: QuerySortExpression = (
-                sorts if sorts else {ID_FIELD: "asc"}
-            )
+            sorts_for_scan: QuerySortExpression = sorts if sorts else {ID_FIELD: "asc"}
             res = []
+
             while True:
                 if aggregates is not None:
                     batch = await self.read_gw.find_many_aggregates(
@@ -844,6 +846,7 @@ class DocumentCoordinator(
                         sorts=sorts_for_scan,
                         aggregates=aggregates,
                         return_model=return_model,
+                        parsed=parsed_filters,
                     )
                 else:
                     batch = await self.read_gw.find_many(  # type: ignore[misc]
@@ -853,11 +856,16 @@ class DocumentCoordinator(
                         sorts=sorts_for_scan,
                         return_model=return_model,  # type: ignore[arg-type]
                         return_fields=return_fields,  # type: ignore[arg-type]
+                        parsed=parsed_filters,
                     )
-                res.extend(batch)
-                if len(batch) < chunk:
+
+                res.extend(batch)  # type: ignore[arg-type]
+
+                if len(batch) < chunk:  # type: ignore[arg-type]
                     break
+
                 off += chunk
+
         elif aggregates is not None:
             res = await self.read_gw.find_many_aggregates(
                 filters=filters,
@@ -866,6 +874,7 @@ class DocumentCoordinator(
                 sorts=sorts,
                 aggregates=aggregates,
                 return_model=return_model,
+                parsed=parsed_filters,
             )
         else:
             res = await self.read_gw.find_many(  # type: ignore[misc]
@@ -875,15 +884,23 @@ class DocumentCoordinator(
                 sorts=sorts,
                 return_model=return_model,  # type: ignore[arg-type]
                 return_fields=return_fields,  # type: ignore[arg-type]
+                parsed=parsed_filters,
             )
 
         if return_count:
             return page_from_limit_offset(
-                list(res),
+                list(res),  # type: ignore[arg-type]
                 pagination,
                 total=cnt,
             )
-        return page_from_limit_offset(list(res), pagination, total=None)
+
+        return page_from_limit_offset(
+            list(res),  # type: ignore[arg-type]
+            pagination,
+            total=None,
+        )
+
+    # ....................... #
 
     async def find_many(
         self,
@@ -900,6 +917,8 @@ class DocumentCoordinator(
             return_model=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_many(
         self,
@@ -918,6 +937,8 @@ class DocumentCoordinator(
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_many(
         self,
         return_type: type[T],
@@ -935,6 +956,8 @@ class DocumentCoordinator(
             return_fields=None,
         )
 
+    # ....................... #
+
     async def find_page(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -950,6 +973,8 @@ class DocumentCoordinator(
             return_model=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_page(
         self,
@@ -968,6 +993,8 @@ class DocumentCoordinator(
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_page(
         self,
         return_type: type[T],
@@ -984,6 +1011,8 @@ class DocumentCoordinator(
             return_model=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def aggregate_many(
         self,
@@ -1002,6 +1031,8 @@ class DocumentCoordinator(
             return_fields=None,
         )
 
+    # ....................... #
+
     async def aggregate_page(
         self,
         aggregates: AggregatesExpression,
@@ -1018,6 +1049,8 @@ class DocumentCoordinator(
             return_model=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_many_aggregated(
         self,
@@ -1036,6 +1069,8 @@ class DocumentCoordinator(
             return_model=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_page_aggregated(
         self,
@@ -1070,6 +1105,8 @@ class DocumentCoordinator(
             return_fields=None,
         )
 
+    # ....................... #
+
     async def project_cursor(
         self,
         fields: Sequence[str],
@@ -1083,6 +1120,8 @@ class DocumentCoordinator(
             sorts=sorts,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     @overload
     async def _cursor_page(
@@ -1712,7 +1751,7 @@ class DocumentCoordinator(
                 else {
                     "$and": [
                         filters,
-                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                        {"$values": {ID_FIELD: {"$gt": last_id}}},
                     ]
                 }
             )
@@ -1870,203 +1909,3 @@ class DocumentCoordinator(
             w.kill_many(pks, batch_size=self.eff_batch_size),
             self.cache_coord.invalidate_keys_now(*pks),
         )
-
-    # ....................... #
-
-    @overload
-    async def delete(
-        self,
-        pk: UUID,
-        rev: int,
-        *,
-        return_new: Literal[True] = True,
-    ) -> R: ...
-
-    @overload
-    async def delete(
-        self,
-        pk: UUID,
-        rev: int,
-        *,
-        return_new: Literal[False],
-    ) -> None: ...
-
-    async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
-        """Soft-delete a document and refresh the cache.
-
-        :param pk: Document primary key.
-        :param rev: Expected revision for historical consistency validation.
-        """
-
-        w = self._require_write()
-
-        await asyncio.gather(
-            w.delete(pk, rev=rev),
-            self.cache_coord.invalidate_keys_now(pk),
-        )
-
-        if not return_new:
-            return None
-
-        res = await self.read_gw.get(pk)
-        await self.cache_coord.after_commit_or_now(
-            lambda: self.cache_coord.set_one(res)
-        )
-
-        return res
-
-    # ....................... #
-
-    @overload
-    async def delete_many(
-        self,
-        deletes: Sequence[tuple[UUID, int]],
-        *,
-        return_new: Literal[True] = True,
-    ) -> Sequence[R]: ...
-
-    @overload
-    async def delete_many(
-        self,
-        deletes: Sequence[tuple[UUID, int]],
-        *,
-        return_new: Literal[False],
-    ) -> None: ...
-
-    async def delete_many(
-        self,
-        deletes: Sequence[tuple[UUID, int]],
-        *,
-        return_new: bool = True,
-    ) -> Sequence[R] | None:
-        """Soft-delete multiple documents and refresh the cache.
-
-        :param pks: Document primary keys.
-        :param revs: Optional expected revisions for history validation.
-        """
-
-        w = self._require_write()
-
-        if not deletes:
-            if not return_new:
-                return None
-
-            return []
-
-        pks = [x[0] for x in deletes]
-        revs = [x[1] for x in deletes]
-
-        await asyncio.gather(
-            w.delete_many(pks, revs=revs, batch_size=self.eff_batch_size),
-            self.cache_coord.invalidate_keys_now(*pks),
-        )
-
-        if not return_new:
-            return None
-
-        res = await self.read_gw.get_many(pks)
-        await self.cache_coord.after_commit_or_now(
-            lambda: self.cache_coord.set_many(res)
-        )
-
-        return res
-
-    # ....................... #
-
-    @overload
-    async def restore(
-        self,
-        pk: UUID,
-        rev: int,
-        *,
-        return_new: Literal[True] = True,
-    ) -> R: ...
-
-    @overload
-    async def restore(
-        self,
-        pk: UUID,
-        rev: int,
-        *,
-        return_new: Literal[False],
-    ) -> None: ...
-
-    async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
-        """Restore a soft-deleted document and refresh the cache.
-
-        :param pk: Document primary key.
-        :param rev: Expected revision for historical consistency validation.
-        """
-
-        w = self._require_write()
-
-        await asyncio.gather(
-            w.restore(pk, rev=rev),
-            self.cache_coord.invalidate_keys_now(pk),
-        )
-
-        if not return_new:
-            return None
-
-        res = await self.read_gw.get(pk)
-        await self.cache_coord.after_commit_or_now(
-            lambda: self.cache_coord.set_one(res)
-        )
-
-        return res
-
-    # ....................... #
-
-    @overload
-    async def restore_many(
-        self,
-        restores: Sequence[tuple[UUID, int]],
-        *,
-        return_new: Literal[True] = True,
-    ) -> Sequence[R]: ...
-
-    @overload
-    async def restore_many(
-        self,
-        restores: Sequence[tuple[UUID, int]],
-        *,
-        return_new: Literal[False],
-    ) -> None: ...
-
-    async def restore_many(
-        self,
-        restores: Sequence[tuple[UUID, int]],
-        *,
-        return_new: bool = True,
-    ) -> Sequence[R] | None:
-        """Restore multiple soft-deleted documents and refresh the cache.
-
-        :param pks: Document primary keys.
-        :param revs: Optional expected revisions for history validation.
-        """
-
-        w = self._require_write()
-
-        if not restores:
-            if not return_new:
-                return None
-
-            return []
-
-        pks = [x[0] for x in restores]
-        revs = [x[1] for x in restores]
-
-        await asyncio.gather(
-            w.restore_many(pks, revs=revs, batch_size=self.eff_batch_size),
-            self.cache_coord.invalidate_keys_now(*pks),
-        )
-
-        if not return_new:
-            return None
-
-        res = await self.read_gw.get_many(pks)
-        await self.cache_coord.after_commit_or_now(
-            lambda: self.cache_coord.set_many(res)
-        )
-
-        return res

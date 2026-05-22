@@ -10,7 +10,6 @@ from fastapi.security.base import SecurityBase
 
 from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
-
 from forze_fastapi.openapi.security import (
     openapi_api_key_cookie_scheme,
     openapi_api_key_header_scheme,
@@ -25,11 +24,11 @@ from .features.security import RequireAuthnFeature
 
 # ----------------------- #
 
-AnyFeature = HttpEndpointFeaturePort[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+AnyFeature = HttpEndpointFeaturePort[Any, Any, Any, Any, Any, Any, Any, Any]
 """Loosely typed feature (all type parameters free) for default feature bundles."""
 
 _FSpec = TypeVar(
-    "_FSpec", bound=HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+    "_FSpec", bound=HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]
 )
 
 
@@ -190,6 +189,7 @@ def _security_scheme_for_requirement(req: AuthnRequirement) -> SecurityBase:
         )
 
     api_key_header = req.api_key_header
+
     if api_key_header is None:
         raise CoreError(
             "AuthnRequirement.api_key_header must be set when token transports are absent",
@@ -257,7 +257,7 @@ def build_authn_requirement_dependency(
         _credentials: Any = Security(security_scheme),
         ctx: ExecutionContext = Depends(ctx_dep),
     ) -> None:
-        if ctx.get_authn_identity() is None:
+        if ctx.inv.get_authn() is None:
             raise HTTPException(
                 status_code=401,
                 detail="Authentication required",

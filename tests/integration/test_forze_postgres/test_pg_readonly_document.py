@@ -60,7 +60,7 @@ async def test_readonly_get_after_sql_insert(pg_client: PostgresClient) -> None:
     )
 
     spec = DocumentSpec(name="ro_ns", read=_ReadOnlyRow, write=None)
-    q = ctx.doc_query(spec)
+    q = ctx.document.query(spec)
 
     row = await q.get(doc_id)
     assert row.title == "from sql"
@@ -105,7 +105,7 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
     )
 
     spec = DocumentSpec(name="ro_many_ns", read=_ReadOnlyRow, write=None)
-    q = ctx.doc_query(spec)
+    q = ctx.document.query(spec)
 
     __p = await q.find_page(None,
         pagination={"limit": 10, "offset": 0},
@@ -126,7 +126,7 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
     assert len(page) == 1
     assert page[0].title == "beta"
 
-    assert await q.count({"$fields": {"title": "gamma"}}) == 1
+    assert await q.count({"$values": {"title": "gamma"}}) == 1
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ async def test_readonly_get_missing_raises(pg_client: PostgresClient) -> None:
             }
         )
     )
-    q = ctx.doc_query(DocumentSpec(name="ro_miss_ns", read=_ReadOnlyRow, write=None))
+    q = ctx.document.query(DocumentSpec(name="ro_miss_ns", read=_ReadOnlyRow, write=None))
     with pytest.raises(NotFoundError, match="Record not found"):
         await q.get(uuid4())
 
@@ -190,6 +190,6 @@ async def test_readonly_get_many_partial_missing_raises(pg_client: PostgresClien
             }
         )
     )
-    q = ctx.doc_query(DocumentSpec(name="ro_gm_ns", read=_ReadOnlyRow, write=None))
+    q = ctx.document.query(DocumentSpec(name="ro_gm_ns", read=_ReadOnlyRow, write=None))
     with pytest.raises(NotFoundError, match="Some records not found"):
         await q.get_many([doc_id, uuid4()])

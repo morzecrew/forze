@@ -10,8 +10,9 @@ import attrs
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryOr,
@@ -96,6 +97,55 @@ class TestPsycopgQueryRenderer:
         r = PsycopgQueryRenderer()
         with pytest.raises(CoreError, match="Unknown expression"):
             r.render(_UnknownExpr())
+
+    def test_compare_renders_without_parameters(self) -> None:
+        """Field-to-field compare uses column expressions only."""
+        r = PsycopgQueryRenderer()
+        _sql, params = r.render(QueryCompare("starts_at", "$lte", "ends_at"))
+        assert params == []
+        assert b"starts_at" in _sql.as_bytes()
+        assert b"ends_at" in _sql.as_bytes()
+
+    def test_compare_typed_columns(self) -> None:
+        types: PostgresColumnTypes = {
+            "a": _t("int4"),
+            "b": _t("int4"),
+        }
+        r = PsycopgQueryRenderer(types=types)
+        _sql, params = r.render(QueryCompare("a", "$eq", "b"))
+        assert params == []
+
+    def test_compare_nested_json_paths(self) -> None:
+        class _Inner(BaseModel):
+            score: int
+            min_score: int = 0
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("jsonb")}
+        r = PsycopgQueryRenderer(types=types, model_type=_Outer)
+        _sql, params = r.render(QueryCompare("meta.score", "$gte", "meta.min_score"))
+        assert params == []
+        assert b"meta" in _sql.as_bytes()
+
+    def test_compare_array_column_raises(self) -> None:
+        types: PostgresColumnTypes = {
+            "a": _t("text", is_array=True),
+            "b": _t("text", is_array=True),
+        }
+        r = PsycopgQueryRenderer(types=types)
+        with pytest.raises(CoreError, match="array columns"):
+            r.render(QueryCompare("a", "$eq", "b"))
+
+    def test_compare_incompatible_types_raises(self) -> None:
+        types: PostgresColumnTypes = {
+            "a": _t("uuid"),
+            "b": _t("text"),
+        }
+        r = PsycopgQueryRenderer(types=types)
+        with pytest.raises(CoreError, match="Incompatible types"):
+            r.render(QueryCompare("a", "$eq", "b"))
 
     def test_unknown_operator_raises(self) -> None:
         """Unsupported operator raises."""
@@ -326,7 +376,7 @@ class TestPostgresAggregateRendering:
 
         parsed, select_clause, group_clause, params = renderer.render_aggregates(
             {
-                "$fields": {"category": "category"},
+                "$groups": {"category": "category"},
                 "$computed": {
                     "orders": {"$count": None},
                     "revenue": {"$sum": "price"},
@@ -358,14 +408,14 @@ class TestPostgresAggregateRendering:
                     "mid_count": {
                         "$count": {
                             "filter": {
-                                "$fields": {"price": {"$gte": 10, "$lte": 20}},
+                                "$values": {"price": {"$gte": 10, "$lte": 20}},
                             },
                         },
                     },
                     "book_revenue": {
                         "$sum": {
                             "field": "price",
-                            "filter": {"$fields": {"category": "books"}},
+                            "filter": {"$values": {"category": "books"}},
                         },
                     },
                 },
@@ -378,7 +428,7 @@ class TestPostgresAggregateRendering:
         assert b"SUM" in select_sql
         assert params == [10, 20, "books"]
 
-    def test_renders_time_bucket_with_field_group(self) -> None:
+    def test_renders_trunc_group_with_field_group(self) -> None:
         renderer = PsycopgQueryRenderer(
             types={
                 "item_id": _t("text"),
@@ -389,8 +439,12 @@ class TestPostgresAggregateRendering:
         )
         parsed, select_clause, group_clause, params = renderer.render_aggregates(
             {
-                "$fields": {"item": "item_id"},
-                "$time_bucket": {"field": "ts", "unit": "day", "timezone": "UTC"},
+                "$groups": {
+                    "item": "item_id",
+                    "day_start": {
+                        "$trunc": {"field": "ts", "unit": "day", "timezone": "UTC"},
+                    },
+                },
                 "$computed": {"avg_p": {"$avg": "price"}},
             },
         )
@@ -398,7 +452,7 @@ class TestPostgresAggregateRendering:
         gro = group_clause.as_bytes() if group_clause else b""
         assert b"date_trunc" in sel
         assert b"item_id" in gro
-        assert parsed.time_bucket is not None
+        assert len(parsed.groups) == 2
         assert params == []
 
     def test_rejects_unknown_aggregate_sort_alias(self) -> None:

@@ -62,7 +62,7 @@ Required methods:
     )
 
     spec = IdempotencySpec(name="http", ttl=timedelta(minutes=5))
-    idem = ctx.dep(IdempotencyDepKey)(ctx, spec)
+    idem = ctx.deps.resolve_configurable(ctx, IdempotencyDepKey, spec, route=spec.name)
     cached = await idem.begin("create-project", key, payload_hash)
     if cached is None:
         await idem.commit(

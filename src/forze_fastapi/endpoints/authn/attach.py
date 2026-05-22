@@ -9,7 +9,9 @@ from typing import Any, Callable, Sequence
 from fastapi import APIRouter
 
 from forze.application.contracts.authn import AuthnSpec
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
+from forze.base.primitives import StrKeyNamespace
 from forze.base.errors import CoreError
 
 from ..http import (
@@ -35,7 +37,7 @@ from .specs import AuthnEndpointsSpec, TokenTransportSpec
 # ----------------------- #
 
 
-HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]
 
 
 def _derive_authn_requirement(
@@ -69,8 +71,9 @@ def attach_authn_endpoints(
     router: APIRouter,
     *,
     spec: AuthnSpec,
-    registry: UsecaseRegistry,
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
+    namespace: StrKeyNamespace | None = None,
     endpoints: AuthnEndpointsSpec | None = None,
     exclude_none: bool = True,
     default_http_features: Sequence[AnyFeature] | None = None,
@@ -86,6 +89,7 @@ def attach_authn_endpoints(
 
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
+    _authn_namespace = namespace or spec.default_namespace
 
     access_transport = config.get(
         "access_token_transport",
@@ -133,6 +137,7 @@ def attach_authn_endpoints(
         simple = _normalize(password_login_entry)
 
         login_spec: HttpEndSpec = build_authn_password_login_endpoint_spec(
+            namespace=_authn_namespace,
             access_transport=access_transport,
             refresh_transport=refresh_transport,
             path_override=simple.get("path_override"),
@@ -155,6 +160,7 @@ def attach_authn_endpoints(
         simple = _normalize(refresh_entry)
 
         refresh_spec: HttpEndSpec = build_authn_refresh_endpoint_spec(
+            namespace=_authn_namespace,
             access_transport=access_transport,
             refresh_transport=refresh_transport,
             path_override=simple.get("path_override"),
@@ -177,6 +183,7 @@ def attach_authn_endpoints(
         simple = _ensure_authn(_normalize(logout_entry))
 
         logout_spec: HttpEndSpec = build_authn_logout_endpoint_spec(
+            namespace=_authn_namespace,
             access_transport=access_transport,
             refresh_transport=refresh_transport,
             path_override=simple.get("path_override"),
@@ -199,6 +206,7 @@ def attach_authn_endpoints(
         simple = _ensure_authn(_normalize(change_password_entry))
 
         change_password_spec: HttpEndSpec = build_authn_change_password_endpoint_spec(
+            namespace=_authn_namespace,
             path_override=simple.get("path_override"),
             metadata=simple.get("metadata"),
         )

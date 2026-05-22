@@ -23,11 +23,11 @@ class ConfigurableS3Storage(StorageDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
-        client = ctx.dep(S3ClientDepKey)
+        client = ctx.deps.provide(S3ClientDepKey)
 
         return S3StorageAdapter(
             client=client,
             bucket=self.config["bucket"],
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )

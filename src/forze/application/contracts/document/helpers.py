@@ -9,7 +9,7 @@ from forze.domain.models import CreateDocumentCmd
 # ----------------------- #
 
 
-def require_create_id(dto: CreateDocumentCmd | tuple[CreateDocumentCmd, Any]) -> UUID:
+def require_create_id[X: CreateDocumentCmd](dto: X | tuple[X, Any]) -> UUID:
     """Return ``dto.id`` or raise if it is unset.
 
     ``ensure`` / ``ensure_many`` / ``upsert`` / ``upsert_many`` require
@@ -18,22 +18,25 @@ def require_create_id(dto: CreateDocumentCmd | tuple[CreateDocumentCmd, Any]) ->
     """
 
     if isinstance(dto, tuple):
-        dto = dto[0]
+        dto_ = dto[0]
 
-    if dto.id is None:
+    else:
+        dto_ = dto
+
+    if dto_.id is None:
         raise ValidationError(
             "ensure, ensure_many, upsert, and upsert_many require cmd DTO id to be set",
             code="missing_id",
         )
 
-    return dto.id
+    return dto_.id
 
 
 # ....................... #
 
 
-def require_create_id_for_many(
-    dtos: Sequence[CreateDocumentCmd] | Sequence[tuple[CreateDocumentCmd, Any]],
+def require_create_id_for_many[X: CreateDocumentCmd](
+    dtos: Sequence[X] | Sequence[tuple[X, Any]],
 ) -> None:
     """Require each DTO to have an id and ids to be unique within the batch."""
 
@@ -47,4 +50,5 @@ def require_create_id_for_many(
                 "ensure, ensure_many, upsert, and upsert_many require distinct id values in the batch",
                 code="duplicate_id",
             )
+
         seen.add(uid)

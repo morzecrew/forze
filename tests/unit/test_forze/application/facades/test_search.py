@@ -1,74 +1,71 @@
-"""Unit tests for SearchOperation and SearchUsecasesFacade."""
+"""Unit tests for SearchKernelOp and SearchFacade."""
 
+from unittest.mock import AsyncMock, MagicMock
+
+import attrs
 import pytest
 
-from forze.application.composition.search import (
-    SearchOperation,
-    SearchUsecasesFacade,
-)
-from forze.application.execution import ExecutionContext, UsecaseRegistry
+from forze.application.composition.search import SearchFacade, SearchKernelOp
+from forze.application.contracts.execution import Handler
+from forze.application.execution.registry import OperationRegistry
+from forze.application.handlers.search.dto import SearchRequestDTO
+from forze.base.primitives import StrKeyNamespace
 
 # ----------------------- #
 
-
-class TestSearchOperation:
-    """Tests for SearchOperation enum."""
-
-    def test_typed_search_value(self) -> None:
-        assert SearchOperation.TYPED_SEARCH == "search.typed"
-
-    def test_raw_search_value(self) -> None:
-        assert SearchOperation.RAW_SEARCH == "search.raw"
-
-    def test_typed_search_cursor_value(self) -> None:
-        assert SearchOperation.TYPED_SEARCH_CURSOR == "search.typed_cursor"
-
-    def test_raw_search_cursor_value(self) -> None:
-        assert SearchOperation.RAW_SEARCH_CURSOR == "search.raw_cursor"
-
-    def test_all_members_string_values(self) -> None:
-        for op in SearchOperation:
-            assert isinstance(op.value, str)
-            assert len(op.value) > 0
+_SEARCH_KEYS = StrKeyNamespace(prefix="search")
 
 
-class TestSearchUsecasesFacade:
-    """Tests for SearchUsecasesFacade."""
+class TestSearchKernelOp:
+    def test_typed_kernel_suffix(self) -> None:
+        assert str(SearchKernelOp.TYPED) == "typed"
+        assert _SEARCH_KEYS.key(SearchKernelOp.TYPED) == "search.typed"
 
+    def test_raw_kernel_suffix(self) -> None:
+        assert str(SearchKernelOp.RAW) == "raw"
+        assert _SEARCH_KEYS.key(SearchKernelOp.RAW) == "search.raw"
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StubProjectedSearch(Handler[SearchRequestDTO, list]):
+    async def __call__(self, args: SearchRequestDTO) -> list:
+        return []
+
+
+class TestSearchFacade:
     @pytest.fixture
-    def mock_raw_search_usecase(self) -> UsecaseRegistry:
-        """Registry with RAW_SEARCH operation only."""
-        from forze.application.execution import Usecase
-
-        class StubRawSearchUsecase(Usecase[dict, dict]):
-            async def main(self, args: dict) -> dict:
-                return {"hits": [], "count": 0}
-
-        reg = UsecaseRegistry().register(
-            SearchOperation.RAW_SEARCH,
-            lambda ctx: StubRawSearchUsecase(ctx=ctx),
+    def mock_raw_registry(self) -> OperationRegistry:
+        return OperationRegistry(
+            handlers={
+                _SEARCH_KEYS.key(SearchKernelOp.RAW): lambda _ctx: StubProjectedSearch(),
+            }
         )
-        reg.finalize("search_facade", inplace=True)
-        return reg
 
-    def test_raw_search_returns_usecase(
+    def test_projected_search_returns_resolved_operation(
         self,
-        stub_ctx: ExecutionContext,
-        mock_raw_search_usecase: UsecaseRegistry,
+        stub_ctx,
+        mock_raw_registry: OperationRegistry,
     ) -> None:
-        facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
-        uc = facade.raw_search
-        assert uc is not None
+        frozen = mock_raw_registry.freeze()
+        facade = SearchFacade(
+            ctx=stub_ctx,
+            registry=frozen,
+            namespace=_SEARCH_KEYS,
+        )
+        assert facade.projected_search is not None
 
     def test_search_not_supported_raises(
         self,
-        stub_ctx: ExecutionContext,
-        mock_raw_search_usecase: UsecaseRegistry,
+        stub_ctx,
+        mock_raw_registry: OperationRegistry,
     ) -> None:
         from forze.base.errors import CoreError
 
-        facade = SearchUsecasesFacade(ctx=stub_ctx, reg=mock_raw_search_usecase)
-        with pytest.raises(
-            CoreError, match="not registered for operation: search.typed"
-        ):
-            facade.search()
+        frozen = mock_raw_registry.freeze()
+        facade = SearchFacade(
+            ctx=stub_ctx,
+            registry=frozen,
+            namespace=_SEARCH_KEYS,
+        )
+        with pytest.raises(CoreError, match="Handler factory not found"):
+            _ = facade.search

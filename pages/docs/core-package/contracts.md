@@ -39,8 +39,8 @@ task queues.
 Prefer `ExecutionContext` convenience methods when available:
 
     :::python
-    doc_q = ctx.doc_query(project_spec)
-    doc_c = ctx.doc_command(project_spec)
+    doc_q = ctx.document.query(project_spec)
+    doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
     storage = ctx.storage(storage_spec)
 
@@ -50,7 +50,7 @@ and call it with `(ctx, spec)`:
     :::python
     from forze.application.contracts.queue import QueueCommandDepKey
 
-    queue = ctx.dep(QueueCommandDepKey)(ctx, order_queue_spec)
+    queue = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, order_queue_spec, route=order_queue_spec.name)
     message_id = await queue.enqueue("orders", payload)
 
 ## Common supporting contracts
@@ -68,5 +68,5 @@ and call it with `(ctx, spec)`:
 
 - [Contracts and Adapters](../concepts/contracts-adapters.md)
 - [Specs and Wiring](../concepts/specs-and-wiring.md)
-- [Execution](execution.md)
+- [Execution](../reference/execution.md)
 - [Integrations](../integrations/mock.md)

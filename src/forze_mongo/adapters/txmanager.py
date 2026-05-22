@@ -11,14 +11,17 @@ from typing import AsyncIterator, final
 
 import attrs
 
-from forze.application.contracts.tx import TxManagerPort, TxScopeKey
+from forze.application.contracts.transaction import (
+    TransactionManagerPort,
+    TransactionScopeKey,
+)
 
 from ..kernel.platform import MongoClientPort, MongoTransactionOptions
 from ._logger import logger
 
 # ----------------------- #
 
-MongoTxScopeKey = TxScopeKey("mongo")
+MongoTxScopeKey = TransactionScopeKey("mongo")
 """Key used to scope the Mongo transaction."""
 
 # ....................... #
@@ -26,7 +29,7 @@ MongoTxScopeKey = TxScopeKey("mongo")
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoTxManagerAdapter(TxManagerPort):
+class MongoTxManagerAdapter(TransactionManagerPort):
     """Mongo-backed :class:`TxManagerPort` that delegates to :meth:`MongoClient.transaction`."""
 
     client: MongoClientPort
@@ -35,9 +38,11 @@ class MongoTxManagerAdapter(TxManagerPort):
     options: MongoTransactionOptions = attrs.field(factory=MongoTransactionOptions)
     """Transaction options forwarded to the Mongo session."""
 
-    # Non initable fields
-    scope_key: TxScopeKey = attrs.field(default=MongoTxScopeKey, init=False)
-    """The key used to scope the transaction."""
+    # ....................... #
+
+    @property
+    def scope_key(self) -> TransactionScopeKey:
+        return MongoTxScopeKey
 
     # ....................... #
 

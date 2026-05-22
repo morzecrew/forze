@@ -105,9 +105,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         return IssuedApiKey(
             key=creds,
             key_id=str(created_key.id),
-            lifetime=CredentialLifetime(
-                expires_in=self.api_key_svc.config.expires_in,
-            ),
+            lifetime=CredentialLifetime(expires_in=self.api_key_svc.config.expires_in),
         )
 
     # ....................... #

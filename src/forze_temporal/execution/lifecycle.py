@@ -4,7 +4,8 @@ from typing import cast, final
 
 import attrs
 
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
 
 from ..kernel.platform import RoutedTemporalClient, TemporalClient, TemporalConfig
 from .deps import TemporalClientDepKey
@@ -20,13 +21,13 @@ class TemporalStartupHook(LifecycleHook):
     host: str
     """Connection host for the Temporal server."""
 
-    config: TemporalConfig = TemporalConfig()
+    config: TemporalConfig = attrs.field(factory=TemporalConfig, repr=False)
     """Configuration for the Temporal client."""
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        temporal_client = cast(TemporalClient, ctx.dep(TemporalClientDepKey))
+        temporal_client = cast(TemporalClient, ctx.deps.provide(TemporalClientDepKey))
         await temporal_client.initialize(self.host, config=self.config)
 
 
@@ -39,7 +40,7 @@ class TemporalShutdownHook(LifecycleHook):
     """Shutdown hook that releases the Temporal client reference."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        temporal_client = ctx.dep(TemporalClientDepKey)
+        temporal_client = ctx.deps.provide(TemporalClientDepKey)
         await temporal_client.close()
 
 
@@ -88,7 +89,7 @@ def temporal_lifecycle_step(
     startup_hook = TemporalStartupHook(host=host, config=config)
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=startup_hook,
         shutdown=TemporalShutdownHook(),
     )
@@ -108,7 +109,7 @@ def routed_temporal_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedTemporalStartupHook(client=client),
         shutdown=RoutedTemporalShutdownHook(client=client),
     )

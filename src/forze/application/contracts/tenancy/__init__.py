@@ -1,4 +1,6 @@
+from .constants import TENANT_ID_FIELD
 from .deps import (
+    TenancyDeps,
     TenantManagementDepKey,
     TenantManagementDepPort,
     TenantResolverDepKey,
@@ -11,8 +13,10 @@ from .value_objects import TenantIdentity
 # ----------------------- #
 
 __all__ = [
+    "TENANT_ID_FIELD",
     "TenantIdentity",
     "TenantManagementPort",
+    "TenancyDeps",
     "TenantManagementDepKey",
     "TenantManagementDepPort",
     "TenantResolverPort",

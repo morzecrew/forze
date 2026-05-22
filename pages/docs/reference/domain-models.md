@@ -210,7 +210,7 @@ Reusable domain concerns composed via multiple inheritance. Each mixin adds a fo
 Adds an `is_deleted` boolean and a validator that blocks updates to soft-deleted documents (except toggling the flag itself):
 
     :::python
-    from forze.domain.mixins import SoftDeletionMixin
+    from forze_contrib.soft_deletion import SoftDeletionMixin
 
     class Project(SoftDeletionMixin, Document):
         title: str
@@ -221,66 +221,51 @@ Once `is_deleted` is `True`, updating any field other than `is_deleted` raises `
 |-------|------|---------|
 | `is_deleted` | `bool` | `False` |
 
-### NameMixin
+### MetadataMixin (`forze_contrib.metadata`)
 
-Adds a required `name` and optional `display_name`, `short_name`, and `description`:
+Adds a required `name` and optional `display_name` and `description`:
 
     :::python
-    from forze.domain.mixins import (
-        NameMixin,
-        NameCreateCmdMixin,
-        NameUpdateCmdMixin,
+    from forze_contrib.metadata import (
+        MetadataCreateCmdMixin,
+        MetadataMixin,
+        MetadataUpdateCmdMixin,
     )
 
-    class Workspace(NameMixin, Document):
+    class Workspace(MetadataMixin, Document):
         pass
 
-    class CreateWorkspaceCmd(NameCreateCmdMixin, CreateDocumentCmd):
+    class CreateWorkspaceCmd(MetadataCreateCmdMixin, CreateDocumentCmd):
         pass
 
-    class UpdateWorkspaceCmd(NameUpdateCmdMixin, BaseDTO):
+    class UpdateWorkspaceCmd(MetadataUpdateCmdMixin, BaseDTO):
         pass
 
-| Field | Type | Required in model | Required in create | Required in update |
-|-------|------|------|------|------|
-| `name` | `String` | Yes | Yes | No (optional) |
-| `display_name` | `String | None` | No | No | No |
-| `short_name` | `String | None` | No | No | No |
-| `description` | `LongString | None` | No | No | No |
-
-### NumberMixin
+### NumberIdMixin (`forze_contrib.number_id`)
 
 Adds a required positive integer `number_id` for human-readable identification. Typically populated by a counter adapter during the create mapping step:
 
     :::python
-    from forze.domain.mixins import NumberMixin, NumberCreateCmdMixin
+    from forze_contrib.number_id import NumberIdCreateCmdMixin, NumberIdMixin
 
-    class Ticket(NumberMixin, Document):
+    class Ticket(NumberIdMixin, Document):
         title: str
 
-    class CreateTicketCmd(NumberCreateCmdMixin, CreateDocumentCmd):
+    class CreateTicketCmd(NumberIdCreateCmdMixin, CreateDocumentCmd):
         title: str
 
-| Field | Type | Required |
-|-------|------|----------|
-| `number_id` | `PositiveInt` | Yes in model and create cmd, optional in update |
-
-### CreatorMixin
+### CreatorIdMixin (`forze_contrib.creator_id`)
 
 Adds a frozen `creator_id` field (UUID). Typically injected by a mapping step that reads the current actor context:
 
     :::python
-    from forze.domain.mixins import CreatorMixin, CreatorCreateCmdMixin
+    from forze_contrib.creator_id import CreatorIdCreateCmdMixin, CreatorIdMixin
 
-    class Comment(CreatorMixin, Document):
+    class Comment(CreatorIdMixin, Document):
         body: str
 
-    class CreateCommentCmd(CreatorCreateCmdMixin, CreateDocumentCmd):
+    class CreateCommentCmd(CreatorIdCreateCmdMixin, CreateDocumentCmd):
         body: str
-
-| Field | Type | Frozen |
-|-------|------|--------|
-| `creator_id` | `UUID` | Yes |
 
 ## Domain constants
 

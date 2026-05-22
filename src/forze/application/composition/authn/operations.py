@@ -1,4 +1,4 @@
-"""Authn operation identifiers for usecase registration and resolution."""
+"""Authn operation kernel suffixes for usecase registration and resolution."""
 
 from enum import StrEnum
 from typing import final
@@ -7,17 +7,17 @@ from typing import final
 
 
 @final
-class AuthnOperation(StrEnum):
-    """Logical operation identifiers for authentication usecases."""
+class AuthnKernelOp(StrEnum):
+    """Kernel segments (suffix only) for authentication usecase keys."""
 
-    PASSWORD_LOGIN = "authn.password_login"  # nosec B105
+    PASSWORD_LOGIN = "password_login"  # nosec B105
     """Authenticate with password credentials and issue a fresh token pair."""
 
-    REFRESH_TOKENS = "authn.refresh_tokens"
+    REFRESH_TOKENS = "refresh_tokens"
     """Rotate a refresh token into a fresh access/refresh pair."""
 
-    LOGOUT = "authn.logout"
+    LOGOUT = "logout"
     """Revoke all sessions for the currently authenticated identity."""
 
-    CHANGE_PASSWORD = "authn.change_password"  # nosec B105
+    CHANGE_PASSWORD = "change_password"  # nosec B105
     """Change the password of the currently authenticated identity."""

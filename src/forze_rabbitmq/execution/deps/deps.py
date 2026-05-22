@@ -33,7 +33,7 @@ class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
     ) -> RabbitMQQueueAdapter[Any]:
-        client = ctx.dep(RabbitMQClientDepKey)
+        client = ctx.deps.provide(RabbitMQClientDepKey)
         codec = RabbitMQQueueCodec(model=spec.model)
 
         return RabbitMQQueueAdapter(
@@ -41,7 +41,7 @@ class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )
 
 
@@ -63,7 +63,7 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
         ctx: ExecutionContext,
         spec: QueueSpec[Any],
     ) -> RabbitMQQueueAdapter[Any]:
-        client = ctx.dep(RabbitMQClientDepKey)
+        client = ctx.deps.provide(RabbitMQClientDepKey)
         codec = RabbitMQQueueCodec(model=spec.model)
 
         return RabbitMQQueueAdapter(
@@ -71,5 +71,5 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
             codec=codec,
             namespace=self.config.get("namespace"),
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )

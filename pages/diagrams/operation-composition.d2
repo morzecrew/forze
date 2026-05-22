@@ -10,30 +10,30 @@ vars: {
 
 direction: right
 
-Guards: {
+Before: {
     shape: rectangle
-    label: Guard chain
+    label: before steps
 }
 
-Middlewares: {
+Wrap: {
     shape: rectangle
-    label: Middleware chain
+    label: wrap / tx scope
 }
 
-Usecase: {
+Handler: {
     shape: circle
-    label: Core usecase
+    label: Handler
 }
 
-Effects: {
+OnSuccess: {
     shape: rectangle
-    label: Effect chain
+    label: on_success steps
 }
 
 AfterCommit: {
     shape: rectangle
-    label: Side effects after commit
+    label: After-commit hooks
 }
 
-Guards -> Middlewares -> Usecase -> Effects
-Usecase -> AfterCommit: transactional flow
+Before -> Wrap -> Handler -> OnSuccess
+Handler -> AfterCommit: transactional flow

@@ -1,5 +1,5 @@
-from .deps import EmbeddingsProviderDepKey, EmbeddingsProviderDepPort
-from .ports import EmbeddingsProviderPort, EmbeddingInputKind
+from .deps import EmbeddingsDeps, EmbeddingsProviderDepKey, EmbeddingsProviderDepPort
+from .ports import EmbeddingInputKind, EmbeddingsProviderPort
 from .specs import EmbeddingsSpec
 
 # ----------------------- #
@@ -10,4 +10,5 @@ __all__ = [
     "EmbeddingsSpec",
     "EmbeddingsProviderDepPort",
     "EmbeddingsProviderDepKey",
+    "EmbeddingsDeps",
 ]

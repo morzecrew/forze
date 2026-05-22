@@ -76,7 +76,7 @@ class ConfigurableArgon2PasswordVerifier:
 
         return Argon2PasswordVerifier(
             password_svc=self.shared.password_svc,
-            pa_qry=ctx.doc_query(password_account_spec),
+            pa_qry=ctx.doc.query(password_account_spec),
         )
 
 
@@ -133,7 +133,7 @@ class ConfigurableHmacApiKeyVerifier:
 
         return HmacApiKeyVerifier(
             api_key_svc=self.shared.api_key_svc,
-            ak_qry=ctx.doc_query(api_key_account_spec),
+            ak_qry=ctx.doc.query(api_key_account_spec),
         )
 
 
@@ -193,13 +193,13 @@ class ConfigurableMappingTableResolver:
         _ = spec
 
         cmd = (
-            ctx.doc_command(identity_mapping_spec)
+            ctx.doc.command(identity_mapping_spec)
             if self.provision_on_first_sight
             else None
         )
 
         return MappingTableResolver(
-            qry=ctx.doc_query(identity_mapping_spec),
+            qry=ctx.doc.query(identity_mapping_spec),
             cmd=cmd,
             provision_on_first_sight=self.provision_on_first_sight,
         )
@@ -233,15 +233,19 @@ class ConfigurableAuthn:
         api_key_v: ApiKeyVerifierPort | None = None
 
         if "password" in self.enabled_methods:
-            password_v = ctx.dep(PasswordVerifierDepKey, route=spec.name)(ctx, spec)
+            password_v = ctx.deps.provide(PasswordVerifierDepKey, route=spec.name)(
+                ctx, spec
+            )
 
         if "token" in self.enabled_methods:
-            token_v = ctx.dep(TokenVerifierDepKey, route=spec.name)(ctx, spec)
+            token_v = ctx.deps.provide(TokenVerifierDepKey, route=spec.name)(ctx, spec)
 
         if "api_key" in self.enabled_methods:
-            api_key_v = ctx.dep(ApiKeyVerifierDepKey, route=spec.name)(ctx, spec)
+            api_key_v = ctx.deps.provide(ApiKeyVerifierDepKey, route=spec.name)(
+                ctx, spec
+            )
 
-        resolver = ctx.dep(PrincipalResolverDepKey, route=spec.name)(ctx, spec)
+        resolver = ctx.deps.provide(PrincipalResolverDepKey, route=spec.name)(ctx, spec)
 
         return AuthnOrchestrator(
             resolver=resolver,
@@ -276,9 +280,9 @@ class ConfigurableTokenLifecycle:
         return TokenLifecycleAdapter(
             access_svc=self.shared.access_svc,
             refresh_svc=self.shared.refresh_svc,
-            session_qry=ctx.doc_query(session_spec),
-            session_cmd=ctx.doc_command(session_spec),
-            principal_qry=ctx.doc_query(principal_spec),
+            session_qry=ctx.doc.query(session_spec),
+            session_cmd=ctx.doc.command(session_spec),
+            principal_qry=ctx.doc.query(principal_spec),
         )
 
 
@@ -306,8 +310,8 @@ class ConfigurablePasswordLifecycle:
 
         return PasswordLifecycleAdapter(
             password_svc=self.shared.password_svc,
-            pa_qry=ctx.doc_query(password_account_spec),
-            pa_cmd=ctx.doc_command(password_account_spec),
+            pa_qry=ctx.doc.query(password_account_spec),
+            pa_cmd=ctx.doc.command(password_account_spec),
         )
 
 
@@ -331,9 +335,9 @@ class ConfigurableApiKeyLifecycle:
 
         return ApiKeyLifecycleAdapter(
             api_key_svc=self.shared.api_key_svc,
-            ak_qry=ctx.doc_query(api_key_account_spec),
-            ak_cmd=ctx.doc_command(api_key_account_spec),
-            principal_qry=ctx.doc_query(principal_spec),
+            ak_qry=ctx.doc.query(api_key_account_spec),
+            ak_cmd=ctx.doc.command(api_key_account_spec),
+            principal_qry=ctx.doc.query(principal_spec),
         )
 
 
@@ -361,7 +365,7 @@ class ConfigurablePasswordAccountProvisioning:
 
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,
-            password_account_qry=ctx.doc_query(password_account_spec),
-            password_account_cmd=ctx.doc_command(password_account_spec),
-            principal_qry=ctx.doc_query(principal_spec),
+            password_account_qry=ctx.doc.query(password_account_spec),
+            password_account_cmd=ctx.doc.command(password_account_spec),
+            principal_qry=ctx.doc.query(principal_spec),
         )

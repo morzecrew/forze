@@ -12,8 +12,8 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -22,8 +22,10 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
+# ----------------------- #
 
-class SoftDoc(Document, SoftDeletionMixin):
+
+class SoftDoc(DocWithSoftDeletion):
     name: str
 
 
@@ -31,7 +33,7 @@ class SoftCreate(CreateDocumentCmd):
     name: str
 
 
-class SoftUpdate(BaseDTO):
+class SoftUpdate(UpdateCmdWithSoftDeletion):
     name: str | None = None
 
 
@@ -86,19 +88,19 @@ async def test_soft_delete_restore_and_hard_kill(pg_client: PostgresClient) -> N
             "update_cmd": SoftUpdate,
         },
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     doc = await cmd.create(SoftCreate(name="live"))
     assert doc.is_deleted is False
 
-    soft = await cmd.delete(doc.id, rev=doc.rev)
+    soft = await cmd.update(doc.id, doc.rev, SoftUpdate(is_deleted=True))
     assert soft.is_deleted is True
     assert soft.rev == doc.rev + 1
 
     loaded = await cmd.get(doc.id)
     assert loaded.is_deleted is True
 
-    restored = await cmd.restore(doc.id, rev=soft.rev)
+    restored = await cmd.update(doc.id, soft.rev, SoftUpdate(is_deleted=False))
     assert restored.is_deleted is False
 
     await cmd.kill(doc.id)
@@ -107,7 +109,7 @@ async def test_soft_delete_restore_and_hard_kill(pg_client: PostgresClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_many_and_restore_many(pg_client: PostgresClient) -> None:
+async def test_soft_delete_many_via_sequential_updates(pg_client: PostgresClient) -> None:
     t = f"soft_many_{uuid4().hex[:12]}"
     await pg_client.execute(
         f"""
@@ -132,15 +134,15 @@ async def test_soft_delete_many_and_restore_many(pg_client: PostgresClient) -> N
             "update_cmd": SoftUpdate,
         },
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     a = await cmd.create(SoftCreate(name="a"))
     b = await cmd.create(SoftCreate(name="b"))
 
-    deleted = await cmd.delete_many([(a.id, a.rev), (b.id, b.rev)])
-    assert len(deleted) == 2
-    assert all(d.is_deleted for d in deleted)
+    da = await cmd.update(a.id, a.rev, SoftUpdate(is_deleted=True))
+    db = await cmd.update(b.id, b.rev, SoftUpdate(is_deleted=True))
+    assert da.is_deleted and db.is_deleted
 
-    restored = await cmd.restore_many([(d.id, d.rev) for d in deleted])
-    assert len(restored) == 2
-    assert not any(r.is_deleted for r in restored)
+    ra = await cmd.update(a.id, da.rev, SoftUpdate(is_deleted=False))
+    rb = await cmd.update(b.id, db.rev, SoftUpdate(is_deleted=False))
+    assert not ra.is_deleted and not rb.is_deleted

@@ -4,8 +4,9 @@ Exercises the protocol through MockDocumentAdapter and through direct protocol
 method calls to improve coverage of ports.py.
 """
 
-import pytest
 from uuid import uuid4
+
+import pytest
 
 from forze.application.contracts.document import (
     DocumentCommandPort,
@@ -13,11 +14,10 @@ from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
 )
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.errors import NotFoundError, ValidationError
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-
 from forze_mock import MockState
 from forze_mock.adapters import MockDocumentAdapter
 
@@ -113,7 +113,7 @@ class TestDocumentQueryPortViaMock:
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
         result = await port.project(
-            {"$fields": {ID_FIELD: str(created.id)}},
+            {"$values": {ID_FIELD: str(created.id)}},
             ["id", "rev"],
         )
         assert isinstance(result, dict)
@@ -142,7 +142,7 @@ class TestDocumentQueryPortViaMock:
         created = await port.create(cmd)
         page = await port.project_many(
             ["id"],
-            filters={"$fields": {ID_FIELD: {"$in": [str(created.id)]}}},
+            filters={"$values": {ID_FIELD: {"$in": [str(created.id)]}}},
         )
         assert len(page.hits) == 1
         assert isinstance(page.hits[0], dict)
@@ -151,7 +151,7 @@ class TestDocumentQueryPortViaMock:
     @pytest.mark.asyncio
     async def test_find_returns_none_when_empty(self) -> None:
         port = _document_adapter()
-        filters: QueryFilterExpression = {"$fields": {"id": str(uuid4())}}
+        filters: QueryFilterExpression = {"$values": {"id": str(uuid4())}}
         result = await port.find(filters)
         assert result is None
 
@@ -160,7 +160,7 @@ class TestDocumentQueryPortViaMock:
         port = _document_adapter()
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
-        filters: QueryFilterExpression = {"$fields": {"id": str(created.id)}}
+        filters: QueryFilterExpression = {"$values": {"id": str(created.id)}}
         result = await port.find(filters)
         assert result is not None
 
@@ -291,7 +291,8 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_soft_deletes(self) -> None:
-        from forze.domain.mixins import SoftDeletionMixin
+        from forze_contrib.soft_deletion import SoftDeletionMixin
+
         from forze.domain.models import Document
 
         # Use a model with soft delete support
@@ -326,7 +327,8 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_many(self) -> None:
-        from forze.domain.mixins import SoftDeletionMixin
+        from forze_contrib.soft_deletion import SoftDeletionMixin
+
         from forze.domain.models import Document
 
         class DocWithSoftDelete(Document, SoftDeletionMixin):
@@ -357,7 +359,8 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_restore_after_delete(self) -> None:
-        from forze.domain.mixins import SoftDeletionMixin
+        from forze_contrib.soft_deletion import SoftDeletionMixin
+
         from forze.domain.models import Document
 
         class DocWithSoftDelete(Document, SoftDeletionMixin):
@@ -390,7 +393,8 @@ class TestDocumentCommandPortViaMock:
 
     @pytest.mark.asyncio
     async def test_restore_many(self) -> None:
-        from forze.domain.mixins import SoftDeletionMixin
+        from forze_contrib.soft_deletion import SoftDeletionMixin
+
         from forze.domain.models import Document
 
         class DocWithSoftDelete(Document, SoftDeletionMixin):
@@ -436,10 +440,13 @@ class TestDocumentCommandReturnNewViaMock:
     @pytest.mark.asyncio
     async def test_create_many_return_new_false(self) -> None:
         port = _document_adapter()
-        assert await port.create_many(
-            [CreateDocumentCmd(), CreateDocumentCmd()],
-            return_new=False,
-        ) is None
+        assert (
+            await port.create_many(
+                [CreateDocumentCmd(), CreateDocumentCmd()],
+                return_new=False,
+            )
+            is None
+        )
         n = await port.count()
         assert n >= 2
 
@@ -501,7 +508,8 @@ class TestDocumentCommandReturnNewViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_restore_return_new_false(self) -> None:
-        from forze.domain.mixins import SoftDeletionMixin
+        from forze_contrib.soft_deletion import SoftDeletionMixin
+
         from forze.domain.models import Document
 
         class DocWithSoftDelete(Document, SoftDeletionMixin):
@@ -532,7 +540,8 @@ class TestDocumentCommandReturnNewViaMock:
 
     @pytest.mark.asyncio
     async def test_delete_many_restore_many_return_new_false(self) -> None:
-        from forze.domain.mixins import SoftDeletionMixin
+        from forze_contrib.soft_deletion import SoftDeletionMixin
+
         from forze.domain.models import Document
 
         class DocWithSoftDelete(Document, SoftDeletionMixin):
@@ -584,7 +593,7 @@ class TestUpdateMatchingViaMock:
         await port.create(_CreateWithTitle(title="keep"))
         await port.create(_CreateWithTitle(title="drop"))
 
-        flt: QueryFilterExpression = {"$fields": {"title": "keep"}}
+        flt: QueryFilterExpression = {"$values": {"title": "keep"}}
         n = await port.update_matching(
             flt,
             _UpdateTitle(title="done"),
@@ -593,12 +602,12 @@ class TestUpdateMatchingViaMock:
         assert n == 2
 
         remaining = await port.find_many(
-            filters={"$fields": {"title": "keep"}},
+            filters={"$values": {"title": "keep"}},
         )
         assert len(remaining.hits) == 0
 
         done_hits = await port.find_many(
-            filters={"$fields": {"title": "done"}},
+            filters={"$values": {"title": "done"}},
         )
         assert len(done_hits.hits) == 2
 
@@ -606,7 +615,7 @@ class TestUpdateMatchingViaMock:
     async def test_update_matching_fast_return_new_true(self) -> None:
         port = _document_adapter_with_title()
         await port.create(_CreateWithTitle(title="x"))
-        flt: QueryFilterExpression = {"$fields": {"title": "x"}}
+        flt: QueryFilterExpression = {"$values": {"title": "x"}}
         out = await port.update_matching(flt, _UpdateTitle(title="y"), return_new=True)
         assert len(out) == 1
         assert out[0].title == "y"
@@ -618,7 +627,7 @@ class TestUpdateMatchingViaMock:
         await port.create(_CreateWithTitle(title="batch"))
         await port.create(_CreateWithTitle(title="batch"))
 
-        flt: QueryFilterExpression = {"$fields": {"title": "batch"}}
+        flt: QueryFilterExpression = {"$values": {"title": "batch"}}
         n = await port.update_matching_strict(
             flt,
             _UpdateTitle(title="z"),
@@ -628,6 +637,6 @@ class TestUpdateMatchingViaMock:
         assert n == 3
 
         z_page = await port.find_many(
-            filters={"$fields": {"title": "z"}},
+            filters={"$values": {"title": "z"}},
         )
         assert len(z_page.hits) == 3

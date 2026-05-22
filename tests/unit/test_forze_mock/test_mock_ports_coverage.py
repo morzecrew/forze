@@ -46,15 +46,19 @@ async def test_mock_cache_versioned_get_many_and_hard_delete() -> None:
 async def test_mock_storage_upload_download_list_delete() -> None:
     st = MockState()
     s = MockStorageAdapter(state=st, bucket="b1")
-    meta = await s.upload("f.txt", b"hello", description="d", prefix="pre")
-    assert meta["size"] == 5
-    got = await s.download(meta["key"])
-    assert got["data"] == b"hello"
+    from forze.application.contracts.storage import UploadedObject
+
+    meta = await s.upload(
+        UploadedObject(filename="f.txt", data=b"hello", description="d", prefix="pre"),
+    )
+    assert meta.size == 5
+    got = await s.download(meta.key)
+    assert got.data == b"hello"
     rows, total = await s.list(10, 0, prefix="pre")
     assert total >= 1
-    await s.delete(meta["key"])
+    await s.delete(meta.key)
     with pytest.raises(NotFoundError):
-        await s.download(meta["key"])
+        await s.download(meta.key)
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
 from .deps import PostgresClientDepKey
@@ -17,16 +20,16 @@ from .deps import PostgresClientDepKey
 class PostgresStartupHook(LifecycleHook):
     """Startup hook that initializes the Postgres client from the deps container."""
 
-    dsn: str
+    dsn: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
     """Connection DSN for the Postgres database."""
 
-    config: PostgresConfig = PostgresConfig()
+    config: PostgresConfig = attrs.field(factory=PostgresConfig, repr=False)
     """Pool configuration for the client."""
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        postgres_client = cast(PostgresClient, ctx.dep(PostgresClientDepKey))
+        postgres_client = cast(PostgresClient, ctx.deps.provide(PostgresClientDepKey))
         await postgres_client.initialize(self.dsn, config=self.config)
 
 
@@ -42,7 +45,7 @@ class PostgresShutdownHook(LifecycleHook):
     """
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        postgres_client = ctx.dep(PostgresClientDepKey)
+        postgres_client = ctx.deps.provide(PostgresClientDepKey)
         await postgres_client.close()
 
 
@@ -86,7 +89,7 @@ class RoutedPostgresShutdownHook(LifecycleHook):
 def postgres_lifecycle_step(
     name: str = "postgres_lifecycle",
     *,
-    dsn: str,
+    dsn: str | SecretStr,
     config: PostgresConfig = PostgresConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for Postgres client init and shutdown.
@@ -100,7 +103,7 @@ def postgres_lifecycle_step(
     startup_hook = PostgresStartupHook(dsn=dsn, config=config)
     shutdown_hook = PostgresShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -122,7 +125,7 @@ def routed_postgres_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedPostgresStartupHook(client=client),
         shutdown=RoutedPostgresShutdownHook(client=client),
     )

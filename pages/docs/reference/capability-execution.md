@@ -1,129 +1,99 @@
-# Capability-driven usecase execution
+# Capability-driven execution
 
-This page describes the optional **capability engine** for ordering and skipping
-guards and effects inside a single `UsecasePlan` bucket. Placement is a product of
-:class:`~forze.application.execution.bucket.Phase` (where the step runs relative to
-``TxMiddleware``) and :class:`~forze.application.execution.bucket.Slot` (guard, effect,
-wrap, finally, on_failure). The 11 legal combinations are :class:`~forze.application.execution.bucket.BucketKey`
-members; each exposes ``label`` (stable string id, e.g. ``outer_before``), ``capability_schedulable``,
-``explain_kind``, and iterators such as :meth:`~forze.application.execution.bucket.BucketKey.iter_capability_segments`.
-It complements
-[Middleware and plans](middleware-plans.md) and [Execution](execution.md).
+Capability metadata on graph steps lets Forze order hooks inside one schedulable stage and skip downstream work when prerequisites are missing.
 
-## Design decisions (locked)
+The public authoring model uses `BeforeStep`, `OnSuccessStep`, and related types from `forze.application.contracts.execution` on `OperationRegistry` binders (`bind_outer()`, `bind_tx()`).
 
-1. **Capability keys** are dotted strings (for example `authn.principal`,
-   `authz.permits:documents.write`). Stable constants live in
-   `forze.application.execution.capability_keys`. Keys are **not** a replacement
-   for `ExecutionContext.dep(...)` ports; they label **runtime facts** produced
-   by steps in the same invocation.
+It complements [Middleware & Plans](middleware-plans.md) and [Execution](execution.md).
 
-2. **Skip vs missing**: when a guard or effect returns an explicit **skip**
-   outcome, every key in that step’s `provides` set is marked **missing** in the
-   shared :class:`~forze.application.execution.capabilities.CapabilityStore`.
-   Later steps (including later buckets) whose `requires` are not ready are **not
-   invoked** (they are skipped, not errors).
+## Design rules
 
-3. **Tie-breaking**: within a bucket, the scheduler uses a directed graph from
-   `requires` / `provides`, then a total order on each topological layer:
-   `(priority descending, original index ascending)`.
+1. Capability keys are plain strings (often dotted), such as `"authn.principal"` or `"authz.permits:documents.write"`.
+2. Steps inherit `GraphStep` fields: `requires`, `provides`, `depends_on`, and `priority`.
+3. Within one stage, ordering is topological first, then `(priority descending, original index ascending)` inside each layer.
+4. Dependency graphs are validated when the operation plan is built.
+5. Only one step should provide a given capability key in one stage.
+6. Raised exceptions still abort execution; capability state does not mask failures.
 
-4. **Scopes**: capability **dependency graphs** are computed **per bucket** when
-   ordering steps (`schedule_capability_specs`). A key required in `in_tx_before`
-   must be provided by another step in **the same** `in_tx_before` bucket for
-   scheduling purposes. At **runtime**, a single :class:`~forze.application.execution.capabilities.CapabilityStore`
-   is shared across all capability segments in one invocation, so keys marked
-   ready or missing in an earlier segment (for example `outer_before`) are
-   visible to later segments (for example `outer_after`).
+## Authoring with `BeforeStep`
 
-5. **Effects and `R`**: only one step should **provide** a given key per bucket.
-   Effects may still transform `R` sequentially; capability keys document
-   side-effect facts (for example `search.indexed`), not a general merge algebra.
+Attach steps on a scope binder:
 
-6. **Failure**: guards that **raise** behave as today (the usecase aborts). The
-   capability store does not catch exceptions.
+    :::python
+    from forze.application.contracts.execution import BeforeStep
+    from forze.application.execution import OperationRegistry
 
-## Non-goals (v1)
+    def principal_factory(ctx):
+        async def _before(_args) -> None:
+            if ctx.inv.get_authn() is None:
+                raise PermissionError("principal required")
+        return _before
 
-- Replacing `wrap` / `Finally` / `OnFailure` with capability graph nodes.
-- Parallel execution of independent capability branches inside a transaction.
-- A generalized `RegionSpec` tree or multi-transaction composition (future work).
+    def permission_factory(ctx):
+        async def _before(_args) -> None:
+            ...
+        return _before
 
-## Enabling the engine
+    registry = (
+        OperationRegistry(handlers={"projects.create": create_factory})
+        .bind("projects.create")
+        .bind_outer()
+        .before(
+            BeforeStep(
+                id="authn",
+                factory=principal_factory,
+                provides=("authn.principal",),
+                priority=100,
+            ),
+            BeforeStep(
+                id="authz",
+                factory=permission_factory,
+                requires=("authn.principal",),
+                priority=50,
+            ),
+        )
+        .finish(deep=True)
+        .freeze()
+    )
 
-Pass `use_capability_engine=True` when constructing
-`UsecasePlan(use_capability_engine=True)` or call
-`UsecasePlan.with_capability_engine()`. Merged plans use logical OR of the flag.
+Use `depends_on` when ordering should follow explicit step ids in addition to capability edges.
 
-When disabled (default), behavior matches the historical flat
-`GuardMiddleware` / `EffectMiddleware` chain ordered by priority only.
+The same `requires` / `provides` / `depends_on` fields apply to `OnSuccessStep` and transactional steps on `bind_tx()`.
 
-## Annotating steps
+## Runtime behavior
 
-`UsecasePlan.before`, `in_tx_before`, `after`, `in_tx_after`, and `after_commit`
-accept optional keyword arguments:
+Capability-aware middleware is compiled when `FrozenOperationRegistry.resolve(operation, ctx)` runs.
 
-- `requires` / `provides` — iterables of `str` or :class:`~forze.application.execution.capability_keys.CapabilityKey`
-  (normalized to `frozenset[str]` on the spec).
-- `step_label` — optional stable label for introspection and logs.
+What stays stable:
 
-## Pipeline helpers (`GuardStep` / `EffectStep`)
+- stage-local topological scheduling
+- duplicate-provider detection
+- missing-provider errors during plan validation
+- eager dispatch-graph validation at `freeze()`
 
-`before_pipeline`, `after_pipeline`, `in_tx_before_pipeline`, `in_tx_after_pipeline`,
-`after_commit_pipeline`, `outer_pipeline`, and `in_tx_pipeline` accept each entry
-as either a plain factory or a frozen :class:`~forze.application.execution.plan.GuardStep` /
-:class:`~forze.application.execution.plan.EffectStep` carrying `requires` / `provides` /
-`step_label` for that slot (priority still comes from `first_priority` minus the
-pipeline index step).
+## Freeze-time validation
 
-## Introspection
+`OperationRegistry.freeze()` validates dispatch edges and operation plans before the registry becomes immutable:
 
-`UsecasePlan.explain(op)` returns an `ExecutionPlanReport` with rows in **resolve
-order** (outer segments, optional `tx` marker row, in-transaction segments,
-`after_commit`, then `outer_after`). Each :class:`~forze.application.execution.plan.StepExplainRow`
-includes `kind` (`guard`, `effect`, `wrap`, `finally`, `on_failure`, `tx`),
-`schedule_mode` (`legacy_priority` vs `capability_topo` inside capability buckets),
-`dispatch_edge_count`, and the scheduled `priority` / `requires` / `provides`.
+- **Dispatch graph** — targets must exist; edges must form a DAG (no cycles).
+- **Orphan patches** — each `patch(selector)` must match at least one registered operation key.
+- **Patch specificity** — two patches with the same selector specificity that match the same operation must merge cleanly (for example, conflicting `set_route` values are rejected).
+- **Transaction route** — resolved plans with transaction stages or `dispatch` / `dispatch_after_commit` in the tx scope require `bind_tx().set_route(...)`.
 
-## Registry finalize checks
+    :::python
+    registry = (
+        OperationRegistry(handlers={...})
+        .bind("projects.create")
+        .bind_outer()
+        .before(authn_step, authz_step)
+        .finish(deep=True)
+        .freeze()  # raises CoreError on invalid graphs, patches, or tx wiring
+    )
 
-:class:`~forze.application.execution.registry.UsecaseRegistry` runs the same
-per-bucket scheduler used at runtime for **every registered operation** when
-`UsecasePlan.use_capability_engine` is enabled, so broken graphs fail `finalize`
-instead of first `resolve`. With `strict_capability_middleware_without_engine=True`,
-`finalize` also rejects plans that attach capability metadata while the merged plan
-keeps the engine disabled.
+Fix capability wiring at registry build time rather than at first HTTP request.
 
-## Execution trace (tests and diagnostics)
+## When to use capabilities
 
-`UsecasePlan.resolve(..., capability_execution_trace=[...])` appends
-:class:`~forze.application.execution.capabilities.CapabilityExecutionEvent`
-records for capability-segment guards/effects and `after_commit` runners when
-the engine is on. Log lines for those steps prefer `step_label`, then the spec
-factory’s `__qualname__`, then the guard/effect implementation type.
+Use capability metadata when several hooks in the **same stage** share prerequisites (authn before authz, lock before write). For a single linear guard, one `BeforeStep` with a higher `priority` is enough.
 
-## Integration sketch (authn → authz)
-
-Use :func:`forze.application.guards.authn.authn_principal_capability_guard_factory`
-together with `before(..., provides={AUTHN_PRINCIPAL})`, then an authz guard whose
-`requires` include the keys returned by
-:func:`~forze.application.guards.authz.authz_permission_capability_keys` — see
-the authz guard factory and the FastAPI recipe.
-
-## Troubleshooting (`CoreError` from the scheduler)
-
-| Message | Meaning |
-|---------|---------|
-| capability … **more than one step** | Two steps in the same bucket both `provide` the same key after merge — dedupe or split keys. |
-| capability … **no step in this bucket provides it** | A `requires` key has no matching `provides` in **that bucket’s** scheduled graph (for ordering). You may still seed readiness from an earlier segment at runtime if the key is optional. |
-| dependency graph … **cycle** | Circular `requires` / `provides` edges — break the cycle or merge steps. |
-
-## Migration notes
-
-- Start with **empty** `requires` / `provides` (defaults) for existing code;
-  ordering stays priority-only.
-- For authz, use
-  `authz_permission_capability_keys(requirement)` together with
-  `before(..., requires=..., provides=...)` and ensure an earlier guard in the
-  same bucket **provides** `authn.principal` when you require authenticated
-  principals.
+For cross-cutting HTTP policy, prefer `RequireAuthnFeature` / `RequireTenantFeature` on FastAPI endpoint specs in addition to operation-plan checks so non-HTTP callers still enforce rules in `BeforeStep` hooks.

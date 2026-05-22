@@ -5,6 +5,8 @@ import attrs
 from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 
+from forze.base.serialization import pydantic_secret_converter
+
 # ----------------------- #
 
 
@@ -39,6 +41,9 @@ class SQSConnectionOpts:
 
     endpoint: str
     region_name: str  #! Should NOT be required
-    access_key_id: str
-    secret_access_key: str | SecretStr
-    config: AioConfig | None = attrs.field(default=None)
+    access_key_id: str = attrs.field(repr=False)
+    secret_access_key: SecretStr = attrs.field(
+        converter=pydantic_secret_converter,
+        repr=False,
+    )
+    config: AioConfig | None = attrs.field(default=None, repr=False)

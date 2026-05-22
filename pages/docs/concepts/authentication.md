@@ -19,7 +19,7 @@ Read this when you wire authentication for a new route, integrate an external Id
 2. **Orchestration** — `AuthnPort` (default implementation: `AuthnOrchestrator` from `forze_authn`) dispatches by credential family (`password`, `token`, `api_key`).
 3. **Verification** — A `*VerifierPort` proves the credential is valid against its issuer (signature, hash, JWKS, etc.) and emits a `VerifiedAssertion` carrying `(issuer, subject, audience, tenant_hint, claims)`.
 4. **Resolution** — A `PrincipalResolverPort` maps the assertion to a canonical `AuthnIdentity` with `UUID` `principal_id` and optional `tenant_id`.
-5. **Binding** — The middleware binds the resolved identity onto `ExecutionContext` so usecases, document/tenancy ports, and authz guards read it via `ctx.get_authn_identity()`.
+5. **Binding** — The middleware binds the resolved identity onto `ExecutionContext` so handlers, document/tenancy ports, and authz checks read it via `ctx.inv.get_authn()`.
 
 The verifier and resolver are **two separable concerns** that meet at the `VerifiedAssertion` value object — that is the entire seam.
 

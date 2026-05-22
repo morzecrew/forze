@@ -44,7 +44,7 @@ class TenantResolverAdapter(TenantResolverPort):
         principal_id: UUID,
     ) -> TenantIdentity | None:
         page = await self.binding_qry.find_many(
-            filters={"$fields": {"principal_id": principal_id}},
+            filters={"$values": {"principal_id": principal_id}},
             pagination={"limit": 1},
         )
 

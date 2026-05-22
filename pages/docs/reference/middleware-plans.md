@@ -1,322 +1,130 @@
 # Middleware & Plans
 
-The middleware system wraps usecases with cross-cutting behavior: authorization, transaction boundaries, logging, side effects. Plans and registries provide a declarative way to compose these into per-operation chains. For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Usecase Composition](../concepts/usecase-composition.md). For optional **capability-driven** guard/effect ordering and `UsecasePlan.explain`, see [Capability execution](capability-execution.md).
+The execution system wraps handlers with stage hooks (before, on-success, transaction boundaries, after-commit, failure, finally). The public composition surface is `OperationRegistry` plus explicit `OperationPlan` steps.
 
-## Usecase
+For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Operation composition](../concepts/usecase-composition.md). For capability-aware ordering inside one stage, see [Capability execution](capability-execution.md).
 
-`Usecase[Args, R]` is the base class for all application usecases. It receives an `ExecutionContext` and implements business logic in `main()`:
+## Handler
 
-    :::python
-    from forze.application.execution import Usecase
-
-    class GetProject(Usecase[UUID, ProjectRead]):
-        async def main(self, args: UUID) -> ProjectRead:
-            doc = self.ctx.doc_query(project_spec)
-            return await doc.get(args)
-
-Invoke a usecase via `__call__()`, which runs the full middleware chain:
+`Handler[Args, R]` is a protocol for application operations. Built-in handlers in `forze.application.handlers` are attrs classes that receive ports in their constructor and implement `__call__(args) -> R`:
 
     :::python
-    get_project = GetProject(ctx=ctx)
-    project = await get_project(some_id)
+    from uuid import UUID
 
-| Attribute | Type | Purpose |
-|-----------|------|---------|
-| `ctx` | `ExecutionContext` | Execution context for resolving ports |
-| `middlewares` | `tuple[Middleware, ...]` | Middleware chain wrapping the usecase |
+    from forze.application.contracts.document import DocumentQueryPort
+    from forze.application.contracts.execution import Handler
 
-`with_middlewares(*mw)` returns a new usecase instance with additional middlewares appended.
+    class GetProject(Handler[UUID, ProjectRead]):
+        doc: DocumentQueryPort[ProjectRead]
 
-## Middleware protocols
+        async def __call__(self, args: UUID) -> ProjectRead:
+            return await self.doc.get(args)
 
-Three protocol types describe different positions in the chain:
+Register handler factories on `OperationRegistry` with `set_handler` or the `handlers=` constructor dict. At runtime, `FrozenOperationRegistry.resolve(operation, ctx)` builds the handler and runs the compiled stage pipeline.
 
-### Guard
+## OperationRegistry
 
-Runs **before** the usecase. Raises to abort the chain:
-
-    :::python
-    from forze.application.execution import Guard
-
-    class RequireAuth(Guard[UUID]):
-        async def __call__(self, args: UUID) -> None:
-            if not is_authenticated():
-                raise ValidationError("Not authenticated")
-
-### Effect
-
-Runs **after** the usecase returns. May inspect or transform the result:
+`OperationRegistry` maps operation keys to handler factories and owns per-operation `OperationPlan` instances. Author plans with `.bind(...)`, then **freeze** before HTTP or other transports resolve operations:
 
     :::python
-    from forze.application.execution import Effect
+    from forze.application.contracts.execution import BeforeStep
+    from forze.application.execution import OperationRegistry
 
-    class LogCreation(Effect[CreateProjectCmd, ProjectRead]):
-        async def __call__(
-            self, args: CreateProjectCmd, res: ProjectRead
-        ) -> ProjectRead:
-            logger.info("Created project %s", res.id)
-            return res
-
-### ConditionalGuard and ConditionalEffect
-
-Run validation or post-processing only when a **synchronous** `condition` holds (`bool`).
-
-Subclass **`ConditionalGuard`** or **`ConditionalEffect`** when the skip logic belongs to one guard or effect type. Implement **`main`**; override **`condition`** (the default is always run):
-
-    :::python
-    from forze.application.execution import ConditionalGuard
-
-    class MaybeRequireFoo(ConditionalGuard[MyArgs]):
-        def condition(self, args: MyArgs) -> bool:
-            return args.mode == "strict"
-
-        async def main(self, args: MyArgs) -> None:
+    def _rate_limit_factory(ctx):
+        async def _before(_args) -> None:
             ...
+        return _before
 
-### WhenGuard and WhenEffect
-
-Wrap an existing **`Guard`** or **`Effect`** with a predicate at **composition** time (no subclass). The `when` callable may return **`bool`** or **`Awaitable[bool]`**; the usecase runner awaits the result when needed, so predicates can call async ports (for example `await self.ctx.dep(...)` inside an `async def` wrapper).
-
-    :::python
-    from forze.application.execution import WhenGuard, WhenEffect
-
-    guard = WhenGuard(guard=existing, when=lambda a: a.tenant_id is not None)
-    effect = WhenEffect(effect=existing, when=lambda a, r: r.is_draft)
-
-Skipped **`WhenEffect`** calls return the incoming result unchanged.
-
-### Middleware
-
-Full control over the chain — receives `next` and `args`:
-
-    :::python
-    from forze.application.execution import Middleware, NextCall
-
-    class TimingMiddleware(Middleware[Any, Any]):
-        async def __call__(self, next: NextCall[Any, Any], args: Any) -> Any:
-            start = time.monotonic()
-            result = await next(args)
-            logger.info("%.3fs", time.monotonic() - start)
-            return result
-
-`NextCall[Args, R]` is a type alias for `Callable[[Args], Awaitable[R]]`.
-
-| Helper | Role |
-|--------|------|
-| `ConditionalGuard[Args]` | Abstract base: synchronous `condition(args)` + `main`, unified `__call__` |
-| `ConditionalEffect[Args, R]` | Abstract base: synchronous `condition(args, res)` + `main`; skip returns `res` |
-| `WhenGuard[Args]` | Wraps a `Guard`; runs inner guard when `when(args)` is true (sync or awaitable) |
-| `WhenEffect[Args, R]` | Wraps an `Effect`; runs inner effect when `when(args, res)` is true (sync or awaitable) |
-
-## Built-in middleware implementations
-
-| Class | Purpose |
-|-------|---------|
-| `GuardMiddleware[Args, R]` | Wraps a `Guard`: runs it before `next(args)` |
-| `EffectMiddleware[Args, R]` | Wraps an `Effect`: runs it after `next(args)` |
-| `TxMiddleware[Args, R]` | Wraps `next` inside `ctx.transaction("default")`; supports after-commit effects |
-
-### TxMiddleware
-
-Wraps the usecase in a transaction. After a successful commit, runs registered after-commit effects:
-
-    :::python
-    from forze.application.execution.middleware import TxMiddleware
-
-    tx_mw = TxMiddleware(ctx=ctx)
-    tx_mw = tx_mw.with_after_commit(notify_effect, publish_effect)
-
-After-commit effects run outside the transaction boundary, making them suitable for notifications, event publishing, and other side effects that should not roll back.
-
-## Middleware chain execution
-
-When a usecase is invoked, the chain builds from the middleware tuple (outermost first):
-
-    :::text
-    GuardMiddleware(auth)
-      → TxMiddleware(ctx)
-        → GuardMiddleware(lock)
-          → EffectMiddleware(audit)
-            → main(args)
-
-Each middleware calls `next(args)` to proceed or raises to abort.
-
-## UsecasePlan
-
-Declares how each operation is composed with middleware. Maps operation keys to middleware buckets:
-
-    :::python
-    from forze.application.execution import UsecasePlan
-
-    plan = (
-        UsecasePlan()
-        .tx("create", route="default")
-        .tx("update", route="default")
-        .before("create", auth_guard_factory, priority=100)
-        .after("create", log_effect_factory, priority=0)
-        .after_commit("create", notify_factory)
-        .before("*", rate_limit_factory, priority=200)
+    registry = (
+        OperationRegistry(
+            handlers={
+                "projects.get": lambda ctx: GetProject(doc=ctx.document.query(project_spec)),
+                "projects.create": lambda ctx: CreateProject(doc=ctx.document.command(project_spec)),
+            },
+        )
+        .bind("projects.create")
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=False)
+        .bind_outer()
+        .before(BeforeStep(id="rate_limit", factory=_rate_limit_factory, priority=200))
+        .finish(deep=True)
+        .freeze()
     )
 
-### Plan buckets
-
-Each operation has multiple middleware buckets (a :class:`~forze.application.execution.bucket.Phase` × :class:`~forze.application.execution.bucket.Slot` placement, represented by :class:`~forze.application.execution.bucket.BucketKey`), executed in this order:
-
-| Bucket | When it runs | Typical use |
-|--------|-------------|-------------|
-| `outer_before` | Before everything | Authorization, rate limiting |
-| `outer_wrap` | Wraps the entire chain | Metrics, retries, error handling |
-| *Transaction boundary* | Automatic when `tx=True` | |
-| `in_tx_before` | Inside tx, before usecase | Lock acquisition, pre-checks |
-| `in_tx_wrap` | Inside tx, wraps usecase | In-transaction cross-cutting |
-| `in_tx_after` | Inside tx, after usecase | Audit logging inside tx |
-| `outer_after` | After everything | Response transformation |
-| `after_commit` | After successful commit | Notifications, event publishing |
-
-The `in_tx_*` and `after_commit` buckets only activate when `tx(op)` has been called for the operation.
-
-### Wildcard
-
-The `"*"` wildcard applies to all operations as a base plan. Per-operation plans extend the base:
-
-    :::python
-    plan = (
-        UsecasePlan()
-        .before("*", global_guard, priority=1000)   # applies to all ops
-        .before("create", create_guard, priority=100) # only for create
-    )
-
-When an operation is resolved, the wildcard plan and the operation-specific plan are merged.
-
-### Priority ordering
-
-Within a bucket, middlewares are sorted by priority (descending). Higher priority runs first (outermost). Priority values must be unique within a bucket:
-
-    :::python
-    plan = (
-        UsecasePlan()
-        .before("create", rate_limit, priority=200)  # runs first
-        .before("create", auth_guard, priority=100)   # runs second
-    )
-
-When `UsecasePlan.use_capability_engine` is **enabled**, guard/effect buckets listed on the [Capability execution](capability-execution.md) page are collapsed into **segment** middlewares (`CapabilityGuardSegmentMiddleware` / `CapabilityEffectSegmentMiddleware`) plus unchanged `wrap` / `finally` / `on_failure` entries, so the composed `Usecase.middlewares` tuple is shorter than the legacy flat `GuardMiddleware` / `EffectMiddleware` per-step tuple — troubleshooting should start from `UsecasePlan.explain(op)` rather than assuming one tuple entry per plan row.
-
-### Plan methods
-
-| Method | Signature | Purpose |
-|--------|-----------|---------|
-| `tx(op, *, route)` | `(OpKey, route) -> Self` | Enable transaction wrapping |
-| `before(op, guard, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, GuardFactory, …) -> Self` | Add to `outer_before` |
-| `before_pipeline(op, guards, *, first_priority=0)` | `(OpKey, Sequence[GuardFactory \| GuardStep], …) -> Self` | Add several `outer_before` guards |
-| `after(op, effect, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, EffectFactory, …) -> Self` | Add to `outer_after` |
-| `after_pipeline(op, effects, *, first_priority=0)` | `(OpKey, Sequence[EffectFactory \| EffectStep], …) -> Self` | Add several `outer_after` effects |
-| `wrap(op, mw, *, priority=0)` | `(OpKey, MiddlewareFactory, priority) -> Self` | Add to `outer_wrap` |
-| `in_tx_before(op, guard, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, GuardFactory, …) -> Self` | Add to `in_tx_before` |
-| `in_tx_before_pipeline(op, guards, *, first_priority=0)` | `(OpKey, Sequence[GuardFactory \| GuardStep], …) -> Self` | Add several `in_tx_before` guards |
-| `in_tx_after(op, effect, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, EffectFactory, …) -> Self` | Add to `in_tx_after` |
-| `in_tx_after_pipeline(op, effects, *, first_priority=0)` | `(OpKey, Sequence[EffectFactory \| EffectStep], …) -> Self` | Add several `in_tx_after` effects |
-| `in_tx_wrap(op, mw, *, priority=0)` | `(OpKey, MiddlewareFactory, priority) -> Self` | Add to `in_tx_wrap` |
-| `after_commit(op, effect, *, priority=0, requires=…, provides=…, step_label=…)` | `(OpKey, EffectFactory, …) -> Self` | Add to `after_commit` |
-| `after_commit_pipeline(op, effects, *, first_priority=0)` | `(OpKey, Sequence[EffectFactory \| EffectStep], …) -> Self` | Add several `after_commit` effects |
-
-Factory types:
-
-| Type | Signature |
-|------|-----------|
-| `GuardFactory` | `(ExecutionContext) -> Guard[Any]` |
-| `EffectFactory` | `(ExecutionContext) -> Effect[Any, Any]` |
-| `MiddlewareFactory` | `(ExecutionContext) -> Middleware[Any, Any]` |
-
-### Merging plans
-
-Multiple plans can be merged for modular composition:
-
-    :::python
-    auth_plan = build_auth_plan()
-    audit_plan = build_audit_plan()
-
-    final_plan = UsecasePlan.merge(base_plan, auth_plan, audit_plan)
-
-Per-operation buckets are concatenated. When resolved, duplicates within a bucket are deduplicated by factory identity and priority.
-
-### Resolving a plan
-
-`resolve()` builds a fully composed usecase for an operation:
-
-    :::python
-    usecase = plan.resolve("create", ctx, lambda ctx: CreateProject(ctx=ctx))
-
-The method merges the wildcard and operation-specific plans, validates (e.g. in-tx buckets require tx), builds the ordered middleware chain, and wraps the factory result.
-
-### Inspecting a plan
-
-Use `explain()` to debug the middleware chain for an operation:
-
-    :::python
-    explanation = plan.explain("create")
-    print(explanation.pretty_format())
-
-Output includes bucket names, priorities, factory references, and factory IDs.
-
-## UsecaseRegistry
-
-Maps operation keys to usecase factories. A factory receives `ExecutionContext` and returns a `Usecase`:
-
-    :::python
-    from forze.application.execution import UsecaseRegistry
-
-    registry = UsecaseRegistry()
-    registry = registry.register("get", lambda ctx: GetProject(ctx=ctx))
-    registry = registry.register("create", lambda ctx: CreateProject(ctx=ctx))
-
-### Registration methods
+### Binder flow
 
 | Method | Purpose |
 |--------|---------|
-| `register(op, factory, *, inplace=False)` | Register a factory; raises if `op` exists |
-| `register_many(ops, *, inplace=False)` | Register multiple factories at once |
-| `override(op, factory, *, inplace=False)` | Override an existing factory; raises if `op` missing |
-| `override_many(ops, *, inplace=False)` | Override multiple factories |
-| `exists(op)` | Check if a factory is registered |
+| `set_handler(op, factory)` | Register or replace a handler factory |
+| `bind(*ops)` | Start a plan binder for one or more operation keys |
+| `bind_outer()` | Author outer-scope stages (`before`, `wrap`, `on_success`, …) |
+| `bind_tx()` | Author transaction scope (`tx_before`, `after_commit`, `set_route`, …) |
+| `finish(deep=False)` | Commit scope changes to the parent binder |
+| `finish(deep=True)` | Commit all the way back to the registry |
+| `freeze()` | Validate patches, resolved plans, dispatch graph; return `FrozenOperationRegistry` |
 
-When `inplace=True`, the registry is mutated; otherwise a new instance is returned.
+Built-in composition helpers (`build_document_registry`, `build_search_registry`, …) return an `OperationRegistry` with handlers pre-registered. Bind transaction routes and outer stages, then call `.freeze()` before `attach_*_endpoints`.
 
-### Extending with plans
+### Stage methods (on scope binders)
+
+| Stage method | When it runs | Typical use |
+|--------------|--------------|-------------|
+| `before` | Before the handler | auth, validation, rate limiting |
+| `wrap` | Around the whole chain | metrics, tracing, retries |
+| `on_failure` / `finally_` | Around the outer outcome | cleanup, error hooks |
+| `on_success` | After successful handler | observe result, side effects |
+| `tx_before` | Inside the transaction, before the handler | locks, preconditions |
+| `wrap` (on tx binder) | Around the transactional segment | tx-scoped middleware |
+| `tx_on_failure` / `tx_finally` | Around the in-tx outcome | tx cleanup or failure hooks |
+| `on_success` (on tx binder) | Inside the transaction, after successful handler | writes that must commit |
+| `after_commit` | After successful commit | events, notifications |
+| `dispatch` / `dispatch_after_commit` | Nested operation dispatch | fan-out, sagas |
+
+Enable a transaction route with `bind_tx().set_route("default")` (or your registered tx route label) on the operations that need transactional stages.
+
+### Step types
+
+Stages are explicit value objects from `forze.application.contracts.execution`:
+
+- `BeforeStep`, `OnSuccessStep` — extend `GraphStep` (`requires`, `provides`, `depends_on`, `priority`)
+- `MiddlewareStep`, `OnFailureStep`, `FinallyStep`, `DispatchStep`
+
+Each step carries an `id`, a `factory(ctx)` that returns the callable hook, and optional capability metadata (see [Capability execution](capability-execution.md)).
+
+Example authz as a `BeforeStep`:
 
     :::python
-    registry.extend_plan(auth_plan, inplace=True)
+    from forze.application.contracts.authz import AuthzSpec
+    from forze.application.contracts.authz.ports import AuthzPort
+    from forze.application.contracts.execution import BeforeStep
 
-`extend_plan()` merges a `UsecasePlan` into the registry's internal plan.
+    def authz_before_factory(ctx, *, authz: AuthzPort, permission: str):
+        async def _before(_args) -> None:
+            identity = ctx.inv.get_authn()
+            if identity is None or not await authz.permits(identity, permission):
+                raise PermissionError(permission)
+        return _before
 
-### Resolving usecases
-
-    :::python
-    usecase = registry.resolve("create", ctx)
-    result = await usecase(CreateProjectCmd(title="New"))
-
-`resolve()` looks up the factory, builds the middleware chain from the plan, and returns a composed usecase. Pass `debug_plan=True` to print the chain to stdout.
-
-## OperationPlan
-
-Internal building block for `UsecasePlan`. Each operation maps to an `OperationPlan` with a ``buckets`` mapping from :class:`~forze.application.execution.bucket.BucketKey` to middleware spec tuples, plus optional ``tx``:
-
-    :::python
-    from forze.application.execution.bucket import BucketKey
-    from forze.application.execution.plan import MiddlewareSpec, OperationPlan, TransactionSpec
-
-    op_plan = OperationPlan(tx=TransactionSpec(route="default"))
-    op_plan = op_plan.add(
-        BucketKey.OUTER_BEFORE,
-        MiddlewareSpec(priority=100, factory=my_factory),
+    step = BeforeStep(
+        id="authz",
+        factory=lambda ctx: authz_before_factory(ctx, authz=..., permission="projects.write"),
+        requires=("authn.principal",),
     )
 
-| Method | Purpose |
-|--------|---------|
-| `add(key, spec)` | Add a middleware spec to bucket ``key`` |
-| `specs(key)` | Raw tuple for ``key`` (append order) |
-| `build(key)` | Dedupe and sort by priority (descending) for ``key`` |
-| `specs_for_chain(key)` | Order used when composing the flat middleware tuple |
-| `validate()` | Ensure in-tx / after-commit buckets are only used when tx is enabled |
-| `merge(*plans)` | Combine multiple operation plans |
+## Resolve and inspect
 
-You typically interact with `UsecasePlan` rather than `OperationPlan` directly.
+Resolve a composed handler through a frozen registry:
+
+    :::python
+    from forze.application.execution import make_registry_operation_resolver
+
+    resolver = make_registry_operation_resolver(registry)
+    handler = resolver("projects.create", ctx)
+    result = await handler(create_dto)
+
+`FrozenOperationRegistry.resolve(operation, ctx)` is the same entry point. At `freeze()`, the registry checks orphan patches, equal-specificity patch conflicts, transaction route requirements for tx-scoped dispatch, dispatch target existence, and acyclic dispatch graphs.
+
+## Internal types
+
+`OperationPlan`, scope objects (`Scope`, `TransactionScope`), and the operation runner are internal building blocks behind registry binding. Normal application code should compose through `OperationRegistry.bind(...)` and frozen resolution, not by constructing plans by hand unless extending the framework.

@@ -1,6 +1,7 @@
 from .deps import (
     DocumentCommandDepKey,
     DocumentCommandDepPort,
+    DocumentDeps,
     DocumentQueryDepKey,
     DocumentQueryDepPort,
 )
@@ -21,4 +22,5 @@ __all__ = [
     "DocumentCommandDepKey",
     "DocumentQueryDepPort",
     "DocumentCommandDepPort",
+    "DocumentDeps",
 ]

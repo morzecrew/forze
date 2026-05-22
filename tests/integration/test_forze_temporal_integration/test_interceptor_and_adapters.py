@@ -11,7 +11,7 @@ from temporalio.worker import Worker
 from forze.application.contracts.workflow import WorkflowHandle, WorkflowSpec
 from forze.application.contracts.workflow.specs import WorkflowInvokeSpec
 from forze.application.contracts.authn import AuthnIdentity
-from forze.application.execution import CallContext, ExecutionContext
+from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
 from forze_temporal.adapters.workflow import (
@@ -55,13 +55,13 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
                 workflows=[ItContextProbeWorkflow],
                 activities=[it_read_correlation],
             ):
-                with exec_ctx.bind_call(
-                    call=CallContext(
+                with exec_ctx.inv.bind(
+                    metadata=InvocationMetadata(
                         execution_id=uuid7(),
                         correlation_id=fixed,
                         causation_id=None,
                     ),
-                    identity=AuthnIdentity(principal_id=uuid7()),
+                    authn=AuthnIdentity(principal_id=uuid7()),
                 ):
                     handle = await env.client.start_workflow(
                         ItContextProbeWorkflow.run,
@@ -119,12 +119,8 @@ async def test_temporal_workflow_adapters_end_to_end() -> None:
                 workflows=[ItSumWorkflow],
                 activities=[it_sum_pair],
             ):
-                with exec_ctx.bind_call(
-                    call=CallContext(
-                        execution_id=uuid7(),
-                        correlation_id=uuid7(),
-                        causation_id=None,
-                    ),
+                with exec_ctx.inv.bind(
+                    metadata=InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7(), causation_id=None),
                 ):
                     handle: WorkflowHandle = await cmd.start(SumIn(a=40, b=2))
                     out = await qry.result(handle)

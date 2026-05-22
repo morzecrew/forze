@@ -14,10 +14,10 @@ from .emitter import (
 from .routing import (
     ExecutionContextFactoryPort,
     ForzeSocketIOAdapter,
+    HandlerResolverPort,
     SocketIOCommandRoute,
     SocketIONamespaceRouter,
     SocketIORequest,
-    UsecaseResolverPort,
     make_registry_usecase_resolver,
 )
 from .server import build_socketio_asgi_app, build_socketio_server
@@ -26,7 +26,7 @@ from .server import build_socketio_asgi_app, build_socketio_server
 
 __all__ = [
     "ExecutionContextFactoryPort",
-    "UsecaseResolverPort",
+    "HandlerResolverPort",
     "SocketIORequest",
     "SocketIOCommandRoute",
     "SocketIONamespaceRouter",

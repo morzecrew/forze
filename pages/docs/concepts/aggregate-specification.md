@@ -54,7 +54,7 @@ Specifications are the bridge between your domain models and infrastructure adap
 
 ### Helper methods
 
-- `supports_soft_delete()` — `True` when `write["domain"]` subclasses `SoftDeletionMixin`
+- `supports_soft_delete()` — `True` when `write["domain"]` subclasses `forze_contrib.soft_deletion.SoftDeletionMixin`
 - `supports_update()` — `True` when `update_cmd` has writable fields
 
 Physical storage (Postgres tables, Mongo collections) is **not** on the spec — configure `PostgresDocumentConfig` / `MongoDocumentConfig` under the same `name`.
@@ -129,11 +129,11 @@ Each subclasses `BaseSpec` with a `name` and a `model` type (Pydantic) for paylo
 Use `ExecutionContext` helpers — names on specs must match routed infra config:
 
     :::python
-    doc_q = ctx.doc_query(project_spec)
-    doc_c = ctx.doc_command(project_spec)
-    search = ctx.search_query(project_search_spec)
+    doc_q = ctx.document.query(project_spec)
+    doc_c = ctx.document.command(project_spec)
+    search = ctx.search.query(project_search_spec)
     cache = ctx.cache(cache_spec)
     counter = ctx.counter(counter_spec)
     storage = ctx.storage(storage_spec)
 
-For contracts without a helper, use `ctx.dep(SomeDepKey)(ctx, spec, ...)`.
+For contracts without a helper, use `ctx.deps.resolve_configurable(ctx, SomeDepKey, spec, route=spec.name)`.

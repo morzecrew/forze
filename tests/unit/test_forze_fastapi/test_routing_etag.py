@@ -127,32 +127,30 @@ class TestETagFeature:
 
     @pytest.mark.asyncio
     async def test_adds_etag_header(self) -> None:
-        from forze.application.contracts.mapping import MapperPort
-        from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+        from forze.application.contracts.mapping import Mapper
+        from forze.application.execution import Deps, ExecutionContext
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
         class Item(BaseModel):
             id: int
             name: str
 
-        class _PassMapper(MapperPort[HttpRequestDTO, Item]):
+        class _PassMapper(Mapper[HttpRequestDTO, Item]):
             async def __call__(self, dto: HttpRequestDTO) -> Item:  # type: ignore[override]
                 raise NotImplementedError
 
         spec = HttpEndpointSpec(
             http={"method": "GET", "path": "/item"},
+            operation="x",
             response=Item,
-            mapper=_PassMapper(),
-            facade_type=object,
-            call=FacadeOpRef(op="x"),
+            request_mapper=_PassMapper(),
         )
 
         ctx = HttpEndpointContext(
             raw_request=_request_with_headers({}),
             raw_kwargs={},
             exec_ctx=ExecutionContext(deps=Deps()),
-            facade=object(),
-            dto=HttpRequestDTO(),
+                        dto=HttpRequestDTO(),
             input=Item(id=1, name="a"),
             spec=spec,
             operation_id="test.op",
@@ -173,28 +171,26 @@ class TestETagFeature:
         class Item(BaseModel):
             id: int
 
-        from forze.application.contracts.mapping import MapperPort
-        from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+        from forze.application.contracts.mapping import Mapper
+        from forze.application.execution import Deps, ExecutionContext
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
-        class _PassMapper(MapperPort[HttpRequestDTO, Item]):
+        class _PassMapper(Mapper[HttpRequestDTO, Item]):
             async def __call__(self, dto: HttpRequestDTO) -> Item:  # type: ignore[override]
                 raise NotImplementedError
 
         spec = HttpEndpointSpec(
             http={"method": "GET", "path": "/item"},
+            operation="x",
             response=Item,
-            mapper=_PassMapper(),
-            facade_type=object,
-            call=FacadeOpRef(op="x"),
+            request_mapper=_PassMapper(),
         )
 
         ctx = HttpEndpointContext(
             raw_request=_request_with_headers({IF_NONE_MATCH_HEADER_KEY: '"abc123"'}),
             raw_kwargs={},
             exec_ctx=ExecutionContext(deps=Deps()),
-            facade=object(),
-            dto=HttpRequestDTO(),
+                        dto=HttpRequestDTO(),
             input=Item(id=1),
             spec=spec,
             operation_id="test.op",
@@ -215,28 +211,26 @@ class TestETagFeature:
         class Item(BaseModel):
             id: int
 
-        from forze.application.contracts.mapping import MapperPort
-        from forze.application.execution import Deps, ExecutionContext, FacadeOpRef
+        from forze.application.contracts.mapping import Mapper
+        from forze.application.execution import Deps, ExecutionContext
         from forze_fastapi.endpoints.http.contracts import HttpRequestDTO
 
-        class _PassMapper(MapperPort[HttpRequestDTO, Item]):
+        class _PassMapper(Mapper[HttpRequestDTO, Item]):
             async def __call__(self, dto: HttpRequestDTO) -> Item:  # type: ignore[override]
                 raise NotImplementedError
 
         spec = HttpEndpointSpec(
             http={"method": "GET", "path": "/item"},
+            operation="x",
             response=Item,
-            mapper=_PassMapper(),
-            facade_type=object,
-            call=FacadeOpRef(op="x"),
+            request_mapper=_PassMapper(),
         )
 
         ctx = HttpEndpointContext(
             raw_request=_request_with_headers({IF_NONE_MATCH_HEADER_KEY: '"abc123"'}),
             raw_kwargs={},
             exec_ctx=ExecutionContext(deps=Deps()),
-            facade=object(),
-            dto=HttpRequestDTO(),
+                        dto=HttpRequestDTO(),
             input=Item(id=1),
             spec=spec,
             operation_id="test.op",

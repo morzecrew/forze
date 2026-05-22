@@ -20,7 +20,6 @@ from forze.base.errors import CoreError
 from ..contracts import (
     HTTP_BODY_KEY,
     HTTP_CTX_KEY,
-    HTTP_FACADE_KEY,
     HTTP_REQUEST_KEY,
     HttpBodyMode,
 )
@@ -137,7 +136,7 @@ def validate_http_param_name_conflicts(
         )
         raise CoreError(f"HTTP parameter name conflicts detected: {parts}")
 
-    reserved_names = {HTTP_REQUEST_KEY, HTTP_CTX_KEY, HTTP_FACADE_KEY}
+    reserved_names = {HTTP_REQUEST_KEY, HTTP_CTX_KEY}
 
     reserved_conflicts = {
         name: tuple(kinds) for name, kinds in owners.items() if name in reserved_names

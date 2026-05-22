@@ -1,42 +1,47 @@
 import attrs
 
-from forze.application.execution import UsecasesFacade, facade_op
-from forze.application.usecases.authn import (
+from forze.application.execution.facade import (
+    OperationFacade,
+    facade_op,
+    namespaced_facade,
+)
+from forze.application.handlers.authn import (
     AuthnChangePassword,
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
 )
 
-from .operations import AuthnOperation
+from .operations import AuthnKernelOp
 
 # ----------------------- #
 
 
+@namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class AuthnUsecasesFacade(UsecasesFacade):
-    """Typed facade for authentication usecases."""
+class AuthnFacade(OperationFacade):
+    """Typed facade for authentication operations."""
 
     password_login = facade_op(
-        AuthnOperation.PASSWORD_LOGIN,
+        AuthnKernelOp.PASSWORD_LOGIN,
         uc=AuthnPasswordLogin,
     )
-    """Password login usecase."""
+    """Password login operation."""
 
     refresh_tokens = facade_op(
-        AuthnOperation.REFRESH_TOKENS,
+        AuthnKernelOp.REFRESH_TOKENS,
         uc=AuthnRefreshTokens,
     )
-    """Refresh tokens usecase."""
+    """Refresh tokens operation."""
 
     logout = facade_op(
-        AuthnOperation.LOGOUT,
+        AuthnKernelOp.LOGOUT,
         uc=AuthnLogout,
     )
     """Logout (revoke session tokens) usecase."""
 
     change_password = facade_op(
-        AuthnOperation.CHANGE_PASSWORD,
+        AuthnKernelOp.CHANGE_PASSWORD,
         uc=AuthnChangePassword,
     )
     """Change-password usecase."""

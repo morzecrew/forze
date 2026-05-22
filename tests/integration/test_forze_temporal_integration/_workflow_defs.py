@@ -39,8 +39,8 @@ async def it_read_correlation() -> str:
     if ctx is None:
         return "none"
 
-    cc = ctx.get_call_ctx()
-    return str(cc.correlation_id) if cc else "none"
+    meta = ctx.inv.get_metadata()
+    return str(meta.correlation_id) if meta else "none"
 
 
 @workflow.defn(name="ItContextProbeWorkflow")

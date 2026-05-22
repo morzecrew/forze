@@ -1,23 +1,23 @@
-"""Tests for forze.application.contracts.mapping.ports."""
+"""Tests for forze.application.contracts.mapping."""
 
 from __future__ import annotations
 
-from forze.application.contracts.mapping import MapperPort
+from forze.application.contracts.mapping import Mapper
 from forze.application.execution import Deps, ExecutionContext
 
 
 class _StubMapper:
-    async def __call__(self, source: int, /, *, ctx: ExecutionContext | None = None) -> str:
-        _ = ctx
+    async def __call__(self, source: int) -> str:
         return str(source * 2)
 
 
-class TestMapperPort:
-    def test_runtime_checkable(self) -> None:
-        assert isinstance(_StubMapper(), MapperPort)
+class TestMapperProtocol:
+    def test_stub_satisfies_mapper_protocol(self) -> None:
+        mapper: Mapper[int, str] = _StubMapper()
+        assert callable(mapper)
 
-    async def test_call_with_and_without_ctx(self) -> None:
+    async def test_call_maps_source(self) -> None:
         m = _StubMapper()
         assert await m(3) == "6"
-        ctx = ExecutionContext(deps=Deps.plain({}))
-        assert await m(4, ctx=ctx) == "8"
+        _ = ExecutionContext(deps=Deps.plain({}))
+        assert await m(4) == "8"

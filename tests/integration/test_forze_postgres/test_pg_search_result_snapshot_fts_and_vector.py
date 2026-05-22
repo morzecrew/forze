@@ -134,7 +134,7 @@ async def test_fts_v2_result_snapshot_reread(
         ),
     )
     ctx = _exec_fts(pg_client, redis_client, table=table, index_name=index_name)
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     p1 = await adapter.search_page(
@@ -220,7 +220,7 @@ async def test_vector_v2_result_snapshot_reread(
             ttl=timedelta(minutes=5),
         ),
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresVectorSearchAdapter)
     p1 = await adapter.search_page(
         "vecq",

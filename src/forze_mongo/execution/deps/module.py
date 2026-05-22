@@ -9,7 +9,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.platform import MongoClientPort
@@ -104,7 +104,11 @@ class MongoDepsModule[K: str | StrEnum](DepsModule[K]):
         if self.tx:
             tx_deps = tx_deps.merge(
                 Deps[K].routed(
-                    {TxManagerDepKey: {name: mongo_txmanager for name in self.tx}}
+                    {
+                        TransactionManagerDepKey: {
+                            name: mongo_txmanager for name in self.tx
+                        }
+                    }
                 )
             )
 

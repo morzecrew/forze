@@ -9,8 +9,8 @@ from starlette.testclient import TestClient
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySnapshot
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.composition.document import DocumentDTOs, build_document_registry
+from registry_helpers import freeze_registry
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import UsecasePlan
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.http import IDEMPOTENCY_KEY_HEADER
@@ -99,10 +99,7 @@ class TestDocumentCreateIdempotencyIntegration:
             )
 
         spec, dtos = _doc_spec_and_dtos()
-        reg = build_document_registry(spec, dtos).extend_plan(
-            UsecasePlan().tx("*", route="mock")
-        )
-        reg.finalize(spec.name, inplace=True)
+        reg = freeze_registry(build_document_registry(spec, dtos))
 
         app = FastAPI()
         router = APIRouter(prefix="/api")

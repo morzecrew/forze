@@ -24,10 +24,10 @@ from .._logger import logger
 
 # ----------------------- #
 
-UPDATE_VALIDATOR_METADATA_FIELD: Final[str] = "__update_validator__"
+UPDATE_VALIDATOR_METADATA_FIELD: Final = "__update_validator__"
 """Name of the attribute that stores the update validator metadata."""
 
-UPDATE_VALIDATOR_STORE_FIELD: Final[str] = "_update_validators_"
+UPDATE_VALIDATOR_STORE_FIELD: Final = "_update_validators_"
 """Name of the attribute that stores the update validators."""
 
 # ....................... #
@@ -36,15 +36,17 @@ M = TypeVar("M", bound=BaseModel)
 
 # ....................... #
 
-type UpdateValidator[M] = Callable[[M, M, JsonDict], None]
+type UpdateValidator[X: BaseModel] = Callable[[X, X, JsonDict], None]
 """Update validator method signature."""
 
-type UpdateValidatorLike[M] = Union[
-    Callable[[M], None],
-    Callable[[M, M], None],
-    Callable[[M, M, JsonDict], None],
+type UpdateValidatorLike[X: BaseModel] = Union[
+    Callable[[X], None],
+    Callable[[X, X], None],
+    Callable[[X, X, JsonDict], None],
 ]
 """Allowed update validator signatures."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)

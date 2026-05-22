@@ -1,55 +1,55 @@
-from typing import Any, Self, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
 import attrs
 
-from .context import ExecutionContext
-from .plan import OpKey
-from .registry import UsecaseRegistry
-from .usecase import Usecase
+from forze.application.contracts.execution import Handler
+from forze.base.errors import CoreError
+from forze.base.primitives import StrKey, StrKeyNamespace
+
+from .registry.registries import FrozenOperationRegistry
+
+if TYPE_CHECKING:
+    from .context import ExecutionContext
+    from .running import ResolvedOperation
 
 # ----------------------- #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class UsecasesFacade:
-    """Usecases facade."""
+class OperationFacade:
+    """Facade for operations."""
 
-    ctx: ExecutionContext
-    """Execution context for resolving usecases."""
-
-    reg: UsecaseRegistry
-    """Registry with plan merged; used to resolve usecases."""
+    namespace_required: ClassVar[bool] = False
+    """Whether the facade requires a namespace."""
 
     # ....................... #
 
-    def resolve(self, op: OpKey) -> Usecase[Any, Any]:
-        """Resolve a usecase for the given operation."""
+    ctx: "ExecutionContext"
+    """Execution context for operation resolution."""
 
-        return self.reg.resolve(op, self.ctx)
+    registry: FrozenOperationRegistry
+    """Frozen operation registry."""
 
-
-# ....................... #
-
-
-@attrs.define(slots=True, frozen=True)
-class FacadeOpRef[Args, R]:
-    """Reference to a facade operation."""
-
-    op: OpKey
-    """Operation key."""
-
-    uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
-    """Optional usecase type to infer annotations from."""
-
-    name: str | None = attrs.field(default=None, kw_only=True)
-    """Attribute name assigned on facade class."""
+    namespace: StrKeyNamespace | None = None
+    """Namespace for operations, optional."""
 
     # ....................... #
 
-    def bind(self, facade: UsecasesFacade) -> Usecase[Args, R]:
-        """Bind the reference to a facade instance and resolve the usecase."""
+    def __attrs_post_init__(self) -> None:
+        if type(self).namespace_required and self.namespace is None:
+            raise CoreError(
+                f"{type(self).__name__} requires namespace=... at runtime",
+            )
 
-        return facade.resolve(self.op)
+    # ....................... #
+
+    def resolve(self, op: StrKey) -> "ResolvedOperation[Any, Any]":
+        """Resolve an operation."""
+
+        if self.namespace is not None:
+            op = self.namespace.key(op)
+
+        return self.registry.resolve(op, self.ctx)
 
 
 # ....................... #
@@ -57,21 +57,13 @@ class FacadeOpRef[Args, R]:
 
 @attrs.define(slots=True, frozen=True)
 class facade_op[Args, R]:
-    """Аacade operation descriptor."""
+    """Descriptor that resolves an operation from a facade instance."""
 
-    op: OpKey
+    op: StrKey
     """Operation key."""
 
-    uc: type[Usecase[Args, R]] | None = attrs.field(default=None, kw_only=True)
-    """Optional usecase type to infer annotations from."""
-
-    name: str | None = attrs.field(default=None, init=False, repr=False)
-    """Attribute name assigned on facade class."""
-
-    # ....................... #
-
-    def __set_name__(self, owner: type[Any], name: str) -> None:
-        object.__setattr__(self, "name", name)
+    uc: type[Handler[Args, R]] | None = attrs.field(default=None, kw_only=True)
+    """Operation type for type hints."""
 
     # ....................... #
 
@@ -80,41 +72,32 @@ class facade_op[Args, R]:
         self,
         obj: None,
         objtype: type[Any] | None = None,
-    ) -> Self:
-        """Return the descriptor itself when accessed on the class."""
-        ...
+    ) -> Self: ...
 
     @overload
     def __get__(
         self,
-        obj: UsecasesFacade,
+        obj: OperationFacade,
         objtype: type[Any] | None = None,
-    ) -> Usecase[Args, R]:
-        """Return the resolved usecase when accessed on a facade instance."""
-        ...
+    ) -> "ResolvedOperation[Args, R]": ...
 
     def __get__(
         self,
-        obj: UsecasesFacade | None,
+        obj: OperationFacade | None,
         objtype: type[Any] | None = None,
-    ) -> Usecase[Args, R] | Self:
+    ) -> "ResolvedOperation[Args, R] | Self":
         if obj is None:
             return self
 
         return obj.resolve(self.op)
 
-    # ....................... #
-
-    def ref(self) -> FacadeOpRef[Args, R]:
-        """Create a reference to the operation."""
-
-        return FacadeOpRef(op=self.op, uc=self.uc, name=self.name)
-
 
 # ....................... #
 
 
-def facade_call[Args, R](d: facade_op[Args, R]) -> FacadeOpRef[Args, R]:
-    """Create a reference to the operation."""
+def namespaced_facade[X: OperationFacade](cls: type[X]) -> type[X]:
+    """Decorator that makes an operation facade namespace-aware."""
 
-    return d.ref()
+    cls.namespace_required = True
+
+    return cls

@@ -9,7 +9,7 @@ description: >-
 
 # Forze Domain Aggregates
 
-Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md).
+Use when defining domain models, document aggregates, and **kernel** specifications. Physical tables, collections, Redis namespaces, buckets, and queues belong in integration configs — see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md) and [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md).
 
 Pair with [`forze-framework-usage`](../forze-framework-usage/SKILL.md) for ports and [`forze-wiring`](../forze-wiring/SKILL.md) for composition and HTTP.
 
@@ -25,7 +25,7 @@ Every document aggregate typically defines four model types:
 | **Read model** | `ReadDocument` | Frozen projection for queries |
 
 ```python
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 class Project(SoftDeletionMixin, Document):
@@ -55,18 +55,18 @@ class ProjectReadModel(ReadDocument):
 | Mixin | Adds | Use when |
 |-------|------|----------|
 | `SoftDeletionMixin` | `is_deleted` | Soft-delete support |
-| `NumberMixin` | `number_id` | Human-readable IDs (combine with `NumberIdStep` in mapping) |
-| `CreatorMixin` | `creator_id` | Audit (`CreatorIdStep`) |
-| `NameMixin` | `name`, `display_name`, … | Named entities |
+| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdStep` in mapping) |
+| `CreatorIdMixin` (`forze_contrib.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
+| `MetadataMixin` (`forze_contrib.metadata`) | `name`, `display_name`, … | Named entities |
 
 ```python
-from forze.domain.mixins import NumberCreateCmdMixin, NumberMixin, SoftDeletionMixin
+from forze_contrib.number_id import NumberIdCreateCmdMixin, NumberIdMixin, SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document
 
-class Ticket(NumberMixin, SoftDeletionMixin, Document):
+class Ticket(NumberIdMixin, SoftDeletionMixin, Document):
     title: str
 
-class CreateTicketCmd(NumberCreateCmdMixin, CreateDocumentCmd):
+class CreateTicketCmd(NumberIdCreateCmdMixin, CreateDocumentCmd):
     title: str
 ```
 
@@ -117,7 +117,7 @@ project_spec = DocumentSpec(
 )
 ```
 
-Once a `DepsPlan` registers document adapters for that `name`, usecases obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.doc_query(project_spec)`** / **`ctx.doc_command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [`pages/docs/core-package/contracts/document.md`](../../pages/docs/core-package/contracts/document.md).
+Once a `DepsPlan` registers document adapters for that `name`, usecases obtain **`DocumentQueryPort`** / **`DocumentCommandPort`** via **`ctx.document.query(project_spec)`** / **`ctx.document.command(project_spec)`** — see [`forze-framework-usage`](../forze-framework-usage/SKILL.md) and [`pages/docs/core-package/contracts/document.md`](../../pages/docs/core-package/contracts/document.md).
 
 | Field | Purpose |
 |-------|---------|
@@ -188,5 +188,5 @@ project_dtos = DocumentDTOs(
 
 ## Reference
 
-- [`pages/docs/core-concepts/aggregate-specification.md`](../../pages/docs/core-concepts/aggregate-specification.md)
-- [`pages/docs/core-concepts/specs-and-wiring.md`](../../pages/docs/core-concepts/specs-and-wiring.md)
+- [`pages/docs/concepts/aggregate-specification.md`](../../pages/docs/concepts/aggregate-specification.md)
+- [`pages/docs/concepts/specs-and-wiring.md`](../../pages/docs/concepts/specs-and-wiring.md)

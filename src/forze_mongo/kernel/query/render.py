@@ -5,13 +5,16 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregateComputedField,
-    AggregateTimeBucket,
     AggregatesExpression,
     AggregatesExpressionParser,
+    GroupKey,
+    GroupRef,
+    GroupTrunc,
     ParsedAggregates,
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
@@ -78,33 +81,20 @@ class MongoQueryRenderer:
 
         group_id_el: JsonDict = {}
 
-        if parsed.time_bucket is not None:
-            tb = parsed.time_bucket
-            group_id_el[tb.alias] = {
-                "$dateTrunc": {
-                    "date": f"${tb.field}",
-                    "unit": tb.unit,
-                    "timezone": self._mongo_date_trunc_timezone(tb),
-                    "startOfWeek": "monday",
-                },
-            }
+        for group_key in parsed.groups:
+            group_id_el[group_key.alias] = self._render_group_id_element(group_key)
 
-        group_id_el.update(
-            {field.alias: f"${field.field}" for field in parsed.fields},
-        )
         group_id: JsonDict | None = group_id_el if group_id_el else None
-        group: JsonDict = {"_id": group_id}
+        group_stage: JsonDict = {"_id": group_id}
 
         for computed in parsed.computed_fields:
-            group[computed.alias] = self._render_aggregate_function(computed)
+            group_stage[computed.alias] = self._render_aggregate_function(computed)
 
-        pipeline.append({"$group": group})
+        pipeline.append({"$group": group_stage})
 
         project: JsonDict = {"_id": 0}
-        if parsed.time_bucket is not None:
-            project[parsed.time_bucket.alias] = f"$_id.{parsed.time_bucket.alias}"
-        for field in parsed.fields:
-            project[field.alias] = f"$_id.{field.alias}"
+        for group_key in parsed.groups:
+            project[group_key.alias] = f"$_id.{group_key.alias}"
         for computed in parsed.computed_fields:
             project[computed.alias] = 1
         pipeline.append({"$project": project})
@@ -146,9 +136,24 @@ class MongoQueryRenderer:
 
     # ....................... #
 
+    def _render_group_id_element(self, group_key: GroupKey) -> object:
+        expr = group_key.expr
+        if isinstance(expr, GroupRef):
+            return f"${expr.field}"
+
+        trunc = expr
+        return {
+            "$dateTrunc": {
+                "date": f"${trunc.field}",
+                "unit": trunc.unit,
+                "timezone": self._mongo_date_trunc_timezone(trunc),
+                "startOfWeek": "monday",
+            },
+        }
+
     @staticmethod
-    def _mongo_date_trunc_timezone(tb: AggregateTimeBucket) -> str:
-        tz = tb.timezone
+    def _mongo_date_trunc_timezone(trunc: GroupTrunc) -> str:
+        tz = trunc.timezone
         if tz.mode == "iana":
             return tz.iana
 
@@ -203,15 +208,47 @@ class MongoQueryRenderer:
         if computed.filter is None:
             return value
 
-        expr = QueryFilterExpressionParser.parse(computed.filter)
+        expr = computed.parsed_filter
+        if expr is None:
+            expr = QueryFilterExpressionParser.parse(computed.filter)
+
         return {"$cond": [self.render_expr_predicate(expr), value, otherwise]}
 
     # ....................... #
+
+    @staticmethod
+    def _field_ref(path: str) -> str:
+        return f"${path}"
+
+    def _render_compare_expr(
+        self,
+        left: str,
+        op: QueryOp.Compare,  # type: ignore[valid-type]
+        right: str,
+    ) -> JsonDict:
+        left_ref = self._field_ref(left)
+        right_ref = self._field_ref(right)
+
+        match op:
+            case "$eq":
+                return {"$expr": {"$eq": [left_ref, right_ref]}}
+
+            case "$neq":
+                return {"$expr": {"$ne": [left_ref, right_ref]}}
+
+            case "$gt" | "$gte" | "$lt" | "$lte":
+                return {"$expr": {op: [left_ref, right_ref]}}
+
+            case _:  # pyright: ignore[reportUnnecessaryComparison]
+                raise CoreError(f"Unknown compare operator: {op!r}")
 
     def render_expr_predicate(self, expr: QueryExpr) -> JsonDict:
         """Render a parsed query expression as a Mongo aggregation predicate."""
 
         match expr:
+            case QueryCompare(left, op, right):
+                return self._render_compare_expr(left, op, right)
+
             case QueryField(name, op, value):
                 return self._render_field_predicate(name, op, value)
 
@@ -253,9 +290,7 @@ class MongoQueryRenderer:
             case "$null":
                 null_check: JsonDict = {"$eq": [ref, None]}
                 return (
-                    null_check
-                    if self.caster.as_bool(value)
-                    else {"$not": [null_check]}
+                    null_check if self.caster.as_bool(value) else {"$not": [null_check]}
                 )
 
             case "$empty":
@@ -332,6 +367,9 @@ class MongoQueryRenderer:
 
     def _render_expr(self, expr: QueryExpr) -> JsonDict:
         match expr:
+            case QueryCompare(left, op, right):
+                return self._render_compare_expr(left, op, right)
+
             case QueryField(name, op, value):
                 return self._render_field(name, op, value)
 

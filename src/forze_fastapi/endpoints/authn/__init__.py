@@ -1,6 +1,6 @@
 """Pre-built FastAPI endpoints for the authn flows (login/refresh/logout/change-password).
 
-Pair with :class:`~forze.application.composition.authn.AuthnUsecasesFacade` and
+Pair with :class:`~forze.application.composition.authn.build_authn_registry` and
 the matching :class:`~forze_authn.AuthnDepsModule` registration to wire a turnkey
 authentication surface onto a FastAPI router.
 """

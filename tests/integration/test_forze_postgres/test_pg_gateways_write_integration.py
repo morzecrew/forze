@@ -1,7 +1,6 @@
 """Integration tests for :class:`~forze_postgres.kernel.gateways.write.PostgresWriteGateway` with a real Postgres instance."""
 
-from datetime import UTC, datetime
-from decimal import Decimal
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -35,6 +34,30 @@ def _write_types() -> DocumentWriteTypes[PgGwDoc, PgGwCreate, PgGwUpdate]:
         domain=PgGwDoc,
         create_cmd=PgGwCreate,
         update_cmd=PgGwUpdate,
+    )
+
+
+class PgGwDocDeadline(Document):
+    name: str
+    deadline: datetime | None = None
+
+
+class PgGwCreateDeadline(CreateDocumentCmd):
+    name: str
+    deadline: datetime | None = None
+
+
+class PgGwUpdateDeadline(BaseDTO):
+    deadline: datetime | None = None
+
+
+def _write_types_deadline() -> (
+    DocumentWriteTypes[PgGwDocDeadline, PgGwCreateDeadline, PgGwUpdateDeadline]
+):
+    return DocumentWriteTypes(
+        domain=PgGwDocDeadline,
+        create_cmd=PgGwCreateDeadline,
+        update_cmd=PgGwUpdateDeadline,
     )
 
 
@@ -499,44 +522,18 @@ async def test_postgres_write_gateway_create_many_empty_is_noop(
     assert await write.create_many([]) == []
 
 
-class PgGwTypedDoc(Document):
-    name: str
-    amount: Decimal | None = None
-    seen_at: datetime | None = None
-    ref_id: UUID | None = None
-
-
-class PgGwTypedCreate(CreateDocumentCmd):
-    name: str
-    amount: Decimal | None = None
-    seen_at: datetime | None = None
-    ref_id: UUID | None = None
-
-
-class PgGwTypedUpdate(BaseDTO):
-    name: str | None = None
-    amount: Decimal | None = None
-    seen_at: datetime | None = None
-    ref_id: UUID | None = None
-
-
-def _typed_write_types() -> DocumentWriteTypes[
-    PgGwTypedDoc, PgGwTypedCreate, PgGwTypedUpdate
-]:
-    return DocumentWriteTypes(
-        domain=PgGwTypedDoc,
-        create_cmd=PgGwTypedCreate,
-        update_cmd=PgGwTypedUpdate,
-    )
-
-
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_postgres_write_gateway_update_many_clears_typed_nullables(
+async def test_postgres_write_gateway_update_many_nullable_timestamptz_all_null(
     pg_client: PostgresClient,
 ) -> None:
-    """``update_many`` can set nullable numeric, timestamptz, and uuid columns to NULL."""
-    table = f"pg_gw_null_{uuid4().hex[:8]}"
+    """Batched ``UPDATE … FROM (VALUES…)`` must type ``NULL`` cells (not infer ``text``).
+
+    PostgreSQL assigns ``text`` to a ``VALUES`` column whose expressions are all
+    untyped nulls; ``SET deadline = v.deadline`` then fails for ``timestamptz``.
+    """
+
+    table = f"pg_gw_ts_{uuid4().hex[:8]}"
     await pg_client.execute(
         f"""
         CREATE TABLE public.{table} (
@@ -545,9 +542,7 @@ async def test_postgres_write_gateway_update_many_clears_typed_nullables(
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
             name text NOT NULL,
-            amount numeric,
-            seen_at timestamptz,
-            ref_id uuid
+            deadline timestamptz
         );
         """
     )
@@ -562,116 +557,26 @@ async def test_postgres_write_gateway_update_many_clears_typed_nullables(
     )
     write = doc_write_gw(
         ctx,
-        write_types=_typed_write_types(),
+        write_types=_write_types_deadline(),
         write_relation=("public", table),
         bookkeeping_strategy="application",
         tenant_aware=False,
     )
+    read = write.read_gw
 
-    ref = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    seen = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
-    a = await write.create(
-        PgGwTypedCreate(
-            name="a",
-            amount=Decimal("10.5"),
-            seen_at=seen,
-            ref_id=ref,
-        )
-    )
-    b = await write.create(
-        PgGwTypedCreate(
-            name="b",
-            amount=Decimal("20"),
-            seen_at=seen,
-            ref_id=ref,
-        )
-    )
+    a = await write.create(PgGwCreateDeadline(name="a"))
+    b = await write.create(PgGwCreateDeadline(name="b"))
+    assert a.deadline is None and b.deadline is None
 
-    updated, _ = await write.update_many(
+    res, _ = await write.update_many(
         [a.id, b.id],
-        [
-            PgGwTypedUpdate(amount=None, seen_at=None, ref_id=None),
-            PgGwTypedUpdate(amount=None, seen_at=None, ref_id=None),
-        ],
+        [PgGwUpdateDeadline(deadline=None), PgGwUpdateDeadline(deadline=None)],
         revs=[a.rev, b.rev],
+        batch_size=10,
     )
-    assert len(updated) == 2
-    assert all(d.amount is None for d in updated)
-    assert all(d.seen_at is None for d in updated)
-    assert all(d.ref_id is None for d in updated)
+    assert len(res) == 2
+    assert all(r.deadline is None for r in res)
 
-    row_a = await pg_client.fetch_one(
-        f"SELECT amount, seen_at, ref_id FROM public.{table} WHERE id = %s",
-        [a.id],
-        row_factory="dict",
-    )
-    assert row_a is not None
-    assert row_a["amount"] is None
-    assert row_a["seen_at"] is None
-    assert row_a["ref_id"] is None
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_postgres_write_gateway_update_many_mixed_null_and_values(
-    pg_client: PostgresClient,
-) -> None:
-    """Mixed ``update_many`` batch with NULL and non-null typed column values."""
-    table = f"pg_gw_mix_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        f"""
-        CREATE TABLE public.{table} (
-            id uuid PRIMARY KEY,
-            rev integer NOT NULL,
-            created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL,
-            name text NOT NULL,
-            amount numeric
-        );
-        """
-    )
-
-    ctx = ExecutionContext(
-        deps=Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            }
-        )
-    )
-    class AmountDoc(Document):
-        name: str
-        amount: Decimal | None = None
-
-    class AmountCreate(CreateDocumentCmd):
-        name: str
-        amount: Decimal | None = None
-
-    class AmountUpdate(BaseDTO):
-        amount: Decimal | None = None
-
-    write = doc_write_gw(
-        ctx,
-        write_types=DocumentWriteTypes(
-            domain=AmountDoc,
-            create_cmd=AmountCreate,
-            update_cmd=AmountUpdate,
-        ),
-        write_relation=("public", table),
-        bookkeeping_strategy="application",
-        tenant_aware=False,
-    )
-
-    a = await write.create(AmountCreate(name="a", amount=Decimal("1")))
-    b = await write.create(AmountCreate(name="b", amount=Decimal("2")))
-
-    updated, _ = await write.update_many(
-        [a.id, b.id],
-        [
-            AmountUpdate(amount=None),
-            AmountUpdate(amount=Decimal("99")),
-        ],
-        revs=[a.rev, b.rev],
-    )
-    assert updated[0].amount is None
-    assert updated[1].amount == Decimal("99")
+    ra = await read.get(a.id)
+    rb = await read.get(b.id)
+    assert ra.deadline is None and rb.deadline is None

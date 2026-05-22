@@ -1,14 +1,14 @@
-from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol, Self, TypeVar, final
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
 import attrs
 
-from forze.base.descriptors import hybridmethod
+from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
 
 from .specs import BaseSpec
 
 if TYPE_CHECKING:
-    from forze.application.execution.context import ExecutionContext
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -33,77 +33,80 @@ class DepKey[T]:
 # ....................... #
 
 
-class DepsPort[K: str | StrEnum](Protocol):
-    """Abstract access to dependency resolution.
-
-    Implementations provide a registry of dependencies keyed by ``DepKey``.
-    Merging is used when combining multiple modules; ``without`` supports
-    routers that extract a dependency from a container.
-    """
-
-    def provide(
-        self,
-        key: DepKey[T],
-        *,
-        route: K | None = None,
-        fallback_to_plain: bool = True,
-    ) -> T:
-        """Return the dependency instance registered under ``key``."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    def exists(self, key: DepKey[T], *, route: K | None = None) -> bool:
-        """Return ``True`` if the dependency is registered."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    @hybridmethod
-    def merge(cls: type[Self], *deps: Self) -> Self:  # type: ignore[misc]
-        """Merge multiple dependency containers into a single container."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    @merge.instancemethod
-    def _merge_instance(self, *deps: Self) -> Self:
-        """Merge this dependency container with another containers."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    def without(self, key: DepKey[T]) -> Self:
-        """Create a new dependency container without the given key."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    def without_route(self, key: DepKey[T], route: K) -> Self:
-        """Create a new dependency container without the given route."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    def empty(self) -> bool:
-        """Return ``True`` if the dependency container is empty."""
-        ...  # pragma: no cover
-
-    # ....................... #
-
-    def count(self) -> int:
-        """Return total number of registered dependency entries."""
-        ...  # pragma: no cover
-
-
-# ....................... #
-
-
-class BaseDepPort[S: BaseSpec, Port](Protocol):
-    """Base protocol for building resource ports."""
+class ConfigurableDepPort[S: BaseSpec, Port](Protocol):
+    """Configurable protocol for building resource ports."""
 
     def __call__(
         self,
         ctx: "ExecutionContext",
         spec: S,
     ) -> Port: ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class SimpleDepPort[T](Protocol):
+    """Simple dependency port."""
+
+    def __call__(self, ctx: "ExecutionContext") -> T:
+        """Build a dependency port instance."""
+        ...
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True)
+class ConvenientDeps:
+    """Convenient wrapper for dependencies."""
+
+    ctx: "ExecutionContext | None" = attrs.field(default=None)
+    """Execution context."""
+
+    _locked: bool = attrs.field(default=False, init=False)
+    """Whether the dependencies are locked and cannot be modified."""
+
+    # ....................... #
+
+    def lock(self, ctx: "ExecutionContext") -> None:
+        if self._locked:
+            raise CoreError("Convenience layer already locked")
+
+        self._locked = True
+        self.ctx = ctx
+
+    # ....................... #
+
+    def _require_ctx(self) -> "ExecutionContext":
+        if self.ctx is None:
+            raise CoreError("Execution context is not set")
+
+        return self.ctx
+
+    # ....................... #
+
+    def _resolve_configurable(
+        self,
+        key: DepKey[Any],
+        spec: object,
+        *,
+        route: StrKey | None = None,
+    ) -> Any:
+        """Resolve a configurable port via :attr:`ctx` deps."""
+
+        ctx = self._require_ctx()
+        return ctx.deps.resolve_configurable(ctx, key, spec, route=route)
+
+    # ....................... #
+
+    def _resolve_simple(
+        self,
+        key: DepKey[Any],
+        *,
+        route: StrKey | None = None,
+    ) -> Any:
+        """Resolve a simple port via :attr:`ctx` deps."""
+
+        ctx = self._require_ctx()
+        return ctx.deps.resolve_simple(ctx, key, route=route)

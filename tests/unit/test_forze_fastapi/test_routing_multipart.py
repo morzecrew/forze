@@ -7,20 +7,16 @@ from fastapi import APIRouter, FastAPI, UploadFile
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
-from forze.application.execution import (
-    Deps,
-    ExecutionContext,
-    Usecase,
-    UsecaseRegistry,
-    UsecasesFacade,
-    facade_op,
-)
+from forze.application.execution import ExecutionContext
+from forze_mock import MockDepsModule
+from forze.application.execution.registry import OperationRegistry
 from forze_fastapi.endpoints.http import (
     HttpRequestDTO,
     HttpRequestSpec,
     attach_http_endpoint,
     build_http_endpoint_spec,
 )
+from registry_helpers import freeze_registry
 
 # ----------------------- #
 
@@ -48,8 +44,8 @@ class UploadOut(BaseModel):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class UploadUsecase(Usecase[UploadIn, UploadOut]):
-    async def main(self, args: UploadIn) -> UploadOut:
+class UploadHandler:
+    async def __call__(self, args: UploadIn) -> UploadOut:
         return UploadOut(
             name=args.name,
             size=args.size,
@@ -75,23 +71,22 @@ class BatchOut(BaseModel):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class BatchUsecase(Usecase[BatchIn, BatchOut]):
-    async def main(self, args: BatchIn) -> BatchOut:
+class BatchHandler:
+    async def __call__(self, args: BatchIn) -> BatchOut:
         return BatchOut(count=args.count, total_size=args.total_size)
 
 
 # ....................... #
 
 
-def _reg() -> UsecaseRegistry:
-    reg = UsecaseRegistry(
-        defaults={
-            UP_OP: lambda ctx: UploadUsecase(ctx=ctx),
-            BATCH_OP: lambda ctx: BatchUsecase(ctx=ctx),
-        }
+def _reg():
+    reg = OperationRegistry(
+        handlers={
+            UP_OP: lambda _ctx: UploadHandler(),
+            BATCH_OP: lambda _ctx: BatchHandler(),
+        },
     )
-    reg.finalize("mp", inplace=True)
-    return reg
+    return freeze_registry(reg)
 
 
 async def _map_upload(
@@ -126,14 +121,6 @@ async def _map_batch(
     return BatchIn(count=n, total_size=t)
 
 
-# ....................... #
-
-
-class UploadFacade(UsecasesFacade):
-    upload = facade_op(UP_OP, uc=UploadUsecase)
-    batch = facade_op(BATCH_OP, uc=BatchUsecase)
-
-
 # ----------------------- #
 
 
@@ -144,19 +131,18 @@ class TestMultipartHttpEndpoint:
             "body_mode": "form",
         }
         spec = build_http_endpoint_spec(
-            UploadFacade,
-            UploadFacade.upload,
+            UP_OP,
             http={"method": "POST", "path": "/upload"},
             request=_request,
             response=UploadOut,
-            mapper=_map_upload,
+            request_mapper=_map_upload,
         )
         reg = _reg()
         app = FastAPI()
         r = APIRouter()
 
         def ctx_dep() -> ExecutionContext:
-            return ExecutionContext(deps=Deps())
+            return ExecutionContext(deps=MockDepsModule()())
 
         attach_http_endpoint(
             r,
@@ -181,19 +167,18 @@ class TestMultipartHttpEndpoint:
             "body_mode": "form",
         }
         spec = build_http_endpoint_spec(
-            UploadFacade,
-            UploadFacade.batch,
+            BATCH_OP,
             http={"method": "POST", "path": "/batch"},
             request=_request,
             response=BatchOut,
-            mapper=_map_batch,
+            request_mapper=_map_batch,
         )
         reg = _reg()
         app = FastAPI()
         r = APIRouter()
 
         def ctx_dep() -> ExecutionContext:
-            return ExecutionContext(deps=Deps())
+            return ExecutionContext(deps=MockDepsModule()())
 
         attach_http_endpoint(
             r,

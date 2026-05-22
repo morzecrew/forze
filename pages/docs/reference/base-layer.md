@@ -28,7 +28,28 @@ Every error carries three fields:
 |-------|------|---------|
 | `message` | `str` | Human-readable description |
 | `code` | `str` | Machine-readable error code |
-| `details` | `Mapping[str, Any] | None` | Optional structured context |
+| `details` | `Mapping[str, Any] | None` | Optional structured context (must be safe for clients and logs; never raw credentials) |
+
+Populate `details` with sanitized data only:
+
+- Pydantic validation failures: `sanitize_pydantic_errors(e.errors())` — never pass `e.errors()` verbatim (it includes raw `input`).
+- Model snapshots in `details`: `dump_for_error_context(model)` (JSON dump + key-based scrubbing; masks `SecretStr`).
+- Arbitrary mappings: `sanitize(mapping, context="egress")` before attaching, or rely on FastAPI egress scrubbing.
+
+### Scrubbing (`forze.base.scrubbing`)
+
+Single entry point for safe copies destined for clients or logs:
+
+```python
+from forze.base.scrubbing import sanitize
+
+sanitize(payload, context="egress")  # API / CoreError.details — key mask only
+sanitize(payload, context="log")     # structured log extras — keys + log string rules
+```
+
+`configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email and Bearer tokens). Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
+
+When logging a `CoreError`, prefer `sanitize(exc.details, context="egress")` or log `message` and `code` only. Inbound attrs configs use `pydantic_secret_converter` for `SecretStr` fields; outbound dumps use `dump_for_error_context` / `sanitize(..., context="egress")`.
 
 ### Error handling
 
@@ -62,7 +83,7 @@ Immutable codec classes for serialization, encoding, and key/path construction.
 JSON serializer using `orjson` with deterministic key ordering:
 
     :::python
-    from forze.base import JsonCodec
+    from forze.base.codecs import JsonCodec
 
     codec = JsonCodec()
     raw = codec.dumps({"b": 2, "a": 1})   # b'{"a":1,"b":2}'
@@ -74,7 +95,7 @@ JSON serializer using `orjson` with deterministic key ordering:
 String-to-bytes encoder/decoder:
 
     :::python
-    from forze.base import TextCodec
+    from forze.base.codecs import TextCodec
 
     codec = TextCodec()
     raw = codec.dumps("hello")   # b'hello'
@@ -85,7 +106,7 @@ String-to-bytes encoder/decoder:
 Transparent base64 codec for non-ASCII strings. ASCII-only strings pass through unchanged:
 
     :::python
-    from forze.base import AsciiB64Codec
+    from forze.base.codecs import AsciiB64Codec
 
     codec = AsciiB64Codec()
     codec.dumps("hello")     # 'hello' (ASCII, unchanged)
@@ -97,7 +118,7 @@ Transparent base64 codec for non-ASCII strings. ASCII-only strings pass through 
 Namespace-prefixed key builder for Redis-style key schemes:
 
     :::python
-    from forze.base import KeyCodec
+    from forze.base.codecs import KeyCodec
 
     keys = KeyCodec(namespace="app")
     keys.join("users", "123")            # 'app:users:123'
@@ -109,7 +130,7 @@ Namespace-prefixed key builder for Redis-style key schemes:
 Slash-separated path joiner (no namespace):
 
     :::python
-    from forze.base import PathCodec
+    from forze.base.codecs import PathCodec
 
     paths = PathCodec()
     paths.join("uploads", "2024", "file.png")  # 'uploads/2024/file.png'
@@ -121,16 +142,14 @@ Shared types, value generators, and context-scoped utilities importable from `fo
 
 ### Type aliases
 
-| Type | Underlying | Constraints |
-|------|-----------|-------------|
-| `String` | `Annotated[str, ...]` | Min 2, max 4096 chars, stripped, NFC-normalized |
-| `LongString` | `Annotated[str, ...]` | Max 16384 chars, stripped, NFC-normalized |
-| `JsonDict` | `dict[str, Any]` | JSON-compatible dictionary |
-
-`String` and `LongString` are Pydantic-aware annotated types. They apply `normalize_string` as a before-validator, which handles Unicode normalization, invisible character stripping, and whitespace collapsing.
+| Type | Module | Purpose |
+|------|--------|---------|
+| `JsonDict` | `forze.base.primitives` | JSON-compatible dictionary |
+| `StrKey` | `forze.base.primitives` | String-compatible operation/spec key |
+| `String`, `LongString` | `forze_contrib.base.types` | Pydantic-aware normalized strings (optional `forze_contrib` package) |
 
     :::python
-    from forze.base.primitives import String, LongString, JsonDict
+    from forze.base.primitives import JsonDict, StrKey
 
 ### UUID generation
 
@@ -296,6 +315,32 @@ These are used internally by `Document.update()` to compute minimal diffs and by
 
 The `exclude` parameter for `pydantic_dump` accepts a `TypedDict` with optional keys: `unset`, `none`, `defaults`, `computed_fields` (all `bool`).
 
+### Record mapping codecs
+
+    :::python
+    import msgspec
+    from forze.base.serialization import (
+        MsgspecRecordMappingCodec,
+        PydanticRecordMappingCodec,
+        RecordMappingCodec,
+    )
+
+    pydantic_codec: RecordMappingCodec[MyPydanticModel, MyPydanticSource]
+    pydantic_codec = PydanticRecordMappingCodec(MyPydanticModel)
+
+    msgspec_codec: RecordMappingCodec[MyMsgspecStruct, msgspec.Struct]
+    msgspec_codec = MsgspecRecordMappingCodec(MyMsgspecStruct)
+
+| Type / factory | Purpose |
+|----------------|---------|
+| `RecordMappingCodec[...]` | Protocol for mapping decode/encode, batched operations, transforms, and stored-field introspection |
+| `PydanticRecordMappingCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
+| `MsgspecRecordMappingCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
+
+Use the codec API when a component should depend on a record-mapping abstraction. The `pydantic_*` and `msgspec_*` helpers remain available as the low-level function APIs and are the single behavior sources used by the codec classes.
+
+The msgspec codec intentionally does **not** support `exclude={"unset": True}` because msgspec structs do not track unset-versus-default state. Strip unset fields at the Pydantic application boundary before constructing or transcoding msgspec models.
+
 ## File I/O
 
 Simple helpers for reading YAML and text files:
@@ -316,7 +361,7 @@ Simple helpers for reading YAML and text files:
 Utilities for extracting names and modules from callables and classes. Used internally for diagnostics and error messages:
 
     :::python
-    from forze.base import (
+    from forze.base.introspection import (
         get_callable_name,
         get_callable_module,
         get_class_name,

@@ -35,11 +35,11 @@ def mock_deps_module(mock_state: MockState) -> MockDepsModule:
 
 
 def _stub_counter_fac(ctx: ExecutionContext, spec: CounterSpec) -> CounterPort:
-    return MockCounterAdapter(state=ctx.dep(MockStateDepKey), namespace=spec.name)
+    return MockCounterAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=spec.name)
 
 
 def _stub_storage_fac(ctx: ExecutionContext, spec: StorageSpec) -> MockStorageAdapter:
-    return MockStorageAdapter(state=ctx.dep(MockStateDepKey), bucket=spec.name)
+    return MockStorageAdapter(state=ctx.deps.provide(MockStateDepKey), bucket=spec.name)
 
 
 @pytest.fixture
@@ -84,14 +84,14 @@ def _minimal_search_spec() -> SearchSpec[ReadDocument]:
 def stub_document_port(stub_ctx: ExecutionContext) -> MockDocumentAdapter:
     """Document port for usecase tests (shares state with stub_ctx)."""
     spec = _minimal_document_spec()
-    return stub_ctx.doc_query(spec)
+    return stub_ctx.document.query(spec)
 
 
 @pytest.fixture
 def stub_search_port(stub_ctx: ExecutionContext) -> MockSearchAdapter:
     """Search port for usecase tests (shares state with stub_ctx)."""
     spec = _minimal_search_spec()
-    return stub_ctx.search_query(spec)
+    return stub_ctx.search.query(spec)
 
 
 @pytest.fixture
@@ -103,7 +103,7 @@ def stub_storage_port(stub_ctx: ExecutionContext) -> MockStorageAdapter:
 @pytest.fixture
 def stub_tx_manager(stub_ctx: ExecutionContext):
     """Transaction manager for usecase tests."""
-    return stub_ctx.txmanager("mock")
+    return stub_ctx.tx.resolver("mock")
 
 
 @pytest.fixture

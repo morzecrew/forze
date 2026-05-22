@@ -5,7 +5,16 @@ class NoneValidator:
     def exactly_one(*values: object) -> bool:
         """Validate that exactly one of the values is not None."""
 
-        return sum(1 for v in values if v is not None) == 1
+        already_found = False
+
+        for v in values:
+            if v is not None:
+                if already_found:
+                    return False
+
+                already_found = True
+
+        return already_found
 
     # ....................... #
 
@@ -13,7 +22,7 @@ class NoneValidator:
     def at_least_one(*values: object) -> bool:
         """Validate that at least one of the values is not None."""
 
-        return sum(1 for v in values if v is not None) >= 1
+        return any(v is not None for v in values)
 
     # ....................... #
 
@@ -21,10 +30,12 @@ class NoneValidator:
     def all_or_none(*values: object) -> bool:
         """Validate that either all of the values are None or all of the values are not None."""
 
-        all_none = all(v is None for v in values)
-        all_not_none = all(v is not None for v in values)
+        if not values:
+            return True
 
-        return all_none or all_not_none
+        first_is_none = values[0] is None
+
+        return all((v is None) == first_is_none for v in values)
 
     # ....................... #
 
@@ -32,7 +43,13 @@ class NoneValidator:
     def one_or_none(cls, *values: object) -> bool:
         """Validate that exactly one of the values is not None or all of the values are None."""
 
-        exactly_one = cls.exactly_one(*values)
-        at_least_one = cls.at_least_one(*values)
+        already_found = False
 
-        return exactly_one or not at_least_one
+        for v in values:
+            if v is not None:
+                if already_found:
+                    return False
+
+                already_found = True
+
+        return True

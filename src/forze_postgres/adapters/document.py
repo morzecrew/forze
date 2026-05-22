@@ -12,13 +12,11 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.tx import TxScopeKey
 from forze.application.coordinators import DocumentCacheCoordinator, DocumentCoordinator
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..kernel.gateways import PostgresReadGateway, PostgresWriteGateway
-from .txmanager import PostgresTxScopeKey
 
 # ----------------------- #
 
@@ -49,9 +47,6 @@ class PostgresDocumentAdapter(DocumentCoordinator[R, D, C, U]):
 
     batch_size: int = 200
     """Chunk size for bulk writes and internal chunked offset reads when pagination omits ``limit``."""
-
-    # Non initable fields
-    tx_scope: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
 
     # ....................... #
 

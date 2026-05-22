@@ -1,15 +1,15 @@
 """Dependency keys and factory protocols for graph module ports."""
 
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import GraphCommandPort, GraphQueryPort
 from .specs import GraphModuleSpec
 
 # ----------------------- #
 
-GraphQueryDepPort = BaseDepPort[GraphModuleSpec, GraphQueryPort]
+GraphQueryDepPort = ConfigurableDepPort[GraphModuleSpec, GraphQueryPort]
 """Graph query dependency port."""
 
-GraphCommandDepPort = BaseDepPort[GraphModuleSpec, GraphCommandPort]
+GraphCommandDepPort = ConfigurableDepPort[GraphModuleSpec, GraphCommandPort]
 """Graph command dependency port."""
 
 # ....................... #

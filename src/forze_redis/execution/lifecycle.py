@@ -3,8 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RedisClient, RedisConfig, RoutedRedisClient
 from .deps import RedisClientDepKey
@@ -21,16 +24,16 @@ class RedisStartupHook(LifecycleHook):
     with the DSN and config. The client must be registered before startup runs.
     """
 
-    dsn: str
+    dsn: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
     """Connection DSN or URL for the Redis instance."""
 
-    config: RedisConfig = RedisConfig()
+    config: RedisConfig = attrs.field(factory=RedisConfig, repr=False)
     """Connection pool configuration for the client."""
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        redis_client = cast(RedisClient, ctx.dep(RedisClientDepKey))
+        redis_client = cast(RedisClient, ctx.deps.provide(RedisClientDepKey))
         await redis_client.initialize(self.dsn, config=self.config)
 
 
@@ -46,7 +49,7 @@ class RedisShutdownHook(LifecycleHook):
     """
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        redis_client = ctx.dep(RedisClientDepKey)
+        redis_client = ctx.deps.provide(RedisClientDepKey)
         await redis_client.close()
 
 
@@ -88,7 +91,7 @@ class RoutedRedisShutdownHook(LifecycleHook):
 def redis_lifecycle_step(
     name: str = "redis_lifecycle",
     *,
-    dsn: str,
+    dsn: str | SecretStr,
     config: RedisConfig = RedisConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for Redis client init and shutdown.
@@ -101,7 +104,7 @@ def redis_lifecycle_step(
     startup_hook = RedisStartupHook(dsn=dsn, config=config)
     shutdown_hook = RedisShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -118,7 +121,7 @@ def routed_redis_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedRedisStartupHook(client=client),
         shutdown=RoutedRedisShutdownHook(client=client),
     )

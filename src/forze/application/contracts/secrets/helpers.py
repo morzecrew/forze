@@ -5,6 +5,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from forze.base.errors import CoreError
+from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .ports import SecretsPort
 from .value_objects import SecretRef
@@ -39,5 +40,5 @@ async def resolve_structured(
         raise CoreError(
             f"Secret at {ref.path!r} is not valid for {model_type.__name__}: {e}",
             code="secret_invalid",
-            details={"errors": e.errors()},
+            details={"errors": sanitize_pydantic_errors(e.errors())},
         ) from e

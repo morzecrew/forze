@@ -5,13 +5,7 @@ from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
-from forze.domain.constants import NUMBER_ID_FIELD, SOFT_DELETE_FIELD
-from forze.domain.mixins import NumberMixin, SoftDeletionMixin
-from forze.domain.models import (
-    BaseDTO,
-    CreateDocumentCmd,
-    Document,
-)
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -64,21 +58,6 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
-    def supports_soft_delete(self) -> bool:
-        """Return ``True`` when the domain model supports soft deletion."""
-
-        if self.write is None:
-            return False
-
-        d = self.write["domain"]
-
-        return (
-            issubclass(d, SoftDeletionMixin)
-            or SOFT_DELETE_FIELD in d.model_fields.keys()
-        )
-
-    # ....................... #
-
     def supports_update(self) -> bool:
         """Return ``True`` when the update command exposes writable fields."""
 
@@ -92,12 +71,17 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
-    def supports_number_id(self) -> bool:
-        """Return ``True`` when the domain model supports number ID."""
+    def supports_soft_delete(self) -> bool:
+        """Return ``True`` when the domain model supports soft deletion."""
 
         if self.write is None:
             return False
 
-        d = self.write["domain"]
+        return "is_deleted" in self.write["domain"].model_fields
 
-        return issubclass(d, NumberMixin) or NUMBER_ID_FIELD in d.model_fields.keys()
+    # ....................... #
+
+    def supports_number_id(self) -> bool:
+        """Return ``True`` when the read model exposes a number identifier."""
+
+        return "number_id" in self.read.model_fields

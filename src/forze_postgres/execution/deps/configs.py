@@ -43,7 +43,7 @@ class PostgresReadOnlyDocumentConfig(_BasePostgresConfig):
     the read model alone does not resolve a leaf type.
 
     Parameterized ``dict[str, V]`` / ``Mapping[str, V]`` annotations are walked
-    automatically: one path segment is treated as the JSON object key, then types
+    automatically; one path segment is treated as the JSON object key, then types
     are inferred from ``V`` (including nested ``BaseModel`` fields or further
     ``dict[str, …]`` / ``Mapping[str, …]`` nesting). Use hints for bare ``dict``,
     ``Any``, multi-branch unions, filters that end on a mapping without a key

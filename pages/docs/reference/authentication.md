@@ -155,7 +155,7 @@ All dep keys live in `forze.application.contracts.authn` (re-exported from `.dep
 | `ApiKeyLifecycleDepKey` | `ApiKeyLifecyclePort` | Optional; for API-key issuance/revocation flows. |
 | `PasswordAccountProvisioningDepKey` | `PasswordAccountProvisioningPort` | Optional; for self-service or operator-driven account creation. |
 
-Resolve from `ExecutionContext` with `ctx.dep(KEY, route=spec.name)(ctx, spec)`.
+Resolve from `ExecutionContext` with `ctx.deps.resolve_configurable(ctx, KEY, spec, route=spec.name)`.
 
 ## forze_authn surface
 

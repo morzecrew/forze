@@ -1,15 +1,17 @@
-"""Tests for :mod:`forze.application.contracts.query.pagination.cursor_page`."""
+"""Tests for :mod:`forze.application.contracts.querying.pagination.cursor_page`."""
 
 from typing import Any, cast
 
 import pytest
 
-from forze.application.contracts.query.pagination.cursor_page import (
-    assert_cursor_projection_includes_sort_keys,
+from forze.application.contracts.querying.pagination.cursor_page import (
     assemble_keyset_cursor_page,
+    assert_cursor_projection_includes_sort_keys,
     resolved_cursor_limit,
 )
-from forze.application.contracts.query.pagination.cursor_token import decode_keyset_v1
+from forze.application.contracts.querying.pagination.cursor_token import (
+    decode_keyset_v1,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD

@@ -8,17 +8,25 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from forze.application.composition.search import SearchDTOs, SearchUsecasesFacade
-from forze.application.dto import (
+from forze.application.composition.search import SearchDTOs, SearchKernelOp
+from forze.application.dto.paginated import (
     CursorPaginated,
-    CursorSearchRequestDTO,
     Paginated,
-    RawCursorPaginated,
-    RawCursorSearchRequestDTO,
-    RawPaginated,
-    RawSearchRequestDTO,
+    ProjectedCursorPaginated,
+)
+from forze.application.handlers.search import (
+    CursorSearchRequestDTO,
+    ProjectedCursorSearchRequestDTO,
+    ProjectedSearchPaginated,
+    ProjectedSearchRequestDTO,
     SearchRequestDTO,
 )
+
+RawSearchRequestDTO = ProjectedSearchRequestDTO
+RawCursorSearchRequestDTO = ProjectedCursorSearchRequestDTO
+RawPaginated = ProjectedSearchPaginated
+RawCursorPaginated = ProjectedCursorPaginated
+from forze.base.primitives import StrKeyNamespace
 
 from .._utils import path_coerce
 from ..http import (
@@ -32,10 +40,6 @@ from ..http import (
 
 # ----------------------- #
 
-Facade = SearchUsecasesFacade[Any]
-
-# ....................... #
-
 type TypedSearchDTOs[M: BaseModel] = SearchDTOs[M]
 type TypedSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     Any,
@@ -46,13 +50,13 @@ type TypedSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     SearchRequestDTO,
     Paginated[M],
     Paginated[M],
-    Facade,
 ]
 
 
 def build_typed_search_endpoint_spec[M: BaseModel](
     dtos: TypedSearchDTOs[M],
     *,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> TypedSearchEndpointSpec[M]:
@@ -65,20 +69,18 @@ def build_typed_search_endpoint_spec[M: BaseModel](
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        Facade.search,  # type: ignore[misc]
+        namespace.key(SearchKernelOp.TYPED),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
         response=Paginated[dtos.read],  # type: ignore[name-defined]
-        mapper=BodyAsIsMapper(SearchRequestDTO),
+        request_mapper=BodyAsIsMapper(SearchRequestDTO),
     )
 
 
 # ....................... #
 
-type RawSearchDTOs[M: BaseModel] = SearchDTOs[M]
-type RawSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
+RawSearchEndpointSpec = HttpEndpointSpec[
     Any,
     Any,
     Any,
@@ -87,16 +89,15 @@ type RawSearchEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     RawSearchRequestDTO,
     RawPaginated,
     RawPaginated,
-    Facade,
 ]
 
 
-def build_raw_search_endpoint_spec[M: BaseModel](
-    dtos: RawSearchDTOs[M],
+def build_raw_search_endpoint_spec(
     *,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
-) -> RawSearchEndpointSpec[M]:
+) -> RawSearchEndpointSpec:
     path = path_override or "/raw-search"
     path = path_coerce(path)
 
@@ -106,13 +107,12 @@ def build_raw_search_endpoint_spec[M: BaseModel](
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        Facade.raw_search,  # type: ignore[misc]
+        namespace.key(SearchKernelOp.RAW),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
         response=RawPaginated,
-        mapper=BodyAsIsMapper(RawSearchRequestDTO),
+        request_mapper=BodyAsIsMapper(RawSearchRequestDTO),
     )
 
 
@@ -128,13 +128,13 @@ type TypedSearchCursorEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     CursorSearchRequestDTO,
     CursorPaginated[M],
     CursorPaginated[M],
-    Facade,
 ]
 
 
 def build_typed_search_cursor_endpoint_spec[M: BaseModel](
     dtos: TypedSearchCursorDTOs[M],
     *,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> TypedSearchCursorEndpointSpec[M]:
@@ -147,20 +147,18 @@ def build_typed_search_cursor_endpoint_spec[M: BaseModel](
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        Facade.search_cursor,  # type: ignore[misc]
+        namespace.key(SearchKernelOp.TYPED_CURSOR),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
         response=CursorPaginated[dtos.read],  # type: ignore[name-defined]
-        mapper=BodyAsIsMapper(CursorSearchRequestDTO),
+        request_mapper=BodyAsIsMapper(CursorSearchRequestDTO),
     )
 
 
 # ....................... #
 
-type RawSearchCursorDTOs[M: BaseModel] = SearchDTOs[M]
-type RawSearchCursorEndpointSpec[M: BaseModel] = HttpEndpointSpec[
+RawSearchCursorEndpointSpec = HttpEndpointSpec[
     Any,
     Any,
     Any,
@@ -169,16 +167,15 @@ type RawSearchCursorEndpointSpec[M: BaseModel] = HttpEndpointSpec[
     RawCursorSearchRequestDTO,
     RawCursorPaginated,
     RawCursorPaginated,
-    Facade,
 ]
 
 
-def build_raw_search_cursor_endpoint_spec[M: BaseModel](
-    dtos: RawSearchCursorDTOs[M],
+def build_raw_search_cursor_endpoint_spec(
     *,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
-) -> RawSearchCursorEndpointSpec[M]:
+) -> RawSearchCursorEndpointSpec:
     path = path_override or "/raw-search-cursor"
     path = path_coerce(path)
 
@@ -188,11 +185,10 @@ def build_raw_search_cursor_endpoint_spec[M: BaseModel](
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        Facade.raw_search_cursor,  # type: ignore[misc]
+        namespace.key(SearchKernelOp.RAW_CURSOR),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
         response=RawCursorPaginated,
-        mapper=BodyAsIsMapper(RawCursorSearchRequestDTO),
+        request_mapper=BodyAsIsMapper(RawCursorSearchRequestDTO),
     )

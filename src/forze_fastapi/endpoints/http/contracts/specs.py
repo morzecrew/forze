@@ -2,15 +2,15 @@ from typing import Any, Generic, Literal, NotRequired, Sequence, TypedDict
 
 import attrs
 
-from forze.application.contracts.mapping import MapperPort
-from forze.application.execution import FacadeOpRef
+from forze.application.contracts.mapping import Mapper
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO
 
 from .authn import AuthnRequirement
 from .constants import HttpBodyMode
 from .ports import HttpEndpointFeaturePort
-from .typevars import B, C, F, H, In, P, Q, R, Raw
+from .typevars import B, C, H, In, P, Q, R, Raw
 
 # ----------------------- #
 
@@ -104,16 +104,19 @@ class HttpRequestDTO(BaseDTO, Generic[Q, P, H, C, B]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R, F]):
+class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R]):
     """Specification for an HTTP endpoint."""
 
     http: HttpSpec
     """The HTTP specification of the endpoint."""
 
+    operation: StrKey
+    """Absolute operation key resolved by :class:`~forze.application.execution.registry.FrozenOperationRegistry`."""
+
     metadata: HttpMetadataSpec | None = attrs.field(default=None)
     """The metadata specification of the endpoint."""
 
-    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]] | None = (
+    features: Sequence[HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R]] | None = (
         attrs.field(default=None)
     )
     """The features specification of the endpoint."""
@@ -124,17 +127,11 @@ class HttpEndpointSpec(Generic[Q, P, H, C, B, In, Raw, R, F]):
     response: type[R | None] = attrs.field(default=type(None))
     """The response model type of the endpoint."""
 
-    mapper: MapperPort[HttpRequestDTO[Q, P, H, C, B], In]
-    """The mapper that maps the request to the input model."""
+    request_mapper: Mapper[HttpRequestDTO[Q, P, H, C, B], In]
+    """The mapper that maps the request DTO to the input model."""
 
-    response_mapper: MapperPort[Raw, R] | None = attrs.field(default=None)
-    """Maps usecase output to the HTTP response model; omit when Raw is R (identity)."""
-
-    facade_type: type[F]
-    """The type of the usecases facade to use for the endpoint."""
-
-    call: FacadeOpRef[In, Raw]
-    """The call operation to use for the endpoint."""
+    response_mapper: Mapper[Raw, R] | None = attrs.field(default=None)
+    """Maps operation output to the HTTP response model; omit when Raw is R (identity)."""
 
     # ....................... #
 
@@ -169,5 +166,10 @@ class SimpleHttpEndpointSpec(TypedDict, total=False):
     """Extra contract for built-in HTTP endpoints."""
 
     path_override: str
+    """Override the default path of the endpoint."""
+
     metadata: HttpMetadataSpec
+    """The metadata of the endpoint."""
+
     authn: AuthnRequirement
+    """The authentication requirement of the endpoint."""

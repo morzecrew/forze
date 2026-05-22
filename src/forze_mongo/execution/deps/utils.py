@@ -23,14 +23,14 @@ def read_gw(
     tenant_aware: bool,
 ) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
-    client = ctx.dep(MongoClientDepKey)
+    client = ctx.deps.provide(MongoClientDepKey)
 
     return MongoReadGateway(
         database=read_relation[0],
         collection=read_relation[1],
         client=client,
         model_type=read_type,
-        tenant_provider=ctx.get_tenancy_identity,
+        tenant_provider=ctx.inv.get_tenant,
         tenant_aware=tenant_aware,
     )
 
@@ -48,7 +48,7 @@ def _doc_history_gw(
 ) -> MongoHistoryGateway[Any]:
     """Build a history gateway for document audit trails."""
 
-    client = ctx.dep(MongoClientDepKey)
+    client = ctx.deps.provide(MongoClientDepKey)
 
     return MongoHistoryGateway(
         database=history_relation[0],
@@ -57,7 +57,7 @@ def _doc_history_gw(
         target_collection=write_relation[1],
         client=client,
         model_type=domain_type,
-        tenant_provider=ctx.get_tenancy_identity,
+        tenant_provider=ctx.inv.get_tenant,
         tenant_aware=tenant_aware,
     )
 
@@ -75,7 +75,7 @@ def doc_write_gw(
     tenant_aware: bool,
 ) -> MongoWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history."""
-    client = ctx.dep(MongoClientDepKey)
+    client = ctx.deps.provide(MongoClientDepKey)
 
     read = read_gw(
         ctx,
@@ -103,6 +103,6 @@ def doc_write_gw(
         update_cmd_type=write_types.get("update_cmd"),
         read_gw=read,
         history_gw=hist,
-        tenant_provider=ctx.get_tenancy_identity,
+        tenant_provider=ctx.inv.get_tenant,
         tenant_aware=tenant_aware,
     )

@@ -16,7 +16,7 @@ from temporalio.worker import (
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext, ExecutionContext
+from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.application.execution.deps import Deps
 from forze.base.primitives import uuid7
 from forze_temporal.interceptors.codecs import TemporalContextCodec
@@ -47,10 +47,14 @@ class TestExecutionContextInterceptorChains:
         cid = uuid7()
         pid = uuid7()
         tid = uuid7()
-        with ctx.bind_call(
-            call=CallContext(execution_id=eid, correlation_id=cid, causation_id=None),
-            identity=AuthnIdentity(principal_id=pid),
-            tenancy=TenantIdentity(tenant_id=tid),
+        with ctx.inv.bind(
+            metadata=InvocationMetadata(
+                execution_id=eid,
+                correlation_id=cid,
+                causation_id=None,
+            ),
+            authn=AuthnIdentity(principal_id=pid),
+            tenant=TenantIdentity(tenant_id=tid),
         ):
             eci = ExecutionContextInterceptor(ctx_dep=lambda: ctx)
             inner = MagicMock(spec=OutboundInterceptor)
@@ -78,13 +82,17 @@ class TestExecutionContextInterceptorChains:
         eid = uuid7()
         cid = uuid7()
         headers = codec.encode(
-            call=CallContext(execution_id=eid, correlation_id=cid, causation_id=None),
+            metadata=InvocationMetadata(
+                execution_id=eid,
+                correlation_id=cid,
+                causation_id=None,
+            ),
         )
 
-        captured: list[CallContext | None] = []
+        captured: list[InvocationMetadata | None] = []
 
         async def inner_exec(_inp: ExecuteActivityInput) -> str:
-            captured.append(ctx.get_call_ctx())
+            captured.append(ctx.inv.get_metadata())
             return "ok"
 
         inner = MagicMock(spec=ActivityInboundInterceptor)
@@ -100,6 +108,7 @@ class TestExecutionContextInterceptorChains:
         result = await act_chain.execute_activity(inp)
 
         assert result == "ok"
+        assert captured[0] is not None
         assert captured[0] is not None
         assert captured[0].correlation_id == cid
 
@@ -133,8 +142,12 @@ class TestWorkflowContextOutboundInterceptor:
         ctx = _exec_ctx()
         eid = uuid7()
         cid = uuid7()
-        with ctx.bind_call(
-            call=CallContext(execution_id=eid, correlation_id=cid, causation_id=None),
+        with ctx.inv.bind(
+            metadata=InvocationMetadata(
+                execution_id=eid,
+                correlation_id=cid,
+                causation_id=None,
+            ),
         ):
             out_next = MagicMock()
             wco = WorkflowContextOutboundInterceptor(

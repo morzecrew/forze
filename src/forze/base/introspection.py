@@ -38,6 +38,9 @@ def _module_name(obj: object) -> str:
     return mod.__name__
 
 
+# ....................... #
+
+
 def get_callable_module(fn: Callable[..., Any]) -> str:
     """Return the module name where *fn* is defined."""
 

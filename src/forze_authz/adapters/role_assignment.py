@@ -86,7 +86,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         _ = principal_row
 
         role = await self.role_qry.find(
-            filters={"$fields": {"role_key": role_key}},
+            filters={"$values": {"role_key": role_key}},
         )
 
         if role is None:
@@ -121,7 +121,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         _ = principal_row
 
         role = await self.role_qry.find(
-            filters={"$fields": {"role_key": role_key}},
+            filters={"$values": {"role_key": role_key}},
         )
 
         if role is None:
@@ -132,7 +132,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         if binding is None:
             return
 
-        await self.pr_binding_cmd.delete(binding.id, binding.rev)
+        await self.pr_binding_cmd.kill(binding.id)
 
     # ....................... #
 
@@ -162,7 +162,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
     ) -> ReadPrincipalRoleBinding | None:
         rows = await fetch_all_document_hits(
             self.pr_binding_qry,
-            filters={"$fields": {"principal_id": principal_id}},
+            filters={"$values": {"principal_id": principal_id}},
         )
 
         for row in rows:

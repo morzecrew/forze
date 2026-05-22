@@ -6,7 +6,8 @@ from typing import Any, cast, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 
 from ..kernel.introspect import PostgresIntrospector
@@ -72,7 +73,7 @@ async def warm_postgres_catalog(
     run a tenant-scoped warmup job after authentication.
     """
 
-    introspector = ctx.dep(PostgresIntrospectorDepKey)
+    introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
     try:
         if searches:
@@ -157,7 +158,7 @@ def postgres_catalog_warmup_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=PostgresCatalogWarmupHook(
             searches=searches,
             hub_searches=hub_searches,

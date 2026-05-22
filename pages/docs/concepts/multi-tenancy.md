@@ -8,7 +8,7 @@ Typical HTTP flow:
 
 1. Resolve `AuthnIdentity` (bearer token, API key, etc.).
 2. Resolve `TenantIdentity` via `TenantIdentityResolver`: merge, in order, credential-bound `AuthnIdentity.tenant_id`, an optional header hint (`HeaderTenantIdentityCodec`), and `TenantResolverPort.resolve_from_principal` when registered.
-3. `ExecutionContext.bind_call` attaches both so adapters can call `get_tenancy_identity()`.
+3. `ExecutionContext.inv.bind` attaches both so adapters can call `ctx.inv.get_tenant()`.
 
 If credential validation reads **tenant-scoped** document ports (`tenant_aware=True`) before step 2 completes, bootstrap can deadlock. Keep **authentication document routes** (`AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_authn.application`) on **tenant-unaware** stores or global registry clients.
 

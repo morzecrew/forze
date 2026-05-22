@@ -10,7 +10,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -58,7 +58,7 @@ async def _ctx_cached(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -78,7 +78,7 @@ async def _ctx_cached_tx(
     mongo_client: MongoClient,
     collection: str,
 ) -> tuple[ExecutionContext, DocumentSpec]:
-    """Like :func:`_ctx_cached` but registers ``TxManagerDepKey`` route ``main``."""
+    """Like :func:`_ctx_cached` but registers ``TransactionManagerDepKey`` route ``main``."""
 
     db = (await mongo_client.db()).name
     cache_spec = CacheSpec(name=f"cache_{collection}")
@@ -98,7 +98,7 @@ async def _ctx_cached_tx(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
     plain = Deps.plain(
         {
@@ -109,7 +109,7 @@ async def _ctx_cached_tx(
             CacheDepKey: _cache_factory,
         }
     )
-    routed = Deps.routed({TxManagerDepKey: {"main": mongo_txmanager}})
+    routed = Deps.routed({TransactionManagerDepKey: {"main": mongo_txmanager}})
     ctx = ExecutionContext(deps=plain.merge(routed))
     return ctx, spec
 
@@ -141,8 +141,8 @@ async def test_mongo_adapter_cursor_prev_next_and_desc(
             }
         )
     )
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     ids = [
         UUID("20000000-0000-0000-0000-000000000001"),
@@ -207,14 +207,14 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
             }
         )
     )
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     await cmd.create(_CxCreate(sku="apple"))
     await cmd.create(_CxCreate(sku="banana"))
 
     one = await q.project(
-        {"$fields": {"sku": "apple"}},
+        {"$values": {"sku": "apple"}},
         ["sku"],
     )
     assert one is not None
@@ -222,7 +222,7 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
 
     page = await q.project_page(
         ["id", "sku"],
-        {"$fields": {"sku": {"$in": ["apple", "banana"]}}},
+        {"$values": {"sku": {"$in": ["apple", "banana"]}}},
         pagination={"limit": 10, "offset": 0},
         sorts={"sku": "asc"},
     )
@@ -240,9 +240,9 @@ async def test_mongo_adapter_read_through_cache_get_and_get_many(
     """DocumentSpec cache: miss populates versioned cache; hit avoids Mongo; update evicts."""
     col = f"m_cc_{uuid4().hex[:8]}"
     ctx, spec = await _ctx_cached(mongo_client, col)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
-    state = ctx.dep(MockStateDepKey)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
+    state = ctx.deps.provide(MockStateDepKey)
     assert spec.cache is not None
     bodies = state.cache_bodies.setdefault(spec.cache.name, {})
 
@@ -278,13 +278,13 @@ async def test_mongo_adapter_cache_tx_commit_deferred_warm(
 
     col = f"m_cc_tx_{uuid4().hex[:8]}"
     ctx, spec = await _ctx_cached_tx(mongo_client_replica, col)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     doc = await cmd.create(_CxCreate(sku="baseline"))
     await q.get(doc.id)
 
-    async with ctx.transaction("main"):
+    async with ctx.tx.scope("main"):
         patched = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="committed"))
         assert patched.sku == "committed"
         in_tx = await q.get(doc.id)
@@ -303,9 +303,9 @@ async def test_mongo_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
 
     col = f"m_rb_tx_{uuid4().hex[:8]}"
     ctx, spec = await _ctx_cached_tx(mongo_client_replica, col)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
-    state = ctx.dep(MockStateDepKey)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
+    state = ctx.deps.provide(MockStateDepKey)
     assert spec.cache is not None
 
     doc = await cmd.create(_CxCreate(sku="baseline"))
@@ -315,7 +315,7 @@ async def test_mongo_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
     assert str(doc.id) in pointers
 
     with pytest.raises(RuntimeError, match="intentional rollback"):
-        async with ctx.transaction("main"):
+        async with ctx.tx.scope("main"):
             upd = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="lost"))
             assert upd.sku == "lost"
             in_tx = await q.get(doc.id)

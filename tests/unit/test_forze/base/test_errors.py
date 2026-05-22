@@ -100,6 +100,10 @@ class TestDefaultErrorHandler:
         except PydanticValidationError as e:
             result = _default_error_hanlder(e, "op")
             assert isinstance(result, ValidationError)
+            assert result.details is not None
+            errors = result.details["errors"]
+            assert errors
+            assert "input" not in errors[0]
 
     def test_returns_none_for_unknown_exception(self) -> None:
         result = _default_error_hanlder(RuntimeError("boom"), "op")

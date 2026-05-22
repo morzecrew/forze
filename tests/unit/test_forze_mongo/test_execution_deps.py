@@ -11,7 +11,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -83,7 +83,7 @@ def test_mongo_deps_module_rw_registers_query_and_command() -> None:
 
     assert deps.exists(DocumentQueryDepKey, route="doc")
     assert deps.exists(DocumentCommandDepKey, route="doc")
-    assert deps.exists(TxManagerDepKey, route="session")
+    assert deps.exists(TransactionManagerDepKey, route="session")
 
 
 def test_mongo_deps_module_ro_only() -> None:

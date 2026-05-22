@@ -134,7 +134,7 @@ async def test_history_application_strategy_writes_history_rows(
         },
         history_enabled=True,
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     doc = await cmd.create(HistCreate(name="v1"))
     assert doc.rev == 1
@@ -262,7 +262,7 @@ async def test_history_database_strategy_uses_triggers_not_app_insert(
         },
         history_enabled=True,
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     doc = await cmd.create(HistCreate(name="v1"))
     assert doc.rev == 1

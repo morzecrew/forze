@@ -13,15 +13,15 @@ Use when implementing document persistence, filtered listings, cursor pagination
 
 ## Document ports (`DocumentQueryPort` / `DocumentCommandPort`)
 
-Kernel **`DocumentSpec`** carries model types and logical `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.doc_query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.doc_command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
+Kernel **`DocumentSpec`** carries model types and logical `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.document.query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.document.command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
 
 ```python
-doc_q = self.ctx.doc_query(project_spec)
-doc_c = self.ctx.doc_command(project_spec)
+doc_q = self.ctx.document.query(project_spec)
+doc_c = self.ctx.document.command(project_spec)
 
 project = await doc_q.get(project_id)
 page = await doc_q.find_page(
-    filters={"$fields": {"status": "active"}},
+    filters={"$values": {"status": "active"}},
     pagination={"limit": 20, "offset": 0},
     sorts={"created_at": "desc", "id": "asc"},
 )
@@ -39,8 +39,8 @@ Use the shared JSON DSL, not adapter-specific SQL/Mongo syntax, in application c
 ```python
 filters = {
     "$and": [
-        {"$fields": {"status": {"$in": ["active", "paused"]}}},
-        {"$fields": {"created_at": {"$gte": since}}},
+        {"$values": {"status": {"$in": ["active", "paused"]}}},
+        {"$values": {"created_at": {"$gte": since}}},
     ]
 }
 ```
@@ -76,7 +76,7 @@ project_search = SearchSpec(
 
 hits, total = await self.ctx.search_query(project_search).search(
     query="roadmap",
-    filters={"$fields": {"status": "active"}},
+    filters={"$values": {"status": "active"}},
     limit=20,
 )
 ```

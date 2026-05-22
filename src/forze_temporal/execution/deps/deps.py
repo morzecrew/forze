@@ -31,14 +31,14 @@ class ConfigurableTemporalWorkflowQuery(WorkflowQueryDepPort):
         ctx: ExecutionContext,
         spec: WorkflowSpec[Any, Any],
     ) -> TemporalWorkflowQueryAdapter[Any, Any]:
-        client = ctx.dep(TemporalClientDepKey)
+        client = ctx.deps.provide(TemporalClientDepKey)
 
         return TemporalWorkflowQueryAdapter(
             client=client,
             queue=self.config["queue"],
             spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )
 
 
@@ -60,12 +60,12 @@ class ConfigurableTemporalWorkflowCommand(WorkflowCommandDepPort):
         ctx: ExecutionContext,
         spec: WorkflowSpec[Any, Any],
     ) -> TemporalWorkflowCommandAdapter[Any, Any]:
-        client = ctx.dep(TemporalClientDepKey)
+        client = ctx.deps.provide(TemporalClientDepKey)
 
         return TemporalWorkflowCommandAdapter(
             client=client,
             queue=self.config["queue"],
             spec=spec,
             tenant_aware=self.config.get("tenant_aware", False),
-            tenant_provider=ctx.get_tenancy_identity,
+            tenant_provider=ctx.inv.get_tenant,
         )

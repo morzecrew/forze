@@ -31,6 +31,11 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.transaction import (
+    TransactionManagerPort,
+    TransactionScopeKey,
+)
+
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -52,11 +57,12 @@ from forze.application.contracts.pubsub import (
     PubSubMessage,
     PubSubQueryPort,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryFilterExpression,
@@ -64,7 +70,7 @@ from forze.application.contracts.query import (
     QueryOr,
     QuerySortExpression,
 )
-from forze.application.contracts.query.internal.time_bucket import (
+from forze.application.contracts.querying.internal.time_bucket import (
     floor_to_time_bucket,
     tzinfo_from_resolved,
 )
@@ -87,6 +93,7 @@ from forze.application.contracts.storage import (
     DownloadedObject,
     StoragePort,
     StoredObject,
+    UploadedObject,
 )
 from forze.application.contracts.stream import (
     StreamCommandPort,
@@ -94,7 +101,6 @@ from forze.application.contracts.stream import (
     StreamMessage,
     StreamQueryPort,
 )
-from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
@@ -103,7 +109,6 @@ from forze.base.serialization import (
     pydantic_validate_many,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 # ----------------------- #
@@ -343,10 +348,63 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             return not _coerce_set(value).isdisjoint(values)
 
 
+def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
+    left_value = _path_get(doc, node.left)
+    right_value = _path_get(doc, node.right)
+
+    match node.op:
+        case "$eq":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            return _eq(left_value, right_value)
+
+        case "$neq":
+            if left_value is _MISSING:
+                return True
+            if right_value is _MISSING:
+                return True
+            return not _eq(left_value, right_value)
+
+        case "$gt":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value > right_value
+            except TypeError:
+                return False
+
+        case "$gte":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value >= right_value
+            except TypeError:
+                return False
+
+        case "$lt":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value < right_value
+            except TypeError:
+                return False
+
+        case "$lte":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value <= right_value
+            except TypeError:
+                return False
+
+
 def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
     match expr:
         case QueryField():
             return _match_field(doc, expr)
+
+        case QueryCompare():
+            return _match_compare(doc, expr)
 
         case QueryOr(items=items):
             return any(_match_expr(doc, item) for item in items)
@@ -425,55 +483,50 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     if isinstance(raw, (int, float)):
         return datetime.fromtimestamp(float(raw), tz=timezone.utc)
 
-    raise CoreError(f"Invalid timestamp for $time_bucket: {raw!r}")
+    raise CoreError(f"Invalid timestamp for $trunc: {raw!r}")
+
+
+def _group_key_part(doc: JsonDict, expr: object) -> Any:
+    from forze.application.contracts.querying import GroupRef, GroupTrunc
+
+    match expr:
+        case GroupRef(field=field):
+            value = _path_get(doc, field)
+            return None if value is _MISSING else value
+        case GroupTrunc(field=field, unit=unit, timezone=tz):
+            raw_ts = _path_get(doc, field)
+            if raw_ts is _MISSING:
+                return None
+            tb_tz = tzinfo_from_resolved(tz)
+            floored = floor_to_time_bucket(
+                _coerce_datetime_for_bucket(raw_ts),
+                unit=unit,
+                tz=tb_tz,
+            )
+            return floored.isoformat()
+        case _:
+            raise CoreError(f"Unsupported group expression: {expr!r}")
 
 
 def _aggregate_docs(
     docs: Sequence[JsonDict], aggregates: AggregatesExpression
 ) -> list[JsonDict]:
     parsed = AggregatesExpressionParser.parse(aggregates)
-    tb_tz = (
-        tzinfo_from_resolved(parsed.time_bucket.timezone)
-        if parsed.time_bucket is not None
-        else None
-    )
 
     grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
 
     for doc in docs:
-        parts: list[Any] = []
-        if parsed.time_bucket is not None and tb_tz is not None:
-            raw_ts = _path_get(doc, parsed.time_bucket.field)
-            if raw_ts is _MISSING:
-                parts.append(None)
-            else:
-                floored = floor_to_time_bucket(
-                    _coerce_datetime_for_bucket(raw_ts),
-                    unit=parsed.time_bucket.unit,
-                    tz=tb_tz,
-                )
-                parts.append(floored.isoformat())
+        parts = tuple(_group_key_part(doc, group.expr) for group in parsed.groups)
+        grouped.setdefault(parts, []).append(doc)
 
-        parts.extend(
-            None if (value := _path_get(doc, field.field)) is _MISSING else value
-            for field in parsed.fields
-        )
-        key = tuple(parts)
-        grouped.setdefault(key, []).append(doc)
-
-    if not parsed.fields and parsed.time_bucket is None and not grouped:
+    if not parsed.groups and not grouped:
         grouped[()] = []
 
     rows: list[JsonDict] = []
     for key, items in grouped.items():
         row: JsonDict = {}
-        idx = 0
-        if parsed.time_bucket is not None:
-            row[parsed.time_bucket.alias] = key[idx]
-            idx += 1
-        for field in parsed.fields:
-            row[field.alias] = key[idx]
-            idx += 1
+        for group, value in zip(parsed.groups, key, strict=True):
+            row[group.alias] = value
 
         for computed in parsed.computed_fields:
             computed_items = (
@@ -1741,7 +1794,7 @@ class MockDocumentAdapter(
                 else {
                     "$and": [
                         filters,
-                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                        {"$values": {ID_FIELD: {"$gt": last_id}}},
                     ]
                 }
             )
@@ -1851,9 +1904,9 @@ class MockDocumentAdapter(
     # ....................... #
 
     def _supports_soft_delete(self) -> bool:
-        return self.domain_model is not None and issubclass(
-            self.domain_model, SoftDeletionMixin
-        )
+        if self.domain_model is None:
+            return False
+        return "is_deleted" in getattr(self.domain_model, "model_fields", {})
 
     # ....................... #
 
@@ -2290,17 +2343,13 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         if return_fields is not None:
             proj = [_project(doc, return_fields) for doc in ordered]
             if return_count:
-                return page_from_limit_offset(
-                    proj, pagination, total=total
-                )
+                return page_from_limit_offset(proj, pagination, total=total)
             return page_from_limit_offset(proj, pagination, total=None)
 
         if return_type is not None:
             out = pydantic_validate_many(return_type, ordered)
             if return_count:
-                return page_from_limit_offset(
-                    out, pagination, total=total
-                )
+                return page_from_limit_offset(out, pagination, total=total)
             return page_from_limit_offset(out, pagination, total=None)
 
         allowed = set(self.spec.model_type.model_fields.keys())
@@ -2308,9 +2357,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         out = pydantic_validate_many(self.spec.model_type, typed_docs)
 
         if return_count:
-            return page_from_limit_offset(
-                out, pagination, total=total
-            )
+            return page_from_limit_offset(out, pagination, total=total)
         return page_from_limit_offset(out, pagination, total=None)
 
     # ....................... #
@@ -2852,17 +2899,14 @@ class MockStorageAdapter(StoragePort):
 
     # ....................... #
 
-    async def upload(
-        self,
-        filename: str,
-        data: bytes,
-        description: str | None = None,
-        *,
-        prefix: str | None = None,
-    ) -> StoredObject:
+    async def upload(self, obj: UploadedObject) -> StoredObject:
+        filename = obj.filename
+        data = obj.data
+        prefix = obj.prefix
+        description = obj.description
         key = f"{prefix.strip('/') + '/' if prefix else ''}{uuid7()}"
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        obj = StoredObject(
+        stored = StoredObject(
             key=key,
             filename=filename,
             description=description,
@@ -2871,9 +2915,9 @@ class MockStorageAdapter(StoragePort):
             created_at=utcnow(),
         )
         with self.state.lock:
-            self._objects()[key] = obj
+            self._objects()[key] = stored
             self._payloads()[key] = bytes(data)
-        return obj
+        return stored
 
     # ....................... #
 
@@ -2885,8 +2929,8 @@ class MockStorageAdapter(StoragePort):
             payload = self._payloads()[key]
         return DownloadedObject(
             data=payload,
-            content_type=obj["content_type"],
-            filename=obj["filename"],
+            content_type=obj.content_type,
+            filename=obj.filename,
         )
 
     # ....................... #
@@ -2908,17 +2952,25 @@ class MockStorageAdapter(StoragePort):
         with self.state.lock:
             rows = list(self._objects().values())
         if prefix:
-            rows = [row for row in rows if row["key"].startswith(prefix)]
+            rows = [row for row in rows if row.key.startswith(prefix)]
         total = len(rows)
         return rows[offset : offset + limit], total
 
 
+MockTxScopeKey = TransactionScopeKey("mock")
+"""Scope key for the in-memory mock transaction manager."""
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockTxManagerAdapter(TxManagerPort):
+class MockTxManagerAdapter(TransactionManagerPort):
     """No-op transaction manager for mock environments."""
 
-    scope_key: TxScopeKey = attrs.field(factory=lambda: TxScopeKey(name="mock"))
+    # ....................... #
+
+    @property
+    def scope_key(self) -> TransactionScopeKey:
+        return MockTxScopeKey
 
     # ....................... #
 

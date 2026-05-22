@@ -8,25 +8,25 @@ from ...contracts import (
     HttpEndpointFeaturePort,
     HttpEndpointHandlerPort,
 )
-from ...contracts.typevars import B, C, F, H, In, P, Q, R, Raw
+from ...contracts.typevars import B, C, H, In, P, Q, R, Raw
 
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class RequireAuthnFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F]):
+class RequireAuthnFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R]):
     """Require a bound :class:`~forze.application.contracts.authn.AuthnIdentity` before the handler runs."""
 
     def wrap(
         self,
-        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
-    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
+        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R],
+    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R]:
 
         async def wrapped(
-            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
+            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R],
         ) -> R | Response:
-            ident = ctx.exec_ctx.get_authn_identity()
+            ident = ctx.exec_ctx.inv.get_authn()
 
             if ident is None:
                 raise HTTPException(status_code=401, detail="Authentication required")

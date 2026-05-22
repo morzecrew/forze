@@ -10,6 +10,7 @@ import asyncio
 from typing import (
     Any,
     AsyncContextManager,
+    AsyncIterator,
     Awaitable,
     Literal,
     Protocol,
@@ -129,6 +130,16 @@ class PostgresClientPort(Protocol):
         row_factory: RowFactory = "dict",
         commit: bool = False,
     ) -> Awaitable[list[JsonDict] | list[tuple[Any, ...]]]: ...  # pragma: no cover
+
+    def fetch_all_batched(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        batch_size: int = 2000,
+        row_factory: RowFactory = "dict",
+        commit: bool = False,
+    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]: ...  # pragma: no cover
 
     @overload
     def fetch_one(

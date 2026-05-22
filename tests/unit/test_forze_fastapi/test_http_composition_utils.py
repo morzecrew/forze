@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
-from forze.application.execution import Deps, ExecutionContext, FacadeOpRef, UsecaseRegistry
+from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO
 from forze_fastapi.endpoints.http import BodyAsIsMapper, EmptyMapper
@@ -18,8 +19,9 @@ from forze_fastapi.endpoints.http.composition.attach import (
     attach_http_endpoint,
     attach_http_endpoints,
 )
-from forze_fastapi.endpoints.http.composition.signature import build_http_endpoint_signature
-from forze_fastapi.openapi.security import http_bearer_scheme, openapi_operation_security
+from forze_fastapi.endpoints.http.composition.signature import (
+    build_http_endpoint_signature,
+)
 from forze_fastapi.endpoints.http.composition.utils import (
     build_body_parameters,
     build_dependency_parameter,
@@ -37,7 +39,13 @@ from forze_fastapi.endpoints.http.composition.utils import (
 from forze_fastapi.endpoints.http.contracts import HTTP_BODY_KEY, HTTP_REQUEST_KEY
 from forze_fastapi.endpoints.http.contracts.specs import HttpEndpointSpec
 from forze_fastapi.endpoints.http.features.etag import ETagFeature
-from forze_fastapi.endpoints.http.features.etag.constants import IF_NONE_MATCH_HEADER_KEY
+from forze_fastapi.endpoints.http.features.etag.constants import (
+    IF_NONE_MATCH_HEADER_KEY,
+)
+from forze_fastapi.openapi.security import (
+    http_bearer_scheme,
+    openapi_operation_security,
+)
 
 # ----------------------- #
 
@@ -201,28 +209,20 @@ class TestJoinPathsAndHasRoute:
 
 class TestBuildHttpEndpointSignatureEtag:
     def test_if_none_match_header_param(self) -> None:
-        class Facade:
-            pass
-
         spec = HttpEndpointSpec(
             http={"method": "GET", "path": "/r"},
+            operation="test.read",
             features=[ETagFeature(provider=lambda _b: '"t"')],
             request=None,
             response=None,
-            mapper=EmptyMapper(),
-            facade_type=Facade,
-            call=FacadeOpRef(op="test.read"),
+            request_mapper=EmptyMapper(),
         )
 
         def ctx_dep() -> ExecutionContext:
             return ExecutionContext(deps=Deps())
 
-        def facade_dep(_ctx: ExecutionContext) -> Facade:
-            return Facade()
-
         sig = build_http_endpoint_signature(
             spec=spec,
-            facade_dep=facade_dep,
             ctx_dep=ctx_dep,
         )
         inm = [p for p in sig.parameters.values() if p.name == "__if_none_match"]
@@ -235,19 +235,15 @@ def _minimal_get_spec(
     path: str = "/ping",
     metadata: dict[str, str] | None = None,
     features: Any = None,
-) -> HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]:
-    class Facade:
-        pass
-
+) -> HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]:
     return HttpEndpointSpec(
         http={"method": "GET", "path": path},
+        operation="ns.op",
         metadata=metadata,
         features=features,
         request=None,
         response=None,
-        mapper=EmptyMapper(),
-        facade_type=Facade,
-        call=FacadeOpRef(op="ns.op"),
+        request_mapper=EmptyMapper(),
     )
 
 
@@ -259,8 +255,7 @@ class TestAttachHttpEndpoint:
         async def _existing() -> None:
             return None
 
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.qualify_operation = MagicMock(return_value="ns.ping")
+        reg = MagicMock(spec=FrozenOperationRegistry)
 
         spec = _minimal_get_spec(path="/ping")
 
@@ -277,8 +272,7 @@ class TestAttachHttpEndpoint:
 
     def test_sets_docstring_from_metadata(self) -> None:
         router = APIRouter()
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.qualify_operation = MagicMock(return_value="ns.ping")
+        reg = MagicMock(spec=FrozenOperationRegistry)
 
         spec = _minimal_get_spec(
             metadata={"description": "## Hello"},
@@ -300,8 +294,7 @@ class TestAttachHttpEndpoint:
 
     def test_attach_passes_openapi_extra_and_dependencies(self) -> None:
         router = APIRouter()
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.qualify_operation = MagicMock(return_value="ns.secured")
+        reg = MagicMock(spec=FrozenOperationRegistry)
 
         bearer = http_bearer_scheme(auto_error=False)
         spec = _minimal_get_spec(
@@ -330,23 +323,17 @@ class TestAttachHttpEndpoint:
 
     def test_attach_http_endpoints_iteration(self) -> None:
         router = APIRouter()
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.qualify_operation = MagicMock(side_effect=["ns.a", "ns.b"])
-
-        class Facade:
-            pass
+        reg = MagicMock(spec=FrozenOperationRegistry)
 
         s1 = HttpEndpointSpec(
             http={"method": "GET", "path": "/a"},
-            mapper=EmptyMapper(),
-            facade_type=Facade,
-            call=FacadeOpRef(op="a"),
+            operation="a",
+            request_mapper=EmptyMapper(),
         )
         s2 = HttpEndpointSpec(
             http={"method": "GET", "path": "/b"},
-            mapper=EmptyMapper(),
-            facade_type=Facade,
-            call=FacadeOpRef(op="b"),
+            operation="b",
+            request_mapper=EmptyMapper(),
         )
 
         def ctx_dep() -> ExecutionContext:
@@ -377,11 +364,9 @@ class TestSignaturePathQueryHeaderCookie:
         class In(BaseDTO):
             title: str
 
-        class Facade:
-            pass
-
         spec = HttpEndpointSpec(
             http={"method": "POST", "path": "/items/{item_id}"},
+            operation="x.create",
             request={
                 "query_type": Q,
                 "path_type": P,
@@ -391,23 +376,22 @@ class TestSignaturePathQueryHeaderCookie:
                 "body_mode": "json",
             },
             response=None,
-            mapper=BodyAsIsMapper(out=In),
-            facade_type=Facade,
-            call=FacadeOpRef(op="x.create"),
+            request_mapper=BodyAsIsMapper(out=In),
         )
 
         def ctx_dep() -> ExecutionContext:
             return ExecutionContext(deps=Deps())
 
-        def facade_dep(_ctx: ExecutionContext) -> Facade:
-            return Facade()
-
         sig = build_http_endpoint_signature(
             spec=spec,
-            facade_dep=facade_dep,
             ctx_dep=ctx_dep,
         )
         names = {p.name for p in sig.parameters.values()}
-        assert {"q", "item_id", "trace", "sid", HTTP_BODY_KEY, HTTP_REQUEST_KEY}.issubset(
-            names
-        )
+        assert {
+            "q",
+            "item_id",
+            "trace",
+            "sid",
+            HTTP_BODY_KEY,
+            HTTP_REQUEST_KEY,
+        }.issubset(names)

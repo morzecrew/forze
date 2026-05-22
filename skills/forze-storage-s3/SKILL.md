@@ -59,15 +59,18 @@ lifecycle = LifecyclePlan.from_steps(
 
 Use a secrets-backed or environment-backed configuration layer for real credentials; do not hard-code production keys.
 
-## Usecase pattern
+## Handler pattern
 
 ```python
-class UploadAttachment(Usecase[UploadAttachmentCmd, StoredObject]):
-    async def main(self, args: UploadAttachmentCmd) -> StoredObject:
-        await self.ctx.doc_query(project_spec).get(args.project_id)
+from forze.application.contracts.execution import Handler
 
-        storage = self.ctx.storage(attachments_spec)
-        return await storage.upload(
+class UploadAttachment(Handler[UploadAttachmentCmd, StoredObject]):
+    doc: DocumentQueryPort[ProjectRead]
+    storage: StoragePort
+
+    async def __call__(self, args: UploadAttachmentCmd) -> StoredObject:
+        await self.doc.get(args.project_id)
+        return await self.storage.upload(
             args.filename,
             args.data,
             description=args.description,

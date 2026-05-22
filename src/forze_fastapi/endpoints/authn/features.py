@@ -6,14 +6,17 @@ import attrs
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
 
-from forze.application.dto import AuthnRefreshRequestDTO, AuthnTokenResponseDTO
+from forze.application.handlers.authn import (
+    AuthnRefreshRequestDTO,
+    AuthnTokenResponseDTO,
+)
 
 from ..http.contracts import (
     HttpEndpointContext,
     HttpEndpointFeaturePort,
     HttpEndpointHandlerPort,
 )
-from ..http.contracts.typevars import B, C, F, H, In, P, Q, R, Raw
+from ..http.contracts.typevars import B, C, H, In, P, Q, R, Raw
 from .specs import (
     CookieTokenTransportSpec,
     HeaderTokenTransportSpec,
@@ -120,7 +123,7 @@ TokenTransportMode = Literal["issue", "clear"]
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TokenTransportOutputFeature(
-    HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F],
+    HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R],
 ):
     """Translate :class:`AuthnTokenResponseDTO` into a HTTP response with cookies / body.
 
@@ -141,15 +144,15 @@ class TokenTransportOutputFeature(
 
     def wrap(
         self,
-        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
-    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
+        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R],
+    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R]:
 
         access = self.access_transport
         refresh = self.refresh_transport
         mode = self.mode
 
         async def wrapped(
-            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
+            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R],
         ) -> R | Response:
             inner_result = await handler(ctx)
 
@@ -224,7 +227,7 @@ class TokenTransportOutputFeature(
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TokenTransportInputFeature(
-    HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R, F],
+    HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R],
 ):
     """Read the refresh token from the configured transport and bind it to ``ctx.input``.
 
@@ -239,13 +242,13 @@ class TokenTransportInputFeature(
 
     def wrap(
         self,
-        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F],
-    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]:
+        handler: HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R],
+    ) -> HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R]:
 
         spec = self.refresh_transport
 
         async def wrapped(
-            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
+            ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R],
         ) -> R | Response:
             token = _extract_token(ctx, spec)
 
@@ -276,7 +279,7 @@ class TokenTransportInputFeature(
 
 
 def _extract_token(
-    ctx: HttpEndpointContext[Any, Any, Any, Any, Any, Any, Any, Any, Any],
+    ctx: HttpEndpointContext[Any, Any, Any, Any, Any, Any, Any, Any],
     spec: TokenTransportSpec,
 ) -> str | None:
     spec_dict: dict[str, Any] = dict(spec)

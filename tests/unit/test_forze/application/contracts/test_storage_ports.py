@@ -3,27 +3,24 @@
 from datetime import datetime
 from typing import Optional
 
+from forze.application.contracts.storage import (
+    DownloadedObject,
+    StoredObject,
+    UploadedObject,
+)
 from forze.application.contracts.storage.ports import StoragePort
-from forze.application.contracts.storage.types import DownloadedObject, StoredObject
 
 
 class _StubStorage:
     """Concrete implementation for testing StoragePort."""
 
-    async def upload(
-        self,
-        filename: str,
-        data: bytes,
-        description: Optional[str] = None,
-        *,
-        prefix: Optional[str] = None,
-    ) -> StoredObject:
+    async def upload(self, obj: UploadedObject) -> StoredObject:
         return StoredObject(
-            key=f"{prefix or ''}/{filename}",
-            filename=filename,
-            description=description,
+            key=f"{obj.prefix or ''}/{obj.filename}",
+            filename=obj.filename,
+            description=obj.description,
             content_type="application/octet-stream",
-            size=len(data),
+            size=len(obj.data),
             created_at=datetime.now(),
         )
 
@@ -54,14 +51,16 @@ class TestStoragePort:
 
     async def test_upload(self) -> None:
         stub = _StubStorage()
-        result = await stub.upload("test.txt", b"data", prefix="files")
-        assert result["filename"] == "test.txt"
-        assert result["size"] == 4
+        result = await stub.upload(
+            UploadedObject(filename="test.txt", data=b"data", prefix="files"),
+        )
+        assert result.filename == "test.txt"
+        assert result.size == 4
 
     async def test_download(self) -> None:
         stub = _StubStorage()
         result = await stub.download("files/test.txt")
-        assert result["data"] == b"content"
+        assert result.data == b"content"
 
     async def test_delete(self) -> None:
         stub = _StubStorage()
@@ -75,8 +74,10 @@ class TestStoragePort:
 
     async def test_upload_with_description(self) -> None:
         stub = _StubStorage()
-        result = await stub.upload("doc.pdf", b"pdf", description="My doc")
-        assert result["description"] == "My doc"
+        result = await stub.upload(
+            UploadedObject(filename="doc.pdf", data=b"pdf", description="My doc"),
+        )
+        assert result.description == "My doc"
 
     def test_non_conforming_not_instance(self) -> None:
         class Bad:

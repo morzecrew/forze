@@ -3,8 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
 from .deps import RabbitMQClientDepKey
@@ -17,13 +20,13 @@ from .deps import RabbitMQClientDepKey
 class RabbitMQStartupHook(LifecycleHook):
     """Startup hook that initializes the RabbitMQ client from the deps container."""
 
-    dsn: str
-    config: RabbitMQConfig = RabbitMQConfig()
+    dsn: SecretStr = attrs.field(converter=pydantic_secret_converter, repr=False)
+    config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, repr=False)
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        rabbitmq_client = cast(RabbitMQClient, ctx.dep(RabbitMQClientDepKey))
+        rabbitmq_client = cast(RabbitMQClient, ctx.deps.provide(RabbitMQClientDepKey))
         await rabbitmq_client.initialize(self.dsn, config=self.config)
 
 
@@ -36,7 +39,7 @@ class RabbitMQShutdownHook(LifecycleHook):
     """Shutdown hook that closes the RabbitMQ connection."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        rabbitmq_client = ctx.dep(RabbitMQClientDepKey)
+        rabbitmq_client = ctx.deps.provide(RabbitMQClientDepKey)
         await rabbitmq_client.close()
 
 
@@ -78,14 +81,14 @@ class RoutedRabbitMQShutdownHook(LifecycleHook):
 def rabbitmq_lifecycle_step(
     name: str = "rabbitmq_lifecycle",
     *,
-    dsn: str,
+    dsn: str | SecretStr,
     config: RabbitMQConfig = RabbitMQConfig(),
 ) -> LifecycleStep:
     """Build a lifecycle step for RabbitMQ client init and shutdown."""
     startup_hook = RabbitMQStartupHook(dsn=dsn, config=config)
     shutdown_hook = RabbitMQShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -102,7 +105,7 @@ def routed_rabbitmq_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedRabbitMQStartupHook(client=client),
         shutdown=RoutedRabbitMQShutdownHook(client=client),
     )

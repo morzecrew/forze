@@ -1,18 +1,20 @@
 from typing import Any
 
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import StreamCommandPort, StreamGroupQueryPort, StreamQueryPort
 from .specs import StreamSpec
 
 # ----------------------- #
 
-StreamQueryDepPort = BaseDepPort[StreamSpec[Any], StreamQueryPort[Any]]
+StreamQueryDepPort = ConfigurableDepPort[StreamSpec[Any], StreamQueryPort[Any]]
 """Stream query dependency port."""
 
-StreamCommandDepPort = BaseDepPort[StreamSpec[Any], StreamCommandPort[Any]]
+StreamCommandDepPort = ConfigurableDepPort[StreamSpec[Any], StreamCommandPort[Any]]
 """Stream command dependency port."""
 
-StreamGroupQueryDepPort = BaseDepPort[StreamSpec[Any], StreamGroupQueryPort[Any]]
+StreamGroupQueryDepPort = ConfigurableDepPort[
+    StreamSpec[Any], StreamGroupQueryPort[Any]
+]
 """Stream group query dependency port."""
 
 StreamQueryDepKey = DepKey[StreamQueryDepPort]("stream_query")

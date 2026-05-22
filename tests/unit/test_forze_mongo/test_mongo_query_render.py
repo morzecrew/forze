@@ -8,8 +8,9 @@ import attrs
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryOr,
@@ -57,6 +58,42 @@ class TestMongoQueryRenderer:
         with pytest.raises(CoreError, match="Unknown expression"):
             r.render(_UnknownExpr())
 
+    def test_compare_renders_expr(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render(QueryCompare("starts_at", "$lte", "ends_at")) == {
+            "$expr": {"$lte": ["$starts_at", "$ends_at"]},
+        }
+
+    def test_compare_eq_shortcut_via_parser_shape(self) -> None:
+        from forze.application.contracts.querying import QueryFilterExpressionParser
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$fields": {"a": "b"}},
+        )
+        r = MongoQueryRenderer()
+        assert r.render(expr) == {"$expr": {"$eq": ["$a", "$b"]}}
+
+    def test_compare_dot_paths(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render(QueryCompare("meta.score", "$gte", "meta.min")) == {
+            "$expr": {"$gte": ["$meta.score", "$meta.min"]},
+        }
+
+    def test_compare_with_fields_in_and(self) -> None:
+        r = MongoQueryRenderer()
+        expr = QueryAnd(
+            (
+                QueryField("status", "$eq", "active"),
+                QueryCompare("a", "$lt", "b"),
+            ),
+        )
+        assert r.render(expr) == {
+            "$and": [
+                {"status": "active"},
+                {"$expr": {"$lt": ["$a", "$b"]}},
+            ],
+        }
+
     def test_unknown_operator_raises(self) -> None:
         r = MongoQueryRenderer()
         with pytest.raises(CoreError, match="Unknown operator"):
@@ -99,14 +136,18 @@ class TestMongoQueryRenderer:
             r.render(QueryField("s", "$subset", 1))
 
     def test_null_default_matches_missing(self) -> None:
-        r = MongoQueryRenderer(null_matches_missing=True, require_exists_for_not_null=True)
+        r = MongoQueryRenderer(
+            null_matches_missing=True, require_exists_for_not_null=True
+        )
         assert r.render(QueryField("z", "$null", True)) == {"z": None}
         assert r.render(QueryField("z", "$null", False)) == {
             "$and": [{"z": {"$ne": None}}, {"z": {"$exists": True}}],
         }
 
     def test_null_explicit_missing_only(self) -> None:
-        r = MongoQueryRenderer(null_matches_missing=False, require_exists_for_not_null=False)
+        r = MongoQueryRenderer(
+            null_matches_missing=False, require_exists_for_not_null=False
+        )
         assert r.render(QueryField("z", "$null", True)) == {
             "$and": [{"z": None}, {"z": {"$exists": True}}],
         }
@@ -136,7 +177,7 @@ class TestMongoAggregateRendering:
 
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$fields": {"category": "category"},
+                "$groups": {"category": "category"},
                 "$computed": {
                     "orders": {"$count": None},
                     "revenue": {"$sum": "price"},
@@ -184,14 +225,14 @@ class TestMongoAggregateRendering:
                     "mid_rows": {
                         "$count": {
                             "filter": {
-                                "$fields": {"price": {"$gte": 10, "$lte": 20}},
+                                "$values": {"price": {"$gte": 10, "$lte": 20}},
                             },
                         },
                     },
                     "book_revenue": {
                         "$sum": {
                             "field": "price",
-                            "filter": {"$fields": {"category": "books"}},
+                            "filter": {"$values": {"category": "books"}},
                         },
                     },
                 },
@@ -240,7 +281,7 @@ class TestMongoAggregateRendering:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$fields": {"cat": "category"},
+                "$groups": {"cat": "category"},
                 "$computed": {
                     "avg_p": {"$avg": "price"},
                     "lo": {"$min": "price"},
@@ -259,17 +300,25 @@ class TestMongoAggregateRendering:
             "$median": {"input": "$p", "method": "approximate"},
         }
 
-    def test_renders_time_bucket_in_group_id(self) -> None:
+    def test_renders_trunc_in_group_id(self) -> None:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$fields": {"cat": "category"},
-                "$time_bucket": {"field": "created_at", "unit": "week", "timezone": "+03:00"},
+                "$groups": {
+                    "cat": "category",
+                    "week_start": {
+                        "$trunc": {
+                            "field": "created_at",
+                            "unit": "week",
+                            "timezone": "+03:00",
+                        },
+                    },
+                },
                 "$computed": {"n": {"$count": None}},
             },
         )
         group = pipeline[0]["$group"]
-        assert group["_id"]["bucket"] == {
+        assert group["_id"]["week_start"] == {
             "$dateTrunc": {
                 "date": "$created_at",
                 "unit": "week",

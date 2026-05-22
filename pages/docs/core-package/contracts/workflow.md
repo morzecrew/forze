@@ -49,7 +49,7 @@ Import path for all invocation specs:
 | Common implementations | Temporal workflow command adapter. |
 | Related dependency keys | `WorkflowCommandDepKey`. |
 | Minimal example | `handle = await commands.start(StartArgs(...))` |
-| Related pages | [Execution](../execution.md). |
+| Related pages | [Execution](../../reference/execution.md). |
 
 ## `WorkflowQueryPort[In, Out]`
 
@@ -90,5 +90,5 @@ Import path for all invocation specs:
         name="project-onboarding",
         run=WorkflowInvokeSpec(args_type=StartOnboarding, return_type=OnboardingResult),
     )
-    commands = ctx.dep(WorkflowCommandDepKey)(ctx, workflow_spec)
+    commands = ctx.deps.resolve_configurable(ctx, WorkflowCommandDepKey, workflow_spec, route=workflow_spec.name)
     handle = await commands.start(StartOnboarding(project_id="p1"))

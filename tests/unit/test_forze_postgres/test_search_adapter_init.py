@@ -12,6 +12,7 @@ from forze_postgres.adapters.search import (
     PostgresFTSSearchAdapter,
     PostgresPGroongaSearchAdapter,
 )
+from forze_postgres.adapters.search._leg_pgroonga import build_pgroonga_leg
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
@@ -41,7 +42,17 @@ async def test_pgroonga_v2_match_combined_empty_string_is_true_predicate() -> No
         tenant_provider=None,
         tenant_aware=False,
     )
-    sw, params = await adapter._pgroonga_match_combined_query("")
+    sw, _rank, params = await build_pgroonga_leg(
+        introspector=adapter.introspector,
+        index_qname=adapter.index_qname,
+        search=adapter.spec,
+        index_field_map=adapter.index_field_map,
+        index_alias="t",
+        queries=(),
+        options=None,
+        score_column="_pgroonga_rank",
+        pgroonga_score_version=adapter.pgroonga_score_version,
+    )
     assert params == []
     assert "TRUE" in str(sw)
 

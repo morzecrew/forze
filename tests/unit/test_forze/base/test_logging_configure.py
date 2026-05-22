@@ -205,3 +205,37 @@ class TestConfigureLogging:
         assert row["event"] == "failed"
         assert row["error.type"] == "RuntimeError"
         assert row["error.message"] == "explode"
+
+    def test_configure_logging_scrubs_sensitive_extras(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("login", password="hunter2")
+
+        row = _json_records(stream)[-1]
+        assert row["event"] == "login"
+        assert row["password"] == "**********"
+
+    def test_configure_logging_sanitize_logs_disabled(self) -> None:
+        stream = io.StringIO()
+
+        configure_logging(
+            level="info",
+            render_mode="json",
+            logger_names=["forze.test"],
+            stream=stream,
+            sanitize_logs=False,
+        )
+
+        logger = Logger("forze.test")
+        logger.info("login", password="hunter2")
+
+        row = _json_records(stream)[-1]
+        assert row["password"] == "hunter2"

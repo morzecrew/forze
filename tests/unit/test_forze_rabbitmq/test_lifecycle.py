@@ -22,8 +22,10 @@ async def test_rabbitmq_startup_hook_initializes_client() -> None:
 
     await hook(ctx)
 
+    from pydantic import SecretStr
+
     client.initialize.assert_awaited_once_with(
-        "amqp://guest:guest@localhost/",
+        SecretStr("amqp://guest:guest@localhost/"),
         config=config,
     )
 
@@ -44,6 +46,6 @@ def test_rabbitmq_lifecycle_step_builds_hooks() -> None:
     config = RabbitMQConfig(prefetch_count=20)
     step = rabbitmq_lifecycle_step(dsn="amqp://guest:guest@localhost/", config=config)
 
-    assert step.name == "rabbitmq_lifecycle"
+    assert step.id == "rabbitmq_lifecycle"
     assert isinstance(step.startup, RabbitMQStartupHook)
     assert isinstance(step.shutdown, RabbitMQShutdownHook)

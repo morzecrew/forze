@@ -2,18 +2,22 @@
 
 import pytest
 
-from forze.application.composition.document import DocumentDTOs
-from forze.application.composition.document.factories import (
-    build_document_create_mapper,
+from forze.application.composition.document import (
+    DocumentDTOs,
+    DocumentKernelOp,
     build_document_registry,
 )
-from forze.application.composition.document.operations import DocumentOperation
 from forze.application.contracts.document import DocumentSpec
-from forze.application.composition.mapping import DTOMapper, NumberIdStep
-from forze.application.contracts.counter import CounterSpec
+from forze.application.execution.registry import OperationRegistry
 from forze.base.errors import CoreError
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion.composition import (
+    SoftDeletionKernelOp,
+    build_soft_deletion_registry,
+)
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+
+from ..registry_helpers import registry_has_handler
 
 # ----------------------- #
 
@@ -26,7 +30,7 @@ class _EmptyUpdateCmd(BaseDTO):
     pass
 
 
-class _SoftDoc(Document, SoftDeletionMixin):
+class _SoftDoc(DocWithSoftDeletion):
     name: str
 
 
@@ -64,84 +68,60 @@ def _read_only_dtos() -> DocumentDTOs:
     return DocumentDTOs(read=ReadDocument)
 
 
-# ----------------------- #
-
-
-class TestBuildDocumentCreateMapper:
-    def test_basic(self) -> None:
-        spec = _write_spec()
-        dtos = _write_dtos()
-        mapper = build_document_create_mapper(spec, dtos)
-        assert isinstance(mapper, DTOMapper)
-
-    def test_numbered(self) -> None:
-        spec = _write_spec()
-        dtos = _write_dtos()
-        mapper = build_document_create_mapper(
-            spec, dtos, steps=(NumberIdStep(spec=CounterSpec(name="test")),)
-        )
-        assert isinstance(mapper, DTOMapper)
-
-    def test_read_only_spec_raises(self) -> None:
-        spec = _read_only_spec()
-        dtos = _read_only_dtos()
-        with pytest.raises(CoreError, match="does not support write"):
-            build_document_create_mapper(spec, dtos)
-
-
 class TestBuildDocumentRegistry:
     def test_registers_get(self) -> None:
         spec = _write_spec()
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.GET)
-        assert reg.exists(DocumentOperation.LIST_CURSOR)
-        assert reg.exists(DocumentOperation.RAW_LIST_CURSOR)
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.GET))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.LIST_CURSOR))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.RAW_LIST_CURSOR))
 
     def test_registers_create_and_kill(self) -> None:
         spec = _write_spec()
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.CREATE)
-        assert reg.exists(DocumentOperation.KILL)
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.KILL))
 
     def test_registers_update_when_update_cmd_has_fields(self) -> None:
         spec = _write_spec(update_cmd=_UpdateCmd)
         dtos = _write_dtos(update_cmd=_UpdateCmd)
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.UPDATE)
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.UPDATE))
 
     def test_skips_update_when_update_cmd_empty(self) -> None:
         spec = _write_spec(update_cmd=_EmptyUpdateCmd)
         dtos = _write_dtos(update_cmd=_EmptyUpdateCmd)
         reg = build_document_registry(spec, dtos)
-        assert not reg.exists(DocumentOperation.UPDATE)
+        ns = spec.default_namespace
+        assert not registry_has_handler(reg, ns.key(DocumentKernelOp.UPDATE))
 
-    def test_registers_delete_restore_for_soft_delete(self) -> None:
+    def test_soft_delete_via_contrib_registry(self) -> None:
         spec = _write_spec(domain=_SoftDoc)
         dtos = _write_dtos()
-        reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.DELETE)
-        assert reg.exists(DocumentOperation.RESTORE)
+        reg = OperationRegistry.merge(
+            build_document_registry(spec, dtos),
+            build_soft_deletion_registry(spec),
+        )
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(SoftDeletionKernelOp.DELETE))
+        assert registry_has_handler(reg, ns.key(SoftDeletionKernelOp.RESTORE))
 
-    def test_no_delete_restore_without_soft_delete(self) -> None:
+    def test_no_delete_restore_without_contrib_registry(self) -> None:
         spec = _write_spec(domain=Document)
         dtos = _write_dtos()
         reg = build_document_registry(spec, dtos)
-        assert not reg.exists(DocumentOperation.DELETE)
-        assert not reg.exists(DocumentOperation.RESTORE)
+        ns = spec.default_namespace
+        assert not registry_has_handler(reg, ns.key(SoftDeletionKernelOp.DELETE))
 
     def test_read_only_spec_only_get(self) -> None:
         spec = _read_only_spec()
         dtos = _read_only_dtos()
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(DocumentOperation.GET)
-        assert not reg.exists(DocumentOperation.CREATE)
-
-    def test_custom_create_steps(self) -> None:
-        spec = _write_spec()
-        dtos = _write_dtos()
-        reg = build_document_registry(
-            spec, dtos, create_steps=(NumberIdStep(spec=CounterSpec(name="test")),)
-        )
-        assert reg.exists(DocumentOperation.CREATE)
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.GET))
+        assert not registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))

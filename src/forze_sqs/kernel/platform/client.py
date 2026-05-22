@@ -215,17 +215,12 @@ class SQSClient(SQSClientPort):
         if opts is None:
             raise CoreError("SQS client options are not initialized")
 
-        sec_key = opts.secret_access_key
-
-        if isinstance(sec_key, SecretStr):
-            sec_key = sec_key.get_secret_value()
-
         cm = session.client(  # type: ignore
             "sqs",
             endpoint_url=opts.endpoint,
             region_name=opts.region_name,
             aws_access_key_id=opts.access_key_id,
-            aws_secret_access_key=sec_key,
+            aws_secret_access_key=opts.secret_access_key.get_secret_value(),
             config=opts.config,  # type: ignore[arg-type]
         )
         cm = cast(AsyncSQSClient, cm)

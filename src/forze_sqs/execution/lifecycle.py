@@ -3,8 +3,11 @@
 from typing import cast, final
 
 import attrs
+from pydantic import SecretStr
 
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
+from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedSQSClient, SQSClient, SQSConfig
 from .deps import SQSClientDepKey
@@ -19,14 +22,16 @@ class SQSStartupHook(LifecycleHook):
 
     endpoint: str
     region_name: str
-    access_key_id: str
-    secret_access_key: str
-    config: SQSConfig | None = attrs.field(default=None)
+    access_key_id: str = attrs.field(repr=False)
+    secret_access_key: SecretStr = attrs.field(
+        converter=pydantic_secret_converter, repr=False
+    )
+    config: SQSConfig | None = attrs.field(default=None, repr=False)
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        sqs_client = cast(SQSClient, ctx.dep(SQSClientDepKey))
+        sqs_client = cast(SQSClient, ctx.deps.provide(SQSClientDepKey))
 
         await sqs_client.initialize(
             endpoint=self.endpoint,
@@ -78,7 +83,7 @@ class SQSShutdownHook(LifecycleHook):
     """Shutdown hook that closes the SQS session (await :meth:`SQSClient.close`)."""
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        sqs_client = ctx.dep(SQSClientDepKey)
+        sqs_client = ctx.deps.provide(SQSClientDepKey)
         await sqs_client.close()
 
 
@@ -91,7 +96,7 @@ def sqs_lifecycle_step(
     endpoint: str,
     region_name: str,
     access_key_id: str,
-    secret_access_key: str,
+    secret_access_key: str | SecretStr,
     config: SQSConfig | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for SQS client init and shutdown."""
@@ -104,7 +109,7 @@ def sqs_lifecycle_step(
     )
     shutdown_hook = SQSShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -121,7 +126,7 @@ def routed_sqs_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedSQSStartupHook(client=client),
         shutdown=RoutedSQSShutdownHook(client=client),
     )

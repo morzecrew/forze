@@ -7,7 +7,8 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import ExecutionContext, LifecycleHook, LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.execution import ExecutionContext
 from forze.base.errors import CoreError
 
 from ..kernel.validate_schema import (
@@ -85,7 +86,7 @@ class PostgresDocumentSchemaValidationHook(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        introspector = ctx.dep(PostgresIntrospectorDepKey)
+        introspector = ctx.deps.provide(PostgresIntrospectorDepKey)
 
         try:
             await validate_postgres_document_schemas(introspector, self.specs)
@@ -99,6 +100,9 @@ class PostgresDocumentSchemaValidationHook(LifecycleHook):
                 return
 
             raise
+
+
+# ....................... #
 
 
 def postgres_document_schema_validation_lifecycle_step(
@@ -119,6 +123,6 @@ def postgres_document_schema_validation_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=PostgresDocumentSchemaValidationHook(specs=tuple(specs)),
     )

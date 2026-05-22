@@ -1,23 +1,23 @@
 from uuid import UUID, uuid4
 
 import pytest
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import ConflictError
-from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
 
-class MyDoc(Document, SoftDeletionMixin):
+class MyDoc(DocWithSoftDeletion):
     name: str
 
 
@@ -25,7 +25,7 @@ class MyCreateDoc(CreateDocumentCmd):
     name: str
 
 
-class MyUpdateDoc(BaseDTO):
+class MyUpdateDoc(UpdateCmdWithSoftDeletion):
     name: str | None = None
 
 
@@ -66,7 +66,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
         }
     )
     ctx = ExecutionContext(deps=deps)
-    adapter = ctx.doc_command(spec)
+    adapter = ctx.document.command(spec)
 
     created = await adapter.create(MyCreateDoc(name="alpha"))
     created_2 = await adapter.create(MyCreateDoc(name="beta"))
@@ -76,7 +76,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     fetched = await adapter.get(created.id)
     assert fetched.name == "alpha"
 
-    filtered: QueryFilterExpression = {"$fields": {"name": {"$eq": "alpha"}}}
+    filtered: QueryFilterExpression = {"$values": {"name": {"$eq": "alpha"}}}
     found = await adapter.find(filtered)
     assert found is not None
     assert found.id == created.id
@@ -103,10 +103,18 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     touched = await adapter.touch(created.id)
     assert touched.rev == 3
 
-    deleted = await adapter.delete(created.id, touched.rev)
+    deleted = await adapter.update(
+        created.id,
+        touched.rev,
+        MyUpdateDoc(is_deleted=True),
+    )
     assert deleted.is_deleted is True
 
-    restored = await adapter.restore(created.id, deleted.rev)
+    restored = await adapter.update(
+        created.id,
+        deleted.rev,
+        MyUpdateDoc(is_deleted=False),
+    )
     assert restored.is_deleted is False
 
     await adapter.kill(created_2.id)
@@ -155,12 +163,12 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
         }
     )
     ctx = ExecutionContext(deps=deps)
-    adapter = ctx.doc_command(spec)
+    adapter = ctx.document.command(spec)
 
     for name in ("charlie", "alice", "bob"):
         await adapter.create(MyCreateDoc(name=name))
 
-    q_adapter = ctx.doc_query(spec)
+    q_adapter = ctx.document.query(spec)
 
     __p = await q_adapter.find_page(
         None,

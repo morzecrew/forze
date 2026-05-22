@@ -1,62 +1,30 @@
-"""Unit tests for forze.application.execution.usecase."""
+"""Unit tests for handler execution via OperationRegistry."""
 
+import attrs
 import pytest
 
-from forze.application.execution import Deps, ExecutionContext, Usecase
-from forze.application.execution.middleware import EffectMiddleware, GuardMiddleware
+from forze.application.contracts.execution import Handler
+from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution.registry import OperationRegistry
 
 # ----------------------- #
 
 
-class ConcreteUsecase(Usecase[str, str]):
-    """Concrete usecase for testing."""
-
-    async def main(self, args: str) -> str:
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class EchoHandler(Handler[str, str]):
+    async def __call__(self, args: str) -> str:
         return f"result:{args}"
 
 
-class TestUsecase:
-    """Tests for Usecase base class."""
-
+class TestHandlerExecution:
     @pytest.fixture
     def stub_ctx(self) -> ExecutionContext:
         return ExecutionContext(deps=Deps())
 
     @pytest.mark.asyncio
-    async def test_call_invokes_main(self, stub_ctx: ExecutionContext) -> None:
-        uc = ConcreteUsecase(ctx=stub_ctx)
-        result = await uc("foo")
-        assert result == "result:foo"
-
-    @pytest.mark.asyncio
-    async def test_with_middlewares_runs_guard_before_main(
-        self, stub_ctx: ExecutionContext
-    ) -> None:
-        seen: list[str] = []
-
-        async def guard(args: str) -> None:
-            seen.append(f"guard:{args}")
-
-        uc = ConcreteUsecase(ctx=stub_ctx).with_middlewares(
-            GuardMiddleware(guard=guard)
-        )
-        result = await uc("x")
-        assert seen == ["guard:x"]
-        assert result == "result:x"
-
-    @pytest.mark.asyncio
-    async def test_with_middlewares_runs_effect_after_main(
-        self, stub_ctx: ExecutionContext
-    ) -> None:
-        seen: list[str] = []
-
-        async def effect(args: str, res: str) -> str:
-            seen.append(f"effect:{args}:{res}")
-            return res.upper()
-
-        uc = ConcreteUsecase(ctx=stub_ctx).with_middlewares(
-            EffectMiddleware(effect=effect)
-        )
-        result = await uc("x")
-        assert seen == ["effect:x:result:x"]
-        assert result == "RESULT:X"
+    async def test_resolve_and_call_handler(self, stub_ctx: ExecutionContext) -> None:
+        reg = OperationRegistry(
+            handlers={"echo": lambda _ctx: EchoHandler()},
+        ).freeze()
+        resolved = reg.resolve("echo", stub_ctx)
+        assert await resolved("foo") == "result:foo"

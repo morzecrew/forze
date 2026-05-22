@@ -3,24 +3,25 @@ from typing import Any, Generic, TypeVar
 import attrs
 from pydantic import BaseModel
 
-from forze.application.execution import UsecasesFacade, facade_op
-from forze.application.usecases.document import (
+from forze.application.execution.facade import (
+    OperationFacade,
+    facade_op,
+    namespaced_facade,
+)
+from forze.application.handlers.document import (
     AggregatedListDocuments,
     CreateDocument,
-    DeleteDocument,
+    CursorListDocuments,
     GetDocument,
-    GetDocumentByNumberId,
     KillDocument,
-    RawCursorListDocuments,
-    RawListDocuments,
-    RestoreDocument,
-    TypedCursorListDocuments,
-    TypedListDocuments,
+    ListDocuments,
+    ProjectedCursorListDocuments,
+    ProjectedListDocuments,
     UpdateDocument,
 )
 from forze.domain.models import BaseDTO
 
-from .operations import DocumentOperation
+from .operations import DocumentKernelOp
 
 # ----------------------- #
 
@@ -31,95 +32,61 @@ U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 # ....................... #
 
 
+@namespaced_facade
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentDTOs(Generic[R, C, U]):
-    """DTO type mapping for a document aggregate."""
-
-    read: type[R]
-    """Get command type."""
-
-    create: type[C] | None = attrs.field(default=None)
-    """Create command type; optional when create is not supported."""
-
-    update: type[U] | None = attrs.field(default=None)
-    """Update command type; optional when update is not supported."""
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class DocumentUsecasesFacade(UsecasesFacade, Generic[R, C, U]):
-    """Typed facade for document usecases."""
+class DocumentFacade(OperationFacade, Generic[R, C, U]):
+    """Typed facade for document operations."""
 
     get = facade_op(
-        DocumentOperation.GET,
+        DocumentKernelOp.GET,
         uc=GetDocument[R],
     )
-    """Get document usecase."""
-
-    get_by_number_id = facade_op(
-        DocumentOperation.GET_BY_NUMBER_ID,
-        uc=GetDocumentByNumberId[R],
-    )
-    """Get document by number ID usecase."""
+    """Get document operation."""
 
     list = facade_op(
-        DocumentOperation.LIST,
-        uc=TypedListDocuments[R],
+        DocumentKernelOp.LIST,
+        uc=ListDocuments[R],
     )
-    """List documents usecase."""
+    """List documents operation."""
 
     raw_list = facade_op(
-        DocumentOperation.RAW_LIST,
-        uc=RawListDocuments,
+        DocumentKernelOp.RAW_LIST,
+        uc=ProjectedListDocuments,
     )
-    """Raw list documents usecase."""
+    """Raw list documents operation."""
 
     list_cursor = facade_op(
-        DocumentOperation.LIST_CURSOR,
-        uc=TypedCursorListDocuments[R],
+        DocumentKernelOp.LIST_CURSOR,
+        uc=CursorListDocuments[R],
     )
-    """List documents with cursor (keyset) pagination."""
+    """List documents with cursor (keyset) pagination operation."""
 
     raw_list_cursor = facade_op(
-        DocumentOperation.RAW_LIST_CURSOR,
-        uc=RawCursorListDocuments,
+        DocumentKernelOp.RAW_LIST_CURSOR,
+        uc=ProjectedCursorListDocuments,
     )
-    """Raw list with cursor (keyset) pagination."""
+    """Raw list with cursor (keyset) pagination operation."""
 
     agg_list = facade_op(
-        DocumentOperation.AGG_LIST,
+        DocumentKernelOp.AGG_LIST,
         uc=AggregatedListDocuments,
     )
-    """List documents with aggregates."""
+    """List documents with aggregates operation."""
 
     create = facade_op(
-        DocumentOperation.CREATE,
+        DocumentKernelOp.CREATE,
         uc=CreateDocument[C, Any, R],
     )
-    """Create document usecase."""
+    """Create document operation."""
 
     update = facade_op(
-        DocumentOperation.UPDATE,
+        DocumentKernelOp.UPDATE,
         uc=UpdateDocument[U, Any, R],
     )
-    """Update document usecase."""
+    """Update document operation."""
 
     kill = facade_op(
-        DocumentOperation.KILL,
+        DocumentKernelOp.KILL,
         uc=KillDocument,
     )
-    """Kill document usecase."""
-
-    delete = facade_op(
-        DocumentOperation.DELETE,
-        uc=DeleteDocument[R],
-    )
-    """Delete document usecase."""
-
-    restore = facade_op(
-        DocumentOperation.RESTORE,
-        uc=RestoreDocument[R],
-    )
-    """Restore document usecase."""
+    """Kill document operation."""

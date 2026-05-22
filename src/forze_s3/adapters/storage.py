@@ -1,5 +1,7 @@
 """S3-backed implementation of :class:`~forze.application.contracts.storage.StoragePort`."""
 
+import msgspec
+
 from forze_s3._compat import require_s3
 
 require_s3()
@@ -9,6 +11,7 @@ require_s3()
 import asyncio
 import mimetypes
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Callable, final
 
@@ -20,15 +23,44 @@ from forze.application.contracts.storage import (
     ObjectMetadata,
     StoragePort,
     StoredObject,
+    UploadedObject,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.errors import CoreError, ValidationError
-from forze.base.primitives import utcnow, uuid7
+from forze.base.primitives import JsonDict, utcnow, uuid7
 
 from ..kernel.platform import S3ClientPort
 from .codecs import default_b64_codec, default_path_codec
 
 # ----------------------- #
+
+
+def _object_metadata_from_s3_user(meta: Mapping[str, str]) -> ObjectMetadata:
+    """Decode :class:`ObjectMetadata` from S3 user metadata (all string values)."""
+
+    try:
+        filename = meta["filename"]
+        size = int(meta["size"])
+        created_at_raw = meta["created_at"]
+    except KeyError as e:
+        raise CoreError("Invalid object metadata") from e
+    except ValueError as e:
+        raise CoreError("Invalid object metadata") from e
+
+    if created_at_raw.endswith("Z"):
+        created_at_raw = f"{created_at_raw[:-1]}+00:00"
+
+    created_at = datetime.fromisoformat(created_at_raw)
+
+    return ObjectMetadata(
+        filename=filename,
+        created_at=created_at,
+        size=size,
+        description=meta.get("description"),
+    )
+
+
+# ....................... #
 
 
 @final
@@ -108,24 +140,20 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
 
     # ....................... #
 
-    async def upload(
-        self,
-        filename: str,
-        data: bytes,
-        description: str | None = None,
-        *,
-        prefix: tuple[str, ...] | str | None = None,
-    ) -> StoredObject:
+    async def upload(self, obj: UploadedObject) -> StoredObject:
         """Upload a file to S3 and return its stored representation.
 
-        :param filename: Original file name (preserved in metadata).
-        :param data: Raw file bytes.
-        :param description: Optional human-readable description.
-        :param prefix: Optional key prefix segment.
+        :param obj: Uploaded object.
         :returns: A :class:`StoredObject` with the generated key and metadata.
         """
 
-        prefix = default_path_codec.join(prefix)
+        filename = obj.filename
+        data = obj.data
+        prefix = obj.prefix
+        description = obj.description
+
+        if description:
+            description = default_b64_codec.dumps(description)
 
         self._validate_prefix(prefix)
         key = self.construct_key(prefix)
@@ -135,14 +163,12 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
 
         metadata = ObjectMetadata(
             filename=default_b64_codec.dumps(filename),
-            created_at=now.isoformat(),
-            size=str(len(data)),
+            created_at=now,
+            size=len(data),
+            description=description,
         )
-
-        if description:
-            metadata["description"] = default_b64_codec.dumps(description)
-
-        safe_meta = {k: str(v) for k, v in metadata.items() if v is not None}
+        meta_dict: JsonDict = msgspec.to_builtins(metadata, str_keys=True)
+        safe_meta = {k: str(v) for k, v in meta_dict.items() if v is not None}
 
         async with self.client.client():
             await self.client.ensure_bucket(self.bucket)
@@ -181,7 +207,10 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
                 raise CoreError("Invalid object metadata")
 
             try:
-                meta = ObjectMetadata(**h["metadata"])  # type: ignore[typeddict-item]
+                meta = _object_metadata_from_s3_user(h["metadata"])
+
+            except CoreError:
+                raise
 
             except Exception as e:
                 raise CoreError("Invalid object metadata") from e
@@ -191,7 +220,7 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
             return DownloadedObject(
                 data=data,
                 content_type=str(h["content_type"]),  # type: ignore[arg-type]
-                filename=default_b64_codec.loads(meta["filename"]),
+                filename=default_b64_codec.loads(meta.filename),
             )
 
     # ....................... #
@@ -258,7 +287,10 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
                     raise CoreError("Invalid object metadata")
 
                 try:
-                    meta = ObjectMetadata(**h["metadata"])  # type: ignore[typeddict-item]
+                    meta = _object_metadata_from_s3_user(h["metadata"])
+
+                except CoreError:
+                    raise
 
                 except Exception as e:
                     raise CoreError("Invalid object metadata") from e
@@ -266,15 +298,15 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
                 out.append(
                     StoredObject(
                         key=o["Key"],  # type: ignore[typeddict-item]
-                        filename=default_b64_codec.loads(meta["filename"]),
+                        filename=default_b64_codec.loads(meta.filename),
                         description=(
-                            default_b64_codec.loads(meta["description"])
-                            if "description" in meta
+                            default_b64_codec.loads(meta.description)
+                            if meta.description
                             else None
                         ),
                         content_type=h.get("content_type", "application/json"),
-                        size=int(meta["size"]),
-                        created_at=datetime.fromisoformat(meta["created_at"]),
+                        size=meta.size,
+                        created_at=meta.created_at,
                     )
                 )
 

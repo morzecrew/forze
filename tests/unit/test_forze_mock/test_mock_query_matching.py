@@ -3,9 +3,7 @@
 from typing import Any, cast
 from uuid import UUID
 
-import pytest
-
-from forze.application.contracts.query import QueryField
+from forze.application.contracts.querying import QueryField
 from forze_mock.adapters import _MISSING, _match_field, _path_get, _path_text
 
 # ----------------------- #
@@ -68,6 +66,4 @@ def test_match_eq_uuid_coercion() -> None:
 
 def test_unknown_operator_falls_through_without_match() -> None:
     """Unsupported ops are not handled by the mock matcher (no default case)."""
-    assert (
-        _match_field({"a": 1}, QueryField("a", cast(Any, "$nope"), 1)) is None
-    )
+    assert _match_field({"a": 1}, QueryField("a", cast(Any, "$nope"), 1)) is None

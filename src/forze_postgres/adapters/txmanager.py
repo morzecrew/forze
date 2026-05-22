@@ -11,14 +11,17 @@ from typing import AsyncIterator, final
 
 import attrs
 
-from forze.application.contracts.tx import TxManagerPort, TxScopeKey
+from forze.application.contracts.transaction import (
+    TransactionManagerPort,
+    TransactionScopeKey,
+)
 
 from ..kernel.platform import PostgresClientPort, PostgresTransactionOptions
 from ._logger import logger
 
 # ----------------------- #
 
-PostgresTxScopeKey = TxScopeKey("postgres")
+PostgresTxScopeKey = TransactionScopeKey("postgres")
 """Key used to scope the Postgres transaction."""
 
 # ....................... #
@@ -26,7 +29,7 @@ PostgresTxScopeKey = TxScopeKey("postgres")
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresTxManagerAdapter(TxManagerPort):
+class PostgresTxManagerAdapter(TransactionManagerPort):
     """Postgres-backed :class:`TxManagerPort` that delegates to :meth:`PostgresClient.transaction`."""
 
     client: PostgresClientPort
@@ -37,9 +40,11 @@ class PostgresTxManagerAdapter(TxManagerPort):
     )
     """Transaction options forwarded to the Postgres client."""
 
-    # Non initable fields
-    scope_key: TxScopeKey = attrs.field(default=PostgresTxScopeKey, init=False)
-    """The key used to scope the transaction."""
+    # ....................... #
+
+    @property
+    def scope_key(self) -> TransactionScopeKey:
+        return PostgresTxScopeKey
 
     # ....................... #
 

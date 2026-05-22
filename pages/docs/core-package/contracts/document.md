@@ -17,7 +17,7 @@ usecase can depend only on the side it needs.
 | Import path | `from forze.application.contracts.document import DocumentSpec` |
 | Type parameters | `R` read model, `D` domain document, `C` create command, `U` update DTO. |
 | Required fields | `name`, `read`; `write` is required for command ports and may be `None` for read-only resources. |
-| Returned values | The spec itself is passed to `ctx.doc_query(spec)` or `ctx.doc_command(spec)` to build ports. |
+| Returned values | The spec itself is passed to `ctx.document.query(spec)` or `ctx.document.command(spec)` to build ports. |
 | Common implementations | Mock document adapter, Postgres document adapters, Mongo document adapters. |
 | Related dependency keys | `DocumentQueryDepKey`, `DocumentCommandDepKey`; optional `CacheDepKey` when `cache` is set. |
 | Minimal example | See below. |
@@ -82,8 +82,8 @@ Helper methods:
 | Required methods | Identity: `get`, `get_many`. Single row by filters: `find`, `project`, `select`. Offset listing: `find_many`, `find_page`, `project_many`, `project_page`, `select_many`, `select_page`. Keyset: `find_cursor`, `project_cursor`. Aggregates: `aggregate_many`, `aggregate_page`, `select_many_aggregated`, `select_page_aggregated`. `count`. |
 | Returned values | `R`, `Sequence[R]`, `JsonDict`, `Page[...]`, `CountlessPage[...]`, `CursorPage[...]`, or `int` depending on the method. |
 | Common implementations | Mock, Postgres, Mongo document adapters (via `DocumentCoordinator`). |
-| Related dependency keys | `DocumentQueryDepKey`; resolve with `ctx.doc_query(spec)`. |
-| Minimal example | `project = await ctx.doc_query(project_spec).get(project_id)` |
+| Related dependency keys | `DocumentQueryDepKey`; resolve with `ctx.document.query(spec)`. |
+| Minimal example | `project = await ctx.document.query(project_spec).get(project_id)` |
 | Related pages | [Query Syntax](../query-syntax.md), [Cache contracts](cache.md). |
 
 Methods (result shape is encoded in the name; use `pagination` / `sorts` keyword arguments where applicable):
@@ -112,9 +112,9 @@ Methods (result shape is encoded in the name; use `pagination` / `sorts` keyword
 | Required methods | `create`, `create_many`, `update`, `update_many`, `update_matching`, `touch`, `kill`, `delete`, `restore`, `ensure`, and batch variants. |
 | Returned values | Usually the updated/read model `R`, sequences of `R`, counts for matching updates, or `None` for kill operations. |
 | Common implementations | Mock, Postgres, Mongo document command adapters. |
-| Related dependency keys | `DocumentCommandDepKey`; resolve with `ctx.doc_command(spec)`. |
-| Minimal example | `created = await ctx.doc_command(project_spec).create(cmd)` |
-| Related pages | [Domain Models](../domain-models.md), [Execution](../execution.md). |
+| Related dependency keys | `DocumentCommandDepKey`; resolve with `ctx.document.command(spec)`. |
+| Minimal example | `created = await ctx.document.command(project_spec).create(cmd)` |
+| Related pages | [Domain Models](../../reference/domain-models.md), [Execution](../../reference/execution.md). |
 
 Revision-bearing methods such as `update`, `delete`, and `restore` require the
 expected `rev` to prevent lost updates. Batch methods accept sequences of tuples

@@ -219,6 +219,7 @@ class TCreate(CreateDocumentCmd):
 
 class TUpdate(BaseDTO):
     title: str | None = None
+    is_deleted: bool | None = None
 
 
 def _full_spec() -> DocumentSpec:
@@ -357,7 +358,7 @@ class TestPostgresDocumentAdapterGetPaths:
             cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
-        filt: dict = {"$fields": {ID_FIELD: pk}}
+        filt: dict = {"$values": {ID_FIELD: pk}}
         out = await adapter.project(filt, ["id"])
 
         assert out == {"id": str(pk)}
@@ -474,6 +475,32 @@ class TestPostgresDocumentAdapterQueryDelegation:
 
         assert page.hits == [] and page.count == 0
         read_gw.find_many.assert_not_called()
+        read_gw.compile_filters.assert_called_once_with({"x": 1})
+        read_gw.count.assert_awaited_once_with(
+            {"x": 1},
+            parsed=read_gw.compile_filters.return_value,
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_page_parses_filters_once_for_count_and_find_many(self) -> None:
+        read_gw = _read_gw_full()
+        read_gw.count = AsyncMock(return_value=2)
+        read_gw.find_many = AsyncMock(return_value=[_tread()])
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+        )
+
+        filt = {"$values": {"a": 1}}
+        await adapter.find_page(filters=filt, pagination={"limit": 5})
+
+        read_gw.compile_filters.assert_called_once_with(filt)
+        parsed = read_gw.compile_filters.return_value
+        read_gw.count.assert_awaited_once_with(filt, parsed=parsed)
+        read_gw.find_many.assert_awaited_once()
+        assert read_gw.find_many.await_args.kwargs["parsed"] is parsed
 
     @pytest.mark.asyncio
     async def test_find_page_returns_rows_and_count(self) -> None:
@@ -589,7 +616,9 @@ class TestPostgresDocumentAdapterQueryDelegation:
             sorts={ID_FIELD: "asc"},
             return_model=None,
             return_fields=None,
+            parsed=read_gw.compile_filters.return_value,
         )
+        read_gw.compile_filters.assert_called_once_with({"k": "v"})
 
     @pytest.mark.asyncio
     async def test_find_page_unbounded_chunks_after_count(self) -> None:
@@ -620,7 +649,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
             side_effect=[[row_a] * 10, [row_b]],
         )
         agg = {
-            "$fields": ["title"],
+            "$groups": ["title"],
             "$computed": {"n": {"$count": None}},
         }
 
@@ -867,14 +896,13 @@ class TestPostgresDocumentAdapterCommands:
         write_gw.kill_many.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_and_restore(self) -> None:
+    async def test_soft_delete_and_restore_via_update(self) -> None:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
         pk = uuid4()
         rd = _tread(pk)
-        write_gw.delete = AsyncMock()
-        write_gw.restore = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         read_gw.get = AsyncMock(return_value=rd)
 
         adapter = PostgresDocumentAdapter(
@@ -884,20 +912,17 @@ class TestPostgresDocumentAdapterCommands:
             cache_coord=_pg_cc(read_gw, ds),
         )
 
-        assert await adapter.delete(pk, 1) == rd
-        write_gw.delete.assert_awaited_once_with(pk, rev=1)
+        assert await adapter.update(pk, 1, TUpdate(is_deleted=True)) == rd
+        write_gw.update.assert_awaited()
 
-        assert await adapter.restore(pk, 2) == rd
-        write_gw.restore.assert_awaited_once_with(pk, rev=2)
+        assert await adapter.update(pk, 2, TUpdate(is_deleted=False)) == rd
 
     @pytest.mark.asyncio
-    async def test_update_many_delete_many_restore_many_empty(self) -> None:
+    async def test_update_many_empty(self) -> None:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
         write_gw.update_many = AsyncMock(return_value=([], []))
-        write_gw.delete_many = AsyncMock()
-        write_gw.restore_many = AsyncMock()
 
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
@@ -907,13 +932,7 @@ class TestPostgresDocumentAdapterCommands:
         )
 
         assert await adapter.update_many([]) == []
-        assert await adapter.delete_many([]) == []
-        assert await adapter.restore_many([]) == []
-        assert await adapter.delete_many([], return_new=False) is None
-        assert await adapter.restore_many([], return_new=False) is None
         write_gw.update_many.assert_not_called()
-        write_gw.delete_many.assert_not_called()
-        write_gw.restore_many.assert_not_called()
 
 
 class TestPostgresDocumentAdapterGetManyBranches:
@@ -945,7 +964,7 @@ class TestPostgresDocumentAdapterGetManyBranches:
 
         page = await adapter.project_many(
             ["id"],
-            filters={"$fields": {ID_FIELD: {"$in": pks}}},
+            filters={"$values": {ID_FIELD: {"$in": pks}}},
         )
 
         assert page.hits == [{"id": str(pks[0])}]
@@ -1049,15 +1068,14 @@ class TestPostgresDocumentAdapterBatchMutations:
         assert ua[1]["batch_size"] == 80
 
     @pytest.mark.asyncio
-    async def test_delete_many_and_restore_many(self) -> None:
+    async def test_soft_delete_many_via_sequential_updates(self) -> None:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
         pk1, pk2 = uuid4(), uuid4()
         r1, r2 = _tread(pk1), _tread(pk2)
-        write_gw.delete_many = AsyncMock()
-        write_gw.restore_many = AsyncMock()
-        read_gw.get_many = AsyncMock(return_value=[r1, r2])
+        write_gw.update = AsyncMock(return_value=(None, {}))
+        read_gw.get = AsyncMock(side_effect=[r1, r2, r1, r2])
         cache = MagicMock()
         cache.delete_many = AsyncMock()
 
@@ -1069,20 +1087,10 @@ class TestPostgresDocumentAdapterBatchMutations:
             batch_size=90,
         )
 
-        dels = [(pk1, 1), (pk2, 2)]
-        assert await adapter.delete_many(dels) == [r1, r2]
-        write_gw.delete_many.assert_awaited_once()
-        da = write_gw.delete_many.await_args
-        assert da[0][0] == [pk1, pk2]
-        assert da[1]["revs"] == [1, 2]
-        assert da[1]["batch_size"] == 90
-
-        assert await adapter.restore_many(dels) == [r1, r2]
-        write_gw.restore_many.assert_awaited_once()
-        ra = write_gw.restore_many.await_args
-        assert ra[0][0] == [pk1, pk2]
-        assert ra[1]["revs"] == [1, 2]
-        assert ra[1]["batch_size"] == 90
+        assert await adapter.update(pk1, 1, TUpdate(is_deleted=True)) == r1
+        assert await adapter.update(pk2, 2, TUpdate(is_deleted=True)) == r2
+        assert await adapter.update(pk1, 1, TUpdate(is_deleted=False)) == r1
+        assert await adapter.update(pk2, 2, TUpdate(is_deleted=False)) == r2
 
 
 class TestPostgresDocumentAdapterReturnNew:
@@ -1232,13 +1240,12 @@ class TestPostgresDocumentAdapterReturnNew:
         read_gw.get_many.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_delete_restore_skips_read_when_return_new_false(self) -> None:
+    async def test_soft_delete_restore_skips_read_when_return_new_false(self) -> None:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = read_gw.client
         pk = uuid4()
-        write_gw.delete = AsyncMock()
-        write_gw.restore = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         cache = MagicMock()
         cache.delete_many = AsyncMock()
 
@@ -1249,40 +1256,15 @@ class TestPostgresDocumentAdapterReturnNew:
             cache_coord=_pg_cc(read_gw, ds, cache=cache),
         )
 
-        assert await adapter.delete(pk, 1, return_new=False) is None
-        write_gw.delete.assert_awaited_once_with(pk, rev=1)
-        read_gw.get.assert_not_awaited()
-
-        assert await adapter.restore(pk, 2, return_new=False) is None
-        write_gw.restore.assert_awaited_once_with(pk, rev=2)
-        read_gw.get.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_delete_many_restore_many_skips_read_when_return_new_false(
-        self,
-    ) -> None:
-        read_gw = _read_gw_full()
-        write_gw = _write_gw()
-        write_gw.client = read_gw.client
-        pk1, pk2 = uuid4(), uuid4()
-        write_gw.delete_many = AsyncMock()
-        write_gw.restore_many = AsyncMock()
-        cache = MagicMock()
-        cache.delete_many = AsyncMock()
-
-        adapter = PostgresDocumentAdapter(
-            spec=(ds := _full_spec()),
-            read_gw=read_gw,
-            write_gw=write_gw,
-            cache_coord=_pg_cc(read_gw, ds),
-            batch_size=90,
+        assert (
+            await adapter.update(pk, 1, TUpdate(is_deleted=True), return_new=False)
+            is None
         )
+        write_gw.update.assert_awaited()
+        read_gw.get.assert_not_awaited()
 
-        dels = [(pk1, 1), (pk2, 2)]
-        assert await adapter.delete_many(dels, return_new=False) is None
-        write_gw.delete_many.assert_awaited_once()
-        read_gw.get_many.assert_not_awaited()
-
-        assert await adapter.restore_many(dels, return_new=False) is None
-        write_gw.restore_many.assert_awaited_once()
-        read_gw.get_many.assert_not_awaited()
+        assert (
+            await adapter.update(pk, 2, TUpdate(is_deleted=False), return_new=False)
+            is None
+        )
+        read_gw.get.assert_not_awaited()

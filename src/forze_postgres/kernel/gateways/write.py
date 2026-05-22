@@ -9,7 +9,7 @@ require_psycopg()
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any, AsyncIterator, Sequence, final, get_args
+from typing import Any, AsyncIterator, LiteralString, Sequence, cast, final, get_args
 from uuid import UUID
 
 import attrs
@@ -21,7 +21,7 @@ from tenacity import (
     wait_random_exponential,
 )
 
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,
@@ -38,13 +38,11 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
-from forze.domain.mixins import SoftDeletionMixin
+from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..db_gather import gather_db_work
-from ..introspect import PostgresColumnTypes
-from ..type_cast import assignment_from_values_column
+from ..introspect import PostgresColumnTypes, PostgresType
 from .base import PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
@@ -67,6 +65,42 @@ def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
         wait=wait_random_exponential(multiplier=0.05, max=2.0),
         reraise=True,
     )
+
+
+# ....................... #
+
+
+def _pg_cast_type_sql(pg: PostgresType) -> sql.Composable:
+    """Return the ``CAST`` target type for a column (names come from introspection only)."""
+
+    base = cast(LiteralString, pg.base)  # type: ignore[redundant-cast]
+
+    if pg.is_array:
+        return sql.SQL(cast(LiteralString, pg.base + "[]"))  # type: ignore[redundant-cast]
+
+    return sql.SQL(base)
+
+
+def _values_placeholder_for_patch_group(
+    *,
+    column: str,
+    expected_rev_alias: str,
+    column_types: PostgresColumnTypes,
+) -> sql.Composable:
+    """Placeholder for one ``VALUES`` cell, typed so all-``NULL`` columns are not inferred as ``text``."""
+
+    ph = sql.Placeholder()
+    if column == ID_FIELD:
+        pg_t = column_types.get(ID_FIELD)
+    elif column == expected_rev_alias:
+        pg_t = column_types.get(REV_FIELD)
+    else:
+        pg_t = column_types.get(column)
+
+    if pg_t is None:
+        return ph
+
+    return sql.SQL("CAST({} AS {})").format(ph, _pg_cast_type_sql(pg_t))
 
 
 # ....................... #
@@ -208,11 +242,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     # ....................... #
 
-    def supports_soft_delete(self) -> bool:
-        return issubclass(self.model_type, SoftDeletionMixin)
-
-    # ....................... #
-
     def _where_pk_rev(self) -> sql.Composable:
         return sql.SQL("{} = {} AND {} = {}").format(
             self.ident_pk(),
@@ -273,26 +302,17 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         async with self._write_tx():
-            models = pydantic_transform_many(self.model_type, dtos)
-            insert_data_raw = pydantic_dump_many(models)
-            insert_data = await self.adapt_many_payload_for_write(
-                insert_data_raw,
-                create=True,
-            )
-
-            keys = list(insert_data[0].keys())
-            col_idents = [sql.Identifier(k) for k in keys]
-
-            # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
-            # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
-            row_template = (
-                sql.SQL("(")
-                + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-                + sql.SQL(")")
-            )
+            keys: list[str] | None = None
+            col_idents: list[sql.Composable] | None = None
+            row_template: sql.Composable | None = None
+            payload_batches: list[list[JsonDict]] = []
 
             async def _insert_batch(batch: Sequence[JsonDict]) -> list[JsonDict]:
-                # ⚡ Bolt: Duplicate the precomputed row template
+                nonlocal keys, col_idents, row_template
+
+                if keys is None or col_idents is None or row_template is None:
+                    raise CoreError("insert_batch: missing required state")
+
                 value_parts = [row_template] * len(batch)
                 params = [b[k] for b in batch for k in keys]
 
@@ -320,23 +340,43 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 return rows
 
-            batches = [
-                insert_data[offset : offset + batch_size]
-                for offset in range(0, len(insert_data), batch_size)
-            ]
+            for offset in range(0, len(dtos), batch_size):
+                dto_batch = dtos[offset : offset + batch_size]
+                models = pydantic_transform_many(self.model_type, dto_batch)
+                insert_data_raw = pydantic_dump_many(models)
+                insert_data = await self.adapt_many_payload_for_write(
+                    insert_data_raw,
+                    create=True,
+                )
+
+                if keys is None:
+                    keys = list(insert_data[0].keys())
+                    col_idents = [sql.Identifier(k) for k in keys]
+                    row_template = (
+                        sql.SQL("(")
+                        + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                        + sql.SQL(")")
+                    )
+
+                elif list(insert_data[0].keys()) != keys:
+                    raise CoreError(
+                        "create_many: adapted payload keys differ between batches",
+                    )
+
+                payload_batches.append(list(insert_data))
+
             batch_results = await gather_db_work(
                 self.client,
-                [partial(_insert_batch, b) for b in batches],
+                [partial(_insert_batch, b) for b in payload_batches],
             )
 
-            result_raw: list[JsonDict] = []
+            result: list[D] = []
             for rows in batch_results:
-                result_raw.extend(rows)
+                result.extend(pydantic_validate_many(self.model_type, rows))
 
-            if len(result_raw) != len(dtos):
+            if len(result) != len(dtos):
                 raise CoreError("Failed to create all records")
 
-            result = pydantic_validate_many(self.model_type, result_raw)
             await self._write_history(*result)
 
             return result
@@ -408,20 +448,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         async with self._write_tx():
-            models = pydantic_transform_many(self.model_type, dtos)
-            insert_data_raw = pydantic_dump_many(models)
-            insert_data = await self.adapt_many_payload_for_write(
-                insert_data_raw,
-                create=True,
-            )
-
-            keys = list(insert_data[0].keys())
-            col_idents = [sql.Identifier(k) for k in keys]
-            row_template = (
-                sql.SQL("(")
-                + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-                + sql.SQL(")")
-            )
+            keys: list[str] | None = None
+            col_idents: list[sql.Composable] | None = None
+            row_template: sql.Composable | None = None
 
             def _pk_from_row(r: JsonDict) -> UUID:
                 v = r[ID_FIELD]
@@ -433,6 +462,11 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 batch: Sequence[JsonDict],
                 model_batch: Sequence[D],
             ) -> list[D]:
+                nonlocal keys, col_idents, row_template
+
+                if keys is None or col_idents is None or row_template is None:
+                    raise CoreError("ensure_batch: missing required state")
+
                 value_parts = [row_template] * len(batch)
                 params = [b[k] for b in batch for k in keys]
 
@@ -485,10 +519,30 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 return ordered
 
             out: list[D] = []
-            for offset in range(0, len(insert_data), batch_size):
-                data_batch = insert_data[offset : offset + batch_size]
-                model_batch = models[offset : offset + batch_size]
-                out.extend(await _ensure_batch(data_batch, model_batch))
+            for offset in range(0, len(dtos), batch_size):
+                dto_batch = dtos[offset : offset + batch_size]
+                models = pydantic_transform_many(self.model_type, dto_batch)
+                insert_data_raw = pydantic_dump_many(models)
+                insert_data = await self.adapt_many_payload_for_write(
+                    insert_data_raw,
+                    create=True,
+                )
+
+                if keys is None:
+                    keys = list(insert_data[0].keys())
+                    col_idents = [sql.Identifier(k) for k in keys]
+                    row_template = (
+                        sql.SQL("(")
+                        + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                        + sql.SQL(")")
+                    )
+
+                elif list(insert_data[0].keys()) != keys:
+                    raise CoreError(
+                        "ensure_many: adapted payload keys differ between batches",
+                    )
+
+                out.extend(await _ensure_batch(insert_data, models))
 
             if len(out) != len(dtos):
                 raise CoreError("ensure_many result length does not match input")
@@ -561,21 +615,9 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             return []
 
         async with self._write_tx():
-            creates = [c for c, _ in pairs]
-            models = pydantic_transform_many(self.model_type, creates)
-            insert_data_raw = pydantic_dump_many(models)
-            insert_data = await self.adapt_many_payload_for_write(
-                insert_data_raw,
-                create=True,
-            )
-
-            keys = list(insert_data[0].keys())
-            col_idents = [sql.Identifier(k) for k in keys]
-            row_template = (
-                sql.SQL("(")
-                + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
-                + sql.SQL(")")
-            )
+            keys: list[str] | None = None
+            col_idents: list[sql.Composable] | None = None
+            row_template: sql.Composable | None = None
 
             def _pk_from_row(r: JsonDict) -> UUID:
                 v = r[ID_FIELD]
@@ -583,13 +625,16 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     return v
                 return UUID(str(v))
 
-            u_seq = [u for _, u in pairs]
-
             async def _upsert_batch(
                 batch: Sequence[JsonDict],
                 model_batch: Sequence[D],
                 u_for_batch: Sequence[U],
             ) -> list[D]:
+                nonlocal keys, col_idents, row_template
+
+                if keys is None or col_idents is None or row_template is None:
+                    raise CoreError("upsert_batch: missing required state")
+
                 value_parts = [row_template] * len(batch)
                 params_in = [b[k] for b in batch for k in keys]
 
@@ -625,11 +670,13 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
                 need_u: list[tuple[UUID, U]] = []
                 u_list = list(u_for_batch)
+
                 for i, m in enumerate(model_batch):
                     if m.id not in by_returned:
                         need_u.append((m.id, u_list[i]))
 
                 by_updated: dict[UUID, D] = {}
+
                 if need_u:
                     pks_u = [a[0] for a in need_u]
                     u_dtos = [a[1] for a in need_u]
@@ -645,26 +692,52 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                     by_updated = {d.id: d for d in updated}
 
                 ordered: list[D] = []
+
                 for i, m in enumerate(model_batch):
                     rj = by_returned.get(m.id)
+
                     if rj is not None:
                         ordered.append(pydantic_validate(self.model_type, rj))
+
                     else:
                         u_one = by_updated.get(m.id)
+
                         if u_one is None:
                             raise NotFoundError(
                                 f"Record not found after upsert_many conflict: {m.id!s}",
                             )
+
                         ordered.append(u_one)
 
                 return ordered
 
             out: list[D] = []
-            for offset in range(0, len(insert_data), batch_size):
-                data_b = insert_data[offset : offset + batch_size]
-                model_b = models[offset : offset + batch_size]
-                u_b = u_seq[offset : offset + batch_size]
-                out.extend(await _upsert_batch(data_b, model_b, u_b))
+            for offset in range(0, len(pairs), batch_size):
+                batch_pairs = pairs[offset : offset + batch_size]
+                creates = [c for c, _ in batch_pairs]
+                models = pydantic_transform_many(self.model_type, creates)
+                insert_data_raw = pydantic_dump_many(models)
+                insert_data = await self.adapt_many_payload_for_write(
+                    insert_data_raw,
+                    create=True,
+                )
+
+                if keys is None:
+                    keys = list(insert_data[0].keys())
+                    col_idents = [sql.Identifier(k) for k in keys]
+                    row_template = (
+                        sql.SQL("(")
+                        + sql.SQL(", ").join(sql.Placeholder() for _ in keys)
+                        + sql.SQL(")")
+                    )
+
+                elif list(insert_data[0].keys()) != keys:
+                    raise CoreError(
+                        "upsert_many: adapted payload keys differ between batches",
+                    )
+
+                u_seq = [u for _, u in batch_pairs]
+                out.extend(await _upsert_batch(insert_data, models, u_seq))
 
             if len(out) != len(pairs):
                 raise CoreError("upsert_many result length does not match input")
@@ -788,11 +861,20 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         values_rows: list[sql.Composable] = []
         params: list[Any] = []
 
+        column_types = await self.column_types()
+
         # ⚡ Bolt: Precompute the row template to avoid repeatedly instantiating
         # sql.SQL and parsing it for every record in the batch, improving CPU bound performance
         row_template = (
             sql.SQL("(")
-            + sql.SQL(", ").join(sql.Placeholder() for _ in value_cols)
+            + sql.SQL(", ").join(
+                _values_placeholder_for_patch_group(
+                    column=c,
+                    expected_rev_alias=expected_rev_alias,
+                    column_types=column_types,
+                )
+                for c in value_cols
+            )
             + sql.SQL(")")
         )
 
@@ -815,9 +897,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         )
         params.extend(where_params)
 
-        set_parts = [
-            assignment_from_values_column(k, column_types.get(k)) for k in key
-        ]
+        set_parts = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
 
         stmt = sql.SQL(
             """
@@ -873,7 +953,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
         async with self._write_tx():
             currents = await self.read_gw.get_many(pks)
-
             column_types = await self.column_types()
 
             groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = (
@@ -958,7 +1037,12 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
             batch_results = await gather_db_work(
                 self.client,
                 [
-                    partial(self.__patch_group, fk, bb, column_types)
+                    partial(
+                        self.__patch_group,
+                        fk,
+                        bb,
+                        column_types,
+                    )
                     for fk, bb in work
                 ],
             )
@@ -987,7 +1071,14 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         self._require_update_cmd()
 
-        updates = pydantic_dump_many(dtos, exclude={"unset": True})
+        updates: list[JsonDict] = []
+        for start in range(0, len(dtos), batch_size):
+            updates.extend(
+                pydantic_dump_many(
+                    dtos[start : start + batch_size],
+                    exclude={"unset": True},
+                ),
+            )
 
         res, res_diffs = await self.__patch_many(
             pks,
@@ -1078,68 +1169,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 200,
     ) -> Sequence[D]:
         res, _ = await self.__patch_many(pks, None, batch_size=batch_size)
-
-        return res
-
-    # ....................... #
-
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> D:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
-
-        return res
-
-    # ....................... #
-
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D]:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch_many(
-            pks,
-            [{SOFT_DELETE_FIELD: True} for _ in pks],
-            batch_size=batch_size,
-            revs=revs,
-        )
-
-        return res
-
-    # ....................... #
-
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> D:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
-
-        return res
-
-    # ....................... #
-
-    async def restore_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D]:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch_many(
-            pks,
-            [{SOFT_DELETE_FIELD: False} for _ in pks],
-            batch_size=batch_size,
-            revs=revs,
-        )
 
         return res
 

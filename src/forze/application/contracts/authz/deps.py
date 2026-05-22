@@ -1,4 +1,4 @@
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, DepKey
 from .ports import (
     AuthzPort,
     EffectiveGrantsPort,
@@ -9,16 +9,16 @@ from .specs import AuthzSpec
 
 # ----------------------- #
 
-PrincipalRegistryDepPort = BaseDepPort[AuthzSpec, PrincipalRegistryPort]
+PrincipalRegistryDepPort = ConfigurableDepPort[AuthzSpec, PrincipalRegistryPort]
 """Principal registry dependency port."""
 
-EffectiveGrantsDepPort = BaseDepPort[AuthzSpec, EffectiveGrantsPort]
+EffectiveGrantsDepPort = ConfigurableDepPort[AuthzSpec, EffectiveGrantsPort]
 """Effective grants dependency port."""
 
-RoleAssignmentDepPort = BaseDepPort[AuthzSpec, RoleAssignmentPort]
+RoleAssignmentDepPort = ConfigurableDepPort[AuthzSpec, RoleAssignmentPort]
 """Role assignment dependency port."""
 
-AuthzDepPort = BaseDepPort[AuthzSpec, AuthzPort]
+AuthzDepPort = ConfigurableDepPort[AuthzSpec, AuthzPort]
 """Authorization decision dependency port."""
 
 # ....................... #

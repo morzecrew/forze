@@ -1,6 +1,7 @@
 from .deps import (
     DistributedLockCommandDepKey,
     DistributedLockCommandDepPort,
+    DistributedLockDeps,
     DistributedLockQueryDepKey,
     DistributedLockQueryDepPort,
 )
@@ -17,4 +18,5 @@ __all__ = [
     "DistributedLockCommandDepKey",
     "DistributedLockQueryDepPort",
     "DistributedLockCommandDepPort",
+    "DistributedLockDeps",
 ]

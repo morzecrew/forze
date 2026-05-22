@@ -63,5 +63,5 @@ subscriber interested in a topic should see the published event.
     from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
 
     events = PubSubSpec(name="events", model=EventPayload)
-    publisher = ctx.dep(PubSubCommandDepKey)(ctx, events)
+    publisher = ctx.deps.resolve_configurable(ctx, PubSubCommandDepKey, events, route=events.name)
     await publisher.publish("projects.created", EventPayload(project_id="p1"))

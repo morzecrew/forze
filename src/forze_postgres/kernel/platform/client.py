@@ -6,6 +6,8 @@ pooling. Query methods use :meth:`PostgresClient.execute`-style API with
 optional dict/tuple row factories.
 """
 
+from pydantic import SecretStr
+
 from forze_postgres._compat import require_psycopg
 
 require_psycopg()
@@ -139,7 +141,7 @@ class PostgresClient(PostgresClientPort):
 
     async def initialize(
         self,
-        dsn: str,
+        dsn: str | SecretStr,
         *,
         config: PostgresConfig = PostgresConfig(),
         acquire_timeout: timedelta = timedelta(seconds=5),
@@ -164,6 +166,9 @@ class PostgresClient(PostgresClientPort):
             )
 
         configure = _pool_configure_for_config(config)
+
+        if isinstance(dsn, SecretStr):
+            dsn = dsn.get_secret_value()
 
         self.__pool = AsyncConnectionPool(
             conninfo=dsn,
@@ -567,6 +572,48 @@ class PostgresClient(PostgresClientPort):
                 await conn.commit()
 
             return res
+
+    # ....................... #
+
+    @psycopg_handled("postgres.fetch_all_batched")  # type: ignore[untyped-decorator]
+    async def fetch_all_batched(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        batch_size: int = 2000,
+        row_factory: RowFactory = "dict",
+        commit: bool = False,
+    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+        """Execute *query* and yield row chunks of at most *batch_size* rows.
+
+        Uses :meth:`psycopg.AsyncCursor.fetchmany` on a forward-only cursor so
+        rows are materialized incrementally. Prefer :meth:`transaction` for long
+        scans so the connection remains scoped for the full iteration.
+        """
+
+        if batch_size < 1:
+            msg = "batch_size must be >= 1"
+            raise ValueError(msg)
+
+        async with self.__acquire_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+
+                while True:
+                    chunk = await cur.fetchmany(batch_size)
+
+                    if not chunk:
+                        break
+
+                    if row_factory == "tuple":
+                        yield list(chunk)
+
+                    else:
+                        yield self._rows_to_dicts(cur.description, chunk)
+
+            if commit and self.__current_conn() is None:
+                await conn.commit()
 
     # ....................... #
 

@@ -1,3 +1,5 @@
+from pydantic import SecretStr
+
 from forze_redis._compat import require_redis
 
 require_redis()
@@ -92,7 +94,7 @@ class RedisClient(RedisClientPort):
 
     async def initialize(
         self,
-        dsn: str,
+        dsn: str | SecretStr,
         *,
         config: RedisConfig = RedisConfig(),
     ) -> None:
@@ -111,6 +113,9 @@ class RedisClient(RedisClientPort):
             if config.health_check_interval
             else None
         )
+
+        if isinstance(dsn, SecretStr):
+            dsn = dsn.get_secret_value()
 
         self.__pool = (
             ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]

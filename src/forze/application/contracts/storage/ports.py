@@ -2,7 +2,7 @@
 
 from typing import Awaitable, Protocol, runtime_checkable
 
-from .types import DownloadedObject, StoredObject
+from .value_objects import DownloadedObject, StoredObject, UploadedObject
 
 # ----------------------- #
 
@@ -11,20 +11,10 @@ from .types import DownloadedObject, StoredObject
 class StoragePort(Protocol):
     """Abstraction over object storage providers (e.g. S3-compatible services)."""
 
-    def upload(
-        self,
-        filename: str,
-        data: bytes,
-        description: str | None = None,
-        *,
-        prefix: str | None = None,
-    ) -> Awaitable[StoredObject]:
+    def upload(self, obj: UploadedObject) -> Awaitable[StoredObject]:
         """Upload an object and return its stored metadata.
 
-        :param filename: Original filename for the object.
-        :param data: Raw bytes to store.
-        :param description: Optional human-readable description.
-        :param prefix: Optional key prefix (folder-like namespace).
+        :param obj: Uploaded object.
         """
         ...  # pragma: no cover
 

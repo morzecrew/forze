@@ -40,15 +40,15 @@ from .configs import AuthzSharedServices
 def _grant_resolver(ctx: ExecutionContext) -> AuthzGrantResolver:
     return AuthzGrantResolver(
         deps=AuthzGrantResolverDeps(
-            permission_qry=ctx.doc_query(permission_definition_spec),
-            role_qry=ctx.doc_query(role_definition_spec),
-            group_qry=ctx.doc_query(group_spec),
-            rp_binding_qry=ctx.doc_query(role_permission_binding_spec),
-            pr_binding_qry=ctx.doc_query(principal_role_binding_spec),
-            pp_binding_qry=ctx.doc_query(principal_permission_binding_spec),
-            gp_binding_qry=ctx.doc_query(group_principal_binding_spec),
-            gr_binding_qry=ctx.doc_query(group_role_binding_spec),
-            gperm_binding_qry=ctx.doc_query(group_permission_binding_spec),
+            permission_qry=ctx.doc.query(permission_definition_spec),
+            role_qry=ctx.doc.query(role_definition_spec),
+            group_qry=ctx.doc.query(group_spec),
+            rp_binding_qry=ctx.doc.query(role_permission_binding_spec),
+            pr_binding_qry=ctx.doc.query(principal_role_binding_spec),
+            pp_binding_qry=ctx.doc.query(principal_permission_binding_spec),
+            gp_binding_qry=ctx.doc.query(group_principal_binding_spec),
+            gr_binding_qry=ctx.doc.query(group_role_binding_spec),
+            gperm_binding_qry=ctx.doc.query(group_permission_binding_spec),
         ),
     )
 
@@ -71,8 +71,8 @@ class ConfigurablePrincipalRegistry:
         _ = spec
 
         return PrincipalRegistryAdapter(
-            principal_qry=ctx.doc_query(policy_principal_spec),
-            principal_cmd=ctx.doc_command(policy_principal_spec),
+            principal_qry=ctx.doc.query(policy_principal_spec),
+            principal_cmd=ctx.doc.command(policy_principal_spec),
         )
 
 
@@ -94,10 +94,10 @@ class ConfigurableRoleAssignment:
         _ = spec
 
         return RoleAssignmentAdapter(
-            principal_qry=ctx.doc_query(policy_principal_spec),
-            role_qry=ctx.doc_query(role_definition_spec),
-            pr_binding_qry=ctx.doc_query(principal_role_binding_spec),
-            pr_binding_cmd=ctx.doc_command(principal_role_binding_spec),
+            principal_qry=ctx.doc.query(policy_principal_spec),
+            role_qry=ctx.doc.query(role_definition_spec),
+            pr_binding_qry=ctx.doc.query(principal_role_binding_spec),
+            pr_binding_cmd=ctx.doc.command(principal_role_binding_spec),
             resolver=_grant_resolver(ctx),
         )
 
@@ -120,7 +120,7 @@ class ConfigurableEffectiveGrants:
         _ = spec
 
         return EffectiveGrantsAdapter(
-            principal_qry=ctx.doc_query(policy_principal_spec),
+            principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx),
         )
 
@@ -141,7 +141,7 @@ class ConfigurableAuthz:
         _ = spec
 
         return AuthzAdapter(
-            principal_qry=ctx.doc_query(policy_principal_spec),
+            principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx),
             policy=self.shared.policy,
         )

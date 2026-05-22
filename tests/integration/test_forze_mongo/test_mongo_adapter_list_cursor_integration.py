@@ -70,9 +70,9 @@ async def test_mongo_adapter_find_page_return_count_zero_short_circuit(
     """Counted page with no matches returns an empty page without listing."""
     col = f"m_lc_{uuid4().hex[:8]}"
     ctx, spec = await _ctx_spec(mongo_client, col)
-    q = ctx.doc_query(spec)
+    q = ctx.document.query(spec)
     page = await q.find_page(
-        {"$fields": {"label": "___none___"}},
+        {"$values": {"label": "___none___"}},
         pagination={"limit": 5},
     )
     assert page.count == 0
@@ -87,8 +87,8 @@ async def test_mongo_adapter_find_cursor_tokens(
     """Adapter wraps gateway keyset results and builds next/prev cursor tokens."""
     col = f"m_lcc_{uuid4().hex[:8]}"
     ctx, spec = await _ctx_spec(mongo_client, col)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     for i in range(4):
         await cmd.create(_ListCreate(label=f"L{i}"))

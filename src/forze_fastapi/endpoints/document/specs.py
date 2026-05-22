@@ -18,7 +18,6 @@ class DocumentConfigSpec(TypedDict, total=False):
 
 class DocumentEndpointsSpec(TypedDict, total=False):
     get_: SimpleHttpEndpointSpec | bool
-    get_by_number_id: SimpleHttpEndpointSpec | bool
     list_: SimpleHttpEndpointSpec | bool
     raw_list: SimpleHttpEndpointSpec | bool
     list_cursor: SimpleHttpEndpointSpec | bool

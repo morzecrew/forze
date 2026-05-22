@@ -46,7 +46,7 @@ It does **not** embed SQL table names or Mongo collections. Those belong in `Pos
 - `rw_documents: dict[str, PostgresDocumentConfig]` — read/write documents
 - `ro_documents: dict[str, PostgresReadOnlyDocumentConfig]` — read-only
 - `searches: dict[str, PostgresSearchConfig]` — full-text search per `SearchSpec.name`
-- `tx: set[str]` — transaction manager routes for `ctx.txmanager(route)`
+- `tx: set[str]` — transaction manager routes for `ctx.tx.resolver(route)` and `ctx.tx.scope(route)`
 
 Each `PostgresDocumentConfig` supplies `(schema, table)` tuples for `read`, `write`, optional `history`, `bookkeeping_strategy` (`"database"` \| `"application"`), and optional `batch_size`.
 
@@ -97,7 +97,7 @@ Each `PostgresDocumentConfig` supplies `(schema, table)` tuples for `read`, `wri
 
 Inside the app you only pass `project_spec`; adapters receive both the spec and the infra config that was registered under `project_spec.name`.
 
-**From specs to ports.** A `DocumentSpec` is metadata only; it does not perform I/O. After wiring, `ctx.doc_query(spec)` resolves the `DocumentQueryDepKey` factory for route `spec.name` and returns a **`DocumentQueryPort[read]`**; `ctx.doc_command(spec)` resolves **`DocumentCommandDepKey`** → **`DocumentCommandPort`**. For search, `ctx.search_query(search_spec)` resolves **`SearchQueryDepKey`** → **`SearchQueryPort`**. Method tables for those protocols are in [Contracts and adapters](contracts-adapters.md).
+**From specs to ports.** A `DocumentSpec` is metadata only; it does not perform I/O. After wiring, `ctx.document.query(spec)` resolves the `DocumentQueryDepKey` factory for route `spec.name` and returns a **`DocumentQueryPort[read]`**; `ctx.document.command(spec)` resolves **`DocumentCommandDepKey`** → **`DocumentCommandPort`**. For search, `ctx.search.query(search_spec)` resolves **`SearchQueryDepKey`** → **`SearchQueryPort`**. Method tables for those protocols are in [Contracts and adapters](contracts-adapters.md).
 
 ## Troubleshooting
 

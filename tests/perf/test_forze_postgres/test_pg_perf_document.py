@@ -97,7 +97,7 @@ async def document_adapter(pg_client: PostgresClient, execution_context):
         },
     )
 
-    return execution_context.doc_command(spec)
+    return execution_context.document.command(spec)
 
 
 @pytest.mark.perf

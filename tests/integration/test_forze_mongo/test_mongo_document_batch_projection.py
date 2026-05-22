@@ -13,14 +13,14 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.constants import ID_FIELD
-from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
 
-class BatchDoc(Document, SoftDeletionMixin):
+class BatchDoc(DocWithSoftDeletion):
     name: str
     tag: str = ""
 
@@ -30,7 +30,7 @@ class BatchCreate(CreateDocumentCmd):
     tag: str = ""
 
 
-class BatchUpdate(BaseDTO):
+class BatchUpdate(UpdateCmdWithSoftDeletion):
     name: str | None = None
     tag: str | None = None
 
@@ -82,7 +82,7 @@ async def test_get_many_and_field_projection(mongo_client: MongoClient) -> None:
     col = f"batch_proj_{uuid4().hex[:8]}"
     hist = f"{col}_history"
     ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     a = await cmd.create(BatchCreate(name="one", tag="x"))
     b = await cmd.create(BatchCreate(name="two", tag="y"))
@@ -91,7 +91,7 @@ async def test_get_many_and_field_projection(mongo_client: MongoClient) -> None:
     assert {x.id for x in many} == {a.id, b.id}
 
     proj = await cmd.project(
-        {"$fields": {ID_FIELD: a.id}},
+        {"$values": {ID_FIELD: a.id}},
         ("name", "tag"),
     )
     assert proj == {"name": "one", "tag": "x"}
@@ -102,7 +102,7 @@ async def test_create_many_delete_many_restore_many(mongo_client: MongoClient) -
     col = f"batch_soft_{uuid4().hex[:8]}"
     hist = f"{col}_history"
     ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     created = await cmd.create_many(
         [
@@ -112,12 +112,19 @@ async def test_create_many_delete_many_restore_many(mongo_client: MongoClient) -
     )
     assert len(created) == 2
 
-    deletes = [(c.id, c.rev) for c in created]
-    deleted = await cmd.delete_many(deletes)
+    deleted = await cmd.update_many(
+        [(c.id, c.rev, BatchUpdate(is_deleted=True)) for c in created],
+        return_new=True,
+    )
+    assert deleted is not None
     assert len(deleted) == 2
     assert all(d.is_deleted for d in deleted)
 
-    restored = await cmd.restore_many([(d.id, d.rev) for d in deleted])
+    restored = await cmd.update_many(
+        [(d.id, d.rev, BatchUpdate(is_deleted=False)) for d in deleted],
+        return_new=True,
+    )
+    assert restored is not None
     assert len(restored) == 2
     assert not any(r.is_deleted for r in restored)
 
@@ -127,7 +134,7 @@ async def test_kill_many_removes_documents(mongo_client: MongoClient) -> None:
     col = f"batch_kill_{uuid4().hex[:8]}"
     hist = f"{col}_history"
     ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     a = await cmd.create(BatchCreate(name="a"))
     b = await cmd.create(BatchCreate(name="b"))
@@ -140,5 +147,5 @@ async def test_get_many_empty_returns_empty(mongo_client: MongoClient) -> None:
     col = f"batch_empty_{uuid4().hex[:8]}"
     hist = f"{col}_history"
     ctx, spec = await _setup(mongo_client, collection=col, history_collection=hist)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
     assert await cmd.get_many([]) == []

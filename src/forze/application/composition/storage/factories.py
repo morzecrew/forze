@@ -1,36 +1,39 @@
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution import UsecaseRegistry
-from forze.application.usecases.storage import (
+from forze.application.execution.registry import OperationRegistry
+from forze.application.handlers.storage import (
     DeleteObject,
     DownloadObject,
     ListObjects,
     UploadObject,
 )
+from forze.base.primitives import StrKeyNamespace
 
-from .operations import StorageOperation
+from .operations import StorageKernelOp
 
 # ----------------------- #
 
 
-def build_storage_registry(spec: StorageSpec) -> UsecaseRegistry:
+def build_storage_registry(
+    spec: StorageSpec,
+    *,
+    ns: StrKeyNamespace | None = None,
+) -> OperationRegistry:
     """Build a usecase registry for storage operations in a bucket."""
 
-    return UsecaseRegistry(
-        {
-            StorageOperation.UPLOAD: lambda ctx: UploadObject(
-                ctx=ctx,
+    ns = ns or spec.default_namespace
+
+    return OperationRegistry(
+        handlers={
+            ns.key(StorageKernelOp.UPLOAD): lambda ctx: UploadObject(
                 storage=ctx.storage(spec),
             ),
-            StorageOperation.LIST: lambda ctx: ListObjects(
-                ctx=ctx,
+            ns.key(StorageKernelOp.LIST): lambda ctx: ListObjects(
                 storage=ctx.storage(spec),
             ),
-            StorageOperation.DOWNLOAD: lambda ctx: DownloadObject(
-                ctx=ctx,
+            ns.key(StorageKernelOp.DOWNLOAD): lambda ctx: DownloadObject(
                 storage=ctx.storage(spec),
             ),
-            StorageOperation.DELETE: lambda ctx: DeleteObject(
-                ctx=ctx,
+            ns.key(StorageKernelOp.DELETE): lambda ctx: DeleteObject(
                 storage=ctx.storage(spec),
             ),
         }

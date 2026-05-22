@@ -33,7 +33,7 @@ async def find_policy_principal_by_id(
 
     return await qry.find(
         filters={
-            "$fields": {
+            "$values": {
                 "id": principal_id,
             },
         },

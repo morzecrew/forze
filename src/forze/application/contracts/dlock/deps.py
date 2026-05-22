@@ -1,16 +1,16 @@
-from ..base import BaseDepPort, DepKey
+from ..base import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import DistributedLockCommandPort, DistributedLockQueryPort
 from .specs import DistributedLockSpec
 
 # ----------------------- #
 
-DistributedLockQueryDepPort = BaseDepPort[
+DistributedLockQueryDepPort = ConfigurableDepPort[
     DistributedLockSpec,
     DistributedLockQueryPort,
 ]
 """Distributed lock query dependency port."""
 
-DistributedLockCommandDepPort = BaseDepPort[
+DistributedLockCommandDepPort = ConfigurableDepPort[
     DistributedLockSpec,
     DistributedLockCommandPort,
 ]
@@ -27,3 +27,29 @@ DistributedLockCommandDepKey = DepKey[DistributedLockCommandDepPort](
     "distributed_lock_command"
 )
 """Key used to register the ``DistributedLockCommandDepPort`` implementation."""
+
+# ....................... #
+
+
+class DistributedLockDeps(ConvenientDeps):
+    """Convenience wrapper for distributed lock dependencies."""
+
+    def query(self, spec: DistributedLockSpec) -> DistributedLockQueryPort:
+        """Resolve a distributed lock query port for the given spec."""
+
+        return self._resolve_configurable(
+            DistributedLockQueryDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    # ....................... #
+
+    def command(self, spec: DistributedLockSpec) -> DistributedLockCommandPort:
+        """Resolve a distributed lock command port for the given spec."""
+
+        return self._resolve_configurable(
+            DistributedLockCommandDepKey,
+            spec,
+            route=spec.name,
+        )

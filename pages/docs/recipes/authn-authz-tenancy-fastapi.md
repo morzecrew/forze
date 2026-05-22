@@ -4,15 +4,15 @@ This recipe describes how Forze separates **boundary authentication** (who is ca
 
 ## Two trust boundaries
 
-1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves `AuthnIdentity` and optional `TenantIdentity`, then `ExecutionContext.bind_call` stores them for the request. Downstream code should read `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()`, not re-parse headers everywhere.
-2. **Route / use case boundary** — Optional `HttpEndpointFeaturePort` wrappers (for example `RequireAuthnFeature`, `RequirePermissionFeature`) can enforce policy **after** the execution context exists but **before** the use case runs (fast-fail at the HTTP edge). Prefer **authoritative** checks on the usecase plan via :func:`~forze.application.guards.authz.authz_permission_guard_factory` so non-HTTP callers hit the same rules. Align OpenAPI with the same `AuthzPermissionRequirement` using `HttpMetadataSpec` (`dependencies`, `openapi_extra`) on `build_http_endpoint_spec` / `attach_http_endpoint` (see below).
+1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves `AuthnIdentity` and optional `TenantIdentity`, then `ctx.inv.bind(...)` stores them for the request. Downstream code should read `ctx.inv.get_authn()` / `ctx.inv.get_tenant()`, not re-parse headers everywhere.
+2. **Route / handler boundary** — Optional `HttpEndpointFeaturePort` wrappers (for example `RequireAuthnFeature`, `RequireTenantFeature`) can enforce policy **after** the execution context exists but **before** the handler runs (fast-fail at the HTTP edge). Prefer **authoritative** checks on the operation plan via `BeforeStep` hooks that call `AuthzPort.permits` so non-HTTP callers hit the same rules. Align OpenAPI with `HttpMetadataSpec` (`dependencies`, `openapi_extra`) on `build_http_endpoint_spec` / `attach_http_endpoint` (see below).
 
 ```mermaid
 flowchart TB
   MW[ContextBindingMiddleware]
-  MW --> bind[bind_call]
+  MW --> bind[inv.bind]
   bind --> feats[HttpEndpointFeature chain]
-  feats --> uc[Usecase handler]
+  feats --> uc[Handler]
 ```
 
 ## Without tenancy
@@ -26,7 +26,7 @@ flowchart TB
 
 - Resolve tenant with `TenantIdentityResolver` (merges optional JWT `tid`, optional header hint, optional `TenantResolverPort`).
 - Keep **authentication document routes** on **tenant-unaware** document clients until `TenantIdentity` is known (see `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_authn.application` and [Multi-tenancy](../concepts/multi-tenancy.md)).
-- Pass `tenant_id` into `permits` / other authz ports from `ctx.get_tenancy_identity().tenant_id` when your policy store is partitioned.
+- Pass `tenant_id` into `permits` / other authz ports from `ctx.inv.get_tenant().tenant_id` when your policy store is partitioned.
 
 ## Credential sources on the boundary
 
@@ -72,41 +72,60 @@ app.add_middleware(
 
 `AuthnSpec.enabled_methods` is the contract between the boundary and the configured verifier set: the orchestrator raises `AuthenticationError` if a request supplies a credential family that the spec does not advertise. The optional `token_profile` / `password_profile` / `api_key_profile` / `resolver_profile` fields select named verifier/resolver implementations registered by `AuthnDepsModule` — see [Authentication pipeline](../concepts/authentication.md) and [External IdPs over OIDC](external-idp-oidc.md).
 
-## Usecase-level authz and OpenAPI alignment
+## Operation-plan authz and OpenAPI alignment
 
-- Register **guards** on `UsecasePlan` (for example `plan.before("ns.op", authz_permission_guard_factory(authz_spec, requirement))`, or `before_pipeline` for several factories) using a single frozen :class:`~forze.application.guards.authz.AuthzPermissionRequirement` instance.
-- Optional: enable **capability-driven** guard ordering with `UsecasePlan(use_capability_engine=True)` and pass `requires` / `provides` on `before` / `in_tx_before`, or use :class:`~forze.application.execution.plan.GuardStep` entries inside `before_pipeline` (see [Capability execution](../reference/capability-execution.md) and `authz_permission_capability_keys`). For a minimal “principal present” step before authz, wire :func:`~forze.application.guards.authn.authn_principal_capability_guard_factory` with `provides={AUTHN_PRINCIPAL}` on the same `before` / `GuardStep`.
-- Reuse that **same** `AuthzPermissionRequirement` in HTTP metadata so clients see the right contract:
+Register **authorization** on the frozen registry with `BeforeStep` hooks that resolve `AuthzPort` from `ctx.deps` and call `permits`. Use capability metadata when authz depends on a prior “principal present” step (see [Capability execution](../reference/capability-execution.md)):
+
+```python
+from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.authz.ports import AuthzPort
+from forze.application.contracts.execution import BeforeStep
+from forze.application.execution import OperationRegistry
+
+def authz_factory(ctx, *, authz: AuthzPort, permission: str):
+    async def _before(_args) -> None:
+        identity = ctx.inv.get_authn()
+        tenant = ctx.inv.get_tenant()
+        tid = tenant.tenant_id if tenant else None
+        if identity is None or not await authz.permits(identity, permission, tenant_id=tid):
+            raise PermissionError(permission)
+    return _before
+
+registry = (
+    OperationRegistry(handlers={"widgets.read": read_factory})
+    .bind("widgets.read")
+    .bind_outer()
+    .before(
+        BeforeStep(
+            id="authz",
+            factory=lambda ctx: authz_factory(ctx, authz=..., permission="widgets.read"),
+            requires=("authn.principal",),
+        ),
+    )
+    .finish(deep=True)
+    .freeze()
+)
+```
+
+For HTTP routes, mirror the same transport in OpenAPI:
 
 ```python
 from fastapi import Depends
-from forze.application.contracts.authz import AuthzSpec
-from forze.application.execution import UsecasePlan
-from forze.application.guards.authz import AuthzPermissionRequirement, authz_permission_guard_factory
-from forze_fastapi.openapi.security import http_bearer_scheme, openapi_http_bearer_scheme, openapi_operation_security
-
-authz_spec = AuthzSpec(name="api")
-requirement = AuthzPermissionRequirement(permission_key="widgets.read", authz_route="api")
-
-plan = UsecasePlan().before(
-    "widgets.read",
-    authz_permission_guard_factory(authz_spec, requirement),
-)
+from forze_fastapi.openapi.security import http_bearer_scheme, openapi_operation_security
 
 bearer = http_bearer_scheme(auto_error=False)
 metadata = {
     "dependencies": [Depends(bearer)],
     "openapi_extra": openapi_operation_security("httpBearer"),
 }
-# Pass ``metadata`` into ``build_http_endpoint_spec(..., metadata=metadata)`` for custom routes.
-# Merge ``openapi_http_bearer_scheme()`` into ``app.openapi_schema["components"]["securitySchemes"]`` once.
+# Pass metadata into build_http_endpoint_spec(..., metadata=metadata) for custom routes.
 ```
 
-OpenAPI cannot be inferred from arbitrary guard callables; **sharing** `AuthzPermissionRequirement` (or an `AuthzOpRequirementMap` keyed by operation) keeps enforcement and documentation aligned; add tests that every HTTP-exposed operation has matching plan guards and metadata.
+Wire `forze_authz` via `AuthzDepsModule` and document-backed policy stores — see [Authentication reference](../reference/authentication.md).
 
-## Generated routes and default guards
+## Generated routes and default features
 
-Pass `default_http_features` into `attach_document_endpoints` / `attach_search_endpoints` / `attach_storage_endpoints` to prepend guards (for example `RequireAuthnFeature()`, `RequirePermissionFeature(...)`) to every generated endpoint spec without editing each builder. Defaults remain **off** if you omit the argument.
+Pass `default_http_features` into `attach_document_endpoints` / `attach_search_endpoints` / `attach_storage_endpoints` to prepend features (for example `RequireAuthnFeature()`, `RequireTenantFeature()`) to every generated endpoint spec without editing each builder. Defaults remain **off** if you omit the argument.
 
 ### Base `AuthnRequirement` on document / search specs
 
@@ -173,11 +192,12 @@ Attach the dependency at the **router** level for the common case (every route s
 
 ## Pre-built authn endpoints
 
-`attach_authn_endpoints` registers configurable **login**, **refresh**, **logout**, and **change-password** routes wired to the `AuthnUsecasesFacade`:
+`attach_authn_endpoints` registers configurable **login**, **refresh**, **logout**, and **change-password** routes resolved from a frozen authn registry:
 
 ```python
 from fastapi import APIRouter
 from forze.application.composition.authn import build_authn_registry
+from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,
     HeaderTokenTransportSpec,
@@ -185,13 +205,19 @@ from forze_fastapi.endpoints.authn import (
 )
 
 reg = build_authn_registry(api_authn)
-reg.finalize("authn", inplace=True)
+registry = (
+    reg.patch(str_key_selector.all_keys())
+    .bind_tx()
+    .set_route("postgres")
+    .finish(deep=True)
+    .freeze()
+)
 
 router = APIRouter(prefix="/auth")
 attach_authn_endpoints(
     router,
     spec=api_authn,
-    registry=reg,
+    registry=registry,
     ctx_dep=get_ctx,
     endpoints={
         "password_login": True,
@@ -215,7 +241,7 @@ attach_authn_endpoints(
 
 Password login uses `application/x-www-form-urlencoded` so first-party login forms post directly. The matching `TokenTransportInputFeature` reads the refresh token from the configured transport on `/refresh`; the `TokenTransportOutputFeature` sets cookies on issue and clears them on logout.
 
-Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless the caller explicitly supplies one in the `SimpleHttpEndpointSpec` for the endpoint. The `AuthnUsecasesFacade.password_login` implementation provided by `forze_authn` is `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the pre-built routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
+Logout and change-password are auto-protected by an `AuthnRequirement` derived from the access transport unless the caller explicitly supplies one in the `SimpleHttpEndpointSpec` for the endpoint. The password-login handler wired by `forze_authn` uses `AuthnOrchestrator`, which composes credential-family verifiers with a principal resolver — see [Authentication pipeline](../concepts/authentication.md). Treat the pre-built routes as a **starter kit**: add rate limiting, abuse protection, and logging in your application.
 
 The `ctx_dep` callable must be annotated with a concrete return type (for example `def get_ctx() -> ExecutionContext:`) so FastAPI treats it as a dependency rather than trying to parse `ExecutionContext` from the request.
 

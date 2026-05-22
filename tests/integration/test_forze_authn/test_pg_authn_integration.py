@@ -25,7 +25,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution.context import CallContext
+from forze.application.execution import InvocationMetadata
 from forze_authn import (
     Argon2PasswordVerifier,
     AuthnOrchestrator,
@@ -207,8 +207,8 @@ async def _insert_principal_row(
     )
 
 
-def _call_ctx() -> CallContext:
-    return CallContext(execution_id=uuid4(), correlation_id=uuid4())
+def _invocation_metadata() -> InvocationMetadata:
+    return InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
 
 def _orchestrator(
@@ -259,9 +259,9 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
     )
 
     hashed = pwd_svc.hash_password("correct horse battery staple")
-    pwd_cmd = ctx.doc_command(password_account_spec)
+    pwd_cmd = ctx.document.command(password_account_spec)
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await pwd_cmd.create(
             CreatePasswordAccountCmd(
                 principal_id=pid,
@@ -273,18 +273,18 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
 
     authn = _orchestrator(
         password_svc=pwd_svc,
-        pa_qry=ctx.doc_query(password_account_spec),
+        pa_qry=ctx.document.query(password_account_spec),
         methods=frozenset({"password"}),
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         identity = await authn.authenticate_with_password(
             PasswordCredentials(login="alice", password="correct horse battery staple"),
         )
     assert identity.principal_id == pid
 
     with pytest.raises(Exception, match="Invalid password|authentication"):
-        with ctx.bind_call(call=_call_ctx()):
+        with ctx.inv.bind(metadata=_invocation_metadata()):
             await authn.authenticate_with_password(
                 PasswordCredentials(login="alice", password="wrong"),
             )
@@ -313,13 +313,13 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
     token_adapter = TokenLifecycleAdapter(
         access_svc=access_svc,
         refresh_svc=refresh_svc,
-        session_qry=ctx.doc_query(session_spec),
-        session_cmd=ctx.doc_command(session_spec),
-        principal_qry=ctx.doc_query(principal_spec),
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
+        principal_qry=ctx.document.query(principal_spec),
     )
 
     identity = AuthnIdentity(principal_id=pid)
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         issued = await token_adapter.issue_tokens(identity)
 
     access_creds = issued.access.token
@@ -335,14 +335,14 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
         methods=frozenset({"token"}),
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         bearer_id = await authn.authenticate_with_token(sub)
 
     assert bearer_id.principal_id == pid
 
-    with ctx.bind_call(call=_call_ctx()):
-        page = await ctx.doc_query(session_spec).find_many(
-            filters={"$fields": {"principal_id": pid}}
+    with ctx.inv.bind(metadata=_invocation_metadata()):
+        page = await ctx.document.query(session_spec).find_many(
+            filters={"$values": {"principal_id": pid}}
         )
 
     assert len(page.hits) == 1
@@ -365,9 +365,9 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
     bootstrap_key_material = secrets.token_hex(16)
     bootstrap_digest = api_key_svc.calculate_key_digest(bootstrap_key_material)
 
-    ak_cmd = ctx.doc_command(api_key_account_spec)
+    ak_cmd = ctx.document.command(api_key_account_spec)
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await ak_cmd.create(
             CreateApiKeyAccountCmd(
                 principal_id=pid,
@@ -379,24 +379,24 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
 
     lifecycle = ApiKeyLifecycleAdapter(
         api_key_svc=api_key_svc,
-        ak_qry=ctx.doc_query(api_key_account_spec),
+        ak_qry=ctx.document.query(api_key_account_spec),
         ak_cmd=ak_cmd,
-        principal_qry=ctx.doc_query(principal_spec),
+        principal_qry=ctx.document.query(principal_spec),
     )
 
     authn = _orchestrator(
         api_key_svc=api_key_svc,
-        ak_qry=ctx.doc_query(api_key_account_spec),
+        ak_qry=ctx.document.query(api_key_account_spec),
         methods=frozenset({"api_key"}),
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         resp = await lifecycle.issue_api_key(AuthnIdentity(principal_id=pid))
 
     issued_key = resp.key.key
     assert resp.key.prefix == "sk_test"
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         authed = await authn.authenticate_with_api_key(
             ApiKeyCredentials(key=issued_key, prefix=resp.key.prefix),
         )
@@ -415,8 +415,8 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
         pg_client, table=f"authn_pri_{suffix}", principal_id=pid
     )
 
-    pwd_cmd = ctx.doc_command(password_account_spec)
-    with ctx.bind_call(call=_call_ctx()):
+    pwd_cmd = ctx.document.command(password_account_spec)
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await pwd_cmd.create(
             CreatePasswordAccountCmd(
                 principal_id=pid,
@@ -428,26 +428,26 @@ async def test_pg_change_password(pg_client: PostgresClient) -> None:
 
     plc = PasswordLifecycleAdapter(
         password_svc=pwd_svc,
-        pa_qry=ctx.doc_query(password_account_spec),
+        pa_qry=ctx.document.query(password_account_spec),
         pa_cmd=pwd_cmd,
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await plc.change_password(AuthnIdentity(principal_id=pid), "new-secret")
 
     authn = _orchestrator(
         password_svc=pwd_svc,
-        pa_qry=ctx.doc_query(password_account_spec),
+        pa_qry=ctx.document.query(password_account_spec),
         methods=frozenset({"password"}),
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await authn.authenticate_with_password(
             PasswordCredentials(login="bob", password="new-secret"),
         )
 
     with pytest.raises(Exception, match="Invalid password|authentication"):
-        with ctx.bind_call(call=_call_ctx()):
+        with ctx.inv.bind(metadata=_invocation_metadata()):
             await authn.authenticate_with_password(
                 PasswordCredentials(login="bob", password="old-secret"),
             )
@@ -466,25 +466,25 @@ async def test_pg_provision_password_account(pg_client: PostgresClient) -> None:
 
     provisioning = PasswordAccountProvisioningAdapter(
         password_svc=PasswordService(),
-        password_account_qry=ctx.doc_query(password_account_spec),
-        password_account_cmd=ctx.doc_command(password_account_spec),
-        principal_qry=ctx.doc_query(principal_spec),
+        password_account_qry=ctx.document.query(password_account_spec),
+        password_account_cmd=ctx.document.command(password_account_spec),
+        principal_qry=ctx.document.query(principal_spec),
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await provisioning.register_with_password(
             pid,
             PasswordCredentials(login="carol", password="initial"),
         )
 
-    pwd_qry = ctx.doc_query(password_account_spec)
+    pwd_qry = ctx.document.query(password_account_spec)
     authn = _orchestrator(
         password_svc=PasswordService(),
         pa_qry=pwd_qry,
         methods=frozenset({"password"}),
     )
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await authn.authenticate_with_password(
             PasswordCredentials(login="carol", password="initial"),
         )
@@ -527,9 +527,9 @@ async def test_pg_execution_deps_password_authentication(
     assert pwd_svc is not None
 
     hashed = pwd_svc.hash_password("correct horse battery staple")
-    pwd_cmd = ctx.doc_command(password_account_spec)
+    pwd_cmd = ctx.document.command(password_account_spec)
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         await pwd_cmd.create(
             CreatePasswordAccountCmd(
                 principal_id=pid,
@@ -540,12 +540,12 @@ async def test_pg_execution_deps_password_authentication(
         )
 
     spec = AuthnSpec(name="default", enabled_methods=frozenset({"password", "api_key"}))
-    factory = ctx.dep(AuthnDepKey, route="default")
+    factory = ctx.deps.provide(AuthnDepKey, route="default")
     authn = factory(ctx, spec)
 
     assert isinstance(authn, AuthnOrchestrator)
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         identity = await authn.authenticate_with_password(
             PasswordCredentials(login="alice", password="correct horse battery staple"),
         )
@@ -590,12 +590,12 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
 
     spec = AuthnSpec(name="oauth", enabled_methods=methods)
 
-    tl_factory = ctx.dep(TokenLifecycleDepKey, route="oauth")
+    tl_factory = ctx.deps.provide(TokenLifecycleDepKey, route="oauth")
     token_adapter = tl_factory(ctx, spec)
     assert isinstance(token_adapter, TokenLifecycleAdapter)
 
     identity = AuthnIdentity(principal_id=pid)
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         issued = await token_adapter.issue_tokens(identity)
 
     access_creds = issued.access.token
@@ -606,17 +606,17 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
         scheme=access_creds.scheme,
     )
 
-    auth_factory = ctx.dep(AuthnDepKey, route="oauth")
+    auth_factory = ctx.deps.provide(AuthnDepKey, route="oauth")
     authn = auth_factory(ctx, spec)
 
-    with ctx.bind_call(call=_call_ctx()):
+    with ctx.inv.bind(metadata=_invocation_metadata()):
         bearer_id = await authn.authenticate_with_token(sub)
 
     assert bearer_id.principal_id == pid
 
-    with ctx.bind_call(call=_call_ctx()):
-        page = await ctx.doc_query(session_spec).find_many(
-            filters={"$fields": {"principal_id": pid}}
+    with ctx.inv.bind(metadata=_invocation_metadata()):
+        page = await ctx.document.query(session_spec).find_many(
+            filters={"$values": {"principal_id": pid}}
         )
 
     assert len(page.hits) == 1

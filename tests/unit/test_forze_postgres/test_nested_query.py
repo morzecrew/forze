@@ -235,7 +235,7 @@ def test_build_nested_uuid_from_mapping_str_uuid() -> None:
 
 
 def test_resolve_non_string_mapping_key_raises() -> None:
-    with pytest.raises(CoreError, match="string object keys"):
+    with pytest.raises(CoreError, match="not found under _RowIntKeyDict"):
         resolve_leaf_python_type(
             model_type=_RowIntKeyDict,
             path="data.1",
