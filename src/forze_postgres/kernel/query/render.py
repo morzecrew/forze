@@ -17,7 +17,9 @@ from forze.application.contracts.querying import (
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
-    AggregateTimeBucket,
+    GroupKey,
+    GroupRef,
+    GroupTrunc,
     ParsedAggregates,
     QueryAnd,
     QueryCompare,
@@ -188,18 +190,10 @@ class PsycopgQueryRenderer:
         select_parts: list[sql.Composable] = []
         group_parts: list[sql.Composable] = []
 
-        if parsed.time_bucket is not None:
-            tb_expr = self._render_time_bucket_expr(parsed.time_bucket)
-            tb_ident = sql.Identifier(parsed.time_bucket.alias)
-            select_parts.append(sql.SQL("{} AS {}").format(tb_expr, tb_ident))
-            group_parts.append(tb_expr)
-
-        for field in parsed.fields:
-            expr = self._render_source_expr(field.field)
-            select_parts.append(
-                sql.SQL("{} AS {}").format(expr, sql.Identifier(field.alias)),
-            )
-            group_parts.append(expr)
+        for group in parsed.groups:
+            group_expr, ident = self._render_group_expr(group)
+            select_parts.append(sql.SQL("{} AS {}").format(group_expr, ident))
+            group_parts.append(group_expr)
 
         for computed in parsed.computed_fields:
             expr = self._render_aggregate_function(computed)
@@ -217,10 +211,22 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
-    def _render_time_bucket_expr(self, tb: AggregateTimeBucket) -> sql.Composable:
-        col = self._render_source_expr(tb.field)
-        unit = tb.unit
-        tz = tb.timezone
+    def _render_group_expr(
+        self,
+        group: GroupKey,
+    ) -> tuple[sql.Composable, sql.Composable]:
+        ident = sql.Identifier(group.alias)
+        if isinstance(group.expr, GroupRef):
+            expr = self._render_source_expr(group.expr.field)
+        else:
+            expr = self._render_trunc_expr(group.expr)
+
+        return expr, ident
+
+    def _render_trunc_expr(self, trunc: GroupTrunc) -> sql.Composable:
+        col = self._render_source_expr(trunc.field)
+        unit = trunc.unit
+        tz = trunc.timezone
 
         if tz.mode == "iana":
             return sql.SQL("date_trunc({}, {} AT TIME ZONE {})").format(

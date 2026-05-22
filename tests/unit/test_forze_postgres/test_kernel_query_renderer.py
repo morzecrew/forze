@@ -428,7 +428,7 @@ class TestPostgresAggregateRendering:
         assert b"SUM" in select_sql
         assert params == [10, 20, "books"]
 
-    def test_renders_time_bucket_with_field_group(self) -> None:
+    def test_renders_trunc_group_with_field_group(self) -> None:
         renderer = PsycopgQueryRenderer(
             types={
                 "item_id": _t("text"),
@@ -439,8 +439,12 @@ class TestPostgresAggregateRendering:
         )
         parsed, select_clause, group_clause, params = renderer.render_aggregates(
             {
-                "$groups": {"item": "item_id"},
-                "$time_bucket": {"field": "ts", "unit": "day", "timezone": "UTC"},
+                "$groups": {
+                    "item": "item_id",
+                    "day_start": {
+                        "$trunc": {"field": "ts", "unit": "day", "timezone": "UTC"},
+                    },
+                },
                 "$computed": {"avg_p": {"$avg": "price"}},
             },
         )
@@ -448,7 +452,7 @@ class TestPostgresAggregateRendering:
         gro = group_clause.as_bytes() if group_clause else b""
         assert b"date_trunc" in sel
         assert b"item_id" in gro
-        assert parsed.time_bucket is not None
+        assert len(parsed.groups) == 2
         assert params == []
 
     def test_rejects_unknown_aggregate_sort_alias(self) -> None:

@@ -114,17 +114,42 @@ QuerySortExpression = Mapping[str, QuerySortDirection]
 AggregateFunction = Literal["$count", "$sum", "$avg", "$min", "$max", "$median"]
 """Supported aggregate function names."""
 
-AggregateTimeBucketUnit = Literal["hour", "day", "week", "month"]
-"""Calendar bucketing unit for ``$time_bucket``."""
+AggregateTruncUnit = Literal["hour", "day", "week", "month"]
+"""Calendar bucketing unit for ``$trunc`` group expressions."""
 
 
-AggregateFieldExpression = Mapping[str, str]
-"""Map of aggregate output aliases to source field paths used as group keys."""
+class AggregateTruncSpec(TypedDict):
+    """Calendar bucket on a timestamp field (``$trunc`` under ``$groups``)."""
+
+    field: str
+    """Source field path (typically a ``timestamptz`` / ISO datetime)."""
+
+    unit: AggregateTruncUnit
+    """Bucket width: hour, day, week (Monday start), or month."""
+
+    timezone: NotRequired[str]
+    """IANA name (e.g. ``Europe/Paris``) or fixed offset ``+3``, ``+03:00``. Defaults to ``UTC``."""
+
+
+AggregateTruncExpression = TypedDict(
+    "AggregateTruncExpression",
+    {"$trunc": AggregateTruncSpec},
+)
+"""Single ``$trunc`` group operator application."""
+
+
+AggregateGroupKeyValue: TypeAlias = str | AggregateTruncExpression
+"""Group dimension: path shortcut (``str``) or ``$trunc`` operator map."""
+
+
+AggregateGroupKeysMapExpression = Mapping[str, AggregateGroupKeyValue]
+"""Map of output alias to group dimension (path or ``$trunc``)."""
+
 
 AggregateGroupKeysExpression: TypeAlias = (
-    AggregateFieldExpression | list[str] | tuple[str, ...]
+    AggregateGroupKeysMapExpression | list[str] | tuple[str, ...]
 )
-"""Group keys: alias→path map, or a list/tuple of names (alias and path are the same)."""
+"""Group keys: alias→dimension map, or path-only list/tuple (alias equals path)."""
 
 
 class AggregateComputedFunctionApplication(TypedDict, total=False):
@@ -155,40 +180,20 @@ AggregateComputedFieldExpression = Mapping[str, AggregateComputedFunctionExpress
 """Map of aggregate output aliases to computed aggregate function specs."""
 
 
-class AggregateTimeBucketExpression(TypedDict):
-    """Optional calendar bucket on a timestamp field (``$time_bucket``)."""
-
-    field: str
-    """Source field path (typically a ``timestamptz`` / ISO datetime)."""
-
-    unit: AggregateTimeBucketUnit
-    """Bucket width: hour, day, week (Monday start), or month."""
-
-    timezone: NotRequired[str]
-    """IANA name (e.g. ``Europe/Paris``) or fixed offset ``+3``, ``+03:00``. Defaults to ``UTC``."""
-
-    alias: NotRequired[str]
-    """Output column alias; defaults to ``bucket``."""
-
-
 AggregatesExpression = TypedDict(
     "AggregatesExpression",
     {
         "$groups": AggregateGroupKeysExpression,
         "$computed": AggregateComputedFieldExpression,
-        "$time_bucket": AggregateTimeBucketExpression,
     },
     total=False,
 )
-"""Aggregate result shape: ``$groups`` (group keys) plus ``$computed`` (aggregates).
+"""Aggregate result shape: ``$groups`` (dimensions) plus ``$computed`` (metrics).
 
-Optional ``$time_bucket`` adds a derived group key: the start of a calendar period
-for a timestamp field in the given timezone. It can be combined with other group
-fields and any computed aggregates.
-
-``$groups`` is either a map of output alias to source path or a homogeneous list
-or tuple of field paths (each path is both alias and source). ``$computed`` maps
-output aliases to aggregate function applications.
+``$groups`` map values are either a source path string (group by that field) or
+``{\"$trunc\": {\"field\", \"unit\", optional \"timezone\"}}`` for calendar buckets
+(output alias is the map key). List/tuple ``$groups`` accepts path strings only.
+``$computed`` maps output aliases to aggregate function applications.
 """
 
 

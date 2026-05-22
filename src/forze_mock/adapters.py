@@ -483,55 +483,50 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     if isinstance(raw, (int, float)):
         return datetime.fromtimestamp(float(raw), tz=timezone.utc)
 
-    raise CoreError(f"Invalid timestamp for $time_bucket: {raw!r}")
+    raise CoreError(f"Invalid timestamp for $trunc: {raw!r}")
+
+
+def _group_key_part(doc: JsonDict, expr: object) -> Any:
+    from forze.application.contracts.querying import GroupRef, GroupTrunc
+
+    match expr:
+        case GroupRef(field=field):
+            value = _path_get(doc, field)
+            return None if value is _MISSING else value
+        case GroupTrunc(field=field, unit=unit, timezone=tz):
+            raw_ts = _path_get(doc, field)
+            if raw_ts is _MISSING:
+                return None
+            tb_tz = tzinfo_from_resolved(tz)
+            floored = floor_to_time_bucket(
+                _coerce_datetime_for_bucket(raw_ts),
+                unit=unit,
+                tz=tb_tz,
+            )
+            return floored.isoformat()
+        case _:
+            raise CoreError(f"Unsupported group expression: {expr!r}")
 
 
 def _aggregate_docs(
     docs: Sequence[JsonDict], aggregates: AggregatesExpression
 ) -> list[JsonDict]:
     parsed = AggregatesExpressionParser.parse(aggregates)
-    tb_tz = (
-        tzinfo_from_resolved(parsed.time_bucket.timezone)
-        if parsed.time_bucket is not None
-        else None
-    )
 
     grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
 
     for doc in docs:
-        parts: list[Any] = []
-        if parsed.time_bucket is not None and tb_tz is not None:
-            raw_ts = _path_get(doc, parsed.time_bucket.field)
-            if raw_ts is _MISSING:
-                parts.append(None)
-            else:
-                floored = floor_to_time_bucket(
-                    _coerce_datetime_for_bucket(raw_ts),
-                    unit=parsed.time_bucket.unit,
-                    tz=tb_tz,
-                )
-                parts.append(floored.isoformat())
+        parts = tuple(_group_key_part(doc, group.expr) for group in parsed.groups)
+        grouped.setdefault(parts, []).append(doc)
 
-        parts.extend(
-            None if (value := _path_get(doc, field.field)) is _MISSING else value
-            for field in parsed.fields
-        )
-        key = tuple(parts)
-        grouped.setdefault(key, []).append(doc)
-
-    if not parsed.fields and parsed.time_bucket is None and not grouped:
+    if not parsed.groups and not grouped:
         grouped[()] = []
 
     rows: list[JsonDict] = []
     for key, items in grouped.items():
         row: JsonDict = {}
-        idx = 0
-        if parsed.time_bucket is not None:
-            row[parsed.time_bucket.alias] = key[idx]
-            idx += 1
-        for field in parsed.fields:
-            row[field.alias] = key[idx]
-            idx += 1
+        for group, value in zip(parsed.groups, key, strict=True):
+            row[group.alias] = value
 
         for computed in parsed.computed_fields:
             computed_items = (

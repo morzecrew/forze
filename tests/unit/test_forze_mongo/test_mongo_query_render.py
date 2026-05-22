@@ -300,21 +300,25 @@ class TestMongoAggregateRendering:
             "$median": {"input": "$p", "method": "approximate"},
         }
 
-    def test_renders_time_bucket_in_group_id(self) -> None:
+    def test_renders_trunc_in_group_id(self) -> None:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$groups": {"cat": "category"},
-                "$time_bucket": {
-                    "field": "created_at",
-                    "unit": "week",
-                    "timezone": "+03:00",
+                "$groups": {
+                    "cat": "category",
+                    "week_start": {
+                        "$trunc": {
+                            "field": "created_at",
+                            "unit": "week",
+                            "timezone": "+03:00",
+                        },
+                    },
                 },
                 "$computed": {"n": {"$count": None}},
             },
         )
         group = pipeline[0]["$group"]
-        assert group["_id"]["bucket"] == {
+        assert group["_id"]["week_start"] == {
             "$dateTrunc": {
                 "date": "$created_at",
                 "unit": "week",

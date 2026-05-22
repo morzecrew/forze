@@ -144,6 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking (private imports):** ranked-search cursor helpers, hub/federated/simple `SearchOptions` normalization, and `calculate_effective_field_weights` moved from `forze_postgres.adapters.search` internals to `forze.application.contracts.search`; log codes for ignored options use neutral `search_options_*` prefixes.
 - **Breaking:** Document query/command dep factories are ``factory(ctx, spec)`` without a `cache` argument; resolve cache via ``ctx.cache(spec.cache)`` when set.
 - **Breaking:** Filter literals use `"$values"` (was `"$fields"`). Field-to-field compare uses `"$fields"` (was `"$compare"`). Aggregate group keys use `"$groups"` (was `"$fields"`).
+- **Breaking:** Removed top-level `"$time_bucket"` on aggregate expressions. Calendar grouping is `"$groups": { "<alias>": { "$trunc": { "field", "unit", optional "timezone" } } } }` (map key is the output alias). List/tuple `"$groups"` remains path-only.
 - **Breaking:** `MongoClient` `db` / `collection` and `MongoGateway.coll` are async.
 - **Breaking:** `ExecutionContext` caller identity is `AuthIdentity` only; FastAPI middleware uses `auth_identity_codec`; Temporal codec adds `Forze-Subject-ID`.
 - **Postgres / Mongo:** Gateways and deps use `PostgresClientPort` / `MongoClientPort`; startup hooks still construct concrete clients unless using routed lifecycle + `RoutedPostgresClient` / `RoutedMongoClient`.

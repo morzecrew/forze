@@ -9,7 +9,9 @@ from forze.application.contracts.querying import (
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
-    AggregateTimeBucket,
+    GroupKey,
+    GroupRef,
+    GroupTrunc,
     ParsedAggregates,
     QueryAnd,
     QueryCompare,
@@ -79,33 +81,20 @@ class MongoQueryRenderer:
 
         group_id_el: JsonDict = {}
 
-        if parsed.time_bucket is not None:
-            tb = parsed.time_bucket
-            group_id_el[tb.alias] = {
-                "$dateTrunc": {
-                    "date": f"${tb.field}",
-                    "unit": tb.unit,
-                    "timezone": self._mongo_date_trunc_timezone(tb),
-                    "startOfWeek": "monday",
-                },
-            }
+        for group_key in parsed.groups:
+            group_id_el[group_key.alias] = self._render_group_id_element(group_key)
 
-        group_id_el.update(
-            {field.alias: f"${field.field}" for field in parsed.fields},
-        )
         group_id: JsonDict | None = group_id_el if group_id_el else None
-        group: JsonDict = {"_id": group_id}
+        group_stage: JsonDict = {"_id": group_id}
 
         for computed in parsed.computed_fields:
-            group[computed.alias] = self._render_aggregate_function(computed)
+            group_stage[computed.alias] = self._render_aggregate_function(computed)
 
-        pipeline.append({"$group": group})
+        pipeline.append({"$group": group_stage})
 
         project: JsonDict = {"_id": 0}
-        if parsed.time_bucket is not None:
-            project[parsed.time_bucket.alias] = f"$_id.{parsed.time_bucket.alias}"
-        for field in parsed.fields:
-            project[field.alias] = f"$_id.{field.alias}"
+        for group_key in parsed.groups:
+            project[group_key.alias] = f"$_id.{group_key.alias}"
         for computed in parsed.computed_fields:
             project[computed.alias] = 1
         pipeline.append({"$project": project})
@@ -147,9 +136,24 @@ class MongoQueryRenderer:
 
     # ....................... #
 
+    def _render_group_id_element(self, group_key: GroupKey) -> object:
+        expr = group_key.expr
+        if isinstance(expr, GroupRef):
+            return f"${expr.field}"
+
+        trunc = expr
+        return {
+            "$dateTrunc": {
+                "date": f"${trunc.field}",
+                "unit": trunc.unit,
+                "timezone": self._mongo_date_trunc_timezone(trunc),
+                "startOfWeek": "monday",
+            },
+        }
+
     @staticmethod
-    def _mongo_date_trunc_timezone(tb: AggregateTimeBucket) -> str:
-        tz = tb.timezone
+    def _mongo_date_trunc_timezone(trunc: GroupTrunc) -> str:
+        tz = trunc.timezone
         if tz.mode == "iana":
             return tz.iana
 

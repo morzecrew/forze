@@ -19,17 +19,40 @@ from .time_bucket import ResolvedTimeBucketTimezone, parse_aggregate_timezone
 _ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
 _UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
+_GROUP_OPS: frozenset[str] = frozenset(("$trunc",))
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class AggregateField:
-    """Group key selected into an aggregate result row."""
+class GroupRef:
+    """Group by a document field path."""
+
+    field: str
+    """Source field path."""
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
+class GroupTrunc:
+    """Calendar bucket dimension derived from a timestamp field."""
+
+    field: str
+    """Source field path."""
+
+    unit: Literal["hour", "day", "week", "month"]
+    """Bucket width."""
+
+    timezone: ResolvedTimeBucketTimezone
+    """Resolved IANA or fixed-offset timezone."""
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
+class GroupKey:
+    """One aggregate group dimension with its output alias."""
 
     alias: str
     """Output field alias."""
 
-    field: str
-    """Source field path."""
+    expr: GroupRef | GroupTrunc
+    """Group dimension expression."""
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
@@ -50,44 +73,22 @@ class AggregateComputedField:
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
-class AggregateTimeBucket:
-    """Calendar bucket dimension derived from a timestamp field."""
-
-    field: str
-    """Source field path."""
-
-    unit: Literal["hour", "day", "week", "month"]
-    """Bucket width."""
-
-    alias: str
-    """Output alias (default ``bucket`` on the wire)."""
-
-    timezone: ResolvedTimeBucketTimezone
-    """Resolved IANA or fixed-offset timezone."""
-
-
-@attrs.define(slots=True, frozen=True, match_args=True)
 class ParsedAggregates:
     """Validated aggregate expression."""
 
-    fields: tuple[AggregateField, ...]
-    """Group key fields."""
+    groups: tuple[GroupKey, ...]
+    """Group dimensions in wire declaration order."""
 
     computed_fields: tuple[AggregateComputedField, ...]
     """Computed aggregate fields."""
-
-    time_bucket: AggregateTimeBucket | None = None
-    """Optional calendar bucket group key."""
 
     @property
     def aliases(self) -> frozenset[str]:
         """All output aliases declared by the expression."""
 
-        keys = [field.alias for field in self.fields] + [
+        keys = [group.alias for group in self.groups] + [
             field.alias for field in self.computed_fields
         ]
-        if self.time_bucket is not None:
-            keys.append(self.time_bucket.alias)
 
         return frozenset(keys)
 
@@ -106,9 +107,8 @@ class AggregatesExpressionParser:
 
         raw_computed = cast(Mapping[Any, Any], raw_computed_obj)  # type: ignore[redundant-cast]
 
-        fields_obj: object = expr.get("$groups", {})
-        fields = cls._group_keys(fields_obj)
-        time_bucket = cls._time_bucket(expr.get("$time_bucket"))
+        groups_obj: object = expr.get("$groups", {})
+        groups = cls._group_keys(groups_obj)
         computed_fields = tuple(
             cls._computed(alias, spec) for alias, spec in raw_computed.items()
         )
@@ -116,39 +116,42 @@ class AggregatesExpressionParser:
         if not computed_fields:
             raise CoreError("Aggregates expression requires $computed")
 
-        aliases = [field.alias for field in fields] + [
+        aliases = [group.alias for group in groups] + [
             field.alias for field in computed_fields
         ]
-        if time_bucket is not None:
-            aliases.append(time_bucket.alias)
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:
             raise CoreError(f"Duplicate aggregate aliases: {duplicates}")
 
         return ParsedAggregates(
-            fields=fields,
+            groups=groups,
             computed_fields=computed_fields,
-            time_bucket=time_bucket,
         )
 
     # ....................... #
 
     @classmethod
-    def _group_keys(cls, raw: object) -> tuple[AggregateField, ...]:
+    def _group_keys(cls, raw: object) -> tuple[GroupKey, ...]:
         if isinstance(raw, Mapping):
             mapping = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
 
             return tuple(
-                AggregateField(alias=cls._alias(alias), field=cls._field(field))
-                for alias, field in mapping.items()
+                GroupKey(
+                    alias=cls._alias(alias),
+                    expr=cls._parse_group_value(raw_value),
+                )
+                for alias, raw_value in mapping.items()
             )
 
         if isinstance(raw, (list, tuple)):
             seq = cast(list[Any] | tuple[Any, ...], raw)  # type: ignore[redundant-cast]
 
             return tuple(
-                AggregateField(alias=cls._alias(name), field=cls._field(name))
+                GroupKey(
+                    alias=cls._alias(name),
+                    expr=GroupRef(field=cls._field(name)),
+                )
                 for name in seq
             )
 
@@ -157,44 +160,64 @@ class AggregatesExpressionParser:
     # ....................... #
 
     @classmethod
-    def _time_bucket(cls, raw: object) -> AggregateTimeBucket | None:
-        if raw is None:
-            return None
+    def _parse_group_value(cls, raw: object) -> GroupRef | GroupTrunc:
+        if isinstance(raw, str):
+            return GroupRef(field=cls._field(raw))
 
         if not isinstance(raw, Mapping):
-            raise CoreError(f"Invalid aggregate $time_bucket: {raw!r}")
+            raise CoreError(f"Invalid $groups map value: {raw!r}")
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
-        allowed = {"field", "unit", "timezone", "alias"}
+
+        if len(spec) != 1:
+            raise CoreError(
+                f"$groups map value must declare exactly one operator, got {list(spec)!r}",
+            )
+
+        op, inner = next(iter(spec.items()))
+
+        if op not in _GROUP_OPS:
+            raise CoreError(f"Invalid $groups operator: {op!r}")
+
+        if op == "$trunc":
+            return cls._parse_trunc(inner)
+
+        raise CoreError(f"Invalid $groups operator: {op!r}")
+
+    # ....................... #
+
+    @classmethod
+    def _parse_trunc(cls, raw: object) -> GroupTrunc:
+        if not isinstance(raw, Mapping):
+            raise CoreError(f"Invalid $trunc spec: {raw!r}")
+
+        spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
+        allowed = {"field", "unit", "timezone"}
         extra = set(spec) - allowed
 
         if extra:
-            raise CoreError(f"Invalid $time_bucket keys: {sorted(extra)}")
+            raise CoreError(f"Invalid $trunc keys: {sorted(extra)}")
 
         field = spec.get("field")
         unit = spec.get("unit")
 
         if not isinstance(field, str) or not field.strip():
-            raise CoreError("$time_bucket.field must be a non-empty string")
+            raise CoreError("$trunc.field must be a non-empty string")
 
         if not isinstance(unit, str) or unit not in _UNITS:
             raise CoreError(
-                f"$time_bucket.unit must be one of {sorted(_UNITS)}",
+                f"$trunc.unit must be one of {sorted(_UNITS)}",
             )
-
-        alias_raw = spec.get("alias", "bucket")
-        alias = cls._alias(alias_raw)
 
         tz_raw = spec.get("timezone")
         if tz_raw is not None and not isinstance(tz_raw, str):
-            raise CoreError(f"$time_bucket.timezone must be a string, got {tz_raw!r}")
+            raise CoreError(f"$trunc.timezone must be a string, got {tz_raw!r}")
 
         resolved = parse_aggregate_timezone(tz_raw)
 
-        return AggregateTimeBucket(
+        return GroupTrunc(
             field=cls._field(field),
             unit=cast(Literal["hour", "day", "week", "month"], unit),
-            alias=alias,
             timezone=resolved,
         )
 

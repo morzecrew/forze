@@ -35,7 +35,7 @@ class ResolvedTimeBucketTimezone:
 
 
 def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
-    """Parse wire ``timezone`` for ``$time_bucket`` (IANA name or numeric offset)."""
+    """Parse wire ``timezone`` for ``$trunc`` group expressions (IANA or numeric offset)."""
 
     if wire is None or not str(wire).strip():
         return ResolvedTimeBucketTimezone(mode="iana", iana="UTC", offset=None)

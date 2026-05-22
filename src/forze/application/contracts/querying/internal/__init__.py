@@ -2,9 +2,10 @@
 
 from .aggregate import (
     AggregateComputedField,
-    AggregateField,
-    AggregateTimeBucket,
     AggregatesExpressionParser,
+    GroupKey,
+    GroupRef,
+    GroupTrunc,
     ParsedAggregates,
 )
 from .cast import QueryValueCaster
@@ -15,9 +16,10 @@ from .parse import QueryFilterExpressionParser
 
 __all__ = [
     "AggregateComputedField",
-    "AggregateField",
-    "AggregateTimeBucket",
     "AggregatesExpressionParser",
+    "GroupKey",
+    "GroupRef",
+    "GroupTrunc",
     "ParsedAggregates",
     "QueryFilterExpressionParser",
     "QueryValueCaster",

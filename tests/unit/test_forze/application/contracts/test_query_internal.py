@@ -7,6 +7,8 @@ import pytest
 
 from forze.application.contracts.querying import AggregatesExpressionParser
 from forze.application.contracts.querying.internal import (
+    GroupRef,
+    GroupTrunc,
     QueryAnd,
     QueryCompare,
     QueryExpr,
@@ -33,7 +35,8 @@ class TestAggregatesExpressionParser:
         )
 
         assert parsed.aliases == {"category", "rows", "revenue"}
-        assert parsed.fields[0].field == "category"
+        assert isinstance(parsed.groups[0].expr, GroupRef)
+        assert parsed.groups[0].expr.field == "category"
         assert parsed.computed_fields[0].function == "$count"
 
     def test_parses_group_fields_as_name_sequence(self) -> None:
@@ -43,8 +46,8 @@ class TestAggregatesExpressionParser:
                 "$computed": {"n": {"$count": None}},
             },
         )
-        assert [f.alias for f in parsed.fields] == ["detail_id", "warehouse_id"]
-        assert [f.field for f in parsed.fields] == ["detail_id", "warehouse_id"]
+        assert [g.alias for g in parsed.groups] == ["detail_id", "warehouse_id"]
+        assert [g.expr.field for g in parsed.groups] == ["detail_id", "warehouse_id"]
 
     def test_rejects_invalid_count_argument(self) -> None:
         with pytest.raises(CoreError, match="expects no field"):
@@ -112,32 +115,70 @@ class TestAggregatesExpressionParser:
                 },
             )
 
-    def test_parses_time_bucket(self) -> None:
+    def test_parses_trunc_group(self) -> None:
         parsed = AggregatesExpressionParser.parse(
             {
-                "$groups": {"item": "item_id"},
-                "$time_bucket": {
-                    "field": "ts",
-                    "unit": "day",
-                    "timezone": "+3",
-                    "alias": "day_start",
+                "$groups": {
+                    "item": "item_id",
+                    "day_start": {
+                        "$trunc": {
+                            "field": "ts",
+                            "unit": "day",
+                            "timezone": "+3",
+                        },
+                    },
                 },
                 "$computed": {"avg_p": {"$avg": "price"}},
             },
         )
-        assert parsed.time_bucket is not None
-        assert parsed.time_bucket.field == "ts"
-        assert parsed.time_bucket.unit == "day"
-        assert parsed.time_bucket.alias == "day_start"
-        assert parsed.time_bucket.timezone.mode == "fixed"
+        assert len(parsed.groups) == 2
+        trunc = parsed.groups[1]
+        assert trunc.alias == "day_start"
+        assert isinstance(trunc.expr, GroupTrunc)
+        assert trunc.expr.field == "ts"
+        assert trunc.expr.unit == "day"
+        assert trunc.expr.timezone.mode == "fixed"
         assert "day_start" in parsed.aliases
 
-    def test_rejects_duplicate_time_bucket_alias(self) -> None:
+    def test_parses_multiple_trunc_groups(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {
+                    "by_day": {"$trunc": {"field": "ts", "unit": "day"}},
+                    "by_hour": {"$trunc": {"field": "ts", "unit": "hour"}},
+                },
+                "$computed": {"n": {"$count": None}},
+            },
+        )
+        assert len(parsed.groups) == 2
+        assert all(isinstance(g.expr, GroupTrunc) for g in parsed.groups)
+
+    def test_rejects_duplicate_trunc_alias(self) -> None:
         with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
-                    "$groups": {"bucket": "item_id"},
-                    "$time_bucket": {"field": "ts", "unit": "hour"},
+                    "$groups": {
+                        "bucket": "item_id",
+                        "week": {"$trunc": {"field": "ts", "unit": "hour"}},
+                    },
+                    "$computed": {"bucket": {"$count": None}},
+                },
+            )
+
+    def test_rejects_unknown_group_operator(self) -> None:
+        with pytest.raises(CoreError, match="Invalid \\$groups operator"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"x": {"$unknown": {"field": "ts"}}},
+                    "$computed": {"n": {"$count": None}},
+                },
+            )
+
+    def test_rejects_bare_trunc_spec_without_operator(self) -> None:
+        with pytest.raises(CoreError, match="exactly one operator"):
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"day": {"field": "ts", "unit": "day"}},
                     "$computed": {"n": {"$count": None}},
                 },
             )

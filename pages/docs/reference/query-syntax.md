@@ -209,13 +209,17 @@ When `return_count=True` **with** `aggregates`, the total counts **aggregate
 groups**. Sorts for aggregate queries use aggregate output aliases such as
 `revenue`, not source document fields.
 
-Optional **`$time_bucket`** adds another group key: the **start instant** of a
-calendar period for a timestamp field. It composes with `$groups` and all
-`$computed` functions (for example average price per item per day). Units:
-`hour`, `day`, `week` (Monday start, aligned with Postgres `date_trunc` / Mongo
-`$dateTrunc`), `month`. Default timezone is `UTC`. You may pass an **IANA** name
-(`Europe/Berlin`) or a **fixed offset** (`+3`, `+03:00`). Default output alias is
-`bucket`; override with `alias`.
+**`$groups` map values** are either a source path string (group by that field) or a
+single-operator object. Calendar bucketing uses **`$trunc`** (output alias is the
+map key):
+
+    :::python
+    "day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}}
+
+Units: `hour`, `day`, `week` (Monday start, aligned with Postgres `date_trunc` /
+Mongo `$dateTrunc`), `month`. Default timezone is `UTC`. You may pass an **IANA**
+name (`Europe/Berlin`) or a **fixed offset** (`+3`, `+03:00`). List/tuple `$groups`
+accept path strings only (no `$trunc`).
 
 MongoDB **5.0+** is required for `$dateTrunc` bucketing.
 
@@ -225,8 +229,10 @@ model shape). `return_count` then counts documents, not groups.
 
     :::python
     aggregates = {
-        "$groups": {"item_id": "item_id"},
-        "$time_bucket": {"field": "ts", "unit": "day", "timezone": "+3"},
+        "$groups": {
+            "item_id": "item_id",
+            "day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}},
+        },
         "$computed": {"avg_price": {"$avg": "price"}},
     }
 
