@@ -95,8 +95,8 @@ async def test_sort_by_nested_jsonb_field(pg_client: PostgresClient) -> None:
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(
         RowCreate(title="c", meta=Meta(score=30, tag="low")),
@@ -135,8 +135,8 @@ async def test_filter_on_nested_jsonb_scalar(pg_client: PostgresClient) -> None:
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="keep", meta=Meta(score=5, tag="x")))
     await cmd.create(RowCreate(title="drop", meta=Meta(score=50, tag="y")))
@@ -170,8 +170,8 @@ async def test_logical_and_across_top_level_and_nested_paths(
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="match", meta=Meta(score=7, tag="a")))
     await cmd.create(RowCreate(title="other", meta=Meta(score=7, tag="b")))
@@ -206,8 +206,8 @@ async def test_logical_or_nested_and_top_level(pg_client: PostgresClient) -> Non
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="low", meta=Meta(score=1, tag="p")))
     await cmd.create(RowCreate(title="high", meta=Meta(score=100, tag="q")))
@@ -246,8 +246,8 @@ async def test_filter_on_nested_string_leaf(pg_client: PostgresClient) -> None:
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="x", meta=Meta(score=1, tag="gold")))
     await cmd.create(RowCreate(title="y", meta=Meta(score=2, tag="silver")))
@@ -277,8 +277,8 @@ async def test_multi_field_sort_nested_then_scalar(pg_client: PostgresClient) ->
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="b", meta=Meta(score=10, tag="p")))
     await cmd.create(RowCreate(title="a", meta=Meta(score=10, tag="q")))

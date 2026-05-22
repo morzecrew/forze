@@ -1,84 +1,71 @@
-"""Unit tests for SearchKernelOp and SearchUsecasesFacade."""
+"""Unit tests for SearchKernelOp and SearchFacade."""
 
+from unittest.mock import AsyncMock, MagicMock
+
+import attrs
 import pytest
 
-from forze.application.composition.search import (
-    SearchKernelOp,
-    SearchUsecasesFacade,
-)
-from forze.application.execution import ExecutionContext, OperationNamespace, UsecaseRegistry
+from forze.application.composition.search import SearchFacade, SearchKernelOp
+from forze.application.contracts.execution import Handler
+from forze.application.execution.registry import OperationRegistry
+from forze.application.handlers.search.dto import SearchRequestDTO
+from forze.base.primitives import StrKeyNamespace
 
 # ----------------------- #
 
-_SEARCH_KEYS = OperationNamespace(prefix="search")
+_SEARCH_KEYS = StrKeyNamespace(prefix="search")
 
 
 class TestSearchKernelOp:
-    """Tests for :class:`SearchKernelOp` and default keyspace."""
+    def test_typed_kernel_suffix(self) -> None:
+        assert str(SearchKernelOp.TYPED) == "typed"
+        assert _SEARCH_KEYS.key(SearchKernelOp.TYPED) == "search.typed"
 
-    def test_typed_search_wire_key(self) -> None:
-        assert _SEARCH_KEYS.op(SearchKernelOp.TYPED) == "search.typed"
-
-    def test_raw_search_wire_key(self) -> None:
-        assert _SEARCH_KEYS.op(SearchKernelOp.RAW) == "search.raw"
-
-    def test_typed_search_cursor_wire_key(self) -> None:
-        assert _SEARCH_KEYS.op(SearchKernelOp.TYPED_CURSOR) == "search.typed_cursor"
-
-    def test_raw_search_cursor_wire_key(self) -> None:
-        assert _SEARCH_KEYS.op(SearchKernelOp.RAW_CURSOR) == "search.raw_cursor"
-
-    def test_all_members_string_values(self) -> None:
-        for op in SearchKernelOp:
-            assert isinstance(op.value, str)
-            assert len(op.value) > 0
+    def test_raw_kernel_suffix(self) -> None:
+        assert str(SearchKernelOp.RAW) == "raw"
+        assert _SEARCH_KEYS.key(SearchKernelOp.RAW) == "search.raw"
 
 
-class TestSearchUsecasesFacade:
-    """Tests for SearchUsecasesFacade."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StubProjectedSearch(Handler[SearchRequestDTO, list]):
+    async def __call__(self, args: SearchRequestDTO) -> list:
+        return []
 
+
+class TestSearchFacade:
     @pytest.fixture
-    def mock_raw_search_usecase(self) -> UsecaseRegistry:
-        """Registry with raw search operation only."""
-        from forze.application.execution import Usecase
-
-        class StubRawSearchUsecase(Usecase[dict, dict]):
-            async def main(self, args: dict) -> dict:
-                return {"hits": [], "count": 0}
-
-        reg = UsecaseRegistry().register(
-            _SEARCH_KEYS.op(SearchKernelOp.RAW),
-            lambda ctx: StubRawSearchUsecase(ctx=ctx),
+    def mock_raw_registry(self) -> OperationRegistry:
+        return OperationRegistry(
+            handlers={
+                _SEARCH_KEYS.key(SearchKernelOp.RAW): lambda _ctx: StubProjectedSearch(),
+            }
         )
-        reg.finalize("search_facade")
-        return reg
 
-    def test_raw_search_returns_usecase(
+    def test_projected_search_returns_resolved_operation(
         self,
-        stub_ctx: ExecutionContext,
-        mock_raw_search_usecase: UsecaseRegistry,
+        stub_ctx,
+        mock_raw_registry: OperationRegistry,
     ) -> None:
-        facade = SearchUsecasesFacade(
+        frozen = mock_raw_registry.freeze()
+        facade = SearchFacade(
             ctx=stub_ctx,
-            registry=mock_raw_search_usecase,
+            registry=frozen,
             namespace=_SEARCH_KEYS,
         )
-        uc = facade.raw_search
-        assert uc is not None
+        assert facade.projected_search is not None
 
     def test_search_not_supported_raises(
         self,
-        stub_ctx: ExecutionContext,
-        mock_raw_search_usecase: UsecaseRegistry,
+        stub_ctx,
+        mock_raw_registry: OperationRegistry,
     ) -> None:
         from forze.base.errors import CoreError
 
-        facade = SearchUsecasesFacade(
+        frozen = mock_raw_registry.freeze()
+        facade = SearchFacade(
             ctx=stub_ctx,
-            registry=mock_raw_search_usecase,
+            registry=frozen,
             namespace=_SEARCH_KEYS,
         )
-        with pytest.raises(
-            CoreError, match="not registered for operation: search.typed"
-        ):
-            facade.search()
+        with pytest.raises(CoreError, match="Handler factory not found"):
+            _ = facade.search

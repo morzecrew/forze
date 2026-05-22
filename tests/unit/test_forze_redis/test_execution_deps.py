@@ -18,7 +18,7 @@ from forze.application.contracts.dlock import (
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext, Deps, ExecutionContext
+from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
@@ -76,10 +76,13 @@ class TestRedisDepsModule:
         )
         ctx = _ctx()
         tid = uuid4()
-        with ctx.bind_call(
-            call=CallContext(execution_id=uuid4(), correlation_id=uuid4()),
-            identity=AuthnIdentity(principal_id=uuid4()),
-            tenancy=TenantIdentity(tenant_id=tid),
+        with ctx.inv.bind(
+            metadata=InvocationMetadata(
+                execution_id=uuid4(),
+                correlation_id=uuid4(),
+            ),
+            authn=AuthnIdentity(principal_id=uuid4()),
+            tenant=TenantIdentity(tenant_id=tid),
         ):
             spec = CacheSpec(name="cache")
             adapter = factory(ctx, spec)
@@ -124,7 +127,7 @@ class TestRedisDepsModule:
 
         deps = RedisDepsModule(client=MagicMock(spec=RedisClient), dlocks={"dl": {"namespace": "x"}})()
         ctx2 = ExecutionContext(deps=deps)
-        q = ctx2.dlock_query(spec)
-        c = ctx2.dlock_command(spec)
+        q = ctx2.dlock.query(spec)
+        c = ctx2.dlock.command(spec)
         assert isinstance(q, RedisDistributedLockAdapter)
         assert isinstance(c, RedisDistributedLockAdapter)

@@ -72,8 +72,8 @@ async def _setup(
 async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
     col = f"mn_sort_{uuid4().hex[:8]}"
     ctx, spec = await _setup(mongo_client, col)
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="c", meta=Meta(score=30)))
     await cmd.create(RowCreate(title="a", meta=Meta(score=10)))
@@ -93,8 +93,8 @@ async def test_sort_by_dotted_nested_field(mongo_client: MongoClient) -> None:
 async def test_filter_nested_numeric_operator(mongo_client: MongoClient) -> None:
     col = f"mn_filt_{uuid4().hex[:8]}"
     ctx, spec = await _setup(mongo_client, col)
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="in", meta=Meta(score=3, tag="x")))
     await cmd.create(RowCreate(title="out", meta=Meta(score=300, tag="y")))
@@ -114,8 +114,8 @@ async def test_and_or_combinators_with_nested_paths(
 ) -> None:
     col = f"mn_log_{uuid4().hex[:8]}"
     ctx, spec = await _setup(mongo_client, col)
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="alpha", meta=Meta(score=5, tag="t1")))
     await cmd.create(RowCreate(title="beta", meta=Meta(score=5, tag="t2")))
@@ -151,8 +151,8 @@ async def test_multi_field_sort_including_nested(mongo_client: MongoClient) -> N
     """Stable ordering: nested score first, then top-level title."""
     col = f"mn_msort_{uuid4().hex[:8]}"
     ctx, spec = await _setup(mongo_client, col)
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(RowCreate(title="b", meta=Meta(score=10)))
     await cmd.create(RowCreate(title="a", meta=Meta(score=10)))

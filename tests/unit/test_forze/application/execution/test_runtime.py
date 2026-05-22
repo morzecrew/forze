@@ -38,7 +38,7 @@ class TestExecutionRuntime:
         async def shut(ctx):
             order.append("shut")
 
-        step = LifecycleStep(name="s", startup=start, shutdown=shut)
+        step = LifecycleStep(id="s", startup=start, shutdown=shut)
         plan = LifecyclePlan.from_steps(step)
         rt = ExecutionRuntime(lifecycle=plan)
 

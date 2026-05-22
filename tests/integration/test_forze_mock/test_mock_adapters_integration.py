@@ -8,8 +8,9 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
-from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.application.contracts.storage import UploadedObject
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion
+from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 from forze_mock import (
     MockCacheAdapter,
     MockDocumentAdapter,
@@ -20,7 +21,7 @@ from forze_mock import (
 )
 
 
-class _ItemDoc(Document, SoftDeletionMixin):
+class _ItemDoc(DocWithSoftDeletion):
     title: str
 
 
@@ -96,15 +97,17 @@ async def test_mock_shared_state_document_search_storage_cache_and_queue() -> No
     assert any("integrate" in getattr(h, "title", "").lower() for h in hits)
 
     stored = await storage.upload(
-        "note.txt",
-        b"hello",
-        description="mock integration",
-        prefix="docs",
+        UploadedObject(
+            filename="note.txt",
+            data=b"hello",
+            description="mock integration",
+            prefix="docs",
+        ),
     )
-    assert stored["size"] == 5
+    assert stored.size == 5
 
-    dl = await storage.download(stored["key"])
-    assert dl["data"] == b"hello"
+    dl = await storage.download(stored.key)
+    assert dl.data == b"hello"
 
     now = datetime.now(tz=UTC)
     await cache.set_versioned("user-1", "v1", {"seen": True})

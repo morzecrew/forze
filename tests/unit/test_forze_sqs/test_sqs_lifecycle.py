@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import SecretStr
 
 from forze.application.execution import Deps, ExecutionContext
 from forze_sqs.execution.deps import SQSClientDepKey
@@ -32,7 +33,7 @@ async def test_sqs_startup_hook_initializes_client() -> None:
         endpoint="http://localhost:4566",
         region_name="us-east-1",
         access_key_id="test",
-        secret_access_key="test",
+        secret_access_key=SecretStr("test"),
         config=config,
     )
 
@@ -59,6 +60,6 @@ def test_sqs_lifecycle_step_builds_hooks() -> None:
         config=config,
     )
 
-    assert step.name == "sqs_lifecycle"
+    assert step.id == "sqs_lifecycle"
     assert isinstance(step.startup, SQSStartupHook)
     assert isinstance(step.shutdown, SQSShutdownHook)

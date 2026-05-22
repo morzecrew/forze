@@ -1,12 +1,14 @@
 """Unit tests for forze.application.composition.storage."""
 
 from forze.application.composition.storage import (
+    StorageFacade,
     StorageKernelOp,
-    StorageUsecasesFacade,
     build_storage_registry,
 )
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution import UsecaseRegistry, operation_namespace_for
+from forze.application.execution.registry import OperationRegistry
+
+from ..registry_helpers import registry_has_handler
 
 # ----------------------- #
 
@@ -18,39 +20,37 @@ class TestBuildStorageRegistry:
 
     def test_returns_registry(self) -> None:
         reg = build_storage_registry(_FILES)
-        assert isinstance(reg, UsecaseRegistry)
+        assert isinstance(reg, OperationRegistry)
 
     def test_has_core_operations(self) -> None:
         reg = build_storage_registry(_FILES)
-        ops = operation_namespace_for(_FILES)
-        assert reg.exists(ops.op(StorageKernelOp.UPLOAD))
-        assert reg.exists(ops.op(StorageKernelOp.LIST))
-        assert reg.exists(ops.op(StorageKernelOp.DOWNLOAD))
-        assert reg.exists(ops.op(StorageKernelOp.DELETE))
+        ns = _FILES.default_namespace
+        assert registry_has_handler(reg, ns.key(StorageKernelOp.UPLOAD))
+        assert registry_has_handler(reg, ns.key(StorageKernelOp.LIST))
+        assert registry_has_handler(reg, ns.key(StorageKernelOp.DOWNLOAD))
+        assert registry_has_handler(reg, ns.key(StorageKernelOp.DELETE))
 
-    def test_resolve_upload_returns_usecase(
+    def test_resolve_upload_returns_handler(
         self,
         composition_ctx,
     ) -> None:
-        reg = build_storage_registry(_FILES)
-        reg.finalize("storage")
-        uc = reg.resolve(operation_namespace_for(_FILES).op(StorageKernelOp.UPLOAD), composition_ctx)
-        assert uc is not None
+        reg = build_storage_registry(_FILES).freeze()
+        op = _FILES.default_namespace.key(StorageKernelOp.UPLOAD)
+        resolved = reg.resolve(op, composition_ctx)
+        assert resolved is not None
 
 
 class TestStorageFacadeWithRegistry:
-    """Tests for StorageUsecasesFacade with build_storage_registry."""
+    """Tests for StorageFacade with build_storage_registry."""
 
-    def test_facade_resolves_upload_usecase(
+    def test_facade_resolves_upload(
         self,
         composition_ctx,
     ) -> None:
-        reg = build_storage_registry(_FILES)
-        reg.finalize("storage")
-        facade = StorageUsecasesFacade(
+        reg = build_storage_registry(_FILES).freeze()
+        facade = StorageFacade(
             ctx=composition_ctx,
             registry=reg,
-            namespace=operation_namespace_for(_FILES),
+            namespace=_FILES.default_namespace,
         )
-        uc = facade.upload
-        assert uc is not None
+        assert facade.upload is not None

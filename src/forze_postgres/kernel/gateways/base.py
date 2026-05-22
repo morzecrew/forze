@@ -313,7 +313,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             return _WRITE_VALUE_COERCER.array(
                 v,
                 t=elem_t,
-                raise_on_scalar_t=True,
+                raise_on_scalar_t=False,
             )
 
         if t.base in {"jsonb", "json"}:

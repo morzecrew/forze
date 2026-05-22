@@ -44,7 +44,7 @@ def _stub_endpoint_spec() -> HttpEndpointSpec[Any, Any, Any, Any, Any, None, Non
     return build_http_endpoint_spec(
         "dummy.noop",
         http=http,
-        mapper=EmptyMapper(),
+        request_mapper=EmptyMapper(),
     )
 
 

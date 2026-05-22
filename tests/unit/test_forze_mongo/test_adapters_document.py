@@ -25,6 +25,7 @@ class MyCreateDoc(CreateDocumentCmd):
 
 class MyUpdateDoc(BaseDTO):
     name: str | None = None
+    is_deleted: bool | None = None
 
 
 class MyReadDoc(ReadDocument):
@@ -422,12 +423,11 @@ class TestMongoDocumentAdapterReturnNew:
         read_gw.get_many.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_delete_restore_skips_read_when_return_new_false(self) -> None:
+    async def test_soft_delete_restore_skips_read_when_return_new_false(self) -> None:
         pk = uuid4()
         read_gw = _build_read_gateway()
         write_gw = _build_write_gateway(read_gw.client)
-        write_gw.delete = AsyncMock()
-        write_gw.restore = AsyncMock()
+        write_gw.update = AsyncMock(return_value=(None, {}))
         cache = MagicMock()
         cache.delete_many = AsyncMock()
 
@@ -438,12 +438,18 @@ class TestMongoDocumentAdapterReturnNew:
             cache_coord=_mongo_cc(read_gw, ms, cache=cache),
         )
 
-        assert await adapter.delete(pk, 1, return_new=False) is None
-        write_gw.delete.assert_awaited_once_with(pk, rev=1)
+        assert (
+            await adapter.update(pk, 1, MyUpdateDoc(is_deleted=True), return_new=False)
+            is None
+        )
+        write_gw.update.assert_awaited()
         read_gw.get.assert_not_awaited()
 
-        assert await adapter.restore(pk, 2, return_new=False) is None
-        write_gw.restore.assert_awaited_once_with(pk, rev=2)
+        assert (
+            await adapter.update(pk, 2, MyUpdateDoc(is_deleted=False), return_new=False)
+            is None
+        )
+        assert write_gw.update.await_count == 2
         read_gw.get.assert_not_awaited()
 
 
@@ -910,16 +916,15 @@ class TestMongoDocumentAdapterMutationsWithCache:
         assert cache.delete_many.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_delete_restore_delete_many_restore_many_with_readback(self) -> None:
+    async def test_soft_delete_restore_with_readback(self) -> None:
         pk = uuid4()
         read = _read_doc(pk, rev=2)
         read_gw = _build_read_gateway()
         read_gw.get.return_value = read
-        read_gw.get_many.return_value = [read]
         write_gw = _build_write_gateway(read_gw.client)
+        write_gw.update = AsyncMock(return_value=(None, {}))
         cache = MagicMock()
         cache.set_versioned = AsyncMock()
-        cache.set_many_versioned = AsyncMock()
         cache.delete_many = AsyncMock()
 
         adapter = MongoDocumentAdapter(
@@ -928,29 +933,6 @@ class TestMongoDocumentAdapterMutationsWithCache:
             write_gw=write_gw,
             cache_coord=_mongo_cc(read_gw, ms, cache=cache),
         )
-        assert await adapter.delete(pk, 1) == read
-        assert await adapter.restore(pk, 2) == read
-
-        p2 = uuid4()
-        r2 = _read_doc(p2)
-        read_gw.get_many.return_value = [read, r2]
-        assert await adapter.delete_many([(pk, 1), (p2, 1)]) == [read, r2]
-        assert await adapter.restore_many([(pk, 2), (p2, 2)]) == [read, r2]
-
-    @pytest.mark.asyncio
-    async def test_delete_many_restore_many_return_new_false(self) -> None:
-        pk, pk2 = uuid4(), uuid4()
-        read_gw = _build_read_gateway()
-        write_gw = _build_write_gateway(read_gw.client)
-        cache = MagicMock()
-        cache.delete_many = AsyncMock()
-
-        adapter = MongoDocumentAdapter(
-            spec=(ms := _doc_spec()),
-            read_gw=read_gw,
-            write_gw=write_gw,
-            cache_coord=_mongo_cc(read_gw, ms, cache=cache),
-        )
-        assert await adapter.delete_many([(pk, 1)], return_new=False) is None
-        assert await adapter.restore_many([(pk2, 1)], return_new=False) is None
-        read_gw.get_many.assert_not_awaited()
+        assert await adapter.update(pk, 1, MyUpdateDoc(is_deleted=True)) == read
+        assert await adapter.update(pk, 2, MyUpdateDoc(is_deleted=False)) == read
+        write_gw.update.assert_awaited()

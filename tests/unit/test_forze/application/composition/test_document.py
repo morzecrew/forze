@@ -4,26 +4,27 @@ import pytest
 
 from forze.application.composition.document import (
     DocumentDTOs,
+    DocumentFacade,
     DocumentKernelOp,
-    build_document_create_mapper,
     build_document_registry,
 )
-from forze.application.composition.document.factories import (
-    build_document_list_mapper,
-    build_document_raw_list_mapper,
-    build_document_update_mapper,
-)
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import OperationNamespace, UsecaseRegistry, operation_namespace_for
-from forze.application.composition.mapping import DTOMapper
-from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+from forze.application.execution.registry import OperationRegistry
+from forze.base.primitives import StrKeyNamespace
+from forze_contrib.soft_deletion.composition import (
+    SoftDeletionKernelOp,
+    build_soft_deletion_registry,
+)
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+
+from ..registry_helpers import handler_at, registry_has_handler
 
 # ----------------------- #
 
 
-class _SoftDoc(Document, SoftDeletionMixin):
-    """Document with soft-delete for facade validation tests."""
+class _SoftDoc(DocWithSoftDeletion):
+    """Document with soft-delete for registry tests."""
 
     pass
 
@@ -31,12 +32,7 @@ class _SoftDoc(Document, SoftDeletionMixin):
 def _minimal_spec(
     supports_update: bool = False, supports_soft_delete: bool = False
 ) -> DocumentSpec:
-    """Build a minimal DocumentSpec for testing."""
-    from forze.domain.models import BaseDTO
-
     class UpdateCmd(BaseDTO):
-        """Minimal update DTO with one field for supports_update."""
-
         title: str | None = None
 
     update_cmd = UpdateCmd if supports_update else type("EmptyUpdate", (BaseDTO,), {})
@@ -53,9 +49,6 @@ def _minimal_spec(
 
 
 def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
-    """Build minimal DocumentDTOs for testing."""
-    from forze.domain.models import BaseDTO
-
     class UpdateCmd(BaseDTO):
         title: str | None = None
 
@@ -67,92 +60,6 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
     )
 
 
-class TestBuildDocumentCreateMapper:
-    """Tests for build_document_create_mapper."""
-
-    def test_returns_mapper_when_spec_supports_create(self) -> None:
-        spec = _minimal_spec()
-        dtos = _minimal_dtos()
-        mapper = build_document_create_mapper(spec, dtos)
-        assert isinstance(mapper, DTOMapper)
-        assert mapper.in_ == CreateDocumentCmd
-        assert mapper.out == CreateDocumentCmd
-
-    def test_raises_when_spec_has_no_write(self) -> None:
-        from forze.base.errors import CoreError
-
-        spec = DocumentSpec(
-            name="test",
-            read=ReadDocument,
-            write=None,
-        )
-        dtos = _minimal_dtos()
-        with pytest.raises(CoreError, match="does not support write operations"):
-            build_document_create_mapper(spec, dtos)
-
-    def test_raises_when_dtos_has_no_create(self) -> None:
-        from forze.base.errors import CoreError
-
-        spec = _minimal_spec()
-        dtos = DocumentDTOs(read=ReadDocument)
-        with pytest.raises(CoreError, match="does not support create operations"):
-            build_document_create_mapper(spec, dtos)
-
-
-class TestBuildDocumentUpdateMapper:
-    """Tests for build_document_update_mapper."""
-
-    def test_returns_mapper_when_spec_supports_update(self) -> None:
-        spec = _minimal_spec(supports_update=True)
-        dtos = _minimal_dtos(supports_update=True)
-        mapper = build_document_update_mapper(spec, dtos)
-        assert isinstance(mapper, DTOMapper)
-
-    def test_raises_when_spec_has_no_write(self) -> None:
-        from forze.base.errors import CoreError
-
-        spec = DocumentSpec(
-            name="test",
-            read=ReadDocument,
-            write=None,
-        )
-        dtos = _minimal_dtos(supports_update=True)
-        with pytest.raises(CoreError, match="does not support write operations"):
-            build_document_update_mapper(spec, dtos)
-
-    def test_raises_when_dtos_has_no_update(self) -> None:
-        from forze.base.errors import CoreError
-
-        spec = _minimal_spec(supports_update=True)
-        dtos = DocumentDTOs(read=ReadDocument, create=CreateDocumentCmd)
-        with pytest.raises(CoreError, match="does not support update operations"):
-            build_document_update_mapper(spec, dtos)
-
-
-class TestBuildDocumentListMapper:
-    """Tests for build_document_list_mapper."""
-
-    def test_returns_mapper(self) -> None:
-        from forze.application.dto import ListRequestDTO
-
-        mapper = build_document_list_mapper()
-        assert isinstance(mapper, DTOMapper)
-        assert mapper.in_ == ListRequestDTO
-        assert mapper.out == ListRequestDTO
-
-
-class TestBuildDocumentRawListMapper:
-    """Tests for build_document_raw_list_mapper."""
-
-    def test_returns_mapper(self) -> None:
-        from forze.application.dto import RawListRequestDTO
-
-        mapper = build_document_raw_list_mapper()
-        assert isinstance(mapper, DTOMapper)
-        assert mapper.in_ == RawListRequestDTO
-        assert mapper.out == RawListRequestDTO
-
-
 class TestBuildDocumentRegistry:
     """Tests for build_document_registry."""
 
@@ -160,67 +67,88 @@ class TestBuildDocumentRegistry:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        assert isinstance(reg, UsecaseRegistry)
+        assert isinstance(reg, OperationRegistry)
 
     def test_has_core_operations(self) -> None:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        ops = operation_namespace_for(spec)
-        assert reg.exists(ops.op(DocumentKernelOp.GET))
-        assert reg.exists(ops.op(DocumentKernelOp.CREATE))
-        assert reg.exists(ops.op(DocumentKernelOp.KILL))
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.GET))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.CREATE))
+        assert registry_has_handler(reg, ns.key(DocumentKernelOp.KILL))
 
     def test_update_registered_when_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=True)
         dtos = _minimal_dtos(supports_update=True)
         reg = build_document_registry(spec, dtos)
-        assert reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.UPDATE))
+        assert registry_has_handler(
+            reg, spec.default_namespace.key(DocumentKernelOp.UPDATE)
+        )
 
     def test_update_not_registered_when_no_supports_update(self) -> None:
         spec = _minimal_spec(supports_update=False)
         dtos = _minimal_dtos()
         reg = build_document_registry(spec, dtos)
-        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.UPDATE))
+        assert not registry_has_handler(
+            reg, spec.default_namespace.key(DocumentKernelOp.UPDATE)
+        )
 
-    def test_resolve_get_returns_usecase(
+    def test_resolve_get_returns_handler(
         self,
         composition_ctx,
     ) -> None:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
-        reg = build_document_registry(spec, dtos)
-        reg.finalize("document")
-        uc = reg.resolve(operation_namespace_for(spec).op(DocumentKernelOp.GET), composition_ctx)
-        assert uc is not None
+        reg = build_document_registry(spec, dtos).freeze()
+        op = spec.default_namespace.key(DocumentKernelOp.GET)
+        resolved = reg.resolve(op, composition_ctx)
+        assert resolved is not None
 
-    def test_custom_op_key_space_registers_prefixed_keys(self) -> None:
+    def test_custom_namespace_registers_prefixed_keys(self) -> None:
         spec = _minimal_spec()
         dtos = _minimal_dtos()
-        custom = OperationNamespace(prefix="orders.document")
-        reg = build_document_registry(spec, dtos, namespace=custom)
-        assert reg.exists(custom.op(DocumentKernelOp.GET))
-        assert not reg.exists(operation_namespace_for(spec).op(DocumentKernelOp.GET))
+        custom = StrKeyNamespace(prefix="orders")
+        reg = build_document_registry(spec, dtos, ns=custom)
+        assert registry_has_handler(reg, custom.key(DocumentKernelOp.GET))
+        assert not registry_has_handler(
+            reg, spec.default_namespace.key(DocumentKernelOp.GET)
+        )
 
 
 class TestDocumentFacadeWithRegistry:
-    """Tests for DocumentUsecasesFacade with build_document_registry."""
+    """Tests for DocumentFacade with build_document_registry."""
 
-    def test_facade_resolves_get_usecase(
+    def test_facade_resolves_get_operation(
         self,
         composition_ctx,
     ) -> None:
-        """Facade built from registry resolves get usecase."""
-        from forze.application.composition.document import DocumentUsecasesFacade
-
         spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
         dtos = _minimal_dtos(supports_update=True)
-        reg = build_document_registry(spec, dtos).tx("*", route="mock")
-        reg.finalize("document")
-        facade = DocumentUsecasesFacade(
+        reg = build_document_registry(spec, dtos).freeze()
+        facade = DocumentFacade(
             ctx=composition_ctx,
             registry=reg,
-            namespace=operation_namespace_for(spec),
+            namespace=spec.default_namespace,
         )
-        uc = facade.get
-        assert uc is not None
+        op = facade.get
+        assert op is not None
+
+
+class TestSoftDeletionRegistryMerge:
+    def test_soft_delete_ops_from_contrib_registry(self) -> None:
+        spec = _minimal_spec(supports_update=True, supports_soft_delete=True)
+        dtos = _minimal_dtos(supports_update=True)
+        doc_reg = build_document_registry(spec, dtos)
+        soft_reg = build_soft_deletion_registry(spec)
+        reg = OperationRegistry.merge(doc_reg, soft_reg)
+        ns = spec.default_namespace
+        assert registry_has_handler(reg, ns.key(SoftDeletionKernelOp.DELETE))
+        assert registry_has_handler(reg, ns.key(SoftDeletionKernelOp.RESTORE))
+
+    def test_no_soft_delete_without_contrib_registry(self) -> None:
+        spec = _minimal_spec(supports_soft_delete=True)
+        dtos = _minimal_dtos()
+        reg = build_document_registry(spec, dtos)
+        ns = spec.default_namespace
+        assert not registry_has_handler(reg, ns.key(SoftDeletionKernelOp.DELETE))

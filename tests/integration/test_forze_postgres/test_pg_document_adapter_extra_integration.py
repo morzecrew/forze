@@ -14,11 +14,11 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_postgres.execution.deps.deps import (
@@ -49,7 +49,7 @@ class _CxRead(ReadDocument):
     sku: str
 
 
-class _SoftDoc(Document, SoftDeletionMixin):
+class _SoftDoc(DocWithSoftDeletion):
     label: str
 
 
@@ -57,7 +57,7 @@ class _SoftCreate(CreateDocumentCmd):
     label: str
 
 
-class _SoftUpdate(BaseDTO):
+class _SoftUpdate(UpdateCmdWithSoftDeletion):
     label: str | None = None
 
 
@@ -91,7 +91,7 @@ def _ctx_cached(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -112,7 +112,7 @@ def _ctx_cached_tx(
     pg_client: PostgresClient,
     table: str,
 ) -> tuple[ExecutionContext, DocumentSpec]:
-    """Like :func:`_ctx_cached` but registers ``TxManagerDepKey`` route ``main`` for :meth:`ExecutionContext.transaction`."""
+    """Like :func:`_ctx_cached` but registers ``TransactionManagerDepKey`` route ``main`` for :meth:`ExecutionContext.tx.scope`."""
 
     cache_spec = CacheSpec(name=f"cache_{table}")
     spec = DocumentSpec(
@@ -135,7 +135,7 @@ def _ctx_cached_tx(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
     plain = Deps.plain(
         {
@@ -147,7 +147,7 @@ def _ctx_cached_tx(
             CacheDepKey: _cache_factory,
         }
     )
-    routed = Deps.routed({TxManagerDepKey: {"main": postgres_txmanager}})
+    routed = Deps.routed({TransactionManagerDepKey: {"main": postgres_txmanager}})
     ctx = ExecutionContext(deps=plain.merge(routed))
     return ctx, spec
 
@@ -187,8 +187,8 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     ids = [
         UUID("20000000-0000-0000-0000-000000000001"),
@@ -246,8 +246,8 @@ async def test_pg_adapter_find_many_count_zero_and_countless_page(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     await cmd.create(_CxCreate(sku="only"))
 
@@ -277,8 +277,8 @@ async def test_pg_adapter_find_and_find_many_projections_with_count(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     await cmd.create(_CxCreate(sku="apple"))
     await cmd.create(_CxCreate(sku="banana"))
@@ -309,8 +309,8 @@ async def test_pg_adapter_project_cursor_requires_sort_fields_in_projection(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     await cmd.create(_CxCreate(sku="x"))
 
@@ -333,9 +333,9 @@ async def test_pg_adapter_read_through_cache_get_and_get_many(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
-    state = ctx.dep(MockStateDepKey)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
+    state = ctx.deps.provide(MockStateDepKey)
     assert spec.cache is not None
     bodies = state.cache_bodies.setdefault(spec.cache.name, {})
 
@@ -372,15 +372,13 @@ async def test_pg_adapter_mutation_branches_and_empty_batches(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     assert await cmd.create_many([], return_new=False) is None
     assert await cmd.ensure_many([], return_new=False) is None
     assert await cmd.upsert_many([], return_new=False) is None
     assert await cmd.update_many([], return_new=False) is None
     assert await cmd.touch_many([], return_new=False) is None
-    assert await cmd.delete_many([], return_new=False) is None
-    assert await cmd.restore_many([], return_new=False) is None
     assert await cmd.kill_many([]) is None
 
     base = await cmd.create(_CxCreate(sku="base"))
@@ -460,7 +458,7 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -474,22 +472,19 @@ async def test_pg_adapter_soft_delete_restore_return_new_false(
             }
         )
     )
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     doc = await cmd.create(_SoftCreate(label="live"))
     await q.get(doc.id)
 
-    await cmd.delete(doc.id, doc.rev, return_new=False)
+    await cmd.update(doc.id, doc.rev, _SoftUpdate(is_deleted=True), return_new=False)
     loaded = await q.get(doc.id)
     assert loaded.is_deleted is True
 
-    await cmd.restore(doc.id, loaded.rev, return_new=False)
+    await cmd.update(doc.id, loaded.rev, _SoftUpdate(is_deleted=False), return_new=False)
     again = await q.get(doc.id)
     assert again.is_deleted is False
-
-    assert await cmd.delete_many([], return_new=True) == []
-    assert await cmd.restore_many([], return_new=True) == []
 
 
 # ....................... #
@@ -512,8 +507,8 @@ async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     doc = await cmd.create(_CxCreate(sku="rf"))
     prj = await q.project(
@@ -542,8 +537,8 @@ async def test_pg_adapter_find_many_aggregates_with_typed_page(
     await pg_client.execute(_ddl_main(t))
 
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     await cmd.create(_CxCreate(sku="g1"))
     await cmd.create(_CxCreate(sku="g1"))
@@ -574,7 +569,7 @@ async def test_pg_adapter_aggregate_page_rejects_unknown_kwargs(
     t = f"pg_inv_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached(pg_client, t)
-    q = ctx.doc_query(spec)
+    q = ctx.document.query(spec)
 
     agg = {
         "$fields": {"c": "sku"},
@@ -583,7 +578,7 @@ async def test_pg_adapter_aggregate_page_rejects_unknown_kwargs(
     with pytest.raises(TypeError):
         await q.aggregate_page(agg, filters=None, return_fields=["sku"])  # type: ignore[call-arg]
 
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
     await cmd.create(_CxCreate(sku="rt-single"))
     page = await q.select_many(
         _CxRead,
@@ -603,8 +598,8 @@ async def test_pg_adapter_count_method(
     t = f"pg_cnt_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
     await cmd.create(_CxCreate(sku="cnt-a"))
     await cmd.create(_CxCreate(sku="cnt-b"))
     n = await q.count({"$fields": {"sku": {"$in": ["cnt-a", "cnt-b"]}}})
@@ -620,8 +615,8 @@ async def test_pg_adapter_create_return_new_false(
     t = f"pg_cnf_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
     uid = uuid4()
     out = await cmd.create(_CxCreate(id=uid, sku="no-ret"), return_new=False)
     assert out is None
@@ -638,7 +633,7 @@ async def test_pg_adapter_update_many_return_new_with_diffs(
     t = f"pg_ud_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     a = await cmd.create(_CxCreate(sku="u1"))
     b = await cmd.create(_CxCreate(sku="u2"))
@@ -665,7 +660,7 @@ async def test_pg_adapter_touch_many_return_new_true(
     t = f"pg_tm_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
     a = await cmd.create(_CxCreate(sku="t1"))
     b = await cmd.create(_CxCreate(sku="t2"))
     out = await cmd.touch_many([a.id, b.id], return_new=True)
@@ -704,7 +699,7 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
     state = MockState()
 
     def _cache_factory(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.dep(MockStateDepKey), namespace=cspec.name)
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
 
     ctx = ExecutionContext(
         deps=Deps.plain(
@@ -718,21 +713,27 @@ async def test_pg_adapter_soft_delete_and_restore_many_return_new_true(
             }
         )
     )
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     d1 = await cmd.create(_SoftCreate(label="a"))
     d2 = await cmd.create(_SoftCreate(label="b"))
-    del_rows = await cmd.delete_many(
-        [(d1.id, d1.rev), (d2.id, d2.rev)],
+    del_rows = await cmd.update_many(
+        [
+            (d1.id, d1.rev, _SoftUpdate(is_deleted=True)),
+            (d2.id, d2.rev, _SoftUpdate(is_deleted=True)),
+        ],
         return_new=True,
     )
     assert del_rows is not None
     assert len(del_rows) == 2
     assert {x.is_deleted for x in del_rows} == {True}
     r1, r2 = del_rows[0], del_rows[1]
-    rest = await cmd.restore_many(
-        [(r1.id, r1.rev), (r2.id, r2.rev)],
+    rest = await cmd.update_many(
+        [
+            (r1.id, r1.rev, _SoftUpdate(is_deleted=False)),
+            (r2.id, r2.rev, _SoftUpdate(is_deleted=False)),
+        ],
         return_new=True,
     )
     assert rest is not None
@@ -751,8 +752,8 @@ async def test_pg_adapter_find_for_update_in_transaction(
     t = f"pg_fuf_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
     await cmd.create(_CxCreate(sku="lockme"))
     async with pg_client.transaction():
         found = await q.find({"$fields": {"sku": "lockme"}}, for_update=True)
@@ -795,7 +796,7 @@ async def test_pg_adapter_uses_clamped_batch_size(
             }
         )
     )
-    ad = ctx.doc_command(spec)
+    ad = ctx.document.command(spec)
     assert ad.eff_batch_size == 200
     await ad.create_many(
         [
@@ -815,13 +816,13 @@ async def test_pg_adapter_cache_tx_commit_deferred_warm(
     t = f"pg_cc_tx_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached_tx(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     doc = await cmd.create(_CxCreate(sku="baseline"))
     await q.get(doc.id)
 
-    async with ctx.transaction("main"):
+    async with ctx.tx.scope("main"):
         patched = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="committed"))
         assert patched.sku == "committed"
         in_tx = await q.get(doc.id)
@@ -841,9 +842,9 @@ async def test_pg_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
     t = f"pg_rb_tx_{uuid4().hex[:12]}"
     await pg_client.execute(_ddl_main(t))
     ctx, spec = _ctx_cached_tx(pg_client, t)
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
-    state = ctx.dep(MockStateDepKey)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
+    state = ctx.deps.provide(MockStateDepKey)
     assert spec.cache is not None
 
     doc = await cmd.create(_CxCreate(sku="baseline"))
@@ -853,7 +854,7 @@ async def test_pg_adapter_cache_tx_rollback_eager_evict_skips_deferred_warm(
     assert str(doc.id) in pointers
 
     with pytest.raises(RuntimeError, match="intentional rollback"):
-        async with ctx.transaction("main"):
+        async with ctx.tx.scope("main"):
             upd = await cmd.update(doc.id, doc.rev, _CxUpdate(sku="lost"))
             assert upd.sku == "lost"
             in_tx = await q.get(doc.id)

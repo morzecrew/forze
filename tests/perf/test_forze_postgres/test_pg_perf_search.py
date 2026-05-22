@@ -88,7 +88,7 @@ async def search_adapter(pg_client: PostgresClient, execution_context):
         fields=["title", "content"],
     )
 
-    return execution_context.search_query(spec)
+    return execution_context.search.query(spec)
 
 
 @pytest.mark.perf
@@ -163,7 +163,7 @@ async def test_pg_search_large_corpus_benchmark(
         model_type=SearchableModel,
         fields=["title", "content"],
     )
-    adapter = execution_context.search_query(spec)
+    adapter = execution_context.search.query(spec)
 
     async def run() -> None:
         __p = await adapter.search_page("corpus", pagination={"limit": 100, "offset": 0})

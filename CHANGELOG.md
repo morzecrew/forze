@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **S3 (`forze_s3`):** ``S3StorageAdapter`` decodes S3 user metadata (string ``size`` / ISO ``created_at``) on download and list; optional ``description`` is persisted in object metadata on upload.
+- **Postgres (`forze_postgres`):** Document write coercion passes the array column type into the value coercer so native ``text[]`` (and other array) payloads serialize correctly.
 - **Postgres (`forze_postgres`):** Batched document updates that use ``UPDATE … FROM (VALUES …)`` now ``CAST`` each ``VALUES`` cell to the introspected column type so nullable columns (for example ``timestamptz``) cleared to ``NULL`` on every row in the batch are not inferred as ``text`` by PostgreSQL.
 - **Postgres (`forze_postgres`):** `PostgresClient.transaction` applies ``read_only`` via ``set_read_only`` before opening the psycopg transaction context, matching driver rules (avoids ``can't change 'read_only' now`` during ``connection.transaction()``).
 - **Redis (`forze_redis`):** `RedisClient.run_script` normalizes script results without ``isinstance`` on primitive unions (uses ``inspect.isawaitable`` in a bounded loop, then ``is`` / ``type(...) is ...`` for ``bool`` / ``int`` / ``bytes`` / ``bytearray``), avoiding rare ``TypeError: isinstance() arg 2 must be a type...`` failures when resolving ``AsyncScript`` / pipeline results.

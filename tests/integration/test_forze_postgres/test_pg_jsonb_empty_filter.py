@@ -92,8 +92,8 @@ async def test_empty_filter_jsonb_array_column(pg_client: PostgresClient) -> Non
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(_ListCreate(title="none", characteristics=[]))
     await cmd.create(_ListCreate(title="one", characteristics=["a"]))
@@ -134,8 +134,8 @@ async def test_empty_filter_json_column(pg_client: PostgresClient) -> None:
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     await cmd.create(_ListCreate(title="empty", characteristics=[]))
     await cmd.create(_ListCreate(title="full", characteristics=["x"]))
@@ -187,8 +187,8 @@ async def test_empty_filter_native_pg_array_unaffected(pg_client: PostgresClient
         },
     )
     ctx = _ctx(pg_client, t)
-    cmd = ctx.doc_command(arr_spec)
-    query = ctx.doc_query(arr_spec)
+    cmd = ctx.document.command(arr_spec)
+    query = ctx.document.query(arr_spec)
 
     await cmd.create(_ArrCreate(title="a", tags=[]))
     await cmd.create(_ArrCreate(title="b", tags=["z"]))

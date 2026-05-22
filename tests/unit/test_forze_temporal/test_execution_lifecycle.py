@@ -29,17 +29,17 @@ async def test_temporal_startup_hook_initializes_client() -> None:
         host="localhost:7233", config=TemporalConfig(namespace="default")
     )
     ctx = MagicMock(spec=ExecutionContext)
-    ctx.dep = MagicMock(return_value=client)
+    ctx.deps.provide = MagicMock(return_value=client)
 
     await hook(ctx)
 
-    ctx.dep.assert_called_once_with(TemporalClientDepKey)
+    ctx.deps.provide.assert_called_once_with(TemporalClientDepKey)
     client.initialize.assert_awaited_once_with("localhost:7233", config=hook.config)
 
 
 def test_temporal_lifecycle_step_exposes_startup_and_shutdown() -> None:
     step = temporal_lifecycle_step(host="127.0.0.1:7233", name="t1")
-    assert step.name == "t1"
+    assert step.id == "t1"
     assert step.startup is not None
     assert isinstance(step.startup, TemporalStartupHook)
     assert step.startup.host == "127.0.0.1:7233"
@@ -51,11 +51,11 @@ async def test_temporal_shutdown_hook_closes_client() -> None:
     client = MagicMock(spec=TemporalClient)
     client.close = AsyncMock(return_value=None)
     ctx = MagicMock(spec=ExecutionContext)
-    ctx.dep = MagicMock(return_value=client)
+    ctx.deps.provide = MagicMock(return_value=client)
 
     await TemporalShutdownHook()(ctx)
 
-    ctx.dep.assert_called_once_with(TemporalClientDepKey)
+    ctx.deps.provide.assert_called_once_with(TemporalClientDepKey)
     client.close.assert_awaited_once()
 
 

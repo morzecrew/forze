@@ -105,7 +105,7 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
 
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
@@ -210,7 +210,7 @@ async def test_fts_search_with_filters_and_empty_query(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
 
     flt: QueryFilterExpression = {"$fields": {"title": "keep"}}
     __p = await adapter.search_page("", filters=flt)
@@ -281,7 +281,7 @@ async def test_fts_v2_projection_view_and_heap_split(pg_client: PostgresClient) 
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
 
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
@@ -388,7 +388,7 @@ async def test_fts_search_with_cursor_ranked_and_browse(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
 
     p1: CursorPage = await adapter.project_search_cursor(
         ["title", "content", "id"],
@@ -459,7 +459,7 @@ async def test_fts_phrase_combine_any_vs_all_multi_term(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresFTSSearchAdapter)
     p_any = await adapter.search_page(
         ["giraffe", "zebra"],
@@ -513,7 +513,7 @@ async def test_fts_search_with_cursor_return_type_and_before(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     class FtsTitleId(BaseModel):
@@ -589,7 +589,7 @@ async def test_fts_v2_ranked_count_zero_short_circuits(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     p = await adapter.search_page("zzznotokenmatchunique123")
     assert p.count == 0
     assert p.hits == []
@@ -633,7 +633,7 @@ async def test_fts_v2_search_with_cursor_ranked_return_type_and_fields(
         model_type=FtsArticle,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresFTSSearchAdapter)
 
     class TitleOnly(BaseModel):

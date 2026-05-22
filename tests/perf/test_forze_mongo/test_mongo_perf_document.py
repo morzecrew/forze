@@ -84,7 +84,7 @@ async def document_adapter(
         history_enabled=True,
     )
 
-    return execution_context.doc_command(spec)
+    return execution_context.document.command(spec)
 
 
 @pytest.mark.perf

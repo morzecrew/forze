@@ -5,7 +5,6 @@ from enum import StrEnum
 
 import pytest
 
-from forze.application.contracts.base import DepKey
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
 from forze.application.contracts.document import DocumentSpec
@@ -27,11 +26,13 @@ def mock_state() -> MockState:
 
 
 def _mock_counter_fac(ctx: ExecutionContext, spec: CounterSpec) -> CounterPort:
-    return MockCounterAdapter(state=ctx.dep(MockStateDepKey), namespace=spec.name)
+    return MockCounterAdapter(
+        state=ctx.deps.provide(MockStateDepKey), namespace=spec.name
+    )
 
 
 def _mock_storage_fac(ctx: ExecutionContext, spec: StorageSpec) -> MockStorageAdapter:
-    return MockStorageAdapter(state=ctx.dep(MockStateDepKey), bucket=spec.name)
+    return MockStorageAdapter(state=ctx.deps.provide(MockStateDepKey), bucket=spec.name)
 
 
 @pytest.fixture
@@ -74,56 +75,42 @@ class TestExecutionContextDep:
     def test_resolves_dependency(self, ctx: ExecutionContext) -> None:
         from forze.application.contracts.counter import CounterDepKey
 
-        factory = ctx.dep(CounterDepKey)
+        factory = ctx.deps.provide(CounterDepKey)
         assert callable(factory)
-
-    def test_cycle_detection_raises(self, mock_state: MockState) -> None:
-        key: DepKey[int] = DepKey("cyclic")
-
-        class CyclicDeps:
-            def provide(
-                self,
-                k: DepKey[int],
-                *,
-                route: str | None = None,
-                fallback_to_plain: bool = True,
-            ) -> int:
-                return ctx.dep(key)
-
-        ctx = ExecutionContext(deps=CyclicDeps())  # type: ignore[arg-type]
-        with pytest.raises(RecursionError):
-            ctx.dep(key)
 
 
 class TestExecutionContextTransaction:
     @pytest.mark.asyncio
     async def test_basic_transaction(self, ctx: ExecutionContext) -> None:
-        async with ctx.transaction("mock"):
+        async with ctx.tx.scope("mock"):
             pass
 
     @pytest.mark.asyncio
     async def test_nested_transaction(self, ctx: ExecutionContext) -> None:
-        async with ctx.transaction("mock"):
-            async with ctx.transaction("mock"):
+        async with ctx.tx.scope("mock"):
+            async with ctx.tx.scope("mock"):
                 pass
 
     @pytest.mark.asyncio
     async def test_transaction_cleanup_on_error(self, ctx: ExecutionContext) -> None:
         with pytest.raises(RuntimeError):
-            async with ctx.transaction("mock"):
+            async with ctx.tx.scope("mock"):
                 raise RuntimeError("fail")
 
-    def test_defer_after_commit_outside_transaction_raises(
+    @pytest.mark.asyncio
+    async def test_run_or_defer_outside_transaction_runs_immediately(
         self, ctx: ExecutionContext
     ) -> None:
-        async def _cb() -> None:
-            pass
+        ran: list[int] = []
 
-        with pytest.raises(CoreError, match="defer_after_commit"):
-            ctx.defer_after_commit(_cb)
+        async def _cb() -> None:
+            ran.append(1)
+
+        await ctx.tx.run_or_defer(_cb)
+        assert ran == [1]
 
     @pytest.mark.asyncio
-    async def test_defer_after_commit_runs_fifo_on_success(
+    async def test_run_or_defer_runs_fifo_on_success(
         self, ctx: ExecutionContext
     ) -> None:
         order: list[str] = []
@@ -134,14 +121,14 @@ class TestExecutionContextTransaction:
         async def _b() -> None:
             order.append("b")
 
-        async with ctx.transaction("mock"):
-            ctx.defer_after_commit(_a)
-            ctx.defer_after_commit(_b)
+        async with ctx.tx.scope("mock"):
+            await ctx.tx.run_or_defer(_a)
+            await ctx.tx.run_or_defer(_b)
 
         assert order == ["a", "b"]
 
     @pytest.mark.asyncio
-    async def test_defer_after_commit_skipped_on_error(
+    async def test_run_or_defer_skipped_on_error(
         self, ctx: ExecutionContext
     ) -> None:
         ran: list[int] = []
@@ -150,14 +137,14 @@ class TestExecutionContextTransaction:
             ran.append(1)
 
         with pytest.raises(RuntimeError, match="fail"):
-            async with ctx.transaction("mock"):
-                ctx.defer_after_commit(_cb)
+            async with ctx.tx.scope("mock"):
+                await ctx.tx.run_or_defer(_cb)
                 raise RuntimeError("fail")
 
         assert ran == []
 
     @pytest.mark.asyncio
-    async def test_defer_after_commit_nested_fifo_after_outer_commit(
+    async def test_run_or_defer_nested_fifo_after_outer_commit(
         self, ctx: ExecutionContext
     ) -> None:
         order: list[str] = []
@@ -168,38 +155,38 @@ class TestExecutionContextTransaction:
         async def _inner() -> None:
             order.append("inner")
 
-        async with ctx.transaction("mock"):
-            ctx.defer_after_commit(_outer)
-            async with ctx.transaction("mock"):
-                ctx.defer_after_commit(_inner)
+        async with ctx.tx.scope("mock"):
+            await ctx.tx.run_or_defer(_outer)
+            async with ctx.tx.scope("mock"):
+                await ctx.tx.run_or_defer(_inner)
 
         assert order == ["outer", "inner"]
 
 
 class TestExecutionContextPorts:
     def test_doc_query(self, ctx: ExecutionContext) -> None:
-        port = ctx.doc_query(_doc_spec())
+        port = ctx.document.query(_doc_spec())
         assert port is not None
 
     def test_doc_command(self, ctx: ExecutionContext) -> None:
-        port = ctx.doc_command(_doc_spec())
+        port = ctx.document.command(_doc_spec())
         assert port is not None
 
     def test_doc_query_with_cache(self, ctx: ExecutionContext) -> None:
         spec = _doc_spec(
             cache=CacheSpec(name="doc-cache", ttl=timedelta(seconds=60)),
         )
-        port = ctx.doc_query(spec)
+        port = ctx.document.query(spec)
         assert port is not None
 
     def test_doc_command_with_cache(self, ctx: ExecutionContext) -> None:
         spec = _doc_spec(cache=CacheSpec(name="doc-cache"))
-        port = ctx.doc_command(spec)
+        port = ctx.document.command(spec)
         assert port is not None
 
     def test_doc_query_cache_disabled(self, ctx: ExecutionContext) -> None:
         spec = _doc_spec(cache=None)
-        port = ctx.doc_query(spec)
+        port = ctx.document.query(spec)
         assert port is not None
 
     def test_cache(self, ctx: ExecutionContext) -> None:
@@ -211,15 +198,15 @@ class TestExecutionContextPorts:
         port = ctx.counter(CounterSpec(name="test"))
         assert port is not None
 
-    def test_txmanager(self, ctx: ExecutionContext) -> None:
-        port = ctx.txmanager("mock")
+    def test_tx_resolver(self, ctx: ExecutionContext) -> None:
+        port = ctx.tx.resolver("mock")
         assert port is not None
 
-    def test_txmanager_accepts_str_enum_route(self, ctx: ExecutionContext) -> None:
+    def test_tx_resolver_accepts_str_enum_route(self, ctx: ExecutionContext) -> None:
         class TxRoute(StrEnum):
             MOCK = "mock"
 
-        port = ctx.txmanager(TxRoute.MOCK)
+        port = ctx.tx.resolver(TxRoute.MOCK)
         assert port is not None
 
     def test_storage(self, ctx: ExecutionContext) -> None:
@@ -227,7 +214,7 @@ class TestExecutionContextPorts:
         assert port is not None
 
     def test_search(self, ctx: ExecutionContext) -> None:
-        port = ctx.search_query(_search_spec())
+        port = ctx.search.query(_search_spec())
         assert port is not None
 
 
@@ -250,8 +237,8 @@ class TestExecutionContextStrEnumNames:
                 "update_cmd": CreateDocumentCmd,
             },
         )
-        assert ctx.doc_query(spec) is not None
-        assert ctx.doc_command(spec) is not None
+        assert ctx.document.query(spec) is not None
+        assert ctx.document.command(spec) is not None
 
         cache_spec = CacheSpec(name=DocName.TEST, ttl=timedelta(seconds=1))
         assert ctx.cache(cache_spec) is not None
@@ -265,7 +252,7 @@ class TestExecutionContextStrEnumNames:
             model_type=ReadDocument,
             fields=["id"],
         )
-        assert ctx.search_query(search_spec) is not None
+        assert ctx.search.query(search_spec) is not None
 
 
 class TestExecutionContextStrEnumTransactionRoute:
@@ -276,5 +263,5 @@ class TestExecutionContextStrEnumTransactionRoute:
         class TxRoute(StrEnum):
             MOCK = "mock"
 
-        async with ctx.transaction(TxRoute.MOCK):
+        async with ctx.tx.scope(TxRoute.MOCK):
             pass

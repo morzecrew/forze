@@ -179,7 +179,7 @@ class TestAuthnDepsModule:
         )()
 
         ctx = ExecutionContext(deps=deps.merge(_document_deps()))
-        resolver = ctx.dep(PrincipalResolverDepKey, route="main")(
+        resolver = ctx.deps.provide(PrincipalResolverDepKey, route="main")(
             ctx, AuthnSpec(name="main", enabled_methods=frozenset({"token"}))
         )
 
@@ -252,7 +252,7 @@ class TestConfigurableFactories:
 
         ctx = ExecutionContext(deps=merged)
 
-        factory = ctx.dep(AuthnDepKey, route="main")
+        factory = ctx.deps.provide(AuthnDepKey, route="main")
         port = factory(
             ctx,
             AuthnSpec(name="main", enabled_methods=frozenset({"token", "password"})),
@@ -271,7 +271,7 @@ class TestConfigurableFactories:
         )().merge(_document_deps())
 
         ctx = ExecutionContext(deps=merged)
-        factory = ctx.dep(AuthnDepKey, route="main")
+        factory = ctx.deps.provide(AuthnDepKey, route="main")
 
         with pytest.raises(CoreError, match="enabled_methods"):
             factory(
@@ -340,8 +340,8 @@ class TestConfigurableFactories:
         ctx = ExecutionContext(deps=deps)
 
         spec = AuthnSpec(name="r", enabled_methods=frozenset({"password"}))
-        auth = ctx.dep(AuthnDepKey, route="r")(ctx, spec)
-        pl = ctx.dep(PasswordLifecycleDepKey, route="r")(ctx, spec)
+        auth = ctx.deps.provide(AuthnDepKey, route="r")(ctx, spec)
+        pl = ctx.deps.provide(PasswordLifecycleDepKey, route="r")(ctx, spec)
 
         assert isinstance(auth, AuthnOrchestrator)
         assert isinstance(pl, PasswordLifecycleAdapter)

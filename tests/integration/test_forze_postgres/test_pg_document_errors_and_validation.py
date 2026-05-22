@@ -13,7 +13,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import ConflictError, NotFoundError, ValidationError
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
@@ -40,8 +40,12 @@ class _Read(ReadDocument):
     title: str
 
 
-class _SoftDoc(Document, SoftDeletionMixin):
+class _SoftDoc(DocWithSoftDeletion):
     title: str
+
+
+class _SoftUpdate(UpdateCmdWithSoftDeletion):
+    title: str | None = None
 
 
 class _SoftRead(ReadDocument):
@@ -92,7 +96,7 @@ async def test_get_missing_raises_not_found(pg_client: PostgresClient) -> None:
         """
     )
     ctx = _ctx(pg_client, t)
-    query = ctx.doc_query(_spec())
+    query = ctx.document.query(_spec())
     with pytest.raises(NotFoundError, match="Record not found"):
         await query.get(uuid4())
 
@@ -112,7 +116,7 @@ async def test_find_missing_returns_none(pg_client: PostgresClient) -> None:
         """
     )
     ctx = _ctx(pg_client, t)
-    query = ctx.doc_query(_spec())
+    query = ctx.document.query(_spec())
     assert (
         await query.find({"$fields": {"title": "does-not-exist"}}) is None
     )
@@ -133,7 +137,7 @@ async def test_update_with_stale_rev_raises_conflict(pg_client: PostgresClient) 
         """
     )
     ctx = _ctx(pg_client, t)
-    cmd = ctx.doc_command(_spec())
+    cmd = ctx.document.command(_spec())
     doc = await cmd.create(_Create(title="v1"))
     await cmd.update(doc.id, doc.rev, _Update(title="v2"))
     with pytest.raises(ConflictError, match="Revision mismatch"):
@@ -155,7 +159,7 @@ async def test_touch_missing_raises_not_found(pg_client: PostgresClient) -> None
         """
     )
     ctx = _ctx(pg_client, t)
-    cmd = ctx.doc_command(_spec())
+    cmd = ctx.document.command(_spec())
     with pytest.raises(NotFoundError):
         await cmd.touch(uuid4())
 
@@ -180,14 +184,14 @@ async def test_cannot_update_non_deleted_fields_when_soft_deleted(
     spec = DocumentSpec(
         name="soft_err_ns",
         read=_SoftRead,
-        write={"domain": _SoftDoc, "create_cmd": _Create, "update_cmd": _Update},
+        write={"domain": _SoftDoc, "create_cmd": _Create, "update_cmd": _SoftUpdate},
     )
     ctx = _ctx(pg_client, t)
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
     doc = await cmd.create(_Create(title="live"))
-    deleted = await cmd.delete(doc.id, rev=doc.rev)
+    deleted = await cmd.update(doc.id, doc.rev, _SoftUpdate(is_deleted=True))
     with pytest.raises(ValidationError, match="soft-deleted"):
-        await cmd.update(deleted.id, deleted.rev, _Update(title="nope"))
+        await cmd.update(deleted.id, deleted.rev, _SoftUpdate(title="nope"))
 
 
 @pytest.mark.asyncio
@@ -206,7 +210,7 @@ async def test_count_and_find_many_on_empty_table(pg_client: PostgresClient) -> 
     )
     ctx = _ctx(pg_client, t)
     spec = _spec()
-    query = ctx.doc_query(spec)
+    query = ctx.document.query(spec)
     assert await query.count() == 0
     assert await query.count(None) == 0
     __p = await query.find_page(
@@ -233,10 +237,10 @@ async def test_count_with_field_filter(pg_client: PostgresClient) -> None:
         """
     )
     ctx = _ctx(pg_client, t)
-    cmd = ctx.doc_command(_spec())
+    cmd = ctx.document.command(_spec())
     await cmd.create(_Create(title="red"))
     await cmd.create(_Create(title="blue"))
     await cmd.create(_Create(title="red"))
-    query = ctx.doc_query(_spec())
+    query = ctx.document.query(_spec())
     assert await query.count({"$fields": {"title": "red"}}) == 2
     assert await query.count({"$fields": {"title": "green"}}) == 0

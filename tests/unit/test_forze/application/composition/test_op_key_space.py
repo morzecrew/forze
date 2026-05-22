@@ -1,38 +1,37 @@
-"""Tests for :class:`~forze.application.execution.OperationNamespace`."""
+"""Tests for :class:`~forze.base.primitives.StrKeyNamespace`."""
 
 import pytest
 
-from forze.application.execution import OperationNamespace
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKeyNamespace
 
 
-def test_op_joins_prefix_and_kernel() -> None:
-    s = OperationNamespace(prefix="document")
-    assert s.op("get") == "document.get"
+def test_key_joins_prefix_and_segment() -> None:
+    s = StrKeyNamespace(prefix="document")
+    assert s.key("get") == "document.get"
 
 
-def test_op_accepts_str_enum_value() -> None:
+def test_key_accepts_str_enum_value() -> None:
     from enum import StrEnum
 
     class K(StrEnum):
         X = "x"
 
-    s = OperationNamespace(prefix="bc")
-    assert s.op(K.X) == "bc.x"
+    s = StrKeyNamespace(prefix="bc")
+    assert s.key(K.X) == "bc.x"
 
 
-def test_kernel_with_dot_raises() -> None:
-    s = OperationNamespace(prefix="document")
+def test_segment_with_dot_raises() -> None:
+    s = StrKeyNamespace(prefix="document")
     with pytest.raises(CoreError, match=r"must not contain"):
-        s.op("bad.kernel")
+        s.key("bad.kernel")
 
 
 def test_empty_prefix_raises() -> None:
-    with pytest.raises(CoreError, match="prefix must be non-empty"):
-        OperationNamespace(prefix="   ")
+    with pytest.raises(CoreError, match="must be non-empty"):
+        StrKeyNamespace(prefix="")
 
 
-def test_prefix_strips_whitespace_and_outer_dots() -> None:
-    s = OperationNamespace(prefix="  orders.document.  ")
-    assert s.prefix == "orders.document"
-    assert s.op("create") == "orders.document.create"
+def test_multi_segment_key_builds_dotted_operation_id() -> None:
+    s = StrKeyNamespace(prefix="orders")
+    assert s.key("document", "create") == "orders.document.create"

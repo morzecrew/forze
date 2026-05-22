@@ -90,8 +90,8 @@ async def test_find_find_many_count_and_projections(
             "update_cmd": _Update,
         },
     )
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     a = await cmd.create(_Create(name="alpha", kind="a"))
     b = await cmd.create(_Create(name="beta", kind="b"))
@@ -155,8 +155,8 @@ async def test_create_update_touch_kill_many(
             "update_cmd": _Update,
         },
     )
-    cmd = ctx.doc_command(spec)
-    q = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    q = ctx.document.query(spec)
 
     created = await cmd.create_many(
         [
@@ -207,7 +207,7 @@ async def test_empty_create_and_update_shortcuts(
             "update_cmd": _Update,
         },
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     assert await cmd.create_many([]) == []
     assert await cmd.update_many([]) == []

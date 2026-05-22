@@ -14,11 +14,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import (
-    CallContext,
-    Deps,
-    ExecutionContext,
-)
+from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.base.errors import CoreError, NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
@@ -73,8 +69,8 @@ def _tenant_table_context(
     )
 
 
-def _call() -> CallContext:
-    return CallContext(execution_id=uuid4(), correlation_id=uuid4())
+def _metadata() -> InvocationMetadata:
+    return InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
 
 def _spec() -> DocumentSpec:
@@ -109,11 +105,11 @@ async def test_tenant_aware_requires_tenant_in_identity(
 
     execution_context = _tenant_table_context(pg_client, table)
     spec = _spec()
-    adapter = execution_context.doc_command(spec)
+    adapter = execution_context.document.command(spec)
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
     ):
         with pytest.raises(CoreError, match="Tenant ID is required"):
             await adapter.create(TenantCreateDoc(name="orphan"))
@@ -140,12 +136,12 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
     tenant_b = uuid4()
     spec = _spec()
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_a),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_a),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         doc_a = await adapter.create(TenantCreateDoc(name="alpha"))
         pk_a = doc_a.id
 
@@ -157,20 +153,20 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
     assert row is not None
     assert row["tenant_id"] == tenant_a
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_b),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_b),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         doc_b = await adapter.create(TenantCreateDoc(name="beta"))
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_b),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_b),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         with pytest.raises(NotFoundError):
             await adapter.get(pk_a)
 
@@ -178,12 +174,12 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
         assert got_b.id == doc_b.id
         assert (await adapter.count({})) == 1
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_a),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_a),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         loaded = await adapter.get(pk_a)
         assert loaded.name == "alpha"
         assert loaded.tenant_id == tenant_a
@@ -211,21 +207,21 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
     tenant_b = uuid4()
     spec = _spec()
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_a),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_a),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         doc_a = await adapter.create(TenantCreateDoc(name="kill-me"))
         pk_a = doc_a.id
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_b),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_b),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         with pytest.raises(NotFoundError, match="Record not found"):
             await adapter.kill(pk_a)
 
@@ -236,12 +232,12 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
     )
     assert int(n_before) == 1
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_a),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_a),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         await adapter.kill(pk_a)
 
     n_after = await pg_client.fetch_value(
@@ -273,19 +269,19 @@ async def test_update_cross_tenant_is_not_found(pg_client: PostgresClient) -> No
     tenant_b = uuid4()
     spec = _spec()
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_a),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_a),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         doc_a = await adapter.create(TenantCreateDoc(name="u"))
 
-    with execution_context.bind_call(
-        call=_call(),
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tenant_b),
+    with execution_context.inv.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tenant_b),
     ):
-        adapter = execution_context.doc_command(spec)
+        adapter = execution_context.document.command(spec)
         with pytest.raises(NotFoundError):
             await adapter.update(doc_a.id, doc_a.rev, TenantUpdateDoc(name="hijack"))

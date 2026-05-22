@@ -11,7 +11,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import InfrastructureError, NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -59,7 +59,7 @@ def _execution_context(pg_client: PostgresClient, table: str) -> ExecutionContex
             DocumentCommandDepKey: doc,
         }
     )
-    routed = Deps.routed({TxManagerDepKey: {"main": postgres_txmanager}})
+    routed = Deps.routed({TransactionManagerDepKey: {"main": postgres_txmanager}})
     return ExecutionContext(deps=plain.merge(routed))
 
 
@@ -86,10 +86,10 @@ async def test_get_for_update_requires_active_transaction(
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
     doc = await cmd.create(_Create(title="row"))
 
-    query = ctx.doc_query(spec)
+    query = ctx.document.query(spec)
     with pytest.raises(InfrastructureError, match="Transactional context is required"):
         await query.get(doc.id, for_update=True)
 
@@ -117,10 +117,10 @@ async def test_get_for_update_succeeds_inside_transaction(
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    created = await ctx.doc_command(spec).create(_Create(title="locked"))
+    created = await ctx.document.command(spec).create(_Create(title="locked"))
 
-    async with ctx.transaction("main"):
-        query = ctx.doc_query(spec)
+    async with ctx.tx.scope("main"):
+        query = ctx.document.query(spec)
         row = await query.get(created.id, for_update=True)
         assert row.id == created.id
         assert row.title == "locked"
@@ -149,10 +149,10 @@ async def test_find_for_update_with_projection_inside_transaction(
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    await ctx.doc_command(spec).create(_Create(title="unique-find-title"))
+    await ctx.document.command(spec).create(_Create(title="unique-find-title"))
 
-    async with ctx.transaction("main"):
-        query = ctx.doc_query(spec)
+    async with ctx.tx.scope("main"):
+        query = ctx.document.query(spec)
         proj = await query.project(
             {"$fields": {"title": "unique-find-title"}},
             ("id", "rev", "title"),
@@ -186,9 +186,9 @@ async def test_get_many_raises_when_any_pk_missing(
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    existing = await ctx.doc_command(spec).create(_Create(title="only"))
+    existing = await ctx.document.command(spec).create(_Create(title="only"))
     missing = uuid4()
 
-    query = ctx.doc_query(spec)
+    query = ctx.document.query(spec)
     with pytest.raises(NotFoundError, match="Some records not found"):
         await query.get_many([existing.id, missing])

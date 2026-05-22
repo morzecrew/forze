@@ -11,6 +11,8 @@ require_s3()
 import asyncio
 import mimetypes
 import re
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Callable, final
 
 import attrs
@@ -31,6 +33,34 @@ from ..kernel.platform import S3ClientPort
 from .codecs import default_b64_codec, default_path_codec
 
 # ----------------------- #
+
+
+def _object_metadata_from_s3_user(meta: Mapping[str, str]) -> ObjectMetadata:
+    """Decode :class:`ObjectMetadata` from S3 user metadata (all string values)."""
+
+    try:
+        filename = meta["filename"]
+        size = int(meta["size"])
+        created_at_raw = meta["created_at"]
+    except KeyError as e:
+        raise CoreError("Invalid object metadata") from e
+    except ValueError as e:
+        raise CoreError("Invalid object metadata") from e
+
+    if created_at_raw.endswith("Z"):
+        created_at_raw = f"{created_at_raw[:-1]}+00:00"
+
+    created_at = datetime.fromisoformat(created_at_raw)
+
+    return ObjectMetadata(
+        filename=filename,
+        created_at=created_at,
+        size=size,
+        description=meta.get("description"),
+    )
+
+
+# ....................... #
 
 
 @final
@@ -135,6 +165,7 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
             filename=default_b64_codec.dumps(filename),
             created_at=now,
             size=len(data),
+            description=description,
         )
         meta_dict: JsonDict = msgspec.to_builtins(metadata, str_keys=True)
         safe_meta = {k: str(v) for k, v in meta_dict.items() if v is not None}
@@ -176,7 +207,10 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
                 raise CoreError("Invalid object metadata")
 
             try:
-                meta = msgspec.convert(h["metadata"], type=ObjectMetadata)
+                meta = _object_metadata_from_s3_user(h["metadata"])
+
+            except CoreError:
+                raise
 
             except Exception as e:
                 raise CoreError("Invalid object metadata") from e
@@ -253,7 +287,10 @@ class S3StorageAdapter(StoragePort, TenancyMixin):
                     raise CoreError("Invalid object metadata")
 
                 try:
-                    meta = msgspec.convert(h["metadata"], type=ObjectMetadata)
+                    meta = _object_metadata_from_s3_user(h["metadata"])
+
+                except CoreError:
+                    raise
 
                 except Exception as e:
                     raise CoreError("Invalid object metadata") from e

@@ -99,7 +99,7 @@ async def test_pgroonga_v2_result_snapshot_reread(
             ttl=timedelta(minutes=5),
         ),
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresPGroongaSearchAdapter)
     p1 = await adapter.search_page(
         "hello",
@@ -180,7 +180,7 @@ async def test_pgroonga_v2_filter_only_empty_query_snapshot_reread(
             ttl=timedelta(minutes=5),
         ),
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     flt: QueryFilterExpression = {"$fields": {"title": "match-me"}}
     p1 = await adapter.search_page(
         "",

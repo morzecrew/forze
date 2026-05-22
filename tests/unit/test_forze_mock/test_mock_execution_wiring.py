@@ -37,18 +37,18 @@ def test_mock_deps_module_resolves_shared_state_and_core_ports() -> None:
     mod = MockDepsModule()
     ctx = ExecutionContext(deps=mod())
 
-    assert ctx.dep(MockStateDepKey) is mod.state
+    assert ctx.deps.provide(MockStateDepKey) is mod.state
 
     dspec = DocumentSpec(
         name="d",
         read=_R,
         write=DocumentWriteTypes(domain=_D, create_cmd=_C, update_cmd=_U),
     )
-    q_adapter = ctx.doc_query(dspec)
-    c_adapter = ctx.doc_command(dspec)
+    q_adapter = ctx.document.query(dspec)
+    c_adapter = ctx.document.command(dspec)
     assert q_adapter.__class__ is c_adapter.__class__
 
     search = SearchSpec(name="s", model_type=_S, fields=["t"])
-    assert ctx.search_query(search) is not None
+    assert ctx.search.query(search) is not None
 
     assert ctx.cache(CacheSpec(name="cache1")) is not None

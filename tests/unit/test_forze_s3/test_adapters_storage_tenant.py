@@ -3,6 +3,7 @@ from uuid import UUID
 
 import pytest
 
+from forze.application.contracts.storage import UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
 
 from forze_s3.adapters.storage import S3StorageAdapter
@@ -32,10 +33,10 @@ async def test_upload_with_tenant(storage_adapter_with_tenant: S3StorageAdapter)
     storage_adapter_with_tenant.client.upload_bytes = AsyncMock()
 
     result = await storage_adapter_with_tenant.upload(
-        "file.txt", b"data", prefix="docs"
+        UploadedObject(filename="file.txt", data=b"data", prefix="docs"),
     )
     assert (
-        result["key"]
+        result.key
         == "tenant_12345678-1234-5678-1234-567812345678/docs/00000000-0000-0000-0000-000000000000"
     )
 

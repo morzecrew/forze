@@ -19,11 +19,11 @@ from forze_mock.execution import MockStateDepKey
 
 
 def _composition_counter(ctx: ExecutionContext, spec: CounterSpec) -> CounterPort:
-    return MockCounterAdapter(state=ctx.dep(MockStateDepKey), namespace=spec.name)
+    return MockCounterAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=spec.name)
 
 
 def _composition_storage(ctx: ExecutionContext, spec: StorageSpec) -> MockStorageAdapter:
-    return MockStorageAdapter(state=ctx.dep(MockStateDepKey), bucket=spec.name)
+    return MockStorageAdapter(state=ctx.deps.provide(MockStateDepKey), bucket=spec.name)
 
 
 @pytest.fixture

@@ -80,7 +80,7 @@ async def test_postgres_document_adapter(
         },
     )
 
-    adapter = execution_context.doc_command(spec)
+    adapter = execution_context.document.command(spec)
 
     # CREATE
     create_dto = MyCreateDoc(name="test item")

@@ -4,7 +4,7 @@ from uuid import uuid4
 from forze.application.contracts.storage import StorageDepKey, StorageSpec
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext, Deps, ExecutionContext
+from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_s3.adapters.storage import S3StorageAdapter
 from forze_s3.execution.deps import S3ClientDepKey, S3DepsModule
 from forze_s3.execution.deps.deps import ConfigurableS3Storage
@@ -35,11 +35,11 @@ def test_s3_storage_factory_resolves_tenant_from_context() -> None:
         config={"bucket": "tenant-bucket", "tenant_aware": True},
     )
 
-    call = CallContext(execution_id=uuid4(), correlation_id=uuid4())
-    with context.bind_call(
-        call=call,
-        identity=AuthnIdentity(principal_id=uuid4()),
-        tenancy=TenantIdentity(tenant_id=tid),
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+    with context.inv.bind(
+        metadata=metadata,
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=tid),
     ):
         storage = factory(context, StorageSpec(name="x"))
         assert storage.tenant_provider().tenant_id == tid

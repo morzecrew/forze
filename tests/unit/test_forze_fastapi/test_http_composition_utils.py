@@ -215,7 +215,7 @@ class TestBuildHttpEndpointSignatureEtag:
             features=[ETagFeature(provider=lambda _b: '"t"')],
             request=None,
             response=None,
-            mapper=EmptyMapper(),
+            request_mapper=EmptyMapper(),
         )
 
         def ctx_dep() -> ExecutionContext:
@@ -243,7 +243,7 @@ def _minimal_get_spec(
         features=features,
         request=None,
         response=None,
-        mapper=EmptyMapper(),
+        request_mapper=EmptyMapper(),
     )
 
 
@@ -328,12 +328,12 @@ class TestAttachHttpEndpoint:
         s1 = HttpEndpointSpec(
             http={"method": "GET", "path": "/a"},
             operation="a",
-            mapper=EmptyMapper(),
+            request_mapper=EmptyMapper(),
         )
         s2 = HttpEndpointSpec(
             http={"method": "GET", "path": "/b"},
             operation="b",
-            mapper=EmptyMapper(),
+            request_mapper=EmptyMapper(),
         )
 
         def ctx_dep() -> ExecutionContext:
@@ -376,7 +376,7 @@ class TestSignaturePathQueryHeaderCookie:
                 "body_mode": "json",
             },
             response=None,
-            mapper=BodyAsIsMapper(out=In),
+            request_mapper=BodyAsIsMapper(out=In),
         )
 
         def ctx_dep() -> ExecutionContext:

@@ -2,8 +2,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from forze.application.contracts.storage import UploadedObject
 from forze.base.errors import ValidationError
-from forze_s3.adapters.storage import S3StorageAdapter
+from forze_s3.adapters.storage import S3StorageAdapter, _object_metadata_from_s3_user
 
 
 @pytest.fixture
@@ -54,7 +55,9 @@ def test_validate_prefix_invalid(storage_adapter):
 @pytest.mark.asyncio
 async def test_upload_invalid_prefix_raises(storage_adapter):
     with pytest.raises(ValidationError):
-        await storage_adapter.upload("file.txt", b"data", prefix="invalid prefix")
+        await storage_adapter.upload(
+            UploadedObject(filename="file.txt", data=b"data", prefix="invalid prefix"),
+        )
 
 
 @pytest.mark.asyncio
@@ -72,7 +75,9 @@ async def test_upload_valid_prefix_passes_validation(storage_adapter):
     storage_adapter.client.upload_bytes = AsyncMock()
 
     # Should not raise ValidationError
-    await storage_adapter.upload("file.txt", b"data", prefix="valid/prefix")
+    await storage_adapter.upload(
+        UploadedObject(filename="file.txt", data=b"data", prefix="valid/prefix"),
+    )
 
 
 @pytest.mark.asyncio
@@ -85,3 +90,26 @@ async def test_list_valid_prefix_passes_validation(storage_adapter):
 
     # Should not raise ValidationError
     await storage_adapter.list(10, 0, prefix="valid/prefix")
+
+
+def test_object_metadata_from_s3_user_coerces_string_size() -> None:
+    meta = _object_metadata_from_s3_user(
+        {
+            "filename": "Zm9v.txt",
+            "size": "42",
+            "created_at": "2025-01-15T12:00:00+00:00",
+        },
+    )
+    assert meta.size == 42
+    assert meta.filename == "Zm9v.txt"
+
+
+def test_object_metadata_from_s3_user_accepts_zulu_timestamp() -> None:
+    meta = _object_metadata_from_s3_user(
+        {
+            "filename": "x",
+            "size": "1",
+            "created_at": "2025-01-15T12:00:00Z",
+        },
+    )
+    assert meta.created_at.isoformat().startswith("2025-01-15T12:00:00")

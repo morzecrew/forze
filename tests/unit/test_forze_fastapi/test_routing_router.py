@@ -33,7 +33,7 @@ class TestIdempotencyHeaderOnSignature:
             features=[IdempotencyFeature(spec=IdempotencySpec(name="test"))],
             request={"body_type": BodyDTO},
             response=None,
-            mapper=BodyAsIsMapper(BodyDTO),
+            request_mapper=BodyAsIsMapper(BodyDTO),
         )
 
         def ctx_dep() -> ExecutionContext:

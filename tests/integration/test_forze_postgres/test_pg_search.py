@@ -96,7 +96,7 @@ async def test_postgres_pgroonga_single_column_index(
         title: str
 
     spec = SearchSpec(name="pg1col", model_type=OneCol, fields=["title"])
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     __p = await adapter.search_page("singleton", options={"fuzzy": True})
     rows = __p.hits
     n = __p.count
@@ -160,7 +160,7 @@ async def test_postgres_search_adapter(
         fields=["title", "content"],
     )
 
-    adapter = execution_context.search_query(spec)
+    adapter = execution_context.search.query(spec)
 
     assert isinstance(adapter, PostgresPGroongaSearchAdapter)
 
@@ -360,7 +360,7 @@ async def test_postgres_search_configurable_uses_heap_and_field_map(
         model_type=SearchableModel,
         fields=["title", "content"],
     )
-    adapter = ctx.search_query(spec)
+    adapter = ctx.search.query(spec)
     assert isinstance(adapter, PostgresPGroongaSearchAdapter)
 
     __p = await adapter.search_page("hello")
@@ -574,7 +574,7 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
             }
         )
     )
-    resolved = ctx.hub_search_query(hub_spec)
+    resolved = ctx.search.hub(hub_spec)
     __p = await resolved.search_page("delta")
     same = __p.hits
     c3 = __p.count

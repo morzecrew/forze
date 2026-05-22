@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.application.dto import Pagination
+from forze.application.dto.paginated import Pagination
 
 
 # ----------------------- #

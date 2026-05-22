@@ -142,14 +142,14 @@ class TestFederatedSearchSpec:
 
 
 class TestExecutionContextSearchQuery:
-    """Tests for ExecutionContext.search_query() resolution."""
+    """Tests for ExecutionContext.search.query() resolution."""
 
     def test_search_query_resolves_registered_port(
         self,
         stub_ctx,
     ) -> None:
-        """ctx.search_query(spec) returns SearchQueryPort from SearchQueryDepKey."""
+        """ctx.search.query(spec) returns SearchQueryPort from SearchQueryDepKey."""
         spec = _minimal_search_spec()
-        port = stub_ctx.search_query(spec)
+        port = stub_ctx.search.query(spec)
         assert port is not None
         assert hasattr(port, "search")

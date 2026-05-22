@@ -143,7 +143,7 @@ class TestETagFeature:
             http={"method": "GET", "path": "/item"},
             operation="x",
             response=Item,
-            mapper=_PassMapper(),
+            request_mapper=_PassMapper(),
         )
 
         ctx = HttpEndpointContext(
@@ -183,7 +183,7 @@ class TestETagFeature:
             http={"method": "GET", "path": "/item"},
             operation="x",
             response=Item,
-            mapper=_PassMapper(),
+            request_mapper=_PassMapper(),
         )
 
         ctx = HttpEndpointContext(
@@ -223,7 +223,7 @@ class TestETagFeature:
             http={"method": "GET", "path": "/item"},
             operation="x",
             response=Item,
-            mapper=_PassMapper(),
+            request_mapper=_PassMapper(),
         )
 
         ctx = HttpEndpointContext(

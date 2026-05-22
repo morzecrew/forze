@@ -16,7 +16,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
-from forze.application.contracts.tx import TxManagerDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -143,7 +143,7 @@ class TestPostgresDepsModule:
         ttl = timedelta(minutes=2)
         module = PostgresDepsModule(client=client, introspector_cache_ttl=ttl)
         ctx = ExecutionContext(deps=module())
-        intro = ctx.dep(PostgresIntrospectorDepKey)
+        intro = ctx.deps.provide(PostgresIntrospectorDepKey)
         assert intro.cache_ttl == ttl
 
     def test_registers_read_only_document_routes(self) -> None:
@@ -184,7 +184,7 @@ class TestPostgresDepsModule:
         assert deps.exists(DocumentQueryDepKey, route="rw_route")
         assert deps.exists(DocumentCommandDepKey, route="rw_route")
         assert deps.exists(SearchQueryDepKey, route="find")
-        assert deps.exists(TxManagerDepKey, route="main")
+        assert deps.exists(TransactionManagerDepKey, route="main")
 
     def test_invalid_fts_search_config_fails_at_build_time(self) -> None:
         client = MagicMock(spec=PostgresClient)

@@ -16,7 +16,7 @@ from forze.application.contracts.stream import (
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.execution import ExecutionContext
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
 from forze_mock.execution import MockStateDepKey
@@ -24,7 +24,7 @@ from forze_mock.execution import MockStateDepKey
 # ----------------------- #
 
 
-class _Doc(Document, SoftDeletionMixin):
+class _Doc(DocWithSoftDeletion):
     title: str
 
 
@@ -76,13 +76,13 @@ async def test_mock_deps_module_registers_expected_contracts() -> None:
 async def test_execution_context_can_use_mock_document_and_search() -> None:
     ctx = ExecutionContext(deps=MockDepsModule()())
     spec = _doc_spec()
-    doc = ctx.doc_command(spec)
+    doc = ctx.document.command(spec)
     created = await doc.create(_Create(title="Hello"))
 
-    found = await ctx.doc_query(spec).get(created.id)
+    found = await ctx.document.query(spec).get(created.id)
     assert found.id == created.id
 
-    page = await ctx.search_query(_search_spec()).search_page(
+    page = await ctx.search.query(_search_spec()).search_page(
         "hello",
     )
     assert page.count == 1
@@ -92,11 +92,11 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
 async def test_execution_context_resolves_optional_contract_ports() -> None:
     ctx = ExecutionContext(deps=MockDepsModule()())
 
-    queue_read = ctx.dep(QueueQueryDepKey)(ctx, QueueSpec(name="q", model=_Msg))
-    queue_write = ctx.dep(QueueCommandDepKey)(ctx, QueueSpec(name="q", model=_Msg))
-    pubsub = ctx.dep(PubSubCommandDepKey)(ctx, PubSubSpec(name="p", model=_Msg))
-    stream_write = ctx.dep(StreamCommandDepKey)(ctx, StreamSpec(name="s", model=_Msg))
-    stream_group = ctx.dep(StreamGroupQueryDepKey)(ctx, StreamSpec(name="s", model=_Msg))
+    queue_read = ctx.deps.provide(QueueQueryDepKey)(ctx, QueueSpec(name="q", model=_Msg))
+    queue_write = ctx.deps.provide(QueueCommandDepKey)(ctx, QueueSpec(name="q", model=_Msg))
+    pubsub = ctx.deps.provide(PubSubCommandDepKey)(ctx, PubSubSpec(name="p", model=_Msg))
+    stream_write = ctx.deps.provide(StreamCommandDepKey)(ctx, StreamSpec(name="s", model=_Msg))
+    stream_group = ctx.deps.provide(StreamGroupQueryDepKey)(ctx, StreamSpec(name="s", model=_Msg))
 
     msg_id = await queue_write.enqueue("tasks", _Msg(value="x"))
     received = await queue_read.receive("tasks")

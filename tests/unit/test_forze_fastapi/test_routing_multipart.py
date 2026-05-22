@@ -134,7 +134,7 @@ class TestMultipartHttpEndpoint:
             http={"method": "POST", "path": "/upload"},
             request=_request,
             response=UploadOut,
-            mapper=_map_upload,
+            request_mapper=_map_upload,
         )
         reg = _reg()
         app = FastAPI()
@@ -170,7 +170,7 @@ class TestMultipartHttpEndpoint:
             http={"method": "POST", "path": "/batch"},
             request=_request,
             response=BatchOut,
-            mapper=_map_batch,
+            request_mapper=_map_batch,
         )
         reg = _reg()
         app = FastAPI()

@@ -119,7 +119,7 @@ async def test_warm_postgres_catalog_skips_on_partition_error() -> None:
 @pytest.mark.asyncio
 async def test_catalog_warmup_lifecycle_step_builds() -> None:
     step = postgres_catalog_warmup_lifecycle_step(searches=None)
-    assert step.name == "postgres_catalog_warmup"
+    assert step.id == "postgres_catalog_warmup"
 
 
 class _Read(BaseModel):
@@ -172,4 +172,4 @@ async def test_validate_postgres_document_schemas_missing_column() -> None:
 @pytest.mark.asyncio
 async def test_schema_validation_lifecycle_step_builds() -> None:
     step = postgres_document_schema_validation_lifecycle_step(specs=())
-    assert step.name == "postgres_document_schema_validate"
+    assert step.id == "postgres_document_schema_validate"

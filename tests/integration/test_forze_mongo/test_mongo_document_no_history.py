@@ -67,8 +67,8 @@ async def test_mongo_document_without_history_roundtrip(
             }
         )
     )
-    cmd = ctx.doc_command(spec)
-    query = ctx.doc_query(spec)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
 
     doc = await cmd.create(PlainCreate(label="first"))
     assert doc.rev == 1
@@ -116,7 +116,7 @@ async def test_mongo_no_history_revision_conflict_still_enforced(
             }
         )
     )
-    cmd = ctx.doc_command(spec)
+    cmd = ctx.document.command(spec)
 
     doc = await cmd.create(PlainCreate(label="v1"))
     await cmd.update(doc.id, doc.rev, PlainUpdate(label="v2"))

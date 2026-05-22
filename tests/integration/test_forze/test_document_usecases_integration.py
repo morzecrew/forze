@@ -1,44 +1,51 @@
-"""Integration tests for document usecases with in-memory adapters."""
+"""Integration tests for document handlers with in-memory adapters."""
 
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.dto import DocumentIdDTO, DocumentIdRevDTO, DocumentNumberIdDTO
 from forze.application.execution import Deps, ExecutionContext
-from forze.application.usecases.document import (
-    DeleteDocument,
-    GetDocument,
-    GetDocumentByNumberId,
-    RestoreDocument,
+from forze.application.handlers.document import GetDocument
+from forze.application.handlers.document.dto import DocumentIdDTO, DocumentIdRevDTO
+from pydantic import PositiveInt
+
+from forze_contrib.soft_deletion import DeleteDocument, RestoreDocument
+from forze_contrib.soft_deletion.models import (
+    DocWithSoftDeletion,
+    UpdateCmdWithSoftDeletion,
 )
-from forze.domain.mixins import NumberCreateCmdMixin, NumberMixin, SoftDeletionMixin
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
 
+# ----------------------- #
 
-class NumberedDocument(Document, NumberMixin):
+
+class NumberedDocument(Document):
+    number_id: PositiveInt
+
+
+class NumberedCreateCmd(CreateDocumentCmd):
+    number_id: PositiveInt
+
+
+class NumberedReadDocument(ReadDocument):
+    number_id: PositiveInt
+
+
+class SoftDeletableDocument(DocWithSoftDeletion):
     pass
 
 
-class NumberedCreateCmd(CreateDocumentCmd, NumberCreateCmdMixin):
-    pass
+class SoftDeletableReadDocument(ReadDocument):
+    is_deleted: bool = False
 
 
-class NumberedReadDocument(ReadDocument, NumberMixin):
-    pass
-
-
-class SoftDeletableDocument(Document, SoftDeletionMixin):
-    pass
-
-
-class SoftDeletableReadDocument(ReadDocument, SoftDeletionMixin):
+class SoftUpdateCmd(UpdateCmdWithSoftDeletion):
     pass
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_get_by_number_id_roundtrip_integration() -> None:
+async def test_find_by_number_id_roundtrip_integration() -> None:
     state = MockState()
     deps = Deps.plain(dict(MockDepsModule(state=state)().plain_deps))
     ctx = ExecutionContext(deps=deps)
@@ -52,14 +59,15 @@ async def test_get_by_number_id_roundtrip_integration() -> None:
         },
     )
 
-    doc_command = ctx.doc_command(spec)
-    getter = GetDocumentByNumberId[NumberedReadDocument](ctx=ctx, doc=ctx.doc_query(spec))
+    doc_command = ctx.document.command(spec)
+    doc_query = ctx.document.query(spec)
 
     created = await doc_command.create(dto=NumberedCreateCmd(number_id=7))
-    fetched = await getter(DocumentNumberIdDTO(number_id=7))
+    found = await doc_query.find(filters={"$fields": {"number_id": 7}})
 
-    assert fetched.id == created.id
-    assert fetched.number_id == created.number_id
+    assert found is not None
+    assert found.id == created.id
+    assert found.number_id == created.number_id
 
 
 @pytest.mark.integration
@@ -71,24 +79,33 @@ async def test_soft_delete_hides_document_until_restore_integration() -> None:
     spec = DocumentSpec(
         name="orders",
         read=SoftDeletableReadDocument,
-        write={"domain": SoftDeletableDocument, "create_cmd": CreateDocumentCmd, "update_cmd": CreateDocumentCmd},
+        write={
+            "domain": SoftDeletableDocument,
+            "create_cmd": CreateDocumentCmd,
+            "update_cmd": SoftUpdateCmd,
+        },
     )
 
-    doc_command = ctx.doc_command(spec)
-    delete_uc = DeleteDocument[SoftDeletableReadDocument](ctx=ctx, doc=ctx.doc_command(spec))
-    restore_uc = RestoreDocument[SoftDeletableReadDocument](ctx=ctx, doc=ctx.doc_command(spec))
-    get_uc = GetDocument[SoftDeletableReadDocument](ctx=ctx, doc=ctx.doc_query(spec))
+    doc_command = ctx.document.command(spec)
+    doc_query = ctx.document.query(spec)
+    delete_handler = DeleteDocument(doc=doc_command)
+    restore_handler = RestoreDocument(doc=doc_command)
+    get_handler = GetDocument[SoftDeletableReadDocument](doc=doc_query)
 
     created = await doc_command.create(dto=CreateDocumentCmd())
-    deleted = await delete_uc(DocumentIdRevDTO(id=created.id, rev=created.rev))
+    deleted = await delete_handler(
+        DocumentIdRevDTO(id=created.id, rev=created.rev),
+    )
 
     assert deleted.is_deleted is True
 
-    fetched_deleted = await get_uc(DocumentIdDTO(id=created.id))
+    fetched_deleted = await get_handler(DocumentIdDTO(id=created.id))
     assert fetched_deleted.is_deleted is True
 
-    restored = await restore_uc(DocumentIdRevDTO(id=created.id, rev=deleted.rev))
-    refetched = await get_uc(DocumentIdDTO(id=created.id))
+    restored = await restore_handler(
+        DocumentIdRevDTO(id=created.id, rev=deleted.rev),
+    )
+    refetched = await get_handler(DocumentIdDTO(id=created.id))
 
     assert restored.is_deleted is False
     assert refetched.id == created.id
