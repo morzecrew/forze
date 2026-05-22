@@ -3,9 +3,8 @@ from typing import TYPE_CHECKING, Callable
 
 import attrs
 
+from forze.application.contracts.execution import Handler
 from forze.base.primitives import StrKey
-
-from ..core.contracts import Handler
 
 if TYPE_CHECKING:
     from ..planning.plans import ResolvedOperationPlan

@@ -4,11 +4,7 @@ from typing import Any, Callable, Literal, Protocol, Self, overload
 
 import attrs
 
-from forze.base.errors import CoreError
-from forze.base.primitives import StrKey
-
-from .scopes import Scope, TransactionScope
-from .steps import (
+from forze.application.contracts.execution import (
     BeforeStep,
     DispatchStep,
     FinallyStep,
@@ -16,6 +12,10 @@ from .steps import (
     OnFailureStep,
     OnSuccessStep,
 )
+from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
+
+from .scopes import Scope, TransactionScope
 
 # ----------------------- #
 

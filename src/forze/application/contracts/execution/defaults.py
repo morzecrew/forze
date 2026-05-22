@@ -2,10 +2,10 @@ from typing import TYPE_CHECKING
 
 from forze.base.conformity import static_fn_conformity
 
-from .contracts import LifecycleHook
+from .protocols import LifecycleHook
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 

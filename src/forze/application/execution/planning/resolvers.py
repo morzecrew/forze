@@ -1,6 +1,11 @@
 from typing import TYPE_CHECKING, Callable
 
-from ..core.value_objects import Graph, GraphStep, Pipeline, Step
+from forze.application.contracts.execution import (
+    ExecutionGraph,
+    ExecutionPipeline,
+    GraphStep,
+    Step,
+)
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -9,25 +14,25 @@ if TYPE_CHECKING:
 
 
 def resolve_graph[X: GraphStep, S](
-    g: Graph[X],
+    g: ExecutionGraph[X],
     ctx: "ExecutionContext",
     *,
     resolver: Callable[[X, "ExecutionContext"], S],
-) -> Graph[S]:
+) -> ExecutionGraph[S]:
     steps = {step_id: resolver(step, ctx) for step_id, step in g.steps.items()}
 
-    return Graph(steps=steps, waves=g.waves)
+    return ExecutionGraph(steps=steps, waves=g.waves)
 
 
 # ....................... #
 
 
 def resolve_pipe[X: Step, S](
-    p: Pipeline[X],
+    p: ExecutionPipeline[X],
     ctx: "ExecutionContext",
     *,
     resolver: Callable[[X, "ExecutionContext"], S],
-) -> Pipeline[S]:
+) -> ExecutionPipeline[S]:
     steps = tuple(resolver(step, ctx) for step in p.steps)
 
-    return Pipeline(steps=steps)
+    return ExecutionPipeline(steps=steps)

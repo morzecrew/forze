@@ -2,10 +2,10 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperFactory
-from forze.application.dto import (
+from forze.application.handlers.search import (
     CursorSearchRequestDTO,
-    RawCursorSearchRequestDTO,
-    RawSearchRequestDTO,
+    ProjectedCursorSearchRequestDTO,
+    ProjectedSearchRequestDTO,
     SearchRequestDTO,
 )
 
@@ -22,24 +22,26 @@ class SearchDTOs[M: BaseModel]:
 
 # ....................... #
 
-SR = SearchRequestDTO
-RSR = RawSearchRequestDTO
-CSR = CursorSearchRequestDTO
-RCSR = RawCursorSearchRequestDTO
+Sr = SearchRequestDTO
+Psr = ProjectedSearchRequestDTO
+Csr = CursorSearchRequestDTO
+Pcsr = ProjectedCursorSearchRequestDTO
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SearchMappers:
     """Mappers for a search aggregate."""
 
-    search: MapperFactory[SR, SR] | None = attrs.field(default=None)
-    """Read mapper."""
+    search: MapperFactory[Sr, Sr] | None = attrs.field(default=None)
+    """Request DTO mapper."""
 
-    raw_search: MapperFactory[RSR, RSR] | None = attrs.field(default=None)
-    """Raw read mapper."""
+    projected_search: MapperFactory[Psr, Psr] | None = attrs.field(default=None)
+    """Projected request DTO mapper."""
 
-    search_cursor: MapperFactory[CSR, CSR] | None = attrs.field(default=None)
-    """Cursor read mapper."""
+    cursor_search: MapperFactory[Csr, Csr] | None = attrs.field(default=None)
+    """Cursor request DTO mapper."""
 
-    raw_search_cursor: MapperFactory[RCSR, RCSR] | None = attrs.field(default=None)
-    """Raw cursor read mapper."""
+    projected_search_cursor: MapperFactory[Pcsr, Pcsr] | None = attrs.field(
+        default=None
+    )
+    """Projected cursor request DTO mapper."""

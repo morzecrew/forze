@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING, Any, Mapping, Self
 
 import attrs
 
+from forze.application.contracts.execution import DispatchStep, HandlerFactory
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 from forze.base.primitives import DirectedAcyclicGraph, StrKey, StrKeyNamespace
 
-from ..core.factories import HandlerFactory
-from ..planning import DispatchStep, FrozenOperationPlan, OperationPlan
+from ..planning import FrozenOperationPlan, OperationPlan
 from ..running import DispatchedOperation, OperationRunner, ResolvedOperation
 from .binder import OperationRegistryBinder
 

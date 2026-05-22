@@ -5,15 +5,14 @@ from typing import TYPE_CHECKING, Self, final
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.execution import LifecycleHook, noop_lifecycle_hook
 from forze.base.errors import CoreError
-
-from .core.contracts import LifecycleHook
-from .core.defaults import noop_lifecycle_hook
 
 if TYPE_CHECKING:
     from .context import ExecutionContext
 
 # ----------------------- #
+#! TODO: replace with forze.application.contracts.execution.LifecycleStep
 
 
 @final

@@ -7,10 +7,10 @@ from forze.application.execution.facade import (
     namespaced_facade,
 )
 from forze.application.handlers.search import (
-    RawCursorSearch,
-    RawSearch,
-    TypedCursorSearch,
-    TypedSearch,
+    CursorSearch,
+    ProjectedCursorSearch,
+    ProjectedSearch,
+    Search,
 )
 
 from .operations import SearchKernelOp
@@ -23,26 +23,26 @@ from .operations import SearchKernelOp
 class SearchFacade[M: BaseModel](OperationFacade):
     """Typed facade for search operations."""
 
-    raw_search = facade_op(
+    projected_search = facade_op(
         SearchKernelOp.RAW,
-        uc=RawSearch,
+        uc=ProjectedSearch,
     )
-    """Raw search operation."""
+    """Projected search operation."""
 
     search = facade_op(
         SearchKernelOp.TYPED,
-        uc=TypedSearch[M],
+        uc=Search[M],
     )
-    """Typed search operation."""
+    """Search operation."""
 
-    search_cursor = facade_op(
+    cursor_search = facade_op(
         SearchKernelOp.TYPED_CURSOR,
-        uc=TypedCursorSearch[M],
+        uc=CursorSearch[M],
     )
-    """Typed search with cursor (keyset) pagination operation."""
+    """Cursor search operation."""
 
-    raw_search_cursor = facade_op(
+    projected_cursor_search = facade_op(
         SearchKernelOp.RAW_CURSOR,
-        uc=RawCursorSearch,
+        uc=ProjectedCursorSearch,
     )
-    """Raw search with cursor (keyset) pagination operation."""
+    """Projected cursor search operation."""

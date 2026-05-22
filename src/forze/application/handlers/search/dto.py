@@ -5,9 +5,8 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
 )
+from forze.application.dto.paginated import CursorPagination, Pagination
 from forze.domain.models import BaseDTO
-
-from .paginated import CursorPagination, Pagination
 
 # ----------------------- #
 
@@ -45,8 +44,11 @@ class SearchRequestDTO(Pagination, BaseSearchRequestDTO):
     """
 
 
-class RawSearchRequestDTO(SearchRequestDTO):
-    """Search request with required field projection for raw results.
+# ....................... #
+
+
+class ProjectedSearchRequestDTO(SearchRequestDTO):
+    """Search request with required field projection for raw results
 
     Extends `SearchRequestDTO` with `return_fields`.
     Backends return `JsonDict` hits instead of typed models.
@@ -64,7 +66,10 @@ class CursorSearchRequestDTO(CursorPagination, BaseSearchRequestDTO):
     """Cursor search request payload for typed document search."""
 
 
-class RawCursorSearchRequestDTO(CursorSearchRequestDTO):
+# ....................... #
+
+
+class ProjectedCursorSearchRequestDTO(CursorSearchRequestDTO):
     """Cursor search request with required field projection for raw results."""
 
     return_fields: set[str] = Field(min_length=1)

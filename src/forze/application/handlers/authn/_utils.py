@@ -1,7 +1,8 @@
 """Shared helpers for authn usecases."""
 
 from forze.application.contracts.authn import CredentialLifetime, IssuedTokens
-from forze.application.dto import AuthnTokenResponseDTO
+
+from .dto import AuthnTokenResponseDTO
 
 # ----------------------- #
 

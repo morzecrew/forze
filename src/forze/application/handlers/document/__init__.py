@@ -1,16 +1,27 @@
 """Document handlers."""
 
-from .create import CreateDocument
-from .delete import KillDocument
-from .get import GetDocument
-from .list_ import (
-    AggregatedListDocuments,
-    RawCursorListDocuments,
-    RawListDocuments,
-    TypedCursorListDocuments,
-    TypedListDocuments,
+from .dto import (
+    AggregatedListRequestDTO,
+    CursorListRequestDTO,
+    DocumentIdDTO,
+    DocumentIdRevDTO,
+    DocumentUpdateDTO,
+    DocumentUpdateRes,
+    ListRequestDTO,
+    ProjectedCursorListRequestDTO,
+    ProjectedListRequestDTO,
 )
-from .update import UpdateDocument
+from .handlers import (
+    AggregatedListDocuments,
+    CreateDocument,
+    CursorListDocuments,
+    GetDocument,
+    KillDocument,
+    ListDocuments,
+    ProjectedCursorListDocuments,
+    ProjectedListDocuments,
+    UpdateDocument,
+)
 
 # ----------------------- #
 
@@ -19,9 +30,18 @@ __all__ = [
     "KillDocument",
     "GetDocument",
     "UpdateDocument",
-    "TypedListDocuments",
-    "RawListDocuments",
-    "TypedCursorListDocuments",
-    "RawCursorListDocuments",
+    "ListDocuments",
+    "ProjectedListDocuments",
+    "CursorListDocuments",
+    "ProjectedCursorListDocuments",
     "AggregatedListDocuments",
+    "DocumentIdDTO",
+    "DocumentIdRevDTO",
+    "DocumentUpdateDTO",
+    "DocumentUpdateRes",
+    "ListRequestDTO",
+    "ProjectedListRequestDTO",
+    "CursorListRequestDTO",
+    "ProjectedCursorListRequestDTO",
+    "AggregatedListRequestDTO",
 ]

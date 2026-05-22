@@ -4,21 +4,26 @@ from typing import TYPE_CHECKING, Any, Callable, Self, final, override
 
 import attrs
 
+from forze.application.contracts.execution import (
+    Before,
+    BeforeStep,
+    DispatchStep,
+    ExecutionGraph,
+    ExecutionPipeline,
+    Finally,
+    FinallyStep,
+    Middleware,
+    MiddlewareStep,
+    OnFailure,
+    OnFailureStep,
+    OnSuccess,
+    OnSuccessStep,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import AbstractSequence, StrKey
 
-from ..core.contracts import Before, Finally, Middleware, OnFailure, OnSuccess
-from ..core.value_objects import Graph, Pipeline
 from .builders import graph_from_sequence, pipe_from_sequence
 from .resolvers import resolve_graph, resolve_pipe
-from .steps import (
-    BeforeStep,
-    DispatchStep,
-    FinallyStep,
-    MiddlewareStep,
-    OnFailureStep,
-    OnSuccessStep,
-)
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext
@@ -195,22 +200,24 @@ class TransactionScope(Scope):
 class FrozenScope:
     """Frozen scope plan."""
 
-    before: Graph[BeforeStep] = attrs.field(factory=Graph)
+    before: ExecutionGraph[BeforeStep] = attrs.field(factory=ExecutionGraph)
     """Before steps for this scope."""
 
-    wrap: Pipeline[MiddlewareStep] = attrs.field(factory=Pipeline)
+    wrap: ExecutionPipeline[MiddlewareStep] = attrs.field(factory=ExecutionPipeline)
     """Wrap steps for this scope."""
 
-    finally_: Pipeline[FinallyStep] = attrs.field(factory=Pipeline)
+    finally_: ExecutionPipeline[FinallyStep] = attrs.field(factory=ExecutionPipeline)
     """Finally steps for this scope."""
 
-    on_failure: Pipeline[OnFailureStep] = attrs.field(factory=Pipeline)
+    on_failure: ExecutionPipeline[OnFailureStep] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """On failure steps for this scope."""
 
-    on_success: Graph[OnSuccessStep] = attrs.field(factory=Graph)
+    on_success: ExecutionGraph[OnSuccessStep] = attrs.field(factory=ExecutionGraph)
     """On success steps for this scope."""
 
-    dispatch: Pipeline[DispatchStep] = attrs.field(factory=Pipeline)
+    dispatch: ExecutionPipeline[DispatchStep] = attrs.field(factory=ExecutionPipeline)
     """Dispatch steps for this scope."""
 
     # ....................... #
@@ -274,10 +281,12 @@ class FrozenTransactionScope(FrozenScope):
     route: StrKey | None = None
     """Transaction route for this scope."""
 
-    after_commit: Graph[OnSuccessStep] = attrs.field(factory=Graph)
+    after_commit: ExecutionGraph[OnSuccessStep] = attrs.field(factory=ExecutionGraph)
     """After commit steps for this scope."""
 
-    dispatch_after_commit: Pipeline[DispatchStep] = attrs.field(factory=Pipeline)
+    dispatch_after_commit: ExecutionPipeline[DispatchStep] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """After commit dispatches for this scope."""
 
     # ....................... #
@@ -325,22 +334,32 @@ class FrozenTransactionScope(FrozenScope):
 class ResolvedScope:
     """Resolved scope plan."""
 
-    before: Graph[Before[Any]] = attrs.field(factory=Graph)
+    before: ExecutionGraph[Before[Any]] = attrs.field(factory=ExecutionGraph)
     """Resolved before hooks for this scope."""
 
-    wrap: Pipeline[Middleware[Any, Any]] = attrs.field(factory=Pipeline)
+    wrap: ExecutionPipeline[Middleware[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """Resolved wrap hooks for this scope."""
 
-    finally_: Pipeline[Finally[Any, Any]] = attrs.field(factory=Pipeline)
+    finally_: ExecutionPipeline[Finally[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """Resolved finally hooks for this scope."""
 
-    on_failure: Pipeline[OnFailure[Any]] = attrs.field(factory=Pipeline)
+    on_failure: ExecutionPipeline[OnFailure[Any]] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """Resolved on failure hooks for this scope."""
 
-    on_success: Graph[OnSuccess[Any, Any]] = attrs.field(factory=Graph)
+    on_success: ExecutionGraph[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionGraph
+    )
     """Resolved on success hooks for this scope."""
 
-    dispatch: Pipeline[OnSuccess[Any, Any]] = attrs.field(factory=Pipeline)
+    dispatch: ExecutionPipeline[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """Resolved dispatch hooks for this scope."""
 
 
@@ -354,8 +373,12 @@ class ResolvedTransactionScope(ResolvedScope):
     route: StrKey | None = None
     """Transaction route for this scope."""
 
-    after_commit: Graph[OnSuccess[Any, Any]] = attrs.field(factory=Graph)
+    after_commit: ExecutionGraph[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionGraph
+    )
     """Resolved after commit hooks for this scope."""
 
-    dispatch_after_commit: Pipeline[OnSuccess[Any, Any]] = attrs.field(factory=Pipeline)
+    dispatch_after_commit: ExecutionPipeline[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline
+    )
     """Resolved dispatch after commit hooks for this scope."""

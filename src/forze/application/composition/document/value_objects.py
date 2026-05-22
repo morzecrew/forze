@@ -4,12 +4,12 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import MapperFactory
-from forze.application.dto import (
+from forze.application.handlers.document import (
     AggregatedListRequestDTO,
     CursorListRequestDTO,
     ListRequestDTO,
-    RawCursorListRequestDTO,
-    RawListRequestDTO,
+    ProjectedCursorListRequestDTO,
+    ProjectedListRequestDTO,
 )
 from forze.domain.models import BaseDTO, CreateDocumentCmd
 
@@ -41,30 +41,30 @@ class DocumentDTOs(Generic[R, C, U]):
 
 # ....................... #
 
-LR = ListRequestDTO
-RLR = RawListRequestDTO
-CLR = CursorListRequestDTO
-RCLR = RawCursorListRequestDTO
-ALR = AggregatedListRequestDTO
+Lr = ListRequestDTO
+Plr = ProjectedListRequestDTO
+Clr = CursorListRequestDTO
+Pclr = ProjectedCursorListRequestDTO
+Alr = AggregatedListRequestDTO
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentMappers(Generic[C, C_cmd, U, U_cmd]):
     """Mappers for document operations."""
 
-    list: MapperFactory[LR, LR] | None = attrs.field(default=None)
+    list: MapperFactory[Lr, Lr] | None = attrs.field(default=None)
     """Mapper for list operation."""
 
-    raw_list: MapperFactory[RLR, RLR] | None = attrs.field(default=None)
+    projected_list: MapperFactory[Plr, Plr] | None = attrs.field(default=None)
     """Mapper for raw list operation."""
 
-    list_cursor: MapperFactory[CLR, CLR] | None = attrs.field(default=None)
+    cursor_list: MapperFactory[Clr, Clr] | None = attrs.field(default=None)
     """Mapper for list cursor operation."""
 
-    raw_list_cursor: MapperFactory[RCLR, RCLR] | None = attrs.field(default=None)
+    projected_cursor_list: MapperFactory[Pclr, Pclr] | None = attrs.field(default=None)
     """Mapper for raw list cursor operation."""
 
-    aggregated_list: MapperFactory[ALR, ALR] | None = attrs.field(default=None)
+    aggregated_list: MapperFactory[Alr, Alr] | None = attrs.field(default=None)
     """Mapper for aggregated list operation."""
 
     create: MapperFactory[C, C_cmd] | None = attrs.field(default=None)

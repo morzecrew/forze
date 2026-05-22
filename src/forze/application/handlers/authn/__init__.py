@@ -1,7 +1,15 @@
-from .change_password import AuthnChangePassword
-from .login import AuthnPasswordLogin
-from .logout import AuthnLogout
-from .refresh import AuthnRefreshTokens
+from .dto import (
+    AuthnChangePasswordRequestDTO,
+    AuthnLoginRequestDTO,
+    AuthnRefreshRequestDTO,
+    AuthnTokenResponseDTO,
+)
+from .handlers import (
+    AuthnChangePassword,
+    AuthnLogout,
+    AuthnPasswordLogin,
+    AuthnRefreshTokens,
+)
 
 # ----------------------- #
 
@@ -10,4 +18,8 @@ __all__ = [
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",
+    "AuthnChangePasswordRequestDTO",
+    "AuthnLoginRequestDTO",
+    "AuthnRefreshRequestDTO",
+    "AuthnTokenResponseDTO",
 ]

@@ -9,12 +9,12 @@ from forze.application.execution.registry import OperationRegistry
 from forze.application.handlers.document import (
     AggregatedListDocuments,
     CreateDocument,
+    CursorListDocuments,
     GetDocument,
     KillDocument,
-    RawCursorListDocuments,
-    RawListDocuments,
-    TypedCursorListDocuments,
-    TypedListDocuments,
+    ListDocuments,
+    ProjectedCursorListDocuments,
+    ProjectedListDocuments,
     UpdateDocument,
 )
 from forze.application.mapping import PydanticPipelineMapperFactory
@@ -99,24 +99,26 @@ def build_document_registry(
             ns.key(DocumentKernelOp.GET): lambda ctx: GetDocument(
                 doc=ctx.doc.query(spec),
             ),
-            ns.key(DocumentKernelOp.LIST): lambda ctx: TypedListDocuments(
+            ns.key(DocumentKernelOp.LIST): lambda ctx: ListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=mappers.list(ctx) if mappers.list else None,
             ),
-            ns.key(DocumentKernelOp.RAW_LIST): lambda ctx: RawListDocuments(
+            ns.key(DocumentKernelOp.RAW_LIST): lambda ctx: ProjectedListDocuments(
                 doc=ctx.doc.query(spec),
-                mapper=mappers.raw_list(ctx) if mappers.raw_list else None,
+                mapper=mappers.projected_list(ctx) if mappers.projected_list else None,
             ),
-            ns.key(DocumentKernelOp.LIST_CURSOR): lambda ctx: TypedCursorListDocuments(
+            ns.key(DocumentKernelOp.LIST_CURSOR): lambda ctx: CursorListDocuments(
                 doc=ctx.doc.query(spec),
-                mapper=mappers.list_cursor(ctx) if mappers.list_cursor else None,
+                mapper=mappers.cursor_list(ctx) if mappers.cursor_list else None,
             ),
             ns.key(
                 DocumentKernelOp.RAW_LIST_CURSOR
-            ): lambda ctx: RawCursorListDocuments(
+            ): lambda ctx: ProjectedCursorListDocuments(
                 doc=ctx.doc.query(spec),
                 mapper=(
-                    mappers.raw_list_cursor(ctx) if mappers.raw_list_cursor else None
+                    mappers.projected_cursor_list(ctx)
+                    if mappers.projected_cursor_list
+                    else None
                 ),
             ),
             ns.key(DocumentKernelOp.AGG_LIST): lambda ctx: AggregatedListDocuments(

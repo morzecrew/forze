@@ -11,12 +11,12 @@ from forze.application.execution.facade import (
 from forze.application.handlers.document import (
     AggregatedListDocuments,
     CreateDocument,
+    CursorListDocuments,
     GetDocument,
     KillDocument,
-    RawCursorListDocuments,
-    RawListDocuments,
-    TypedCursorListDocuments,
-    TypedListDocuments,
+    ListDocuments,
+    ProjectedCursorListDocuments,
+    ProjectedListDocuments,
     UpdateDocument,
 )
 from forze.domain.models import BaseDTO
@@ -45,25 +45,25 @@ class DocumentFacade(OperationFacade, Generic[R, C, U]):
 
     list = facade_op(
         DocumentKernelOp.LIST,
-        uc=TypedListDocuments[R],
+        uc=ListDocuments[R],
     )
     """List documents operation."""
 
     raw_list = facade_op(
         DocumentKernelOp.RAW_LIST,
-        uc=RawListDocuments,
+        uc=ProjectedListDocuments,
     )
     """Raw list documents operation."""
 
     list_cursor = facade_op(
         DocumentKernelOp.LIST_CURSOR,
-        uc=TypedCursorListDocuments[R],
+        uc=CursorListDocuments[R],
     )
     """List documents with cursor (keyset) pagination operation."""
 
     raw_list_cursor = facade_op(
         DocumentKernelOp.RAW_LIST_CURSOR,
-        uc=RawCursorListDocuments,
+        uc=ProjectedCursorListDocuments,
     )
     """Raw list with cursor (keyset) pagination operation."""
 

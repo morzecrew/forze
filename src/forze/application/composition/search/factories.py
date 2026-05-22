@@ -7,10 +7,10 @@ from forze.application.contracts.search import (
 )
 from forze.application.execution.registry import OperationRegistry
 from forze.application.handlers.search import (
-    RawCursorSearch,
-    RawSearch,
-    TypedCursorSearch,
-    TypedSearch,
+    CursorSearch,
+    ProjectedCursorSearch,
+    ProjectedSearch,
+    Search,
 )
 from forze.base.primitives import StrKeyNamespace
 
@@ -39,23 +39,25 @@ def build_search_registry[M: BaseModel](
 
     reg = OperationRegistry(
         handlers={
-            ns.key(SearchKernelOp.TYPED): lambda ctx: TypedSearch(
+            ns.key(SearchKernelOp.TYPED): lambda ctx: Search(
                 search=ctx.search.query(spec),
                 mapper=mappers.search(ctx) if mappers.search else None,
             ),
-            ns.key(SearchKernelOp.RAW): lambda ctx: RawSearch(
-                search=ctx.search.query(spec),
-                mapper=mappers.raw_search(ctx) if mappers.raw_search else None,
-            ),
-            ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: TypedCursorSearch(
-                search=ctx.search.query(spec),
-                mapper=mappers.search_cursor(ctx) if mappers.search_cursor else None,
-            ),
-            ns.key(SearchKernelOp.RAW_CURSOR): lambda ctx: RawCursorSearch(
+            ns.key(SearchKernelOp.RAW): lambda ctx: ProjectedSearch(
                 search=ctx.search.query(spec),
                 mapper=(
-                    mappers.raw_search_cursor(ctx)
-                    if mappers.raw_search_cursor
+                    mappers.projected_search(ctx) if mappers.projected_search else None
+                ),
+            ),
+            ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: CursorSearch(
+                search=ctx.search.query(spec),
+                mapper=mappers.cursor_search(ctx) if mappers.cursor_search else None,
+            ),
+            ns.key(SearchKernelOp.RAW_CURSOR): lambda ctx: ProjectedCursorSearch(
+                search=ctx.search.query(spec),
+                mapper=(
+                    mappers.projected_search_cursor(ctx)
+                    if mappers.projected_search_cursor
                     else None
                 ),
             ),
@@ -86,23 +88,25 @@ def build_hub_search_registry[M: BaseModel](
 
     reg = OperationRegistry(
         handlers={
-            ns.key(SearchKernelOp.TYPED): lambda ctx: TypedSearch(
+            ns.key(SearchKernelOp.TYPED): lambda ctx: Search(
                 search=ctx.search.hub(spec),
                 mapper=mappers.search(ctx) if mappers.search else None,
             ),
-            ns.key(SearchKernelOp.RAW): lambda ctx: RawSearch(
-                search=ctx.search.hub(spec),
-                mapper=mappers.raw_search(ctx) if mappers.raw_search else None,
-            ),
-            ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: TypedCursorSearch(
-                search=ctx.search.hub(spec),
-                mapper=mappers.search_cursor(ctx) if mappers.search_cursor else None,
-            ),
-            ns.key(SearchKernelOp.RAW_CURSOR): lambda ctx: RawCursorSearch(
+            ns.key(SearchKernelOp.RAW): lambda ctx: ProjectedSearch(
                 search=ctx.search.hub(spec),
                 mapper=(
-                    mappers.raw_search_cursor(ctx)
-                    if mappers.raw_search_cursor
+                    mappers.projected_search(ctx) if mappers.projected_search else None
+                ),
+            ),
+            ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: CursorSearch(
+                search=ctx.search.hub(spec),
+                mapper=mappers.cursor_search(ctx) if mappers.cursor_search else None,
+            ),
+            ns.key(SearchKernelOp.RAW_CURSOR): lambda ctx: ProjectedCursorSearch(
+                search=ctx.search.hub(spec),
+                mapper=(
+                    mappers.projected_search_cursor(ctx)
+                    if mappers.projected_search_cursor
                     else None
                 ),
             ),
@@ -132,13 +136,13 @@ def build_federated_search_registry[M: BaseModel](
 
     reg = OperationRegistry(
         handlers={
-            ns.key(SearchKernelOp.TYPED): lambda ctx: TypedSearch(
+            ns.key(SearchKernelOp.TYPED): lambda ctx: Search(
                 search=ctx.search.federated(spec),
                 mapper=mappers.search(ctx) if mappers.search else None,
             ),
-            ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: TypedCursorSearch(
+            ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: CursorSearch(
                 search=ctx.search.federated(spec),
-                mapper=mappers.search_cursor(ctx) if mappers.search_cursor else None,
+                mapper=mappers.cursor_search(ctx) if mappers.cursor_search else None,
             ),
         },
     )

@@ -2,9 +2,9 @@ from typing import Any, Callable, final
 
 import attrs
 
+from forze.application.contracts.execution import Handler, OnSuccess
 from forze.base.primitives import StrKey
 
-from ..core.contracts import Handler, OnSuccess
 from .runners import OperationRunner
 
 # ----------------------- #

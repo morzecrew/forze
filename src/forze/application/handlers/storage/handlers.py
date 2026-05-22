@@ -1,14 +1,15 @@
 import attrs
 
+from forze.application.contracts.execution import Handler
 from forze.application.contracts.storage import (
     DownloadedObject,
     StoragePort,
     StoredObject,
     UploadedObject,
 )
-from forze.application.dto import ListObjectsRequestDTO, UploadObjectRequestDTO
-from forze.application.execution.core import Handler
 from forze.domain.models import BaseDTO
+
+from .dto import ListObjectsRequestDTO, UploadObjectRequestDTO
 
 # ----------------------- #
 

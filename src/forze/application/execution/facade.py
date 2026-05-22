@@ -2,10 +2,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
 import attrs
 
+from forze.application.contracts.execution import Handler
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey, StrKeyNamespace
 
-from .core.contracts import Handler
 from .registry.registries import FrozenOperationRegistry
 
 if TYPE_CHECKING:

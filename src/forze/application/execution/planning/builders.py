@@ -1,12 +1,16 @@
+from forze.application.contracts.execution import (
+    ExecutionGraph,
+    ExecutionPipeline,
+    GraphStep,
+    Step,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import AbstractSequence, DirectedAcyclicGraph, StrKey
-
-from ..core.value_objects import Graph, GraphStep, Pipeline, Step
 
 # ----------------------- #
 
 
-def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> Graph[X]:
+def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionGraph[X]:
     """Build a graph from a sequence of steps."""
 
     step_list = tuple(seq.items)
@@ -58,16 +62,16 @@ def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> Graph[X]:
     )
     waves = tuple(dag.topological_batches(ready_sort_key=lambda x: order[x]))
 
-    return Graph(steps=steps, waves=waves)
+    return ExecutionGraph(steps=steps, waves=waves)
 
 
 # ....................... #
 
 
-def pipe_from_sequence[X: Step](seq: AbstractSequence[X], /) -> Pipeline[X]:
+def pipe_from_sequence[X: Step](seq: AbstractSequence[X], /) -> ExecutionPipeline[X]:
     """Build a pipeline from a sequence of steps."""
 
     step_list = tuple(seq.items)
     sorted_steps = sorted(step_list, key=lambda x: x.priority)
 
-    return Pipeline(steps=tuple(sorted_steps))
+    return ExecutionPipeline(steps=tuple(sorted_steps))

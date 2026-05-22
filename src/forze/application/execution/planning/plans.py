@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
 
 import attrs
 
+from forze.application.contracts.execution import DispatchStep, OnSuccess
 from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey
 
-from ..core.contracts import OnSuccess
 from .binders import ScopeBinder, TransactionScopeBinder
 from .scopes import (
     FrozenScope,
@@ -18,7 +18,6 @@ from .scopes import (
     Scope,
     TransactionScope,
 )
-from .steps import DispatchStep
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext

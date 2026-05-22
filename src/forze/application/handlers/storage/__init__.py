@@ -1,5 +1,6 @@
 """Storage usecases for object storage workflows."""
 
+from .dto import ListObjectsRequestDTO, UploadObjectRequestDTO
 from .handlers import (
     DeleteObject,
     DownloadObject,
@@ -16,4 +17,6 @@ __all__ = [
     "ListedObjects",
     "DownloadObject",
     "DeleteObject",
+    "ListObjectsRequestDTO",
+    "UploadObjectRequestDTO",
 ]

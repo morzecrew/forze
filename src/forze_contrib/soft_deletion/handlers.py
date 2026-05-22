@@ -4,8 +4,8 @@ import attrs
 from pydantic import BaseModel as BM
 
 from forze.application.contracts.document import DocumentCommandPort
-from forze.application.dto import DocumentIdRevDTO
-from forze.application.execution.core import Handler
+from forze.application.contracts.execution import Handler
+from forze.application.handlers.document import DocumentIdRevDTO
 
 from .models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 
