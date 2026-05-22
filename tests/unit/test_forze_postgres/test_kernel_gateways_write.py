@@ -114,8 +114,10 @@ async def test_patch_group_sql_includes_column_casts() -> None:
 
     stmt = client.fetch_all.await_args.args[0]
     sql_text = stmt.as_string()
-    assert '"amount" = "v"."amount"::numeric' in sql_text
-    assert '"rev" = "v"."rev"::int4' in sql_text
+    assert '"amount" = v."amount"' in sql_text
+    assert '"rev" = v."rev"' in sql_text
+    assert "CAST(%s AS numeric)" in sql_text
+    assert "CAST(%s AS int4)" in sql_text
 
 
 @pytest.mark.asyncio
