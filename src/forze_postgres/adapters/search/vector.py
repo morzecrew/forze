@@ -22,7 +22,7 @@ from forze.application.contracts.embeddings import (
     EmbeddingsProviderPort,
     EmbeddingsSpec,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,

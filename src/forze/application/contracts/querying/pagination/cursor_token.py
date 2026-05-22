@@ -4,7 +4,7 @@ import base64
 import json
 from typing import Any, Sequence
 
-from forze.application.contracts.query import QuerySortExpression
+from forze.application.contracts.querying import QuerySortExpression
 from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
 

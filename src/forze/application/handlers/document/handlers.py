@@ -9,8 +9,8 @@ from forze.application.contracts.mapping import Mapper
 from forze.application.dto.paginated import (
     CursorPaginated,
     Paginated,
-    RawCursorPaginated,
-    RawPaginated,
+    ProjectedCursorPaginated,
+    ProjectedPaginated,
 )
 from forze.domain.models import BaseDTO, CreateDocumentCmd
 
@@ -196,7 +196,7 @@ class ListDocuments[Out: Bm](Handler[Lr, Paginated[Out]]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedListDocuments(Handler[Plr, RawPaginated]):
+class ProjectedListDocuments(Handler[Plr, ProjectedPaginated]):
     """Handler that fetches multiple documents by filters and sorts with raw results."""
 
     doc: DocumentQueryPort[Any]
@@ -207,7 +207,7 @@ class ProjectedListDocuments(Handler[Plr, RawPaginated]):
 
     # ....................... #
 
-    async def __call__(self, args: Plr) -> RawPaginated:
+    async def __call__(self, args: Plr) -> ProjectedPaginated:
         """Fetch multiple documents by filters and sorts with raw results.
 
         :param args: List arguments (body, page, size).
@@ -233,7 +233,7 @@ class ProjectedListDocuments(Handler[Plr, RawPaginated]):
             },
         )
 
-        return RawPaginated.from_page(res)
+        return ProjectedPaginated.from_page(res)
 
 
 # ....................... #
@@ -270,7 +270,7 @@ class CursorListDocuments[Out: Bm](Handler[Clr, CursorPaginated[Out]]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedCursorListDocuments(Handler[Pclr, RawCursorPaginated]):
+class ProjectedCursorListDocuments(Handler[Pclr, ProjectedCursorPaginated]):
     """Usecase that lists documents with raw projection and cursor pagination."""
 
     doc: DocumentQueryPort[Any]
@@ -281,7 +281,7 @@ class ProjectedCursorListDocuments(Handler[Pclr, RawCursorPaginated]):
 
     # ....................... #
 
-    async def __call__(self, args: Pclr) -> RawCursorPaginated:
+    async def __call__(self, args: Pclr) -> ProjectedCursorPaginated:
         body = args
 
         if self.mapper:
@@ -294,14 +294,14 @@ class ProjectedCursorListDocuments(Handler[Pclr, RawCursorPaginated]):
             sorts=body.sorts,
         )
 
-        return RawCursorPaginated.from_page(res)
+        return ProjectedCursorPaginated.from_page(res)
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class AggregatedListDocuments(Handler[Alr, RawPaginated]):
+class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
     """Usecase that fetches multiple documents by filters and sorts with aggregates."""
 
     doc: DocumentQueryPort[Any]
@@ -312,7 +312,7 @@ class AggregatedListDocuments(Handler[Alr, RawPaginated]):
 
     # ....................... #
 
-    async def __call__(self, args: Alr) -> RawPaginated:
+    async def __call__(self, args: Alr) -> ProjectedPaginated:
         page = args.page
         size = args.size
         limit = size
@@ -332,4 +332,4 @@ class AggregatedListDocuments(Handler[Alr, RawPaginated]):
             },
         )
 
-        return RawPaginated.from_page(res)
+        return ProjectedPaginated.from_page(res)

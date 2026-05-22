@@ -5,8 +5,8 @@ from typing import cast, final
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
@@ -103,7 +103,7 @@ def postgres_lifecycle_step(
     startup_hook = PostgresStartupHook(dsn=dsn, config=config)
     shutdown_hook = PostgresShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -125,7 +125,7 @@ def routed_postgres_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedPostgresStartupHook(client=client),
         shutdown=RoutedPostgresShutdownHook(client=client),
     )

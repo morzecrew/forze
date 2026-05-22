@@ -10,7 +10,7 @@ import attrs
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     QueryAnd,
     QueryExpr,
     QueryField,

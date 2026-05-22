@@ -6,13 +6,23 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, AsyncIterator, Literal, Never, Sequence, TypeVar, cast, final, overload
+from typing import (
+    Any,
+    AsyncIterator,
+    Literal,
+    Never,
+    Sequence,
+    TypeVar,
+    cast,
+    final,
+    overload,
+)
 from uuid import UUID
 
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     QueryFilterExpression,

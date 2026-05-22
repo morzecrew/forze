@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.query import encode_keyset_v1
+from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError, InfrastructureError, NotFoundError
 from forze.domain.models import Document
@@ -212,10 +212,13 @@ async def test_postgres_read_gateway_aggregate_expressions(
             premium_revenue=50.0,
         ),
     ]
-    assert await gw.count_aggregates(
-        {"$fields": {"category": {"$in": ["books", "hardware"]}}},
-        aggregates=aggregates,
-    ) == 2
+    assert (
+        await gw.count_aggregates(
+            {"$fields": {"category": {"$in": ["books", "hardware"]}}},
+            aggregates=aggregates,
+        )
+        == 2
+    )
 
 
 @pytest.mark.integration

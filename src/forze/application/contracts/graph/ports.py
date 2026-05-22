@@ -144,7 +144,7 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         List vertices of *node_kind* with a simple property filter and offset pagination.
 
         *property_filter* is an adapter-defined equality (or best-effort) map; it is
-        not a full ``forze.application.contracts.query.QueryFilterExpression`` tree.
+        not a full ``forze.application.contracts.querying.QueryFilterExpression`` tree.
         """
         ...  # pragma: no cover
 

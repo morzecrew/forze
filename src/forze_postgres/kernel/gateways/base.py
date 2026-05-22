@@ -14,7 +14,7 @@ from psycopg import sql
 from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     QueryFilterExpression,
     QueryFilterExpressionParser,
     QuerySortExpression,

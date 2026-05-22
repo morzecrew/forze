@@ -5,8 +5,8 @@ from typing import cast, final
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedSQSClient, SQSClient, SQSConfig
@@ -109,7 +109,7 @@ def sqs_lifecycle_step(
     )
     shutdown_hook = SQSShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -126,7 +126,7 @@ def routed_sqs_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedSQSStartupHook(client=client),
         shutdown=RoutedSQSShutdownHook(client=client),
     )

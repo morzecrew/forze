@@ -1,12 +1,12 @@
-"""Unit tests for forze.application.contracts.query.internal."""
+"""Unit tests for forze.application.contracts.querying.internal."""
 
 from datetime import date, datetime, timezone
 from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.query import AggregatesExpressionParser
-from forze.application.contracts.query.internal import (
+from forze.application.contracts.querying import AggregatesExpressionParser
+from forze.application.contracts.querying.internal import (
     QueryAnd,
     QueryExpr,
     QueryField,

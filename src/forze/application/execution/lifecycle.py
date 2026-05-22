@@ -5,39 +5,12 @@ from typing import TYPE_CHECKING, Self, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.execution import LifecycleHook, noop_lifecycle_hook
-from forze.base.errors import CoreError
+from forze.application.contracts.execution import LifecycleStep
 
 if TYPE_CHECKING:
     from .context import ExecutionContext
 
 # ----------------------- #
-#! TODO: replace with forze.application.contracts.execution.LifecycleStep
-
-
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class LifecycleStep:
-    """Named pair of startup and shutdown hooks.
-
-    Steps are executed in order at startup; shutdown runs in reverse order.
-    Name must be unique within a plan for collision detection.
-    """
-
-    name: str
-    """Unique name for the step (used for collision detection)."""
-
-    startup: LifecycleHook = noop_lifecycle_hook
-    """Hook to run on startup."""
-
-    shutdown: LifecycleHook = noop_lifecycle_hook
-    """Hook to run on shutdown."""
-
-
-# ....................... #
-#! Maybe integrate graph approach, but that's not really necessary
-#! parallel execution might be helpful
-#! at least pipelining would be helpful
 
 
 @final
@@ -55,18 +28,6 @@ class LifecyclePlan:
 
     # ....................... #
 
-    @staticmethod
-    def _check_name_collision(*steps: LifecycleStep) -> None:
-        used: set[str] = set()
-
-        for step in steps:
-            if step.name in used:
-                raise CoreError(f"Lifecycle step name collision: {step.name}")
-
-            used.add(step.name)
-
-    # ....................... #
-
     @classmethod
     def from_steps(cls, *steps: LifecycleStep) -> Self:
         """Create a plan from steps.
@@ -77,8 +38,7 @@ class LifecyclePlan:
         """
 
         logger.trace("Creating lifecycle plan from %s step(s)", len(steps))
-        logger.trace("Steps: %s", tuple(step.name for step in steps))
-        cls._check_name_collision(*steps)
+        logger.trace("Steps: %s", tuple(step.id for step in steps))
 
         return cls(steps=steps)
 
@@ -98,11 +58,10 @@ class LifecyclePlan:
             len(self.steps),
         )
 
-        logger.trace("Existing steps: %s", tuple(step.name for step in self.steps))
-        logger.trace("New steps: %s", tuple(step.name for step in steps))
+        logger.trace("Existing steps: %s", tuple(step.id for step in self.steps))
+        logger.trace("New steps: %s", tuple(step.id for step in steps))
 
         new_steps = (*self.steps, *steps)
-        self._check_name_collision(*new_steps)
 
         return attrs.evolve(self, steps=new_steps)
 
@@ -121,7 +80,7 @@ class LifecyclePlan:
 
         try:
             for step in self.steps:
-                logger.trace("Executing '%s' startup hook", step.name)
+                logger.trace("Executing '%s' startup hook", step.id)
                 await step.startup(ctx)
                 executed.append(step)
 
@@ -130,14 +89,14 @@ class LifecyclePlan:
 
             for step in reversed(executed):
                 try:
-                    logger.trace("Rolling back '%s' via shutdown", step.name)
+                    logger.trace("Rolling back '%s' via shutdown", step.id)
                     await step.shutdown(ctx)
-                    logger.trace("Rolled back '%s' successfully", step.name)
+                    logger.trace("Rolled back '%s' successfully", step.id)
 
                 except Exception:
                     logger.exception(
                         "Lifecycle rollback shutdown failed for '%s'",
-                        step.name,
+                        step.id,
                     )
 
             raise
@@ -154,17 +113,8 @@ class LifecyclePlan:
 
         for step in reversed(self.steps):
             try:
-                logger.trace("Executing '%s' shutdown hook", step.name)
+                logger.trace("Executing '%s' shutdown hook", step.id)
                 await step.shutdown(ctx)
 
             except Exception:
-                logger.exception("Lifecycle shutdown failed for '%s'", step.name)
-
-
-# ....................... #
-
-__all__ = [
-    "LifecycleStep",
-    "LifecyclePlan",
-    "LifecycleHook",
-]
+                logger.exception("Lifecycle shutdown failed for '%s'", step.id)

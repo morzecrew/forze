@@ -93,7 +93,7 @@ class ParsedAggregates:
 
 
 class AggregatesExpressionParser:
-    """Parser for :class:`~forze.application.contracts.query.AggregatesExpression`."""
+    """Parser for :class:`~forze.application.contracts.querying.AggregatesExpression`."""
 
     @classmethod
     def parse(cls, expr: AggregatesExpression) -> ParsedAggregates:

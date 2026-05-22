@@ -8,7 +8,7 @@ import attrs
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     QueryAnd,
     QueryExpr,
     QueryField,
@@ -99,14 +99,18 @@ class TestMongoQueryRenderer:
             r.render(QueryField("s", "$subset", 1))
 
     def test_null_default_matches_missing(self) -> None:
-        r = MongoQueryRenderer(null_matches_missing=True, require_exists_for_not_null=True)
+        r = MongoQueryRenderer(
+            null_matches_missing=True, require_exists_for_not_null=True
+        )
         assert r.render(QueryField("z", "$null", True)) == {"z": None}
         assert r.render(QueryField("z", "$null", False)) == {
             "$and": [{"z": {"$ne": None}}, {"z": {"$exists": True}}],
         }
 
     def test_null_explicit_missing_only(self) -> None:
-        r = MongoQueryRenderer(null_matches_missing=False, require_exists_for_not_null=False)
+        r = MongoQueryRenderer(
+            null_matches_missing=False, require_exists_for_not_null=False
+        )
         assert r.render(QueryField("z", "$null", True)) == {
             "$and": [{"z": None}, {"z": {"$exists": True}}],
         }
@@ -264,7 +268,11 @@ class TestMongoAggregateRendering:
         _parsed, pipeline = renderer.render_aggregates(
             {
                 "$fields": {"cat": "category"},
-                "$time_bucket": {"field": "created_at", "unit": "week", "timezone": "+03:00"},
+                "$time_bucket": {
+                    "field": "created_at",
+                    "unit": "week",
+                    "timezone": "+03:00",
+                },
                 "$computed": {"n": {"$count": None}},
             },
         )

@@ -2,7 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregatesExpression,
     QueryFilterExpression,
     QuerySortExpression,

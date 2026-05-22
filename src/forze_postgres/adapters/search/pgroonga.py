@@ -18,7 +18,7 @@ from forze.application.contracts.base import (
     Page,
     page_from_limit_offset,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,

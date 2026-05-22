@@ -1,6 +1,6 @@
 """Keyset (cursor) pagination helpers: shared tokens in :mod:`forze.pagination`."""
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_with_id,

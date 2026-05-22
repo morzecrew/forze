@@ -6,25 +6,25 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Mapping
 from datetime import timedelta
+from typing import Any, Mapping
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregateComputedField,
-    AggregateTimeBucket,
     AggregatesExpression,
     AggregatesExpressionParser,
+    AggregateTimeBucket,
     ParsedAggregates,
     QueryAnd,
     QueryExpr,
     QueryField,
+    QueryFilterExpressionParser,
     QueryOp,
     QueryOr,
-    QueryFilterExpressionParser,
     QueryValue,
     QueryValueCaster,
 )
@@ -193,7 +193,12 @@ class PsycopgQueryRenderer:
             )
 
         group_clause = sql.SQL(", ").join(group_parts) if group_parts else None
-        return parsed, sql.SQL(", ").join(select_parts), group_clause, self.binder.values()
+        return (
+            parsed,
+            sql.SQL(", ").join(select_parts),
+            group_clause,
+            self.binder.values(),
+        )
 
     # ....................... #
 

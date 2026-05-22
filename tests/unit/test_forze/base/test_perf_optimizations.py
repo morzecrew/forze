@@ -2,14 +2,12 @@
 
 import time
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
 
 from forze.base.errors import CoreError, handled
 from forze.base.serialization.pydantic import pydantic_field_names, pydantic_model_hash
-
 
 # ----------------------- #
 
@@ -58,9 +56,9 @@ class TestHandledDecoratorPerf:
         raw_ns = time.perf_counter_ns() - start
 
         overhead_per_call_ns = (decorated_ns - raw_ns) / iterations
-        assert overhead_per_call_ns < 5_000, (
-            f"Decorated overhead {overhead_per_call_ns:.0f}ns/call exceeds 5us budget"
-        )
+        assert (
+            overhead_per_call_ns < 5_000
+        ), f"Decorated overhead {overhead_per_call_ns:.0f}ns/call exceeds 5us budget"
 
 
 # ----------------------- #
@@ -123,9 +121,9 @@ class TestRowToDictPerf:
         old_avg = old_ns / iterations
         speedup = old_avg / new_avg if new_avg > 0 else float("inf")
 
-        assert speedup >= 1.0, (
-            f"_row_to_dict should be at least as fast; got {speedup:.2f}x"
-        )
+        assert (
+            speedup >= 1.0
+        ), f"_row_to_dict should be at least as fast; got {speedup:.2f}x"
 
     @pytest.mark.perf
     def test_rows_to_dicts_tuple_optimization(self) -> None:
@@ -172,9 +170,9 @@ class TestPydanticFieldNamesPerf:
         cached_ns = time.perf_counter_ns() - start
 
         cached_avg = cached_ns / iterations
-        assert cached_avg < 1_000, (
-            f"Cached pydantic_field_names avg {cached_avg:.0f}ns exceeds 1us budget"
-        )
+        assert (
+            cached_avg < 1_000
+        ), f"Cached pydantic_field_names avg {cached_avg:.0f}ns exceeds 1us budget"
 
     @pytest.mark.perf
     def test_pydantic_field_names_returns_frozenset(self) -> None:
@@ -195,7 +193,7 @@ class TestQueryOperatorSetsPerf:
     def test_operator_validation_throughput(self) -> None:
         """Measure operator validation with pre-computed frozensets vs get_args."""
 
-        from forze.application.contracts.query.internal.parse import (
+        from forze.application.contracts.querying.internal.parse import (
             QueryFilterExpressionParser,
         )
 
@@ -222,9 +220,9 @@ class TestQueryOperatorSetsPerf:
         elapsed_ns = time.perf_counter_ns() - start
 
         avg_us = elapsed_ns / (iterations * len(ops_and_values)) / 1_000
-        assert avg_us < 10, (
-            f"Operator validation avg {avg_us:.1f}us exceeds 10us budget"
-        )
+        assert (
+            avg_us < 10
+        ), f"Operator validation avg {avg_us:.1f}us exceeds 10us budget"
 
 
 # ----------------------- #

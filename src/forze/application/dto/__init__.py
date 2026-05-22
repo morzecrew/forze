@@ -5,19 +5,17 @@ from .paginated import (
     CursorPagination,
     Paginated,
     Pagination,
-    RawCursorPaginated,
-    RawPaginated,
-    SearchSnapshotHandleDTO,
+    ProjectedCursorPaginated,
+    ProjectedPaginated,
 )
 
 # ----------------------- #
 
 __all__ = [
     "CursorPaginated",
-    "RawCursorPaginated",
+    "ProjectedCursorPaginated",
     "Paginated",
-    "RawPaginated",
-    "SearchSnapshotHandleDTO",
+    "ProjectedPaginated",
     "Pagination",
     "CursorPagination",
 ]

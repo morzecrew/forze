@@ -18,7 +18,7 @@ from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import CountlessPage, CursorPage, Page
-from ..query import (
+from ..querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,

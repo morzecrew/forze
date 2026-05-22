@@ -29,6 +29,8 @@ from typing import (
 from uuid import UUID
 
 import attrs
+from forze.application.contracts.tx import TxManagerPort, TxScopeKey
+from forze.domain.mixins import SoftDeletionMixin
 from pydantic import BaseModel
 
 from forze.application.contracts.base import (
@@ -52,7 +54,7 @@ from forze.application.contracts.pubsub import (
     PubSubMessage,
     PubSubQueryPort,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregatesExpression,
     AggregatesExpressionParser,
     CursorPaginationExpression,
@@ -64,7 +66,7 @@ from forze.application.contracts.query import (
     QueryOr,
     QuerySortExpression,
 )
-from forze.application.contracts.query.internal.time_bucket import (
+from forze.application.contracts.querying.internal.time_bucket import (
     floor_to_time_bucket,
     tzinfo_from_resolved,
 )
@@ -94,7 +96,6 @@ from forze.application.contracts.stream import (
     StreamMessage,
     StreamQueryPort,
 )
-from forze.application.contracts.tx import TxManagerPort, TxScopeKey
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
@@ -103,7 +104,6 @@ from forze.base.serialization import (
     pydantic_validate_many,
 )
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 # ----------------------- #
@@ -2290,17 +2290,13 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         if return_fields is not None:
             proj = [_project(doc, return_fields) for doc in ordered]
             if return_count:
-                return page_from_limit_offset(
-                    proj, pagination, total=total
-                )
+                return page_from_limit_offset(proj, pagination, total=total)
             return page_from_limit_offset(proj, pagination, total=None)
 
         if return_type is not None:
             out = pydantic_validate_many(return_type, ordered)
             if return_count:
-                return page_from_limit_offset(
-                    out, pagination, total=total
-                )
+                return page_from_limit_offset(out, pagination, total=total)
             return page_from_limit_offset(out, pagination, total=None)
 
         allowed = set(self.spec.model_type.model_fields.keys())
@@ -2308,9 +2304,7 @@ class MockSearchAdapter[M: BaseModel](SearchQueryPort[M]):
         out = pydantic_validate_many(self.spec.model_type, typed_docs)
 
         if return_count:
-            return page_from_limit_offset(
-                out, pagination, total=total
-            )
+            return page_from_limit_offset(out, pagination, total=total)
         return page_from_limit_offset(out, pagination, total=None)
 
     # ....................... #

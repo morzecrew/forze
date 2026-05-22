@@ -1,4 +1,4 @@
-"""Tests for :mod:`forze.application.contracts.query.pagination.cursor_token`."""
+"""Tests for :mod:`forze.application.contracts.querying.pagination.cursor_token`."""
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.query.pagination.cursor_token import (
+from forze.application.contracts.querying.pagination.cursor_token import (
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_with_id,

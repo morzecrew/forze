@@ -5,8 +5,8 @@ from typing import cast, final
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RedisClient, RedisConfig, RoutedRedisClient
@@ -104,7 +104,7 @@ def redis_lifecycle_step(
     startup_hook = RedisStartupHook(dsn=dsn, config=config)
     shutdown_hook = RedisShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -121,7 +121,7 @@ def routed_redis_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedRedisStartupHook(client=client),
         shutdown=RoutedRedisShutdownHook(client=client),
     )

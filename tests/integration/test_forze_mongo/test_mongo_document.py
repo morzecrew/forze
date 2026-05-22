@@ -1,16 +1,16 @@
 from uuid import UUID, uuid4
 
 import pytest
+from forze.domain.mixins import SoftDeletionMixin
 
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import ConflictError
-from forze.domain.mixins import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey

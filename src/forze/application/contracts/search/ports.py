@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from forze.base.primitives import JsonDict
 
 from ..base import CountlessPage, CursorPage, Page
-from ..query import (
+from ..querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,

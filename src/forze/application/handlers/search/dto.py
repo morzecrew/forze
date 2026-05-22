@@ -1,11 +1,25 @@
-from pydantic import Field
+from __future__ import annotations
 
-from forze.application.contracts.query import QueryFilterExpression, QuerySortExpression
+from typing import cast
+
+from pydantic import BaseModel, Field
+
+from forze.application.contracts.base import Page, SearchSnapshotHandle
+from forze.application.contracts.querying import (
+    QueryFilterExpression,
+    QuerySortExpression,
+)
 from forze.application.contracts.search import (
     SearchOptions,
     SearchResultSnapshotOptions,
 )
-from forze.application.dto.paginated import CursorPagination, Pagination
+from forze.application.dto.paginated import (
+    CursorPagination,
+    Paginated,
+    Pagination,
+    ProjectedPaginated,
+)
+from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -74,3 +88,91 @@ class ProjectedCursorSearchRequestDTO(CursorSearchRequestDTO):
 
     return_fields: set[str] = Field(min_length=1)
     """Field names to project in the response; must not be empty."""
+
+
+# ....................... #
+
+
+class SearchSnapshotHandleDTO(BaseDTO):
+    """Thin response DTO for :class:`~forze.application.contracts.base.SearchSnapshotHandle`.
+
+    Echo ``id`` and ``fingerprint`` in the next request under
+    ``SearchOptions`` ``result_snapshot`` to continue from the KV snapshot.
+    """
+
+    id: str
+    """Snapshot run id."""
+
+    fingerprint: str
+    """Request fingerprint; echo for :meth:`~forze.application.contracts.search.SearchResultSnapshotPort.get_id_range`."""
+
+    total: int
+    """Number of entries materialized in the snapshot (after cap)."""
+
+    capped: bool = False
+    """Whether the result set was truncated to ``max_ids`` when the snapshot was written."""
+
+    # ....................... #
+
+    @classmethod
+    def from_handle(
+        cls,
+        handle: SearchSnapshotHandle | None,
+    ) -> SearchSnapshotHandleDTO | None:
+        """Map a contract handle to DTO, or ``None``."""
+
+        if handle is None:
+            return None
+
+        return cls(
+            id=handle.id,
+            fingerprint=handle.fingerprint,
+            total=handle.total,
+            capped=handle.capped,
+        )
+
+
+# ....................... #
+
+
+class SearchPaginated[T: BaseModel](Paginated[T]):
+    """Paginated response for search operations."""
+
+    snapshot: SearchSnapshotHandleDTO | None = None
+    """When present, KV result snapshot metadata for paged follow-up (send back in request ``snapshot``)."""
+
+    # ....................... #
+
+    @classmethod
+    def from_page[X: BaseModel](cls, page: Page[X]) -> SearchPaginated[X]:
+        out = cast(type[SearchPaginated[X]], cls)
+
+        return out(
+            hits=page.hits,
+            page=page.page,
+            size=page.size,
+            count=page.count,
+            snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
+        )
+
+
+# ....................... #
+
+
+class ProjectedSearchPaginated(ProjectedPaginated):
+    """Paginated response for search operations with field projection."""
+
+    snapshot: SearchSnapshotHandleDTO | None = None
+    """When present, KV result snapshot metadata for paged follow-up (send back in request ``snapshot``)."""
+
+    # ....................... #
+
+    @classmethod
+    def from_page(cls, page: Page[JsonDict]) -> ProjectedSearchPaginated:
+        return cls(
+            hits=page.hits,
+            page=page.page,
+            size=page.size,
+            count=page.count,
+            snapshot=SearchSnapshotHandleDTO.from_handle(page.snapshot),
+        )

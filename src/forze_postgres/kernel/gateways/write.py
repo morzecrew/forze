@@ -21,7 +21,7 @@ from tenacity import (
     wait_random_exponential,
 )
 
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.errors import (
     ConcurrencyError,
     ConflictError,

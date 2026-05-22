@@ -14,7 +14,7 @@ import attrs
 from pydantic import BaseModel
 from pymongo.asynchronous.collection import AsyncCollection
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     QueryFilterExpression,
     QueryFilterExpressionParser,
     QuerySortExpression,

@@ -5,8 +5,8 @@ from typing import cast, final
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import MongoClient, MongoConfig, RoutedMongoClient
@@ -34,7 +34,9 @@ class MongoStartupHook(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         mongo_client = cast(MongoClient, ctx.deps.provide(MongoClientDepKey))
         await mongo_client.initialize(
-            self.uri, db_name=self.db_name, config=self.config
+            self.uri,
+            db_name=self.db_name,
+            config=self.config,
         )
 
 
@@ -97,7 +99,7 @@ def mongo_lifecycle_step(
     startup_hook = MongoStartupHook(uri=uri, db_name=db_name, config=config)
     shutdown_hook = MongoShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -114,7 +116,7 @@ def routed_mongo_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedMongoStartupHook(client=client),
         shutdown=RoutedMongoShutdownHook(client=client),
     )

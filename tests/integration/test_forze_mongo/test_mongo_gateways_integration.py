@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentWriteTypes
-from forze.application.contracts.query import encode_keyset_v1
+from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import (
     CoreError,
@@ -214,10 +214,13 @@ async def test_mongo_read_gateway_aggregate_expressions(
             premium_revenue=50.0,
         ),
     ]
-    assert await read.count_aggregates(
-        {"$fields": {"category": {"$in": ["books", "hardware"]}}},
-        aggregates=aggregates,
-    ) == 2
+    assert (
+        await read.count_aggregates(
+            {"$fields": {"category": {"$in": ["books", "hardware"]}}},
+            aggregates=aggregates,
+        )
+        == 2
+    )
 
 
 @pytest.mark.integration

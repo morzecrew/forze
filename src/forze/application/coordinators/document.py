@@ -30,7 +30,7 @@ from forze.application.contracts.document import (
     require_create_id,
     require_create_id_for_many,
 )
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,

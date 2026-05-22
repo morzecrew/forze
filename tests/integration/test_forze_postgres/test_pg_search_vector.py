@@ -12,7 +12,7 @@ from forze.application.contracts.embeddings import (
     EmbeddingsProviderDepKey,
     EmbeddingsSpec,
 )
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_mock import MockHashEmbeddingsProvider

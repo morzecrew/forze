@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CursorPage
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter
@@ -160,7 +160,9 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
     assert n_str == n_multi
     assert {r.title for r in str_or} == {r.title for r in multi}
 
-    __p = await adapter.search_page(["search", "full"], options={"phrase_combine": "all"})
+    __p = await adapter.search_page(
+        ["search", "full"], options={"phrase_combine": "all"}
+    )
     and_hits = __p.hits
     n_and = __p.count
     assert n_and == 1

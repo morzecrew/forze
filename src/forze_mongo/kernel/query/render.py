@@ -5,11 +5,11 @@ from typing import Any
 
 import attrs
 
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     AggregateComputedField,
-    AggregateTimeBucket,
     AggregatesExpression,
     AggregatesExpressionParser,
+    AggregateTimeBucket,
     ParsedAggregates,
     QueryAnd,
     QueryExpr,
@@ -253,9 +253,7 @@ class MongoQueryRenderer:
             case "$null":
                 null_check: JsonDict = {"$eq": [ref, None]}
                 return (
-                    null_check
-                    if self.caster.as_bool(value)
-                    else {"$not": [null_check]}
+                    null_check if self.caster.as_bool(value) else {"$not": [null_check]}
                 )
 
             case "$empty":

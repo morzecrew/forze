@@ -5,8 +5,8 @@ from typing import cast, final
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
@@ -88,7 +88,7 @@ def rabbitmq_lifecycle_step(
     startup_hook = RabbitMQStartupHook(dsn=dsn, config=config)
     shutdown_hook = RabbitMQShutdownHook()
 
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -105,7 +105,7 @@ def routed_rabbitmq_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedRabbitMQStartupHook(client=client),
         shutdown=RoutedRabbitMQShutdownHook(client=client),
     )

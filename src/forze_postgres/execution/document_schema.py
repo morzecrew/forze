@@ -7,8 +7,8 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.errors import CoreError
 
 from ..kernel.validate_schema import (
@@ -123,6 +123,6 @@ def postgres_document_schema_validation_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=PostgresDocumentSchemaValidationHook(specs=tuple(specs)),
     )

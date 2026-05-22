@@ -4,8 +4,8 @@ from typing import cast, final
 
 import attrs
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 
 from ..kernel.platform import RoutedTemporalClient, TemporalClient, TemporalConfig
 from .deps import TemporalClientDepKey
@@ -89,7 +89,7 @@ def temporal_lifecycle_step(
     startup_hook = TemporalStartupHook(host=host, config=config)
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=startup_hook,
         shutdown=TemporalShutdownHook(),
     )
@@ -109,7 +109,7 @@ def routed_temporal_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedTemporalStartupHook(client=client),
         shutdown=RoutedTemporalShutdownHook(client=client),
     )

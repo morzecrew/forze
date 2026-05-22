@@ -31,7 +31,7 @@ from forze.application.contracts.base import (
     page_from_limit_offset,
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
-from forze.application.contracts.query import (
+from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,

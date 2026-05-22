@@ -21,6 +21,7 @@ from .value_objects import (
     ExecutionPipeline,
     FinallyStep,
     GraphStep,
+    LifecycleStep,
     MiddlewareStep,
     OnFailureStep,
     OnSuccessStep,
@@ -56,4 +57,5 @@ __all__ = [
     "OnSuccessStep",
     "DispatchStep",
     "noop_lifecycle_hook",
+    "LifecycleStep",
 ]

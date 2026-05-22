@@ -5,8 +5,8 @@ from typing import cast, final
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle import LifecycleHook, LifecycleStep
 from forze.base.serialization import pydantic_secret_converter
 
 from ..kernel.platform import RoutedS3Client, S3Client, S3Config
@@ -129,7 +129,7 @@ def s3_lifecycle_step(
         config=config,
     )
     shutdown_hook = S3ShutdownHook()
-    return LifecycleStep(name=name, startup=startup_hook, shutdown=shutdown_hook)
+    return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
 
 
 # ....................... #
@@ -146,7 +146,7 @@ def routed_s3_lifecycle_step(
     """
 
     return LifecycleStep(
-        name=name,
+        id=name,
         startup=RoutedS3StartupHook(client=client),
         shutdown=RoutedS3ShutdownHook(client=client),
     )

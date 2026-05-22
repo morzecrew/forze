@@ -179,7 +179,7 @@ class DispatchStep(Step):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class LifecycleStep(Step):
+class LifecycleStep(GraphStep):
     """Lifecycle step."""
 
     startup: LifecycleHook = noop_lifecycle_hook

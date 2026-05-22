@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     HubSearchSpec,
@@ -215,7 +215,9 @@ async def test_postgres_search_adapter(
     __p = await adapter.search_page(["python", "framework"])
     n_any = __p.count
     assert n_any == 3
-    __p = await adapter.search_page(["python", "framework"], options={"phrase_combine": "all"})
+    __p = await adapter.search_page(
+        ["python", "framework"], options={"phrase_combine": "all"}
+    )
     all_two = __p.hits
     n_all = __p.count
     assert n_all == 1
@@ -557,9 +559,7 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     n_no_match = __p.count
     assert n_no_match == 0
 
-    __p = await adapter.search_page(
-        "gamma", filters={"$fields": {"spec_id": str(s1)}}
-    )
+    __p = await adapter.search_page("gamma", filters={"$fields": {"spec_id": str(s1)}})
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
@@ -724,9 +724,7 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
 
-    __p = await adapter.search_page(
-        "gamma", filters={"$fields": {"spec_id": str(s1)}}
-    )
+    __p = await adapter.search_page("gamma", filters={"$fields": {"spec_id": str(s1)}})
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
@@ -992,9 +990,7 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
     assert n_alpha == 2
     assert {h.id for h in hits_alpha} == {lid1, lid3}
 
-    __p = await adapter.search_page(
-        "gamma", filters={"$fields": {"spec_id": str(s1)}}
-    )
+    __p = await adapter.search_page("gamma", filters={"$fields": {"spec_id": str(s1)}})
     hits_gamma = __p.hits
     n_gamma = __p.count
     assert n_gamma == 2

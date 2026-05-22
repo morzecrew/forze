@@ -5,6 +5,7 @@ from typing import Any, Mapping, overload
 import attrs
 
 # ----------------------- #
+#! TODO: relocate to query contract
 # Search snapshot (optional metadata on paged search responses)
 
 

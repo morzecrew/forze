@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.authz import EffectiveGrants, PermissionRef, RoleRef
 from forze.application.contracts.document import DocumentQueryPort
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 
 from ..domain.models.bindings import (
     ReadGroupPermissionBinding,

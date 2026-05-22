@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.query import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import (
     SearchQueryDepKey,
     SearchResultSnapshotDepKey,
