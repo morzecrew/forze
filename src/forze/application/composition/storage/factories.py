@@ -20,7 +20,7 @@ def build_storage_registry(
 ) -> OperationRegistry:
     """Build a usecase registry for storage operations in a bucket."""
 
-    ns = ns or StrKeyNamespace(prefix=spec.name)
+    ns = ns or spec.default_namespace
 
     return OperationRegistry(
         handlers={

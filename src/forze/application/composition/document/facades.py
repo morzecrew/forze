@@ -11,12 +11,10 @@ from forze.application.execution.facade import (
 from forze.application.handlers.document import (
     AggregatedListDocuments,
     CreateDocument,
-    DeleteDocument,
     GetDocument,
     KillDocument,
     RawCursorListDocuments,
     RawListDocuments,
-    RestoreDocument,
     TypedCursorListDocuments,
     TypedListDocuments,
     UpdateDocument,
@@ -92,17 +90,3 @@ class DocumentFacade(OperationFacade, Generic[R, C, U]):
         uc=KillDocument,
     )
     """Kill document operation."""
-
-    #! should not be here (all below) ...
-
-    delete = facade_op(
-        DocumentKernelOp.DELETE,
-        uc=DeleteDocument[R],
-    )
-    """Delete document operation."""
-
-    restore = facade_op(
-        DocumentKernelOp.RESTORE,
-        uc=RestoreDocument[R],
-    )
-    """Restore document operation."""

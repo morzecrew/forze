@@ -28,7 +28,7 @@ def build_authn_registry(
 ) -> OperationRegistry:
     """Build authn operation registry."""
 
-    ns = ns or StrKeyNamespace(prefix=spec.name)
+    ns = ns or spec.default_namespace
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(

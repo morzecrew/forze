@@ -4,6 +4,7 @@ from typing import NotRequired, TypedDict
 from pydantic import BaseModel
 
 # ----------------------- #
+#! TODO: repurpose into attrs class (or msgspec.Struct)
 
 
 class StreamMessage[M: BaseModel](TypedDict):

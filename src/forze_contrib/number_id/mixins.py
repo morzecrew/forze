@@ -1,12 +1,12 @@
 from pydantic import PositiveInt
 
-from ..models import BaseDTO, CoreModel
+from forze.domain.models import BaseDTO, CoreModel
 
 # ----------------------- #
 
 
-class NumberMixin(CoreModel):
-    """Mixin adding a required positive integer ``number_id`` for human-readable identification.
+class NumberIdMixin(CoreModel):
+    """Mixin adding a required positive integer number ID for human-readable identification.
 
     Use :class:`NumberCreateCmdMixin` or :class:`NumberUpdateCmdMixin` for
     command DTOs.
@@ -19,8 +19,8 @@ class NumberMixin(CoreModel):
 # ....................... #
 
 
-class NumberCreateCmdMixin(BaseDTO):
-    """Create command mixin with required ``number_id``."""
+class NumberIdCreateCmdMixin(BaseDTO):
+    """Create command mixin with required number ID."""
 
     number_id: PositiveInt
     """Unique number identifier of the document."""
@@ -29,8 +29,8 @@ class NumberCreateCmdMixin(BaseDTO):
 # ....................... #
 
 
-class NumberUpdateCmdMixin(BaseDTO):
-    """Update command mixin with optional ``number_id``.
+class NumberIdUpdateCmdMixin(BaseDTO):
+    """Update command mixin with optional number ID.
 
     When provided, updates the document's numeric identifier.
     """

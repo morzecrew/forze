@@ -38,8 +38,7 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
-from forze.domain.mixins import SoftDeletionMixin
+from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..db_gather import gather_db_work
@@ -240,11 +239,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
 
     def _ident_rev(self) -> sql.Composable:
         return sql.Identifier(REV_FIELD)
-
-    # ....................... #
-
-    def supports_soft_delete(self) -> bool:
-        return issubclass(self.model_type, SoftDeletionMixin)
 
     # ....................... #
 
@@ -1167,68 +1161,6 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
         batch_size: int = 200,
     ) -> Sequence[D]:
         res, _ = await self.__patch_many(pks, None, batch_size=batch_size)
-
-        return res
-
-    # ....................... #
-
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> D:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
-
-        return res
-
-    # ....................... #
-
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D]:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch_many(
-            pks,
-            [{SOFT_DELETE_FIELD: True} for _ in pks],
-            batch_size=batch_size,
-            revs=revs,
-        )
-
-        return res
-
-    # ....................... #
-
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> D:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
-
-        return res
-
-    # ....................... #
-
-    async def restore_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D]:
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self.__patch_many(
-            pks,
-            [{SOFT_DELETE_FIELD: False} for _ in pks],
-            batch_size=batch_size,
-            revs=revs,
-        )
 
         return res
 

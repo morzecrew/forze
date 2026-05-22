@@ -5,13 +5,7 @@ from typing import Any, Generic, NotRequired, TypedDict, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
-from forze.domain.constants import SOFT_DELETE_FIELD
-from forze.domain.mixins import SoftDeletionMixin
-from forze.domain.models import (
-    BaseDTO,
-    CreateDocumentCmd,
-    Document,
-)
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -61,21 +55,6 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     cache: CacheSpec | None = attrs.field(default=None)
     """Cache specification for the document aggregate."""
-
-    # ....................... #
-
-    def supports_soft_delete(self) -> bool:
-        """Return ``True`` when the domain model supports soft deletion."""
-
-        if self.write is None:
-            return False
-
-        d = self.write["domain"]
-
-        return (
-            issubclass(d, SoftDeletionMixin)
-            or SOFT_DELETE_FIELD in d.model_fields.keys()
-        )
 
     # ....................... #
 

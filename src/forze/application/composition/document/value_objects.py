@@ -3,7 +3,7 @@ from typing import Any, Generic, TypeVar
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.mapping import Mapper
+from forze.application.contracts.mapping import MapperFactory
 from forze.application.dto import (
     AggregatedListRequestDTO,
     CursorListRequestDTO,
@@ -52,23 +52,23 @@ ALR = AggregatedListRequestDTO
 class DocumentMappers(Generic[C, C_cmd, U, U_cmd]):
     """Mappers for document operations."""
 
-    list: Mapper[LR, LR] | None = attrs.field(default=None)
+    list: MapperFactory[LR, LR] | None = attrs.field(default=None)
     """Mapper for list operation."""
 
-    raw_list: Mapper[RLR, RLR] | None = attrs.field(default=None)
+    raw_list: MapperFactory[RLR, RLR] | None = attrs.field(default=None)
     """Mapper for raw list operation."""
 
-    list_cursor: Mapper[CLR, CLR] | None = attrs.field(default=None)
+    list_cursor: MapperFactory[CLR, CLR] | None = attrs.field(default=None)
     """Mapper for list cursor operation."""
 
-    raw_list_cursor: Mapper[RCLR, RCLR] | None = attrs.field(default=None)
+    raw_list_cursor: MapperFactory[RCLR, RCLR] | None = attrs.field(default=None)
     """Mapper for raw list cursor operation."""
 
-    aggregated_list: Mapper[ALR, ALR] | None = attrs.field(default=None)
+    aggregated_list: MapperFactory[ALR, ALR] | None = attrs.field(default=None)
     """Mapper for aggregated list operation."""
 
-    create: Mapper[C, C_cmd] | None = attrs.field(default=None)
+    create: MapperFactory[C, C_cmd] | None = attrs.field(default=None)
     """Mapper for create operation."""
 
-    update: Mapper[U, U_cmd] | None = attrs.field(default=None)
+    update: MapperFactory[U, U_cmd] | None = attrs.field(default=None)
     """Mapper for update operation."""

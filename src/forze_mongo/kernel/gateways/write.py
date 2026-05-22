@@ -33,8 +33,7 @@ from forze.base.serialization import (
     pydantic_validate,
     pydantic_validate_many,
 )
-from forze.domain.constants import ID_FIELD, REV_FIELD, SOFT_DELETE_FIELD
-from forze.domain.mixins import SoftDeletionMixin
+from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from .base import MongoGateway
@@ -182,13 +181,6 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                         "Historical consistency violation during update",
                         code="historical_consistency_violation",
                     )
-
-    # ....................... #
-
-    def supports_soft_delete(self) -> bool:
-        """Return whether the underlying model declares a soft-delete field."""
-
-        return issubclass(self.model_type, SoftDeletionMixin)
 
     # ....................... #
 
@@ -755,102 +747,3 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 {"_id": {"$in": [self._storage_pk(pk) for pk in pks]}}
             ),
         )
-
-    # ....................... #
-
-    async def delete(self, pk: UUID, *, rev: int | None = None) -> D:
-        """Soft-delete a document by setting the deleted flag.
-
-        :param pk: Document primary key.
-        :param rev: Expected revision for historical consistency validation.
-        :raises CoreError: If the model does not support soft deletion.
-        """
-
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self._patch(pk, {SOFT_DELETE_FIELD: True}, rev=rev)
-
-        return res
-
-    # ....................... #
-
-    async def delete_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D]:
-        """Soft-delete multiple documents.
-
-        :param pks: Document primary keys (must be unique).
-        :param revs: Optional expected revisions for history validation.
-        :param batch_size: Batch size for the bulk operation.
-        :raises CoreError: If the model does not support soft deletion.
-        :raises ValidationError: If *pks* contains duplicates.
-        """
-
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
-
-        if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
-
-        updates = [{SOFT_DELETE_FIELD: True} for _ in pks]
-        res, _ = await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
-
-        return res
-
-    # ....................... #
-
-    async def restore(self, pk: UUID, *, rev: int | None = None) -> D:
-        """Restore a soft-deleted document by clearing the deleted flag.
-
-        :param pk: Document primary key.
-        :param rev: Expected revision for historical consistency validation.
-        :raises CoreError: If the model does not support soft deletion.
-        """
-
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        res, _ = await self._patch(pk, {SOFT_DELETE_FIELD: False}, rev=rev)
-
-        return res
-
-    # ....................... #
-
-    async def restore_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        revs: Sequence[int] | None = None,
-        batch_size: int = 200,
-    ) -> Sequence[D]:
-        """Restore multiple soft-deleted documents.
-
-        :param pks: Document primary keys (must be unique).
-        :param revs: Optional expected revisions for history validation.
-        :param batch_size: Batch size for the bulk operation.
-        :raises CoreError: If the model does not support soft deletion.
-        :raises ValidationError: If *pks* contains duplicates.
-        """
-
-        if not self.supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
-
-        if len(pks) != len(set(pks)):
-            raise ValidationError("Primary keys must be unique")
-
-        if revs is not None and len(revs) != len(pks):
-            raise CoreError("Length mismatch between primary keys and revisions")
-
-        updates = [{SOFT_DELETE_FIELD: False} for _ in pks]
-
-        res, _ = await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
-
-        return res

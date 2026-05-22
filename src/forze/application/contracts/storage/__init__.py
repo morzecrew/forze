@@ -1,12 +1,18 @@
 from .deps import StorageDepKey, StorageDepPort, StorageDeps
 from .ports import StoragePort
 from .specs import StorageSpec
-from .types import DownloadedObject, ObjectMetadata, StoredObject
+from .value_objects import (
+    DownloadedObject,
+    ObjectMetadata,
+    StoredObject,
+    UploadedObject,
+)
 
 # ----------------------- #
 
 __all__ = [
     "StoragePort",
+    "UploadedObject",
     "StoredObject",
     "DownloadedObject",
     "ObjectMetadata",

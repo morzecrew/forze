@@ -35,25 +35,29 @@ def build_search_registry[M: BaseModel](
     :returns: Operation registry with all supported operations.
     """
 
-    ns = ns or StrKeyNamespace(prefix=spec.name)
+    ns = ns or spec.default_namespace
 
     reg = OperationRegistry(
         handlers={
             ns.key(SearchKernelOp.TYPED): lambda ctx: TypedSearch(
                 search=ctx.search.query(spec),
-                mapper=mappers.search,
+                mapper=mappers.search(ctx) if mappers.search else None,
             ),
             ns.key(SearchKernelOp.RAW): lambda ctx: RawSearch(
                 search=ctx.search.query(spec),
-                mapper=mappers.raw_search,
+                mapper=mappers.raw_search(ctx) if mappers.raw_search else None,
             ),
             ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: TypedCursorSearch(
                 search=ctx.search.query(spec),
-                mapper=mappers.search_cursor,
+                mapper=mappers.search_cursor(ctx) if mappers.search_cursor else None,
             ),
             ns.key(SearchKernelOp.RAW_CURSOR): lambda ctx: RawCursorSearch(
                 search=ctx.search.query(spec),
-                mapper=mappers.raw_search_cursor,
+                mapper=(
+                    mappers.raw_search_cursor(ctx)
+                    if mappers.raw_search_cursor
+                    else None
+                ),
             ),
         },
     )
@@ -78,25 +82,29 @@ def build_hub_search_registry[M: BaseModel](
     :returns: Operation registry with all supported operations.
     """
 
-    ns = ns or StrKeyNamespace(prefix=spec.name)
+    ns = ns or spec.default_namespace
 
     reg = OperationRegistry(
         handlers={
             ns.key(SearchKernelOp.TYPED): lambda ctx: TypedSearch(
                 search=ctx.search.hub(spec),
-                mapper=mappers.search,
+                mapper=mappers.search(ctx) if mappers.search else None,
             ),
             ns.key(SearchKernelOp.RAW): lambda ctx: RawSearch(
                 search=ctx.search.hub(spec),
-                mapper=mappers.raw_search,
+                mapper=mappers.raw_search(ctx) if mappers.raw_search else None,
             ),
             ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: TypedCursorSearch(
                 search=ctx.search.hub(spec),
-                mapper=mappers.search_cursor,
+                mapper=mappers.search_cursor(ctx) if mappers.search_cursor else None,
             ),
             ns.key(SearchKernelOp.RAW_CURSOR): lambda ctx: RawCursorSearch(
                 search=ctx.search.hub(spec),
-                mapper=mappers.raw_search_cursor,
+                mapper=(
+                    mappers.raw_search_cursor(ctx)
+                    if mappers.raw_search_cursor
+                    else None
+                ),
             ),
         },
     )
@@ -120,17 +128,17 @@ def build_federated_search_registry[M: BaseModel](
     :returns: Operation registry with all supported operations.
     """
 
-    ns = ns or StrKeyNamespace(prefix=spec.name)
+    ns = ns or spec.default_namespace
 
     reg = OperationRegistry(
         handlers={
             ns.key(SearchKernelOp.TYPED): lambda ctx: TypedSearch(
                 search=ctx.search.federated(spec),
-                mapper=mappers.search,
+                mapper=mappers.search(ctx) if mappers.search else None,
             ),
             ns.key(SearchKernelOp.TYPED_CURSOR): lambda ctx: TypedCursorSearch(
                 search=ctx.search.federated(spec),
-                mapper=mappers.search_cursor,
+                mapper=mappers.search_cursor(ctx) if mappers.search_cursor else None,
             ),
         },
     )

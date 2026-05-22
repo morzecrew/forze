@@ -132,7 +132,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
         if binding is None:
             return
 
-        await self.pr_binding_cmd.delete(binding.id, binding.rev)
+        await self.pr_binding_cmd.kill(binding.id)
 
     # ....................... #
 

@@ -1,10 +1,9 @@
 from typing import Any
 
 import attrs
-from pydantic import BaseModel as BM
 
 from forze.application.contracts.document import DocumentCommandPort
-from forze.application.dto import DocumentIdDTO, DocumentIdRevDTO
+from forze.application.dto import DocumentIdDTO
 from forze.application.execution.core import Handler
 
 # ----------------------- #
@@ -27,47 +26,3 @@ class KillDocument(Handler[DocumentIdDTO, None]):
         """
 
         return await self.doc.kill(pk=args.id)
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class DeleteDocument[Out: BM](Handler[DocumentIdRevDTO, Out]):
-    """Handler that soft-deletes a document."""
-
-    doc: DocumentCommandPort[Out, Any, Any, Any]
-    """Document port for delete operations."""
-
-    # ....................... #
-
-    async def __call__(self, args: DocumentIdRevDTO) -> Out:
-        """Soft-delete a document.
-
-        :param args: Delete arguments (pk, optional rev).
-        :returns: Updated read model.
-        """
-
-        return await self.doc.delete(pk=args.id, rev=args.rev)
-
-
-# ....................... #
-
-
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class RestoreDocument[Out: BM](Handler[DocumentIdRevDTO, Out]):
-    """Handler that restores a soft-deleted document."""
-
-    doc: DocumentCommandPort[Out, Any, Any, Any]
-    """Document port for restore operations."""
-
-    # ....................... #
-
-    async def __call__(self, args: DocumentIdRevDTO) -> Out:
-        """Restore a soft-deleted document.
-
-        :param args: Restore arguments (pk, optional rev).
-        :returns: Updated read model.
-        """
-
-        return await self.doc.restore(pk=args.id, rev=args.rev)

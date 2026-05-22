@@ -1,5 +1,15 @@
-from .pydantic import PydanticMapper
+from .pydantic import (
+    PydanticPipelineMapper,
+    PydanticPipelineMapperFactory,
+    PydanticPipelineMapperStep,
+    PydanticPipelineMapperStepFactory,
+)
 
 # ----------------------- #
 
-__all__ = ["PydanticMapper"]
+__all__ = [
+    "PydanticPipelineMapper",
+    "PydanticPipelineMapperStep",
+    "PydanticPipelineMapperFactory",
+    "PydanticPipelineMapperStepFactory",
+]

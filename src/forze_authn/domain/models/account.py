@@ -2,7 +2,6 @@ from uuid import UUID
 
 from pydantic import EmailStr, Field
 
-from forze.base.primitives import String
 from forze.domain.models import (
     BaseDTO,
     CoreModel,
@@ -22,7 +21,7 @@ class PasswordAccountImmutableFields(CoreModel):
     principal_id: UUID = Field(frozen=True)
     """Principal ID."""
 
-    username: String = Field(frozen=True)
+    username: str = Field(frozen=True, min_length=2, max_length=4096)
     """Username."""
 
 

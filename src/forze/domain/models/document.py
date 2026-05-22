@@ -1,8 +1,4 @@
-"""Domain document models and commands.
-
-The core :class:`Document` model implements versioning and update semantics
-based on JSON-like diffs and pluggable update validators.
-"""
+"""Domain document models and commands."""
 
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Self, cast
@@ -20,6 +16,7 @@ from forze.base.serialization import (
 )
 
 from .._logger import logger
+from ..constants import LAST_UPDATE_AT_FIELD
 from ..validation import (
     UpdateValidator,
     UpdateValidatorMetadata,
@@ -174,7 +171,7 @@ class Document(CoreModel):
         diff = self._calculate_update_diff(data)
 
         if diff:
-            diff["last_update_at"] = utcnow()
+            diff[LAST_UPDATE_AT_FIELD] = utcnow()
             after = self._apply_update(diff)
 
         else:
@@ -192,7 +189,7 @@ class Document(CoreModel):
 
         logger.trace("Touching %s", type(self).__qualname__)
 
-        diff = {"last_update_at": utcnow()}
+        diff = {LAST_UPDATE_AT_FIELD: utcnow()}
         model_copy = self.model_copy(update=diff)
 
         return model_copy, diff

@@ -4,28 +4,22 @@ from typing import Final
 
 # ----------------------- #
 
-ID_FIELD: Final[str] = "id"
+ID_FIELD: Final = "id"
 """Document identifier field."""
 
-REV_FIELD: Final[str] = "rev"
+REV_FIELD: Final = "rev"
 """Document revision field."""
 
-SOFT_DELETE_FIELD: Final[str] = "is_deleted"  #! get rid of this
-"""Soft delete field."""
-
-NUMBER_ID_FIELD: Final[str] = "number_id"  #! get rid of this
-"""Number identifier field."""
-
-CREATOR_ID_FIELD: Final[str] = "creator_id"  #! get rid of this
-"""Creator identifier field."""
+LAST_UPDATE_AT_FIELD: Final = "last_update_at"
+"""Document last update at field."""
 
 # ....................... #
 
-HISTORY_SOURCE_FIELD: Final[str] = "source"
+HISTORY_SOURCE_FIELD: Final = "source"
 """History source field."""
 
-HISTORY_DATA_FIELD: Final[str] = "data"
+HISTORY_DATA_FIELD: Final = "data"
 """History data field."""
 
-TENANT_ID_FIELD: Final[str] = "tenant_id"  #! Should it be here or in the infra layer ?
+TENANT_ID_FIELD: Final = "tenant_id"  #! Should it be here or in the infra layer ?
 """Tenant identifier field."""

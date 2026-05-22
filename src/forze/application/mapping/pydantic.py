@@ -1,26 +1,32 @@
-from typing import Generic, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Self, TypeVar, cast
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.mapping import Mapper
+from forze.application.contracts.mapping import Mapper, MapperFactory
 from forze.base.primitives import JsonDict
 from forze.base.serialization import apply_dict_patch, pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO
 
+if TYPE_CHECKING:
+    from forze.application.execution.context import ExecutionContext
+
 # ----------------------- #
 
 In = TypeVar("In", bound=BaseModel)
-Out = TypeVar("Out", bound=BaseDTO)
 
-PydanticMapperStep = Mapper[tuple[In, JsonDict], JsonDict]
+PydanticPipelineMapperStep = Mapper[tuple[In, JsonDict], JsonDict]
+"""Mapping step that maps a Pydantic source model to a JSON dictionary."""
+
+PydanticPipelineMapperStepFactory = MapperFactory[tuple[In, JsonDict], JsonDict]
+"""Factory that builds a mapping step for a Pydantic source model to a JSON dictionary."""
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PydanticMapper(Mapper[In, Out], Generic[In, Out]):
-    """Pipeline that maps a Pydantic source model to an output DTO."""
+class PydanticPipelineMapper[In: BaseModel, Out: BaseDTO](Mapper[In, Out]):
+    """Pipeline mapper that maps a Pydantic source model to an output DTO."""
 
     in_: type[In]
     """Source model class for validation."""
@@ -28,12 +34,12 @@ class PydanticMapper(Mapper[In, Out], Generic[In, Out]):
     out: type[Out]
     """Target DTO model class for validation."""
 
-    steps: tuple[PydanticMapperStep[In], ...] = attrs.field(factory=tuple)
+    steps: tuple[PydanticPipelineMapperStep[In], ...] = attrs.field(factory=tuple)
     """Ordered sequence of mapping steps."""
 
     # ....................... #
 
-    def with_steps(self, *steps: PydanticMapperStep[In]) -> Self:
+    def with_steps(self, *steps: PydanticPipelineMapperStep[In]) -> Self:
         """Return a new mapper with additional steps appended."""
 
         return attrs.evolve(self, steps=(*self.steps, *steps))
@@ -55,3 +61,37 @@ class PydanticMapper(Mapper[In, Out], Generic[In, Out]):
         result = pydantic_validate(self.out, payload)
 
         return result
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PydanticPipelineMapperFactory[In: BaseModel, Out: BaseDTO](
+    MapperFactory[In, Out]
+):
+    """Factory that builds a pipeline mapper for a Pydantic source model to an output DTO."""
+
+    in_: type[In]
+    """Source model class for validation."""
+
+    out: type[Out]
+    """Target DTO model class for validation."""
+
+    step_factories: tuple[PydanticPipelineMapperStepFactory[In], ...] = attrs.field(
+        factory=tuple
+    )
+    """Ordered sequence of mapping step factories."""
+
+    # ....................... #
+
+    def __call__(self, ctx: "ExecutionContext") -> PydanticPipelineMapper[In, Out]:
+        """Build a pipeline mapper for a Pydantic source model to an output DTO."""
+
+        steps = [step_factory(ctx) for step_factory in self.step_factories]
+
+        return PydanticPipelineMapper(
+            in_=self.in_,
+            out=self.out,
+            steps=tuple(steps),
+        )

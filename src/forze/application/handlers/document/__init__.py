@@ -1,7 +1,7 @@
 """Document handlers."""
 
 from .create import CreateDocument
-from .delete import DeleteDocument, KillDocument, RestoreDocument
+from .delete import KillDocument
 from .get import GetDocument
 from .list_ import (
     AggregatedListDocuments,
@@ -16,9 +16,7 @@ from .update import UpdateDocument
 
 __all__ = [
     "CreateDocument",
-    "DeleteDocument",
     "KillDocument",
-    "RestoreDocument",
     "GetDocument",
     "UpdateDocument",
     "TypedListDocuments",

@@ -2,7 +2,6 @@ from uuid import UUID
 
 from pydantic import Field
 
-from forze.base.primitives import String
 from forze.domain.models import (
     BaseDTO,
     CoreModel,
@@ -17,10 +16,10 @@ from forze.domain.models import (
 class IdentityMappingImmutableFields(CoreModel):
     """Immutable fields for an external-identity mapping row."""
 
-    issuer: String = Field(frozen=True)
+    issuer: str = Field(frozen=True, min_length=2, max_length=4096)
     """Stable identifier of the authority that issued the assertion (e.g. ``iss`` URL)."""
 
-    subject: String = Field(frozen=True)
+    subject: str = Field(frozen=True, min_length=2, max_length=4096)
     """Raw external subject identifier as provided by the issuer."""
 
     principal_id: UUID = Field(frozen=True)

@@ -7,7 +7,7 @@ from .namespace import StrKeyNamespace
 from .runtime import RuntimeVar
 from .sequence import AbstractSequence
 from .string import normalize_string
-from .types import JsonDict, LongString, String, StrKey
+from .types import JsonDict, StrKey
 from .uuid import uuid4, uuid7
 
 # ----------------------- #
@@ -17,8 +17,6 @@ __all__ = [
     "ContextualBuffer",
     "normalize_string",
     "JsonDict",
-    "LongString",
-    "String",
     "StrKey",
     "uuid4",
     "uuid7",
