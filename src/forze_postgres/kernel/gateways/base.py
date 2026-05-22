@@ -29,8 +29,13 @@ from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClientPort
 from ..query import PsycopgQueryRenderer
 from ..query.nested import sort_key_expr
+from ..query.render import PsycopgValueCoercer
 
 # ----------------------- #
+
+_WRITE_VALUE_COERCER = PsycopgValueCoercer()
+
+# ....................... #
 
 
 @final
@@ -297,8 +302,19 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     # ....................... #
 
     def adapt_value_for_write(self, v: Any, *, t: PostgresType | None) -> Any:
-        if v is None or t is None:
+        if t is None:
             return v
+
+        if v is None:
+            return None
+
+        if t.is_array:
+            elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
+            return _WRITE_VALUE_COERCER.array(
+                v,
+                t=elem_t,
+                raise_on_scalar_t=True,
+            )
 
         if t.base in {"jsonb", "json"}:
             wrapper = Jsonb if t.base == "jsonb" else Json
@@ -306,10 +322,9 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
             if not t.is_array:
                 return wrapper(v, dumps=orjson.dumps)
 
-            else:
-                return [wrapper(x, dumps=orjson.dumps) for x in v]
+            return [wrapper(x, dumps=orjson.dumps) for x in v]
 
-        return v
+        return _WRITE_VALUE_COERCER.scalar(v, t=t)
 
     # ....................... #
 
