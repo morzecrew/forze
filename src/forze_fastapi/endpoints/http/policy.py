@@ -24,11 +24,11 @@ from .features.security import RequireAuthnFeature
 
 # ----------------------- #
 
-AnyFeature = HttpEndpointFeaturePort[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+AnyFeature = HttpEndpointFeaturePort[Any, Any, Any, Any, Any, Any, Any, Any]
 """Loosely typed feature (all type parameters free) for default feature bundles."""
 
 _FSpec = TypeVar(
-    "_FSpec", bound=HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+    "_FSpec", bound=HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]
 )
 
 
@@ -189,6 +189,7 @@ def _security_scheme_for_requirement(req: AuthnRequirement) -> SecurityBase:
         )
 
     api_key_header = req.api_key_header
+
     if api_key_header is None:
         raise CoreError(
             "AuthnRequirement.api_key_header must be set when token transports are absent",

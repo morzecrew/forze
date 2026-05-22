@@ -13,7 +13,10 @@ from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.application.execution.registry import FrozenOperationRegistry
+from forze.application.execution.registry import (
+    FrozenOperationRegistry,
+    make_registry_operation_resolver,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey
 
@@ -315,16 +318,13 @@ class ForzeSocketIOAdapter:
 def make_registry_usecase_resolver(
     registry: FrozenOperationRegistry,
 ) -> HandlerResolverPort:
-    """Build a resolver backed by :class:`UsecaseRegistry`.
+    """Build a resolver backed by :class:`FrozenOperationRegistry`.
 
-    :param registry: Base usecase registry.
+    :param registry: Frozen operation registry.
     :returns: Callable resolver suitable for :class:`ForzeSocketIOAdapter`.
     """
 
-    def resolver(ctx: ExecutionContext, operation: StrKey) -> Handler[Any, Any]:
-        return registry.resolve(operation, ctx)
-
-    return resolver
+    return make_registry_operation_resolver(registry)
 
 
 # ....................... #

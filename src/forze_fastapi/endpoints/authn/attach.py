@@ -9,11 +9,9 @@ from typing import Any, Callable, Sequence
 from fastapi import APIRouter
 
 from forze.application.contracts.authn import AuthnSpec
-from forze.application.execution import (
-    ExecutionContext,
-    UsecaseRegistry,
-    operation_namespace_for,
-)
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
+from forze.base.primitives import StrKeyNamespace
 from forze.base.errors import CoreError
 
 from ..http import (
@@ -39,7 +37,7 @@ from .specs import AuthnEndpointsSpec, TokenTransportSpec
 # ----------------------- #
 
 
-HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]
 
 
 def _derive_authn_requirement(
@@ -73,8 +71,9 @@ def attach_authn_endpoints(
     router: APIRouter,
     *,
     spec: AuthnSpec,
-    registry: UsecaseRegistry,
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
+    namespace: StrKeyNamespace | None = None,
     endpoints: AuthnEndpointsSpec | None = None,
     exclude_none: bool = True,
     default_http_features: Sequence[AnyFeature] | None = None,
@@ -90,8 +89,7 @@ def attach_authn_endpoints(
 
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
-    _authn_namespace = registry.namespace or operation_namespace_for(spec)
-    _authn_facade_init: dict[str, Any] = {"namespace": _authn_namespace}
+    _authn_namespace = namespace or spec.default_namespace
 
     access_transport = config.get(
         "access_token_transport",
@@ -152,7 +150,6 @@ def attach_authn_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_authn_facade_init,
         )
 
     # ....................... #
@@ -176,7 +173,6 @@ def attach_authn_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_authn_facade_init,
         )
 
     # ....................... #
@@ -200,7 +196,6 @@ def attach_authn_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_authn_facade_init,
         )
 
     # ....................... #
@@ -222,7 +217,6 @@ def attach_authn_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_authn_facade_init,
         )
 
     return router

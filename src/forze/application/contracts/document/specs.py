@@ -68,3 +68,20 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             return False
 
         return self.write["update_cmd"].model_fields != {}
+
+    # ....................... #
+
+    def supports_soft_delete(self) -> bool:
+        """Return ``True`` when the domain model supports soft deletion."""
+
+        if self.write is None:
+            return False
+
+        return "is_deleted" in self.write["domain"].model_fields
+
+    # ....................... #
+
+    def supports_number_id(self) -> bool:
+        """Return ``True`` when the read model exposes a number identifier."""
+
+        return "number_id" in self.read.model_fields

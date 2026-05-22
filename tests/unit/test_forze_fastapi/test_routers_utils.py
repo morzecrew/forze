@@ -3,16 +3,10 @@
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import Depends
-from starlette.testclient import TestClient
 
-from forze.application.execution import (
-    Deps,
-    ExecutionContext,
-    OperationNamespace,
-    UsecaseRegistry,
-)
-from forze_fastapi.endpoints._utils import facade_dependency, path_coerce
+from forze.application.execution import Deps, ExecutionContext, make_registry_operation_resolver
+from forze.application.execution.registry import FrozenOperationRegistry
+from forze_fastapi.endpoints._utils import path_coerce
 
 # ----------------------- #
 
@@ -21,124 +15,25 @@ class TestPathCoerce:
     """Tests for path_coerce."""
 
     def test_adds_leading_slash(self) -> None:
-        """Relative paths gain a leading slash."""
         assert path_coerce("items") == "/items"
 
     def test_preserves_leading_slash(self) -> None:
-        """Already-absolute paths stay normalized without double slashes."""
         assert path_coerce("/items") == "/items"
 
     def test_strips_trailing_slash(self) -> None:
-        """Trailing slash is removed for consistent route keys."""
         assert path_coerce("/items/") == "/items"
         assert path_coerce("items/") == "/items"
 
 
-class TestFacadeDependency:
-    """Tests for facade_dependency."""
-
-    def test_resolves_facade_from_context(self) -> None:
-        """Depends() wiring returns the facade built from registry + context."""
-
-        class _Facade:
-            def __init__(
-                self,
-                *,
-                ctx: ExecutionContext,
-                registry: UsecaseRegistry,
-                namespace: OperationNamespace | None = None,
-            ) -> None:
-                self.ctx = ctx
-                self.registry = registry
-                self.namespace = namespace
-
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.namespace = None
+class TestMakeRegistryOperationResolver:
+    def test_resolve_delegates_to_registry(self) -> None:
+        registry = MagicMock(spec=FrozenOperationRegistry)
+        handler = MagicMock()
+        registry.resolve.return_value = handler
         ctx = ExecutionContext(deps=Deps())
+        resolver = make_registry_operation_resolver(registry)
 
-        def ctx_dep():
-            return ctx
+        out = resolver(ctx, "test.op")
 
-        dep = facade_dependency(_Facade, reg, ctx_dep)
-
-        from fastapi import FastAPI
-
-        app = FastAPI()
-
-        @app.get("/x")
-        async def route(f: _Facade = Depends(dep)) -> dict:
-            return {"same_ctx": f.ctx is ctx}
-
-        client = TestClient(app)
-        out = client.get("/x").json()
-        assert out == {"same_ctx": True}
-
-    def test_missing_context_dependency_fails_at_runtime(self) -> None:
-        """If ctx_dep does not inject ExecutionContext, dependency resolution fails."""
-
-        class _Facade:
-            def __init__(
-                self,
-                *,
-                ctx: ExecutionContext,
-                registry: UsecaseRegistry,
-                namespace: OperationNamespace | None = None,
-            ) -> None:
-                pass
-
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.namespace = None
-
-        def bad_ctx_dep():
-            raise RuntimeError("no ctx")
-
-        dep = facade_dependency(_Facade, reg, bad_ctx_dep)
-
-        from fastapi import FastAPI
-
-        app = FastAPI()
-
-        @app.get("/y")
-        async def route(f: _Facade = Depends(dep)) -> dict:
-            return {}
-
-        client = TestClient(app, raise_server_exceptions=True)
-        with pytest.raises(RuntimeError, match="no ctx"):
-            client.get("/y")
-
-    def test_forwards_facade_init_kwargs(self) -> None:
-        """Extra kwargs are passed through to the facade constructor."""
-
-        class _Facade:
-            def __init__(
-                self,
-                *,
-                ctx: ExecutionContext,
-                registry: UsecaseRegistry,
-                namespace: OperationNamespace | None = None,
-                marker: str = "",
-            ) -> None:
-                self.ctx = ctx
-                self.registry = registry
-                self.namespace = namespace
-                self.marker = marker
-
-        reg = MagicMock(spec=UsecaseRegistry)
-        reg.namespace = None
-        ctx = ExecutionContext(deps=Deps())
-
-        def ctx_dep():
-            return ctx
-
-        dep = facade_dependency(_Facade, reg, ctx_dep, marker="x")
-
-        from fastapi import FastAPI
-
-        app = FastAPI()
-
-        @app.get("/z")
-        async def route(f: _Facade = Depends(dep)) -> dict:
-            return {"marker": f.marker}
-
-        client = TestClient(app)
-        assert client.get("/z").json() == {"marker": "x"}
+        registry.resolve.assert_called_once_with("test.op", ctx)
+        assert out is handler

@@ -6,8 +6,10 @@ from starlette.testclient import TestClient
 
 from forze.application.composition.search import (
     SearchDTOs,
+    SearchKernelOp,
     build_search_registry,
 )
+from registry_helpers import freeze_registry
 from forze.application.contracts.search import SearchSpec
 from forze_fastapi.endpoints.http import AuthnRequirement
 from forze_fastapi.endpoints.search import attach_search_endpoints
@@ -46,8 +48,10 @@ class TestAttachSearchRoutes:
         """attach_search_endpoints adds /search and /raw-search routes."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx
@@ -81,8 +85,10 @@ class TestAttachSearchRoutes:
         """POST /search returns paginated results."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx
@@ -122,8 +128,10 @@ class TestAttachSearchRoutes:
         """``endpoints['authn']`` enforces 401 on every produced search route."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx
@@ -174,8 +182,10 @@ class TestAttachSearchRoutes:
         """Per-endpoint ``authn`` overrides the base on the matching route only."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx
@@ -222,8 +232,10 @@ class TestAttachSearchRoutes:
         """Typed search can be disabled while raw search remains."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx
@@ -256,8 +268,10 @@ class TestBuildSearchRouter:
         """Router under /search exposes nested /search and /raw-search paths."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx
@@ -297,8 +311,10 @@ class TestBuildSearchRouter:
         """SearchEndpointsSpec path_override and disable flags apply."""
         spec = _minimal_search_spec()
         dtos = _minimal_search_dtos()
-        reg = build_search_registry(spec)
-        reg.finalize(spec.name)
+        reg = freeze_registry(
+            build_search_registry(spec),
+            ops=[spec.default_namespace.key(op) for op in SearchKernelOp],
+        )
 
         def ctx_dep():
             return composition_ctx

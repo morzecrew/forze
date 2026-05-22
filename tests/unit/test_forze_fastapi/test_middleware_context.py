@@ -15,12 +15,12 @@ from forze.application.contracts.authn import (
     AuthnSpec,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import CallContext, Deps, ExecutionContext
+from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.base.errors import AuthenticationError
 from forze_fastapi.middlewares.context import (
     CookieTokenAuthnIdentityResolver,
     HeaderApiKeyAuthnIdentityResolver,
-    HeaderCallContextCodec,
+    HeaderInvocationMetadataCodec,
     HeaderTokenAuthnIdentityResolver,
 )
 from forze_fastapi.middlewares.context.middleware import ContextBindingMiddleware
@@ -138,12 +138,12 @@ class _BothFactory:
         return _BothPort()
 
 
-class TestHeaderCallContextCodec:
-    """Tests for :class:`HeaderCallContextCodec`."""
+class TestHeaderInvocationMetadataCodec:
+    """Tests for :class:`HeaderInvocationMetadataCodec`."""
 
     def test_decode_generates_ids_when_headers_missing(self) -> None:
         """Without correlation headers, new UUIDs are used."""
-        codec = HeaderCallContextCodec()
+        codec = HeaderInvocationMetadataCodec()
         req = Request(
             {
                 "type": "http",
@@ -161,7 +161,7 @@ class TestHeaderCallContextCodec:
         """Valid UUID headers are parsed."""
         corr = uuid4()
         caus = uuid4()
-        codec = HeaderCallContextCodec()
+        codec = HeaderInvocationMetadataCodec()
         req = Request(
             {
                 "type": "http",
@@ -179,8 +179,8 @@ class TestHeaderCallContextCodec:
 
     def test_encode_adds_execution_and_correlation_headers(self) -> None:
         """Response headers include execution and correlation ids."""
-        codec = HeaderCallContextCodec()
-        ctx = CallContext(
+        codec = HeaderInvocationMetadataCodec()
+        ctx = InvocationMetadata(
             execution_id=uuid4(),
             correlation_id=uuid4(),
             causation_id=None,
@@ -194,9 +194,9 @@ class TestHeaderCallContextCodec:
 
     def test_encode_includes_causation_when_set(self) -> None:
         """Causation header is added when causation_id is not None."""
-        codec = HeaderCallContextCodec()
+        codec = HeaderInvocationMetadataCodec()
         caus = uuid4()
-        ctx = CallContext(
+        ctx = InvocationMetadata(
             execution_id=uuid4(),
             correlation_id=uuid4(),
             causation_id=caus,

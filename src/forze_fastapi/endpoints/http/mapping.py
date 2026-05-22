@@ -4,7 +4,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.mapping import Mapper
-from forze.application.dto import DocumentUpdateRes
+from forze.application.handlers.document.dto import DocumentUpdateRes
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_dump, pydantic_validate
 from forze.domain.models import BaseDTO, ReadDocument

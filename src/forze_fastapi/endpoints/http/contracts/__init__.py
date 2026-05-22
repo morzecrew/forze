@@ -2,7 +2,6 @@ from .authn import AuthnRequirement, AuthnRequirementSchemeName
 from .constants import (
     HTTP_BODY_KEY,
     HTTP_CTX_KEY,
-    HTTP_FACADE_KEY,
     HTTP_REQUEST_KEY,
     HttpBodyMode,
 )
@@ -34,6 +33,5 @@ __all__ = [
     "HTTP_REQUEST_KEY",
     "HTTP_CTX_KEY",
     "HttpBodyMode",
-    "HTTP_FACADE_KEY",
     "SimpleHttpEndpointSpec",
 ]

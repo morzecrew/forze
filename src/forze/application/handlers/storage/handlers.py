@@ -9,7 +9,19 @@ from forze.application.contracts.storage import (
 )
 from forze.domain.models import BaseDTO
 
-from .dto import ListObjectsRequestDTO, UploadObjectRequestDTO
+from .dto import ListObjectsRequestDTO, StoredObjectDTO, UploadObjectRequestDTO
+
+
+def _stored_object_to_dto(obj: StoredObject) -> StoredObjectDTO:
+    return StoredObjectDTO(
+        key=obj.key,
+        filename=obj.filename,
+        created_at=obj.created_at,
+        size=obj.size,
+        content_type=obj.content_type,
+        description=obj.description,
+        tags=dict(obj.tags) if obj.tags is not None else None,
+    )
 
 # ----------------------- #
 
@@ -53,7 +65,7 @@ class DownloadObject(Handler[str, DownloadedObject]):
 class ListedObjects(BaseDTO):
     """Paginated listing response for storage objects."""
 
-    hits: list[StoredObject]
+    hits: list[StoredObjectDTO]
     """Objects for the current page."""
 
     page: int
@@ -92,14 +104,19 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
             prefix=args.prefix,
         )
 
-        return ListedObjects(hits=hits, page=page, size=size, count=count)
+        return ListedObjects(
+            hits=[_stored_object_to_dto(h) for h in hits],
+            page=page,
+            size=size,
+            count=count,
+        )
 
 
 # ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class UploadObject(Handler[UploadObjectRequestDTO, StoredObject]):
+class UploadObject(Handler[UploadObjectRequestDTO, StoredObjectDTO]):
     """Handler that uploads an object to storage."""
 
     storage: StoragePort
@@ -107,7 +124,7 @@ class UploadObject(Handler[UploadObjectRequestDTO, StoredObject]):
 
     # ....................... #
 
-    async def __call__(self, args: UploadObjectRequestDTO) -> StoredObject:
+    async def __call__(self, args: UploadObjectRequestDTO) -> StoredObjectDTO:
         """Upload an object and return stored object metadata."""
 
         obj = UploadedObject(
@@ -117,4 +134,5 @@ class UploadObject(Handler[UploadObjectRequestDTO, StoredObject]):
             prefix=args.prefix,
         )
 
-        return await self.storage.upload(obj)
+        stored = await self.storage.upload(obj)
+        return _stored_object_to_dto(stored)

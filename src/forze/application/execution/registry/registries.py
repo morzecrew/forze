@@ -114,6 +114,7 @@ class OperationRegistry:
         self,
         op: StrKey,
         plan: OperationPlan,
+        *,
         namespace: StrKeyNamespace | None = None,
     ) -> Self:
         """Extend plan for an operation."""
@@ -133,6 +134,7 @@ class OperationRegistry:
     def extend_plans(
         self,
         plans: Mapping[StrKey, OperationPlan],
+        *,
         namespace: StrKeyNamespace | None = None,
     ) -> Self:
         """Extend plans for multiple operations."""

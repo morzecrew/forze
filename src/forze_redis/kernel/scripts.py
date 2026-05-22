@@ -9,6 +9,12 @@ else
     return 0
 end
 """
+"""Redis script to release a distributed lock.
+
+Execution requires the lock owner to be provided as the first argument.
+
+Returns 1 if the lock was released, 0 if the lock was not owned by the provided owner.
+"""
 
 RESET_DLOCK: Final = """
 if redis.call("GET", KEYS[1]) == ARGV[1] then
@@ -16,6 +22,12 @@ if redis.call("GET", KEYS[1]) == ARGV[1] then
 else
     return 0
 end
+"""
+"""Redis script to reset a distributed lock.
+
+Execution requires the lock owner to be provided as the first argument and the TTL in milliseconds as the second argument.
+
+Returns 1 if the lock was reset, 0 if the lock was not owned by the provided owner.
 """
 
 # Atomic multi-key SET with shared EX/PX and optional NX/XX (all keys succeed or none).
@@ -83,6 +95,17 @@ for i = 1, n do
 end
 return 1
 """
+"""Redis script to perform a bulk set operation with shared EX/PX and optional NX/XX (all keys succeed or none).
+
+Execution requires the following arguments:
+- ARGV[1]: EX (seconds)
+- ARGV[2]: PX (milliseconds)
+- ARGV[3]: want_nx (1 or 0)
+- ARGV[4]: want_xx (1 or 0)
+- ARGV[5]: ...: key/value pairs
+
+Returns 1 if the set operation was successful, 0 if it was not.
+"""
 
 # Compare-and-swap append for search snapshot: meta must match ARGV[1] (raw GET bytes).
 APPEND_SNAPSHOT_CHUNK: Final = """
@@ -93,4 +116,14 @@ local ex = tonumber(ARGV[3])
 redis.call('SET', KEYS[2], ARGV[2], 'EX', ex)
 redis.call('SET', KEYS[1], ARGV[4], 'EX', ex)
 return 1
+"""
+"""Redis script to compare-and-swap append for search snapshot: meta must match ARGV[1] (raw GET bytes).
+
+Execution requires the following arguments:
+- ARGV[1]: meta (raw GET bytes)
+- ARGV[2]: chunk (raw bytes)
+- ARGV[3]: ex (seconds)
+- ARGV[4]: new_meta (raw bytes)
+
+Returns 1 if the append was successful, 0 if the meta did not match.
 """

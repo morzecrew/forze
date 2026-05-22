@@ -8,10 +8,12 @@ from starlette.testclient import TestClient
 
 from forze.application.composition.document import (
     DocumentDTOs,
+    DocumentKernelOp,
     build_document_registry,
 )
+from registry_helpers import freeze_registry
 from forze.application.contracts.document import DocumentSpec
-from forze.domain.mixins import SoftDeletionMixin
+from forze_contrib.soft_deletion import SoftDeletionMixin
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.http import AuthnRequirement
@@ -87,10 +89,10 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 
 
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
-    """Build registry with plan merged and id set (required for attach_http_endpoint)."""
-    reg = build_document_registry(spec, dtos).tx("*", route="mock")
-    reg.finalize(spec.name)
-    return reg
+    """Build frozen registry with mock tx for HTTP attach."""
+    reg = build_document_registry(spec, dtos)
+    ops = [spec.default_namespace.key(op) for op in DocumentKernelOp]
+    return freeze_registry(reg, ops=ops)
 
 
 def _metadata_endpoints() -> dict:

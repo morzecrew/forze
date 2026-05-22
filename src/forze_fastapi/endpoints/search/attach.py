@@ -10,11 +10,9 @@ from fastapi import APIRouter
 
 from forze.application.composition.search import SearchDTOs
 from forze.application.contracts.search import SearchSpec
-from forze.application.execution import (
-    ExecutionContext,
-    UsecaseRegistry,
-    operation_namespace_for,
-)
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
+from forze.base.primitives import StrKeyNamespace
 
 from ..http import (
     AuthnRequirement,
@@ -38,7 +36,7 @@ from .specs import SearchEndpointsSpec
 # ----------------------- #
 
 
-HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]
 
 
 def attach_search_endpoints(
@@ -46,16 +44,16 @@ def attach_search_endpoints(
     *,
     search: SearchSpec[Any],
     dtos: SearchDTOs[Any],
-    registry: UsecaseRegistry,
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
+    namespace: StrKeyNamespace | None = None,
     endpoints: SearchEndpointsSpec | None = None,
     exclude_none: bool = True,
     default_http_features: Sequence[AnyFeature] | None = None,
 ) -> APIRouter:
     endpoints = endpoints or {}
     base_authn: AuthnRequirement | None = endpoints.get("authn")
-    _search_namespace = registry.namespace or operation_namespace_for(search)
-    _search_facade_init: dict[str, Any] = {"namespace": _search_namespace}
+    _search_namespace = namespace or search.default_namespace
 
     def _resolve_authn(
         simple: SimpleHttpEndpointSpec | None,
@@ -95,7 +93,6 @@ def attach_search_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_search_facade_init,
         )
 
     if raw_search_endpoint is not False:
@@ -107,7 +104,6 @@ def attach_search_endpoints(
 
         raw_search_endpoint_spec = build_raw_search_endpoint_spec(
             namespace=_search_namespace,
-            dtos=dtos,
             path_override=_raw_search.get("path_override"),
             metadata=_raw_search.get("metadata"),
         )
@@ -117,7 +113,6 @@ def attach_search_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_search_facade_init,
         )
 
     if search_cursor_endpoint is not False:
@@ -139,7 +134,6 @@ def attach_search_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_search_facade_init,
         )
 
     if raw_search_cursor_endpoint is not False:
@@ -151,7 +145,6 @@ def attach_search_endpoints(
 
         raw_search_cursor_endpoint_spec = build_raw_search_cursor_endpoint_spec(
             namespace=_search_namespace,
-            dtos=dtos,
             path_override=_raw_search_c.get("path_override"),
             metadata=_raw_search_c.get("metadata"),
         )
@@ -161,7 +154,6 @@ def attach_search_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_search_facade_init,
         )
 
     return router

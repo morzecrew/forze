@@ -6,14 +6,14 @@ require_fastapi()
 
 from typing import Any
 
-from forze.application.composition.authn import AuthnKernelOp, AuthnUsecasesFacade
-from forze.application.dto import (
+from forze.application.composition.authn import AuthnKernelOp
+from forze.application.handlers.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
     AuthnTokenResponseDTO,
 )
-from forze.application.execution import OperationNamespace, OperationRef
+from forze.base.primitives import StrKeyNamespace
 from forze.domain.models import BaseDTO
 
 from .._utils import path_coerce
@@ -37,7 +37,6 @@ from .specs import TokenTransportSpec
 
 # ----------------------- #
 
-Facade = AuthnUsecasesFacade
 
 # ....................... #
 
@@ -51,13 +50,12 @@ PasswordLoginEndpointSpec = HttpEndpointSpec[
     AuthnLoginRequestDTO,
     AuthnTokenResponseDTO,
     AuthnTokenResponseDTO,
-    Facade,
 ]
 
 
 def build_authn_password_login_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     access_transport: TokenTransportSpec,
     refresh_transport: TokenTransportSpec | None = None,
     path_override: str | None = None,
@@ -88,7 +86,6 @@ def build_authn_password_login_endpoint_spec(
         AuthnLoginRequestDTO,
         AuthnTokenResponseDTO,
         AuthnTokenResponseDTO,
-        Facade,
     ] = TokenTransportOutputFeature(
         access_transport=access_transport,
         refresh_transport=refresh_transport,
@@ -96,13 +93,12 @@ def build_authn_password_login_endpoint_spec(
     )
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(AuthnKernelOp.PASSWORD_LOGIN)),
+        namespace.key(AuthnKernelOp.PASSWORD_LOGIN),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
         response=AuthnTokenResponseDTO,
-        mapper=BodyAsIsMapper(AuthnLoginRequestDTO),
+        request_mapper=BodyAsIsMapper(AuthnLoginRequestDTO),
         features=[output_feature],
     )
 
@@ -119,13 +115,12 @@ RefreshEndpointSpec = HttpEndpointSpec[
     AuthnRefreshRequestDTO,
     AuthnTokenResponseDTO,
     AuthnTokenResponseDTO,
-    Facade,
 ]
 
 
 def build_authn_refresh_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     access_transport: TokenTransportSpec,
     refresh_transport: TokenTransportSpec,
     path_override: str | None = None,
@@ -151,7 +146,6 @@ def build_authn_refresh_endpoint_spec(
         AuthnRefreshRequestDTO,
         AuthnTokenResponseDTO,
         AuthnTokenResponseDTO,
-        Facade,
     ] = TokenTransportInputFeature(refresh_transport=refresh_transport)
     output_feature: TokenTransportOutputFeature[
         Any,
@@ -162,7 +156,6 @@ def build_authn_refresh_endpoint_spec(
         AuthnRefreshRequestDTO,
         AuthnTokenResponseDTO,
         AuthnTokenResponseDTO,
-        Facade,
     ] = TokenTransportOutputFeature(
         access_transport=access_transport,
         refresh_transport=refresh_transport,
@@ -170,12 +163,11 @@ def build_authn_refresh_endpoint_spec(
     )
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(AuthnKernelOp.REFRESH_TOKENS)),
+        namespace.key(AuthnKernelOp.REFRESH_TOKENS),
         http=http_spec,
         metadata=metadata,
         response=AuthnTokenResponseDTO,
-        mapper=_RefreshTokenPlaceholderMapper(),
+        request_mapper=_RefreshTokenPlaceholderMapper(),
         features=[input_feature, output_feature],
     )
 
@@ -185,7 +177,7 @@ def build_authn_refresh_endpoint_spec(
 
 import attrs
 
-from forze.application.contracts.mapping import MapperPort
+from forze.application.contracts.mapping import Mapper
 from forze.application.execution import ExecutionContext
 
 from ..http.contracts import HttpRequestDTO
@@ -193,7 +185,7 @@ from ..http.contracts import HttpRequestDTO
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _RefreshTokenPlaceholderMapper(
-    MapperPort[HttpRequestDTO[Any, Any, Any, Any, Any], AuthnRefreshRequestDTO],
+    Mapper[HttpRequestDTO[Any, Any, Any, Any, Any], AuthnRefreshRequestDTO],
 ):
     """Map an empty request DTO to a placeholder ``AuthnRefreshRequestDTO``.
 
@@ -223,13 +215,12 @@ LogoutEndpointSpec = HttpEndpointSpec[
     BaseDTO,
     None,
     None,
-    Facade,
 ]
 
 
 def build_authn_logout_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     access_transport: TokenTransportSpec,
     refresh_transport: TokenTransportSpec | None = None,
     path_override: str | None = None,
@@ -247,7 +238,7 @@ def build_authn_logout_endpoint_spec(
     http_spec: HttpSpec = {"method": "POST", "path": path, "status_code": 204}
 
     output_feature: TokenTransportOutputFeature[
-        Any, Any, Any, Any, Any, BaseDTO, None, None, Facade
+        Any, Any, Any, Any, Any, BaseDTO, None, None
     ] = TokenTransportOutputFeature(
         access_transport=access_transport,
         refresh_transport=refresh_transport,
@@ -255,11 +246,10 @@ def build_authn_logout_endpoint_spec(
     )
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(AuthnKernelOp.LOGOUT)),
+        namespace.key(AuthnKernelOp.LOGOUT),
         http=http_spec,
         metadata=metadata,
-        mapper=EmptyMapper(),
+        request_mapper=EmptyMapper(),
         features=[output_feature],
     )
 
@@ -276,13 +266,12 @@ ChangePasswordEndpointSpec = HttpEndpointSpec[
     AuthnChangePasswordRequestDTO,
     None,
     None,
-    Facade,
 ]
 
 
 def build_authn_change_password_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
     body_mode: HttpBodyMode = "form",
@@ -305,12 +294,11 @@ def build_authn_change_password_endpoint_spec(
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(AuthnKernelOp.CHANGE_PASSWORD)),
+        namespace.key(AuthnKernelOp.CHANGE_PASSWORD),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
-        mapper=BodyAsIsMapper(AuthnChangePasswordRequestDTO),
+        request_mapper=BodyAsIsMapper(AuthnChangePasswordRequestDTO),
     )
 
 

@@ -1,27 +1,33 @@
-from typing import cast, final
+from typing import Any, final
 
 import attrs
 
-from forze.application.execution import OperationRef, UsecasesFacade
+from forze.application.execution.registry import FrozenOperationRegistry
 
 from ..contracts import HttpEndpointContext, HttpEndpointHandlerPort
-from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
 
 # ----------------------- #
 
 
-@final
-@attrs.define(slots=True, frozen=True, kw_only=True)
-class UsecaseHttpEndpointHandler(HttpEndpointHandlerPort[Q, P, H, C, B, In, Raw, R, F]):
-    async def __call__(
-        self,
-        ctx: HttpEndpointContext[Q, P, H, C, B, In, Raw, R, F],
-    ) -> R:
-        call = cast(OperationRef[In, Raw], getattr(ctx.spec, "call"))
-        facade = cast(UsecasesFacade, ctx.facade)
-        uc = facade.resolve(call)
-        raw = await uc(ctx.input)
-        mapper = ctx.spec.response_mapper
-        if mapper is None:
-            return raw  # type: ignore[return-value]
-        return await mapper(raw, ctx=ctx.exec_ctx)
+def build_http_endpoint_handler(
+    registry: FrozenOperationRegistry,
+) -> HttpEndpointHandlerPort[Any, Any, Any, Any, Any, Any, Any, Any]:
+    """Build a handler that resolves and runs the spec operation from a frozen registry."""
+
+    @final
+    @attrs.define(slots=True, frozen=True, kw_only=True)
+    class _Handler(HttpEndpointHandlerPort[Any, Any, Any, Any, Any, Any, Any, Any]):
+        async def __call__(
+            self,
+            ctx: HttpEndpointContext[Any, Any, Any, Any, Any, Any, Any, Any],
+        ) -> Any:
+            resolved = registry.resolve(ctx.spec.operation, ctx.exec_ctx)
+            raw = await resolved(ctx.input)
+            mapper = ctx.spec.response_mapper
+
+            if mapper is None:
+                return raw
+
+            return await mapper(raw)
+
+    return _Handler()

@@ -173,11 +173,11 @@ Attach the dependency at the **router** level for the common case (every route s
 
 ## Pre-built authn endpoints
 
-`attach_authn_endpoints` registers configurable **login**, **refresh**, **logout**, and **change-password** routes wired to the `AuthnUsecasesFacade`:
+`attach_authn_endpoints` registers configurable **login**, **refresh**, **logout**, and **change-password** routes resolved from a frozen authn registry:
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.authn import build_authn_registry
+from forze.application.composition.authn import AuthnKernelOp, build_authn_registry
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,
     HeaderTokenTransportSpec,
@@ -185,13 +185,14 @@ from forze_fastapi.endpoints.authn import (
 )
 
 reg = build_authn_registry(api_authn)
-reg.finalize("authn")
+ops = [api_authn.default_namespace.key(op) for op in AuthnKernelOp]
+registry = reg.bind(*ops).bind_tx().set_route("postgres").finish(deep=True).freeze()
 
 router = APIRouter(prefix="/auth")
 attach_authn_endpoints(
     router,
     spec=api_authn,
-    registry=reg,
+    registry=registry,
     ctx_dep=get_ctx,
     endpoints={
         "password_login": True,

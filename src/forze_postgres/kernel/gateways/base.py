@@ -19,11 +19,11 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QuerySortExpression,
 )
-from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_field_names
-from forze.domain.constants import ID_FIELD, TENANT_ID_FIELD
+from forze.domain.constants import ID_FIELD
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
 from ..platform import PostgresClientPort

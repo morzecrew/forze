@@ -20,6 +20,3 @@ HISTORY_SOURCE_FIELD: Final = "source"
 
 HISTORY_DATA_FIELD: Final = "data"
 """History data field."""
-
-TENANT_ID_FIELD: Final = "tenant_id"  #! Should it be here or in the infra layer ?
-"""Tenant identifier field."""

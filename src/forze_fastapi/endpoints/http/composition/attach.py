@@ -6,18 +6,18 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Callable, Mapping, Sequence, cast
+from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter, Depends, Request
 
-from forze.application.execution import ExecutionContext, OperationRef, UsecaseRegistry
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
 from forze.base.errors import CoreError
 
-from ..._utils import facade_dependency
 from ..contracts import HttpEndpointContext, HttpEndpointSpec
-from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
+from ..contracts.typevars import B, C, H, In, P, Q, R, Raw
 from .dto import build_request_dto
-from .handler import UsecaseHttpEndpointHandler
+from .handler import build_http_endpoint_handler
 from .helpers import compose_endpoint_features, validate_http_features
 from .signature import build_http_endpoint_signature
 
@@ -54,47 +54,35 @@ def _has_route(router: APIRouter, *, path: str, method: str) -> bool:
 def attach_http_endpoint(
     router: APIRouter,
     *,
-    spec: HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F],
-    registry: UsecaseRegistry,
+    spec: HttpEndpointSpec[Q, P, H, C, B, In, Raw, R],
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,
-    facade_init_kwargs: Mapping[str, Any] | None = None,
 ) -> APIRouter:
-    # Fail fast if route already exists
     path = spec.http["path"]
     method = spec.http["method"]
 
     if _has_route(router, path=path, method=method):
         raise CoreError(f"Route already exists: {path} {method}")
 
-    # Fail fast if features are invalid
     validate_http_features(spec.http, spec.features)
 
-    facade_dep = facade_dependency(
-        facade=spec.facade_type,
-        registry=registry,
-        ctx_dep=ctx_dep,
-        **dict(facade_init_kwargs or {}),
-    )
-    call = cast(OperationRef[In, Raw], getattr(spec, "call"))
-    operation_id = registry.operation_id_for(call)
-    base_handler = UsecaseHttpEndpointHandler[Q, P, H, C, B, In, Raw, R, F]()
-    handler = compose_endpoint_features(base_handler, spec.features)
+    operation_id = str(spec.operation)
+    base_handler = build_http_endpoint_handler(registry)  # type: ignore
+    handler = compose_endpoint_features(base_handler, spec.features)  # type: ignore
 
     async def endpoint(
         request: Request,
         ctx: ExecutionContext = Depends(ctx_dep),
-        ucs: F = Depends(facade_dep),
         **kwargs: Any,
     ) -> Any:
         dto = build_request_dto(kwargs=kwargs, spec=spec.request)
-        input_ = await spec.mapper(dto)
+        input_ = await spec.request_mapper(dto)
 
         call_ctx = HttpEndpointContext(
             raw_request=request,
             raw_kwargs=kwargs,
             exec_ctx=ctx,
-            facade=ucs,
             dto=dto,
             input=input_,
             spec=spec,
@@ -108,7 +96,6 @@ def attach_http_endpoint(
     endpoint.__signature__ = (  # type: ignore[attr-defined]
         build_http_endpoint_signature(
             spec=spec,
-            facade_dep=facade_dep,
             ctx_dep=ctx_dep,
         )
     )
@@ -117,7 +104,6 @@ def attach_http_endpoint(
     description = metadata.get("description")
 
     if description is not None:
-        # Only docstring hack allows to use Markdown formatting
         endpoint.__doc__ = description
 
     rsp: type[R] | type[None] | None = spec.response
@@ -159,11 +145,10 @@ def attach_http_endpoint(
 def attach_http_endpoints(
     router: APIRouter,
     *,
-    specs: Sequence[HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]],
-    registry: UsecaseRegistry,
+    specs: Sequence[HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]],
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
     exclude_none: bool = True,
-    facade_init_kwargs: Mapping[str, Any] | None = None,
 ) -> APIRouter:
     for spec in specs:
         attach_http_endpoint(
@@ -172,7 +157,6 @@ def attach_http_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=facade_init_kwargs,
         )
 
     return router

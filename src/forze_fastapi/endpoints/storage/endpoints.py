@@ -6,12 +6,14 @@ require_fastapi()
 
 from typing import Any, cast
 
-from forze.application.composition.storage import StorageKernelOp, StorageUsecasesFacade
+from forze.application.composition.storage import StorageKernelOp
 from forze.application.contracts.idempotency import IdempotencySpec
-from forze.application.contracts.storage import StoredObject
-from forze.application.dto import ListObjectsRequestDTO, UploadObjectRequestDTO
-from forze.application.execution import OperationNamespace, OperationRef
-from forze.application.usecases.storage import ListedObjects
+from forze.application.handlers.storage import ListedObjects, ListObjectsRequestDTO
+from forze.application.handlers.storage.dto import (
+    StoredObjectDTO,
+    UploadObjectRequestDTO,
+)
+from forze.base.primitives import StrKeyNamespace
 
 from .._utils import path_coerce
 from ..http import (
@@ -32,10 +34,6 @@ from .models import StorageObjectKeyPath, StorageUploadFormBody
 
 # ----------------------- #
 
-Facade = StorageUsecasesFacade
-
-# ....................... #
-
 type ListEndpointSpec = HttpEndpointSpec[
     Any,
     Any,
@@ -45,13 +43,12 @@ type ListEndpointSpec = HttpEndpointSpec[
     ListObjectsRequestDTO,
     ListedObjects,
     ListedObjects,
-    Facade,
 ]
 
 
 def build_storage_list_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> ListEndpointSpec:
@@ -64,13 +61,12 @@ def build_storage_list_endpoint_spec(
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(StorageKernelOp.LIST)),
+        namespace.key(StorageKernelOp.LIST),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
         response=ListedObjects,
-        mapper=BodyAsIsMapper(ListObjectsRequestDTO),
+        request_mapper=BodyAsIsMapper(ListObjectsRequestDTO),
     )
 
 
@@ -83,15 +79,14 @@ type UploadEndpointSpec = HttpEndpointSpec[
     Any,
     StorageUploadFormBody,
     UploadObjectRequestDTO,
-    Any,
-    Any,
-    Facade,
+    StoredObjectDTO,
+    StoredObjectDTO,
 ]
 
 
 def build_storage_upload_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
     idempotency: IdempotencySpec | None = None,
@@ -114,9 +109,8 @@ def build_storage_upload_endpoint_spec(
                 Any,
                 StorageUploadFormBody,
                 UploadObjectRequestDTO,
-                Any,
-                Any,
-                Facade,
+                StoredObjectDTO,
+                StoredObjectDTO,
             ]
         ]
         | None
@@ -127,13 +121,12 @@ def build_storage_upload_endpoint_spec(
         features = None
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(StorageKernelOp.UPLOAD)),
+        namespace.key(StorageKernelOp.UPLOAD),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
-        response=StoredObject,
-        mapper=StorageUploadFormMapper(),
+        response=StoredObjectDTO,
+        request_mapper=StorageUploadFormMapper(),
         features=features,
     )
 
@@ -149,13 +142,12 @@ type DownloadEndpointSpec = HttpEndpointSpec[
     Any,
     Any,
     Any,
-    Facade,
 ]
 
 
 def build_storage_download_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> DownloadEndpointSpec:
@@ -189,14 +181,13 @@ def build_storage_download_endpoint_spec(
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(StorageKernelOp.DOWNLOAD)),
+        namespace.key(StorageKernelOp.DOWNLOAD),
         http=http_spec,
         request=request_spec,
         metadata=merged_metadata,
         response=type(None),
         response_mapper=DownloadedObjectResponseMapper(),
-        mapper=StorageKeyFromPathMapper(),  # type: ignore[arg-type]
+        request_mapper=StorageKeyFromPathMapper(),
     )
 
 
@@ -211,13 +202,12 @@ type DeleteEndpointSpec = HttpEndpointSpec[
     Any,
     Any,
     Any,
-    Facade,
 ]
 
 
 def build_storage_delete_endpoint_spec(
     *,
-    namespace: OperationNamespace,
+    namespace: StrKeyNamespace,
     path_override: str | None = None,
     metadata: HttpMetadataSpec | None = None,
 ) -> DeleteEndpointSpec:
@@ -234,10 +224,9 @@ def build_storage_delete_endpoint_spec(
     }
 
     return build_http_endpoint_spec(
-        Facade,
-        OperationRef(namespace.key(StorageKernelOp.DELETE)),
+        namespace.key(StorageKernelOp.DELETE),
         http=http_spec,
         request=request_spec,
         metadata=metadata,
-        mapper=StorageKeyFromPathMapper(),  # type: ignore[arg-type]
+        request_mapper=StorageKeyFromPathMapper(),
     )

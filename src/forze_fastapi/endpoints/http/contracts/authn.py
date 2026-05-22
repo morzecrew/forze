@@ -1,10 +1,4 @@
-"""Per-endpoint auth requirement value object used by Simple endpoint specs.
-
-The single :class:`AuthnRequirement` declaration drives both runtime gating
-(via :class:`~forze_fastapi.endpoints.http.features.security.RequireAuthnFeature`)
-and OpenAPI security schema generation, so document/search/authn attach helpers
-do not need to thread the same configuration twice.
-"""
+"""Auth requirement value object used by endpoint specs."""
 
 from typing import Literal, final
 
@@ -18,12 +12,11 @@ from forze.base.validators import NoneValidator
 AuthnRequirementSchemeName = Literal["bearer", "api_key", "cookie"]
 """OpenAPI scheme classification used by :class:`AuthnRequirement`."""
 
-
 # ....................... #
 
 
 @final
-@attrs.define(slots=True, kw_only=True, frozen=True)
+@attrs.define(slots=True, kw_only=True, frozen=True, repr=False)
 class AuthnRequirement:
     """Declare per-route authentication requirements.
 
@@ -62,8 +55,6 @@ class AuthnRequirement:
         if not self.authn_route:
             raise CoreError("AuthnRequirement.authn_route must be non-empty")
 
-        # Belt-and-suspenders: the same constraint expressed via NoneValidator
-        # to keep the error surface consistent with the rest of the codebase.
         if not NoneValidator.exactly_one(
             self.token_header,
             self.token_cookie,

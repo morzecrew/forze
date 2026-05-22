@@ -4,7 +4,12 @@ from .context import ExecutionContext, InvocationMetadata
 from .deps import Deps, DepsModule, DepsPlan
 from .lifecycle import LifecyclePlan
 from .planning import OperationPlan
-from .registry import OperationRegistry
+from .registry import (
+    FrozenOperationRegistry,
+    OperationRegistry,
+    OperationResolver,
+    make_registry_operation_resolver,
+)
 from .runtime import ExecutionRuntime
 
 # ----------------------- #
@@ -16,7 +21,10 @@ __all__ = [
     "DepsPlan",
     "ExecutionContext",
     "ExecutionRuntime",
+    "FrozenOperationRegistry",
     "LifecyclePlan",
     "OperationPlan",
     "OperationRegistry",
+    "OperationResolver",
+    "make_registry_operation_resolver",
 ]

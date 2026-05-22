@@ -13,18 +13,15 @@ from forze.application.composition.authn import (
     AuthnKernelOp,
 )
 from forze.application.contracts.authn import AuthnSpec
-from forze.application.dto import (
+from forze.application.handlers.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
     AuthnTokenResponseDTO,
 )
-from forze.application.execution import (
-    ExecutionContext,
-    Usecase,
-    UsecaseRegistry,
-    operation_namespace_for,
-)
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import OperationRegistry
+from registry_helpers import freeze_registry
 
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,
@@ -43,38 +40,38 @@ pytestmark = pytest.mark.unit
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class _StubLogin(Usecase[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
+class _StubLogin:
     response: AuthnTokenResponseDTO
 
-    async def main(self, args: AuthnLoginRequestDTO) -> AuthnTokenResponseDTO:
+    async def __call__(self, args: AuthnLoginRequestDTO) -> AuthnTokenResponseDTO:
         _ = args
         return self.response
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class _StubRefresh(Usecase[AuthnRefreshRequestDTO, AuthnTokenResponseDTO]):
+class _StubRefresh:
     response: AuthnTokenResponseDTO
     captured: list[str]
 
-    async def main(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
+    async def __call__(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
         self.captured.append(args.refresh_token)
         return self.response
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class _StubLogout(Usecase[None, None]):
+class _StubLogout:
     called: list[bool]
 
-    async def main(self, args: None) -> None:
+    async def __call__(self, args: None) -> None:
         _ = args
         self.called.append(True)
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class _StubChangePassword(Usecase[AuthnChangePasswordRequestDTO, None]):
+class _StubChangePassword:
     captured: list[str]
 
-    async def main(self, args: AuthnChangePasswordRequestDTO) -> None:
+    async def __call__(self, args: AuthnChangePasswordRequestDTO) -> None:
         self.captured.append(args.new_password)
 
 
@@ -102,39 +99,40 @@ def _make_registry(
     refresh_capture: list[str] | None = None,
     logout_calls: list[bool] | None = None,
     change_password_capture: list[str] | None = None,
-) -> UsecaseRegistry:
+):
+    spec = _spec()
+    ns = spec.default_namespace
     factories: dict[str, Any] = {}
-    ops = operation_namespace_for(_spec())
+    bound_ops: list[str] = []
 
     if login_response is not None:
-        factories[ops.op(AuthnKernelOp.PASSWORD_LOGIN)] = lambda ctx: _StubLogin(
-            ctx=ctx,
-            response=login_response,
-        )
+        op = ns.key(AuthnKernelOp.PASSWORD_LOGIN)
+        factories[op] = lambda _ctx, r=login_response: _StubLogin(response=r)
+        bound_ops.append(op)
 
     if refresh_response is not None:
         rc = refresh_capture if refresh_capture is not None else []
-        factories[ops.op(AuthnKernelOp.REFRESH_TOKENS)] = lambda ctx: _StubRefresh(
-            ctx=ctx,
-            response=refresh_response,
-            captured=rc,
+        op = ns.key(AuthnKernelOp.REFRESH_TOKENS)
+        factories[op] = lambda _ctx, r=refresh_response, c=rc: _StubRefresh(
+            response=r,
+            captured=c,
         )
+        bound_ops.append(op)
 
     if logout_calls is not None:
-        factories[ops.op(AuthnKernelOp.LOGOUT)] = lambda ctx: _StubLogout(
-            ctx=ctx,
-            called=logout_calls,
-        )
+        op = ns.key(AuthnKernelOp.LOGOUT)
+        factories[op] = lambda _ctx, calls=logout_calls: _StubLogout(called=calls)
+        bound_ops.append(op)
 
     if change_password_capture is not None:
-        factories[ops.op(AuthnKernelOp.CHANGE_PASSWORD)] = lambda ctx: _StubChangePassword(
-            ctx=ctx,
-            captured=change_password_capture,
+        op = ns.key(AuthnKernelOp.CHANGE_PASSWORD)
+        factories[op] = lambda _ctx, cap=change_password_capture: _StubChangePassword(
+            captured=cap,
         )
+        bound_ops.append(op)
 
-    reg = UsecaseRegistry(factories).tx("*", route="mock")
-    reg.finalize("authn")
-    return reg
+    reg = OperationRegistry(handlers=factories)
+    return freeze_registry(reg, ops=bound_ops)
 
 
 def _ctx_dep(ctx: ExecutionContext):
@@ -387,13 +385,16 @@ class TestLogout:
         from uuid import uuid4
 
         from forze.application.contracts.authn import AuthnIdentity
-        from forze.application.execution.context import CallContext
+        from forze.application.execution import InvocationMetadata
 
         called: list[bool] = []
         reg = _make_registry(logout_calls=called)
 
-        def _new_call_ctx() -> CallContext:
-            return CallContext(execution_id=uuid4(), correlation_id=uuid4())
+        def _invocation_metadata() -> InvocationMetadata:
+            return InvocationMetadata(
+                execution_id=uuid4(),
+                correlation_id=uuid4(),
+            )
 
         router = APIRouter(prefix="/auth")
         attach_authn_endpoints(
@@ -419,9 +420,9 @@ class TestLogout:
         @app.middleware("http")
         async def _bind_identity(request, call_next):  # type: ignore[no-untyped-def]
             identity = AuthnIdentity(principal_id=uuid4())
-            with authn_ctx.bind_call(
-                call=_new_call_ctx(),
-                identity=identity,
+            with authn_ctx.inv.bind(
+                metadata=_invocation_metadata(),
+                authn=identity,
             ):
                 return await call_next(request)
 

@@ -68,8 +68,11 @@ class ExecutionContext:
 
     # ....................... #
 
-    doc = document
-    """Document dependencies (alias)."""
+    @property
+    def doc(self) -> DocumentDeps:
+        """Document dependencies (alias for :attr:`document`)."""
+
+        return self.document
 
     # ....................... #
 

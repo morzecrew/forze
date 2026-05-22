@@ -1,4 +1,6 @@
-"""Storage-specific request DTOs."""
+"""Storage-specific request and response DTOs."""
+
+from datetime import datetime
 
 from forze.application.dto.paginated import Pagination
 from forze.domain.models import BaseDTO
@@ -30,3 +32,18 @@ class ListObjectsRequestDTO(Pagination):
 
     prefix: str | None = None
     """Optional key prefix filter."""
+
+
+# ....................... #
+
+
+class StoredObjectDTO(BaseDTO):
+    """DTO for a stored object returned over HTTP or handlers."""
+
+    key: str
+    filename: str
+    created_at: datetime
+    size: int
+    content_type: str
+    description: str | None = None
+    tags: dict[str, str] | None = None

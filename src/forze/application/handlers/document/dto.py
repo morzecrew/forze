@@ -24,6 +24,16 @@ class DocumentIdDTO(BaseDTO):
 # ....................... #
 
 
+class DocumentNumberIdDTO(BaseDTO):
+    """DTO for the document number ID."""
+
+    number_id: int
+    """Numeric document identifier."""
+
+
+# ....................... #
+
+
 class DocumentIdRevDTO(DocumentIdDTO):
     """DTO for the document ID and revision."""
 

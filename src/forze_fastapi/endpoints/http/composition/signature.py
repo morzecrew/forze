@@ -13,12 +13,11 @@ from forze.application.execution import ExecutionContext
 
 from ..contracts import (
     HTTP_CTX_KEY,
-    HTTP_FACADE_KEY,
     HTTP_REQUEST_KEY,
     HttpBodyMode,
     HttpEndpointSpec,
 )
-from ..contracts.typevars import B, C, F, H, In, P, Q, R, Raw
+from ..contracts.typevars import B, C, H, In, P, Q, R, Raw
 from ..features import (
     IDEMPOTENCY_KEY_HEADER,
     IF_NONE_MATCH_HEADER_KEY,
@@ -40,8 +39,7 @@ from .utils import (
 
 def build_http_endpoint_signature(
     *,
-    spec: HttpEndpointSpec[Q, P, H, C, B, In, Raw, R, F],
-    facade_dep: Callable[[ExecutionContext], F],
+    spec: HttpEndpointSpec[Q, P, H, C, B, In, Raw, R],
     ctx_dep: Callable[[], ExecutionContext],
 ) -> inspect.Signature:
     path_model = None
@@ -103,14 +101,6 @@ def build_http_endpoint_signature(
             name=HTTP_CTX_KEY,
             annotation=ExecutionContext,
             dependency=ctx_dep,
-        )
-    )
-
-    params.append(
-        build_dependency_parameter(
-            name=HTTP_FACADE_KEY,
-            annotation=spec.facade_type,
-            dependency=facade_dep,
         )
     )
 

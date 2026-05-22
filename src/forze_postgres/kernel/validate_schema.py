@@ -5,9 +5,9 @@ from collections.abc import Sequence
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
-from forze.domain.constants import TENANT_ID_FIELD
 from forze.domain.models import DocumentHistory
 
 from .introspect import PostgresIntrospector
@@ -45,7 +45,7 @@ class PostgresDocumentSchemaSpec:
     """Read model field names that are not stored on the read relation (computed, etc.)."""
 
     tenant_aware: bool = False
-    """When ``True``, the write relation must expose :data:`~forze.domain.constants.TENANT_ID_FIELD`."""
+    """When ``True``, the write relation must expose :data:`~forze.application.contracts.tenancy.TENANT_ID_FIELD`."""
 
     write_domain_model: type[BaseModel] | None = None
     """Domain document model (persisted row shape)."""

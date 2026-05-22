@@ -6,11 +6,14 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
 from forze.base.errors import ConcurrencyError, CoreError
-from forze.domain.constants import TENANT_ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-from forze_mongo.kernel.gateways import MongoHistoryGateway, MongoReadGateway, MongoWriteGateway
+from forze_mongo.kernel.gateways import (
+    MongoHistoryGateway,
+    MongoReadGateway,
+    MongoWriteGateway,
+)
 from forze_mongo.kernel.gateways.write import optimistic_retry
 from forze_mongo.kernel.platform import MongoClient
 
@@ -251,7 +254,9 @@ class TestMongoWriteGatewayPostInit:
             target_database="db",
             target_collection="docs",
         )
-        with pytest.raises(CoreError, match="nested history gateway must use the same client"):
+        with pytest.raises(
+            CoreError, match="nested history gateway must use the same client"
+        ):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",

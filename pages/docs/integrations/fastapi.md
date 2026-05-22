@@ -48,8 +48,12 @@ Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, `build_stor
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.document import DocumentDTOs, build_document_registry
-from forze.application.composition.storage import build_storage_registry
+from forze.application.composition.document import (
+    DocumentDTOs,
+    DocumentKernelOp,
+    build_document_registry,
+)
+from forze.application.composition.storage import StorageKernelOp, build_storage_registry
 from forze.application.contracts.storage import StorageSpec
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.storage import attach_storage_endpoints
@@ -57,9 +61,25 @@ from forze_fastapi.endpoints.storage import attach_storage_endpoints
 projects = APIRouter(prefix="/projects", tags=["projects"])
 files = APIRouter(prefix="/files", tags=["files"])
 project_dtos = DocumentDTOs(read=ProjectReadModel, create=CreateProjectCmd, update=UpdateProjectCmd)
-registry = build_document_registry(project_spec, project_dtos)
+project_reg = build_document_registry(project_spec, project_dtos)
+project_ops = [project_spec.default_namespace.key(op) for op in DocumentKernelOp]
+registry = (
+    project_reg.bind(*project_ops)
+    .bind_tx()
+    .set_route("postgres")
+    .finish(deep=True)
+    .freeze()
+)
 files_spec = StorageSpec(name="files")
-file_registry = build_storage_registry(files_spec)
+file_reg = build_storage_registry(files_spec)
+file_ops = [files_spec.default_namespace.key(op) for op in StorageKernelOp]
+file_registry = (
+    file_reg.bind(*file_ops)
+    .bind_tx()
+    .set_route("postgres")
+    .finish(deep=True)
+    .freeze()
+)
 ```
 
 ### Deps module
@@ -110,10 +130,10 @@ app = FastAPI(lifespan=lifespan)
 
 | Forze contract | Adapter implementation | Dependency key/spec name | Limitations |
 |----------------|------------------------|--------------------------|-------------|
-| `DocumentSpec` | `attach_document_endpoints` creates CRUD/list HTTP handlers backed by a `DocumentUsecasesFacade`. | Uses the `DocumentSpec.name` and the storage dependency keys configured by the runtime, commonly `DocumentQueryDepKey` and `DocumentCommandDepKey`. | Routes are generated only for supported DTO/spec features; soft-delete routes require a soft-deletion-capable document spec. |
-| `SearchSpec` | `attach_search_endpoints` creates typed and raw search routes; pass ``search=`` with the same spec used to build the registry. | Uses the `SearchSpec.name` and runtime search dependencies, commonly `SearchQueryDepKey`. | Search execution still depends on a search adapter such as Postgres; FastAPI only exposes the route. |
-| `StorageSpec` | `attach_storage_endpoints` creates list, multipart upload, binary download, and delete routes backed by a `StorageUsecasesFacade`. | Uses the `StorageSpec.name` for `StorageDepKey` routing, optional upload idempotency naming, and either `registry.namespace` or an explicit `namespace=` override for facade operation keys. | Download returns raw bytes (`application/octet-stream`); register `register_exception_handlers` (or equivalent) so `NotFoundError` maps to HTTP 404. |
-| `Usecase` | `attach_http_endpoint` with `build_http_endpoint_spec`. | The endpoint spec identifies the usecase, request/response DTOs, and context dependency. | You own request/response mapping and status-code choices for custom endpoints. |
+| `DocumentSpec` | `attach_document_endpoints` creates CRUD/list HTTP handlers that resolve operations from a **frozen** `OperationRegistry` via absolute `StrKey` values on each `HttpEndpointSpec`. | Pass a registry built with `build_document_registry`, bind kernel operations, set the transaction route, then `.finish(deep=True).freeze()` before attach. Uses `DocumentSpec.name` and runtime document dependency keys (`DocumentQueryDepKey`, `DocumentCommandDepKey`). | Routes are generated only for supported DTO/spec features; soft-delete routes require a soft-deletion-capable domain model (`supports_soft_delete()`). |
+| `SearchSpec` | `attach_search_endpoints` creates typed and raw search routes; pass ``search=`` with the same spec used to build the registry. | Freeze the search registry the same way as document routes. Uses `SearchSpec.name` and runtime search dependencies, commonly `SearchQueryDepKey`. | Search execution still depends on a search adapter such as Postgres; FastAPI only exposes the route. |
+| `StorageSpec` | `attach_storage_endpoints` creates list, multipart upload, binary download, and delete routes resolved from a frozen registry. | Uses `StorageSpec.name` for `StorageDepKey` routing, optional upload idempotency naming, and `namespace=` (defaults to the spec namespace) for operation keys. | Download returns raw bytes (`application/octet-stream`); register `register_exception_handlers` (or equivalent) so `NotFoundError` maps to HTTP 404. |
+| Custom operations | `attach_http_endpoint` with `build_http_endpoint_spec(operation=...)`. | The spec carries an absolute operation key; the handler calls `registry.resolve(operation, ctx)`. | You own request/response mapping and status-code choices for custom endpoints. |
 | Idempotency feature | HTTP idempotency feature for mutating endpoints. | Requires an idempotency dependency such as `IdempotencyDepKey` when enabled. | Requires clients to send stable idempotency keys; storage and TTL behavior come from the configured idempotency adapter. |
 | ETag feature | HTTP ETag handling for reads. | Uses document revision/version data exposed by the document usecase. | Only useful when the read model exposes stable revision metadata. |
 
@@ -123,7 +143,7 @@ FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it o
 
 ## ASGI middleware
 
-Most services stack `ContextBindingMiddleware` (bind `CallContext`, `AuthnIdentity`, `TenantIdentity`), `LoggingMiddleware`, `register_exception_handlers`, and Scalar docs. See [Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md) for boundary wiring.
+Most services stack `ContextBindingMiddleware` (bind `InvocationMetadata`, `AuthnIdentity`, `TenantIdentity`), `LoggingMiddleware`, `register_exception_handlers`, and Scalar docs. See [Authn, authz, and tenancy with FastAPI](../recipes/authn-authz-tenancy-fastapi.md) for boundary wiring.
 
 `CustomHeadersMiddleware` (`from forze_fastapi.middlewares import CustomHeadersMiddleware`) injects **response** headers before the response is sent. Pass `static_headers` as a string-to-string map and/or `dynamic_headers` as a map of header names to zero-argument callables that return `str` or `Awaitable[str]`. If the outgoing response already includes any of the injected header names, the middleware raises `CoreError` with a duplicate-headers message.
 

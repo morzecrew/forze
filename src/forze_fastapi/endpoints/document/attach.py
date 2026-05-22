@@ -12,11 +12,9 @@ from fastapi import APIRouter
 from forze.application.composition.document import DocumentDTOs
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.idempotency import IdempotencySpec
-from forze.application.execution import (
-    ExecutionContext,
-    UsecaseRegistry,
-    operation_namespace_for,
-)
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
+from forze.base.primitives import StrKeyNamespace
 
 from .._logger import logger
 from ..http import (
@@ -34,7 +32,6 @@ from .endpoints import (
     build_document_aggregated_list_endpoint_spec,
     build_document_create_endpoint_spec,
     build_document_delete_endpoint_spec,
-    build_document_get_by_number_id_endpoint_spec,
     build_document_get_endpoint_spec,
     build_document_kill_endpoint_spec,
     build_document_list_cursor_endpoint_spec,
@@ -49,7 +46,7 @@ from .specs import DocumentEndpointsSpec
 # ----------------------- #
 #! A bit damn function, but building a framework around is even more stupid.
 
-HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+HttpEndSpec = HttpEndpointSpec[Any, Any, Any, Any, Any, Any, Any, Any]
 
 
 def attach_document_endpoints(
@@ -57,8 +54,9 @@ def attach_document_endpoints(
     *,
     document: DocumentSpec[Any, Any, Any, Any],
     dtos: DocumentDTOs[Any, Any, Any],
-    registry: UsecaseRegistry,
+    registry: FrozenOperationRegistry,
     ctx_dep: Callable[[], ExecutionContext],
+    namespace: StrKeyNamespace | None = None,
     endpoints: DocumentEndpointsSpec | None = None,
     exclude_none: bool = True,
     default_http_features: Sequence[AnyFeature] | None = None,
@@ -66,8 +64,7 @@ def attach_document_endpoints(
     endpoints = endpoints or {}
     config = endpoints.get("config", {})
     base_authn: AuthnRequirement | None = endpoints.get("authn")
-    _doc_namespace = registry.namespace or operation_namespace_for(document)
-    _doc_facade_init: dict[str, Any] = {"namespace": _doc_namespace}
+    _doc_namespace = namespace or document.default_namespace
 
     def _resolve_authn(
         simple: SimpleHttpEndpointSpec | None,
@@ -86,7 +83,6 @@ def attach_document_endpoints(
         return apply_authn_requirement(with_defaults, _resolve_authn(simple))
 
     get_endpoint = endpoints.get("get_", False)
-    get_by_number_id_endpoint = endpoints.get("get_by_number_id", False)
     list_endpoint = endpoints.get("list_", False)
     raw_list_endpoint = endpoints.get("raw_list", False)
     list_cursor_endpoint = endpoints.get("list_cursor", False)
@@ -115,41 +111,7 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_doc_facade_init,
         )
-
-    if get_by_number_id_endpoint is not False:
-        _get_by_number_id = (
-            get_by_number_id_endpoint
-            if get_by_number_id_endpoint is not True
-            else SimpleHttpEndpointSpec()
-        )
-
-        if not document.supports_number_id():
-            logger.warning(
-                "Number ID is not supported for document '%s', skipping",
-                str(document.name),
-            )
-
-        else:
-            get_by_number_id_endpoint_spec = (
-                build_document_get_by_number_id_endpoint_spec(
-                    namespace=_doc_namespace,
-                    dtos=dtos,
-                    path_override=_get_by_number_id.get("path_override"),
-                    metadata=_get_by_number_id.get("metadata"),
-                    etag=config.get("enable_etag", False),
-                    etag_auto_304=config.get("etag_auto_304", False),
-                )
-            )
-            attach_http_endpoint(
-                router=router,
-                spec=_apply_defaults(get_by_number_id_endpoint_spec, _get_by_number_id),
-                registry=registry,
-                ctx_dep=ctx_dep,
-                exclude_none=exclude_none,
-                facade_init_kwargs=_doc_facade_init,
-            )
 
     if list_endpoint is not False:
         _list = list_endpoint if list_endpoint is not True else SimpleHttpEndpointSpec()
@@ -166,7 +128,6 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_doc_facade_init,
         )
 
     if raw_list_endpoint is not False:
@@ -188,7 +149,6 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_doc_facade_init,
         )
 
     if aggregated_list_endpoint is not False:
@@ -210,7 +170,6 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_doc_facade_init,
         )
 
     if list_cursor_endpoint is not False:
@@ -232,7 +191,6 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_doc_facade_init,
         )
 
     if raw_list_cursor_endpoint is not False:
@@ -254,7 +212,6 @@ def attach_document_endpoints(
             registry=registry,
             ctx_dep=ctx_dep,
             exclude_none=exclude_none,
-            facade_init_kwargs=_doc_facade_init,
         )
 
     if create_endpoint is not False:
@@ -297,7 +254,6 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
-                facade_init_kwargs=_doc_facade_init,
             )
 
     if update_endpoint is not False:
@@ -336,7 +292,6 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
-                facade_init_kwargs=_doc_facade_init,
             )
 
     if kill_endpoint is not False:
@@ -360,7 +315,6 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
-                facade_init_kwargs=_doc_facade_init,
             )
 
     if delete_endpoint is not False:
@@ -393,7 +347,6 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
-                facade_init_kwargs=_doc_facade_init,
             )
 
     if restore_endpoint is not False:
@@ -428,7 +381,6 @@ def attach_document_endpoints(
                 registry=registry,
                 ctx_dep=ctx_dep,
                 exclude_none=exclude_none,
-                facade_init_kwargs=_doc_facade_init,
             )
 
     return router

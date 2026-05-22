@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Execution (`forze.application.execution`):** `make_registry_operation_resolver` and `FrozenOperationRegistry` re-exports for transport layers that resolve handlers with `registry.resolve(operation, ctx)`.
+- **Document contracts (`forze.application.contracts.document`):** `DocumentSpec.supports_soft_delete()` and `DocumentSpec.supports_number_id()` for composition and HTTP attach branching.
+- **Storage handlers (`forze.application.handlers.storage`):** `StoredObjectDTO` for list/upload responses exposed over HTTP.
 - **Base serialization (`forze.base.serialization`):** Added the additive record-mapping codec API (`RecordMappingCodec`, `PydanticRecordMappingCodec`, `MsgspecRecordMappingCodec`) plus low-level `msgspec_*` helpers. The msgspec codec intentionally rejects `exclude={"unset": True}`; unset filtering must happen at the Pydantic application boundary before models cross into the msgspec layer.
 
 ### Removed
@@ -16,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Execution (`forze.application.execution`):** Legacy `bucket` module (`BucketKey`, phase/slot helpers) — it was unused after the region-and-stage execution model.
 - **Execution (`forze.application.execution`):** `GuardSkip`, `SchedulableCapabilitySpec`, and the `CapabilityChainBuilder` alias (use `RegionHookChainBuilder` and `Skip` / `MiddlewareSpec` instead).
 - **Execution / composition compatibility surface:** `UsecasePlan`, `dispatch_child_success_hook`, `FacadeOpRef`, `facade_call`, `OpKeySpace`, `op_key_space_for`, `UsecaseRegistry.extend_plan(...)`, `UsecaseRegistry.defaults`, `UsecaseRegistry.qualify_operation(...)`, public `registry.graph`, `RegistryGraph`, and the DAG alias families `StageDag` / `StageDagNode` / `PlanGraph` / `PlanGraphNode`.
+- **FastAPI (`forze_fastapi.endpoints`):** `facade_dependency`, `HTTP_FACADE_KEY`, `facade_type` / `facade_init_kwargs` on attach helpers, and `OperationRef` on `HttpEndpointSpec`.
 
 ### Changed
 
@@ -34,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking (`forze.application.execution`):** Inter-operation dispatch is declared only on `UsecaseRegistry` (`add_dispatch_edge` plus `dispatch(...)` / `dispatch_success_hook(...)`); `MiddlewareSpec` no longer carries `dispatch_edges`, and `UsecaseDelegate` / `delegated_usecase_hook` are removed.
 
-- **Breaking (`forze_fastapi.endpoints`):** FastAPI route builders now assume canonical facades built as `Facade(ctx=..., registry=..., namespace=...)`. Generated routes use execution-level `OperationRef` / `OperationNamespace`; `attach_storage_endpoints` still requires `storage` when the registry namespace cannot be derived.
+- **Breaking (`forze_fastapi.endpoints`):** HTTP attach helpers (`attach_document_endpoints`, `attach_search_endpoints`, `attach_storage_endpoints`, `attach_authn_endpoints`, `attach_http_endpoint`) require a **frozen** `FrozenOperationRegistry` built with `.bind(...).bind_tx().set_route(...).finish(deep=True).freeze()`. `HttpEndpointSpec` carries `operation: StrKey` instead of `facade_type` + `OperationRef`; handlers resolve via `registry.resolve(operation, ctx)`. OpenAPI `operation_id` defaults to `str(spec.operation)`. Facades remain for application composition only, not as FastAPI dependencies.
 
 - **Redis (`forze_redis`):** `RedisClient.mset` with ``ex`` / ``px`` / ``nx`` / ``xx`` now runs a single atomic Lua script (all keys succeed or none; rollback on partial ``NX``/``XX`` failure) instead of a non-atomic ``MULTI`` pipeline of per-key ``SET`` calls that always returned ``True``.
 - **Redis (`forze_redis`):** `RedisClientPort` / `RedisClient` / `RoutedRedisClient` now expose ``get`` / ``mget`` as ``bytes | None`` (pool uses ``decode_responses=False``). Added ``pttl_raw_ms`` for full Redis ``PTTL`` semantics (``-1`` / ``-2`` vs remaining ms). ``RedisSearchResultSnapshotAdapter.append_chunk`` uses a Lua compare-and-swap script for meta + chunk writes. ``RedisConfig`` supports read retries, optional pub/sub auto-reconnect with hooks, and chunked ``mget`` for large key sets. ``pubsub_auto_reconnect`` defaults to ``False`` so ``subscribe`` matches the original single-session behavior unless opted in.

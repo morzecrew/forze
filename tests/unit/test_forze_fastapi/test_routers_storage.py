@@ -6,7 +6,9 @@ from starlette.testclient import TestClient
 
 from forze.application.composition.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution import UsecaseRegistry
+from forze.application.composition.storage import StorageKernelOp
+from forze.application.execution.registry import OperationRegistry
+from registry_helpers import freeze_registry
 from forze.base.errors import CoreError
 from forze_fastapi.endpoints.storage import attach_storage_endpoints
 from forze_fastapi.exceptions import register_exception_handlers
@@ -16,10 +18,10 @@ from forze_fastapi.exceptions import register_exception_handlers
 _FILES = StorageSpec(name="files")
 
 
-def _build_registry() -> UsecaseRegistry:
-    reg = build_storage_registry(_FILES).tx("*", route="mock")
-    reg.finalize(_FILES.name)
-    return reg
+def _build_registry():
+    reg = build_storage_registry(_FILES)
+    ops = [_FILES.default_namespace.key(op) for op in StorageKernelOp]
+    return freeze_registry(reg, ops=ops)
 
 
 class TestAttachStorageEndpoints:
@@ -126,7 +128,7 @@ class TestAttachStorageEndpoints:
         assert "/store/upload" not in paths
 
     def test_requires_storage_or_op_key_space(self, composition_ctx) -> None:
-        reg = UsecaseRegistry().finalize("storage")
+        reg = OperationRegistry().freeze()
 
         def ctx_dep():
             return composition_ctx

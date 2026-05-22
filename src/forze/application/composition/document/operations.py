@@ -14,9 +14,6 @@ class DocumentKernelOp(StrEnum):
     GET = "get"
     """Fetch a single document by primary key."""
 
-    GET_BY_NUMBER_ID = "get_by_number_id"
-    """Fetch a single document by number ID."""
-
     CREATE = "create"
     """Create a new document."""
 
@@ -25,12 +22,6 @@ class DocumentKernelOp(StrEnum):
 
     KILL = "kill"
     """Permanently delete a document (hard delete)."""
-
-    DELETE = "delete"
-    """Soft-delete a document."""
-
-    RESTORE = "restore"
-    """Restore a soft-deleted document."""
 
     LIST = "list"
     """List documents."""

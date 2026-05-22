@@ -29,9 +29,12 @@ from typing import (
 from uuid import UUID
 
 import attrs
-from forze.application.contracts.tx import TxManagerPort, TxScopeKey
-from forze.domain.mixins import SoftDeletionMixin
 from pydantic import BaseModel
+
+from forze.application.contracts.transaction import (
+    TransactionManagerPort,
+    TransactionScopeKey,
+)
 
 from forze.application.contracts.base import (
     CountlessPage,
@@ -89,6 +92,7 @@ from forze.application.contracts.storage import (
     DownloadedObject,
     StoragePort,
     StoredObject,
+    UploadedObject,
 )
 from forze.application.contracts.stream import (
     StreamCommandPort,
@@ -1851,9 +1855,9 @@ class MockDocumentAdapter(
     # ....................... #
 
     def _supports_soft_delete(self) -> bool:
-        return self.domain_model is not None and issubclass(
-            self.domain_model, SoftDeletionMixin
-        )
+        if self.domain_model is None:
+            return False
+        return "is_deleted" in getattr(self.domain_model, "model_fields", {})
 
     # ....................... #
 
@@ -2846,17 +2850,14 @@ class MockStorageAdapter(StoragePort):
 
     # ....................... #
 
-    async def upload(
-        self,
-        filename: str,
-        data: bytes,
-        description: str | None = None,
-        *,
-        prefix: str | None = None,
-    ) -> StoredObject:
+    async def upload(self, obj: UploadedObject) -> StoredObject:
+        filename = obj.filename
+        data = obj.data
+        prefix = obj.prefix
+        description = obj.description
         key = f"{prefix.strip('/') + '/' if prefix else ''}{uuid7()}"
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        obj = StoredObject(
+        stored = StoredObject(
             key=key,
             filename=filename,
             description=description,
@@ -2865,9 +2866,9 @@ class MockStorageAdapter(StoragePort):
             created_at=utcnow(),
         )
         with self.state.lock:
-            self._objects()[key] = obj
+            self._objects()[key] = stored
             self._payloads()[key] = bytes(data)
-        return obj
+        return stored
 
     # ....................... #
 
@@ -2879,8 +2880,8 @@ class MockStorageAdapter(StoragePort):
             payload = self._payloads()[key]
         return DownloadedObject(
             data=payload,
-            content_type=obj["content_type"],
-            filename=obj["filename"],
+            content_type=obj.content_type,
+            filename=obj.filename,
         )
 
     # ....................... #
@@ -2902,17 +2903,25 @@ class MockStorageAdapter(StoragePort):
         with self.state.lock:
             rows = list(self._objects().values())
         if prefix:
-            rows = [row for row in rows if row["key"].startswith(prefix)]
+            rows = [row for row in rows if row.key.startswith(prefix)]
         total = len(rows)
         return rows[offset : offset + limit], total
 
 
+MockTxScopeKey = TransactionScopeKey("mock")
+"""Scope key for the in-memory mock transaction manager."""
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockTxManagerAdapter(TxManagerPort):
+class MockTxManagerAdapter(TransactionManagerPort):
     """No-op transaction manager for mock environments."""
 
-    scope_key: TxScopeKey = attrs.field(factory=lambda: TxScopeKey(name="mock"))
+    # ....................... #
+
+    @property
+    def scope_key(self) -> TransactionScopeKey:
+        return MockTxScopeKey
 
     # ....................... #
 
