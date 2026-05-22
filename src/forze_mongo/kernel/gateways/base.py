@@ -15,8 +15,10 @@ from pydantic import BaseModel
 from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.querying import (
+    QueryExpr,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QuerySortExpression,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
@@ -56,6 +58,22 @@ class MongoGateway[M: BaseModel](TenancyMixin):
 
     renderer: MongoQueryRenderer = attrs.field(factory=MongoQueryRenderer)
     """Query expression renderer."""
+
+    filter_limits: QueryFilterLimits | None = attrs.field(default=None)
+    """Optional filter DSL abuse limits; defaults to :class:`QueryFilterLimits` factory values."""
+
+    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
+    """Parser built from :attr:`filter_limits` during initialization."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        limits = self.filter_limits if self.filter_limits is not None else QueryFilterLimits()
+        object.__setattr__(
+            self,
+            "filter_parser",
+            QueryFilterExpressionParser(limits=limits),
+        )
 
     # ....................... #
 
@@ -165,14 +183,33 @@ class MongoGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def render_filters(self, filters: QueryFilterExpression | None) -> JsonDict:  # type: ignore[valid-type]
+    def compile_filters(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    ) -> QueryExpr | None:
+        """Parse *filters* into an AST using :attr:`filter_parser`."""
+
+        if not filters:
+            return None
+
+        return self.filter_parser.parse_filter(filters)
+
+    # ....................... #
+
+    def render_filters(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None = None,
+    ) -> JsonDict:
         """Parse and render a filter expression into a Mongo query dict."""
 
         rendered_filters = {}
 
-        if filters:
-            parsed = QueryFilterExpressionParser.parse(filters)
-            rendered_filters = self.renderer.render(parsed)
+        expr = parsed if parsed is not None else self.compile_filters(filters)
+
+        if expr is not None:
+            rendered_filters = self.renderer.render(expr)
 
         rendered_filters = self._add_tenant_filter(rendered_filters)
 

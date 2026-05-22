@@ -2,7 +2,8 @@ from typing import TYPE_CHECKING, Self
 
 import attrs
 
-from forze.base.primitives import StrKey
+from forze.base.errors import CoreError
+from forze.base.primitives import StrKey, StrKeySelector
 
 from ..planning.binders import ScopeBinder, TransactionScopeBinder
 from ..planning.plans import OperationPlan
@@ -21,8 +22,14 @@ class OperationRegistryBinder:
     _parent: "OperationRegistry" = attrs.field(alias="parent")
     """Parent for this binder."""
 
-    _ops: set[StrKey] = attrs.field(alias="ops")
-    """Operations to bind for this binder."""
+    _ops: set[StrKey] | None = attrs.field(default=None, alias="ops")
+    """Operations to bind for this binder (bind mode)."""
+
+    _patch_selector: StrKeySelector.Spec | None = attrs.field(
+        default=None,
+        alias="patch_selector",
+    )
+    """Selector for plan patches (patch mode)."""
 
     _acc: OperationPlan = attrs.field(alias="acc", factory=OperationPlan)
     """Accumulated plan for this binder."""
@@ -31,6 +38,12 @@ class OperationRegistryBinder:
 
     def finish(self) -> "OperationRegistry":
         """Finish binding and return updated operation registry."""
+
+        if self._patch_selector is not None:
+            return self._parent.commit_patch(self._patch_selector, self._acc)
+
+        if not self._ops:
+            raise CoreError("No operations provided")
 
         plans = self._parent.get_plans()
 

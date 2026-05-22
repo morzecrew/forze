@@ -6,7 +6,6 @@ from starlette.testclient import TestClient
 
 from forze.application.composition.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
-from forze.application.composition.storage import StorageKernelOp
 from forze.application.execution.registry import OperationRegistry
 from registry_helpers import freeze_registry
 from forze.base.errors import CoreError
@@ -20,8 +19,7 @@ _FILES = StorageSpec(name="files")
 
 def _build_registry():
     reg = build_storage_registry(_FILES)
-    ops = [_FILES.default_namespace.key(op) for op in StorageKernelOp]
-    return freeze_registry(reg, ops=ops)
+    return freeze_registry(reg)
 
 
 class TestAttachStorageEndpoints:

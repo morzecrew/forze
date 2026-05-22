@@ -10,7 +10,7 @@ from .aggregate import (
 )
 from .cast import QueryValueCaster
 from .nodes import QueryAnd, QueryCompare, QueryExpr, QueryField, QueryOr
-from .parse import QueryFilterExpressionParser
+from .parse import QueryFilterExpressionParser, QueryFilterLimits
 
 # ----------------------- #
 
@@ -22,6 +22,7 @@ __all__ = [
     "GroupTrunc",
     "ParsedAggregates",
     "QueryFilterExpressionParser",
+    "QueryFilterLimits",
     "QueryValueCaster",
     "QueryAnd",
     "QueryCompare",

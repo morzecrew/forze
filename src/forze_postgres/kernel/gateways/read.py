@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
+    QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
 )
@@ -334,6 +335,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: AggregatesExpression,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -347,6 +349,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: AggregatesExpression,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]: ...
 
     @overload
@@ -360,6 +363,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[M]: ...
 
     @overload
@@ -373,6 +377,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]: ...
 
     @overload
@@ -386,6 +391,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -399,6 +405,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> Never: ...
 
     async def find_many(
@@ -411,6 +418,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: AggregatesExpression | None = None,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         if aggregates is not None:
             return await self.find_many_aggregates(
@@ -421,10 +429,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
                 aggregates=aggregates,
                 return_model=return_model,
                 return_fields=return_fields,
+                parsed=parsed,
             )
 
         # tenant id supplied by where clause
-        where, params = await self.where_clause(filters)
+        where, params = await self.where_clause(filters, parsed=parsed)
         sort_clause = await self.order_by_clause(sorts)
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
@@ -534,26 +543,27 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         aggregates: AggregatesExpression,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[T] | list[JsonDict]:
         """Find aggregate rows."""
 
         if return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
 
-        where, params = await self.where_clause(filters)
+        where, params = await self.where_clause(filters, parsed=parsed)
         types = await self.column_types()
         renderer = PsycopgQueryRenderer(
             types=types,
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        parsed, select_clause, group_clause, aggregate_params = (
+        parsed_, select_clause, group_clause, aggregate_params = (
             renderer.render_aggregates(
                 aggregates,
             )
         )
         params = list(aggregate_params) + list(params)
-        sort_clause = renderer.render_aggregate_order_by(parsed, sorts)
+        sort_clause = renderer.render_aggregate_order_by(parsed_, sorts)
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
             cols=select_clause,
@@ -591,10 +601,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         *,
         aggregates: AggregatesExpression,
+        parsed: QueryExpr | None = None,
     ) -> int:
         """Count aggregate result groups."""
 
-        where, params = await self.where_clause(filters)
+        where, params = await self.where_clause(filters, parsed=parsed)
         types = await self.column_types()
         renderer = PsycopgQueryRenderer(
             types=types,
@@ -766,9 +777,14 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type]
+    async def count(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None = None,
+    ) -> int:
         # tenant id supplied by where clause
-        where, params = await self.where_clause(filters)
+        where, params = await self.where_clause(filters, parsed=parsed)
 
         stmt = sql.SQL("SELECT COUNT(*) FROM {table} WHERE {where}").format(
             table=self.source_qname.ident(),

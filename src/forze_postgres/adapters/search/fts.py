@@ -143,6 +143,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         proj_keys = {pc for pc, _ in self._safe_join_pairs}
 
         if len(proj_keys) != len(self._safe_join_pairs):
@@ -799,6 +800,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         use_after = c.get("after") is not None
         use_before = c.get("before") is not None
 
+        parsed_filters = self.compile_filters(filters)
+
         if not terms:
             if sorts is None:
                 first = sorted(self.read_fields)[0]
@@ -819,7 +822,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             else:
                 select_rf = None
 
-            fw, fp = await self.where_clause(filters)
+            fw, fp = await self.where_clause(filters, parsed=parsed_filters)
             types = await self.column_types()
 
             exprs = [
@@ -941,7 +944,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](
                 has_more=has_more,
             )
 
-        fw_r, fp_r = await self.where_clause(filters)
+        fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
         tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
 
         if len(terms) == 1:

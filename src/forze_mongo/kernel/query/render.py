@@ -208,7 +208,10 @@ class MongoQueryRenderer:
         if computed.filter is None:
             return value
 
-        expr = QueryFilterExpressionParser.parse(computed.filter)
+        expr = computed.parsed_filter
+        if expr is None:
+            expr = QueryFilterExpressionParser.parse(computed.filter)
+
         return {"$cond": [self.render_expr_predicate(expr), value, otherwise]}
 
     # ....................... #

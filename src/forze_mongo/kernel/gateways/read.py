@@ -15,6 +15,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     ParsedAggregates,
+    QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
     decode_keyset_v1,
@@ -345,6 +346,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: AggregatesExpression,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]:
         """Find aggregate rows as JSON mappings."""
         ...
@@ -360,6 +362,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: AggregatesExpression,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]:
         """Find aggregate rows validated against *return_model*."""
         ...
@@ -375,6 +378,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[M]:
         """Find documents as the gateway model."""
         ...
@@ -390,6 +394,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]:
         """Find documents validated against *return_model*."""
         ...
@@ -405,6 +410,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]:
         """Find documents projected to *return_fields*."""
         ...
@@ -420,6 +426,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> Never:
         """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
         ...
@@ -434,6 +441,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: AggregatesExpression | None = None,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
         """Find multiple documents with optional filters, sorting, and pagination.
 
@@ -458,12 +466,13 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
                 aggregates=aggregates,
                 return_model=return_model,
                 return_fields=return_fields,
+                parsed=parsed,
             )
 
         if not filters and limit is None:
             raise ValidationError("Filters or limit must be provided")
 
-        query = self.render_filters(filters)
+        query = self.render_filters(filters, parsed=parsed)
         rows = await self.client.find_many(
             await self.coll(),
             query,
@@ -494,14 +503,15 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         aggregates: AggregatesExpression,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[T] | list[JsonDict]:
         """Find aggregate rows."""
 
         if return_fields is not None:
             raise CoreError("Aggregates cannot be combined with return_fields")
 
-        match = self.render_filters(filters)
-        parsed, pipeline = self.renderer.render_aggregates(
+        match = self.render_filters(filters, parsed=parsed)
+        parsed_, pipeline = self.renderer.render_aggregates(
             aggregates,
             match=match or None,
             sorts=sorts,
@@ -512,11 +522,11 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
         if (
             not rows
-            and not parsed.groups
+            and not parsed_.groups
             and (offset is None or offset == 0)
             and (limit is None or limit > 0)
         ):
-            rows = [_empty_global_aggregate_row(parsed)]
+            rows = [_empty_global_aggregate_row(parsed_)]
 
         if return_model is not None:
             return pydantic_validate_many(return_model, rows)
@@ -530,18 +540,19 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
         *,
         aggregates: AggregatesExpression,
+        parsed: QueryExpr | None = None,
     ) -> int:
         """Count aggregate result groups."""
 
-        match = self.render_filters(filters)
-        parsed, pipeline = self.renderer.render_aggregates(
+        match = self.render_filters(filters, parsed=parsed)
+        parsed_, pipeline = self.renderer.render_aggregates(
             aggregates,
             match=match or None,
         )
         pipeline.append({"$count": "count"})
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=1)
 
-        if not rows and not parsed.groups:
+        if not rows and not parsed_.groups:
             return 1
 
         if not rows:
@@ -708,13 +719,18 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
     # ....................... #
 
-    async def count(self, filters: QueryFilterExpression | None = None) -> int:  # type: ignore[valid-type]
+    async def count(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None = None,
+    ) -> int:
         """Count documents matching the given filters.
 
         :param filters: Optional filter expression; ``None`` counts all
             documents in the collection.
         """
 
-        query = self.render_filters(filters)
+        query = self.render_filters(filters, parsed=parsed)
 
         return await self.client.count(await self.coll(), query)

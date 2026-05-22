@@ -11,6 +11,7 @@ import attrs
 from forze.base.errors import CoreError
 
 from ..expressions import AggregateFunction, AggregatesExpression, QueryFilterExpression
+from .nodes import QueryExpr
 from .parse import QueryFilterExpressionParser
 from .time_bucket import ResolvedTimeBucketTimezone, parse_aggregate_timezone
 
@@ -70,6 +71,9 @@ class AggregateComputedField:
 
     filter: QueryFilterExpression | None = None  # type: ignore[valid-type]
     """Optional row filter applied only to this aggregate."""
+
+    parsed_filter: QueryExpr | None = None
+    """Parsed AST for :attr:`filter`, set when the aggregate expression is validated."""
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
@@ -260,7 +264,7 @@ class AggregatesExpressionParser:
         if function not in _FUNCTIONS:
             raise CoreError(f"Invalid aggregate function: {function!r}")
 
-        field_path, filter_expr = cls._function_arg(function, field)
+        field_path, filter_expr, parsed_filter = cls._function_arg(function, field)
 
         if function == "$count":
             if field_path is not None:
@@ -271,6 +275,7 @@ class AggregatesExpressionParser:
                 function=function,
                 field=None,
                 filter=filter_expr,
+                parsed_filter=parsed_filter,
             )  # type: ignore[arg-type]
 
         return AggregateComputedField(
@@ -278,6 +283,7 @@ class AggregatesExpressionParser:
             function=function,  # type: ignore[arg-type]
             field=cls._field(field_path),
             filter=filter_expr,
+            parsed_filter=parsed_filter,
         )
 
     # ....................... #
@@ -287,9 +293,9 @@ class AggregatesExpressionParser:
         cls,
         function: object,
         raw: object,
-    ) -> tuple[str | None, QueryFilterExpression | None]:  # type: ignore[valid-type]
+    ) -> tuple[str | None, QueryFilterExpression | None, QueryExpr | None]:  # type: ignore[valid-type]
         if not isinstance(raw, Mapping):
-            return raw, None  # type: ignore[return-value]
+            return raw, None, None  # type: ignore[return-value]
 
         raw_spec: Mapping[Any, Any] = raw  # type: ignore[assignment]
         field = raw_spec.get("field")
@@ -306,7 +312,12 @@ class AggregatesExpressionParser:
         if function != "$count" and field is None:
             raise CoreError(f"{function} aggregate requires a field")
 
+        parsed_filter: QueryExpr | None = None
         if filter_expr is not None:
-            QueryFilterExpressionParser.parse(filter_expr)  # type: ignore[arg-type]
+            parsed_filter = QueryFilterExpressionParser.parse(filter_expr)  # type: ignore[arg-type]
 
-        return cls._field(field) if field is not None else None, filter_expr  # type: ignore[return-value]
+        return (
+            cls._field(field) if field is not None else None,
+            filter_expr,  # type: ignore[return-value]
+            parsed_filter,
+        )

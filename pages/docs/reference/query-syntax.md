@@ -272,6 +272,20 @@ model shape). `return_count` then counts documents, not groups.
         offset=0,
     )
 
+## Limits
+
+Filter expressions are validated at parse time. Default bounds (override per gateway via
+``filter_limits`` on Postgres/Mongo gateways, or a custom
+:class:`~forze.application.contracts.querying.QueryFilterExpressionParser` instance):
+
+| Limit | Default | Applies to |
+|-------|---------|------------|
+| ``max_depth`` | 32 | Nesting of ``$and`` / ``$or`` |
+| ``max_clauses`` | 256 | Combinator children, ``$values`` / ``$fields`` keys, and per-field operator entries |
+| ``max_in_size`` | 1000 | ``$in`` / ``$nin``, array shortcuts, and set-relation operands |
+
+Violations raise :class:`~forze.base.errors.ValidationError` before any query is sent to the database.
+
 ## Validation rules
 
 - A field operator map cannot be empty.

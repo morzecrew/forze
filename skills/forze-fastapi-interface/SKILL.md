@@ -40,24 +40,16 @@ Attach routes to standard FastAPI `APIRouter` instances.
 ```python
 from fastapi import APIRouter
 
-from forze.application.composition.document import (
-    DocumentDTOs,
-    DocumentKernelOp,
-    build_document_registry,
-)
-from forze.application.composition.search import (
-    SearchDTOs,
-    SearchKernelOp,
-    build_search_registry,
-)
+from forze.application.composition.document import DocumentDTOs, build_document_registry
+from forze.application.composition.search import SearchDTOs, build_search_registry
+from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.search import attach_search_endpoints
 
 project_dtos = DocumentDTOs(read=ProjectRead, create=CreateProject, update=UpdateProject)
 project_reg = build_document_registry(project_spec, project_dtos)
-project_ops = [project_spec.default_namespace.key(op) for op in DocumentKernelOp]
 project_registry = (
-    project_reg.bind(*project_ops)
+    project_reg.patch(str_key_selector.all_keys())
     .bind_tx()
     .set_route("postgres")
     .finish(deep=True)
@@ -75,9 +67,8 @@ attach_document_endpoints(
 
 search_dtos = SearchDTOs(read=ProjectRead)
 search_reg = build_search_registry(project_search_spec, search_dtos)
-search_ops = [project_search_spec.default_namespace.key(op) for op in SearchKernelOp]
 search_registry = (
-    search_reg.bind(*search_ops)
+    search_reg.patch(str_key_selector.all_keys())
     .bind_tx()
     .set_route("postgres")
     .finish(deep=True)
@@ -99,7 +90,8 @@ Document routes are attached only when the spec/DTOs support the operation. Use 
 `forze_fastapi.endpoints.authn.attach_authn_endpoints` registers configurable login/refresh/logout/change-password routes resolved from a **frozen** `OperationRegistry` (`forze.application.composition.authn.build_authn_registry`). Configure access/refresh transports per token type:
 
 ```python
-from forze.application.composition.authn import AuthnKernelOp, build_authn_registry
+from forze.application.composition.authn import build_authn_registry
+from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,
     HeaderTokenTransportSpec,
@@ -107,8 +99,13 @@ from forze_fastapi.endpoints.authn import (
 )
 
 authn_reg = build_authn_registry(authn_spec)
-ops = [authn_spec.default_namespace.key(op) for op in AuthnKernelOp]
-authn_registry = authn_reg.bind(*ops).bind_tx().set_route("postgres").finish(deep=True).freeze()
+authn_registry = (
+    authn_reg.patch(str_key_selector.all_keys())
+    .bind_tx()
+    .set_route("postgres")
+    .finish(deep=True)
+    .freeze()
+)
 
 attach_authn_endpoints(
     router,

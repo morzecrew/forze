@@ -316,7 +316,10 @@ class PsycopgQueryRenderer:
         if computed.filter is None:
             return expr
 
-        filter_expr = QueryFilterExpressionParser.parse(computed.filter)
+        filter_expr = computed.parsed_filter
+        if filter_expr is None:
+            filter_expr = QueryFilterExpressionParser.parse(computed.filter)
+
         filter_sql = self._render_expr(filter_expr)
 
         return sql.SQL("{} FILTER (WHERE {})").format(expr, filter_sql)

@@ -475,6 +475,32 @@ class TestPostgresDocumentAdapterQueryDelegation:
 
         assert page.hits == [] and page.count == 0
         read_gw.find_many.assert_not_called()
+        read_gw.compile_filters.assert_called_once_with({"x": 1})
+        read_gw.count.assert_awaited_once_with(
+            {"x": 1},
+            parsed=read_gw.compile_filters.return_value,
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_page_parses_filters_once_for_count_and_find_many(self) -> None:
+        read_gw = _read_gw_full()
+        read_gw.count = AsyncMock(return_value=2)
+        read_gw.find_many = AsyncMock(return_value=[_tread()])
+
+        adapter = PostgresDocumentAdapter(
+            spec=(ds := _full_spec()),
+            read_gw=read_gw,
+            cache_coord=_pg_cc(read_gw, ds),
+        )
+
+        filt = {"$values": {"a": 1}}
+        await adapter.find_page(filters=filt, pagination={"limit": 5})
+
+        read_gw.compile_filters.assert_called_once_with(filt)
+        parsed = read_gw.compile_filters.return_value
+        read_gw.count.assert_awaited_once_with(filt, parsed=parsed)
+        read_gw.find_many.assert_awaited_once()
+        assert read_gw.find_many.await_args.kwargs["parsed"] is parsed
 
     @pytest.mark.asyncio
     async def test_find_page_returns_rows_and_count(self) -> None:
@@ -590,7 +616,9 @@ class TestPostgresDocumentAdapterQueryDelegation:
             sorts={ID_FIELD: "asc"},
             return_model=None,
             return_fields=None,
+            parsed=read_gw.compile_filters.return_value,
         )
+        read_gw.compile_filters.assert_called_once_with({"k": "v"})
 
     @pytest.mark.asyncio
     async def test_find_page_unbounded_chunks_after_count(self) -> None:

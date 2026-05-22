@@ -15,8 +15,10 @@ from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
+    QueryExpr,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QuerySortExpression,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
@@ -126,6 +128,12 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
     accidental full-table scans in application code.
     """
 
+    filter_limits: QueryFilterLimits | None = attrs.field(default=None)
+    """Optional filter DSL abuse limits; defaults to :class:`QueryFilterLimits` factory values."""
+
+    filter_parser: QueryFilterExpressionParser = attrs.field(init=False)
+    """Parser built from :attr:`filter_limits` during initialization."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -133,6 +141,13 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
         if cap is not None and cap < 1:
             raise CoreError("find_many_implicit_limit must be at least 1 when set")
+
+        limits = self.filter_limits if self.filter_limits is not None else QueryFilterLimits()
+        object.__setattr__(
+            self,
+            "filter_parser",
+            QueryFilterExpressionParser(limits=limits),
+        )
 
     # ....................... #
 
@@ -203,17 +218,33 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
+    def compile_filters(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    ) -> QueryExpr | None:
+        """Parse *filters* into an AST using :attr:`filter_parser`."""
+
+        if not filters:
+            return None
+
+        return self.filter_parser.parse_filter(filters)
+
+    # ....................... #
+
     async def where_clause(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None = None,
     ) -> tuple[sql.Composable, list[Any]]:
         query = sql.SQL("TRUE")
         params: list[Any] = []
 
-        if filters:
+        expr = parsed if parsed is not None else self.compile_filters(filters)
+
+        if expr is not None:
             types = await self.column_types()
 
-            p = QueryFilterExpressionParser()
             r = PsycopgQueryRenderer(
                 types=types,
                 model_type=self.model_type,
@@ -221,7 +252,6 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
                 table_alias=self.filter_table_alias,
             )
 
-            expr = p.parse(filters)
             query, params = r.render(expr)  # type: ignore[assignment]
 
         query, params = self._add_tenant_where(query, params)  # type: ignore[assignment]

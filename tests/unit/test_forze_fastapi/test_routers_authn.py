@@ -103,12 +103,10 @@ def _make_registry(
     spec = _spec()
     ns = spec.default_namespace
     factories: dict[str, Any] = {}
-    bound_ops: list[str] = []
 
     if login_response is not None:
         op = ns.key(AuthnKernelOp.PASSWORD_LOGIN)
         factories[op] = lambda _ctx, r=login_response: _StubLogin(response=r)
-        bound_ops.append(op)
 
     if refresh_response is not None:
         rc = refresh_capture if refresh_capture is not None else []
@@ -117,22 +115,19 @@ def _make_registry(
             response=r,
             captured=c,
         )
-        bound_ops.append(op)
 
     if logout_calls is not None:
         op = ns.key(AuthnKernelOp.LOGOUT)
         factories[op] = lambda _ctx, calls=logout_calls: _StubLogout(called=calls)
-        bound_ops.append(op)
 
     if change_password_capture is not None:
         op = ns.key(AuthnKernelOp.CHANGE_PASSWORD)
         factories[op] = lambda _ctx, cap=change_password_capture: _StubChangePassword(
             captured=cap,
         )
-        bound_ops.append(op)
 
     reg = OperationRegistry(handlers=factories)
-    return freeze_registry(reg, ops=bound_ops)
+    return freeze_registry(reg)
 
 
 def _ctx_dep(ctx: ExecutionContext):

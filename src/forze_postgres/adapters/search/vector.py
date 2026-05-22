@@ -129,6 +129,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         _ = self.index_qname, self.index_field_map
         proj_keys = {pc for pc, _ in self._safe_join_pairs}
 
@@ -769,6 +770,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](
         use_after = c.get("after") is not None
         use_before = c.get("before") is not None
 
+        parsed_filters = self.compile_filters(filters)
+
         if not terms:
             if sorts is None:
                 first = sorted(self.read_fields)[0]
@@ -789,7 +792,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             else:
                 select_rf = None
 
-            fw, fp = await self.where_clause(filters)
+            fw, fp = await self.where_clause(filters, parsed=parsed_filters)
             types = await self.column_types()
 
             exprs = [
@@ -912,7 +915,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](
             )
 
         combine = effective_phrase_combine(options)
-        fw_r, fp_r = await self.where_clause(filters)
+        fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
         key_cols_r = self._scored_key_columns()
 
         if len(terms) == 1:

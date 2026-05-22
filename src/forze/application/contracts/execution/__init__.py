@@ -19,6 +19,7 @@ from .value_objects import (
     DispatchStep,
     ExecutionGraph,
     ExecutionPipeline,
+    Failure,
     FinallyStep,
     GraphStep,
     LifecycleStep,
@@ -27,6 +28,7 @@ from .value_objects import (
     OnSuccessStep,
     Outcome,
     Step,
+    Success,
 )
 
 # ----------------------- #
@@ -58,4 +60,6 @@ __all__ = [
     "DispatchStep",
     "noop_lifecycle_hook",
     "LifecycleStep",
+    "Failure",
+    "Success",
 ]

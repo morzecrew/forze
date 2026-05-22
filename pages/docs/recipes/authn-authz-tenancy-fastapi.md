@@ -196,7 +196,8 @@ Attach the dependency at the **router** level for the common case (every route s
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.authn import AuthnKernelOp, build_authn_registry
+from forze.application.composition.authn import build_authn_registry
+from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,
     HeaderTokenTransportSpec,
@@ -204,8 +205,13 @@ from forze_fastapi.endpoints.authn import (
 )
 
 reg = build_authn_registry(api_authn)
-ops = [api_authn.default_namespace.key(op) for op in AuthnKernelOp]
-registry = reg.bind(*ops).bind_tx().set_route("postgres").finish(deep=True).freeze()
+registry = (
+    reg.patch(str_key_selector.all_keys())
+    .bind_tx()
+    .set_route("postgres")
+    .finish(deep=True)
+    .freeze()
+)
 
 router = APIRouter(prefix="/auth")
 attach_authn_endpoints(

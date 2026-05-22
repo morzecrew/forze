@@ -34,6 +34,7 @@ from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
     assemble_keyset_cursor_page,
@@ -64,6 +65,13 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
 
     @property
     def model_type(self) -> type[M]: ...
+
+    def compile_filters(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    ) -> QueryExpr | None:
+        """Parse *filters* once for reuse across count/list gateway calls."""
+        ...
 
     # ....................... #
 
@@ -226,6 +234,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -239,6 +248,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]: ...
 
     @overload
@@ -252,6 +262,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[M]: ...
 
     @overload
@@ -265,6 +276,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: None = ...,
+        parsed: QueryExpr | None = ...,
     ) -> list[T]: ...
 
     @overload
@@ -278,6 +290,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -291,6 +304,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: None = ...,
         return_model: type[T],
         return_fields: Sequence[str],
+        parsed: QueryExpr | None = ...,
     ) -> Never: ...
 
     async def find_many(
@@ -303,6 +317,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression | None = None,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[M] | list[T] | list[JsonDict]: ...
 
     # ....................... #
@@ -317,6 +332,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         aggregates: AggregatesExpression,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
     ) -> list[T] | list[JsonDict]: ...
 
     # ....................... #
@@ -326,6 +342,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         *,
         aggregates: AggregatesExpression,
+        parsed: QueryExpr | None = None,
     ) -> int: ...
 
     # ....................... #
@@ -389,6 +406,8 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
     async def count(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None = None,
     ) -> int: ...
 
 
@@ -607,6 +626,8 @@ class DocumentCoordinator(
 
         return await self.read_gw.find(filters, for_update=for_update)
 
+    # ....................... #
+
     async def project(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
@@ -621,6 +642,8 @@ class DocumentCoordinator(
             for_update=for_update,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select(
         self,
@@ -784,12 +807,17 @@ class DocumentCoordinator(
             raise CoreError("Aggregates cannot be combined with return_fields")
 
         pagination = pagination or {}
+        parsed_filters = self.read_gw.compile_filters(filters)
         cnt = 0
         if return_count:
             cnt = (
-                await self.read_gw.count_aggregates(filters, aggregates=aggregates)
+                await self.read_gw.count_aggregates(
+                    filters,
+                    aggregates=aggregates,
+                    parsed=parsed_filters,
+                )
                 if aggregates is not None
-                else await self.read_gw.count(filters)
+                else await self.read_gw.count(filters, parsed=parsed_filters)
             )
             if not cnt:
                 return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
@@ -808,6 +836,7 @@ class DocumentCoordinator(
             off = 0 if offset is None else offset
             sorts_for_scan: QuerySortExpression = sorts if sorts else {ID_FIELD: "asc"}
             res = []
+
             while True:
                 if aggregates is not None:
                     batch = await self.read_gw.find_many_aggregates(
@@ -817,6 +846,7 @@ class DocumentCoordinator(
                         sorts=sorts_for_scan,
                         aggregates=aggregates,
                         return_model=return_model,
+                        parsed=parsed_filters,
                     )
                 else:
                     batch = await self.read_gw.find_many(  # type: ignore[misc]
@@ -826,11 +856,16 @@ class DocumentCoordinator(
                         sorts=sorts_for_scan,
                         return_model=return_model,  # type: ignore[arg-type]
                         return_fields=return_fields,  # type: ignore[arg-type]
+                        parsed=parsed_filters,
                     )
-                res.extend(batch)
-                if len(batch) < chunk:
+
+                res.extend(batch)  # type: ignore[arg-type]
+
+                if len(batch) < chunk:  # type: ignore[arg-type]
                     break
+
                 off += chunk
+
         elif aggregates is not None:
             res = await self.read_gw.find_many_aggregates(
                 filters=filters,
@@ -839,6 +874,7 @@ class DocumentCoordinator(
                 sorts=sorts,
                 aggregates=aggregates,
                 return_model=return_model,
+                parsed=parsed_filters,
             )
         else:
             res = await self.read_gw.find_many(  # type: ignore[misc]
@@ -848,15 +884,23 @@ class DocumentCoordinator(
                 sorts=sorts,
                 return_model=return_model,  # type: ignore[arg-type]
                 return_fields=return_fields,  # type: ignore[arg-type]
+                parsed=parsed_filters,
             )
 
         if return_count:
             return page_from_limit_offset(
-                list(res),
+                list(res),  # type: ignore[arg-type]
                 pagination,
                 total=cnt,
             )
-        return page_from_limit_offset(list(res), pagination, total=None)
+
+        return page_from_limit_offset(
+            list(res),  # type: ignore[arg-type]
+            pagination,
+            total=None,
+        )
+
+    # ....................... #
 
     async def find_many(
         self,
@@ -873,6 +917,8 @@ class DocumentCoordinator(
             return_model=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_many(
         self,
@@ -891,6 +937,8 @@ class DocumentCoordinator(
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_many(
         self,
         return_type: type[T],
@@ -908,6 +956,8 @@ class DocumentCoordinator(
             return_fields=None,
         )
 
+    # ....................... #
+
     async def find_page(
         self,
         filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
@@ -923,6 +973,8 @@ class DocumentCoordinator(
             return_model=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_page(
         self,
@@ -941,6 +993,8 @@ class DocumentCoordinator(
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_page(
         self,
         return_type: type[T],
@@ -957,6 +1011,8 @@ class DocumentCoordinator(
             return_model=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def aggregate_many(
         self,
@@ -975,6 +1031,8 @@ class DocumentCoordinator(
             return_fields=None,
         )
 
+    # ....................... #
+
     async def aggregate_page(
         self,
         aggregates: AggregatesExpression,
@@ -991,6 +1049,8 @@ class DocumentCoordinator(
             return_model=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_many_aggregated(
         self,
@@ -1009,6 +1069,8 @@ class DocumentCoordinator(
             return_model=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_page_aggregated(
         self,
@@ -1043,6 +1105,8 @@ class DocumentCoordinator(
             return_fields=None,
         )
 
+    # ....................... #
+
     async def project_cursor(
         self,
         fields: Sequence[str],
@@ -1056,6 +1120,8 @@ class DocumentCoordinator(
             sorts=sorts,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     @overload
     async def _cursor_page(

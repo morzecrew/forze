@@ -48,23 +48,20 @@ Configure routers from `DocumentSpec`, `DocumentDTOs`, `SearchDTOs`, `build_stor
 
 ```python
 from fastapi import APIRouter
-from forze.application.composition.document import (
-    DocumentDTOs,
-    DocumentKernelOp,
-    build_document_registry,
-)
-from forze.application.composition.storage import StorageKernelOp, build_storage_registry
+from forze.application.composition.document import DocumentDTOs, build_document_registry
+from forze.application.composition.storage import build_storage_registry
 from forze.application.contracts.storage import StorageSpec
+from forze.base.primitives import str_key_selector
 from forze_fastapi.endpoints.document import attach_document_endpoints
 from forze_fastapi.endpoints.storage import attach_storage_endpoints
 
 projects = APIRouter(prefix="/projects", tags=["projects"])
 files = APIRouter(prefix="/files", tags=["files"])
 project_dtos = DocumentDTOs(read=ProjectReadModel, create=CreateProjectCmd, update=UpdateProjectCmd)
+
 project_reg = build_document_registry(project_spec, project_dtos)
-project_ops = [project_spec.default_namespace.key(op) for op in DocumentKernelOp]
 registry = (
-    project_reg.bind(*project_ops)
+    project_reg.patch(str_key_selector.all_keys())
     .bind_tx()
     .set_route("postgres")
     .finish(deep=True)
@@ -72,9 +69,8 @@ registry = (
 )
 files_spec = StorageSpec(name="files")
 file_reg = build_storage_registry(files_spec)
-file_ops = [files_spec.default_namespace.key(op) for op in StorageKernelOp]
 file_registry = (
-    file_reg.bind(*file_ops)
+    file_reg.patch(str_key_selector.all_keys())
     .bind_tx()
     .set_route("postgres")
     .finish(deep=True)

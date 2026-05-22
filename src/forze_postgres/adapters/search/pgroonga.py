@@ -141,6 +141,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         proj_keys = {pc for pc, _ in self._safe_join_pairs}
 
         if len(proj_keys) != len(self._safe_join_pairs):
@@ -897,6 +898,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         use_after = c.get("after") is not None
         use_before = c.get("before") is not None
 
+        parsed_filters = self.compile_filters(filters)
+
         if not terms:
             if sorts is None:
                 first = sorted(self.read_fields)[0]
@@ -917,7 +920,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             else:
                 select_rf = None
 
-            fw, fp = await self.where_clause(filters)
+            fw, fp = await self.where_clause(filters, parsed=parsed_filters)
             types = await self.column_types()
 
             exprs = [
@@ -1046,7 +1049,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         sort_keys_r = [k for k, _ in key_spec_r]
         directions_r = [d for _, d in key_spec_r]
 
-        fw_r, fp_r = await self.where_clause(filters)
+        fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
         combine = effective_phrase_combine(options)
         mq = pgroonga_phrase_match_text(terms, combine=combine)
         sw_r, sp_r = await self._pgroonga_match_combined_query(mq, options=options)

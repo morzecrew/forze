@@ -14,6 +14,7 @@ from forze.application.contracts.querying.internal import (
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QueryOr,
     QueryValueCaster,
 )
@@ -695,6 +696,44 @@ class TestQueryCompareExpressionParser:
             QueryFilterExpressionParser.parse(
                 {"$fields": {"a": {"$eq": ""}}},
             )
+
+    def test_parse_exceeds_max_depth(self) -> None:
+        expr: dict[str, object] = {"$values": {"x": 1}}
+        for _ in range(5):
+            expr = {"$and": [expr]}
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=3, max_clauses=100, max_in_size=100),
+        )
+        with pytest.raises(ValidationError, match="maximum depth"):
+            parser.parse_filter(expr)  # type: ignore[arg-type]
+
+    def test_parse_exceeds_max_clauses(self) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=2, max_in_size=100),
+        )
+        expr = {
+            "$and": [
+                {"$values": {"a": 1}},
+                {"$values": {"b": 2}},
+                {"$values": {"c": 3}},
+            ],
+        }
+        with pytest.raises(ValidationError, match="maximum clause count"):
+            parser.parse_filter(expr)  # type: ignore[arg-type]
+
+    def test_parse_exceeds_max_in_size(self) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=2),
+        )
+        with pytest.raises(ValidationError, match="maximum size"):
+            parser.parse_filter({"$values": {"x": [1, 2, 3]}})  # type: ignore[arg-type]
+
+    def test_parse_exceeds_max_in_size_operator_form(self) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=1),
+        )
+        with pytest.raises(ValidationError, match="maximum size"):
+            parser.parse_filter({"$values": {"x": {"$in": [1, 2]}}})  # type: ignore[arg-type]
 
 
 # ----------------------- #

@@ -7,7 +7,8 @@ from fastapi import APIRouter, FastAPI, UploadFile
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
+from forze_mock import MockDepsModule
 from forze.application.execution.registry import OperationRegistry
 from forze_fastapi.endpoints.http import (
     HttpRequestDTO,
@@ -85,7 +86,7 @@ def _reg():
             BATCH_OP: lambda _ctx: BatchHandler(),
         },
     )
-    return freeze_registry(reg, ops=(UP_OP, BATCH_OP))
+    return freeze_registry(reg)
 
 
 async def _map_upload(
@@ -141,7 +142,7 @@ class TestMultipartHttpEndpoint:
         r = APIRouter()
 
         def ctx_dep() -> ExecutionContext:
-            return ExecutionContext(deps=Deps())
+            return ExecutionContext(deps=MockDepsModule()())
 
         attach_http_endpoint(
             r,
@@ -177,7 +178,7 @@ class TestMultipartHttpEndpoint:
         r = APIRouter()
 
         def ctx_dep() -> ExecutionContext:
-            return ExecutionContext(deps=Deps())
+            return ExecutionContext(deps=MockDepsModule()())
 
         attach_http_endpoint(
             r,

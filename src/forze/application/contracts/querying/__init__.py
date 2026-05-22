@@ -40,6 +40,7 @@ from .internal import (
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QueryOr,
     QueryValueCaster,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "PaginationExpression",
     "CursorPaginationExpression",
     "QueryFilterExpressionParser",
+    "QueryFilterLimits",
     "QueryValueCaster",
     "QueryAnd",
     "QueryCompare",

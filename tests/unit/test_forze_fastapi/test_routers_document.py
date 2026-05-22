@@ -6,11 +6,7 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
-from forze.application.composition.document import (
-    DocumentDTOs,
-    DocumentKernelOp,
-    build_document_registry,
-)
+from forze.application.composition.document import DocumentDTOs, build_document_registry
 from registry_helpers import freeze_registry
 from forze.application.contracts.document import DocumentSpec
 from forze_contrib.soft_deletion import SoftDeletionMixin
@@ -91,8 +87,7 @@ def _minimal_dtos(supports_update: bool = False) -> DocumentDTOs:
 def _build_registry(spec: DocumentSpec, dtos: DocumentDTOs):
     """Build frozen registry with mock tx for HTTP attach."""
     reg = build_document_registry(spec, dtos)
-    ops = [spec.default_namespace.key(op) for op in DocumentKernelOp]
-    return freeze_registry(reg, ops=ops)
+    return freeze_registry(reg)
 
 
 def _metadata_endpoints() -> dict:

@@ -1,4 +1,4 @@
-from .registries import FrozenOperationRegistry, OperationRegistry
+from .registries import FrozenOperationRegistry, OperationRegistry, PlanPatch
 from .resolvers import OperationResolver, make_registry_operation_resolver
 
 # ----------------------- #
@@ -6,6 +6,7 @@ from .resolvers import OperationResolver, make_registry_operation_resolver
 __all__ = [
     "FrozenOperationRegistry",
     "OperationRegistry",
+    "PlanPatch",
     "OperationResolver",
     "make_registry_operation_resolver",
 ]

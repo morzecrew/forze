@@ -39,9 +39,14 @@ class _ExactKeys:
 
     keys: frozenset[str]
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         if not self.keys:
             raise CoreError("ExactKeys.keys must be non-empty")
+
+
+# ....................... #
 
 
 @final
@@ -51,8 +56,13 @@ class _Prefix:
 
     value: str
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         _require_non_empty(self.value, label="Prefix.value")
+
+
+# ....................... #
 
 
 @final
@@ -62,8 +72,13 @@ class _Suffix:
 
     value: str
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         _require_non_empty(self.value, label="Suffix.value")
+
+
+# ....................... #
 
 
 @final
@@ -73,8 +88,13 @@ class _Glob:
 
     pattern: str
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         _require_non_empty(self.pattern, label="Glob.pattern")
+
+
+# ....................... #
 
 
 @final
