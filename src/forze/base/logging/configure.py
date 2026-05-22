@@ -18,6 +18,7 @@ from .constants import (
     RenderMode,
 )
 from .processors import (
+    EventDictSanitizer,
     ExceptionInfoFormatter,
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
@@ -95,6 +96,19 @@ def build_common_processors(
 # ....................... #
 
 
+def _event_sanitizer_processors(
+    *,
+    sanitize_logs: bool,
+    text_scrub: bool,
+) -> list[Processor]:
+    if not sanitize_logs:
+        return []
+    return [EventDictSanitizer(text_scrub=text_scrub)]
+
+
+# ....................... #
+
+
 def build_structlog_processors(level: LogLevel) -> list[Processor]:
     return [
         TraceLevelResolver(configured_level=level),
@@ -111,10 +125,17 @@ def build_foreign_formatter(
     custom_console_renderer: structlog.types.Processor | None = None,
     drop_keys: list[str] | None = None,
     otel_config: OpenTelemetryConfig | None = None,
+    *,
+    sanitize_logs: bool = True,
+    text_scrub: bool = True,
 ) -> structlog.stdlib.ProcessorFormatter:
     return structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
             *build_common_processors(render_mode, otel_config),
+            *_event_sanitizer_processors(
+                sanitize_logs=sanitize_logs,
+                text_scrub=text_scrub,
+            ),
             RedundantKeysDropper(keys=drop_keys or []),
         ],
         processors=[
@@ -137,6 +158,8 @@ def configure_logging(
     logger_names: Sequence[str] | None = None,
     stream: TextIO = sys.stdout,
     otel_config: OpenTelemetryConfig | None = None,
+    sanitize_logs: bool = True,
+    text_scrub: bool = True,
 ) -> None:
     """Configure logging for the application.
 
@@ -145,6 +168,8 @@ def configure_logging(
     :param custom_console_renderer: A custom console renderer to use for the console mode.
     :param logger_names: The logger names to configure logging for.
     :param stream: The stream to use for logging (default: stdout).
+    :param sanitize_logs: Scrub sensitive keys (and optionally text PII) from log event fields.
+    :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
     """
 
     wrapper_class = (
@@ -157,6 +182,10 @@ def configure_logging(
         processors=[
             *build_common_processors(render_mode, otel_config),
             *build_structlog_processors(level),
+            *_event_sanitizer_processors(
+                sanitize_logs=sanitize_logs,
+                text_scrub=text_scrub,
+            ),
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=wrapper_class,
@@ -165,7 +194,13 @@ def configure_logging(
     )
 
     formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=[],
+        foreign_pre_chain=[
+            *build_common_processors(render_mode, otel_config),
+            *_event_sanitizer_processors(
+                sanitize_logs=sanitize_logs,
+                text_scrub=text_scrub,
+            ),
+        ],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             build_renderer(
@@ -199,11 +234,15 @@ def attach_foreign_loggers(
     replace_handlers: bool = True,
     propagate: bool = False,
     otel_config: OpenTelemetryConfig | None = None,
+    sanitize_logs: bool = True,
+    text_scrub: bool = True,
 ) -> None:
     formatter = build_foreign_formatter(
         render_mode,
         custom_console_renderer=custom_console_renderer,
         otel_config=otel_config,
+        sanitize_logs=sanitize_logs,
+        text_scrub=text_scrub,
     )
 
     for name in names:

@@ -10,9 +10,11 @@ from starlette.testclient import TestClient
 from forze.base.errors import (
     ConflictError,
     CoreError,
+    InfrastructureError,
     NotFoundError,
     ValidationError,
 )
+from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze_fastapi.exceptions import (
     ERROR_CODE_HEADER,
     _forze_exception_handler,
@@ -81,6 +83,34 @@ class TestForzeExceptionHandler:
                 "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af",
             },
         }
+
+    @pytest.mark.asyncio
+    async def test_redacts_sensitive_keys_in_context(self) -> None:
+        """Sensitive keys in details are redacted before the response is sent."""
+        exc = ValidationError(
+            message="Invalid input",
+            details={"password": "hunter2", "field": "email"},
+        )
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, exc)
+
+        assert response.status_code == 422
+        body = json.loads(response.body)
+        assert body["context"]["password"] == SECRET_PLACEHOLDER
+        assert body["context"]["field"] == "email"
+
+    @pytest.mark.asyncio
+    async def test_omits_context_on_500(self) -> None:
+        """Internal errors do not expose structured context on the wire."""
+        exc = InfrastructureError(
+            message="Database down",
+            details={"dsn": "postgres://user:pass@localhost/db"},
+        )
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, exc)
+
+        assert response.status_code == 500
+        assert json.loads(response.body) == {"detail": "Database down"}
 
 
 class TestRegisterExceptionHandlers:

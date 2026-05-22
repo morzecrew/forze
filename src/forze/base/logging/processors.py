@@ -20,6 +20,26 @@ from .constants import (
     RenderMode,
 )
 
+# Keys left untouched by :class:`EventDictSanitizer` (message template, metadata, stacks).
+_EVENT_DICT_SANITIZE_SKIP: frozenset[str] = frozenset(
+    {
+        "event",
+        "level",
+        "timestamp",
+        "logger",
+        "logger_name",
+        TRACE_LEVEL_KEY,
+        ERR_TYPE_KEY,
+        ERR_MESSAGE_KEY,
+        ERR_STACK_KEY,
+        RICH_EXC_INFO_KEY,
+        OTEL_DEFAULT_SPAN_ID_KEY,
+        OTEL_DEFAULT_TRACE_ID_KEY,
+        "exc_info",
+        "stack_info",
+    }
+)
+
 # ----------------------- #
 
 
@@ -144,4 +164,36 @@ class TraceLevelResolver:
         if event_rank < configured_rank:
             raise DropEvent()
 
+        return event_dict
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class EventDictSanitizer:
+    """Scrub sensitive values from structlog event fields (not the ``event`` message)."""
+
+    text_scrub: bool = True
+    """When true, apply log string scrub rules to string leaves in ``log`` context."""
+
+    # ....................... #
+
+    def __call__(self, _: Any, __: str, event_dict: EventDict) -> EventDict:
+        from forze.base.scrubbing import sanitize
+        from forze.base.scrubbing.policy import SECRET_PLACEHOLDER, is_sensitive_key
+
+        for key in list(event_dict.keys()):
+            if key in _EVENT_DICT_SANITIZE_SKIP:
+                continue
+
+            if is_sensitive_key(key):
+                event_dict[key] = SECRET_PLACEHOLDER
+                continue
+
+            event_dict[key] = sanitize(
+                event_dict[key],
+                context="log",
+                text_scrub=self.text_scrub,
+            )
         return event_dict

@@ -19,6 +19,7 @@ from forze.base.errors import (
     NotFoundError,
     ValidationError,
 )
+from forze.base.scrubbing import sanitize
 
 # ----------------------- #
 
@@ -63,13 +64,14 @@ def _status_code_mapper(exc: CoreError) -> int:
 async def _forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
     """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
 
+    status_code = _status_code_mapper(exc)
     content: dict[str, Any] = {"detail": exc.message}
 
-    if exc.details:
-        content["context"] = exc.details
+    if exc.details and status_code != 500:
+        content["context"] = sanitize(exc.details, context="egress")
 
     return JSONResponse(
-        status_code=_status_code_mapper(exc),
+        status_code=status_code,
         content=content,
         headers={ERROR_CODE_HEADER: exc.code},
     )

@@ -45,8 +45,14 @@ async def test_resolve_structured_ok() -> None:
 async def test_resolve_structured_invalid() -> None:
     sec = _MemSecrets({"db/1": '{"dsn": 1}'})
     ref = SecretRef(path="db/1")
-    with pytest.raises(CoreError, match="not valid"):
+    with pytest.raises(CoreError, match="not valid") as exc_info:
         await resolve_structured(sec, ref, _Sample)
+
+    details = exc_info.value.details
+    assert details is not None
+    errors = details["errors"]
+    assert errors
+    assert "input" not in errors[0]
 
 
 @pytest.mark.asyncio

@@ -47,7 +47,14 @@ class CoreError(Exception):
     """Code of the error."""
 
     details: Mapping[str, Any] | None = attrs.field(default=None, kw_only=True)
-    """Optional details of the error."""
+    """Optional structured context for clients and logs.
+
+    Must never contain raw credentials, tokens, or other secrets. Prefer opaque
+    references (ids, paths) over payloads. For Pydantic validation failures use
+    :func:`~forze.base.scrubbing.sanitize_pydantic_errors`; for model dumps
+    use :func:`~forze.base.scrubbing.dump_for_error_context`. HTTP egress applies
+    :func:`~forze.base.scrubbing.sanitize` with ``context='egress'`` defensively.
+    """
 
     # ....................... #
 
@@ -181,7 +188,12 @@ def _default_error_hanlder(e: Exception, op: str, **kwargs: Any) -> CoreError | 
 
     match e:
         case PydanticValidationError():
-            err = ValidationError(message=e.title)
+            from forze.base.scrubbing import sanitize_pydantic_errors
+
+            err = ValidationError(
+                message=e.title,
+                details={"errors": sanitize_pydantic_errors(list(e.errors()))},
+            )
 
         case _:
             pass
@@ -388,13 +400,13 @@ def _resolve_op(fn: Callable[..., Any], op: str | None) -> str:
     return op or fn.__name__
 
 
-def _prepare_fn(  # pragma: no cover  # pyright: ignore[reportUnusedFunction]
+def _prepare_fn(
     fn: Callable[P, Any],
     op: str | None,
     *args: P.args,
     **kwargs: P.kwargs,
 ) -> tuple[str, dict[str, Any]]:
-    """Resolve the operation name and bound arguments for error context."""
+    """Resolve the operation name and redacted bound arguments for error context."""
 
     sig = _cached_signature(fn)
     bound = sig.bind_partial(*args, **kwargs)
@@ -406,7 +418,21 @@ def _prepare_fn(  # pragma: no cover  # pyright: ignore[reportUnusedFunction]
 
     op = op or fn.__name__
 
-    return op, all_args
+    from forze.base.scrubbing import dump_bound_args_for_errors
+
+    return op, dump_bound_args_for_errors(all_args)
+
+
+def _handler_context(
+    fn: Callable[P, Any],
+    op: str | None,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> dict[str, Any]:
+    """Return redacted keyword arguments for :class:`ErrorHandler` calls."""
+
+    _, ctx = _prepare_fn(fn, op, *args, **kwargs)
+    return ctx
 
 
 # ....................... #
@@ -456,8 +482,10 @@ def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-
                 try:
                     return await fn(*args, **kwargs)
 
-                except Exception as e:  #! omit kwargs for time being
-                    raise h(e, operation) from e
+                except Exception as e:
+                    raise h(
+                        e, operation, **_handler_context(fn, op, *args, **kwargs)
+                    ) from e
 
             return async_wrapper
 
@@ -471,15 +499,19 @@ def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-
                 try:
                     it = fn(*args, **kwargs)
 
-                except Exception as e:  # pragma: no cover #! omit kwargs for time being
-                    raise h(e, operation) from e
+                except Exception as e:  # pragma: no cover
+                    raise h(
+                        e, operation, **_handler_context(fn, op, *args, **kwargs)
+                    ) from e
 
                 try:
                     async for x in it:
                         yield x
 
-                except Exception as e:  #! omit kwargs for time being
-                    raise h(e, operation) from e
+                except Exception as e:
+                    raise h(
+                        e, operation, **_handler_context(fn, op, *args, **kwargs)
+                    ) from e
 
             return async_gen_wrapper
 
@@ -491,15 +523,19 @@ def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-
                 try:
                     it = fn(*args, **kwargs)
 
-                except Exception as e:  # pragma: no cover #! omit kwargs for time being
-                    raise h(e, operation) from e
+                except Exception as e:  # pragma: no cover
+                    raise h(
+                        e, operation, **_handler_context(fn, op, *args, **kwargs)
+                    ) from e
 
                 try:
                     for x in it:
                         yield x
 
-                except Exception as e:  #! omit kwargs for time being
-                    raise h(e, operation) from e
+                except Exception as e:
+                    raise h(
+                        e, operation, **_handler_context(fn, op, *args, **kwargs)
+                    ) from e
 
             return gen_wrapper
 
@@ -510,8 +546,12 @@ def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-
             try:
                 res = fn(*args, **kwargs)
 
-            except Exception as e:  #! omit kwargs for time being
-                raise h(e, operation) from e
+            except Exception as e:
+                raise h(
+                    e, operation, **_handler_context(fn, op, *args, **kwargs)
+                ) from e
+
+            handler_ctx = _handler_context(fn, op, *args, **kwargs)
 
             if _is_awaitable(res):
 
@@ -519,16 +559,16 @@ def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-
                     try:
                         return await res
 
-                    except Exception as e:  #! omit kwargs for time being
-                        raise h(e, operation) from e
+                    except Exception as e:
+                        raise h(e, operation, **handler_ctx) from e
 
                 return _awaited()  # pragma: no cover
 
             if _is_async_contextmanager(res):
-                return _AsyncCmWrapper(res, h, operation)  # pragma: no cover
+                return _AsyncCmWrapper(res, h, operation, kwargs=handler_ctx)  # pragma: no cover
 
             if _is_contextmanager(res):
-                return _CmWrapper(res, h, operation)  # pragma: no cover
+                return _CmWrapper(res, h, operation, kwargs=handler_ctx)  # pragma: no cover
 
             if _is_async_iterator(res):
                 return _wrap_async_iterator(res, h, operation)

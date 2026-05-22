@@ -7,10 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")`, Pydantic error helpers, and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
+
 ### Changed
 
+- **Scrubbing:** log-context string scrub uses `**********` and Logfire-aligned substring rules (email, Bearer, `key=value` assignments, secrets in free text) instead of scrubadub `{{TYPE}}` placeholders.
 - **Postgres search:** Internal refactor of FTS, PGroonga, vector, and hub search adapters — shared projection-index CTE builders (`_pipeline_sql`), leg scorers (`_leg_*`), and offset/snapshot execution (`_offset_run`); no public API change.
 - **Execution:** `ResolvedOperationPlan` now drives operation runtime: stage hooks (`before`, `wrap`, `on_success`, `on_failure`, `finally_`, `dispatch`), transaction scopes, and `after_commit` / `dispatch_after_commit` deferral run in documented order when calling `FrozenOperationRegistry.resolve(...)(args)` (previously only the bare handler ran).
+
+### Removed
+
+- **Scrubbing:** `scrubadub` core dependency (replaced by Forze-owned policy in `forze.base.scrubbing.policy`).
 
 ### Added
 
@@ -49,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Errors:** `CoreError.details` and FastAPI `context` responses no longer expose raw credentials or Pydantic validation `input`; egress uses `forze.base.scrubbing.sanitize`, producers use `sanitize_pydantic_errors`, and `handled()` passes scrubbed bound arguments to error handlers.
 - **Postgres:** Batched `UPDATE … FROM (VALUES …)` casts nullable cells correctly; write gateway no longer duplicates `rev` in `VALUES` (fixes ambiguous column); `read_only` set before opening psycopg transactions; document array coercion for `text[]` columns.
 - **Postgres search:** Hub/PGroonga empty queries no longer emit invalid rank SQL; offset snapshot pages reuse validated rows when possible.
 - **Redis:** Script result normalization avoids rare `isinstance` failures on union types; platform errors map subclass exceptions before generic redis bases.

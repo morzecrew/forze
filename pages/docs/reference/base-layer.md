@@ -28,7 +28,28 @@ Every error carries three fields:
 |-------|------|---------|
 | `message` | `str` | Human-readable description |
 | `code` | `str` | Machine-readable error code |
-| `details` | `Mapping[str, Any] | None` | Optional structured context |
+| `details` | `Mapping[str, Any] | None` | Optional structured context (must be safe for clients and logs; never raw credentials) |
+
+Populate `details` with sanitized data only:
+
+- Pydantic validation failures: `sanitize_pydantic_errors(e.errors())` — never pass `e.errors()` verbatim (it includes raw `input`).
+- Model snapshots in `details`: `dump_for_error_context(model)` (JSON dump + key-based scrubbing; masks `SecretStr`).
+- Arbitrary mappings: `sanitize(mapping, context="egress")` before attaching, or rely on FastAPI egress scrubbing.
+
+### Scrubbing (`forze.base.scrubbing`)
+
+Single entry point for safe copies destined for clients or logs:
+
+```python
+from forze.base.scrubbing import sanitize
+
+sanitize(payload, context="egress")  # API / CoreError.details — key mask only
+sanitize(payload, context="log")     # structured log extras — keys + log string rules
+```
+
+`configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email and Bearer tokens). Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
+
+When logging a `CoreError`, prefer `sanitize(exc.details, context="egress")` or log `message` and `code` only. Inbound attrs configs use `pydantic_secret_converter` for `SecretStr` fields; outbound dumps use `dump_for_error_context` / `sanitize(..., context="egress")`.
 
 ### Error handling
 
