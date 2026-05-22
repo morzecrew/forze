@@ -64,6 +64,6 @@ Modules.postgres -> Deps: contributes document deps
 Modules.redis -> Deps: contributes cache deps
 Modules.custom -> Deps: contributes app deps
 Deps -> Keys: registers key + route
-Keys.doc_query -> Ports.query: ctx.doc_query(spec)
-Keys.doc_command -> Ports.command: ctx.doc_command(spec)
+Keys.doc_query -> Ports.query: ctx.document.query(spec)
+Keys.doc_command -> Ports.command: ctx.document.command(spec)
 Keys.cache -> Ports.cache_port: ctx.cache(spec)

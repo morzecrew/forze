@@ -13,11 +13,11 @@ Use when implementing document persistence, filtered listings, cursor pagination
 
 ## Document ports (`DocumentQueryPort` / `DocumentCommandPort`)
 
-Kernel **`DocumentSpec`** carries model types and logical `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.doc_query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.doc_command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
+Kernel **`DocumentSpec`** carries model types and logical `name` only; **`PostgresDepsModule`** / **`MongoDepsModule`** (and related maps) supply tables, history relations, and bookkeeping. At runtime, `ctx.document.query(spec)` resolves the factory registered under **`DocumentQueryDepKey`** for route `spec.name` and returns **`DocumentQueryPort[read]`**; `ctx.document.command(spec)` does the same for **`DocumentCommandDepKey`** → **`DocumentCommandPort`**.
 
 ```python
-doc_q = self.ctx.doc_query(project_spec)
-doc_c = self.ctx.doc_command(project_spec)
+doc_q = self.ctx.document.query(project_spec)
+doc_c = self.ctx.document.command(project_spec)
 
 project = await doc_q.get(project_id)
 page = await doc_q.find_page(

@@ -158,65 +158,61 @@ You can restrict a validator to specific fields using the `fields` parameter:
         if after.status not in allowed.get(before.status, set()):
             raise ValidationError("Invalid status transition.")
 
-## Mixins
+## Mixins (`forze_contrib`)
 
-Reusable domain concerns are composed via mixins. Each mixin adds a focused capability without deep inheritance chains.
+Reusable domain concerns live in the optional **`forze_contrib`** package (included in the default wheel). Each mixin adds a focused capability without deep inheritance chains.
 
 ### SoftDeletionMixin
 
 Adds an `is_deleted` boolean field and an update validator that blocks updates to soft-deleted documents (except toggling the deletion flag itself):
 
     :::python
-    from forze.domain.mixins import SoftDeletionMixin
+    from forze_contrib.soft_deletion import SoftDeletionMixin
 
     class Project(SoftDeletionMixin, Document):
         title: str
 
-Once `is_deleted` is `True`, any update that modifies fields other than `is_deleted` raises `ValidationError`.
+Once `is_deleted` is `True`, any update that modifies fields other than `is_deleted` raises `ValidationError`. Pair with `build_soft_deletion_registry` for delete/restore operations.
 
-### NameMixin
+### MetadataMixin
 
-Adds `name` (required), `display_name`, `short_name`, and `description` (all optional). Companion mixins `NameCreateCmdMixin` and `NameUpdateCmdMixin` mirror the fields for command DTOs:
+Adds `name`, optional `display_name`, and `description` with normalized string types:
 
     :::python
-    from forze.domain.mixins import (
-        NameMixin,
-        NameCreateCmdMixin,
-        NameUpdateCmdMixin,
+    from forze_contrib.metadata import (
+        MetadataCreateCmdMixin,
+        MetadataMixin,
+        MetadataUpdateCmdMixin,
     )
 
-    class Workspace(NameMixin, Document): ...
-    class CreateWorkspaceCmd(NameCreateCmdMixin, CreateDocumentCmd): ...
-    class UpdateWorkspaceCmd(NameUpdateCmdMixin, BaseDTO): ...
+    class Workspace(MetadataMixin, Document): ...
+    class CreateWorkspaceCmd(MetadataCreateCmdMixin, CreateDocumentCmd): ...
+    class UpdateWorkspaceCmd(MetadataUpdateCmdMixin, BaseDTO): ...
 
-### NumberMixin
+### NumberIdMixin
 
 Adds a required `number_id` field (positive integer) for human-readable identifiers. Typically populated by a counter adapter during the create mapping step:
 
     :::python
-    from forze.domain.mixins import NumberMixin, NumberCreateCmdMixin
+    from forze_contrib.number_id import NumberIdCreateCmdMixin, NumberIdMixin
 
-
-    class Ticket(NumberMixin, Document):
+    class Ticket(NumberIdMixin, Document):
         title: str
 
-
-    class CreateTicketCmd(NumberCreateCmdMixin, CreateDocumentCmd):
+    class CreateTicketCmd(NumberIdCreateCmdMixin, CreateDocumentCmd):
         title: str
 
-### CreatorMixin
+### CreatorIdMixin
 
 Adds a frozen `creator_id` field (UUID). Typically injected by a mapping step that reads the current actor context:
 
     :::python
-    from forze.domain.mixins import CreatorMixin, CreatorCreateCmdMixin
+    from forze_contrib.creator_id import CreatorIdCreateCmdMixin, CreatorIdMixin
 
-
-    class Comment(CreatorMixin, Document):
+    class Comment(CreatorIdMixin, Document):
         body: str
 
-
-    class CreateCommentCmd(CreatorCreateCmdMixin, CreateDocumentCmd):
+    class CreateCommentCmd(CreatorIdCreateCmdMixin, CreateDocumentCmd):
         body: str
 
 ## Domain constants

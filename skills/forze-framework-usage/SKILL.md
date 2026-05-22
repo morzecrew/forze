@@ -3,7 +3,7 @@ name: forze-framework-usage
 description: >-
   Guides correct use of Forze ExecutionContext, document/query/command ports,
   search, cache, counters, storage, messaging, workflows, identity, and
-  transactions in usecases. Use when implementing features or usecases with
+  transactions in handlers. Use when implementing features or handlers with
   Forze specs, hexagonal ports, or runtime context.
 ---
 
@@ -18,85 +18,88 @@ Use when writing code that **consumes** Forze (not when authoring new adapters).
 Dependencies flow **inward**:
 
 - **Domain** — pure business logic, no external deps
-- **Application** — usecases, contracts, composition; imports domain only
+- **Application** — handlers, contracts, composition; imports domain only
 - **Infrastructure** — adapters implementing contracts
-- **Interface** — HTTP, WebSocket; invokes usecases via context
+- **Interface** — HTTP, WebSocket; resolves handlers via frozen registry + context
 
-Usecases and domain models **never** import adapter classes or infrastructure packages.
+Handlers and domain models **never** import adapter classes or infrastructure packages.
 
 ### Contracts and adapters
 
-The application declares **what** it needs via protocol interfaces (contracts). Infrastructure provides **how** (adapters). Resolve ports from `ExecutionContext`; never import adapters into usecases.
+The application declares **what** it needs via protocol interfaces (contracts). Infrastructure provides **how** (adapters). Resolve ports from `ExecutionContext`; never import adapters into handlers.
 
 ```python
 # Correct: resolve port from context
-doc_q = self.ctx.doc_query(project_spec)
+doc_q = ctx.document.query(project_spec)
 result = await doc_q.get(some_id)
 
 # Wrong: importing adapter
-from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in usecases
+from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in handlers
 ```
 
 ### Execution context
 
 `ExecutionContext` resolves infrastructure by **logical spec** (`spec.name` routes factories). Common helpers:
 
-| Method | Returns | Notes |
-|--------|---------|--------|
-| `dep(key, route=...)` | `T` | Generic resolution by `DepKey` |
-| `doc_query(spec)` | `DocumentQueryPort` | Reads, listings |
-| `doc_command(spec)` | `DocumentCommandPort` | Creates, updates, deletes |
-| `cache(spec)` | `CachePort` | `CacheSpec` |
-| `counter(spec)` | `CounterPort` | `CounterSpec` |
-| `storage(spec)` | `StoragePort` | `StorageSpec` |
-| `search_query(spec)` | `SearchQueryPort` | Full-text search |
-| `txmanager(route)` | `TxManagerPort` | Transaction route (e.g. `"default"`) |
+| API | Returns | Notes |
+|-----|---------|--------|
+| `ctx.deps.provide(key, route=...)` | `T` | Simple registered dependency |
+| `ctx.document.query(spec)` / `ctx.doc.query(spec)` | `DocumentQueryPort` | Reads, listings |
+| `ctx.document.command(spec)` / `ctx.doc.command(spec)` | `DocumentCommandPort` | Creates, updates, deletes |
+| `ctx.cache(spec)` | `CachePort` | `CacheSpec` |
+| `ctx.counter(spec)` | `CounterPort` | `CounterSpec` |
+| `ctx.storage(spec)` | `StoragePort` | `StorageSpec` |
+| `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search |
+| `ctx.search.hub(spec)` | `SearchQueryPort` | Hub search |
+| `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
+| `ctx.tx.resolver(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
+| `ctx.tx.scope(route)` | async context manager | Transaction scope |
 
-Also available: `embeddings_provider`, `hub_search_query`, `federated_search_query`, distributed lock query/command, tenant resolver — see [`pages/docs/core-package/execution.md`](../../pages/docs/core-package/execution.md).
+For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
 
-For keys without a convenience method, use `ctx.dep(DepKey, route=spec.name)(ctx, spec)`. Queue, pub/sub, stream, workflow, authn/authz, and secrets patterns have dedicated skills.
+See [`pages/docs/reference/execution.md`](../../pages/docs/reference/execution.md).
 
-### Usecase pattern
+### Handler pattern
 
-Usecases extend `Usecase[Args, R]`, hold `ExecutionContext`, implement `main(args) -> R`:
+Handlers implement `Handler[Args, R]` from `forze.application.contracts.execution` and are registered on `OperationRegistry`:
 
 ```python
-from forze.application.execution import Usecase
+from forze.application.contracts.execution import Handler
 
-class GetProject(Usecase[UUID, ProjectReadModel]):
-    async def main(self, args: UUID) -> ProjectReadModel:
-        doc_q = self.ctx.doc_query(project_spec)
-        return await doc_q.get(args)
+class GetProject(Handler[UUID, ProjectReadModel]):
+    doc: DocumentQueryPort[ProjectReadModel]
+
+    async def __call__(self, args: UUID) -> ProjectReadModel:
+        return await self.doc.get(args)
 ```
 
-Typical reads raise `NotFoundError` when missing (adapter-defined); do not assume `None`.
-
-Usecases resolve ports from `self.ctx`; they do not take ports in the constructor except when composition factories inject them.
+Factories receive `ExecutionContext` and inject ports: `lambda ctx: GetProject(doc=ctx.document.query(project_spec))`.
 
 ### Transactions
 
-`transaction(route)` is an **async context manager**. Pass the **same route** registered on your deps module (prefer a shared `StrEnum`, e.g. `TxRoute.DEFAULT`). Nested calls reuse the active transaction (savepoints when supported). Mixing incompatible managers in one scope raises `CoreError`.
+`ctx.tx.scope(route)` is an **async context manager**. Pass the **same route** registered on your deps module (prefer a shared `StrEnum`, e.g. `TxRoute.DEFAULT`). Nested calls reuse the active transaction (savepoints when supported).
 
 ```python
-async with self.ctx.transaction(TxRoute.DEFAULT):
-    doc_c = self.ctx.doc_command(project_spec)
+async with ctx.tx.scope(TxRoute.DEFAULT):
+    doc_c = ctx.document.command(project_spec)
     await doc_c.create(cmd1)
     await doc_c.create(cmd2)
 ```
 
-Use `defer_after_commit()` or `run_after_commit_or_now()` for side effects that must happen only after the root transaction commits:
+Use `ctx.tx.defer_after_commit()` for side effects that must run only after the root transaction commits.
 
-```python
-async with self.ctx.transaction(TxRoute.DEFAULT):
-    created = await self.ctx.doc_command(project_spec).create(args)
-    self.ctx.defer_after_commit(lambda: notify_project_created(created.id))
-```
-
-Optional guards and effects in `UsecaseRegistry` stage chains can use `WhenGuard` / `WhenEffect`; the `when` callable may return `bool` or `Awaitable[bool]`. See [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
+Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
 
 ### Identity and tenancy
 
-Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary when needed. Usecases may read `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()` but should not call `ctx.bind_call(...)` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
+Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or Temporal worker boundary:
+
+```python
+with ctx.inv.bind(metadata=metadata, authn=identity, tenant=tenant):
+    ...
+```
+
+Handlers read `ctx.inv.get_authn()` / `ctx.inv.get_tenant()`; they should not call `inv.bind` themselves. See [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md).
 
 ## Query syntax
 
@@ -128,23 +131,16 @@ rows, total = page.hits, page.count
 
 ### Document reads and writes
 
-Use `doc_query` for read-only operations and `doc_command` for mutations:
-
 ```python
-doc_q = self.ctx.doc_query(project_spec)
-doc_c = self.ctx.doc_command(project_spec)
+doc_q = ctx.document.query(project_spec)
+doc_c = ctx.document.command(project_spec)
 
 project = await doc_q.get(doc_id)
-listed = await doc_q.find_many(
-    filters=...,
-    pagination={"limit": 20, "offset": 0},
-)
-rows = listed.hits
+page = await doc_q.find_page(filters=..., pagination={"limit": 20, "offset": 0})
+rows = page.hits
 
 created = await doc_c.create(CreateProjectCmd(title="New"))
-updated = await doc_c.update(
-    doc_id, current_rev, UpdateProjectCmd(title="Updated")
-)
+updated = await doc_c.update(doc_id, current_rev, UpdateProjectCmd(title="Updated"))
 await doc_c.delete(doc_id, current_rev)
 await doc_c.kill(doc_id)
 ```
@@ -152,8 +148,9 @@ await doc_c.kill(doc_id)
 ### Search
 
 ```python
-search = self.ctx.search_query(project_search_spec)
-hits, total = await search.search(query="roadmap", filters=..., limit=20, offset=0)
+search = ctx.search.query(project_search_spec)
+page = await search.search_page(query="roadmap", filters=..., limit=20, offset=0)
+hits, total = page.hits, page.count
 ```
 
 ### Counter (e.g. number_id)
@@ -161,7 +158,7 @@ hits, total = await search.search(query="roadmap", filters=..., limit=20, offset
 ```python
 from forze.application.contracts.counter import CounterSpec
 
-counter = self.ctx.counter(CounterSpec(name="tickets"))
+counter = ctx.counter(CounterSpec(name="tickets"))
 next_id = await counter.incr()
 ```
 
@@ -170,53 +167,40 @@ next_id = await counter.incr()
 ```python
 from forze.application.contracts.storage import StorageSpec
 
-storage = self.ctx.storage(StorageSpec(name=ResourceName.ATTACHMENTS))
+storage = ctx.storage(StorageSpec(name=ResourceName.ATTACHMENTS))
 stored = await storage.upload("file.pdf", data, description="Contract")
-downloaded = await storage.download(stored.key)
 ```
-
-See [`forze-storage-s3`](../forze-storage-s3/SKILL.md) for S3 wiring and tenant-aware bucket behavior.
 
 ### Queue, pub/sub, stream, and workflow ports
 
-Contracts without convenience methods resolve the routed factory and call it with `(ctx, spec)`:
-
 ```python
 from forze.application.contracts.queue import QueueCommandDepKey
-from forze.application.contracts.workflow import WorkflowCommandDepKey
 
-queue = self.ctx.dep(QueueCommandDepKey, route=order_queue.name)(self.ctx, order_queue)
+queue = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, order_queue, route=order_queue.name)
 await queue.enqueue("orders", args, type="order.created")
-
-workflow = self.ctx.dep(
-    WorkflowCommandDepKey,
-    route=onboarding_workflow.name,
-)(self.ctx, onboarding_workflow)
-handle = await workflow.start(StartOnboarding(project_id=args.project_id))
 ```
 
 See [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) and [`forze-temporal-workflows`](../forze-temporal-workflows/SKILL.md).
 
 ## Gotchas
 
-- **`doc_read` / `doc_write` are obsolete** — use `doc_query` / `doc_command`.
-- **`ctx.search` is obsolete** — use `ctx.search_query(spec)`.
+- **`ctx.doc_query` / `ctx.doc_command` are removed** — use `ctx.document.query` / `ctx.document.command`.
+- **`ctx.dep(...)` on context is removed** — use `ctx.deps.provide` or `ctx.deps.resolve_configurable`.
+- **`ctx.transaction()` is removed** — use `ctx.tx.scope(route)`.
 - **`ctx.counter("name")` is wrong** — pass `CounterSpec(name=...)`.
-- **`ctx.storage("bucket")` is wrong** — pass `StorageSpec(name=...)`.
-- **`transaction()` requires a route** — must match a registered tx manager route.
-- **`ctx.workflow_command(...)` does not exist** — resolve `WorkflowCommandDepKey` with `route=spec.name`.
+- **`UsecaseRegistry` is removed** — use `OperationRegistry` + `.freeze()`.
 - **Do not nest incompatible tx backends** (e.g. Postgres + Mongo in one scope).
 
 ## Anti-patterns
 
-1. Importing adapters in usecases — resolve via `ctx.doc_query` / `doc_command` / other ports.
+1. Importing adapters in handlers — resolve via `ctx.document.query` / `command` / other ports.
 2. Domain importing application or infrastructure — keep domain pure.
-3. Raw SQL/ORM in usecases — use document/search/cache/storage ports.
-4. Constructing `ExecutionContext` by hand in apps — obtain via `runtime.get_context()` or FastAPI `ctx_dep`.
+3. Raw SQL/ORM in handlers — use document/search/cache/storage ports.
+4. Passing unfrozen registry to FastAPI attach — call `.freeze()` after plan binding.
 
 ## Reference
 
-- [`pages/docs/core-package/execution.md`](../../pages/docs/core-package/execution.md)
-- [`pages/docs/core-concepts/contracts-adapters.md`](../../pages/docs/core-concepts/contracts-adapters.md)
-- [`pages/docs/core-package/query-syntax.md`](../../pages/docs/core-package/query-syntax.md)
+- [`pages/docs/reference/execution.md`](../../pages/docs/reference/execution.md)
+- [`pages/docs/concepts/contracts-adapters.md`](../../pages/docs/concepts/contracts-adapters.md)
+- [`pages/docs/reference/query-syntax.md`](../../pages/docs/reference/query-syntax.md)
 - [`pages/docs/core-package/contracts.md`](../../pages/docs/core-package/contracts.md)

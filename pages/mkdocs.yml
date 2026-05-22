@@ -59,7 +59,7 @@ nav:
     - Multi-tenancy: concepts/multi-tenancy.md
     - Specs and Wiring: concepts/specs-and-wiring.md
     - Aggregate Specification: concepts/aggregate-specification.md
-    - Composition: concepts/usecase-composition.md
+    - Operation composition: concepts/usecase-composition.md
 
   - Recipes:
     - CRUD with FastAPI, Postgres, and Redis: recipes/crud-fastapi-postgres-redis.md

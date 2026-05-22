@@ -1,12 +1,12 @@
 # Composition & Mapping
 
-Forze provides pre-built composition layers for document, search, storage, and authn aggregates. These helpers build a `UsecaseRegistry`, expose typed facades via `facade_op(...)`, and keep operation keys explicit through `OperationNamespace`.
+Forze provides pre-built composition layers for document, search, storage, and authn aggregates. These helpers build an `OperationRegistry`, expose typed facades via `facade_op(...)`, and keep operation keys explicit through `StrKeyNamespace` on each spec.
 
 ## Document composition
 
 ### `build_document_registry`
 
-Creates a `UsecaseRegistry` pre-populated with standard CRUD usecase factories:
+Creates an `OperationRegistry` pre-populated with standard document handler factories:
 
     :::python
     from forze.application.composition.document import (
@@ -22,78 +22,87 @@ Creates a `UsecaseRegistry` pre-populated with standard CRUD usecase factories:
 
     registry = build_document_registry(project_spec, project_dtos)
 
-Use `operation_namespace_for(project_spec)` with `DocumentKernelOp` when you need the fully qualified operation keys. Transactions are explicit:
+Use `spec.default_namespace` with `DocumentKernelOp` when you need fully qualified operation keys. Bind transaction routes and freeze before FastAPI attach:
 
     :::python
     from forze.application.composition.document import DocumentKernelOp
-    from forze.application.execution import operation_namespace_for
 
-    ops = operation_namespace_for(project_spec)
+    write_ops = [
+        project_spec.default_namespace.key(op)
+        for op in (DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE, DocumentKernelOp.KILL)
+    ]
+    registry = (
+        registry.bind(*write_ops)
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=True)
+        .freeze()
+    )
 
-    registry.tx(ops.op(DocumentKernelOp.CREATE), route="default")
-    registry.tx(ops.op(DocumentKernelOp.UPDATE), route="default")
-    registry.finalize("projects")
+### `DocumentFacade`
 
-### `DocumentUsecasesFacade`
-
-Typed facade exposing document operations as attributes:
+Typed facade exposing document operations as attributes (requires a frozen registry):
 
     :::python
-    from forze.application.composition.document import DocumentUsecasesFacade
-    from forze.application.execution import operation_namespace_for
+    from forze.application.composition.document import DocumentFacade
 
-    facade = DocumentUsecasesFacade(
+    facade = DocumentFacade(
         ctx=ctx,
         registry=registry,
-        namespace=operation_namespace_for(project_spec),
+        namespace=project_spec.default_namespace,
     )
 
     project = await facade.create(CreateProjectCmd(title="New"))
     fetched = await facade.get(DocumentIdDTO(id=project.id))
 
-The facade attributes are namespace-aware `facade_op(...)` descriptors. For endpoint metadata and other non-facade call sites, use `OperationRef.absolute(...)` with a fully qualified operation key.
+Facade attributes are namespace-aware `facade_op(...)` descriptors. HTTP endpoint specs carry `operation: StrKey` with the fully qualified key (see [FastAPI integration](../integrations/fastapi.md)).
 
 ### Custom operations
 
-Register custom operations on the same registry and author stages directly on it:
+Register custom handlers on the same registry:
 
     :::python
-    registry.register("archive", lambda ctx: ArchiveProject(ctx=ctx))
-    registry.tx("archive", route="default")
-    registry.before("archive", auth_guard, priority=100)
+    registry = registry.set_handler(
+        project_spec.default_namespace.key("archive"),
+        lambda ctx: ArchiveProject(doc=ctx.document.command(project_spec)),
+        override=True,
+    )
+
+Add stages with `.bind(...).bind_outer().before(...)` as needed, then `.freeze()`.
 
 ## Search composition
 
 ### `build_search_registry`
 
-Creates a registry with typed and raw search usecase factories:
+Creates a registry with search handler factories:
 
     :::python
     from forze.application.composition.search import build_search_registry
 
-    search_registry = build_search_registry(search_spec)
+    search_registry = build_search_registry(search_spec).freeze()
 
-### `SearchUsecasesFacade`
+### `SearchFacade`
 
     :::python
-    from forze.application.composition.search import SearchUsecasesFacade
-    from forze.application.execution import operation_namespace_for
+    from forze.application.composition.search import SearchFacade
 
-    facade = SearchUsecasesFacade(
+    facade = SearchFacade(
         ctx=ctx,
         registry=search_registry,
-        namespace=operation_namespace_for(search_spec),
+        namespace=search_spec.default_namespace,
     )
     result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 
+Hub and federated search use `build_hub_search_registry` and `build_federated_search_registry` with the same freeze pattern.
+
 ## Storage composition
 
-`build_storage_registry(storage_spec)` registers `upload`, `list`, `download`, and `delete` operations. `StorageUsecasesFacade` resolves the same operations through `registry` + `namespace`.
+`build_storage_registry(storage_spec)` registers `upload`, `list`, `download`, and `delete` handlers. `StorageFacade` resolves them through `registry` + `namespace`. Bind tx routes for write operations, then `.freeze()` before `attach_storage_endpoints`.
 
 ## Authn composition
 
-`build_authn_registry(authn_spec)` registers `password_login`, `refresh_tokens`, `logout`, and `change_password`. `AuthnUsecasesFacade` uses the same namespace-aware facade contract as the other built-in composition packages.
+`build_authn_registry(authn_spec)` registers `password_login`, `refresh_tokens`, `logout`, and `change_password`. `AuthnFacade` uses the same namespace-aware facade contract. Freeze the registry before `attach_authn_endpoints`.
 
 ## DTO mapping
 
-The mapping pipeline transforms incoming DTOs before they reach the usecase. `DTOMapper` maps a Pydantic source model to an output DTO and optional `MappingStep`s inject computed fields such as `number_id` or `creator_id`.
+The mapping pipeline transforms incoming DTOs before they reach the handler. `PydanticPipelineMapperFactory` maps a Pydantic source model to an output DTO; optional `MappingStep`s inject computed fields such as `number_id` or `creator_id` from `forze_contrib`.

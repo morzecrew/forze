@@ -101,7 +101,7 @@ class GetOnboardingResult(Usecase[WorkflowHandle, OnboardingResult]):
 
 ## Context and tenancy
 
-Use `ExecutionContextInterceptor` and `TemporalContextCodec` when `CallContext`, `AuthnIdentity`, or `TenantIdentity` must cross Temporal client/worker boundaries. For tenant-aware workflow config, bind `TenantIdentity` before starting workflows so generated IDs can include tenant scope.
+Use `ExecutionContextInterceptor` and `TemporalContextCodec` when `InvocationMetadata`, `AuthnIdentity`, or `TenantIdentity` must cross Temporal client/worker boundaries. For tenant-aware workflow config, bind `TenantIdentity` before starting workflows so generated IDs can include tenant scope.
 
 ## Testing
 

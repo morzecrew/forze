@@ -62,7 +62,7 @@ Immutable codec classes for serialization, encoding, and key/path construction.
 JSON serializer using `orjson` with deterministic key ordering:
 
     :::python
-    from forze.base import JsonCodec
+    from forze.base.codecs import JsonCodec
 
     codec = JsonCodec()
     raw = codec.dumps({"b": 2, "a": 1})   # b'{"a":1,"b":2}'
@@ -74,7 +74,7 @@ JSON serializer using `orjson` with deterministic key ordering:
 String-to-bytes encoder/decoder:
 
     :::python
-    from forze.base import TextCodec
+    from forze.base.codecs import TextCodec
 
     codec = TextCodec()
     raw = codec.dumps("hello")   # b'hello'
@@ -85,7 +85,7 @@ String-to-bytes encoder/decoder:
 Transparent base64 codec for non-ASCII strings. ASCII-only strings pass through unchanged:
 
     :::python
-    from forze.base import AsciiB64Codec
+    from forze.base.codecs import AsciiB64Codec
 
     codec = AsciiB64Codec()
     codec.dumps("hello")     # 'hello' (ASCII, unchanged)
@@ -97,7 +97,7 @@ Transparent base64 codec for non-ASCII strings. ASCII-only strings pass through 
 Namespace-prefixed key builder for Redis-style key schemes:
 
     :::python
-    from forze.base import KeyCodec
+    from forze.base.codecs import KeyCodec
 
     keys = KeyCodec(namespace="app")
     keys.join("users", "123")            # 'app:users:123'
@@ -109,7 +109,7 @@ Namespace-prefixed key builder for Redis-style key schemes:
 Slash-separated path joiner (no namespace):
 
     :::python
-    from forze.base import PathCodec
+    from forze.base.codecs import PathCodec
 
     paths = PathCodec()
     paths.join("uploads", "2024", "file.png")  # 'uploads/2024/file.png'
@@ -121,16 +121,14 @@ Shared types, value generators, and context-scoped utilities importable from `fo
 
 ### Type aliases
 
-| Type | Underlying | Constraints |
-|------|-----------|-------------|
-| `String` | `Annotated[str, ...]` | Min 2, max 4096 chars, stripped, NFC-normalized |
-| `LongString` | `Annotated[str, ...]` | Max 16384 chars, stripped, NFC-normalized |
-| `JsonDict` | `dict[str, Any]` | JSON-compatible dictionary |
-
-`String` and `LongString` are Pydantic-aware annotated types. They apply `normalize_string` as a before-validator, which handles Unicode normalization, invisible character stripping, and whitespace collapsing.
+| Type | Module | Purpose |
+|------|--------|---------|
+| `JsonDict` | `forze.base.primitives` | JSON-compatible dictionary |
+| `StrKey` | `forze.base.primitives` | String-compatible operation/spec key |
+| `String`, `LongString` | `forze_contrib.base.types` | Pydantic-aware normalized strings (optional `forze_contrib` package) |
 
     :::python
-    from forze.base.primitives import String, LongString, JsonDict
+    from forze.base.primitives import JsonDict, StrKey
 
 ### UUID generation
 
@@ -342,7 +340,7 @@ Simple helpers for reading YAML and text files:
 Utilities for extracting names and modules from callables and classes. Used internally for diagnostics and error messages:
 
     :::python
-    from forze.base import (
+    from forze.base.introspection import (
         get_callable_name,
         get_callable_module,
         get_class_name,

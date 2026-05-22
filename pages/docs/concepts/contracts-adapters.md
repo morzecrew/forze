@@ -188,11 +188,11 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 Forze tracks request identity through `ExecutionContext`:
 
-- `CallContext` (`execution_id`, `correlation_id`, optional `causation_id`)
+- `InvocationMetadata` (`execution_id`, `correlation_id`, optional `causation_id`)
 - `AuthnIdentity` (authenticated `principal_id`)
 - `TenantIdentity` (current `tenant_id`)
 
-These are bound at the application boundary (for example, in HTTP middleware) via `ctx.bind_call(..., identity=..., tenancy=...)`.
+These are bound at the application boundary (for example, in HTTP middleware) via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
 
 ## Dependency keys
 
@@ -202,17 +202,17 @@ Each contract has a corresponding `DepKey` for registration and resolution. Inte
     from forze.application.contracts.counter import CounterSpec
     from forze.application.contracts.storage import StorageSpec
 
-    doc = self.ctx.doc_query(project_spec)     # resolves DocumentQueryDepKey
+    doc = self.ctx.document.query(project_spec)     # resolves DocumentQueryDepKey
     cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
     counter = self.ctx.counter(CounterSpec(name="tickets"))  # resolves CounterDepKey
     storage = self.ctx.storage(StorageSpec(name="attachments"))  # resolves StorageDepKey
 
-For contracts without convenience methods on `ExecutionContext`, use `dep()` directly:
+For contracts without convenience methods on `ExecutionContext`, use `ctx.deps.resolve_configurable`:
 
     :::python
     from forze.application.contracts.pubsub import PubSubCommandDepKey
 
-    publish = ctx.dep(PubSubCommandDepKey)(ctx, spec)
+    publish = ctx.deps.resolve_configurable(ctx, PubSubCommandDepKey, spec, route=spec.name)
 
 ## Wiring adapters
 
@@ -243,7 +243,7 @@ Tests stub contracts with in-memory or fake implementations. The `forze_mock` pa
     deps_plan = DepsPlan.from_modules(module)
     ctx = ExecutionContext(deps=deps_plan.build())
 
-    doc = ctx.doc_query(project_spec)
+    doc = ctx.document.query(project_spec)
     result = await doc.get(some_uuid)
 
 You can also build a `Deps` container manually with only the ports your test needs:

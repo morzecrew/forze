@@ -2,7 +2,7 @@
 
 ## What this integration provides
 
-Expose typed realtime events while keeping event handlers wired to application usecases instead of transport-specific business logic.
+Expose typed realtime events while keeping event handlers wired to application handlers instead of transport-specific business logic.
 
 ## When to use it
 
@@ -14,10 +14,10 @@ Use this when clients need bidirectional updates, command events, or server-emit
 2. Create the integration client or module configuration.
 3. Register the module in `DepsPlan` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
 
-`forze_socketio` connects Forze usecases to real-time Socket.IO events. It provides typed command routing, usecase dispatch through `ExecutionContext`, typed server event emission, and optional Redis backplane support for distributed deployments.
+`forze_socketio` connects Forze handlers to real-time Socket.IO events. It provides typed command routing, operation dispatch through `ExecutionContext`, typed server event emission, and optional Redis backplane support for distributed deployments.
 
 ## Installation
 
@@ -41,7 +41,7 @@ Without `redis_url`, the server uses in-memory transport (single-process only).
 
 ## Command event routing
 
-Define namespace routes as typed command events. Each event validates input against a Pydantic model, builds an `ExecutionContext`, resolves the usecase, executes it, and returns a validated acknowledgement payload.
+Define namespace routes as typed command events. Each event validates input against a Pydantic model, builds an `ExecutionContext`, resolves the operation, executes the handler, and returns a validated acknowledgement payload.
 
 ### Define DTOs
 
@@ -58,30 +58,29 @@ Define namespace routes as typed command events. Each event validates input agai
         room: str
         joined: bool
 
-### Create a usecase
+### Create a handler
 
     :::python
-    from forze.application.execution import Usecase
+    from forze.application.contracts.execution import Handler
 
 
-    class JoinRoom(Usecase[JoinRoomCmd, JoinRoomAck]):
-        async def main(self, args: JoinRoomCmd) -> JoinRoomAck:
-            # Business logic here
+    class JoinRoom(Handler[JoinRoomCmd, JoinRoomAck]):
+        async def __call__(self, args: JoinRoomCmd) -> JoinRoomAck:
             return JoinRoomAck(room=args.room, joined=True)
 
 ### Register and route
 
     :::python
-    from forze.application.execution import Deps, ExecutionContext, UsecaseRegistry
+    from forze.application.execution import Deps, ExecutionContext, OperationRegistry
     from forze_socketio import (
         ForzeSocketIOAdapter,
         SocketIONamespaceRouter,
-        make_registry_usecase_resolver,
+        make_registry_operation_resolver,
     )
 
-    registry = UsecaseRegistry().register(
-        "chat.join",
-        lambda ctx: JoinRoom(ctx=ctx),
+    registry = (
+        OperationRegistry(handlers={"chat.join": lambda _ctx: JoinRoom()})
+        .freeze()
     )
 
     router = SocketIONamespaceRouter(namespace="/chat").command(
@@ -99,16 +98,18 @@ Define namespace routes as typed command events. Each event validates input agai
     adapter = ForzeSocketIOAdapter(
         sio=sio,
         context_factory=context_factory,
-        usecase_resolver=make_registry_usecase_resolver(registry),
+        usecase_resolver=make_registry_operation_resolver(registry),
     )
     adapter.include_router(router)
+
+`make_registry_usecase_resolver` is a deprecated alias for `make_registry_operation_resolver`.
 
 The adapter handles:
 
 1. Deserializing the incoming event payload into `JoinRoomCmd`
 2. Calling `context_factory` to create a request-scoped `ExecutionContext`
-3. Resolving `chat.join` from the registry with the context
-4. Executing the usecase and serializing the result as `JoinRoomAck`
+3. Resolving `chat.join` from the frozen registry with the context
+4. Executing the handler and serializing the result as `JoinRoomAck`
 5. Returning the acknowledgement to the client
 
 ### Multiple namespaces
@@ -131,93 +132,3 @@ Register multiple routers for different namespaces:
 
     adapter.include_router(chat_router)
     adapter.include_router(tasks_router)
-
-## Server event emission
-
-Use `SocketIOEventEmitter` to send typed server events. The emitter validates payloads against Pydantic models before sending, ensuring type safety for outbound events.
-
-### Define a server event
-
-    :::python
-    from forze_socketio import SocketIOEventEmitter, SocketIOServerEvent
-
-
-    class ProgressPayload(BaseModel):
-        done: int
-        total: int
-
-
-    progress_event = SocketIOServerEvent(
-        event="task.progress",
-        namespace="/tasks",
-        payload_type=ProgressPayload,
-    )
-
-### Emit
-
-    :::python
-    emitter = SocketIOEventEmitter(sio=sio)
-
-    await emitter.emit(
-        progress_event,
-        ProgressPayload(done=3, total=10),
-        room="task:42",
-    )
-
-The emitter can target specific rooms, sessions (SIDs), or broadcast to all connected clients.
-
-## ASGI integration
-
-Wrap the Socket.IO server as an ASGI application. This allows running alongside FastAPI or other ASGI frameworks:
-
-    :::python
-    from forze_socketio import build_socketio_asgi_app
-
-    app = build_socketio_asgi_app(sio, other_asgi_app=fastapi_app)
-
-### Combined FastAPI + Socket.IO
-
-    :::python
-    import uvicorn
-    from fastapi import FastAPI
-    from forze_socketio import build_socketio_server, build_socketio_asgi_app
-
-    fastapi_app = FastAPI(title="My App")
-    sio = build_socketio_server(async_mode="asgi")
-
-    # Set up Socket.IO routing (as shown above)
-    # ...
-
-    # Combine into a single ASGI app
-    app = build_socketio_asgi_app(sio, other_asgi_app=fastapi_app)
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-HTTP requests go to FastAPI. WebSocket connections for Socket.IO are handled by the `sio` server. Both share the same ASGI process.
-
-## Context factory
-
-The context factory creates a request-scoped `ExecutionContext` for each incoming Socket.IO event. In production, you typically wire it to the same runtime used by FastAPI:
-
-    :::python
-    def context_factory(request) -> ExecutionContext:
-        return runtime.get_context()
-
-The `request` parameter carries Socket.IO metadata (SID, namespace, event name) that you can use for tenant/actor resolution or logging.
-
-## Usecase resolver
-
-The default `make_registry_usecase_resolver(registry)` looks up usecases by operation key in a `UsecaseRegistry`. For custom resolution logic (e.g. dynamic registration, permission checks), implement your own resolver:
-
-    :::python
-    def custom_resolver(ctx: ExecutionContext, operation: str):
-        if operation.startswith("admin."):
-            check_admin_permissions(ctx)
-        return registry.resolve(operation, ctx)
-
-
-    adapter = ForzeSocketIOAdapter(
-        sio=sio,
-        context_factory=context_factory,
-        usecase_resolver=custom_resolver,
-    )

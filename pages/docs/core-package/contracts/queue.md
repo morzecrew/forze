@@ -63,5 +63,5 @@ acknowledge, and optionally requeue messages.
     from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
 
     order_queue = QueueSpec(name="orders", model=OrderPayload)
-    writer = ctx.dep(QueueCommandDepKey)(ctx, order_queue)
+    writer = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, order_queue, route=order_queue.name)
     message_id = await writer.enqueue("orders", OrderPayload(order_id="A-1"))

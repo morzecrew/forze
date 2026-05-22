@@ -86,7 +86,7 @@ Kernel `DocumentSpec` names must match keys in `MongoDepsModule.rw_documents` / 
 
     :::python
     from forze.application.contracts.document import DocumentSpec
-    from forze.domain.mixins import SoftDeletionMixin
+    from forze_contrib.soft_deletion import SoftDeletionMixin
     from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
 
@@ -124,8 +124,8 @@ The `"projects"` key must match `rw_documents["projects"]` in `MongoDepsModule`.
 ## Document operations
 
     :::python
-    doc_q = ctx.doc_query(project_spec)
-    doc_c = ctx.doc_command(project_spec)
+    doc_q = ctx.document.query(project_spec)
+    doc_c = ctx.document.command(project_spec)
 
     created = await doc_c.create(CreateProjectCmd(title="Alpha"))
     fetched = await doc_q.get(created.id)
@@ -180,10 +180,10 @@ See [Query Syntax](../reference/query-syntax.md).
 
 ## Transactions
 
-MongoDB transactions require a replica set or sharded cluster. Within `ctx.transaction("default")`, operations share a session when using the registered tx route.
+MongoDB transactions require a replica set or sharded cluster. Within `ctx.tx.scope("default")`, operations share a session when using the registered tx route.
 
     :::python
-    async with ctx.transaction("default"):
+    async with ctx.tx.scope("default"):
         await doc_c.create(CreateProjectCmd(title="In transaction"))
         existing = await doc_q.get(existing_id)
         await doc_c.update(existing.id, existing.rev, UpdateProjectCmd(title="Also in tx"))

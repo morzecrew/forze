@@ -41,4 +41,4 @@ Class names may evolve, but these invariants are stable:
 | [Multi-tenancy](multi-tenancy.md) | Authn vs tenant identity, bootstrap, JWT ``tid``, reference package |
 | [Specs and infrastructure wiring](specs-and-wiring.md) | Kernel specs vs integration configs, routed dependency keys |
 | [Aggregate Specification](aggregate-specification.md) | How to define aggregates and how adapters consume them |
-| [Usecase Composition](usecase-composition.md) | Registries, plans, guards, effects, transaction middleware |
+| [Operation composition](usecase-composition.md) | Operation registries, plans, stage hooks, transaction scopes |

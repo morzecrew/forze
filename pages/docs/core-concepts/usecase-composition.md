@@ -1,3 +1,3 @@
 # Usecase Composition
 
-This page moved to [Usecase Composition](../concepts/usecase-composition.md).
+This page moved to [Operation composition](../concepts/usecase-composition.md).

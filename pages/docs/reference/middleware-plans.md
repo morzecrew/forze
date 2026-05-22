@@ -1,119 +1,130 @@
-# Middleware & Stages
+# Middleware & Plans
 
-The execution system wraps usecases with guards, transaction boundaries, success hooks, and cleanup hooks. The public composition surface is `UsecaseRegistry`.
+The execution system wraps handlers with stage hooks (before, on-success, transaction boundaries, after-commit, failure, finally). The public composition surface is `OperationRegistry` plus explicit `OperationPlan` steps.
 
-For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Usecase Composition](../concepts/usecase-composition.md). For capability-aware ordering inside one stage, see [Capability execution](capability-execution.md).
+For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Operation composition](../concepts/usecase-composition.md). For capability-aware ordering inside one stage, see [Capability execution](capability-execution.md).
 
-## Usecase
+## Handler
 
-`Usecase[Args, R]` is the base class for application usecases. It receives an `ExecutionContext` and implements business logic in `main()`:
-
-    :::python
-    from forze.application.execution import Usecase
-
-    class GetProject(Usecase[UUID, ProjectRead]):
-        async def main(self, args: UUID) -> ProjectRead:
-            doc = self.ctx.doc_query(project_spec)
-            return await doc.get(args)
-
-Invoke a usecase via `__call__()`, which runs the compiled middleware chain.
-
-## Stage authoring on `UsecaseRegistry`
-
-`UsecaseRegistry` is a fluent mutable builder. Register factories, add stage hooks, and finalize once:
+`Handler[Args, R]` is a protocol for application operations. Built-in handlers in `forze.application.handlers` are attrs classes that receive ports in their constructor and implement `__call__(args) -> R`:
 
     :::python
-    from forze.application.execution import UsecaseRegistry
+    from uuid import UUID
+
+    from forze.application.contracts.document import DocumentQueryPort
+    from forze.application.contracts.execution import Handler
+
+    class GetProject(Handler[UUID, ProjectRead]):
+        doc: DocumentQueryPort[ProjectRead]
+
+        async def __call__(self, args: UUID) -> ProjectRead:
+            return await self.doc.get(args)
+
+Register handler factories on `OperationRegistry` with `set_handler` or the `handlers=` constructor dict. At runtime, `FrozenOperationRegistry.resolve(operation, ctx)` builds the handler and runs the compiled stage pipeline.
+
+## OperationRegistry
+
+`OperationRegistry` maps operation keys to handler factories and owns per-operation `OperationPlan` instances. Author plans with `.bind(...)`, then **freeze** before HTTP or other transports resolve operations:
+
+    :::python
+    from forze.application.contracts.execution import BeforeStep
+    from forze.application.execution import OperationRegistry
+
+    def _rate_limit_factory(ctx):
+        async def _before(_args) -> None:
+            ...
+        return _before
 
     registry = (
-        UsecaseRegistry()
-        .register("get", lambda ctx: GetProject(ctx=ctx))
-        .register("create", lambda ctx: CreateProject(ctx=ctx))
-        .tx("create", route="default")
-        .before("*", rate_limit_guard, priority=200)
-        .before("create", auth_guard, priority=100)
-        .tx_before("create", lock_guard, priority=50)
-        .after_commit("create", publish_event)
-        .finalize("projects")
+        OperationRegistry(
+            handlers={
+                "projects.get": lambda ctx: GetProject(doc=ctx.document.query(project_spec)),
+                "projects.create": lambda ctx: CreateProject(doc=ctx.document.command(project_spec)),
+            },
+        )
+        .bind("projects.create")
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=False)
+        .bind_outer()
+        .before(BeforeStep(id="rate_limit", factory=_rate_limit_factory, priority=200))
+        .finish(deep=True)
+        .freeze()
     )
 
-### Stage methods
+### Binder flow
+
+| Method | Purpose |
+|--------|---------|
+| `set_handler(op, factory)` | Register or replace a handler factory |
+| `bind(*ops)` | Start a plan binder for one or more operation keys |
+| `bind_outer()` | Author outer-scope stages (`before`, `wrap`, `on_success`, …) |
+| `bind_tx()` | Author transaction scope (`tx_before`, `after_commit`, `set_route`, …) |
+| `finish(deep=False)` | Commit scope changes to the parent binder |
+| `finish(deep=True)` | Commit all the way back to the registry |
+| `freeze()` | Validate dispatch graph and return `FrozenOperationRegistry` |
+
+Built-in composition helpers (`build_document_registry`, `build_search_registry`, …) return an `OperationRegistry` with handlers pre-registered. Bind transaction routes and outer stages, then call `.freeze()` before `attach_*_endpoints`.
+
+### Stage methods (on scope binders)
 
 | Stage method | When it runs | Typical use |
 |--------------|--------------|-------------|
-| `before` | Before everything | auth, validation, rate limiting |
+| `before` | Before the handler | auth, validation, rate limiting |
 | `wrap` | Around the whole chain | metrics, tracing, retries |
 | `on_failure` / `finally_` | Around the outer outcome | cleanup, error hooks |
-| `tx_before` | Inside the transaction, before the usecase | locks, preconditions |
-| `tx_wrap` | Around the transactional segment | tx-scoped middleware |
+| `on_success` | After successful handler | observe result, side effects |
+| `tx_before` | Inside the transaction, before the handler | locks, preconditions |
+| `wrap` (on tx binder) | Around the transactional segment | tx-scoped middleware |
 | `tx_on_failure` / `tx_finally` | Around the in-tx outcome | tx cleanup or failure hooks |
-| `tx_after_success` | Inside the transaction, after successful `main()` | writes that must commit |
+| `on_success` (on tx binder) | Inside the transaction, after successful handler | writes that must commit |
 | `after_commit` | After successful commit | events, notifications |
-| `after_success` | After everything else succeeded | out-of-tx follow-up work |
+| `dispatch` / `dispatch_after_commit` | Nested operation dispatch | fan-out, sagas |
 
-`tx(op, route=...)` enables the transactional and after-commit stages for that operation.
+Enable a transaction route with `bind_tx().set_route("default")` (or your registered tx route label) on the operations that need transactional stages.
 
-### Wildcards
+### Step types
 
-Use `"*"` as a base stage layout shared by all operations:
+Stages are explicit value objects from `forze.application.contracts.execution`:
 
-    :::python
-    registry = (
-        UsecaseRegistry()
-        .before("*", global_guard, priority=1000)
-        .before("create", create_guard, priority=100)
-    )
+- `BeforeStep`, `OnSuccessStep` — extend `GraphStep` (`requires`, `provides`, `depends_on`, `priority`)
+- `MiddlewareStep`, `OnFailureStep`, `FinallyStep`, `DispatchStep`
 
-At resolve time, Forze merges the wildcard layout with the operation-specific layout.
+Each step carries an `id`, a `factory(ctx)` that returns the callable hook, and optional capability metadata (see [Capability execution](capability-execution.md)).
 
-### DAG authoring
-
-Use `PlanDag` when one schedulable stage has several explicit dependency edges:
+Example authz as a `BeforeStep`:
 
     :::python
-    from forze.application.execution import AUTHN_PRINCIPAL, DagNode, PlanDag, UsecaseRegistry
+    from forze.application.contracts.authz import AuthzSpec
+    from forze.application.contracts.authz.ports import AuthzPort
+    from forze.application.contracts.execution import BeforeStep
 
-    registry = UsecaseRegistry().before_dag(
-        "create",
-        PlanDag(
-            nodes=(
-                DagNode(
-                    id="authn",
-                    factory=principal_guard,
-                    provides={AUTHN_PRINCIPAL},
-                ),
-                DagNode(
-                    id="authz",
-                    factory=permission_guard,
-                    requires={AUTHN_PRINCIPAL},
-                ),
-            ),
-            edges=(("authn", "authz"),),
-        ),
+    def authz_before_factory(ctx, *, authz: AuthzPort, permission: str):
+        async def _before(_args) -> None:
+            identity = ctx.inv.get_authn()
+            if identity is None or not await authz.permits(identity, permission):
+                raise PermissionError(permission)
+        return _before
+
+    step = BeforeStep(
+        id="authz",
+        factory=lambda ctx: authz_before_factory(ctx, authz=..., permission="projects.write"),
+        requires=("authn.principal",),
     )
-
-Available DAG methods:
-
-- `before_dag`
-- `after_success_dag`
-- `tx_before_dag`
-- `tx_after_success_dag`
-- `after_commit_dag`
 
 ## Resolve and inspect
 
-Resolve a composed usecase through the registry:
+Resolve a composed handler through a frozen registry:
 
     :::python
-    usecase = registry.resolve("create", ctx)
+    from forze.application.execution import make_registry_operation_resolver
 
-Inspect the runtime order with:
+    resolver = make_registry_operation_resolver(registry)
+    handler = resolver("projects.create", ctx)
+    result = await handler(create_dto)
 
-    :::python
-    explanation = registry.explain("create")
-
-`finalize()` eagerly validates dispatch edges and capability schedules for every registered operation.
+`FrozenOperationRegistry.resolve(operation, ctx)` is the same entry point. Dispatch edges and capability schedules are validated at `freeze()`.
 
 ## Internal types
 
-`OperationPlan`, `MiddlewareSpec`, and stage scheduling details are internal building blocks behind registry stage authoring. They remain useful for debugging and tests, but normal application code should compose through `UsecaseRegistry` stage methods and `PlanDag`.
+`OperationPlan`, scope objects (`Scope`, `TransactionScope`), and the operation runner are internal building blocks behind registry binding. Normal application code should compose through `OperationRegistry.bind(...)` and frozen resolution, not by constructing plans by hand unless extending the framework.

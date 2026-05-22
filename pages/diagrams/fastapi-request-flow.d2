@@ -19,7 +19,7 @@ Middleware: {
     shape: rectangle
     label: |md
         ### Middleware
-        bind call/principal context
+        inv.bind authn/tenant
     |
 }
 
@@ -31,14 +31,14 @@ EndpointFeature: {
     |
 }
 
-Usecase: {
+Handler: {
     shape: rectangle
     style: {
         stroke: "#4a90d9"
     }
     label: |md
-        ### Usecase
-        application operation
+        ### Handler
+        registry.resolve(op, ctx)
     |
 }
 
@@ -66,5 +66,5 @@ Response: {
     label: HTTP response
 }
 
-Request -> Middleware -> EndpointFeature -> Usecase -> Port -> Adapter
-Adapter -> Port -> Usecase -> EndpointFeature -> Response
+Request -> Middleware -> EndpointFeature -> Handler -> Port -> Adapter
+Adapter -> Port -> Handler -> EndpointFeature -> Response

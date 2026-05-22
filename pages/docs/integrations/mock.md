@@ -98,7 +98,7 @@ Access the state directly for test assertions:
     :::python
     from forze_mock import MockState, MockStateDepKey
 
-    state = ctx.dep(MockStateDepKey)
+    state = ctx.deps.provide(MockStateDepKey)
 
 ## Using in tests
 
@@ -110,10 +110,10 @@ Access the state directly for test assertions:
     deps = DepsPlan.from_modules(module).build()
     ctx = ExecutionContext(deps=deps)
 
-    doc = ctx.doc_command(project_spec)
+    doc = ctx.document.command(project_spec)
     created = await doc.create(CreateProjectCmd(title="Test"))
 
-    fetched = await ctx.doc_query(project_spec).get(created.id)
+    fetched = await ctx.document.query(project_spec).get(created.id)
     assert fetched.title == "Test"
 
 ## Using with FastAPI

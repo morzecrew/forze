@@ -248,7 +248,7 @@ model shape). `return_count` then counts documents, not groups.
 ### Document port usage
 
     :::python
-    doc = ctx.doc_query(project_spec)
+    doc = ctx.document.query(project_spec)
 
     page = await doc.find_many(
         filters=filters,
@@ -262,7 +262,7 @@ model shape). `return_count` then counts documents, not groups.
 ### Search request usage
 
     :::python
-    search = ctx.search_query(project_search_spec)
+    search = ctx.search.query(project_search_spec)
 
     hits, total = await search.search(
         query="roadmap",

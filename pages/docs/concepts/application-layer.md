@@ -2,11 +2,11 @@
 
 ## What problem this solves
 
-Usecases need to coordinate domain logic and infrastructure without importing concrete adapters directly.
+Handlers need to coordinate domain logic and infrastructure without importing concrete adapters directly.
 
 ## When you need this
 
-Use this when you write operations, resolve dependencies, add middleware, or build an execution runtime.
+Use this when you write operations, resolve dependencies, add stage hooks, or build an execution runtime.
 
 
 The application layer **orchestrates** domain logic and coordinates infrastructure. It defines *what* happens, not *how* persistence or transport work.
@@ -15,9 +15,9 @@ The application layer **orchestrates** domain logic and coordinates infrastructu
 
 The application layer is built around a few core concepts:
 
-- **Execution context**: the single point through which usecases resolve all dependencies. No usecase ever imports an adapter directly.
-- **Usecases**: self-contained operations that implement one business action. Each usecase receives an execution context and resolves typed ports from it.
-- **Middleware**: composable wrappers (guards, success hooks, transaction boundaries) that run before, around, or after a usecase without modifying its core logic.
+- **Execution context**: the single point through which handlers resolve all dependencies. No handler imports an adapter directly.
+- **Handlers**: self-contained operations that implement one business action. Built-in handlers receive ports in their constructor; custom handlers implement `Handler[Args, R]`.
+- **Operation plans**: composable stage hooks (before, on-success, transaction boundaries, after-commit) registered on `OperationRegistry` without modifying handler core logic.
 - **Runtime**: the container that manages dependency injection, lifecycle hooks, and context creation.
 
 Together these ensure that business logic remains independent of infrastructure choices.
@@ -29,118 +29,75 @@ Together these ensure that business logic remains independent of infrastructure 
 
 ## Execution context
 
-`ExecutionContext` is the central dependency resolution point. Usecases and factories receive it and use its methods to obtain typed ports:
+`ExecutionContext` is the central dependency resolution point. Handler factories and lifecycle hooks receive it to obtain typed ports:
 
-| Method | Returns | Purpose |
-|--------|---------|---------|
-| `dep(key)` | `T` | Resolve any dependency by typed key |
-| `doc_query(spec)` | `DocumentQueryPort` | Read-only document port |
-| `doc_command(spec)` | `DocumentCommandPort` | Read-write document port |
-| `cache(spec)` | `CachePort` | Cache port (`CacheSpec`) |
-| `counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
-| `txmanager(route)` | `TxManagerPort` | Transaction manager |
-| `storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
-| `search_query(spec)` | `SearchQueryPort` | Full-text search port |
-| `transaction()` | async context manager | Enter a transaction scope |
+| API | Returns | Purpose |
+|-----|---------|---------|
+| `ctx.deps.provide(key, route=...)` | `T` | Resolve a registered simple dependency |
+| `ctx.document.query(spec)` | `DocumentQueryPort` | Read-only document port |
+| `ctx.document.command(spec)` | `DocumentCommandPort` | Read-write document port |
+| `ctx.cache(spec)` | `CachePort` | Cache port (`CacheSpec`) |
+| `ctx.counter(spec)` | `CounterPort` | Namespace-scoped counter (`CounterSpec`) |
+| `ctx.tx.resolver(route)` | `TransactionManagerPort` | Transaction manager |
+| `ctx.storage(spec)` | `StoragePort` | Object storage (`StorageSpec`) |
+| `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search port |
+| `ctx.tx.scope(route)` | async context manager | Enter a transaction scope |
 
 When `DocumentSpec.cache` is set, the registered document query/command factory resolves `ctx.cache(spec.cache)` while building the adapter.
 
-Nested `transaction()` calls reuse the same transaction with savepoints when the backend supports them.
+Nested `ctx.tx.scope()` calls reuse the same transaction with savepoints when the backend supports them.
 
-## Usecases
+## Handlers
 
-A **usecase** is a single, well-defined business action. It subclasses `Usecase[Args, R]`, implements `main()`, and is invoked via `__call__()` which runs the full middleware chain:
+A **handler** is a single, well-defined business action. Built-in document handlers are attrs classes that take ports in `__init__` and implement `async def __call__(self, args) -> R`:
 
     :::python
     from uuid import UUID
-    from forze.application.execution import Usecase
 
-    class GetProject(Usecase[UUID, ProjectReadModel]):
-        async def main(self, args: UUID) -> ProjectReadModel:
-            doc = self.ctx.doc_query(project_spec)
-            return await doc.get(args)
+    from forze.application.contracts.document import DocumentQueryPort
+    from forze.application.contracts.execution import Handler
 
+    class GetProject(Handler[UUID, ProjectReadModel]):
+        doc: DocumentQueryPort[ProjectReadModel]
 
-    class CreateProject(Usecase[CreateProjectCmd, ProjectReadModel]):
-        async def main(self, args: CreateProjectCmd) -> ProjectReadModel:
-            doc = self.ctx.doc_command(project_spec)
-            return await doc.create(args)
+        async def __call__(self, args: UUID) -> ProjectReadModel:
+            return await self.doc.get(args)
 
-Every usecase has:
+Register handlers on `OperationRegistry` and resolve them through a frozen registry (see [Middleware & Plans](../reference/middleware-plans.md)).
 
-- `ctx`: the execution context for resolving ports
-- `middlewares`: a tuple of middleware wrappers (guards, hooks, transaction)
-- `with_middlewares(*mw)`: returns a new usecase with additional middlewares appended
+## Stage hooks
 
-## Middleware system
+Stage hooks are authored as `BeforeStep`, `OnSuccessStep`, and related types on `OperationRegistry.bind(...)`. They run before, around, or after the handler without replacing the domain result.
 
-Middlewares wrap the usecase call chain. The main protocol types are:
-
-**Guard**: runs before the usecase. Raises to abort:
+Example precondition as `BeforeStep`:
 
     :::python
-    from forze.application.execution import Guard
+    from forze.application.contracts.execution import BeforeStep
+    from forze.base.errors import ValidationError
 
-    class RequireActiveProject(Guard[UUID]):
-        async def __call__(self, args: UUID) -> None:
-            doc = self.ctx.doc_query(project_spec)
+    def require_active_project_factory(ctx):
+        async def _before(args: UUID) -> None:
+            doc = ctx.document.query(project_spec)
             project = await doc.get(args)
-
             if project.is_deleted:
                 raise ValidationError("Project is archived.")
+        return _before
 
-**SuccessHook**: runs after the usecase returns successfully. It observes the result but does not replace it:
+    step = BeforeStep(id="active_check", factory=require_active_project_factory)
 
-    :::python
-    from forze.application.execution import SuccessHook
-
-    class LogCreation(SuccessHook[CreateProjectCmd, ProjectReadModel]):
-        async def __call__(
-            self,
-            args: CreateProjectCmd,
-            res: ProjectReadModel,
-        ) -> None:
-            logger.info("Created project %s", res.id)
-
-**OnFailure / Finally**: observe failure and cleanup paths without changing the domain result:
+Bind transaction routes and stages when building the registry:
 
     :::python
-    from forze.application.execution import Failed, Finally, OnFailure, Successful
+    registry = (
+        build_document_registry(project_spec, dtos)
+        .bind(*write_ops)
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=True)
+        .freeze()
+    )
 
-    class ReportFailure(OnFailure[CreateProjectCmd]):
-        async def __call__(self, args: CreateProjectCmd, exc: Exception) -> None:
-            logger.warning("Create failed: %s", exc)
-
-
-    class RecordOutcome(Finally[CreateProjectCmd, ProjectReadModel]):
-        async def __call__(
-            self,
-            args: CreateProjectCmd,
-            outcome: Successful[ProjectReadModel] | Failed,
-        ) -> None:
-            logger.info("Create flow finished")
-
-**Middleware**: wraps the next call with full control:
-
-    :::python
-    from forze.application.execution import Middleware, NextCall
-
-    class TimingMiddleware(Middleware[Any, Any]):
-        async def __call__(self, next: NextCall, args: Any) -> Any:
-            start = time.monotonic()
-            result = await next(args)
-            elapsed = time.monotonic() - start
-            logger.info("Elapsed: %.3fs", elapsed)
-
-            return result
-
-Built-in middleware implementations:
-
-| Class | Purpose |
-|-------|---------|
-| `GuardMiddleware` | Wraps a `Guard`: runs it before `next` |
-| `SuccessHookMiddleware` | Wraps a `SuccessHook`: runs it after `next` succeeds |
-| `TxMiddleware` | Wraps `next` inside `ctx.transaction("default")`, supports after-commit hooks |
+See [Capability execution](../reference/capability-execution.md) for `requires` / `provides` on graph steps.
 
 ## Execution runtime
 
@@ -211,28 +168,27 @@ Integration packages provide factory functions (e.g. `postgres_lifecycle_step()`
 
 ## Document operations
 
-Forze ships built-in usecases for standard document CRUD:
+Forze ships built-in handlers for standard document CRUD:
 
-| Operation | Usecase class | Args | Returns |
+| Operation | Handler class | Args | Returns |
 |-----------|--------------|------|---------|
 | `GET` | `GetDocument` | `DocumentIdDTO` | `R` (read model) |
 | `CREATE` | `CreateDocument` | `C` (create cmd) | `R` |
 | `UPDATE` | `UpdateDocument` | `DocumentUpdateDTO[U]` | `DocumentUpdateRes[R]` |
 | `KILL` | `KillDocument` | `DocumentIdDTO` | `None` |
-| `DELETE` | `DeleteDocument` | `DocumentIdRevDTO` | `R` |
-| `RESTORE` | `RestoreDocument` | `DocumentIdRevDTO` | `R` |
-| `LIST` | `TypedListDocuments` | `tL` (list request) | `Paginated[R]` |
-| `RAW_LIST` | `RawListDocuments` | `rL` (raw list request) | `RawPaginated` |
+| `LIST` | `ListDocuments` | list request DTO | `Paginated[R]` |
+| `RAW_LIST` | `ProjectedListDocuments` | projected list request | projected page |
 
+See [Composition & Mapping](../reference/composition.md) for `build_document_registry`.
 
 ## Facades
 
-A `DocumentUsecasesFacade` ties together an execution context and a registry. It provides typed access to resolved usecases:
+`DocumentFacade` ties together an execution context and a frozen registry. It provides typed access to resolved handlers:
 
     :::python
     from forze.application.composition.document import (
         DocumentDTOs,
-        DocumentUsecasesFacade,
+        DocumentFacade,
         build_document_registry,
     )
 
@@ -242,11 +198,11 @@ A `DocumentUsecasesFacade` ties together an execution context and a registry. It
         update=UpdateProjectCmd,
     )
 
-    registry = build_document_registry(project_spec, project_dtos)
+    registry = build_document_registry(project_spec, project_dtos).freeze()
 
-    facade = DocumentUsecasesFacade(ctx=ctx, registry=registry)
+    facade = DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
     project = await facade.create(CreateProjectCmd(title="New"))
 
-The facade exposes typed attributes: `get`, `create`, `update`, `kill`, `delete`, `restore`. Each resolves a composed `Usecase` from the registry.
+The facade exposes typed attributes: `get`, `create`, `update`, `kill`, and others depending on the spec.
 
-Similarly, `SearchUsecasesFacade` provides `search` and `raw_search` attributes for full-text search operations.
+Similarly, `SearchFacade` provides `search` and related operations for full-text search.

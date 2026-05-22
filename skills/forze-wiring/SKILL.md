@@ -246,22 +246,23 @@ runtime = ExecutionRuntime(deps=DepsPlan.from_modules(mock_module))
 
 async with runtime.scope():
     ctx = runtime.get_context()
-    doc_q = ctx.doc_query(project_spec)
+    doc_q = ctx.document.query(project_spec)
     result = await doc_q.get(some_uuid)
 ```
 
 ## Search composition
 
 ```python
-from forze.application.composition.search import (
-    SearchUsecasesFacade,
-    build_search_registry,
-)
+from forze.application.composition.search import SearchFacade, build_search_registry
 from forze.application.dto.search import SearchRequestDTO
 
-search_registry = build_search_registry(project_search_spec)
+search_registry = build_search_registry(project_search_spec).freeze()
 
-facade = SearchUsecasesFacade(ctx=ctx, registry=search_registry)
+facade = SearchFacade(
+    ctx=ctx,
+    registry=search_registry,
+    namespace=project_search_spec.default_namespace,
+)
 result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 ```
 
@@ -277,6 +278,6 @@ result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 ## Reference
 
 - [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md)
-- [`pages/docs/core-package/composition.md`](../../pages/docs/core-package/composition.md)
+- [`pages/docs/reference/composition.md`](../../pages/docs/reference/composition.md)
 - [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)
 - [`pages/docs/integrations/mock.md`](../../pages/docs/integrations/mock.md)

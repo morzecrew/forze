@@ -78,7 +78,7 @@ logger = Logger("app.projects").bind(component="projects")
 logger.info("project_created", project_id=str(project_id))
 ```
 
-`ExecutionContext.bind_call(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `principal_id`, and `tenant_id` into logging context.
+`ExecutionContext.inv.bind(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `principal_id`, and `tenant_id` into logging context.
 
 ## FastAPI mapping
 

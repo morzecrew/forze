@@ -16,17 +16,17 @@ Use when identity, tenant routing, authorization, secret resolution, or external
 `ExecutionContext` stores call, authn, and tenancy state in context variables. Bind them in HTTP middleware, Socket.IO adapters, queue workers, or Temporal interceptors.
 
 ```python
-from forze.application.execution import CallContext
+from forze.application.execution import InvocationMetadata
 
-with ctx.bind_call(
-    call=CallContext(execution_id=execution_id, correlation_id=correlation_id),
-    identity=authn_identity,
-    tenancy=tenant_identity,
-):
-    await usecase(args)
+metadata = InvocationMetadata(
+    execution_id=execution_id,
+    correlation_id=correlation_id,
+)
+with ctx.inv.bind(metadata=metadata, authn=authn_identity, tenant=tenant_identity):
+    await handler(args)
 ```
 
-Usecases call `ctx.get_authn_identity()` / `ctx.get_tenancy_identity()` and never call `bind_call(...)`.
+Handlers call `ctx.inv.get_authn()` / `ctx.inv.get_tenant()` and never call `inv.bind(...)` themselves.
 
 ## Verify-then-resolve pipeline
 

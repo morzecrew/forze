@@ -22,7 +22,7 @@ This guide walks through building a working CRUD service with Forze from scratch
 Every aggregate starts with four model types: a **domain model**, a **read model**, a **create command**, and an **update command**.
 
     :::python
-    from forze.domain.mixins import SoftDeletionMixin
+    from forze_contrib.soft_deletion import SoftDeletionMixin
     from forze.domain.models import (
         BaseDTO,
         CreateDocumentCmd,
@@ -160,6 +160,7 @@ Build a registry that wires usecase factories for the spec, attach document rout
 
     from forze.application.composition.document import (
         DocumentDTOs,
+        DocumentKernelOp,
         build_document_registry,
     )
     from forze_fastapi.endpoints.document import attach_document_endpoints
@@ -174,8 +175,18 @@ Build a registry that wires usecase factories for the spec, attach document rout
         update=UpdateProjectCmd,
     )
 
-    registry = build_document_registry(project_spec, project_dtos)
-
+    write_ops = [
+        project_spec.default_namespace.key(op)
+        for op in (DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE)
+    ]
+    registry = (
+        build_document_registry(project_spec, project_dtos)
+        .bind(*write_ops)
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=True)
+        .freeze()
+    )
 
     def context_dependency():
         return runtime.get_context()
@@ -271,7 +282,7 @@ Optionally add a history table for audit trails:
         ExecutionRuntime,
         LifecyclePlan,
     )
-    from forze.domain.mixins import SoftDeletionMixin
+    from forze_contrib.soft_deletion import SoftDeletionMixin
     from forze.domain.models import (
         BaseDTO,
         CreateDocumentCmd,
@@ -372,7 +383,13 @@ Optionally add a history table for audit trails:
         update=UpdateProjectCmd,
     )
 
-    registry = build_document_registry(project_spec, project_dtos)
+    registry = (
+        build_document_registry(project_spec, project_dtos)
+        .bind_tx()
+        .set_route("default")
+        .finish(deep=True)
+        .freeze()
+    )
 
     attach_document_endpoints(
         projects_router,
