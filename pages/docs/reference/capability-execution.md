@@ -75,6 +75,11 @@ What stays stable:
 
 `OperationRegistry.freeze()` validates dispatch edges and operation plans before the registry becomes immutable:
 
+- **Dispatch graph** — targets must exist; edges must form a DAG (no cycles).
+- **Orphan patches** — each `patch(selector)` must match at least one registered operation key.
+- **Patch specificity** — two patches with the same selector specificity that match the same operation must merge cleanly (for example, conflicting `set_route` values are rejected).
+- **Transaction route** — resolved plans with transaction stages or `dispatch` / `dispatch_after_commit` in the tx scope require `bind_tx().set_route(...)`.
+
     :::python
     registry = (
         OperationRegistry(handlers={...})
@@ -82,7 +87,7 @@ What stays stable:
         .bind_outer()
         .before(authn_step, authz_step)
         .finish(deep=True)
-        .freeze()  # raises CoreError on cycles, missing dispatch targets, invalid graphs
+        .freeze()  # raises CoreError on invalid graphs, patches, or tx wiring
     )
 
 Fix capability wiring at registry build time rather than at first HTTP request.

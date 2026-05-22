@@ -46,7 +46,6 @@ T = TypeVar("T", bound=BaseModel)
 _DEFAULT_RRF_K: Final[int] = 60
 _DEFAULT_PER_LEG_LIMIT: Final[int] = 5000
 
-
 # ....................... #
 
 
@@ -373,6 +372,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             snapshot=handle_out,
         )
 
+    # ....................... #
+
     async def search(
         self,
         query: str | Sequence[str],
@@ -395,6 +396,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def search_page(
         self,
         query: str | Sequence[str],
@@ -416,6 +419,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search(
         self,
@@ -440,6 +445,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def project_search_page(
         self,
         fields: Sequence[str],
@@ -462,6 +469,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select_search(
         self,
@@ -486,6 +495,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def select_search_page(
         self,
         return_type: type[T],
@@ -508,6 +519,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     def _raise_federated_cursor_not_supported(self) -> NoReturn:
         raise CoreError(

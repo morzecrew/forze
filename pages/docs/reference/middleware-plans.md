@@ -62,7 +62,7 @@ Register handler factories on `OperationRegistry` with `set_handler` or the `han
 | `bind_tx()` | Author transaction scope (`tx_before`, `after_commit`, `set_route`, …) |
 | `finish(deep=False)` | Commit scope changes to the parent binder |
 | `finish(deep=True)` | Commit all the way back to the registry |
-| `freeze()` | Validate dispatch graph and return `FrozenOperationRegistry` |
+| `freeze()` | Validate patches, resolved plans, dispatch graph; return `FrozenOperationRegistry` |
 
 Built-in composition helpers (`build_document_registry`, `build_search_registry`, …) return an `OperationRegistry` with handlers pre-registered. Bind transaction routes and outer stages, then call `.freeze()` before `attach_*_endpoints`.
 
@@ -123,7 +123,7 @@ Resolve a composed handler through a frozen registry:
     handler = resolver("projects.create", ctx)
     result = await handler(create_dto)
 
-`FrozenOperationRegistry.resolve(operation, ctx)` is the same entry point. Dispatch edges and capability schedules are validated at `freeze()`.
+`FrozenOperationRegistry.resolve(operation, ctx)` is the same entry point. At `freeze()`, the registry checks orphan patches, equal-specificity patch conflicts, transaction route requirements for tx-scoped dispatch, dispatch target existence, and acyclic dispatch graphs.
 
 ## Internal types
 

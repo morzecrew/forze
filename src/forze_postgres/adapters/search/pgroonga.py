@@ -52,11 +52,21 @@ from forze_postgres.pagination import (
 )
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
+from ._leg_pgroonga import build_pgroonga_leg
 from ._materialize_hits import materialize_search_page
-from ._pgroonga_sql import (
-    pgroonga_match_clause,
-    pgroonga_phrase_match_text,
-    pgroonga_score_rank_expr,
+from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
+from ._pipeline_sql import (
+    PipelineAliases,
+    build_filtered_cte,
+    build_outer_from,
+    build_pipeline_with_clause,
+    build_rank_first_order,
+    build_scored_cte,
+    filtered_select_list,
+    outer_join_on_scored,
+    scored_join_on_filtered,
+    scored_key_columns,
+    validate_join_pairs,
 )
 
 # ----------------------- #
@@ -67,11 +77,9 @@ T = TypeVar("T", bound=BaseModel)
 
 _DEFAULT_JOIN: Final[tuple[tuple[str, str], ...]] = ((ID_FIELD, ID_FIELD),)
 
-_FILTERED_CTE_ALIAS: Final[str] = "f"
-_INDEX_ALIAS: Final[str] = "t"
 _PROJECTION_ALIAS: Final[str] = "v"
-_SCORED_CTE_ALIAS: Final[str] = "s"
 _RANK_COLUMN: Final[str] = "_pgroonga_rank"
+_PIPELINE: Final[PipelineAliases] = PipelineAliases(rank_column=_RANK_COLUMN)
 
 # ....................... #
 
@@ -142,10 +150,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
-        proj_keys = {pc for pc, _ in self._safe_join_pairs}
-
-        if len(proj_keys) != len(self._safe_join_pairs):
-            raise CoreError("join_pairs must use unique projection column names.")
+        validate_join_pairs(self._safe_join_pairs)
 
     # ....................... #
 
@@ -154,88 +159,6 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
         return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
-
-    # ....................... #
-
-    async def _pgroonga_match_combined_query(
-        self,
-        mq: str,
-        *,
-        options: SearchOptions | None = None,
-    ) -> tuple[sql.Composable, list[Any]]:
-        if not mq:
-            return sql.SQL("TRUE"), []
-
-        return await pgroonga_match_clause(
-            search=self.spec,
-            index_field_map=self.index_field_map,
-            index_qname=self.index_qname,
-            introspector=self.introspector,
-            index_alias=_INDEX_ALIAS,
-            query=mq,
-            options=options,
-        )
-
-    # ....................... #
-
-    def _filtered_select_list(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_PROJECTION_ALIAS, pc),
-                sql.Identifier(pc),
-            )
-            for pc, _ in self._safe_join_pairs
-        ]
-
-        return sql.SQL(", ").join(parts)
-
-    # ....................... #
-
-    def _scored_join_on_filtered(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} = {}").format(
-                sql.Identifier(_INDEX_ALIAS, ic),
-                sql.Identifier(_FILTERED_CTE_ALIAS, pc),
-            )
-            for pc, ic in self._safe_join_pairs
-        ]
-
-        return sql.SQL(" AND ").join(parts)
-
-    # ....................... #
-
-    def _outer_join_on_scored(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} = {}").format(
-                sql.Identifier(_PROJECTION_ALIAS, pc),
-                sql.Identifier(_SCORED_CTE_ALIAS, pc),
-            )
-            for pc, _ in self._safe_join_pairs
-        ]
-
-        return sql.SQL(" AND ").join(parts)
-
-    # ....................... #
-
-    def _scored_select_keys_and_rank(
-        self,
-        *,
-        query: str,
-    ) -> tuple[sql.Composable, sql.Composable]:
-        key_cols = sql.SQL(", ").join(
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_INDEX_ALIAS, ic),
-                sql.Identifier(pc),
-            )
-            for pc, ic in self._safe_join_pairs
-        )
-        rank = pgroonga_score_rank_expr(
-            index_alias=_INDEX_ALIAS,
-            rank_column=_RANK_COLUMN,
-            query=query,
-            score_version=self.pgroonga_score_version,
-        )
-        return key_cols, rank
 
     # ....................... #
 
@@ -343,38 +266,35 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-
-        rs_spec = self.spec.snapshot
-        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
-            query,
-            filters,
-            sorts,
-            spec_name=self.spec.name,
-            variant="pgroonga",
-            extras={"phrase_combine": str(effective_phrase_combine(options))},
-        )
-
-        if self.snapshot_coord is not None and rs_spec is not None:
-            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
-                rs_spec=rs_spec,
-                snap_opt=snapshot,
-                fp_computed=fp_fingerprint,
-                spec=self.spec,
-                pagination=dict(pagination or {}),
-                return_type=return_type,
-                return_fields=return_fields,
-                return_count=return_count,
-            )
-
-            if maybe_snap is not None:
-                return maybe_snap
-
         fw, fp = await self.where_clause(filters)
         terms = normalize_search_queries(query)
-        combine = effective_phrase_combine(options)
-        mq = pgroonga_phrase_match_text(terms, combine=combine)
 
         if not terms:
+            rs_spec = self.spec.snapshot
+            fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
+                query,
+                filters,
+                sorts,
+                spec_name=self.spec.name,
+                variant="pgroonga",
+                extras={"phrase_combine": str(effective_phrase_combine(options))},
+            )
+
+            if self.snapshot_coord is not None and rs_spec is not None:
+                maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
+                    rs_spec=rs_spec,
+                    snap_opt=snapshot,
+                    fp_computed=fp_fingerprint,
+                    spec=self.spec,
+                    pagination=dict(pagination or {}),
+                    return_type=return_type,
+                    return_fields=return_fields,
+                    return_count=return_count,
+                )
+
+                if maybe_snap is not None:
+                    return maybe_snap
+
             extra_ob = await self._projection_order_by_clause(sorts)
             order_parts: list[sql.Composable] = (  # type: ignore[assignment]
                 [extra_ob]
@@ -395,6 +315,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 pa=sql.Identifier(_PROJECTION_ALIAS),
                 fw=fw,
             )
+
             params_base = list(fp)
             total = 0
 
@@ -500,185 +421,86 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 snapshot=handle_no,
             )
 
-        sw, sp = await self._pgroonga_match_combined_query(mq, options=options)
+        join = self._safe_join_pairs
+        term_tuple = tuple(terms)
 
-        key_sel = self._filtered_select_list()
-        scored_keys, scored_rank = self._scored_select_keys_and_rank(query=mq)
+        sw, scored_rank, leg_params = await build_pgroonga_leg(
+            introspector=self.introspector,
+            index_qname=self.index_qname,
+            search=self.spec,
+            index_field_map=self.index_field_map,
+            index_alias=_PIPELINE.index,
+            queries=term_tuple,
+            options=options,
+            score_column=_RANK_COLUMN,
+            pgroonga_score_version=self.pgroonga_score_version,
+        )
+        scored_keys = scored_key_columns(join, index_alias=_PIPELINE.index)
+        params_body = [*fp, *leg_params]
 
-        filtered_cte = sql.SQL(
-            """
-            {filtered} AS (
-                SELECT {key_sel}
-                FROM {proj} {pa}
-                WHERE {fw}
-            )"""
-        ).format(
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
+        key_sel = filtered_select_list(join, projection_alias=_PIPELINE.projection)
+        filtered_cte = build_filtered_cte(
+            aliases=_PIPELINE,
             key_sel=key_sel,
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
+            proj_ident=self.source_qname.ident(),
             fw=fw,
         )
-
-        join_sf = self._scored_join_on_filtered()
-        scored_cte = sql.SQL(
-            """
-            ,
-            {scored} AS (
-                SELECT {scored_keys}, {scored_rank}
-                FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
-            )"""
-        ).format(
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_sf = scored_join_on_filtered(
+            join,
+            index_alias=_PIPELINE.index,
+            filtered_alias=_PIPELINE.filtered,
+        )
+        scored_cte = build_scored_cte(
+            aliases=_PIPELINE,
             scored_keys=scored_keys,
             scored_rank=scored_rank,
-            heap=self.index_heap_qname.ident(),
-            ia=sql.Identifier(_INDEX_ALIAS),
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            fa=sql.Identifier(_FILTERED_CTE_ALIAS),
+            heap_ident=self.index_heap_qname.ident(),
             join_sf=join_sf,
             sw=sw,
         )
-
-        join_vs = self._outer_join_on_scored()
-        from_outer = sql.SQL(
-            """
-            FROM {proj} {pa}
-            INNER JOIN {scored} {sa} ON ({join_vs})
-            """
-        ).format(
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            sa=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_vs = outer_join_on_scored(
+            join,
+            projection_alias=_PIPELINE.projection,
+            scored_alias=_PIPELINE.scored,
+        )
+        from_outer = build_outer_from(
+            aliases=_PIPELINE,
+            proj_ident=self.source_qname.ident(),
             join_vs=join_vs,
         )
-
-        order_parts: list[sql.Composable] = [  # type: ignore[no-redef]
-            sql.SQL("{} DESC NULLS LAST").format(
-                sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
-            )
-        ]
         extra_ob = await self._projection_order_by_clause(sorts)
-
-        if extra_ob is not None:
-            order_parts.append(extra_ob)
-
-        order_sql = sql.SQL(", ").join(order_parts)
-        with_clause = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
-
-        count_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT COUNT(*) {from_outer}
-            """
-        ).format(with_clause=with_clause, from_outer=from_outer)
-
-        params_count = [*fp, *sp]
-        total = 0
-
-        if return_count:
-            total = int(
-                await self.client.fetch_value(count_stmt, params_count, default=0),
-            )
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
-                )
-
-        cols = self.return_clause(
-            return_type,
-            return_fields,
-            table_alias=_PROJECTION_ALIAS,
+        ranked_order_sql = build_rank_first_order(
+            aliases=_PIPELINE,
+            extra_order=extra_ob,
         )
+        with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
 
-        data_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT {cols} {from_outer}
-            ORDER BY {order}
-            """
-        ).format(
+        plan = RankedOffsetPlan(
             with_clause=with_clause,
-            cols=cols,
             from_outer=from_outer,
-            order=order_sql,
+            order_sql=ranked_order_sql,
+            params=params_body,
+            select_table_alias=_PROJECTION_ALIAS,
         )
 
-        params = [*fp, *sp]
-        pagination = pagination or {}
-        want_s = (
-            self.snapshot_coord is not None
-            and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
-        )
-        max_n1 = (
-            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-            if want_s and self.snapshot_coord is not None
-            else 0
-        )
-        sql_limit, sql_offset, page_limit = (
-            SearchResultSnapshotCoordinator.snapshot_pagination(
-                want_s, max_n1, dict(pagination)
-            )
-        )
-        if sql_limit is not None:
-            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(sql_limit))
-
-        if want_s:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(sql_offset))
-
-        elif pagination.get("offset") is not None:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(pagination.get("offset") or 0))
-
-        rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-        handle_sc = None
-        pool_pg1: list[M] | None = None
-        u0 = int(pagination.get("offset") or 0)
-
-        if want_s and self.snapshot_coord is not None and rs_spec is not None:
-            pool_len2 = len(rows)
-            pool_pg1 = pydantic_validate_many(self.model_type, rows)
-            handle_sc = await self.snapshot_coord.put_simple_ordered_hits(
-                pool_pg1,
-                snap_opt=snapshot,
-                rs_spec=rs_spec,
-                fp_computed=fp_fingerprint,
-                pool_len_before_cap=pool_len2,
-            )
-            rows = rows[u0 : u0 + page_limit]
-
-        page = materialize_search_page(
-            page_rows=rows,
-            pool=pool_pg1,
-            u=u0,
-            page_limit=page_limit,
+        return await execute_simple_ranked_offset_search(
+            self,
+            plan=plan,
+            query=query,
+            filters=filters,
+            sorts=sorts,
+            spec=self.spec,
+            variant="pgroonga",
+            fingerprint_extras={
+                "phrase_combine": str(effective_phrase_combine(options)),
+            },
+            pagination=pagination,
+            snapshot=snapshot,
+            return_count=return_count,
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
-        )
-
-        if return_count:
-            return page_from_limit_offset(
-                page,
-                pagination,
-                total=total,
-                snapshot=handle_sc,
-            )
-
-        return page_from_limit_offset(
-            page,
-            pagination,
-            total=None,
-            snapshot=handle_sc,
+            snapshot_coord=self.snapshot_coord,
         )
 
     # ....................... #
@@ -705,6 +527,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def search_page(
         self,
         query: str | Sequence[str],
@@ -726,6 +550,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search(
         self,
@@ -750,6 +576,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def project_search_page(
         self,
         fields: Sequence[str],
@@ -773,6 +601,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_search(
         self,
         return_type: type[T],
@@ -795,6 +625,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_search_page(
         self,
@@ -1050,69 +882,61 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         directions_r = [d for _, d in key_spec_r]
 
         fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
-        combine = effective_phrase_combine(options)
-        mq = pgroonga_phrase_match_text(terms, combine=combine)
-        sw_r, sp_r = await self._pgroonga_match_combined_query(mq, options=options)
+        join_r = self._safe_join_pairs
+        term_tuple = tuple(terms)
 
-        filtered_cte = sql.SQL(
-            """
-            {filtered} AS (
-                SELECT {key_sel}
-                FROM {proj} {pa}
-                WHERE {fw}
-            )"""
-        ).format(
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            key_sel=self._filtered_select_list(),
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
+        sw_r, scored_rank_r, leg_params_r = await build_pgroonga_leg(
+            introspector=self.introspector,
+            index_qname=self.index_qname,
+            search=self.spec,
+            index_field_map=self.index_field_map,
+            index_alias=_PIPELINE.index,
+            queries=term_tuple,
+            options=options,
+            score_column=_RANK_COLUMN,
+            pgroonga_score_version=self.pgroonga_score_version,
+        )
+        scored_keys_r = scored_key_columns(join_r, index_alias=_PIPELINE.index)
+        params_base_r = [*fp_r, *leg_params_r]
+
+        key_sel_r = filtered_select_list(join_r, projection_alias=_PIPELINE.projection)
+        filtered_cte_r = build_filtered_cte(
+            aliases=_PIPELINE,
+            key_sel=key_sel_r,
+            proj_ident=self.source_qname.ident(),
             fw=fw_r,
         )
-
-        scored_keys_r, scored_rank_r = self._scored_select_keys_and_rank(query=mq)
-        join_sf_r = self._scored_join_on_filtered()
-        scored_cte = sql.SQL(
-            """
-            ,
-            {scored} AS (
-                SELECT {scored_keys}, {scored_rank}
-                FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
-            )"""
-        ).format(
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_sf_r = scored_join_on_filtered(
+            join_r,
+            index_alias=_PIPELINE.index,
+            filtered_alias=_PIPELINE.filtered,
+        )
+        scored_cte_r = build_scored_cte(
+            aliases=_PIPELINE,
             scored_keys=scored_keys_r,
             scored_rank=scored_rank_r,
-            heap=self.index_heap_qname.ident(),
-            ia=sql.Identifier(_INDEX_ALIAS),
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            fa=sql.Identifier(_FILTERED_CTE_ALIAS),
+            heap_ident=self.index_heap_qname.ident(),
             join_sf=join_sf_r,
             sw=sw_r,
         )
-
-        join_vs_r = self._outer_join_on_scored()
-        from_outer_r = sql.SQL(
-            """
-            FROM {proj} {pa}
-            INNER JOIN {scored} {sa} ON ({join_vs})
-            """
-        ).format(
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            sa=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_vs_r = outer_join_on_scored(
+            join_r,
+            projection_alias=_PIPELINE.projection,
+            scored_alias=_PIPELINE.scored,
+        )
+        from_outer_r = build_outer_from(
+            aliases=_PIPELINE,
+            proj_ident=self.source_qname.ident(),
             join_vs=join_vs_r,
         )
 
-        with_clause_r = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
+        with_clause_r = build_pipeline_with_clause(filtered_cte_r, scored_cte_r)
 
         types_r = await self.column_types()
         exprs_r: list[sql.Composable] = []
         for k in sort_keys_r:
             if k == _RANK_COLUMN:
-                exprs_r.append(sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN))
+                exprs_r.append(sql.Identifier(_PIPELINE.scored, _RANK_COLUMN))
             else:
                 exprs_r.append(
                     sort_key_expr(
@@ -1125,7 +949,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
         where_fin_r: sql.Composable = sql.SQL("TRUE")
-        params_r: list[Any] = [*fp_r, *sp_r]
+        params_r: list[Any] = list(params_base_r)
 
         if use_after or use_before:
             token_r = str(c["after" if use_after else "before"])
@@ -1176,7 +1000,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         cols_r = sql.SQL("{}, {}").format(
             base_cols_r,
             sql.SQL("{} AS {}").format(
-                sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
+                sql.Identifier(_PIPELINE.scored, _RANK_COLUMN),
                 sql.Identifier(_RANK_COLUMN),
             ),
         )
@@ -1262,6 +1086,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             has_more=has_more_r,
         )
 
+    # ....................... #
+
     async def search_cursor(
         self,
         query: str | Sequence[str],
@@ -1280,6 +1106,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search_cursor(
         self,
@@ -1300,6 +1128,8 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select_search_cursor(
         self,

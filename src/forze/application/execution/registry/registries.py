@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Mapping, Self
 
 import attrs
@@ -302,6 +303,83 @@ class OperationRegistry:
 
     # ....................... #
 
+    def _validate_patches(self) -> None:
+        """Validate plan patches before freeze."""
+
+        self._validate_orphan_patches()
+        self._validate_patch_specificity_conflicts()
+
+    # ....................... #
+
+    def _validate_orphan_patches(self) -> None:
+        """Reject patches whose selector matches no registered operation."""
+
+        if not self._patches:
+            return
+
+        for patch in self._patches:
+            if not any(
+                str_key_selector.matches(patch.selector, op) for op in self._handlers
+            ):
+                raise CoreError(
+                    "Orphan plan patch: selector "
+                    f"{patch.selector!r} matches no registered operations"
+                )
+
+    # ....................... #
+
+    def _validate_patch_specificity_conflicts(self) -> None:
+        """Reject equal-specificity patches that cannot merge for the same operation."""
+
+        if len(self._patches) < 2 or not self._handlers:
+            return
+
+        for op in self._handlers:
+            by_specificity: dict[int, list[int]] = defaultdict(list)
+
+            for index in self._patch_indices_by_specificity():
+                patch = self._patches[index]
+
+                if not str_key_selector.matches(patch.selector, str(op)):
+                    continue
+
+                spec = str_key_selector.specificity(patch.selector)
+                by_specificity[spec].append(index)
+
+            for spec, indices in by_specificity.items():
+                if len(indices) < 2:
+                    continue
+
+                merged = OperationPlan()
+
+                try:
+                    for index in indices:
+                        merged = merged.merge(self._patches[index].plan)
+
+                except CoreError as exc:
+                    selectors = tuple(self._patches[i].selector for i in indices)
+                    raise CoreError(
+                        "Conflicting plan patches for operation "
+                        f"{op!r} at equal specificity {spec}: "
+                        f"selectors {selectors!r}: {exc}"
+                    ) from exc
+
+    # ....................... #
+
+    def _validate_resolved_plans(self) -> None:
+        """Reject resolved plans with transaction stages but no route."""
+
+        for op in self._handlers:
+            plan = self._resolve_plan(str(op))
+
+            if plan.tx_requires_route() and plan.tx_route() is None:
+                raise CoreError(
+                    f"Operation {op!r} has transaction stages or dispatch "
+                    "but no transaction route"
+                )
+
+    # ....................... #
+
     def _validate_dispatch_graph(self) -> None:
         """Validate the dispatch graph of the operation registry.
 
@@ -328,6 +406,8 @@ class OperationRegistry:
     def freeze(self) -> FrozenOperationRegistry:
         """Freeze the operation registry."""
 
+        self._validate_patches()
+        self._validate_resolved_plans()
         self._validate_dispatch_graph()
 
         frozen_handlers = dict(self._handlers)

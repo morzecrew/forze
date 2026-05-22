@@ -28,7 +28,6 @@ from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
-    page_from_limit_offset,
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.querying import (
@@ -48,7 +47,6 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
     cursor_return_fields_for_select,
-    effective_phrase_combine,
     normalize_search_queries,
     prepare_hub_search_options,
 )
@@ -63,30 +61,12 @@ from ...kernel.hub_fk_columns import normalize_hub_fk_columns
 from ...kernel.introspect import PostgresIntrospector
 from ...kernel.query.nested import sort_key_expr
 from ...pagination import build_seek_condition
-from ._fts_sql import (
-    FtsGroupLetter,
-    fts_effective_group_weights,
-    fts_match_predicate,
-    fts_rank_cd_expr,
-    fts_rank_cd_weight_array,
-    fts_resolve_tsvector_expr,
-    fts_tsquery_expr,
-    fts_tsquery_expr_conjunction,
-    fts_tsquery_expr_disjunction,
-)
-from ._materialize_hits import materialize_search_page
-from ._pgroonga_sql import (
-    pgroonga_match_clause,
-    pgroonga_phrase_match_text,
-    pgroonga_score_rank_expr,
-)
-from ._vector_sql import (
-    VectorDistanceKind,
-    assert_embedding_shape,
-    vector_knn_multi_score_expr,
-    vector_knn_score_expr,
-    vector_param_literal,
-)
+from ._fts_sql import FtsGroupLetter
+from ._leg_fts import build_fts_leg
+from ._leg_pgroonga import build_pgroonga_leg
+from ._leg_vector import build_vector_leg
+from ._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
+from ._vector_sql import VectorDistanceKind
 
 # ----------------------- #
 
@@ -368,34 +348,17 @@ class PgroongaHubLegEngine(HubSearchLegEngine):
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        if not queries:
-            return (
-                sql.SQL("TRUE"),
-                sql.SQL("(0)::double precision AS {}").format(
-                    sql.Identifier(score_column),
-                ),
-                [],
-            )
-        mq = pgroonga_phrase_match_text(
-            queries,
-            combine=effective_phrase_combine(options),
-        )
-        sw, sp = await pgroonga_match_clause(
+        return await build_pgroonga_leg(
+            introspector=introspector,
+            index_qname=leg.index_qname,
             search=leg.search,
             index_field_map=leg.index_field_map,
-            index_qname=leg.index_qname,
-            introspector=introspector,
             index_alias=index_alias,
-            query=mq,
+            queries=queries,
             options=options,
+            score_column=score_column,
+            pgroonga_score_version=leg.pgroonga_score_version or "v2",
         )
-        rank = pgroonga_score_rank_expr(
-            index_alias=index_alias,
-            rank_column=score_column,
-            query=mq,
-            score_version=leg.pgroonga_score_version or "v2",
-        )
-        return sw, rank, sp
 
 
 # ....................... #
@@ -416,47 +379,21 @@ class FtsHubLegEngine(HubSearchLegEngine):
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        _ = index_alias
         groups = leg.fts_groups
 
         if groups is None:
             raise CoreError("FTS hub leg requires fts_groups.")
 
-        if not queries:
-            return (
-                sql.SQL("TRUE"),
-                sql.SQL("(0)::double precision AS {}").format(
-                    sql.Identifier(score_column),
-                ),
-                [],
-            )
-
-        tsv = await fts_resolve_tsvector_expr(introspector, leg.index_qname)
-
-        if len(queries) == 1:
-            tsw_where, tsp_w = fts_tsquery_expr(queries[0], options=options)
-            tsw_rank, tsp_r = fts_tsquery_expr(queries[0], options=options)
-
-        else:
-            fn = (
-                fts_tsquery_expr_disjunction
-                if effective_phrase_combine(options) == "any"
-                else fts_tsquery_expr_conjunction
-            )
-            tsw_where, tsp_w = fn(queries, options=options)
-            tsw_rank, tsp_r = fn(queries, options=options)
-
-        sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)
-        gw = fts_effective_group_weights(leg.search, groups, options)
-        fts_weights = fts_rank_cd_weight_array(gw)
-        rank_inner = fts_rank_cd_expr(tsv=tsv, tsw=tsw_rank)
-        rank_expr = sql.SQL("{} AS {}").format(
-            rank_inner,
-            sql.Identifier(score_column),
+        return await build_fts_leg(
+            introspector=introspector,
+            index_qname=leg.index_qname,
+            search=leg.search,
+            fts_groups=groups,
+            index_alias=index_alias,
+            queries=queries,
+            options=options,
+            score_column=score_column,
         )
-        sp = [fts_weights, *tsp_r, *tsp_w]
-
-        return sw, rank_expr, sp
 
 
 # ....................... #
@@ -482,57 +419,25 @@ class VectorHubLegEngine(HubSearchLegEngine):
         options: SearchOptions | None,
         score_column: str,
     ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        _ = introspector
-        combine = effective_phrase_combine(options)
-
         if leg.engine != "vector" or leg.vector_column is None:
             raise CoreError("VectorHubLegEngine requires a vector hub leg.")
-
-        if not queries:
-            return (
-                sql.SQL("TRUE"),
-                sql.SQL("(0)::double precision AS {}").format(
-                    sql.Identifier(score_column),
-                ),
-                [],
-            )
 
         edim = leg.embedding_dimensions
 
         if edim is None:
             raise CoreError("embedding_dimensions is required for vector engine.")
 
-        sw = sql.SQL("TRUE")
-
-        if len(queries) == 1:
-            one = await self.embedder.embed_one(queries[0], input_kind="query")
-            assert_embedding_shape(one, expect_dim=edim)
-
-            rank = vector_knn_score_expr(
-                index_alias=index_alias,
-                column=leg.vector_column,
-                kind=leg.vector_distance,
-                score_name=score_column,
-            )
-            sp = [vector_param_literal(one)]
-
-        else:
-            vecs = await self.embedder.embed(queries, input_kind="query")
-
-            for vec in vecs:
-                assert_embedding_shape(vec, expect_dim=edim)
-
-            rank = vector_knn_multi_score_expr(
-                index_alias=index_alias,
-                column=leg.vector_column,
-                kind=leg.vector_distance,
-                score_name=score_column,
-                n_queries=len(vecs),
-                phrase_combine=combine,
-            )
-            sp = [vector_param_literal(v) for v in vecs]
-
-        return sw, rank, sp
+        return await build_vector_leg(
+            embedder=self.embedder,
+            introspector=introspector,
+            index_alias=index_alias,
+            vector_column=leg.vector_column,
+            vector_distance=leg.vector_distance,
+            embedding_dimensions=edim,
+            queries=queries,
+            options=options,
+            score_column=score_column,
+        )
 
 
 # ....................... #
@@ -605,8 +510,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
         base = sql.SQL(", ").join(
             sql.Identifier(_HUB_ROW_ALIAS, f) for f in sorted(self.read_fields)
         )
+
         if not include_groonga_sys:
             return base
+
         ha = sql.Identifier(_HUB_ROW_ALIAS)
         ext = sql.SQL("{}, {}").format(
             sql.SQL("{}.tableoid AS {}").format(
@@ -614,6 +521,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             ),
             sql.SQL("{}.ctid AS {}").format(ha, sql.Identifier(_HUB_GROONGA_CTID)),
         )
+
         return sql.SQL("{}, {}").format(base, ext)
 
     # ....................... #
@@ -637,20 +545,26 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     sql.Identifier(_COMBO_ALIAS, _RANK),
                 )
             ]
+
             ob = await self._hub_order_by(sorts)
+
             if ob is not None:
                 order_parts.append(ob)
+
             return sql.SQL(", ").join(order_parts)
 
         ob = await self._hub_order_by(sorts)
+
         if ob is not None:
             order_parts = [ob]
+
         elif ID_FIELD in self.read_fields:
             order_parts = [
                 sql.SQL("{} ASC").format(
                     sql.Identifier(_COMBO_ALIAS, ID_FIELD),
                 ),
             ]
+
         else:
             first = sorted(self.read_fields)[0]
             order_parts = [
@@ -658,6 +572,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
                     sql.Identifier(_COMBO_ALIAS, first),
                 ),
             ]
+
         return sql.SQL(", ").join(order_parts)
 
     # ....................... #
@@ -953,16 +868,21 @@ class PostgresHubSearchAdapter[M: BaseModel](
         flip: bool,
     ) -> sql.Composable:
         parts: list[sql.Composable] = []
+
         for ex, d_raw, sk in zip(exprs, directions, sort_keys, strict=True):
             d = ("desc" if d_raw == "asc" else "asc") if flip else d_raw
+
             if sk == _RANK:
                 if d == "desc":
                     parts.append(sql.SQL("{} DESC NULLS LAST").format(ex))
+
                 else:
                     parts.append(sql.SQL("{} ASC NULLS FIRST").format(ex))
+
             else:
                 suf = "ASC" if d == "asc" else "DESC"
                 parts.append(sql.SQL("{} {}").format(ex, sql.SQL(suf)))
+
         return sql.SQL(", ").join(parts)
 
     # ....................... #
@@ -1077,34 +997,10 @@ class PostgresHubSearchAdapter[M: BaseModel](
             options,
         )
 
-        rs_spec = self.hub_spec.snapshot
         members_weighted: list[tuple[str, float]] = [
             (self.hub_spec.members[i].name, float(member_weights_list[i]))
             for i in range(len(self.hub_spec.members))
         ]
-        fp_fingerprint = SearchResultSnapshotCoordinator.hub_search_fingerprint(
-            query,
-            filters,
-            sorts,
-            spec_name=self.hub_spec.name,
-            members_weighted=members_weighted,
-            score_merge=str(self.score_merge),
-            combine=str(self.combine),
-        )
-        if self.snapshot_coord is not None and rs_spec is not None:
-            read_page = await self.snapshot_coord.read_hub_result_snapshot(
-                rs_spec=rs_spec,
-                snap_opt=snapshot,
-                fp_computed=fp_fingerprint,
-                model_type=self.model_type,
-                pagination=dict(pagination or {}),
-                return_type=return_type,
-                return_fields=return_fields,
-                return_count=return_count,
-            )
-
-            if read_page is not None:
-                return read_page
 
         with_clause, params, do_legs = await self._hub_build_with_clause(
             query_terms=terms,
@@ -1115,118 +1011,32 @@ class PostgresHubSearchAdapter[M: BaseModel](
 
         order_sql = await self._hub_order_sql_for_search(do_legs, sorts)
 
-        count_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT COUNT(*) FROM {combo} {ca}
-            """
-        ).format(
+        plan = RankedOffsetPlan(
             with_clause=with_clause,
-            combo=sql.Identifier("combo"),
-            ca=sql.Identifier(_COMBO_ALIAS),
+            from_outer=sql.SQL(""),
+            order_sql=order_sql,
+            params=params,
+            select_table_alias=_COMBO_ALIAS,
         )
 
-        total = 0
-        if return_count:
-            total = int(await self.client.fetch_value(count_stmt, params, default=0))
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
-                )
-
-        cols = self.return_clause(
-            return_type,
-            return_fields,
-            table_alias=_COMBO_ALIAS,
-        )
-
-        data_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT {cols} FROM {combo} {ca}
-            ORDER BY {order}
-            """
-        ).format(
-            with_clause=with_clause,
-            cols=cols,
-            combo=sql.Identifier("combo"),
-            ca=sql.Identifier(_COMBO_ALIAS),
-            order=order_sql,
-        )
-
-        pagination = pagination or {}
-
-        want_sn = (
-            self.snapshot_coord is not None
-            and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
-        )
-        max_nh = (
-            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-            if want_sn and self.snapshot_coord is not None
-            else 0
-        )
-        sql_limit, sql_offset, page_limit = (
-            SearchResultSnapshotCoordinator.snapshot_pagination(
-                want_sn, max_nh, dict(pagination)
-            )
-        )
-
-        if sql_limit is not None:
-            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(sql_limit))
-
-        if want_sn:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(sql_offset))
-
-        elif pagination.get("offset") is not None:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(pagination.get("offset") or 0))
-
-        rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-        handle_h = None
-        pool_h: list[M] | None = None
-        u_h = int(pagination.get("offset") or 0)
-
-        if want_sn and self.snapshot_coord is not None and rs_spec is not None:
-            plh = len(rows)
-            pool_h = pydantic_validate_many(self.model_type, rows)
-            handle_h = await self.snapshot_coord.put_simple_ordered_hits(
-                pool_h,
-                snap_opt=snapshot,
-                rs_spec=rs_spec,
-                fp_computed=fp_fingerprint,
-                pool_len_before_cap=plh,
-            )
-            rows = rows[u_h : u_h + page_limit]
-
-        page = materialize_search_page(
-            page_rows=rows,
-            pool=pool_h,
-            u=u_h,
-            page_limit=page_limit,
+        return await execute_hub_ranked_offset_search(
+            self,
+            plan=plan,
+            query=query,
+            filters=filters,
+            sorts=sorts,
+            hub_spec=self.hub_spec,
+            members_weighted=members_weighted,
+            score_merge=str(self.score_merge),
+            combine=str(self.combine),
+            pagination=pagination,
+            snapshot=snapshot,
+            return_count=return_count,
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
-        )
-
-        if return_count:
-            return page_from_limit_offset(
-                page,
-                pagination,
-                total=total,
-                snapshot=handle_h,
-            )
-
-        return page_from_limit_offset(
-            page,
-            pagination,
-            total=None,
-            snapshot=handle_h,
+            snapshot_coord=self.snapshot_coord,
+            combo_alias=_COMBO_ALIAS,
         )
 
     # ....................... #
@@ -1253,6 +1063,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def search_page(
         self,
         query: str | Sequence[str],
@@ -1274,6 +1086,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search(
         self,
@@ -1298,6 +1112,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def project_search_page(
         self,
         fields: Sequence[str],
@@ -1321,6 +1137,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_search(
         self,
         return_type: type[T],
@@ -1343,6 +1161,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_search_page(
         self,
@@ -1633,6 +1453,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             has_more=has_more,
         )
 
+    # ....................... #
+
     async def search_cursor(
         self,
         query: str | Sequence[str],
@@ -1651,6 +1473,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search_cursor(
         self,
@@ -1672,6 +1496,8 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_search_cursor(
         self,
         return_type: type[T],
@@ -1691,7 +1517,3 @@ class PostgresHubSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
-
-
-# Backward-compatible alias (PGroonga-only name before engine pluggability).
-PostgresHubPGroongaSearchAdapter = PostgresHubSearchAdapter

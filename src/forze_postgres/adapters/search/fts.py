@@ -16,7 +16,6 @@ from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
     Page,
-    page_from_limit_offset,
 )
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
@@ -52,18 +51,22 @@ from forze_postgres.pagination import (
 )
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
-from ._fts_sql import (
-    FtsGroupLetter,
-    fts_effective_group_weights,
-    fts_match_predicate,
-    fts_rank_cd_expr,
-    fts_rank_cd_weight_array,
-    fts_resolve_tsvector_expr,
-    fts_tsquery_expr,
-    fts_tsquery_expr_conjunction,
-    fts_tsquery_expr_disjunction,
+from ._fts_sql import FtsGroupLetter
+from ._leg_fts import build_fts_leg
+from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
+from ._pipeline_sql import (
+    PipelineAliases,
+    build_filtered_cte,
+    build_outer_from,
+    build_pipeline_with_clause,
+    build_rank_first_order,
+    build_scored_cte,
+    filtered_select_list,
+    outer_join_on_scored,
+    scored_join_on_filtered,
+    scored_key_columns,
+    validate_join_pairs,
 )
-from ._materialize_hits import materialize_search_page
 
 # ----------------------- #
 
@@ -73,11 +76,9 @@ T = TypeVar("T", bound=BaseModel)
 
 _DEFAULT_JOIN: Final[tuple[tuple[str, str], ...]] = ((ID_FIELD, ID_FIELD),)
 
-_FILTERED_CTE_ALIAS: Final[str] = "f"
-_INDEX_ALIAS: Final[str] = "t"
 _PROJECTION_ALIAS: Final[str] = "v"
-_SCORED_CTE_ALIAS: Final[str] = "s"
 _RANK_COLUMN: Final[str] = "_fts_rank"
+_PIPELINE: Final[PipelineAliases] = PipelineAliases(rank_column=_RANK_COLUMN)
 
 # ....................... #
 
@@ -144,10 +145,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](
 
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
-        proj_keys = {pc for pc, _ in self._safe_join_pairs}
-
-        if len(proj_keys) != len(self._safe_join_pairs):
-            raise CoreError("join_pairs must use unique projection column names.")
+        validate_join_pairs(self._safe_join_pairs)
 
     # ....................... #
 
@@ -156,90 +154,6 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
         return await self.order_by_clause(sorts, table_alias=_PROJECTION_ALIAS)
-
-    # ....................... #
-
-    def _filtered_select_list(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_PROJECTION_ALIAS, pc),
-                sql.Identifier(pc),
-            )
-            for pc, _ in self._safe_join_pairs
-        ]
-
-        return sql.SQL(", ").join(parts)
-
-    # ....................... #
-
-    def _scored_join_on_filtered(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} = {}").format(
-                sql.Identifier(_INDEX_ALIAS, ic),
-                sql.Identifier(_FILTERED_CTE_ALIAS, pc),
-            )
-            for pc, ic in self._safe_join_pairs
-        ]
-
-        return sql.SQL(" AND ").join(parts)
-
-    # ....................... #
-
-    def _outer_join_on_scored(self) -> sql.Composable:
-        parts = [
-            sql.SQL("{} = {}").format(
-                sql.Identifier(_PROJECTION_ALIAS, pc),
-                sql.Identifier(_SCORED_CTE_ALIAS, pc),
-            )
-            for pc, _ in self._safe_join_pairs
-        ]
-
-        return sql.SQL(" AND ").join(parts)
-
-    # ....................... #
-
-    def _scored_key_columns(self) -> sql.Composable:
-        return sql.SQL(", ").join(
-            sql.SQL("{} AS {}").format(
-                sql.Identifier(_INDEX_ALIAS, ic),
-                sql.Identifier(pc),
-            )
-            for pc, ic in self._safe_join_pairs
-        )
-
-    # ....................... #
-
-    def _scored_select_empty_query(
-        self,
-    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        """Keys, zero rank, no extra rank parameters."""
-
-        key_cols = self._scored_key_columns()
-        rank = sql.SQL("(0)::double precision AS {}").format(
-            sql.Identifier(_RANK_COLUMN),
-        )
-        return key_cols, rank, []
-
-    # ....................... #
-
-    def _scored_select_with_rank(
-        self,
-        *,
-        tsv: sql.Composable,
-        tsw_rank: sql.Composable,
-        options: SearchOptions | None,
-    ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
-        """Keys, ``ts_rank_cd`` column, parameters for rank (weights + tsquery)."""
-
-        key_cols = self._scored_key_columns()
-        gw = fts_effective_group_weights(self.spec, self.fts_groups, options)
-        fts_weights = fts_rank_cd_weight_array(gw)
-        rank_expr = sql.SQL("{} AS {}").format(
-            fts_rank_cd_expr(tsv=tsv, tsw=tsw_rank),
-            sql.Identifier(_RANK_COLUMN),
-        )
-
-        return key_cols, rank_expr, [fts_weights]
 
     # ....................... #
 
@@ -347,247 +261,84 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options)
-
-        rs_spec = self.spec.snapshot
-        fp_fingerprint = SearchResultSnapshotCoordinator.simple_search_fingerprint(
-            query,
-            filters,
-            sorts,
-            spec_name=self.spec.name,
-            variant="fts",
-            extras={"phrase_combine": str(effective_phrase_combine(options))},
-        )
-
-        if self.snapshot_coord is not None and rs_spec is not None:
-            maybe_snap: Any = await self.snapshot_coord.read_simple_result_snapshot(
-                rs_spec=rs_spec,
-                snap_opt=snapshot,
-                fp_computed=fp_fingerprint,
-                spec=self.spec,
-                pagination=dict(pagination or {}),
-                return_type=return_type,
-                return_fields=return_fields,
-                return_count=return_count,
-            )
-            if maybe_snap is not None:
-                return maybe_snap
-
         fw, fp = await self.where_clause(filters)
+        terms = tuple(normalize_search_queries(query))
+        join = self._safe_join_pairs
 
-        terms = normalize_search_queries(query)
+        sw, scored_rank, leg_params = await build_fts_leg(
+            introspector=self.introspector,
+            index_qname=self.index_qname,
+            search=self.spec,
+            fts_groups=self.fts_groups,
+            index_alias=_PIPELINE.index,
+            queries=terms,
+            options=options,
+            score_column=_RANK_COLUMN,
+        )
+        scored_keys = scored_key_columns(join, index_alias=_PIPELINE.index)
+        params_body = [*fp, *leg_params]
 
-        params_body: list[Any]
-        if not terms:
-            sw = sql.SQL("TRUE")  # type: ignore[assignment]
-            scored_keys, scored_rank, _rank_extra = self._scored_select_empty_query()
-            params_body = []
-
-        else:
-            tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
-
-            if len(terms) == 1:
-                tsw_where, tsp_w = fts_tsquery_expr(terms[0], options=options)
-                tsw_rank = tsw_where
-                tsp_r = tsp_w
-            else:
-                fn = (
-                    fts_tsquery_expr_disjunction
-                    if effective_phrase_combine(options) == "any"
-                    else fts_tsquery_expr_conjunction
-                )
-                tsw_where, tsp_w = fn(terms, options=options)
-                tsw_rank, tsp_r = fn(terms, options=options)
-            sw = fts_match_predicate(tsv=tsv, tsw=tsw_where)  # type: ignore[assignment]
-            scored_keys, scored_rank, rank_w = self._scored_select_with_rank(
-                tsv=tsv,
-                tsw_rank=tsw_rank,
-                options=options,
-            )
-            # ``WITH filtered`` uses ``fp``; ``scored`` SELECT lists ``ts_rank_cd`` before
-            # ``WHERE``, so: ``fp``, ``weights``, rank ``tsquery``, where ``tsquery``.
-            # Single term: one ``fts_tsquery_expr``; ``tsw_rank``/``tsp`` match ``tsw_where``;
-            # params still list the tsquery twice (two ``Placeholder``\ s in the SQL).
-            params_body = [*fp, *rank_w, *tsp_r, *tsp_w]
-
-        key_sel = self._filtered_select_list()
-
-        filtered_cte = sql.SQL(
-            """
-            {filtered} AS (
-                SELECT {key_sel}
-                FROM {proj} {pa}
-                WHERE {fw}
-            )"""
-        ).format(
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
+        key_sel = filtered_select_list(join, projection_alias=_PIPELINE.projection)
+        filtered_cte = build_filtered_cte(
+            aliases=_PIPELINE,
             key_sel=key_sel,
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
+            proj_ident=self.source_qname.ident(),
             fw=fw,
         )
-
-        join_sf = self._scored_join_on_filtered()
-        scored_cte = sql.SQL(
-            """
-            ,
-            {scored} AS (
-                SELECT {scored_keys}, {scored_rank}
-                FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
-            )"""
-        ).format(
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_sf = scored_join_on_filtered(
+            join,
+            index_alias=_PIPELINE.index,
+            filtered_alias=_PIPELINE.filtered,
+        )
+        scored_cte = build_scored_cte(
+            aliases=_PIPELINE,
             scored_keys=scored_keys,
             scored_rank=scored_rank,
-            heap=self.index_heap_qname.ident(),
-            ia=sql.Identifier(_INDEX_ALIAS),
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            fa=sql.Identifier(_FILTERED_CTE_ALIAS),
+            heap_ident=self.index_heap_qname.ident(),
             join_sf=join_sf,
             sw=sw,
         )
-
-        join_vs = self._outer_join_on_scored()
-        from_outer = sql.SQL(
-            """
-            FROM {proj} {pa}
-            INNER JOIN {scored} {sa} ON ({join_vs})
-            """
-        ).format(
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            sa=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_vs = outer_join_on_scored(
+            join,
+            projection_alias=_PIPELINE.projection,
+            scored_alias=_PIPELINE.scored,
+        )
+        from_outer = build_outer_from(
+            aliases=_PIPELINE,
+            proj_ident=self.source_qname.ident(),
             join_vs=join_vs,
         )
-
-        order_parts: list[sql.Composable] = [
-            sql.SQL("{} DESC NULLS LAST").format(
-                sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
-            )
-        ]
         extra_ob = await self._projection_order_by_clause(sorts)
+        order_sql = build_rank_first_order(aliases=_PIPELINE, extra_order=extra_ob)
+        with_clause = build_pipeline_with_clause(filtered_cte, scored_cte)
 
-        if extra_ob is not None:
-            order_parts.append(extra_ob)
-
-        order_sql = sql.SQL(", ").join(order_parts)
-        with_clause = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
-
-        params_count = [*fp] if not terms else params_body
-
-        count_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT COUNT(*) {from_outer}
-            """
-        ).format(with_clause=with_clause, from_outer=from_outer)
-
-        total = 0
-
-        if return_count:
-            total = int(
-                await self.client.fetch_value(count_stmt, params_count, default=0),
-            )
-            if total == 0:
-                return page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
-                    [],
-                    pagination or {},
-                    total=0,
-                )
-
-        cols = self.return_clause(
-            return_type,
-            return_fields,
-            table_alias=_PROJECTION_ALIAS,
-        )
-
-        data_stmt = sql.SQL(
-            """
-            {with_clause}
-            SELECT {cols} {from_outer}
-            ORDER BY {order}
-            """
-        ).format(
+        plan = RankedOffsetPlan(
             with_clause=with_clause,
-            cols=cols,
             from_outer=from_outer,
-            order=order_sql,
+            order_sql=order_sql,
+            params=params_body,
+            count_params=[*fp] if not terms else None,
+            select_table_alias=_PROJECTION_ALIAS,
         )
 
-        params = [*fp] if not terms else params_body
-
-        pagination = pagination or {}
-        want_snap = (
-            self.snapshot_coord is not None
-            and rs_spec is not None
-            and self.snapshot_coord.should_write_result_snapshot(snapshot, rs_spec)
-        )
-
-        max_nw = (
-            self.snapshot_coord.effective_snapshot_max_ids(snapshot, rs_spec)
-            if want_snap and self.snapshot_coord is not None
-            else 0
-        )
-        sql_limit, sql_offset, page_limit = (
-            SearchResultSnapshotCoordinator.snapshot_pagination(
-                want_snap, max_nw, dict(pagination)
-            )
-        )
-        if sql_limit is not None:
-            data_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            params.append(int(sql_limit))
-
-        if want_snap:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(sql_offset))
-
-        elif pagination.get("offset") is not None:
-            data_stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            params.append(int(pagination.get("offset") or 0))
-
-        rows = await self.client.fetch_all(data_stmt, params, row_factory="dict")
-
-        handle_out = None
-        pool_snap: list[M] | None = None
-        u_off = int(pagination.get("offset") or 0)
-
-        if want_snap and self.snapshot_coord is not None and rs_spec is not None:
-            pool_len = len(rows)
-            pool_snap = pydantic_validate_many(self.model_type, rows)
-            handle_out = await self.snapshot_coord.put_simple_ordered_hits(
-                pool_snap,
-                snap_opt=snapshot,
-                rs_spec=rs_spec,
-                fp_computed=fp_fingerprint,
-                pool_len_before_cap=pool_len,
-            )
-            rows = rows[u_off : u_off + page_limit]
-
-        page = materialize_search_page(
-            page_rows=rows,
-            pool=pool_snap,
-            u=u_off,
-            page_limit=page_limit,
+        return await execute_simple_ranked_offset_search(
+            self,
+            plan=plan,
+            query=query,
+            filters=filters,
+            sorts=sorts,
+            spec=self.spec,
+            variant="fts",
+            fingerprint_extras={
+                "phrase_combine": str(effective_phrase_combine(options)),
+            },
+            pagination=pagination,
+            snapshot=snapshot,
+            return_count=return_count,
             return_type=return_type,
             return_fields=return_fields,
             model_type=self.model_type,
-        )
-
-        if return_count:
-            return page_from_limit_offset(
-                page,
-                pagination,
-                total=total,
-                snapshot=handle_out,
-            )
-
-        return page_from_limit_offset(
-            page,
-            pagination,
-            total=None,
-            snapshot=handle_out,
+            snapshot_coord=self.snapshot_coord,
         )
 
     # ....................... #
@@ -614,6 +365,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_fields=None,
         )
 
+    # ....................... #
+
     async def search_page(
         self,
         query: str | Sequence[str],
@@ -635,6 +388,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search(
         self,
@@ -659,6 +414,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def project_search_page(
         self,
         fields: Sequence[str],
@@ -682,6 +439,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_fields=tuple(fields),
         )
 
+    # ....................... #
+
     async def select_search(
         self,
         return_type: type[T],
@@ -704,6 +463,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_type=return_type,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def select_search_page(
         self,
@@ -945,29 +706,21 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             )
 
         fw_r, fp_r = await self.where_clause(filters, parsed=parsed_filters)
-        tsv = await fts_resolve_tsvector_expr(self.introspector, self.index_qname)
+        join_r = self._safe_join_pairs
+        term_tuple = tuple(terms)
 
-        if len(terms) == 1:
-            tsw_where, tsp_w = fts_tsquery_expr(terms[0], options=options)
-            tsw_rank = tsw_where
-            tsp_r = tsp_w
-
-        else:
-            fn = (
-                fts_tsquery_expr_disjunction
-                if effective_phrase_combine(options) == "any"
-                else fts_tsquery_expr_conjunction
-            )
-            tsw_where, tsp_w = fn(terms, options=options)
-            tsw_rank, tsp_r = fn(terms, options=options)
-
-        sw_r = fts_match_predicate(tsv=tsv, tsw=tsw_where)
-        scored_keys_r, scored_rank_r, rank_w = self._scored_select_with_rank(
-            tsv=tsv,
-            tsw_rank=tsw_rank,
+        sw_r, scored_rank_r, leg_params_r = await build_fts_leg(
+            introspector=self.introspector,
+            index_qname=self.index_qname,
+            search=self.spec,
+            fts_groups=self.fts_groups,
+            index_alias=_PIPELINE.index,
+            queries=term_tuple,
             options=options,
+            score_column=_RANK_COLUMN,
         )
-        params_base_r = [*fp_r, *rank_w, *tsp_r, *tsp_w]
+        scored_keys_r = scored_key_columns(join_r, index_alias=_PIPELINE.index)
+        params_base_r = [*fp_r, *leg_params_r]
 
         key_spec_r = ranked_search_cursor_key_spec(
             rank_field=_RANK_COLUMN,
@@ -976,64 +729,46 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         sort_keys_r = [k for k, _ in key_spec_r]
         directions_r = [d for _, d in key_spec_r]
 
-        filtered_cte = sql.SQL(
-            """
-            {filtered} AS (
-                SELECT {key_sel}
-                FROM {proj} {pa}
-                WHERE {fw}
-            )"""
-        ).format(
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            key_sel=self._filtered_select_list(),
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
+        key_sel_r = filtered_select_list(join_r, projection_alias=_PIPELINE.projection)
+        filtered_cte_r = build_filtered_cte(
+            aliases=_PIPELINE,
+            key_sel=key_sel_r,
+            proj_ident=self.source_qname.ident(),
             fw=fw_r,
         )
-
-        join_sf_r = self._scored_join_on_filtered()
-        scored_cte = sql.SQL(
-            """
-            ,
-            {scored} AS (
-                SELECT {scored_keys}, {scored_rank}
-                FROM {heap} {ia}
-                INNER JOIN {filtered} {fa} ON ({join_sf})
-                WHERE {sw}
-            )"""
-        ).format(
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_sf_r = scored_join_on_filtered(
+            join_r,
+            index_alias=_PIPELINE.index,
+            filtered_alias=_PIPELINE.filtered,
+        )
+        scored_cte_r = build_scored_cte(
+            aliases=_PIPELINE,
             scored_keys=scored_keys_r,
             scored_rank=scored_rank_r,
-            heap=self.index_heap_qname.ident(),
-            ia=sql.Identifier(_INDEX_ALIAS),
-            filtered=sql.Identifier(_FILTERED_CTE_ALIAS),
-            fa=sql.Identifier(_FILTERED_CTE_ALIAS),
+            heap_ident=self.index_heap_qname.ident(),
             join_sf=join_sf_r,
             sw=sw_r,
         )
-
-        join_vs_r = self._outer_join_on_scored()
-        from_outer_r = sql.SQL(
-            """
-            FROM {proj} {pa}
-            INNER JOIN {scored} {sa} ON ({join_vs})
-            """
-        ).format(
-            proj=self.source_qname.ident(),
-            pa=sql.Identifier(_PROJECTION_ALIAS),
-            scored=sql.Identifier(_SCORED_CTE_ALIAS),
-            sa=sql.Identifier(_SCORED_CTE_ALIAS),
+        join_vs_r = outer_join_on_scored(
+            join_r,
+            projection_alias=_PIPELINE.projection,
+            scored_alias=_PIPELINE.scored,
+        )
+        from_outer_r = build_outer_from(
+            aliases=_PIPELINE,
+            proj_ident=self.source_qname.ident(),
             join_vs=join_vs_r,
         )
 
-        with_clause_r = sql.SQL("WITH {}{}").format(filtered_cte, scored_cte)
+        with_clause_r = build_pipeline_with_clause(filtered_cte_r, scored_cte_r)
 
         types_r = await self.column_types()
         exprs_r: list[sql.Composable] = []
+
         for k in sort_keys_r:
             if k == _RANK_COLUMN:
-                exprs_r.append(sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN))
+                exprs_r.append(sql.Identifier(_PIPELINE.scored, _RANK_COLUMN))
+
             else:
                 exprs_r.append(
                     sort_key_expr(
@@ -1078,14 +813,17 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         )
 
         return_fields_sql_r: Sequence[str] | None
+
         if return_fields is not None:
             return_fields_sql_r = cursor_return_fields_for_select(
                 sort_keys=sort_keys_r,
                 rank_field=_RANK_COLUMN,
                 return_fields=return_fields,
             )
+
             if not return_fields_sql_r:
                 return_fields_sql_r = None
+
         else:
             return_fields_sql_r = None
 
@@ -1097,7 +835,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         cols_r = sql.SQL("{}, {}").format(
             base_cols_r,
             sql.SQL("{} AS {}").format(
-                sql.Identifier(_SCORED_CTE_ALIAS, _RANK_COLUMN),
+                sql.Identifier(_PIPELINE.scored, _RANK_COLUMN),
                 sql.Identifier(_RANK_COLUMN),
             ),
         )
@@ -1183,6 +921,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             has_more=has_more_r,
         )
 
+    # ....................... #
+
     async def search_cursor(
         self,
         query: str | Sequence[str],
@@ -1201,6 +941,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=None,
         )
+
+    # ....................... #
 
     async def project_search_cursor(
         self,
@@ -1221,6 +963,8 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             return_type=None,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
 
     async def select_search_cursor(
         self,

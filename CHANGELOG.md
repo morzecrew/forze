@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Postgres search:** Internal refactor of FTS, PGroonga, vector, and hub search adapters — shared projection-index CTE builders (`_pipeline_sql`), leg scorers (`_leg_*`), and offset/snapshot execution (`_offset_run`); no public API change.
 - **Execution:** `ResolvedOperationPlan` now drives operation runtime: stage hooks (`before`, `wrap`, `on_success`, `on_failure`, `finally_`, `dispatch`), transaction scopes, and `after_commit` / `dispatch_after_commit` deferral run in documented order when calling `FrozenOperationRegistry.resolve(...)(args)` (previously only the bare handler ran).
 
 ### Added
 
+- **Execution:** `OperationRegistry.freeze()` rejects orphan plan patches, equal-specificity patch merge conflicts, and operations with transaction-scoped stages or dispatch but no `set_route`.
 - **Query DSL:** Configurable filter abuse limits (`QueryFilterLimits`: `max_depth`, `max_clauses`, `max_in_size`) enforced at parse time; `QueryFilterExpressionParser` is an attrs instance (`parse_filter`) with a classmethod `parse` shim; gateways expose `compile_filters` and accept pre-parsed `QueryExpr` on `where_clause` / `render_filters`; aggregate computed fields store `parsed_filter` to avoid re-parsing; `DocumentCoordinator` offset pages compile filters once and pass `parsed` through `count` / `find_many` gateway calls.
 - **Execution:** Registry-centered composition with `OperationRegistry`, `FrozenOperationRegistry`, `Handler` implementations, and stage hooks as `BeforeStep` / `OnSuccessStep` on `bind_outer()` / `bind_tx()`; `make_registry_operation_resolver` for FastAPI and Socket.IO; `facade_op` descriptors on `DocumentFacade`, `SearchFacade`, `StorageFacade`, and `AuthnFacade`; `StrKeyNamespace` on specs (`default_namespace`); optional `DepsResolutionTrace` (`FORZE_DEPS_TRACE`); cyclic dependency detection on `Deps`.
 - **Execution context:** Nested resolvers — `ctx.document` / `ctx.doc`, `ctx.search` (including hub and federated), `ctx.deps`, `ctx.tx`, `ctx.inv` (`InvocationMetadata`, authn, tenant binding).

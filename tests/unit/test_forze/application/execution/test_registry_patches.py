@@ -81,7 +81,7 @@ def test_patch_then_bind_overlay_merges_explicit_plan_last() -> None:
     assert len(frozen.plans["op"].outer.before.steps) == 1
 
 
-def test_patch_with_no_handlers_freezes() -> None:
+def test_patch_with_no_handlers_raises_orphan_patch() -> None:
     reg = (
         OperationRegistry()
         .patch(str_key_selector.all_keys())
@@ -90,10 +90,21 @@ def test_patch_with_no_handlers_freezes() -> None:
         .finish(deep=True)
     )
 
-    frozen = reg.freeze()
+    with pytest.raises(CoreError, match="Orphan plan patch"):
+        reg.freeze()
 
-    assert frozen.handlers == {}
-    assert frozen.plans == {}
+
+def test_orphan_patch_exact_selector_raises() -> None:
+    reg = (
+        OperationRegistry(handlers={"other": lambda _ctx: None})
+        .patch(str_key_selector.exact("missing"))
+        .bind_tx()
+        .set_route("mock")
+        .finish(deep=True)
+    )
+
+    with pytest.raises(CoreError, match="Orphan plan patch"):
+        reg.freeze()
 
 
 def test_two_patches_same_selector_merge_plan() -> None:
@@ -115,6 +126,63 @@ def test_two_patches_same_selector_merge_plan() -> None:
 
     assert frozen.plans["op"].tx.route == "first"
     assert len(frozen.plans["op"].outer.before.steps) >= 1
+
+
+def test_equal_specificity_patch_route_conflict_raises() -> None:
+    reg = (
+        OperationRegistry(handlers={"op": lambda _ctx: None})
+        .patch(str_key_selector.when(lambda k: k.startswith("o")))
+        .bind_tx()
+        .set_route("a")
+        .finish(deep=True)
+        .patch(str_key_selector.when(lambda k: "p" in k))
+        .bind_tx()
+        .set_route("b")
+        .finish(deep=True)
+    )
+
+    with pytest.raises(CoreError, match="Conflicting plan patches"):
+        reg.freeze()
+
+
+def test_tx_dispatch_without_route_raises_at_freeze() -> None:
+    reg = (
+        OperationRegistry(
+            handlers={
+                "main": lambda _ctx: None,
+                "target": lambda _ctx: None,
+            },
+        )
+        .patch(str_key_selector.exact("main"))
+        .bind_tx()
+        .dispatch(
+            DispatchStep(id="d1", target="target", mapper=lambda a, r: r),
+        )
+        .finish(deep=True)
+    )
+
+    with pytest.raises(CoreError, match="no transaction route"):
+        reg.freeze()
+
+
+def test_tx_dispatch_after_commit_without_route_raises_at_freeze() -> None:
+    reg = (
+        OperationRegistry(
+            handlers={
+                "main": lambda _ctx: None,
+                "target": lambda _ctx: None,
+            },
+        )
+        .patch(str_key_selector.exact("main"))
+        .bind_tx()
+        .dispatch_after_commit(
+            DispatchStep(id="d1", target="target", mapper=lambda a, r: r),
+        )
+        .finish(deep=True)
+    )
+
+    with pytest.raises(CoreError, match="no transaction route"):
+        reg.freeze()
 
 
 def test_dispatch_in_patch_validates_at_freeze() -> None:

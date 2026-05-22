@@ -35,6 +35,45 @@ class TestOperationRegistryFreeze:
         with pytest.raises(CoreError, match="Dispatch target"):
             reg.freeze()
 
+    def test_tx_dispatch_without_route_raises_at_freeze(self) -> None:
+        reg = (
+            OperationRegistry(
+                handlers={
+                    "main": lambda _ctx: None,
+                    "target": lambda _ctx: None,
+                },
+            )
+            .bind("main")
+            .bind_tx()
+            .dispatch(
+                DispatchStep(id="d1", target="target", mapper=lambda a, r: r),
+            )
+            .finish(deep=True)
+        )
+
+        with pytest.raises(CoreError, match="no transaction route"):
+            reg.freeze()
+
+    def test_outer_dispatch_without_tx_route_freezes(self) -> None:
+        reg = (
+            OperationRegistry(
+                handlers={
+                    "main": lambda _ctx: None,
+                    "target": lambda _ctx: None,
+                },
+            )
+            .bind("main")
+            .bind_outer()
+            .dispatch(
+                DispatchStep(id="d1", target="target", mapper=lambda a, r: r),
+            )
+            .finish(deep=True)
+        )
+
+        frozen = reg.freeze()
+
+        assert "main" in frozen.handlers
+
     def test_registry_merge_detects_handler_conflicts(self) -> None:
         left = OperationRegistry(handlers={"op": lambda _ctx: None})
         right = OperationRegistry(handlers={"op": lambda _ctx: None})

@@ -64,6 +64,20 @@ class OperationPlan:
 
     # ....................... #
 
+    def tx_requires_route(self) -> bool:
+        """Return whether the transaction scope has stages that require a route."""
+
+        return self._tx.has_stages()
+
+    # ....................... #
+
+    def tx_route(self) -> StrKey | None:
+        """Transaction route for this plan, if set."""
+
+        return self._tx.route
+
+    # ....................... #
+
     def bind_outer(self) -> ScopeBinder[Self, Never]:
         """Enter an outer scope and return a binder for it."""
 

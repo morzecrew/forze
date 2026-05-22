@@ -55,6 +55,20 @@ class Scope:
 
     # ....................... #
 
+    def has_stages(self) -> bool:
+        """Return whether this scope defines any stage hooks or dispatches."""
+
+        return (
+            bool(self.before.items)
+            or bool(self.wrap.items)
+            or bool(self.finally_.items)
+            or bool(self.on_failure.items)
+            or bool(self.on_success.items)
+            or bool(self.dispatch.items)
+        )
+
+    # ....................... #
+
     @classmethod
     def merge(cls, *scopes: Self) -> Self:
         """Merge multiple scope plans into a single."""
@@ -127,6 +141,18 @@ class TransactionScope(Scope):
         factory=AbstractSequence
     )
     """After commit dispatches for this scope."""
+
+    # ....................... #
+
+    @override
+    def has_stages(self) -> bool:
+        """Return whether this transaction scope defines any stage hooks or dispatches."""
+
+        return (
+            super().has_stages()
+            or bool(self.after_commit.items)
+            or bool(self.dispatch_after_commit.items)
+        )
 
     # ....................... #
 
