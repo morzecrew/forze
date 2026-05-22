@@ -244,6 +244,9 @@ def resolve_leaf_python_type(
             f"Nested filter path {path!r}: not found under {model_type.__name__}. "
             f"Intermediate fields must be nested Pydantic models or parameterized "
             f"``dict[str, ...]`` / ``Mapping[str, ...]`` with a dynamic key segment. "
+            f"Nested filter path {path!r}: not found under {model_type.__name__}. "
+            f"Intermediate fields must be nested Pydantic models or parameterized "
+            f"``dict[str, ...]`` / ``Mapping[str, ...]`` with a dynamic key segment. "
             f"Fix the path or set nested_field_hints[{path!r}].",
         )
 

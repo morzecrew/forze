@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Union
+from typing import Any, Mapping, Union
 from uuid import UUID
 
 import pytest
@@ -53,6 +53,26 @@ class _TriUnion(BaseModel):
 
 class _Color(str, Enum):
     red = "red"
+
+
+class _RowDictStrInt(BaseModel):
+    meta: dict[str, int]
+
+
+class _RowDictStrInner(BaseModel):
+    meta: dict[str, _Inner]
+
+
+class _RowNestedDictStr(BaseModel):
+    meta: dict[str, dict[str, str]]
+
+
+class _RowMappingUuid(BaseModel):
+    meta: Mapping[str, UUID]
+
+
+class _RowIntKeyDict(BaseModel):
+    data: dict[int, str]
 
 
 def test_walk_pydantic_path_missing_returns_none() -> None:
@@ -140,6 +160,100 @@ def test_resolve_any_like_uses_hint() -> None:
         nested_field_hints={"meta.x": float},
     )
     assert t is float
+
+
+def test_walk_pydantic_path_dict_str_scalar() -> None:
+    assert walk_pydantic_path(_RowDictStrInt, ["meta", "k"]) is int
+
+
+def test_walk_pydantic_path_dict_str_basemodel_then_field() -> None:
+    assert walk_pydantic_path(_RowDictStrInner, ["meta", "slot", "score"]) is int
+
+
+def test_walk_pydantic_path_nested_dict() -> None:
+    assert walk_pydantic_path(_RowNestedDictStr, ["meta", "a", "b"]) is str
+
+
+def test_resolve_leaf_dict_str_int_without_hint() -> None:
+    assert (
+        resolve_leaf_python_type(
+            model_type=_RowDictStrInt,
+            path="meta.count",
+            segments=["meta", "count"],
+            nested_field_hints=None,
+        )
+        is int
+    )
+
+
+def test_resolve_leaf_dict_str_inner_nested_field() -> None:
+    assert (
+        resolve_leaf_python_type(
+            model_type=_RowDictStrInner,
+            path="meta.tenant_a.score",
+            segments=["meta", "tenant_a", "score"],
+            nested_field_hints=None,
+        )
+        is int
+    )
+
+
+def test_resolve_leaf_nested_dict_str_str() -> None:
+    assert (
+        resolve_leaf_python_type(
+            model_type=_RowNestedDictStr,
+            path="meta.outer.inner_key",
+            segments=["meta", "outer", "inner_key"],
+            nested_field_hints=None,
+        )
+        is str
+    )
+
+
+def test_resolve_leaf_mapping_str_uuid() -> None:
+    t = resolve_leaf_python_type(
+        model_type=_RowMappingUuid,
+        path="meta.owner_id",
+        segments=["meta", "owner_id"],
+        nested_field_hints=None,
+    )
+    assert t is UUID
+
+
+def test_build_nested_uuid_from_mapping_str_uuid() -> None:
+    col_types = {"meta": PostgresType(base="jsonb", is_array=False, not_null=True)}
+    _expr, pg = build_nested_json_scalar_expr(
+        path="meta.owner_id",
+        segments=["meta", "owner_id"],
+        column_types=col_types,
+        model_type=_RowMappingUuid,
+        nested_field_hints=None,
+        table_alias=None,
+    )
+    assert pg is not None
+    assert pg.base == "uuid"
+
+
+def test_resolve_non_string_mapping_key_raises() -> None:
+    with pytest.raises(CoreError, match="string object keys"):
+        resolve_leaf_python_type(
+            model_type=_RowIntKeyDict,
+            path="data.1",
+            segments=["data", "1"],
+            nested_field_hints=None,
+        )
+
+
+def test_nested_field_hint_overrides_inferred_dict_value_type() -> None:
+    """Explicit ``nested_field_hints`` entry wins over the model annotation."""
+
+    t = resolve_leaf_python_type(
+        model_type=_RowDictStrInt,
+        path="meta.n",
+        segments=["meta", "n"],
+        nested_field_hints={"meta.n": str},
+    )
+    assert t is str
 
 
 def test_python_type_optional_int_unwraps() -> None:
@@ -241,7 +355,7 @@ def test_build_nested_text_leaf_no_cast_returns_text_type() -> None:
         segments=["meta", "title"],
         column_types=col_types,
         model_type=_StrRow,
-        nested_field_hints={"meta.title": str},
+        nested_field_hints=None,
         table_alias=None,
     )
     assert pg is not None

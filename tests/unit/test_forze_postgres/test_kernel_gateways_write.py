@@ -9,13 +9,14 @@ import pytest
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.errors import ConcurrencyError, NotFoundError
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.kernel.gateways import (
     PostgresQualifiedName,
     PostgresReadGateway,
     PostgresWriteGateway,
 )
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.platform import PostgresClient
 
 
@@ -70,6 +71,51 @@ def _row(*, pk: UUID, name: str, ts: datetime) -> dict[str, object]:
         "last_update_at": ts,
         "name": name,
     }
+
+
+def test_adapt_value_for_write_coerces_numeric_and_preserves_null() -> None:
+    gw, _ = _build_gateway()
+    numeric_t = PostgresType(base="numeric", is_array=False, not_null=False)
+
+    assert gw.adapt_value_for_write("12.5", t=numeric_t) == 12.5
+    assert gw.adapt_value_for_write(None, t=numeric_t) is None
+
+
+@pytest.mark.asyncio
+async def test_patch_group_sql_includes_column_casts() -> None:
+    gw, client = _build_gateway()
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    pk = UUID("11111111-1111-1111-1111-111111111111")
+    column_types = {
+        ID_FIELD: PostgresType(base="uuid", is_array=False, not_null=True),
+        "rev": PostgresType(base="int4", is_array=False, not_null=True),
+        "amount": PostgresType(base="numeric", is_array=False, not_null=False),
+    }
+    gw.introspector.get_column_types = AsyncMock(return_value=column_types)  # type: ignore[method-assign]
+
+    client.fetch_all = AsyncMock(
+        return_value=[
+            {
+                "id": pk,
+                "rev": 2,
+                "created_at": ts,
+                "last_update_at": ts,
+                "name": "x",
+                "amount": None,
+            }
+        ]
+    )
+
+    await gw._PostgresWriteGateway__patch_group(  # type: ignore[attr-defined]
+        ("amount", "rev"),
+        [(pk, 1, {"amount": None, "rev": 2})],
+        column_types,
+    )
+
+    stmt = client.fetch_all.await_args.args[0]
+    sql_text = stmt.as_string()
+    assert '"amount" = "v"."amount"::numeric' in sql_text
+    assert '"rev" = "v"."rev"::int4' in sql_text
 
 
 @pytest.mark.asyncio
