@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Query DSL:** Filter combinator `$not` (single child expression). Array element quantifiers `$any`, `$all`, and `$none` under `$values` with equality/ordering inner predicates (scalar shortcuts, operator maps, or element-relative `$values` for object arrays). Vacuous `$all` / `$none` on missing or empty arrays.
 - **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")`, Pydantic error helpers, and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
 
 ### Changed

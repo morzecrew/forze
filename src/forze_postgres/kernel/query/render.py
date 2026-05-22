@@ -17,15 +17,18 @@ from forze.application.contracts.querying import (
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
+    ELEM_SCALAR_FIELD,
     GroupKey,
     GroupRef,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
     QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
+    QueryNot,
     QueryOp,
     QueryOr,
     QueryValue,
@@ -34,7 +37,13 @@ from forze.application.contracts.querying import (
 from forze.base.errors import CoreError
 
 from ..introspect import PostgresColumnTypes, PostgresType
-from .nested import build_nested_json_scalar_expr, sort_key_expr
+from ..type_cast import cast_sql_for_column_type
+from .nested import (
+    build_nested_json_scalar_expr,
+    resolve_leaf_python_type,
+    sort_key_expr,
+    walk_pydantic_path,
+)
 from .utils import PsycopgPositionalBinder
 
 # ----------------------- #
@@ -504,6 +513,13 @@ class PsycopgQueryRenderer:
 
                 return sql.SQL("(") + sql.SQL(" OR ").join(or_parts) + sql.SQL(")")
 
+            case QueryNot(item):
+                inner = self._render_expr(item)
+                return sql.SQL("NOT ({})").format(inner)
+
+            case QueryElem(path, quantifier, inner):
+                return self._render_elem(path, quantifier, inner)
+
             case _:
                 raise CoreError(f"Unknown expression: {expr!r}")
 
@@ -699,3 +715,230 @@ class PsycopgQueryRenderer:
             op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
 
             return sql.SQL("{} {} {}").format(col, op_sql, ph)
+
+    # ....................... #
+
+    def _elem_vacuous_sql(self, quantifier: str) -> sql.Composable:
+        if quantifier in ("$all", "$none"):
+            return sql.SQL("TRUE")
+        return sql.SQL("FALSE")
+
+    def _elem_has_array_sql(
+        self,
+        col: sql.Composable,
+        t: PostgresType | None,
+    ) -> sql.Composable:
+        if t is not None and t.is_array:
+            return sql.SQL("{} IS NOT NULL").format(col)
+
+        j = sql.SQL("({})::jsonb").format(col)
+        return sql.SQL(
+            "({col} IS NOT NULL AND jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) > 0)",
+        ).format(col=col, j=j)
+
+    def _render_elem(
+        self,
+        path: str,
+        quantifier: str,
+        inner: QueryExpr,
+    ) -> sql.Composable:
+        col, t = self._resolve_column_and_type(path)
+        vacuous = self._elem_vacuous_sql(quantifier)
+
+        if t is not None and not t.is_array and t.base not in ("jsonb", "json"):
+            raise CoreError(
+                f"Element quantifier on {path!r} requires an array or jsonb array column",
+            )
+
+        elem_pred = self._render_elem_inner(inner, col, t, path)
+        has_array = self._elem_has_array_sql(col, t)
+
+        if t is not None and t.is_array:
+            exists = sql.SQL(
+                "EXISTS (SELECT 1 FROM unnest({col}) AS _fz_elem WHERE {pred})",
+            ).format(col=col, pred=elem_pred)
+            forall = sql.SQL(
+                "NOT EXISTS (SELECT 1 FROM unnest({col}) AS _fz_elem WHERE NOT ({pred}))",
+            ).format(col=col, pred=elem_pred)
+        else:
+            arr = sql.SQL(
+                "CASE WHEN jsonb_typeof({col}::jsonb) = 'array' THEN {col}::jsonb ELSE '[]'::jsonb END",
+            ).format(col=col)
+            exists = sql.SQL(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS _fz_elem WHERE {pred})",
+            ).format(arr=arr, pred=elem_pred)
+            forall = sql.SQL(
+                "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS _fz_elem WHERE NOT ({pred}))",
+            ).format(arr=arr, pred=elem_pred)
+
+        if quantifier == "$any":
+            match = exists
+        elif quantifier == "$all":
+            match = forall
+        else:
+            match = sql.SQL("NOT ({})").format(exists)
+
+        return sql.SQL(
+            "(({not_has} AND {vac}) OR ({has} AND {match}))",
+        ).format(
+            not_has=sql.SQL("NOT ({})").format(has_array),
+            vac=vacuous,
+            has=has_array,
+            match=match,
+        )
+
+    def _resolve_column_and_type(
+        self,
+        path: str,
+    ) -> tuple[sql.Composable, PostgresType | None]:
+        segments = path.split(".")
+        if len(segments) > 1:
+            if self.types is None or self.model_type is None:
+                raise CoreError(
+                    f"Nested element path {path!r} requires column types and model_type",
+                )
+            col_expr, t = build_nested_json_scalar_expr(
+                path=path,
+                segments=segments,
+                column_types=self.types,
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+                table_alias=self.table_alias,
+            )
+            return col_expr, t
+
+        if self.types is not None:
+            t = self.types.get(path)
+            if t is None:
+                raise CoreError(f"Unknown column: {path!r}")
+        else:
+            t = None
+
+        col = (
+            sql.Identifier(self.table_alias, path)
+            if self.table_alias is not None
+            else sql.Identifier(path)
+        )
+        return col, t
+
+    def _render_elem_inner(
+        self,
+        inner: QueryExpr,
+        col: sql.Composable,
+        t: PostgresType | None,
+        path: str,
+    ) -> sql.Composable:
+        if self._elem_inner_is_scalar(inner):
+            return self._render_elem_scalar_inner(inner, t)
+
+        return self._render_elem_object_inner(inner, col, t, path)
+
+    @staticmethod
+    def _elem_inner_is_scalar(inner: QueryExpr) -> bool:
+        match inner:
+            case QueryField(name, _, _):
+                return name == ELEM_SCALAR_FIELD
+            case QueryAnd(items):
+                return all(
+                    isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
+                    for i in items
+                )
+            case _:
+                return False
+
+    def _render_elem_scalar_inner(
+        self,
+        inner: QueryExpr,
+        t: PostgresType | None,
+    ) -> sql.Composable:
+        match inner:
+            case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
+                fields = [inner]
+            case QueryAnd(items):
+                fields = [i for i in items if isinstance(i, QueryField)]
+            case _:
+                raise CoreError(f"Invalid scalar element inner: {inner!r}")
+
+        elem_t = (
+            PostgresType(base=t.base, is_array=False, not_null=True) if t and t.is_array else t
+        )
+        elem = sql.Identifier("_fz_elem")
+        parts = [
+            self._render_field(elem, f.op, f.value, t=elem_t)  # type: ignore[arg-type]
+            for f in fields
+        ]
+        if len(parts) == 1:
+            return parts[0]
+        return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    def _render_elem_object_inner(
+        self,
+        inner: QueryExpr,
+        col: sql.Composable,
+        t: PostgresType | None,
+        path: str,
+    ) -> sql.Composable:
+        match inner:
+            case QueryAnd(items):
+                fields = [i for i in items if isinstance(i, QueryField)]
+            case QueryField() as f:
+                fields = [f]
+            case _:
+                raise CoreError(f"Invalid object element inner: {inner!r}")
+
+        parts: list[sql.Composable] = []
+        for f in fields:
+            segments = f.name.split(".")
+            leaf_t = None
+            if self.model_type is not None:
+                ann = walk_pydantic_path(self.model_type, [path, *segments])
+                if ann is not None:
+                    try:
+                        leaf_t = resolve_leaf_python_type(
+                            model_type=self.model_type,
+                            path=f"{path}.{f.name}",
+                            segments=[path, *segments],
+                            nested_field_hints=self.nested_field_hints,
+                        )
+                    except CoreError:
+                        leaf_t = None
+            pg_t = self._python_ann_to_postgres_type(leaf_t) if leaf_t else None
+            if len(segments) == 1:
+                key = segments[0]
+                field_expr = sql.SQL("(_fz_elem ->> {})").format(sql.Literal(key))
+            else:
+                field_expr = sql.SQL("(_fz_elem #>> {})").format(
+                    sql.Literal("{" + ",".join(segments) + "}"),
+                )
+            if pg_t is not None:
+                cast = cast_sql_for_column_type(pg_t)
+                if cast is not None:
+                    field_expr = sql.SQL("({})::{}").format(field_expr, cast)
+            parts.append(self._render_field(field_expr, f.op, f.value, t=pg_t))
+
+        if len(parts) == 1:
+            return parts[0]
+        return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    @staticmethod
+    def _python_ann_to_postgres_type(ann: Any) -> PostgresType | None:
+        if ann is None:
+            return None
+        from datetime import date, datetime
+        from uuid import UUID
+
+        if ann is UUID:
+            return PostgresType(base="uuid", is_array=False, not_null=False)
+        if ann is bool:
+            return PostgresType(base="bool", is_array=False, not_null=False)
+        if ann is int:
+            return PostgresType(base="int8", is_array=False, not_null=False)
+        if ann is float:
+            return PostgresType(base="float8", is_array=False, not_null=False)
+        if ann is datetime:
+            return PostgresType(base="timestamptz", is_array=False, not_null=False)
+        if ann is date:
+            return PostgresType(base="date", is_array=False, not_null=False)
+        if ann is str:
+            return PostgresType(base="text", is_array=False, not_null=False)
+        return None

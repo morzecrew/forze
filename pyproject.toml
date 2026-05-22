@@ -74,6 +74,9 @@ docs = [
     "pymdown-extensions>=10.21",
 ]
 
+# ....................... #
+# Optional dependencies
+
 [project.optional-dependencies]
 fastapi = [
     "fastapi>=0.135.1",
@@ -365,7 +368,6 @@ DEP002 = [
     "types-aioboto3",
     "types-aiobotocore",
     "aiobotocore",
-    "temporalio",
     "httpx",                 # required by starlette.testclient.TestClient
     "python-socketio-stubs",
     "python-multipart",

@@ -7,14 +7,17 @@ import pytest
 
 from forze.application.contracts.querying import AggregatesExpressionParser
 from forze.application.contracts.querying.internal import (
+    ELEM_SCALAR_FIELD,
     GroupRef,
     GroupTrunc,
     QueryAnd,
     QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
     QueryFilterLimits,
+    QueryNot,
     QueryOr,
     QueryValueCaster,
 )
@@ -735,8 +738,229 @@ class TestQueryCompareExpressionParser:
         with pytest.raises(ValidationError, match="maximum size"):
             parser.parse_filter({"$values": {"x": {"$in": [1, 2]}}})  # type: ignore[arg-type]
 
+    def test_parse_not(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$not": {"$values": {"status": "archived"}}},
+        )
+        assert isinstance(result, QueryNot)
+        assert isinstance(result.item, QueryAnd)
+
+    def test_parse_not_nested(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {
+                "$not": {
+                    "$or": [
+                        {"$values": {"a": 1}},
+                        {"$values": {"b": 2}},
+                    ],
+                },
+            },
+        )
+        assert isinstance(result, QueryNot)
+        assert isinstance(result.item, QueryOr)
+
+    def test_parse_not_mix_constraint_raises(self) -> None:
+        with pytest.raises(ValidationError, match="cannot mix"):
+            QueryFilterExpressionParser.parse(
+                {"$not": {"$values": {"a": 1}}, "$values": {"b": 2}},
+            )
+
+    def test_parse_element_any_scalar_shortcut(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$any": "urgent"}}},
+        )
+        assert isinstance(result, QueryAnd)
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        assert elem.path == "tags"
+        assert elem.quantifier == "$any"
+        assert isinstance(elem.inner, QueryField)
+        assert elem.inner.name == ELEM_SCALAR_FIELD
+        assert elem.inner.op == "$eq"
+
+    def test_parse_element_any_scalar_op_map(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gte": 10}}}},
+        )
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        assert isinstance(elem.inner, QueryField)
+        assert elem.inner.op == "$gte"
+
+    def test_parse_element_any_object_values(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {
+                            "$values": {
+                                "status": "open",
+                                "qty": {"$gte": 1},
+                            },
+                        },
+                    },
+                },
+            },
+        )
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        assert isinstance(elem.inner, QueryAnd)
+        assert len(elem.inner.items) == 2
+
+    def test_parse_element_all_and_none(self) -> None:
+        all_result = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$all": {"$eq": "x"}}}},
+        )
+        none_result = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$none": "spam"}}},
+        )
+        assert isinstance(all_result.items[0], QueryElem)
+        assert all_result.items[0].quantifier == "$all"
+        assert isinstance(none_result.items[0], QueryElem)
+        assert none_result.items[0].quantifier == "$none"
+
+    def test_parse_element_invalid_nested_quantifier_raises(self) -> None:
+        with pytest.raises(ValidationError, match="Nested element quantifiers"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"tags": {"$any": {"$all": "x"}}}},
+            )
+
+    def test_parse_element_invalid_operator_raises(self) -> None:
+        with pytest.raises(ValidationError, match="Element constraint must be"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"tags": {"$any": {"$in": ["a"]}}}},
+            )
+
 
 # ----------------------- #
+
+
+class TestMockElementQuantifiers:
+    def test_match_elem_any_scalar(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$any": "urgent"}}},
+        )
+        assert _match_expr({"tags": ["ops", "urgent"]}, expr) is True
+        assert _match_expr({"tags": ["ops"]}, expr) is False
+        assert _match_expr({"tags": []}, expr) is False
+
+    def test_match_elem_any_scalar_gte(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gte": 10}}}},
+        )
+        assert _match_expr({"scores": [5, 15]}, expr) is True
+        assert _match_expr({"scores": [1, 2]}, expr) is False
+
+    def test_match_elem_all_vacuous_empty(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$all": {"$eq": "x"}}}},
+        )
+        assert _match_expr({"tags": []}, expr) is True
+        assert _match_expr({}, expr) is True
+
+    def test_match_elem_all_requires_every_element(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$all": {"$eq": "ops"}}}},
+        )
+        assert _match_expr({"tags": ["ops"]}, expr) is True
+        assert _match_expr({"tags": ["ops", "urgent"]}, expr) is False
+
+    def test_match_elem_none_scalar(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$none": "urgent"}}},
+        )
+        assert _match_expr({"tags": ["api"]}, expr) is True
+        assert _match_expr({"tags": ["urgent"]}, expr) is False
+
+    def test_match_elem_any_object_array(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {
+                            "$values": {
+                                "status": "open",
+                                "qty": {"$gte": 2},
+                            },
+                        },
+                    },
+                },
+            },
+        )
+        doc = {
+            "items": [
+                {"status": "closed", "qty": 1},
+                {"status": "open", "qty": 3},
+            ],
+        }
+        assert _match_expr(doc, expr) is True
+        assert _match_expr({"items": [{"status": "closed", "qty": 5}]}, expr) is False
+
+    def test_match_not(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$not": {"$values": {"status": "archived"}}},
+        )
+        assert _match_expr({"status": "active"}, expr) is True
+        assert _match_expr({"status": "archived"}, expr) is False
+
+    def test_match_not_with_or(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$not": {
+                    "$or": [
+                        {"$values": {"status": "archived"}},
+                        {"$values": {"status": "pending"}},
+                    ],
+                },
+            },
+        )
+        assert _match_expr({"status": "active"}, expr) is True
+        assert _match_expr({"status": "archived"}, expr) is False
+        assert _match_expr({"status": "pending"}, expr) is False
+
+    def test_match_and_with_elem_and_not(self) -> None:
+        from forze_mock.adapters import _match_expr
+
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$and": [
+                    {"$values": {"title": "yes"}},
+                    {"$values": {"tags": {"$any": "urgent"}}},
+                    {
+                        "$not": {
+                            "$values": {"blocked": True},
+                        },
+                    },
+                ],
+            },
+        )
+        assert _match_expr(
+            {"title": "yes", "tags": ["urgent"], "blocked": False},
+            expr,
+        )
+        assert (
+            _match_expr(
+                {"title": "yes", "tags": ["urgent"], "blocked": True},
+                expr,
+            )
+            is False
+        )
 
 
 class TestQueryNodes:
@@ -769,3 +993,5 @@ class TestQueryNodes:
         assert issubclass(QueryCompare, QueryExpr)
         assert issubclass(QueryAnd, QueryExpr)
         assert issubclass(QueryOr, QueryExpr)
+        assert issubclass(QueryNot, QueryExpr)
+        assert issubclass(QueryElem, QueryExpr)

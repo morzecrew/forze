@@ -31,11 +31,6 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.transaction import (
-    TransactionManagerPort,
-    TransactionScopeKey,
-)
-
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -58,15 +53,19 @@ from forze.application.contracts.pubsub import (
     PubSubQueryPort,
 )
 from forze.application.contracts.querying import (
+    ELEM_SCALAR_FIELD,
     AggregatesExpression,
     AggregatesExpressionParser,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryAnd,
     QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryNot,
     QueryOr,
     QuerySortExpression,
 )
@@ -100,6 +99,10 @@ from forze.application.contracts.stream import (
     StreamGroupQueryPort,
     StreamMessage,
     StreamQueryPort,
+)
+from forze.application.contracts.transaction import (
+    TransactionManagerPort,
+    TransactionScopeKey,
 )
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
 from forze.base.primitives import JsonDict, utcnow, uuid7
@@ -398,6 +401,59 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
                 return False
 
 
+def _elem_vacuous_match(quantifier: str) -> bool:
+    return quantifier in ("$all", "$none")
+
+
+def _normalize_array_value(raw: Any) -> list[Any] | None:
+    if raw is _MISSING or raw is None:
+        return None
+
+    if isinstance(raw, list):
+        return raw  # type: ignore[return-value]
+
+    return None
+
+
+def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
+    match inner:
+        case QueryField() as field if field.name == ELEM_SCALAR_FIELD:
+            return _match_field({ELEM_SCALAR_FIELD: elem}, field)
+        case QueryField() as field:
+            if not isinstance(elem, dict):
+                return False
+            return _match_field(cast(JsonDict, elem), field)
+        case QueryAnd(items):
+            if not isinstance(elem, dict):
+                return False
+            elem_doc = cast(JsonDict, elem)
+            return all(
+                _match_field(elem_doc, i) for i in items if isinstance(i, QueryField)
+            )
+        case _:
+            return False
+
+
+def _match_elem(doc: JsonDict, node: QueryElem) -> bool:
+    raw = _path_get(doc, node.path)
+    arr = _normalize_array_value(raw)
+    if arr is None:
+        return _elem_vacuous_match(node.quantifier)
+
+    if not arr:
+        return _elem_vacuous_match(node.quantifier)
+
+    results = [_match_elem_inner(item, node.inner) for item in arr]
+
+    match node.quantifier:
+        case "$any":
+            return any(results)
+        case "$all":
+            return all(results)
+        case "$none":
+            return not any(results)
+
+
 def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
     match expr:
         case QueryField():
@@ -409,17 +465,17 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
         case QueryOr(items=items):
             return any(_match_expr(doc, item) for item in items)
 
+        case QueryAnd(items=items):
+            return all(_match_expr(doc, item) for item in items)
+
+        case QueryNot(item):
+            return not _match_expr(doc, item)
+
+        case QueryElem():
+            return _match_elem(doc, expr)
+
         case _:
-            # QueryAnd and fallback
-            items = getattr(  # pyright: ignore[reportUnknownVariableType]
-                expr,
-                "items",
-                tuple(),  # pyright: ignore[reportUnknownArgumentType]
-            )
-            return all(
-                _match_expr(doc, item)  # pyright: ignore[reportUnknownArgumentType]
-                for item in items  # pyright: ignore[reportUnknownVariableType]
-            )
+            raise CoreError(f"Unknown query expression: {expr!r}")
 
 
 def _match_filters(doc: JsonDict, filters: QueryFilterExpression | None) -> bool:  # type: ignore[valid-type]
