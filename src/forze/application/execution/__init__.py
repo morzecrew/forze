@@ -2,8 +2,9 @@
 
 from .context import ExecutionContext, InvocationMetadata
 from .deps import Deps, DepsModule, DepsPlan
-from .lifecycle import LifecyclePlan, LifecycleStep
+from .lifecycle import LifecyclePlan
 from .planning import OperationPlan
+from .registry import OperationRegistry
 from .runtime import ExecutionRuntime
 
 # ----------------------- #
@@ -16,6 +17,6 @@ __all__ = [
     "ExecutionContext",
     "ExecutionRuntime",
     "LifecyclePlan",
-    "LifecycleStep",
     "OperationPlan",
+    "OperationRegistry",
 ]

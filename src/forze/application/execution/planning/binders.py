@@ -173,7 +173,7 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
     _acc: TransactionScope = attrs.field(alias="acc", factory=TransactionScope)
     """Accumulator plan for this binder."""
 
-    _commit_fn: Callable[[P, TransactionScope], P] = attrs.field(alias="commit_fn")  # type: ignore[override]
+    _commit_fn: Callable[[P, TransactionScope], P] = attrs.field(alias="commit_fn")  # type: ignore[override, assignment]
     """Function to commit the plan back to the parent."""
 
     _root_commit_fn: Callable[[P], R] | None = attrs.field(

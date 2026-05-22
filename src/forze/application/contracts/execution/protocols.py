@@ -56,7 +56,11 @@ class OnFailure[Args](Protocol):  # pragma: no cover
 class Finally[Args, R](Protocol):  # pragma: no cover
     """Protocol for a hook that runs after the operation handler finishes (success or failure)."""
 
-    def __call__(self, args: Args, outcome: "Outcome[R]") -> Awaitable[None]: ...
+    def __call__(
+        self,
+        args: Args,
+        outcome: "Outcome[R]",  # noqa: F841
+    ) -> Awaitable[None]: ...
 
 
 # ....................... #

@@ -135,7 +135,7 @@ class TransactionScope(Scope):
     def merge(cls, *scopes: Self) -> Self:  # type: ignore[override]
         """Merge multiple transaction scope plans into a single."""
 
-        merged_scope = super().merge(*scopes)
+        merged_scope = super().merge(*scopes)  # type: ignore[arg-type]
 
         merged_after_commit = AbstractSequence.merge(
             *[scope.after_commit for scope in scopes]

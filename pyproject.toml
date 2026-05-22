@@ -272,8 +272,8 @@ name = "Layered `forze.application` module architecture"
 type = "layers"
 layers = [
     "forze.application.composition",
-    "forze.application.usecases",
-    "forze.application.guards",
+    "forze.application.handlers",
+    "forze.application.hooks",
     "forze.application.execution",
     "forze.application.dto",
     "forze.application.contracts",
@@ -282,11 +282,7 @@ layers = [
 [[tool.importlinter.contracts]]
 name = "Layered `forze.domain` module architecture"
 type = "layers"
-layers = [
-    "forze.domain.mixins",
-    "forze.domain.models",
-    "forze.domain.validation",
-]
+layers = ["forze.domain.models", "forze.domain.validation"]
 
 [[tool.importlinter.contracts]]
 name = "Protect integration subpackages"

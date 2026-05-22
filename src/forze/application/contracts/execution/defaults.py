@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
-@static_fn_conformity(LifecycleHook)
+@static_fn_conformity(LifecycleHook)  # type: ignore[type-abstract]
 async def noop_lifecycle_hook(ctx: "ExecutionContext") -> None:
     """No-op lifecycle hook."""
 

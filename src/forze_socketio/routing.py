@@ -11,11 +11,9 @@ import attrs
 from pydantic import TypeAdapter
 from socketio.async_server import AsyncServer
 
-from forze.application.execution import (
-    ExecutionContext,
-    Usecase,
-    UsecaseRegistry,
-)
+from forze.application.contracts.execution import Handler
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import FrozenOperationRegistry
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey
 
@@ -27,7 +25,7 @@ ExecutionContextFactoryPort = Callable[
 ]
 """Factory that builds request-scoped :class:`ExecutionContext` instances."""
 
-UsecaseResolverPort = Callable[[ExecutionContext, StrKey], Usecase[Any, Any]]
+HandlerResolverPort = Callable[[ExecutionContext, StrKey], Handler[Any, Any]]
 """Resolver that maps operation keys to composed usecases."""
 
 # ....................... #
@@ -185,6 +183,7 @@ class SocketIONamespaceRouter:
         :param ack_type: Optional type used to validate acknowledgement payload.
         :returns: Current router for chaining.
         """
+
         return self.register(
             SocketIOCommandRoute[Any, Any](
                 event=event,
@@ -201,7 +200,7 @@ class SocketIONamespaceRouter:
         sio: AsyncServer,
         *,
         context_factory: ExecutionContextFactoryPort,
-        usecase_resolver: UsecaseResolverPort,
+        usecase_resolver: HandlerResolverPort,
     ) -> "SocketIONamespaceRouter":
         """Bind registered command routes to a Socket.IO server.
 
@@ -252,7 +251,7 @@ class ForzeSocketIOAdapter:
     context_factory: ExecutionContextFactoryPort
     """Factory that builds request-scoped execution contexts."""
 
-    usecase_resolver: UsecaseResolverPort
+    usecase_resolver: HandlerResolverPort
     """Operation resolver used to build composed usecases."""
 
     __routers: dict[str, SocketIONamespaceRouter] = attrs.field(
@@ -267,6 +266,7 @@ class ForzeSocketIOAdapter:
     @property
     def routers(self) -> tuple[SocketIONamespaceRouter, ...]:
         """Return namespace routers currently attached to the adapter."""
+
         return tuple(self.__routers.values())
 
     # ....................... #
@@ -313,14 +313,15 @@ class ForzeSocketIOAdapter:
 
 
 def make_registry_usecase_resolver(
-    registry: UsecaseRegistry,
-) -> UsecaseResolverPort:
+    registry: FrozenOperationRegistry,
+) -> HandlerResolverPort:
     """Build a resolver backed by :class:`UsecaseRegistry`.
 
     :param registry: Base usecase registry.
     :returns: Callable resolver suitable for :class:`ForzeSocketIOAdapter`.
     """
-    def resolver(ctx: ExecutionContext, operation: StrKey) -> Usecase[Any, Any]:
+
+    def resolver(ctx: ExecutionContext, operation: StrKey) -> Handler[Any, Any]:
         return registry.resolve(operation, ctx)
 
     return resolver

@@ -27,7 +27,10 @@ class AbstractSequence[X]:
     # ....................... #
 
     @hybridmethod
-    def merge[V](cls: type[AbstractSequence[V]], *sequences: AbstractSequence[V]) -> AbstractSequence[V]:  # type: ignore[misc, override]
+    def merge[V](
+        cls: type[AbstractSequence[V]],  # type: ignore[misc, override]
+        *sequences: AbstractSequence[V],
+    ) -> AbstractSequence[V]:
         """Merge multiple sequences into a single sequence."""
 
         merged_items: tuple[V, ...] = ()
@@ -41,8 +44,11 @@ class AbstractSequence[X]:
 
     # ....................... #
 
-    @merge.instancemethod
-    def _merge_instance(self: AbstractSequence[X], *sequences: AbstractSequence[X]) -> AbstractSequence[X]:  # type: ignore[misc, override]
+    @merge.instancemethod  # type: ignore[arg-type]
+    def _merge_instance(  # type: ignore[misc, override]
+        self: AbstractSequence[X],
+        *sequences: AbstractSequence[X],
+    ) -> AbstractSequence[X]:
         return type(self).merge(self, *sequences)
 
     # ....................... #

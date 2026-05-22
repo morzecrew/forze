@@ -8,6 +8,7 @@ from ..planning.binders import ScopeBinder, TransactionScopeBinder
 from ..planning.plans import OperationPlan
 
 if TYPE_CHECKING:
+    from ..planning.scopes import Scope, TransactionScope
     from .registries import OperationRegistry
 
 # ----------------------- #
@@ -49,10 +50,16 @@ class OperationRegistryBinder:
     def bind_outer(self) -> ScopeBinder[Self, "OperationRegistry"]:
         """Enter an outer scope for all operations assigned with this binder."""
 
+        def _commit_fn(parent: Self, scope: "Scope") -> Self:
+            old_acc = parent._acc
+            new_acc = attrs.evolve(old_acc, outer=scope)
+
+            return attrs.evolve(parent, acc=new_acc)
+
         return ScopeBinder(
             parent=self,
             source=self._acc._outer,  # type: ignore
-            commit_fn=lambda p, s: attrs.evolve(p, acc=attrs.evolve(s, outer=s)),
+            commit_fn=_commit_fn,
             root_commit_fn=lambda p: p.finish(),
         )
 
@@ -61,9 +68,15 @@ class OperationRegistryBinder:
     def bind_tx(self) -> TransactionScopeBinder[Self, "OperationRegistry"]:
         """Enter a transaction scope for all operations assigned with this binder."""
 
+        def _commit_fn(parent: Self, scope: "TransactionScope") -> Self:
+            old_acc = parent._acc
+            new_acc = attrs.evolve(old_acc, tx=scope)
+
+            return attrs.evolve(parent, acc=new_acc)
+
         return TransactionScopeBinder(
             parent=self,
             source=self._acc._tx,  # type: ignore
-            commit_fn=lambda p, s: attrs.evolve(p, acc=attrs.evolve(s, tx=s)),
+            commit_fn=_commit_fn,
             root_commit_fn=lambda p: p.finish(),
         )

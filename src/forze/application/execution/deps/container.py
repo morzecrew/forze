@@ -187,14 +187,14 @@ class Deps[K: StrKey]:
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
-            plain_acc.update(d.plain_deps)
+            plain_acc.update(d.plain_deps)  # type: ignore[attr-defined]
 
             # 3. merge routed
             for key, routes in d.routed_deps.items():
                 existing = routed_acc.get(key)
 
                 if existing is None:
-                    routed_acc[key] = dict(routes)
+                    routed_acc[key] = dict(routes)  # type: ignore[index]
                     continue
 
                 existing = dict(existing)
@@ -207,7 +207,7 @@ class Deps[K: StrKey]:
                     )
 
                 existing.update(routes)
-                routed_acc[key] = existing
+                routed_acc[key] = existing  # type: ignore[index]
 
         return cls(plain_deps=plain_acc, routed_deps=routed_acc)
 
