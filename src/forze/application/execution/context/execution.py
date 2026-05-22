@@ -78,8 +78,12 @@ class ExecutionContext:
 
     def __attrs_post_init__(self) -> None:
         def _tx_resolver(route: StrKey) -> TransactionManagerPort:
-            dep = self.deps.provide(TransactionManagerDepKey, route=route)
-            return dep(self)
+            with self.deps.resolution_scope(TransactionManagerDepKey, route=route):
+                dep = self.deps._lookup(  # pyright: ignore[reportPrivateUsage]
+                    TransactionManagerDepKey,
+                    route=route,
+                )
+                return dep(self)
 
         self.tx.lock(_tx_resolver)
         self.document.lock(self)

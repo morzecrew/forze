@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryOr,
@@ -56,6 +57,42 @@ class TestMongoQueryRenderer:
         r = MongoQueryRenderer()
         with pytest.raises(CoreError, match="Unknown expression"):
             r.render(_UnknownExpr())
+
+    def test_compare_renders_expr(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render(QueryCompare("starts_at", "$lte", "ends_at")) == {
+            "$expr": {"$lte": ["$starts_at", "$ends_at"]},
+        }
+
+    def test_compare_eq_shortcut_via_parser_shape(self) -> None:
+        from forze.application.contracts.querying import QueryFilterExpressionParser
+
+        expr = QueryFilterExpressionParser.parse(
+            {"$fields": {"a": "b"}},
+        )
+        r = MongoQueryRenderer()
+        assert r.render(expr) == {"$expr": {"$eq": ["$a", "$b"]}}
+
+    def test_compare_dot_paths(self) -> None:
+        r = MongoQueryRenderer()
+        assert r.render(QueryCompare("meta.score", "$gte", "meta.min")) == {
+            "$expr": {"$gte": ["$meta.score", "$meta.min"]},
+        }
+
+    def test_compare_with_fields_in_and(self) -> None:
+        r = MongoQueryRenderer()
+        expr = QueryAnd(
+            (
+                QueryField("status", "$eq", "active"),
+                QueryCompare("a", "$lt", "b"),
+            ),
+        )
+        assert r.render(expr) == {
+            "$and": [
+                {"status": "active"},
+                {"$expr": {"$lt": ["$a", "$b"]}},
+            ],
+        }
 
     def test_unknown_operator_raises(self) -> None:
         r = MongoQueryRenderer()
@@ -140,7 +177,7 @@ class TestMongoAggregateRendering:
 
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$fields": {"category": "category"},
+                "$groups": {"category": "category"},
                 "$computed": {
                     "orders": {"$count": None},
                     "revenue": {"$sum": "price"},
@@ -188,14 +225,14 @@ class TestMongoAggregateRendering:
                     "mid_rows": {
                         "$count": {
                             "filter": {
-                                "$fields": {"price": {"$gte": 10, "$lte": 20}},
+                                "$values": {"price": {"$gte": 10, "$lte": 20}},
                             },
                         },
                     },
                     "book_revenue": {
                         "$sum": {
                             "field": "price",
-                            "filter": {"$fields": {"category": "books"}},
+                            "filter": {"$values": {"category": "books"}},
                         },
                     },
                 },
@@ -244,7 +281,7 @@ class TestMongoAggregateRendering:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$fields": {"cat": "category"},
+                "$groups": {"cat": "category"},
                 "$computed": {
                     "avg_p": {"$avg": "price"},
                     "lo": {"$min": "price"},
@@ -267,7 +304,7 @@ class TestMongoAggregateRendering:
         renderer = MongoQueryRenderer()
         _parsed, pipeline = renderer.render_aggregates(
             {
-                "$fields": {"cat": "category"},
+                "$groups": {"cat": "category"},
                 "$time_bucket": {
                     "field": "created_at",
                     "unit": "week",

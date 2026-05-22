@@ -1,3 +1,4 @@
+import os
 from typing import Any, Self, final
 
 import attrs
@@ -8,6 +9,17 @@ from .container import Deps
 from .module import DepsModule
 
 # ----------------------- #
+
+_TRUTHY_ENV = frozenset({"1", "true", "yes"})
+
+
+def _trace_from_env() -> bool:
+    value = os.environ.get("FORZE_DEPS_TRACE", "").strip().lower()
+
+    return value in _TRUTHY_ENV
+
+
+# ....................... #
 
 
 @final
@@ -54,9 +66,16 @@ class DepsPlan:
 
     # ....................... #
 
-    def build(self) -> Deps[Any]:
+    def build(
+        self,
+        *,
+        trace_resolution: bool | None = None,
+    ) -> Deps[Any]:
         """Build a merged dependency container from all modules.
 
+        :param trace_resolution: When ``True``, enable observed resolution tracing.
+            When ``None`` (default), enable if ``FORZE_DEPS_TRACE`` is set to a
+            truthy value (``1``, ``true``, ``yes``).
         :returns: Merged :class:`Deps` instance.
         :raises CoreError: If any module registers a conflicting key.
         """
@@ -66,9 +85,13 @@ class DepsPlan:
             len(self.modules),
         )
 
+        enable_trace = (
+            _trace_from_env() if trace_resolution is None else trace_resolution
+        )
+
         if not self.modules:
             logger.trace("Deps plan is empty; returning empty container")
-            return Deps[Any]()
+            return Deps[Any](trace_resolution=enable_trace)
 
         built: list[Deps[Any]] = []
 
@@ -82,5 +105,8 @@ class DepsPlan:
             built.append(deps)
 
         merged = Deps[Any].merge(*built)
+
+        if enable_trace and not merged.trace_resolution:
+            merged = attrs.evolve(merged, trace_resolution=True)
 
         return merged

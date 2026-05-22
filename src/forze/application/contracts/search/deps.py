@@ -78,30 +78,29 @@ class SearchDeps(ConvenientDeps):
     def query(self, spec: SearchSpec[T]) -> SearchQueryPort[T]:
         """Resolve a search query port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(SearchQueryDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(SearchQueryDepKey, spec, route=spec.name)
 
     # ....................... #
 
     def command(self, spec: SearchSpec[T]) -> SearchCommandPort[T]:
         """Resolve a search command port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(SearchCommandDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            SearchCommandDepKey,
+            spec,
+            route=spec.name,
+        )
 
     # ....................... #
 
     def hub(self, spec: HubSearchSpec[T]) -> SearchQueryPort[T]:
         """Resolve a hub search query port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(HubSearchQueryDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            HubSearchQueryDepKey,
+            spec,
+            route=spec.name,
+        )
 
     # ....................... #
 
@@ -111,17 +110,19 @@ class SearchDeps(ConvenientDeps):
     ) -> SearchQueryPort[FederatedSearchReadModel[T]]:
         """Resolve a federated search query port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(FederatedSearchQueryDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            FederatedSearchQueryDepKey,
+            spec,
+            route=spec.name,
+        )
 
     # ....................... #
 
     def snapshot(self, spec: SearchResultSnapshotSpec) -> SearchResultSnapshotPort:
         """Resolve a search result snapshot port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(SearchResultSnapshotDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            SearchResultSnapshotDepKey,
+            spec,
+            route=spec.name,
+        )

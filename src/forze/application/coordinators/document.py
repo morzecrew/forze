@@ -1685,7 +1685,7 @@ class DocumentCoordinator(
                 else {
                     "$and": [
                         filters,
-                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                        {"$values": {ID_FIELD: {"$gt": last_id}}},
                     ]
                 }
             )

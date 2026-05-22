@@ -12,6 +12,7 @@ from forze.application.contracts.querying import (
     AggregateTimeBucket,
     ParsedAggregates,
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
@@ -208,10 +209,39 @@ class MongoQueryRenderer:
 
     # ....................... #
 
+    @staticmethod
+    def _field_ref(path: str) -> str:
+        return f"${path}"
+
+    def _render_compare_expr(
+        self,
+        left: str,
+        op: QueryOp.Compare,  # type: ignore[valid-type]
+        right: str,
+    ) -> JsonDict:
+        left_ref = self._field_ref(left)
+        right_ref = self._field_ref(right)
+
+        match op:
+            case "$eq":
+                return {"$expr": {"$eq": [left_ref, right_ref]}}
+
+            case "$neq":
+                return {"$expr": {"$ne": [left_ref, right_ref]}}
+
+            case "$gt" | "$gte" | "$lt" | "$lte":
+                return {"$expr": {op: [left_ref, right_ref]}}
+
+            case _:  # pyright: ignore[reportUnnecessaryComparison]
+                raise CoreError(f"Unknown compare operator: {op!r}")
+
     def render_expr_predicate(self, expr: QueryExpr) -> JsonDict:
         """Render a parsed query expression as a Mongo aggregation predicate."""
 
         match expr:
+            case QueryCompare(left, op, right):
+                return self._render_compare_expr(left, op, right)
+
             case QueryField(name, op, value):
                 return self._render_field_predicate(name, op, value)
 
@@ -330,6 +360,9 @@ class MongoQueryRenderer:
 
     def _render_expr(self, expr: QueryExpr) -> JsonDict:
         match expr:
+            case QueryCompare(left, op, right):
+                return self._render_compare_expr(left, op, right)
+
             case QueryField(name, op, value):
                 return self._render_field(name, op, value)
 

@@ -156,8 +156,8 @@ The Mongo adapter uses the shared query DSL:
     page = await doc_q.find_many(
         filters={
             "$and": [
-                {"$fields": {"is_deleted": False}},
-                {"$fields": {"title": {"$neq": ""}}},
+                {"$values": {"is_deleted": False}},
+                {"$values": {"title": {"$neq": ""}}},
             ]
         },
         sorts={"created_at": "desc"},
@@ -167,7 +167,7 @@ The Mongo adapter uses the shared query DSL:
     projects = page.hits
     total = page.count
 
-    count = await doc_q.count({"$fields": {"is_deleted": False}})
+    count = await doc_q.count({"$values": {"is_deleted": False}})
 
 See [Query Syntax](../reference/query-syntax.md).
 

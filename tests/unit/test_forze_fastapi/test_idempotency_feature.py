@@ -29,9 +29,7 @@ def _make_ctx(
     raw_request.headers.get = lambda k, d=None: headers.get(k, d)
 
     exec_ctx = MagicMock()
-    exec_ctx.deps.provide = MagicMock(
-        return_value=lambda _ctx, _spec: idem_port,
-    )
+    exec_ctx.deps.resolve_configurable = MagicMock(return_value=idem_port)
 
     spec = MagicMock()
     spec.http = {"status_code": status_code}

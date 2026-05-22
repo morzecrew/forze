@@ -20,6 +20,7 @@ from forze.application.contracts.querying import (
     AggregateTimeBucket,
     ParsedAggregates,
     QueryAnd,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
@@ -38,6 +39,20 @@ from .utils import PsycopgPositionalBinder
 
 _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
     ("$empty", "$superset", "$subset", "$disjoint", "$overlaps"),
+)
+
+_COMPARE_EQ_SQL: dict[str, str] = {"$eq": "=", "$neq": "<>"}
+_COMPARE_ORD_SQL: dict[str, str] = {
+    "$gt": ">",
+    "$gte": ">=",
+    "$lt": "<",
+    "$lte": "<=",
+}
+
+_COMPARE_COMPAT_BASE_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"int2", "int4", "int8"}),
+    frozenset({"float4", "float8", "numeric"}),
+    frozenset({"timestamp", "timestamptz"}),
 )
 
 
@@ -319,8 +334,102 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
+    def _resolve_column_expr(
+        self, field: str
+    ) -> tuple[sql.Composable, PostgresType | None]:
+        """Resolve a field path to a SQL column/expression and optional Postgres type."""
+
+        segments = field.split(".")
+        if len(segments) > 1:
+            if self.types is None:
+                raise CoreError(
+                    f"Nested compare path {field!r} requires column type metadata "
+                    "(introspected types).",
+                )
+            if self.model_type is None:
+                raise CoreError(
+                    f"Nested compare path {field!r} requires gateway model_type "
+                    "for read-model validation.",
+                )
+            return build_nested_json_scalar_expr(
+                path=field,
+                segments=segments,
+                column_types=self.types,
+                model_type=self.model_type,
+                nested_field_hints=self.nested_field_hints,
+                table_alias=self.table_alias,
+            )
+
+        if self.types is not None:
+            t = self.types.get(segments[0])
+            if t is None:
+                raise CoreError(f"Unknown column: {segments[0]!r}")
+        else:
+            t = None
+
+        col = (
+            sql.Identifier(self.table_alias, segments[0])
+            if self.table_alias is not None
+            else sql.Identifier(segments[0])
+        )
+        return col, t
+
+    # ....................... #
+
+    @staticmethod
+    def _assert_compare_types_compatible(
+        left: str,
+        right: str,
+        left_t: PostgresType | None,
+        right_t: PostgresType | None,
+    ) -> None:
+        if left_t is None or right_t is None:
+            return
+
+        if left_t.is_array or right_t.is_array:
+            raise CoreError(
+                f"Field compare between {left!r} and {right!r} does not support array columns.",
+            )
+
+        if left_t.base == right_t.base:
+            return
+
+        for group in _COMPARE_COMPAT_BASE_GROUPS:
+            if left_t.base in group and right_t.base in group:
+                return
+
+        raise CoreError(
+            f"Incompatible types for field compare {left!r} ({left_t.base!r}) "
+            f"and {right!r} ({right_t.base!r}).",
+        )
+
+    # ....................... #
+
+    def _render_compare(self, left: str, op: QueryOp.Compare, right: str) -> sql.Composable:  # type: ignore[valid-type]
+        left_expr, left_t = self._resolve_column_expr(left)
+        right_expr, right_t = self._resolve_column_expr(right)
+        self._assert_compare_types_compatible(left, right, left_t, right_t)
+
+        if op in _COMPARE_EQ_SQL:
+            op_sql = sql.SQL(_COMPARE_EQ_SQL[op])  # pyright: ignore[reportArgumentType]
+
+        elif op in _COMPARE_ORD_SQL:
+            op_sql = sql.SQL(
+                _COMPARE_ORD_SQL[op]  # pyright: ignore[reportArgumentType]
+            )
+
+        else:
+            raise CoreError(f"Unknown compare operator: {op!r}")
+
+        return sql.SQL("{} {} {}").format(left_expr, op_sql, right_expr)
+
+    # ....................... #
+
     def _render_expr(self, expr: QueryExpr) -> sql.Composable:
         match expr:
+            case QueryCompare(left, op, right):
+                return self._render_compare(left, op, right)
+
             case QueryField(name, op, value):
                 segments = name.split(".")
                 if len(segments) > 1:

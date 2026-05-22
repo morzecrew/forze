@@ -20,7 +20,4 @@ class CounterDeps(ConvenientDeps):
     def __call__(self, spec: CounterSpec) -> CounterPort:
         """Resolve a counter port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(CounterDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(CounterDepKey, spec, route=spec.name)

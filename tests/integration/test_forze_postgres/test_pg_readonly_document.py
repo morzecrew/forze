@@ -126,7 +126,7 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
     assert len(page) == 1
     assert page[0].title == "beta"
 
-    assert await q.count({"$fields": {"title": "gamma"}}) == 1
+    assert await q.count({"$values": {"title": "gamma"}}) == 1
 
 
 @pytest.mark.asyncio

@@ -154,7 +154,7 @@ async def test_find_for_update_with_projection_inside_transaction(
     async with ctx.tx.scope("main"):
         query = ctx.document.query(spec)
         proj = await query.project(
-            {"$fields": {"title": "unique-find-title"}},
+            {"$values": {"title": "unique-find-title"}},
             ("id", "rev", "title"),
             for_update=True,
         )

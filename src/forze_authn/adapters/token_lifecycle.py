@@ -149,7 +149,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     async def revoke_tokens(self, identity: AuthnIdentity) -> None:
         sessions = await self.session_qry.find_many(
             filters={
-                "$fields": {
+                "$values": {
                     "principal_id": identity.principal_id,
                 }
             }
@@ -166,7 +166,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
         sessions = await self.session_qry.find_many(
             filters={
-                "$fields": {
+                "$values": {
                     "principal_id": principal_id,
                     "family_id": family_id,
                 }
@@ -192,7 +192,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         old_session = await self.session_qry.find(
             filters={
-                "$fields": {
+                "$values": {
                     "refresh_digest": refresh_digest,
                 }
             }

@@ -91,7 +91,7 @@ async def test_get_many_and_field_projection(mongo_client: MongoClient) -> None:
     assert {x.id for x in many} == {a.id, b.id}
 
     proj = await cmd.project(
-        {"$fields": {ID_FIELD: a.id}},
+        {"$values": {ID_FIELD: a.id}},
         ("name", "tag"),
     )
     assert proj == {"name": "one", "tag": "x"}

@@ -126,7 +126,7 @@ async def test_mongo_gateways_create_read_projections_and_list(
     assert {row["name"] for row in many_proj} == {"gateway-one", "gateway-two"}
 
     one = await read.find(
-        {"$fields": {"name": {"$eq": "gateway-one"}}},
+        {"$values": {"name": {"$eq": "gateway-one"}}},
         return_fields=["name"],
     )
     assert one is not None
@@ -170,25 +170,25 @@ async def test_mongo_read_gateway_aggregate_expressions(
     await write.create(GwOrderCreate(category="software", price=90.0))
 
     aggregates = {
-        "$fields": {"category": "category"},
+        "$groups": {"category": "category"},
         "$computed": {
             "orders": {"$count": None},
             "revenue": {"$sum": "price"},
             "median_price": {"$median": "price"},
             "premium_orders": {
-                "$count": {"filter": {"$fields": {"price": {"$gte": 20}}}},
+                "$count": {"filter": {"$values": {"price": {"$gte": 20}}}},
             },
             "premium_revenue": {
                 "$sum": {
                     "field": "price",
-                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                    "filter": {"$values": {"price": {"$gte": 20}}},
                 },
             },
         },
     }
 
     rows = await read.find_many_aggregates(
-        filters={"$fields": {"category": {"$in": ["books", "hardware"]}}},
+        filters={"$values": {"category": {"$in": ["books", "hardware"]}}},
         limit=10,
         offset=0,
         sorts={"revenue": "desc"},
@@ -216,7 +216,7 @@ async def test_mongo_read_gateway_aggregate_expressions(
     ]
     assert (
         await read.count_aggregates(
-            {"$fields": {"category": {"$in": ["books", "hardware"]}}},
+            {"$values": {"category": {"$in": ["books", "hardware"]}}},
             aggregates=aggregates,
         )
         == 2
@@ -325,7 +325,7 @@ async def test_mongo_read_gateway_for_update_requires_transaction(
         assert locked.name == "tx-doc"
 
         found = await read.find(
-            {"$fields": {"name": {"$eq": "tx-doc"}}},
+            {"$values": {"name": {"$eq": "tx-doc"}}},
             for_update=True,
         )
         assert found is not None
@@ -361,13 +361,13 @@ async def test_mongo_read_gateway_return_model_and_find_many_validation(
     assert [x.name for x in gm] == ["mb", "ma"]
 
     fo = await read.find(
-        {"$fields": {"name": "mb"}},
+        {"$values": {"name": "mb"}},
         return_model=GwProj,
     )
     assert fo is not None and fo.name == "mb"
 
     rows = await read.find_many(
-        {"$fields": {"name": {"$in": ["ma", "mb"]}}},
+        {"$values": {"name": {"$in": ["ma", "mb"]}}},
         limit=10,
         offset=0,
         sorts={"name": "asc"},

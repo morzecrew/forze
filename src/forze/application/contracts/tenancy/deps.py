@@ -31,7 +31,7 @@ class TenancyDeps(ConvenientDeps):
         if not ctx.deps.exists(TenantResolverDepKey):
             return None
 
-        return ctx.deps.provide(TenantResolverDepKey)(ctx)
+        return self._resolve_simple(TenantResolverDepKey)
 
     # ....................... #
 
@@ -43,4 +43,4 @@ class TenancyDeps(ConvenientDeps):
         if not ctx.deps.exists(TenantManagementDepKey):
             return None
 
-        return ctx.deps.provide(TenantManagementDepKey)(ctx)
+        return self._resolve_simple(TenantManagementDepKey)

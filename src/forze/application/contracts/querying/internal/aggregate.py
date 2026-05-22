@@ -106,7 +106,7 @@ class AggregatesExpressionParser:
 
         raw_computed = cast(Mapping[Any, Any], raw_computed_obj)  # type: ignore[redundant-cast]
 
-        fields_obj: object = expr.get("$fields", {})
+        fields_obj: object = expr.get("$groups", {})
         fields = cls._group_keys(fields_obj)
         time_bucket = cls._time_bucket(expr.get("$time_bucket"))
         computed_fields = tuple(
@@ -152,7 +152,7 @@ class AggregatesExpressionParser:
                 for name in seq
             )
 
-        raise CoreError(f"Invalid aggregate $fields: {raw!r}")
+        raise CoreError(f"Invalid aggregate $groups: {raw!r}")
 
     # ....................... #
 

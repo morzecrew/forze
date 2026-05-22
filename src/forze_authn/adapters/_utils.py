@@ -20,8 +20,8 @@ async def find_password_account_by_login(
     return await qry.find(
         filters={
             "$or": [
-                {"$fields": {"username": login}},
-                {"$fields": {"email": login}},
+                {"$values": {"username": login}},
+                {"$values": {"email": login}},
             ]
         }
     )
@@ -36,7 +36,7 @@ async def find_password_account_by_authn_identity(
 ) -> ReadPasswordAccount | None:
     return await qry.find(
         filters={
-            "$fields": {
+            "$values": {
                 "principal_id": identity.principal_id,
             },
         }
@@ -52,7 +52,7 @@ async def find_api_key_account_by_key_hash(
 ) -> ReadApiKeyAccount | None:
     return await qry.find(
         filters={
-            "$fields": {
+            "$values": {
                 "key_hash": key_hash,
             },
         }
@@ -68,7 +68,7 @@ async def find_api_key_account_by_authn_identity(
 ) -> ReadApiKeyAccount | None:
     return await qry.find(
         filters={
-            "$fields": {
+            "$values": {
                 "principal_id": identity.principal_id,
             },
         }
@@ -85,7 +85,7 @@ async def validate_principal(
 ) -> None:
     principal = await qry.find(
         filters={
-            "$fields": {
+            "$values": {
                 "id": principal_id,
             },
         }

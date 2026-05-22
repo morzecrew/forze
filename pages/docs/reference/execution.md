@@ -55,13 +55,30 @@ The context validates that ports resolved inside a transaction match the active 
 
 ### Cycle detection
 
-`dep()` tracks the resolution stack per async task. If a dependency resolution chain encounters the same `DepKey` twice, it raises `CoreError` with the full cycle chain for diagnostics.
+Each `Deps` container owns a resolution stack per async task (via a per-instance `ContextVar`). Stacks are isolated across containers: two `Deps` instances in the same task do not share cycle state. A resolution frame is `(DepKey.name, optional route)` — for example `document_query@items` or `postgres_client` when no route is used.
+
+| API | When to use |
+|-----|-------------|
+| `resolve_configurable(ctx, key, spec, route=...)` | Configurable ports: lookup factory and call `factory(ctx, spec)` under a scope |
+| `resolve_simple(ctx, key, route=...)` | Simple ports: lookup factory and call `factory(ctx)` under a scope |
+| `resolution_scope(key, route=...)` | When the caller owns factory invocation (for example transaction manager resolution) |
+| `provide(key, route=...)` | Plain lookup; raises `CoreError` if the same frame is already on this container's stack |
+
+If a factory (or misconfigured container) requests the same frame again while it is still resolving, Forze raises `CoreError` with a chain such as `Cyclic dependency resolution: document_query@test -> tx_manager@mock -> document_query@test` instead of exhausting the Python stack.
+
+Plain singleton lookups (lifecycle hooks fetching a shared client) use `provide()` when no conflicting frame is active — nested `provide(PostgresClientDepKey)` inside an outer port factory is allowed because the frames differ. When resolution tracing is enabled, `provide()` under an active stack still records an observed edge to the looked-up frame (without pushing it).
+
+#### Observed resolution graph (development)
+
+Enable tracing on a container with `Deps(trace_resolution=True)` or set `FORZE_DEPS_TRACE=1` (or `true` / `yes`) before `DepsPlan.build()` (unless `build(trace_resolution=False)` overrides it). While resolving, Forze records directed edges `(parent, child)` where the child depends on the parent — on scope push and on `provide()` under an active stack.
+
+Read the current task's trace with `deps.resolution_trace()` and export a snapshot via `trace.to_dag()` (`DirectedAcyclicGraph` for topological order). `registered_frames()` lists all statically registered frames. Tracing is diagnostic only; runtime stack checks remain the production guard.
 
 ## Dependencies
 
 ### DepKey
 
-A typed key identifying a dependency. Used for both registration (in dep modules) and resolution (via `ctx.dep(key)`):
+A typed key identifying a dependency. Used for both registration (in dep modules) and resolution (via `ctx.deps`):
 
     :::python
     from forze.application.contracts.base import DepKey
@@ -82,8 +99,13 @@ In-memory dependency container implementing `DepsPort`:
 
 | Method | Purpose |
 |--------|---------|
-| `provide(key)` | Return the dependency; raises `CoreError` if missing |
-| `exists(key)` | Check registration |
+| `provide(key, route=...)` | Look up a registered provider or instance; cycle-check only |
+| `resolve_configurable(ctx, key, spec, route=...)` | Resolve a configurable port under a scope |
+| `resolve_simple(ctx, key, route=...)` | Resolve a simple port under a scope |
+| `resolution_scope(key, route=...)` | Context manager for custom lookup + invoke |
+| `resolution_trace()` | Observed edges for the current task when tracing is enabled |
+| `registered_frames()` | Static inventory of registered frames |
+| `exists(key, route=...)` | Check registration |
 | `merge(*deps)` | Combine containers; raises `CoreError` on key conflicts |
 | `without(key)` | Return a container without the given key |
 | `empty()` | Check if the container is empty |
@@ -136,11 +158,11 @@ Protocol for startup/shutdown hooks. Receives the `ExecutionContext`:
 
     :::python
     async def startup_postgres(ctx: ExecutionContext) -> None:
-        client = ctx.dep(PostgresClientKey)
+        client = ctx.deps.provide(PostgresClientKey)
         await client.connect()
 
     async def shutdown_postgres(ctx: ExecutionContext) -> None:
-        client = ctx.dep(PostgresClientKey)
+        client = ctx.deps.provide(PostgresClientKey)
         await client.disconnect()
 
 ### LifecycleStep
@@ -287,5 +309,6 @@ A complete wiring example showing deps, lifecycle, and runtime:
 | Symptom | Likely cause | Fix | See also |
 |---------|--------------|-----|----------|
 | A lifecycle startup step did not run before a request or usecase. | The runtime scope was not entered, or `startup()` was not called from the application lifespan. | Use `async with runtime.scope()` for tests and workers, or call `runtime.startup()`/`runtime.shutdown()` from the framework lifespan. | [FastAPI integration](../integrations/fastapi.md#lifecycle-step) |
-| Resolving `ctx.dep(...)`, `ctx.doc_query(...)`, or another helper raises a missing dependency error. | The `DepsPlan` does not include the module that registers that key/route, or the route does not match the spec name. | Add the correct integration deps module and verify the spec name, dependency key, and route are registered together. | [Specs and wiring](../concepts/specs-and-wiring.md) |
+| Resolving `ctx.document.query(...)`, `ctx.deps.provide(...)`, or another helper raises a missing dependency error. | The `DepsPlan` does not include the module that registers that key/route, or the route does not match the spec name. | Add the correct integration deps module and verify the spec name, dependency key, and route are registered together. | [Specs and wiring](../concepts/specs-and-wiring.md) |
+| `Cyclic dependency resolution: ...` from `Deps`. | A factory calls back into a dependency that is already on the resolution stack (same key and route). | Break the cycle in module wiring or split dependencies; do not rely on infinite recursion. | [Cycle detection](#cycle-detection) |
 | `Deps.merge()` raises a key collision while building the plan. | Multiple modules provide the same dependency key and route. | Register only one provider per key/route, or separate providers with routed names before merging modules. | [Dependencies](#dependencies) |

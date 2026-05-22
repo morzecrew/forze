@@ -48,11 +48,11 @@ class DocumentDeps(ConvenientDeps):
     def query(self, spec: DocumentSpec[R, Any, Any, Any]) -> DocumentQueryPort[R]:
         """Resolve a document query port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(DocumentQueryDepKey, route=spec.name)
-
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            DocumentQueryDepKey,
+            spec,
+            route=spec.name,
+        )
 
     # ....................... #
 
@@ -62,8 +62,8 @@ class DocumentDeps(ConvenientDeps):
     ) -> DocumentCommandPort[R, D, C, U]:
         """Resolve a document command port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(DocumentCommandDepKey, route=spec.name)
-
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            DocumentCommandDepKey,
+            spec,
+            route=spec.name,
+        )

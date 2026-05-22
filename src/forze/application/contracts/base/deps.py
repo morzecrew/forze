@@ -1,8 +1,9 @@
-from typing import TYPE_CHECKING, Protocol, TypeVar, final
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
 import attrs
 
 from forze.base.errors import CoreError
+from forze.base.primitives import StrKey
 
 from .specs import BaseSpec
 
@@ -82,3 +83,30 @@ class ConvenientDeps:
             raise CoreError("Execution context is not set")
 
         return self.ctx
+
+    # ....................... #
+
+    def _resolve_configurable(
+        self,
+        key: DepKey[Any],
+        spec: object,
+        *,
+        route: StrKey | None = None,
+    ) -> Any:
+        """Resolve a configurable port via :attr:`ctx` deps."""
+
+        ctx = self._require_ctx()
+        return ctx.deps.resolve_configurable(ctx, key, spec, route=route)
+
+    # ....................... #
+
+    def _resolve_simple(
+        self,
+        key: DepKey[Any],
+        *,
+        route: StrKey | None = None,
+    ) -> Any:
+        """Resolve a simple port via :attr:`ctx` deps."""
+
+        ctx = self._require_ctx()
+        return ctx.deps.resolve_simple(ctx, key, route=route)

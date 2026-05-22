@@ -32,35 +32,46 @@ def build_authn_registry(
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
-            authn=ctx.deps.provide(AuthnDepKey, route=spec.name)(ctx, spec),
-            token_lifecycle=ctx.deps.provide(TokenLifecycleDepKey, route=spec.name)(
-                ctx, spec
+            authn=ctx.deps.resolve_configurable(
+                ctx, AuthnDepKey, spec, route=spec.name
+            ),
+            token_lifecycle=ctx.deps.resolve_configurable(
+                ctx,
+                TokenLifecycleDepKey,
+                spec,
+                route=spec.name,
             ),
         )
 
     def _refresh_tokens(ctx: ExecutionContext) -> AuthnRefreshTokens:
         return AuthnRefreshTokens(
-            token_lifecycle=ctx.deps.provide(TokenLifecycleDepKey, route=spec.name)(
-                ctx, spec
+            token_lifecycle=ctx.deps.resolve_configurable(
+                ctx,
+                TokenLifecycleDepKey,
+                spec,
+                route=spec.name,
             ),
         )
 
     def _logout(ctx: ExecutionContext) -> AuthnLogout:
         return AuthnLogout(
             resolver=ctx.inv.get_authn,
-            token_lifecycle=ctx.deps.provide(TokenLifecycleDepKey, route=spec.name)(
-                ctx, spec
+            token_lifecycle=ctx.deps.resolve_configurable(
+                ctx,
+                TokenLifecycleDepKey,
+                spec,
+                route=spec.name,
             ),
         )
 
     def _change_password(ctx: ExecutionContext) -> AuthnChangePassword:
         return AuthnChangePassword(
             resolver=ctx.inv.get_authn,
-            password_lifecycle=ctx.deps.provide(
-                PasswordLifecycleDepKey, route=spec.name
-            )(
+            password_lifecycle=ctx.deps.resolve_configurable(
                 ctx,
+                PasswordLifecycleDepKey,
                 spec,
+                route=spec.name,
             ),
         )
 

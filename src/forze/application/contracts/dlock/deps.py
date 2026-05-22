@@ -37,17 +37,19 @@ class DistributedLockDeps(ConvenientDeps):
     def query(self, spec: DistributedLockSpec) -> DistributedLockQueryPort:
         """Resolve a distributed lock query port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(DistributedLockQueryDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            DistributedLockQueryDepKey,
+            spec,
+            route=spec.name,
+        )
 
     # ....................... #
 
     def command(self, spec: DistributedLockSpec) -> DistributedLockCommandPort:
         """Resolve a distributed lock command port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(DistributedLockCommandDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            DistributedLockCommandDepKey,
+            spec,
+            route=spec.name,
+        )

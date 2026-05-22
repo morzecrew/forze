@@ -54,8 +54,12 @@ class IdempotencyFeature(HttpEndpointFeaturePort[Q, P, H, C, B, In, Raw, R]):
                     detail=f"Idempotency key is required (header: '{IDEMPOTENCY_KEY_HEADER}')",
                 )
 
-            idem_f = ctx.exec_ctx.deps.provide(IdempotencyDepKey, route=self.spec.name)
-            idem = idem_f(ctx.exec_ctx, self.spec)
+            idem = ctx.exec_ctx.deps.resolve_configurable(
+                ctx.exec_ctx,
+                IdempotencyDepKey,
+                self.spec,
+                route=self.spec.name,
+            )
             payload_hash = pydantic_model_hash(ctx.input)
 
             snap = await idem.begin(ctx.operation_id, idem_key, payload_hash)

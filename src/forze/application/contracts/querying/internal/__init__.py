@@ -8,7 +8,7 @@ from .aggregate import (
     ParsedAggregates,
 )
 from .cast import QueryValueCaster
-from .nodes import QueryAnd, QueryExpr, QueryField, QueryOr
+from .nodes import QueryAnd, QueryCompare, QueryExpr, QueryField, QueryOr
 from .parse import QueryFilterExpressionParser
 
 # ----------------------- #
@@ -22,6 +22,7 @@ __all__ = [
     "QueryFilterExpressionParser",
     "QueryValueCaster",
     "QueryAnd",
+    "QueryCompare",
     "QueryExpr",
     "QueryField",
     "QueryOr",

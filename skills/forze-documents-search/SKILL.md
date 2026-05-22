@@ -21,7 +21,7 @@ doc_c = self.ctx.doc_command(project_spec)
 
 project = await doc_q.get(project_id)
 page = await doc_q.find_page(
-    filters={"$fields": {"status": "active"}},
+    filters={"$values": {"status": "active"}},
     pagination={"limit": 20, "offset": 0},
     sorts={"created_at": "desc", "id": "asc"},
 )
@@ -39,8 +39,8 @@ Use the shared JSON DSL, not adapter-specific SQL/Mongo syntax, in application c
 ```python
 filters = {
     "$and": [
-        {"$fields": {"status": {"$in": ["active", "paused"]}}},
-        {"$fields": {"created_at": {"$gte": since}}},
+        {"$values": {"status": {"$in": ["active", "paused"]}}},
+        {"$values": {"created_at": {"$gte": since}}},
     ]
 }
 ```
@@ -76,7 +76,7 @@ project_search = SearchSpec(
 
 hits, total = await self.ctx.search_query(project_search).search(
     query="roadmap",
-    filters={"$fields": {"status": "active"}},
+    filters={"$values": {"status": "active"}},
     limit=20,
 )
 ```

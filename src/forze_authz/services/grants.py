@@ -143,7 +143,7 @@ class AuthzGrantResolver:
         for rid in expanded_role_ids:
             rp_rows = await fetch_all_document_hits(
                 deps.rp_binding_qry,
-                filters={"$fields": {"role_id": rid}},
+                filters={"$values": {"role_id": rid}},
             )
 
             for rb in rp_rows:
@@ -151,7 +151,7 @@ class AuthzGrantResolver:
 
         pp_rows = await fetch_all_document_hits(
             deps.pp_binding_qry,
-            filters={"$fields": {"principal_id": principal_id}},
+            filters={"$values": {"principal_id": principal_id}},
         )
 
         for pb in pp_rows:
@@ -162,7 +162,7 @@ class AuthzGrantResolver:
         for gid in group_ids:
             gp_rows = await fetch_all_document_hits(
                 deps.gperm_binding_qry,
-                filters={"$fields": {"group_id": gid}},
+                filters={"$values": {"group_id": gid}},
             )
 
             for gb in gp_rows:
@@ -201,7 +201,7 @@ class AuthzGrantResolver:
 
         pr_rows = await fetch_all_document_hits(
             deps.pr_binding_qry,
-            filters={"$fields": {"principal_id": principal_id}},
+            filters={"$values": {"principal_id": principal_id}},
         )
 
         for pr in pr_rows:
@@ -212,7 +212,7 @@ class AuthzGrantResolver:
         for gid in group_ids:
             gr_rows = await fetch_all_document_hits(
                 deps.gr_binding_qry,
-                filters={"$fields": {"group_id": gid}},
+                filters={"$values": {"group_id": gid}},
             )
 
             for gr in gr_rows:
@@ -227,7 +227,7 @@ class AuthzGrantResolver:
 
         gp_rows = await fetch_all_document_hits(
             deps.gp_binding_qry,
-            filters={"$fields": {"principal_id": principal_id}},
+            filters={"$values": {"principal_id": principal_id}},
         )
 
         active: list[UUID] = []

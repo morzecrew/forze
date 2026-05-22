@@ -358,7 +358,7 @@ class TestPostgresDocumentAdapterGetPaths:
             cache_coord=_pg_cc(read_gw, doc_spec, cache=cache),
         )
 
-        filt: dict = {"$fields": {ID_FIELD: pk}}
+        filt: dict = {"$values": {ID_FIELD: pk}}
         out = await adapter.project(filt, ["id"])
 
         assert out == {"id": str(pk)}
@@ -621,7 +621,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
             side_effect=[[row_a] * 10, [row_b]],
         )
         agg = {
-            "$fields": ["title"],
+            "$groups": ["title"],
             "$computed": {"n": {"$count": None}},
         }
 
@@ -936,7 +936,7 @@ class TestPostgresDocumentAdapterGetManyBranches:
 
         page = await adapter.project_many(
             ["id"],
-            filters={"$fields": {ID_FIELD: {"$in": pks}}},
+            filters={"$values": {ID_FIELD: {"$in": pks}}},
         )
 
         assert page.hits == [{"id": str(pks[0])}]

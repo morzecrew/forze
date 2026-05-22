@@ -26,6 +26,9 @@ OrdOp = Literal["$gt", "$gte", "$lt", "$lte"]
 EqOp = Literal["$eq", "$neq"]
 """Equality operators."""
 
+CompareOp = Literal["$eq", "$neq", "$gt", "$gte", "$lt", "$lte"]
+"""Field-to-field compare operators (equality and ordering only)."""
+
 MembOp = Literal["$in", "$nin"]
 """Membership operators."""
 
@@ -45,6 +48,7 @@ class QueryOp:
     Unary = UnaryOp
     Ord = OrdOp
     Eq = EqOp
+    Compare = CompareOp
     Memb = MembOp
     SetRel = SetRelOp
     All = Op

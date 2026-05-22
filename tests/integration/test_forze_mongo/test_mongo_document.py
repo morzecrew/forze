@@ -76,7 +76,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     fetched = await adapter.get(created.id)
     assert fetched.name == "alpha"
 
-    filtered: QueryFilterExpression = {"$fields": {"name": {"$eq": "alpha"}}}
+    filtered: QueryFilterExpression = {"$values": {"name": {"$eq": "alpha"}}}
     found = await adapter.find(filtered)
     assert found is not None
     assert found.id == created.id

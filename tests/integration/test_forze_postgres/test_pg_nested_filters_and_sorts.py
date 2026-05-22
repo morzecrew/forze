@@ -141,7 +141,7 @@ async def test_filter_on_nested_jsonb_scalar(pg_client: PostgresClient) -> None:
     await cmd.create(RowCreate(title="keep", meta=Meta(score=5, tag="x")))
     await cmd.create(RowCreate(title="drop", meta=Meta(score=50, tag="y")))
 
-    __p = await query.find_page({"$fields": {"meta.score": {"$lte": 10}}},
+    __p = await query.find_page({"$values": {"meta.score": {"$lte": 10}}},
         pagination={"limit": 10, "offset": 0},
     )
     rows = __p.hits
@@ -179,8 +179,8 @@ async def test_logical_and_across_top_level_and_nested_paths(
 
     filt = {
         "$and": [
-            {"$fields": {"title": "match"}},
-            {"$fields": {"meta.score": {"$eq": 7}}},
+            {"$values": {"title": "match"}},
+            {"$values": {"meta.score": {"$eq": 7}}},
         ]
     }
     assert await query.count(filt) == 1
@@ -215,8 +215,8 @@ async def test_logical_or_nested_and_top_level(pg_client: PostgresClient) -> Non
 
     filt = {
         "$or": [
-            {"$fields": {"meta.score": {"$gte": 100}}},
-            {"$fields": {"title": {"$eq": "low"}}},
+            {"$values": {"meta.score": {"$gte": 100}}},
+            {"$values": {"title": {"$eq": "low"}}},
         ]
     }
     __p = await query.find_page(filt,
@@ -252,7 +252,7 @@ async def test_filter_on_nested_string_leaf(pg_client: PostgresClient) -> None:
     await cmd.create(RowCreate(title="x", meta=Meta(score=1, tag="gold")))
     await cmd.create(RowCreate(title="y", meta=Meta(score=2, tag="silver")))
 
-    __p = await query.find_page({"$fields": {"meta.tag": "gold"}},
+    __p = await query.find_page({"$values": {"meta.tag": "gold"}},
         pagination={"limit": 10, "offset": 0},
     )
     rows = __p.hits

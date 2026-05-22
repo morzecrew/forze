@@ -71,7 +71,7 @@ class TenantManagementAdapter(TenantManagementPort):
     async def attach_principal(self, principal_id: UUID, tenant_id: UUID) -> None:
         dup = await self.binding_qry.find_many(
             filters={
-                "$fields": {
+                "$values": {
                     "principal_id": principal_id,
                     "tenant_id": tenant_id,
                 },
@@ -95,7 +95,7 @@ class TenantManagementAdapter(TenantManagementPort):
     async def detach_principal(self, principal_id: UUID, tenant_id: UUID) -> None:
         page = await self.binding_qry.find_many(
             filters={
-                "$fields": {
+                "$values": {
                     "principal_id": principal_id,
                     "tenant_id": tenant_id,
                 },

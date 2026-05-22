@@ -63,7 +63,7 @@ async def test_find_by_number_id_roundtrip_integration() -> None:
     doc_query = ctx.document.query(spec)
 
     created = await doc_command.create(dto=NumberedCreateCmd(number_id=7))
-    found = await doc_query.find(filters={"$fields": {"number_id": 7}})
+    found = await doc_query.find(filters={"$values": {"number_id": 7}})
 
     assert found is not None
     assert found.id == created.id

@@ -2,7 +2,7 @@
 
 import attrs
 
-from ..types import Array, Op, Scalar
+from ..types import Array, CompareOp, Op, Scalar
 
 # ----------------------- #
 
@@ -43,3 +43,20 @@ class QueryField(QueryExpr):
 
     value: Scalar | Array
     """Operand value."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
+class QueryCompare(QueryExpr):
+    """Leaf node: compare left field to right field with an operator."""
+
+    left: str
+    """Left-hand field path."""
+
+    op: CompareOp
+    """Compare operator (equality or ordering)."""
+
+    right: str
+    """Right-hand field path."""

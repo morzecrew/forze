@@ -74,7 +74,7 @@ class MappingTableResolver(PrincipalResolverPort):
     async def resolve(self, assertion: VerifiedAssertion) -> AuthnIdentity:
         existing = await self.qry.find(
             filters={
-                "$fields": {
+                "$values": {
                     "issuer": assertion.issuer,
                     "subject": assertion.subject,
                 }

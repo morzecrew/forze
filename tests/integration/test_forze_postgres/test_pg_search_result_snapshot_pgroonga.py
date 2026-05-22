@@ -181,7 +181,7 @@ async def test_pgroonga_v2_filter_only_empty_query_snapshot_reread(
         ),
     )
     adapter = ctx.search.query(spec)
-    flt: QueryFilterExpression = {"$fields": {"title": "match-me"}}
+    flt: QueryFilterExpression = {"$values": {"title": "match-me"}}
     p1 = await adapter.search_page(
         "",
         filters=flt,

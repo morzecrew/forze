@@ -214,7 +214,7 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
     await cmd.create(_CxCreate(sku="banana"))
 
     one = await q.project(
-        {"$fields": {"sku": "apple"}},
+        {"$values": {"sku": "apple"}},
         ["sku"],
     )
     assert one is not None
@@ -222,7 +222,7 @@ async def test_mongo_adapter_find_and_find_many_projections_with_count(
 
     page = await q.project_page(
         ["id", "sku"],
-        {"$fields": {"sku": {"$in": ["apple", "banana"]}}},
+        {"$values": {"sku": {"$in": ["apple", "banana"]}}},
         pagination={"limit": 10, "offset": 0},
         sorts={"sku": "asc"},
     )

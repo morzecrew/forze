@@ -97,12 +97,12 @@ async def test_find_find_many_count_and_projections(
     b = await cmd.create(_Create(name="beta", kind="b"))
     await cmd.create(_Create(name="gamma", kind="a"))
 
-    found = await q.find({"$fields": {"name": "beta"}})
+    found = await q.find({"$values": {"name": "beta"}})
     assert found is not None
     assert found.name == "beta"
 
     __p = await q.find_page(
-        {"$fields": {"kind": "a"}},
+        {"$values": {"kind": "a"}},
         pagination={"limit": 10, "offset": 0},
         sorts={"name": "asc"},
     )
@@ -111,10 +111,10 @@ async def test_find_find_many_count_and_projections(
     assert total == 2
     assert [r.name for r in rows] == ["alpha", "gamma"]
 
-    assert await q.count({"$fields": {"kind": "b"}}) == 1
+    assert await q.count({"$values": {"kind": "b"}}) == 1
 
     row = await q.project(
-        {"$fields": {ID_FIELD: a.id}},
+        {"$values": {ID_FIELD: a.id}},
         ("name", "kind"),
     )
     assert row == {"name": "alpha", "kind": "a"}

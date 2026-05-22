@@ -21,7 +21,4 @@ class StorageDeps(ConvenientDeps):
     def __call__(self, spec: StorageSpec) -> StoragePort:
         """Resolve a storage port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(StorageDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(StorageDepKey, spec, route=spec.name)

@@ -100,7 +100,7 @@ Bind `AuthnIdentity` / `TenantIdentity` at the HTTP, Socket.IO, queue worker, or
 
 ## Query syntax
 
-Filters use the shared DSL: `{"$fields": {...}}`, `{"$and": [...]}`, `{"$or": [...]}`.
+Filters use the shared DSL: `{"$values": {...}}`, `{"$and": [...]}`, `{"$or": [...]}`.
 
 **Field shortcuts:**
 
@@ -115,7 +115,7 @@ Filters use the shared DSL: `{"$fields": {...}}`, `{"$and": [...]}`, `{"$or": [.
 **Sorts:** `{"created_at": "desc", "id": "asc"}`.
 
 ```python
-filters = {"$fields": {"status": "active", "is_deleted": False}}
+filters = {"$values": {"status": "active", "is_deleted": False}}
 page = await doc_q.find_page(
     filters=filters,
     pagination={"limit": 20, "offset": 0},

@@ -342,7 +342,7 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
 
     with ctx.inv.bind(metadata=_invocation_metadata()):
         page = await ctx.document.query(session_spec).find_many(
-            filters={"$fields": {"principal_id": pid}}
+            filters={"$values": {"principal_id": pid}}
         )
 
     assert len(page.hits) == 1
@@ -616,7 +616,7 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
 
     with ctx.inv.bind(metadata=_invocation_metadata()):
         page = await ctx.document.query(session_spec).find_many(
-            filters={"$fields": {"principal_id": pid}}
+            filters={"$values": {"principal_id": pid}}
         )
 
     assert len(page.hits) == 1

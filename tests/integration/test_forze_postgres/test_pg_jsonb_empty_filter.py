@@ -99,8 +99,8 @@ async def test_empty_filter_jsonb_array_column(pg_client: PostgresClient) -> Non
     await cmd.create(_ListCreate(title="one", characteristics=["a"]))
     await cmd.create(_ListCreate(title="two", characteristics=["a", "b"]))
 
-    empty_f = {"$fields": {"characteristics": {"$empty": True}}}
-    nonempty_f = {"$fields": {"characteristics": {"$empty": False}}}
+    empty_f = {"$values": {"characteristics": {"$empty": True}}}
+    nonempty_f = {"$values": {"characteristics": {"$empty": False}}}
 
     assert await query.count(empty_f) == 1
     assert await query.count(nonempty_f) == 2
@@ -140,8 +140,8 @@ async def test_empty_filter_json_column(pg_client: PostgresClient) -> None:
     await cmd.create(_ListCreate(title="empty", characteristics=[]))
     await cmd.create(_ListCreate(title="full", characteristics=["x"]))
 
-    assert await query.count({"$fields": {"characteristics": {"$empty": True}}}) == 1
-    assert await query.count({"$fields": {"characteristics": {"$empty": False}}}) == 1
+    assert await query.count({"$values": {"characteristics": {"$empty": True}}}) == 1
+    assert await query.count({"$values": {"characteristics": {"$empty": False}}}) == 1
 
 
 @pytest.mark.asyncio
@@ -193,5 +193,5 @@ async def test_empty_filter_native_pg_array_unaffected(pg_client: PostgresClient
     await cmd.create(_ArrCreate(title="a", tags=[]))
     await cmd.create(_ArrCreate(title="b", tags=["z"]))
 
-    assert await query.count({"$fields": {"tags": {"$empty": True}}}) == 1
-    assert await query.count({"$fields": {"tags": {"$empty": False}}}) == 1
+    assert await query.count({"$values": {"tags": {"$empty": True}}}) == 1
+    assert await query.count({"$values": {"tags": {"$empty": False}}}) == 1

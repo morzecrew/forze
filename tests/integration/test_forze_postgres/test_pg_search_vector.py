@@ -372,7 +372,7 @@ async def test_vector_respects_eq_filter_on_projection(
     )
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search.query(spec)
-    flt: QueryFilterExpression = {"$fields": {"label": "keep"}}
+    flt: QueryFilterExpression = {"$values": {"label": "keep"}}
     __p = await port.search_page("filter_me", filters=flt)
     rows = __p.hits
     n = __p.count
@@ -414,7 +414,7 @@ async def test_vector_return_count_no_matches_short_circuit(
     spec = SearchSpec(name="vector_test", model_type=VecDoc, fields=["id", "label"])
     ctx = _vector_search_context(pgvector_client, table=table, index_name=index_name)
     port = ctx.search.query(spec)
-    impossible: QueryFilterExpression = {"$fields": {"label": "nope"}}
+    impossible: QueryFilterExpression = {"$values": {"label": "nope"}}
     page = await port.search_page("lonely", filters=impossible)
     assert isinstance(page, Page)
     assert page.count == 0

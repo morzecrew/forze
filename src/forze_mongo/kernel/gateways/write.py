@@ -643,7 +643,7 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
                 else {
                     "$and": [
                         filters,
-                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                        {"$values": {ID_FIELD: {"$gt": last_id}}},
                     ]
                 }
             )

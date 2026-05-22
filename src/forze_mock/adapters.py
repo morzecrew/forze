@@ -62,6 +62,7 @@ from forze.application.contracts.querying import (
     AggregatesExpressionParser,
     CursorPaginationExpression,
     PaginationExpression,
+    QueryCompare,
     QueryExpr,
     QueryField,
     QueryFilterExpression,
@@ -347,10 +348,63 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             return not _coerce_set(value).isdisjoint(values)
 
 
+def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
+    left_value = _path_get(doc, node.left)
+    right_value = _path_get(doc, node.right)
+
+    match node.op:
+        case "$eq":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            return _eq(left_value, right_value)
+
+        case "$neq":
+            if left_value is _MISSING:
+                return True
+            if right_value is _MISSING:
+                return True
+            return not _eq(left_value, right_value)
+
+        case "$gt":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value > right_value
+            except TypeError:
+                return False
+
+        case "$gte":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value >= right_value
+            except TypeError:
+                return False
+
+        case "$lt":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value < right_value
+            except TypeError:
+                return False
+
+        case "$lte":
+            if left_value is _MISSING or right_value is _MISSING:
+                return False
+            try:
+                return left_value <= right_value
+            except TypeError:
+                return False
+
+
 def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
     match expr:
         case QueryField():
             return _match_field(doc, expr)
+
+        case QueryCompare():
+            return _match_compare(doc, expr)
 
         case QueryOr(items=items):
             return any(_match_expr(doc, item) for item in items)
@@ -1745,7 +1799,7 @@ class MockDocumentAdapter(
                 else {
                     "$and": [
                         filters,
-                        {"$fields": {ID_FIELD: {"$gt": last_id}}},
+                        {"$values": {ID_FIELD: {"$gt": last_id}}},
                     ]
                 }
             )

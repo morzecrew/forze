@@ -72,7 +72,7 @@ async def test_mongo_adapter_find_page_return_count_zero_short_circuit(
     ctx, spec = await _ctx_spec(mongo_client, col)
     q = ctx.document.query(spec)
     page = await q.find_page(
-        {"$fields": {"label": "___none___"}},
+        {"$values": {"label": "___none___"}},
         pagination={"limit": 5},
     )
     assert page.count == 0

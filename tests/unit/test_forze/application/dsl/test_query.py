@@ -43,11 +43,11 @@ class TestFilterExpressionParser:
     """Tests for FilterExpressionParser."""
 
     def test_parse_simple_predicate(self) -> None:
-        expr = {"$fields": {"name": "foo"}}
+        expr = {"$values": {"name": "foo"}}
         result = QueryFilterExpressionParser.parse(expr)
         assert result is not None
 
     def test_parse_conjunction(self) -> None:
-        expr = {"$and": [{"$fields": {"a": 1}}, {"$fields": {"b": 2}}]}
+        expr = {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}
         result = QueryFilterExpressionParser.parse(expr)
         assert result is not None

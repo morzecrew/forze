@@ -118,7 +118,7 @@ async def test_find_missing_returns_none(pg_client: PostgresClient) -> None:
     ctx = _ctx(pg_client, t)
     query = ctx.document.query(_spec())
     assert (
-        await query.find({"$fields": {"title": "does-not-exist"}}) is None
+        await query.find({"$values": {"title": "does-not-exist"}}) is None
     )
 
 
@@ -242,5 +242,5 @@ async def test_count_with_field_filter(pg_client: PostgresClient) -> None:
     await cmd.create(_Create(title="blue"))
     await cmd.create(_Create(title="red"))
     query = ctx.document.query(_spec())
-    assert await query.count({"$fields": {"title": "red"}}) == 2
-    assert await query.count({"$fields": {"title": "green"}}) == 0
+    assert await query.count({"$values": {"title": "red"}}) == 2
+    assert await query.count({"$values": {"title": "green"}}) == 0

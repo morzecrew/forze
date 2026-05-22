@@ -5,6 +5,7 @@ from .datetime import utcnow
 from .graph import DirectedAcyclicGraph
 from .namespace import StrKeyNamespace
 from .runtime import RuntimeVar
+from .selector import StrKeySelector, str_key_selector
 from .sequence import AbstractSequence
 from .string import normalize_string
 from .types import JsonDict, StrKey
@@ -22,6 +23,8 @@ __all__ = [
     "uuid7",
     "RuntimeVar",
     "StrKeyNamespace",
+    "StrKeySelector",
+    "str_key_selector",
     "AbstractSequence",
     "DirectedAcyclicGraph",
 ]

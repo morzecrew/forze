@@ -21,7 +21,4 @@ class CacheDeps(ConvenientDeps):
     def __call__(self, spec: CacheSpec) -> CachePort:
         """Resolve a cache port for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(CacheDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(CacheDepKey, spec, route=spec.name)

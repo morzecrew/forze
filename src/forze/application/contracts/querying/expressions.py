@@ -7,51 +7,82 @@ from typing import Literal, Mapping, NotRequired, Sequence, TypeAlias, TypedDict
 from .types import Array, Numeric, Scalar
 
 # ----------------------- #
+# Filter: literal constraints ($values)
 
-QueryFieldShortcutValue = Scalar | Array | None
+QueryValueShortcutValue = Scalar | Array | None
 """Shortcut value: scalar (eq), array (in), or None (null check)."""
 
-QueryFieldOpConjunction = TypedDict(
-    "QueryFieldOpConjunction",
+QueryValueOpConjunction = TypedDict(
+    "QueryValueOpConjunction",
     {
-        # Equality
         "$eq": Scalar,
         "$neq": Scalar,
-        # Ordering
         "$gt": Numeric,
         "$gte": Numeric,
         "$lt": Numeric,
         "$lte": Numeric,
-        # Membership
         "$in": Array,
         "$nin": Array,
-        # Unary
         "$null": bool,
         "$empty": bool,
-        # Set relations
         "$superset": Array,
-        "$subset": Array,  # whitelist (field doesn't have values outside of the list)
-        "$disjoint": Array,  # blacklist (field doesn't have values inside of the list)
-        "$overlaps": Array,  # intersection (field has values that are in both lists)
-        #! TODO: add support for ltree operators
+        "$subset": Array,
+        "$disjoint": Array,
+        "$overlaps": Array,
     },
     total=False,
 )
+"""Operator map for field-to-literal filters."""
 
-QueryFieldMapValue = QueryFieldOpConjunction | QueryFieldShortcutValue
+QueryValueMapValue = QueryValueOpConjunction | QueryValueShortcutValue
 """Value for a single field: operator map or shortcut."""
 
-QueryFieldMap = Mapping[str, QueryFieldMapValue]
-"""Map of field names to filter values.
-
-Keys may use dot notation (``meta.version``) for nested document fields. Backends
-interpret paths according to their storage (e.g. JSON column navigation on Postgres).
-"""
+QueryValueMap = Mapping[str, QueryValueMapValue]
+"""Map of field names to literal filter values (dot paths for nested JSON)."""
 
 # ....................... #
+# Filter: field-to-field constraints ($fields)
 
-QueryPredicate = TypedDict("QueryPredicate", {"$fields": QueryFieldMap})
-"""Predicate with ``$fields`` mapping."""
+QueryFieldsOpConjunction = TypedDict(
+    "QueryFieldsOpConjunction",
+    {
+        "$eq": str,
+        "$neq": str,
+        "$gt": str,
+        "$gte": str,
+        "$lt": str,
+        "$lte": str,
+    },
+    total=False,
+)
+"""Operator map for field-to-field compare; values are right-hand field paths."""
+
+QueryFieldsMapValue = QueryFieldsOpConjunction | str
+"""Field compare value: operator map or ``$eq`` shortcut (right-hand field path)."""
+
+QueryFieldsMap = Mapping[str, QueryFieldsMapValue]
+"""Map of left field paths to field-to-field compare specs."""
+
+# ....................... #
+# Filter: constraint bundle ($values and/or $fields)
+
+QueryConstraintPredicate = TypedDict(
+    "QueryConstraintPredicate",
+    {
+        "$values": QueryValueMap,
+        "$fields": QueryFieldsMap,
+    },
+    total=False,
+)
+"""Literal and/or field-to-field constraints (implicit AND when both keys present)."""
+
+QueryValuesPredicate = TypedDict("QueryValuesPredicate", {"$values": QueryValueMap})
+"""Literal-only constraint (``$values``)."""
+
+QueryFieldsPredicate = TypedDict("QueryFieldsPredicate", {"$fields": QueryFieldsMap})
+"""Field-to-field-only constraint (``$fields``)."""
+
+# ....................... #
 
 QueryConjunction = TypedDict(
     "QueryConjunction",
@@ -60,12 +91,15 @@ QueryConjunction = TypedDict(
 """Conjunction of filter expressions."""
 
 QueryDisjunction = TypedDict(
-    "QueryDisjunction", {"$or": Sequence["QueryFilterExpression"]}
+    "QueryDisjunction",
+    {"$or": Sequence["QueryFilterExpression"]},
 )
 """Disjunction of filter expressions."""
 
-QueryFilterExpression: TypeAlias = QueryPredicate | QueryConjunction | QueryDisjunction
-"""Recursive filter expression (predicate, and, or)."""
+QueryFilterExpression: TypeAlias = (
+    QueryConstraintPredicate | QueryConjunction | QueryDisjunction
+)
+"""Recursive filter expression (constraints, and, or)."""
 
 # ....................... #
 
@@ -140,19 +174,19 @@ class AggregateTimeBucketExpression(TypedDict):
 AggregatesExpression = TypedDict(
     "AggregatesExpression",
     {
-        "$fields": AggregateGroupKeysExpression,
+        "$groups": AggregateGroupKeysExpression,
         "$computed": AggregateComputedFieldExpression,
         "$time_bucket": AggregateTimeBucketExpression,
     },
     total=False,
 )
-"""Aggregate result shape: ``$fields`` (group keys) plus ``$computed`` (aggregates).
+"""Aggregate result shape: ``$groups`` (group keys) plus ``$computed`` (aggregates).
 
 Optional ``$time_bucket`` adds a derived group key: the start of a calendar period
 for a timestamp field in the given timezone. It can be combined with other group
 fields and any computed aggregates.
 
-``$fields`` is either a map of output alias to source path or a homogeneous list
+``$groups`` is either a map of output alias to source path or a homogeneous list
 or tuple of field paths (each path is both alias and source). ``$computed`` maps
 output aliases to aggregate function applications.
 """

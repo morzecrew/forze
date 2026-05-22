@@ -570,7 +570,7 @@ class TestMongoDocumentAdapterFindAndPage:
             read_gw=read_gw,
             cache_coord=_mongo_cc(read_gw, ms),
         )
-        filt = {"$fields": {"name": "x"}}
+        filt = {"$values": {"name": "x"}}
         row = await adapter.project(filt, ["name"])
         assert row == {"name": "x"}
         read_gw.find.assert_awaited_once_with(

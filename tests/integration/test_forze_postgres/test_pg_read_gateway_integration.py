@@ -96,7 +96,7 @@ async def test_postgres_read_gateway_get_find_and_projections(
     typed = await gw.get(alpha_id, return_model=RdNameOnly)
     assert typed.name == "alpha"
 
-    one = await gw.find({"$fields": {"name": "beta"}}, return_fields=["id", "name"])
+    one = await gw.find({"$values": {"name": "beta"}}, return_fields=["id", "name"])
     assert one is not None
     assert one["name"] == "beta"
 
@@ -168,25 +168,25 @@ async def test_postgres_read_gateway_aggregate_expressions(
     )
 
     aggregates = {
-        "$fields": {"category": "category"},
+        "$groups": {"category": "category"},
         "$computed": {
             "orders": {"$count": None},
             "revenue": {"$sum": "price"},
             "median_price": {"$median": "price"},
             "premium_orders": {
-                "$count": {"filter": {"$fields": {"price": {"$gte": 20}}}},
+                "$count": {"filter": {"$values": {"price": {"$gte": 20}}}},
             },
             "premium_revenue": {
                 "$sum": {
                     "field": "price",
-                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                    "filter": {"$values": {"price": {"$gte": 20}}},
                 },
             },
         },
     }
 
     rows = await gw.find_many_aggregates(
-        filters={"$fields": {"category": {"$in": ["books", "hardware"]}}},
+        filters={"$values": {"category": {"$in": ["books", "hardware"]}}},
         limit=10,
         offset=0,
         sorts={"revenue": "desc"},
@@ -214,7 +214,7 @@ async def test_postgres_read_gateway_aggregate_expressions(
     ]
     assert (
         await gw.count_aggregates(
-            {"$fields": {"category": {"$in": ["books", "hardware"]}}},
+            {"$values": {"category": {"$in": ["books", "hardware"]}}},
             aggregates=aggregates,
         )
         == 2
@@ -430,7 +430,7 @@ async def test_postgres_read_gateway_for_update_requires_transaction(
         assert locked.name == "x"
 
     with pytest.raises(InfrastructureError, match="Transactional context"):
-        await gw.find({"$fields": {"name": "x"}}, for_update=True)
+        await gw.find({"$values": {"name": "x"}}, for_update=True)
 
 
 @pytest.mark.integration
@@ -512,7 +512,7 @@ async def test_postgres_read_gateway_find_many_aggregates_raw_rows(
     )
     raw = await gw.find_many_aggregates(
         aggregates={
-            "$fields": {"c": "category"},
+            "$groups": {"c": "category"},
             "$computed": {"n": {"$count": None}},
         },
     )
@@ -618,7 +618,7 @@ async def test_postgres_read_gateway_aggregates_reject_return_fields(
     with pytest.raises(CoreError, match="Aggregates cannot be combined"):
         await gw.find_many_aggregates(
             aggregates={
-                "$fields": {"c": "category"},
+                "$groups": {"c": "category"},
                 "$computed": {"n": {"$count": None}},
             },
             return_fields=["c"],

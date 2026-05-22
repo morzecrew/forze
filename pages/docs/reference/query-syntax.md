@@ -6,15 +6,20 @@ Forze uses a shared query DSL for filtering and sorting. The same expression sha
 
 A filter expression is one of:
 
-- predicate: `{"$fields": {...}}`
+- literal constraints: `{"$values": {...}}`
+- field-to-field constraints: `{"$fields": {...}}`
+- combined constraints: `{"$values": {...}, "$fields": {...}}` (implicit AND)
 - conjunction: `{"$and": [expr, ...]}`
 - disjunction: `{"$or": [expr, ...]}`
 
-Where `expr` is recursively one of the three shapes above.
+Where `expr` is recursively one of the shapes above.
 
-## Field shortcuts
+You may combine `$values` and `$fields` in one object; all constraints are ANDed.
+Do not mix `$and` / `$or` with `$values` / `$fields` in the same object.
 
-Inside `"$fields"`, each field value can use a shortcut or an explicit operator map.
+## Literal shortcuts (`$values`)
+
+Inside `"$values"`, each field value can use a shortcut or an explicit operator map.
 
 | Field value | Expanded form | Meaning |
 |-------------|---------------|---------|
@@ -26,14 +31,14 @@ Example:
 
     :::python
     filters = {
-        "$fields": {
+        "$values": {
             "status": "active",
             "tags": ["backend", "api"],
             "deleted_at": None,
         }
     }
 
-## Operators
+## Operators (for `$values`)
 
 ### Equality
 
@@ -74,6 +79,34 @@ Example:
 | `$overlaps` | array | field intersects list |
 | `$disjoint` | array | field does not intersect list |
 
+## Field-to-field compare (`$fields`)
+
+Compare one document field to another field (not a literal). Use the same
+operator names as equality and ordering (`$eq`, `$neq`, `$gt`, `$gte`, `$lt`,
+`$lte`). Membership, unary, and set-relation operators are not supported under
+`$fields`.
+
+Inside `"$fields"`, each **left** field key maps to either:
+
+| Value | Meaning |
+|-------|---------|
+| `"other_field"` | `$eq` shortcut: left field equals right field path |
+| `{"$gte": "other_field"}` | explicit compare operator; value is always a **field path** string |
+
+Unlike `"$values"`, string values under `"$fields"` always refer to another
+field path, never a literal scalar.
+
+Example:
+
+    :::python
+    filters = {
+        "$values": {"is_deleted": False},
+        "$fields": {"starts_at": {"$lte": "ends_at"}},
+    }
+
+Dot notation works for nested JSON fields (Postgres requires the same column
+type metadata and read model as other nested filters).
+
 ## Complex examples
 
 ### Nested AND/OR
@@ -81,11 +114,11 @@ Example:
     :::python
     filters = {
         "$and": [
-            {"$fields": {"is_deleted": False}},
+            {"$values": {"is_deleted": False}},
             {
                 "$or": [
-                    {"$fields": {"priority": {"$gte": 5}}},
-                    {"$fields": {"status": {"$in": ["new", "in_progress"]}}},
+                    {"$values": {"priority": {"$gte": 5}}},
+                    {"$values": {"status": {"$in": ["new", "in_progress"]}}},
                 ]
             },
         ]
@@ -95,7 +128,7 @@ Example:
 
     :::python
     filters = {
-        "$fields": {
+        "$values": {
             "created_at": {"$gte": "2026-01-01T00:00:00Z"},
             "labels": {"$overlaps": ["urgent", "customer"]},
         }
@@ -128,7 +161,7 @@ validated against that Pydantic model.
 
 An aggregate expression has two sections:
 
-- `$fields`: group keys — either a map of output alias → source field path, or a
+- `$groups`: group keys — either a map of output alias → source field path, or a
   list/tuple of field paths (each path is used as both alias and source).
 - `$computed`: output aliases mapped to one aggregate function.
 
@@ -140,20 +173,20 @@ filters, including `$and` and `$or`, but it applies only to that aggregate.
 
     :::python
     aggregates = {
-        "$fields": {"category": "category"},
+        "$groups": {"category": "category"},
         "$computed": {
             "products": {"$count": None},
             "revenue": {"$sum": "price"},
             "median_price": {"$median": "price"},
             "premium_products": {
                 "$count": {
-                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                    "filter": {"$values": {"price": {"$gte": 20}}},
                 },
             },
             "premium_revenue": {
                 "$sum": {
                     "field": "price",
-                    "filter": {"$fields": {"price": {"$gte": 20}}},
+                    "filter": {"$values": {"price": {"$gte": 20}}},
                 },
             },
         },
@@ -161,12 +194,12 @@ filters, including `$and` and `$or`, but it applies only to that aggregate.
 
     # Same group keys when alias equals source path:
     aggregates = {
-        "$fields": ["detail_id", "revision_id", "warehouse_id"],
+        "$groups": ["detail_id", "revision_id", "warehouse_id"],
         "$computed": {"rows": {"$count": None}},
     }
 
     page = await doc.find_many(
-        filters={"$fields": {"is_deleted": False}},
+        filters={"$values": {"is_deleted": False}},
         sorts={"revenue": "desc"},
         aggregates=aggregates,
         return_count=True,
@@ -177,7 +210,7 @@ groups**. Sorts for aggregate queries use aggregate output aliases such as
 `revenue`, not source document fields.
 
 Optional **`$time_bucket`** adds another group key: the **start instant** of a
-calendar period for a timestamp field. It composes with `$fields` and all
+calendar period for a timestamp field. It composes with `$groups` and all
 `$computed` functions (for example average price per item per day). Units:
 `hour`, `day`, `week` (Monday start, aligned with Postgres `date_trunc` / Mongo
 `$dateTrunc`), `month`. Default timezone is `UTC`. You may pass an **IANA** name
@@ -192,7 +225,7 @@ model shape). `return_count` then counts documents, not groups.
 
     :::python
     aggregates = {
-        "$fields": {"item_id": "item_id"},
+        "$groups": {"item_id": "item_id"},
         "$time_bucket": {"field": "ts", "unit": "day", "timezone": "+3"},
         "$computed": {"avg_price": {"$avg": "price"}},
     }

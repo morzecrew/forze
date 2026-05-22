@@ -212,7 +212,7 @@ async def test_fts_search_with_filters_and_empty_query(
     )
     adapter = ctx.search.query(spec)
 
-    flt: QueryFilterExpression = {"$fields": {"title": "keep"}}
+    flt: QueryFilterExpression = {"$values": {"title": "keep"}}
     __p = await adapter.search_page("", filters=flt)
     rows = __p.hits
     cnt = __p.count

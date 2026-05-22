@@ -252,7 +252,7 @@ async def test_pg_adapter_find_many_count_zero_and_countless_page(
     await cmd.create(_CxCreate(sku="only"))
 
     empty = await q.find_page(
-        {"$fields": {"sku": "nope"}},
+        {"$values": {"sku": "nope"}},
         pagination={"limit": 10, "offset": 0},
     )
     assert isinstance(empty, Page)
@@ -260,7 +260,7 @@ async def test_pg_adapter_find_many_count_zero_and_countless_page(
     assert empty.hits == []
 
     countless = await q.find_many(
-        {"$fields": {"sku": "only"}},
+        {"$values": {"sku": "only"}},
         pagination={"limit": 10, "offset": 0},
     )
     assert not isinstance(countless, Page)
@@ -284,7 +284,7 @@ async def test_pg_adapter_find_and_find_many_projections_with_count(
     await cmd.create(_CxCreate(sku="banana"))
 
     one = await q.project(
-        {"$fields": {"sku": "apple"}},
+        {"$values": {"sku": "apple"}},
         ["sku"],
     )
     assert one is not None
@@ -292,7 +292,7 @@ async def test_pg_adapter_find_and_find_many_projections_with_count(
 
     page = await q.project_page(
         ["id", "sku"],
-        {"$fields": {"sku": {"$in": ["apple", "banana"]}}},
+        {"$values": {"sku": {"$in": ["apple", "banana"]}}},
         pagination={"limit": 10, "offset": 0},
         sorts={"sku": "asc"},
     )
@@ -512,7 +512,7 @@ async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
 
     doc = await cmd.create(_CxCreate(sku="rf"))
     prj = await q.project(
-        {"$fields": {ID_FIELD: doc.id}},
+        {"$values": {ID_FIELD: doc.id}},
         ["sku", "rev"],
     )
     assert prj == {"sku": "rf", "rev": 1}
@@ -520,7 +520,7 @@ async def test_pg_adapter_get_get_many_return_fields_bypasses_read_cache(
     prjs = (
         await q.project_many(
             ["id", "sku"],
-            filters={"$fields": {ID_FIELD: {"$in": [doc.id, b.id]}}},
+            filters={"$values": {ID_FIELD: {"$in": [doc.id, b.id]}}},
         )
     ).hits
     assert len(prjs) == 2
@@ -545,7 +545,7 @@ async def test_pg_adapter_find_many_aggregates_with_typed_page(
     await cmd.create(_CxCreate(sku="g2"))
 
     agg = {
-        "$fields": {"cat": "sku"},
+        "$groups": {"cat": "sku"},
         "$computed": {"n": {"$count": None}},
     }
     p = await q.select_page_aggregated(
@@ -572,7 +572,7 @@ async def test_pg_adapter_aggregate_page_rejects_unknown_kwargs(
     q = ctx.document.query(spec)
 
     agg = {
-        "$fields": {"c": "sku"},
+        "$groups": {"c": "sku"},
         "$computed": {"n": {"$count": None}},
     }
     with pytest.raises(TypeError):
@@ -582,7 +582,7 @@ async def test_pg_adapter_aggregate_page_rejects_unknown_kwargs(
     await cmd.create(_CxCreate(sku="rt-single"))
     page = await q.select_many(
         _CxRead,
-        {"$fields": {"sku": "rt-single"}},
+        {"$values": {"sku": "rt-single"}},
         pagination={"limit": 10},
     )
     assert len(page.hits) == 1
@@ -602,9 +602,9 @@ async def test_pg_adapter_count_method(
     q = ctx.document.query(spec)
     await cmd.create(_CxCreate(sku="cnt-a"))
     await cmd.create(_CxCreate(sku="cnt-b"))
-    n = await q.count({"$fields": {"sku": {"$in": ["cnt-a", "cnt-b"]}}})
+    n = await q.count({"$values": {"sku": {"$in": ["cnt-a", "cnt-b"]}}})
     assert n == 2
-    assert await q.count({"$fields": {"sku": "missing"}}) == 0
+    assert await q.count({"$values": {"sku": "missing"}}) == 0
 
 
 @pytest.mark.integration
@@ -756,7 +756,7 @@ async def test_pg_adapter_find_for_update_in_transaction(
     q = ctx.document.query(spec)
     await cmd.create(_CxCreate(sku="lockme"))
     async with pg_client.transaction():
-        found = await q.find({"$fields": {"sku": "lockme"}}, for_update=True)
+        found = await q.find({"$values": {"sku": "lockme"}}, for_update=True)
         assert found is not None
         assert found.sku == "lockme"
 

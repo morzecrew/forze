@@ -559,7 +559,7 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     n_no_match = __p.count
     assert n_no_match == 0
 
-    __p = await adapter.search_page("gamma", filters={"$fields": {"spec_id": str(s1)}})
+    __p = await adapter.search_page("gamma", filters={"$values": {"spec_id": str(s1)}})
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
@@ -724,7 +724,7 @@ async def test_postgres_hub_fts_search_links_or_legs(pg_client: PostgresClient) 
     assert cnt == 2
     assert {h.id for h in hits} == {lid1, lid3}
 
-    __p = await adapter.search_page("gamma", filters={"$fields": {"spec_id": str(s1)}})
+    __p = await adapter.search_page("gamma", filters={"$values": {"spec_id": str(s1)}})
     hits2 = __p.hits
     cnt2 = __p.count
     assert cnt2 == 2
@@ -990,7 +990,7 @@ async def test_postgres_hub_mixed_pgroonga_and_fts_legs(
     assert n_alpha == 2
     assert {h.id for h in hits_alpha} == {lid1, lid3}
 
-    __p = await adapter.search_page("gamma", filters={"$fields": {"spec_id": str(s1)}})
+    __p = await adapter.search_page("gamma", filters={"$values": {"spec_id": str(s1)}})
     hits_gamma = __p.hits
     n_gamma = __p.count
     assert n_gamma == 2
@@ -1279,7 +1279,7 @@ async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
 
     z = await adapter.search_page(
         "",
-        filters={"$fields": {"title": "Nope"}},
+        filters={"$values": {"title": "Nope"}},
     )
     assert z.count == 0
     assert z.hits == []
@@ -1287,7 +1287,7 @@ async def test_postgres_pgroonga_v2_empty_query_filter_only_paths(
     page = await adapter.project_search_page(
         ("title", "id"),
         "",
-        filters={"$fields": {"title": "Apple"}},
+        filters={"$values": {"title": "Apple"}},
         pagination={"limit": 5, "offset": 0},
         sorts={"title": "asc"},
     )
@@ -1809,7 +1809,7 @@ async def test_postgres_hub_return_count_zero_and_projections(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    impossible: QueryFilterExpression = {"$fields": {"name": "nope"}}
+    impossible: QueryFilterExpression = {"$values": {"name": "nope"}}
     z = await adapter.search_page("solo", filters=impossible)
     assert isinstance(z, Page)
     assert z.count == 0

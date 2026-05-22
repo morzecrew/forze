@@ -98,7 +98,7 @@ async def test_find_missing_returns_none(mongo_client: MongoClient) -> None:
     col = f"m_find_{uuid4().hex[:8]}"
     ctx, spec = await _rw_ctx(mongo_client, col)
     query = ctx.document.query(spec)
-    assert await query.find({"$fields": {"title": "missing-doc"}}) is None
+    assert await query.find({"$values": {"title": "missing-doc"}}) is None
 
 
 @pytest.mark.asyncio
@@ -194,5 +194,5 @@ async def test_count_with_filter(mongo_client: MongoClient) -> None:
     await cmd.create(_Create(title="apricot"))
     await cmd.create(_Create(title="banana"))
     query = ctx.document.query(spec)
-    n = await query.count({"$fields": {"title": {"$in": ["apple", "apricot"]}}})
+    n = await query.count({"$values": {"title": {"$in": ["apple", "apricot"]}}})
     assert n == 2

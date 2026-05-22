@@ -21,7 +21,8 @@ class EmbeddingsDeps(ConvenientDeps):
     def provider(self, spec: EmbeddingsSpec) -> EmbeddingsProviderPort:
         """Resolve an embeddings provider for the given spec."""
 
-        ctx = self._require_ctx()
-
-        f = ctx.deps.provide(EmbeddingsProviderDepKey, route=spec.name)
-        return f(ctx, spec)
+        return self._resolve_configurable(
+            EmbeddingsProviderDepKey,
+            spec,
+            route=spec.name,
+        )
