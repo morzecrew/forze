@@ -3,12 +3,12 @@ name: forze-fastapi-interface
 description: >-
   Builds Forze FastAPI interfaces: context dependencies, document/search/custom
   endpoint attachment, middleware, idempotency, ETags, multipart forms, Scalar
-  docs, and exception handling. Use when exposing usecases over HTTP.
+  docs, and exception handling. Use when exposing handlers over HTTP.
 ---
 
 # Forze FastAPI interface
 
-Use when connecting Forze usecases to HTTP. Pair with [`forze-wiring`](../forze-wiring/SKILL.md) for runtime/lifecycle and [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md) for identity binding.
+Use when connecting Forze handlers to HTTP. Pair with [`forze-wiring`](../forze-wiring/SKILL.md) for runtime/lifecycle and [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md) for identity binding.
 
 ## Context dependency and lifespan
 
@@ -193,7 +193,7 @@ For multipart/form routes, set `body_mode="form"` and declare `UploadFile` / `li
 
 ## Idempotency and ETags
 
-Document create routes can use idempotency when an `IdempotencyPort` is registered, usually via `RedisDepsModule.idempotency`. The feature hashes the mapped usecase input, not the raw HTTP body.
+Document create routes can use idempotency when an `IdempotencyPort` is registered, usually via `RedisDepsModule.idempotency`. The feature hashes the mapped handler input, not the raw HTTP body.
 
 ETag support is route-feature based. Use it for stable read responses such as document `id:rev`, not for volatile projections.
 
@@ -221,7 +221,7 @@ register_exception_handlers(app)
 register_scalar_docs(app, path="/docs")
 ```
 
-`ContextBindingMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary. Use resolvers/codecs there; usecases should only read identity from `ExecutionContext.inv`.
+`ContextBindingMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary. Use resolvers/codecs there; handlers should only read identity from `ExecutionContext.inv`.
 
 `CustomHeadersMiddleware` adds response headers from `static_headers` and/or `dynamic_headers` (callables may be sync or async). It raises `CoreError` if the response already defines any of the same header names.
 

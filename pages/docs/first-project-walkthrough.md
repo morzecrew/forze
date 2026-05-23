@@ -153,7 +153,7 @@ The runtime has two parts: a **dependency plan** that assembles the container an
 
 ## Step 4: Create the FastAPI application
 
-Build a registry that wires usecase factories for the spec, attach document routes to an `APIRouter`, then include that router on the app.
+Build a registry that wires handler factories for the spec, attach document routes to an `APIRouter`, then include that router on the app.
 
     :::python
     from fastapi import APIRouter, FastAPI

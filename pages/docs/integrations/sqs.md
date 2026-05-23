@@ -95,7 +95,7 @@ Use `routed_sqs_lifecycle_step(client=routed_sqs)` with `RoutedSQSClient` and do
 |----------------|------------------------|--------------------------|-------------|
 | Queue reads | `ConfigurableSQSQueueRead` / SQS queue adapter. | `QueueQueryDepKey`, route usually equal to `QueueSpec.name`. | SQS is at-least-once; consumers must ack/delete after successful processing and handle duplicates. |
 | Queue writes | `ConfigurableSQSQueueWrite` / SQS queue adapter. | `QueueCommandDepKey`, route usually equal to `QueueSpec.name`. | FIFO ordering requires `.fifo` queues and a message group key. Standard queues do not guarantee order. |
-| Raw client | `SQSClient` or `RoutedSQSClient`. | `SQSClientDepKey`. | Prefer queue contracts in usecases unless AWS-specific APIs are required. |
+| Raw client | `SQSClient` or `RoutedSQSClient`. | `SQSClientDepKey`. | Prefer queue contracts in handlers unless AWS-specific APIs are required. |
 
 ## Complete recipe link
 

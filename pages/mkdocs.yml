@@ -4,7 +4,6 @@ repo_url: https://github.com/morzecrew/forze
 dev_addr: "localhost:8045"
 
 not_in_nav: |
-  core-concepts/*
   core-package/*
   reference/contracts.md
 
@@ -59,7 +58,7 @@ nav:
     - Multi-tenancy: concepts/multi-tenancy.md
     - Specs and Wiring: concepts/specs-and-wiring.md
     - Aggregate Specification: concepts/aggregate-specification.md
-    - Operation composition: concepts/usecase-composition.md
+    - Operation composition: concepts/operation-composition.md
 
   - Recipes:
     - CRUD with FastAPI, Postgres, and Redis: recipes/crud-fastapi-postgres-redis.md

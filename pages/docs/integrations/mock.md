@@ -14,7 +14,7 @@ Use this when you want fast tests, demos, or a partial runtime without external 
 2. Create the integration client or module configuration.
 3. Register the module in `DepsPlan` with routes that match your specs.
 4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in usecases.
+5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
 
 
 `forze_mock` provides in-memory adapters for all Forze contracts. It is designed for development and testing — no external infrastructure required.

@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Documentation:** Site docs and agent skills aligned with current terminology (`Handler`, `OperationRegistry`, stage hooks, `ctx.deps.*`); removed references to deleted `Usecase` / `ctx.dep` / plan-bucket APIs; renamed operation composition page to `operation-composition.md`; removed legacy `core-concepts/` redirect stubs; distilled Socket.IO integration guide.
+- **Socket.IO:** `ForzeSocketIOAdapter` and `SocketIONamespaceRouter.bind` take `operation_resolver` (not `usecase_resolver`); `make_registry_usecase_resolver` removed — import `make_registry_operation_resolver` from `forze_socketio` or `forze.application.execution`.
 - **Record mapping:** `RecordMappingCodec` adds `encode_json_bytes` / `decode_json_bytes` with fast-path Pydantic (`model_dump_json` / `model_validate_json`) and msgspec (`msgspec.json.encode` / `decode`) implementations.
 - **Messaging contracts:** `QueueMessage`, `PubSubMessage`, and `StreamMessage` are frozen attrs value objects (replacing `TypedDict`). `QueueSpec`, `PubSubSpec`, and `StreamSpec` require a `codec: RecordMappingCodec[...]` (for example `PydanticRecordMappingCodec(model)`). Integration queue/pubsub/stream adapters take `payload_codec` from the spec.
 - **Scrubbing:** log-context string scrub uses `**********` and Logfire-aligned substring rules (email, Bearer, `key=value` assignments, secrets in free text) instead of scrubadub `{{TYPE}}` placeholders.

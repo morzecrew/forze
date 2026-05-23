@@ -22,7 +22,7 @@ Skills are automatically available once installed. The agent will use them when 
 
 | Name | Description |
 | -------- | -------- |
-| **forze-framework-usage** | ExecutionContext, ports, direct dep-key resolution, identity, after-commit hooks, and transactions in usecases. |
+| **forze-framework-usage** | ExecutionContext, ports, direct dep-key resolution, identity, after-commit hooks, and transactions in handlers. |
 | **forze-documents-search** | `DocumentQueryPort`, `DocumentCommandPort`, `SearchQueryPort`, query DSL, cache-aware `DocumentSpec` / `SearchSpec`, and Postgres/Mongo/mock search behavior. |
 | **forze-domain-aggregates** | Document aggregates, mixins, validators, kernel `DocumentSpec` / `SearchSpec`, and composition DTOs. |
 | **forze-wiring** | Runtime, deps modules, lifecycle, document/search composition, registry stage authoring, FastAPI endpoints, mapping. |

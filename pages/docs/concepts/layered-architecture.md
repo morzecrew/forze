@@ -6,7 +6,7 @@ Backend projects often mix request handlers, persistence, and business rules unt
 
 ## When you need this
 
-Use this when you are deciding where a model, usecase, adapter, or route should live.
+Use this when you are deciding where a model, handler, adapter, or route should live.
 
 
 Forze organizes code into four layers with strict dependency rules. Each layer has a clear responsibility, and dependencies flow **inward**: outer layers depend on inner layers, never the reverse.
@@ -23,7 +23,7 @@ At the center sits the **domain**: pure business logic with no external dependen
 | Layer | Responsibility | Depends on |
 |-------|----------------|------------|
 | **Domain** | Business logic, invariants,<br>validation rules, model behavior | - |
-| **Application** | Orchestration, usecases,<br>contracts, composition, execution runtime | Domain |
+| **Application** | Orchestration, handlers,<br>contracts, composition, execution runtime | Domain |
 | **Infrastructure** | Databases, caches,<br>external services, adapter implementations | Application, Domain |
 | **Interface** | HTTP routes, WebSocket handlers,<br>user-facing entry points | Application, Domain,<br>Infrastructure |
 
@@ -42,8 +42,8 @@ The domain layer is the most stable part of the system. Changing a database engi
 The application layer defines **what** happens without knowing **how**. It contains:
 
 - **Contracts (ports)**: protocol interfaces describing capabilities the application needs (document storage, cache, transactions, search, queues, etc.)
-- **Usecases**: single-purpose operations that receive an execution context and resolve ports from it
-- **Composition**: facade providers, registries, and plans that wire usecases with middleware
+- **Handlers**: single-purpose operations that receive an execution context and resolve ports from it
+- **Composition**: facades, `OperationRegistry`, and operation plans that wire handlers with stage hooks
 - **Execution runtime**: dependency injection container, lifecycle hooks, and transaction management
 
 The application layer imports from the domain layer but never from infrastructure or interface.
@@ -61,12 +61,12 @@ Infrastructure packages import from both application and domain layers to implem
 
 ## Interface layer
 
-The interface layer is the outermost, user-facing boundary of the backend. It handles transport concerns: receiving requests, invoking usecases, and returning responses. Typically it is the only layer that end users (or other services) interact with directly.
+The interface layer is the outermost, user-facing boundary of the backend. It handles transport concerns: receiving requests, resolving operations from a frozen registry, and returning responses. Typically it is the only layer that end users (or other services) interact with directly.
 
 - `forze_fastapi` provides HTTP routing, idempotency handling, and OpenAPI integration
 - `forze_socketio` provides real-time WebSocket event routing and typed command dispatch
 
-Interface packages depend on the application layer (to invoke usecases and resolve contexts) and on infrastructure (for runtime wiring and lifecycle management). They never contain business logic.
+Interface packages depend on the application layer (to resolve handlers and execution contexts) and on infrastructure (for runtime wiring and lifecycle management). They never contain business logic.
 
 ## Dependency rules
 
@@ -77,14 +77,14 @@ The dependency rules are enforced by design:
 - Infrastructure imports from application and domain
 - Interface imports from application and infrastructure
 
-This means you can swap Postgres for Mongo by changing the dependency plan, not the usecases. You can replace FastAPI with a CLI without touching business logic.
+This means you can swap Postgres for Mongo by changing the dependency plan, not the handlers. You can replace FastAPI with a CLI without touching business logic.
 
 ## Practical impact
 
 | Scenario | What changes | What stays the same |
 |----------|-------------|-------------------|
-| Switch from Postgres to Mongo | Dependency module, lifecycle step | Domain models, usecases,<br>specs |
-| Add Redis caching | Dependency module, lifecycle step,<br>cache flag on spec | Domain models, usecases |
-| Replace FastAPI with gRPC | Interface/transport layer | Domain models, usecases,<br>specs, adapters |
+| Switch from Postgres to Mongo | Dependency module, lifecycle step | Domain models, handlers,<br>specs |
+| Add Redis caching | Dependency module, lifecycle step,<br>cache flag on spec | Domain models, handlers |
+| Replace FastAPI with gRPC | Interface/transport layer | Domain models, handlers,<br>specs, adapters |
 | Add a new business rule | Domain model validation | Infrastructure adapters,<br>routing |
-| Add audit logging to all operations | Usecase plan (add an effect) | Domain models, adapters |
+| Add audit logging to all operations | Operation plan (`BeforeStep` / `OnSuccessStep`) | Domain models, adapters |

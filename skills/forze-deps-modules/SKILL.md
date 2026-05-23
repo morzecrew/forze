@@ -70,7 +70,7 @@ Most spec-backed adapters register factories shaped like:
 
 ```python
 def __call__(self, ctx: ExecutionContext, spec: WidgetSpec) -> WidgetPort:
-    return WidgetAdapter(client=ctx.dep(WidgetClientDepKey), spec=spec, config=self.config)
+    return WidgetAdapter(client=ctx.deps.provide(WidgetClientDepKey), spec=spec, config=self.config)
 ```
 
 Application code resolves the factory with `route=spec.name`, then calls it with `(ctx, spec)`. `ExecutionContext` convenience methods do this internally for documents, search, cache, counters, storage, locks, and embeddings.
@@ -85,7 +85,7 @@ For tenant-aware clients, register a structural client port as a plain dependenc
 
 ## Anti-patterns
 
-1. **Instantiating adapters directly in usecases** — use deps factories and ports.
+1. **Instantiating adapters directly in handlers** — use deps factories and ports.
 2. **Using only strings in new modules** — keep route type as `K: str | StrEnum`.
 3. **Opening connections in `__call__`** — lifecycle owns startup/shutdown.
 4. **Returning overlapping keys from multiple modules** — compose maps before module construction or use distinct routes.

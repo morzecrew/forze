@@ -18,7 +18,7 @@ A Forze backend keeps business rules in the domain layer and puts infrastructure
 |-------|----------------------|--------------------|
 | Domain models | `Document`, create command, update DTO, read model | [Domain Layer](concepts/domain-layer.md) |
 | Specs | `DocumentSpec`, `SearchSpec`, cache specs | [Specs and wiring](concepts/specs-and-wiring.md) |
-| Usecases | business operations that receive `ExecutionContext` | [Application Layer](concepts/application-layer.md) |
+| Handlers | business operations that receive `ExecutionContext` | [Application Layer](concepts/application-layer.md) |
 | Adapters | Postgres, Redis, FastAPI, queues, storage | [Integrations](integrations/fastapi.md) |
 
 ## Build your first project

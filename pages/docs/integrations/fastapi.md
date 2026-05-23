@@ -2,16 +2,16 @@
 
 ## Page opening
 
-`forze_fastapi` exposes Forze application contracts over typed FastAPI routes without making domain code depend on HTTP. It provides route attach helpers for document CRUD, search, object storage, custom usecase endpoints, request context middleware, exception handlers, and Scalar API docs integration.
+`forze_fastapi` exposes Forze application contracts over typed FastAPI routes without making domain code depend on HTTP. It provides route attach helpers for document CRUD, search, object storage, custom handler endpoints, request context middleware, exception handlers, and Scalar API docs integration.
 
 <div class="d2-diagram">
-  <img class="d2-light" src="/forze/assets/diagrams/light/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, usecase, port, and adapter">
-  <img class="d2-dark" src="/forze/assets/diagrams/dark/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, usecase, port, and adapter">
+  <img class="d2-light" src="/forze/assets/diagrams/light/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, handler, port, and adapter">
+  <img class="d2-dark" src="/forze/assets/diagrams/dark/fastapi-request-flow.svg" alt="FastAPI request flow through middleware, endpoint features, handler, port, and adapter">
 </div>
 
 | Topic | Details |
 |------|---------|
-| What it provides | FastAPI routers and middleware that resolve Forze dependencies from `ExecutionContext` and call registered usecases. |
+| What it provides | FastAPI routers and middleware that resolve Forze dependencies from `ExecutionContext` and call registered handlers. |
 | Supported Forze contracts | `DocumentSpec` and `SearchSpec` through generated endpoints; `StorageSpec` via `attach_storage_endpoints` (multipart upload, list, binary download, delete); arbitrary handlers through HTTP endpoint specs; optional ETag and idempotency behaviors through endpoint features. |
 | When to use it | Use this integration when FastAPI is the delivery layer for a Forze service, when you want generated CRUD/search routes, or when custom HTTP operations should still run through `ExecutionRuntime`. |
 | Authn / authz / tenancy | [Recipe: boundary vs feature guards, resolver policy, default features on generated routes](../recipes/authn-authz-tenancy-fastapi.md). |
@@ -32,7 +32,7 @@ uv add 'forze[fastapi]'
 
 ### Client
 
-FastAPI does not require a network client. The Forze runtime is the object that routes requests to dependency ports and usecases.
+FastAPI does not require a network client. The Forze runtime is the object that routes requests to dependency ports and handlers.
 
 ```python
 from fastapi import FastAPI
@@ -80,7 +80,7 @@ file_registry = (
 
 ### Deps module
 
-FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the usecases in your normal `DepsPlan` and expose the current context as a FastAPI dependency.
+FastAPI routes do not register storage dependencies themselves. Register the adapters needed by the handlers in your normal `DepsPlan` and expose the current context as a FastAPI dependency.
 
 ```python
 def context_dependency():
@@ -131,11 +131,11 @@ app = FastAPI(lifespan=lifespan)
 | `StorageSpec` | `attach_storage_endpoints` creates list, multipart upload, binary download, and delete routes resolved from a frozen registry. | Uses `StorageSpec.name` for `StorageDepKey` routing, optional upload idempotency naming, and `namespace=` (defaults to the spec namespace) for operation keys. | Download returns raw bytes (`application/octet-stream`); register `register_exception_handlers` (or equivalent) so `NotFoundError` maps to HTTP 404. |
 | Custom operations | `attach_http_endpoint` with `build_http_endpoint_spec(operation=...)`. | The spec carries an absolute operation key; the handler calls `registry.resolve(operation, ctx)`. | You own request/response mapping and status-code choices for custom endpoints. |
 | Idempotency feature | HTTP idempotency feature for mutating endpoints. | Requires an idempotency dependency such as `IdempotencyDepKey` when enabled. | Requires clients to send stable idempotency keys; storage and TTL behavior come from the configured idempotency adapter. |
-| ETag feature | HTTP ETag handling for reads. | Uses document revision/version data exposed by the document usecase. | Only useful when the read model exposes stable revision metadata. |
+| ETag feature | HTTP ETag handling for reads. | Uses document revision/version data exposed by the document handler. | Only useful when the read model exposes stable revision metadata. |
 
 ## Idempotency
 
-FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it on the endpoint spec or generated document create endpoint, require clients to send a stable `Idempotency-Key`, and register an idempotency dependency such as Redis under `IdempotencyDepKey`. The stored response is keyed by the operation, idempotency key, and mapped usecase input, so avoid using one key for different payloads.
+FastAPI endpoint idempotency is an HTTP feature for mutating routes. Enable it on the endpoint spec or generated document create endpoint, require clients to send a stable `Idempotency-Key`, and register an idempotency dependency such as Redis under `IdempotencyDepKey`. The stored response is keyed by the operation, idempotency key, and mapped handler input, so avoid using one key for different payloads.
 
 ## ASGI middleware
 

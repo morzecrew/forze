@@ -6,6 +6,8 @@ require_socketio()
 
 # ....................... #
 
+from forze.application.execution import make_registry_operation_resolver
+
 from .emitter import (
     SocketIOEventEmitter,
     SocketIONamespaceEmitter,
@@ -18,7 +20,6 @@ from .routing import (
     SocketIOCommandRoute,
     SocketIONamespaceRouter,
     SocketIORequest,
-    make_registry_usecase_resolver,
 )
 from .server import build_socketio_asgi_app, build_socketio_server
 
@@ -31,7 +32,7 @@ __all__ = [
     "SocketIOCommandRoute",
     "SocketIONamespaceRouter",
     "ForzeSocketIOAdapter",
-    "make_registry_usecase_resolver",
+    "make_registry_operation_resolver",
     "SocketIOServerEvent",
     "SocketIOEventEmitter",
     "SocketIONamespaceEmitter",

@@ -3,7 +3,7 @@ title: Overview
 summary: The foundation for building backend services with clean architecture
 ---
 
-The `forze` core package provides the foundation for building backend services with clean architecture. It contains everything you need to define domain models, declare contracts, compose usecases, and wire dependencies — without depending on any specific database, queue, or web framework.
+The `forze` core package provides the foundation for building backend services with clean architecture. It contains everything you need to define domain models, declare contracts, compose handlers, and wire dependencies — without depending on any specific database, queue, or web framework.
 
 ## Package structure
 
@@ -11,7 +11,7 @@ The `forze` core package provides the foundation for building backend services w
 |-------|--------|------------------|
 | **Base** | `forze.base` | Error hierarchy, codecs, primitives (UUID, datetime, types),<br>serialization, file I/O, introspection |
 | **Domain** | `forze.domain` | `Document`, `CoreModel`, `BaseDTO`, mixins,<br>update validators, field constants |
-| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middlewares,<br>usecase plans, composition, mapping, DTOs |
+| **Application** | `forze.application` | Contracts (ports, specs), execution engine, middlewares,<br>operation plans, composition, mapping, DTOs |
 
 Dependencies flow inward: Application → Domain → Base. No layer imports from an outer one.
 
@@ -31,7 +31,7 @@ These pages cover the orchestration layer:
 - [Contracts](contracts.md) — protocol ports, specs, and dependency keys for all infrastructure concerns
 - [Authentication](authentication.md) — full authn contract surface (verifiers, resolvers, lifecycle, dep keys), `forze_authn` first-party stack, and `forze_oidc` integration surface
 - [Execution](execution.md) — `ExecutionContext`, dependency injection, runtime lifecycle
-- [Middleware & Plans](middleware-plans.md) — guards, effects, transaction wrapping, usecase plans, and the registry
+- [Middleware & Plans](middleware-plans.md) — stage hooks, transaction wrapping, operation plans, and the registry
 - [Composition & Mapping](composition.md) — facades, providers, DTO mapping pipelines, and paginated responses
 
 ### Reference
@@ -88,7 +88,7 @@ A minimal aggregate definition using the core package:
         cache=CacheSpec(name="tasks"),
     )
 
-With this in place, adapters (Postgres, Mongo, etc.) know how to store and retrieve tasks, usecases can be composed with middleware, and the entire aggregate is testable without any infrastructure.
+With this in place, adapters (Postgres, Mongo, etc.) know how to store and retrieve tasks, handlers can be composed with stage hooks, and the entire aggregate is testable without any infrastructure.
 
 ## Related sections
 

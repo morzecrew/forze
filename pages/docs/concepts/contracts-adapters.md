@@ -21,9 +21,9 @@ Forze follows **hexagonal architecture** (ports and adapters). The core idea is 
 1. The application layer defines **contracts**: protocol interfaces describing required capabilities
 2. Infrastructure packages provide **adapters**: concrete implementations of those protocols
 3. A **dependency plan** wires adapters to contracts at startup
-4. Usecases resolve contracts from execution context; they never import adapter classes
+4. Handlers resolve contracts from execution context; they never import adapter classes
 
-Switching from Postgres to Mongo means changing the dependency plan, not the usecase code.
+Switching from Postgres to Mongo means changing the dependency plan, not the handler code.
 
 ## Contract catalog
 
@@ -99,11 +99,14 @@ Both ports also have `*_many` batch variants for all applicable operations.
 
 ### Search
 
-**`SearchQueryPort[R]`**: full-text search:
+**`SearchQueryPort[R]`**: full-text search. Result shape and pagination mode are encoded in the **method name** (`search*` vs `search_page*`, `project_*`, `select_*`, `*_cursor`):
 
-| Method | Purpose |
-|--------|---------|
-| `search(query, filters?, limit?, offset?, sorts?, *, options?, return_model?, return_fields?)` | Search with optional filters and pagination |
+| Method family | Purpose |
+|---------------|---------|
+| `search` / `search_page` | Typed read model `R`; offset pagination; `_page` includes total count |
+| `project_search` / `project_search_page` | Field-projected `JsonDict` rows |
+| `select_search` / `select_search_page` | Each hit validated as `return_type` |
+| `search_cursor` / `project_search_cursor` / `select_search_cursor` | Keyset cursor pagination |
 
 ### Object storage
 

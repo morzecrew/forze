@@ -101,7 +101,7 @@ register_exception_handlers(app)
 1. **Raising raw provider exceptions from adapters** — map them to `CoreError`.
 2. **Using plain strings as error categories** — use `code` and `details`.
 3. **Logging secrets or raw credentials** — log logical refs and ids only.
-4. **Binding log context manually in usecases** — bind request identity at the boundary.
+4. **Binding log context manually in handlers** — bind request identity at the boundary.
 5. **Catching `CoreError` only to re-raise it unchanged** — let middleware/presentation layers handle it.
 
 ## Reference

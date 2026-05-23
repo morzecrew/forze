@@ -12,7 +12,7 @@ Use when adding asynchronous messages, event publication, or stream processing. 
 
 ## Queue contracts
 
-`QueueSpec.name` is the logical route. Resolve query/command factories with `ctx.dep(..., route=spec.name)(ctx, spec)`.
+`QueueSpec.name` is the logical route. Resolve query/command ports with `ctx.deps.resolve_configurable`.
 
 ```python
 from enum import StrEnum
@@ -41,10 +41,14 @@ order_queue = QueueSpec(
     codec=PydanticRecordMappingCodec(OrderPayload),
 )
 
-writer = ctx.dep(QueueCommandDepKey, route=order_queue.name)(ctx, order_queue)
+writer = ctx.deps.resolve_configurable(
+    ctx, QueueCommandDepKey, order_queue, route=order_queue.name
+)
 await writer.enqueue("orders", OrderPayload(order_id="o-1", customer_id="c-1"))
 
-reader = ctx.dep(QueueQueryDepKey, route=order_queue.name)(ctx, order_queue)
+reader = ctx.deps.resolve_configurable(
+    ctx, QueueQueryDepKey, order_queue, route=order_queue.name
+)
 messages = await reader.receive("orders", limit=10)
 await reader.ack("orders", [msg.id for msg in messages])
 ```
@@ -80,7 +84,9 @@ events = PubSubSpec(
     name=ResourceName.ORDERS,
     codec=PydanticRecordMappingCodec(OrderPayload),
 )
-publisher = ctx.dep(PubSubCommandDepKey, route=events.name)(ctx, events)
+publisher = ctx.deps.resolve_configurable(
+    ctx, PubSubCommandDepKey, events, route=events.name
+)
 await publisher.publish("orders.created", payload, type="order.created")
 ```
 
@@ -97,7 +103,9 @@ stream_spec = StreamSpec(
     name=ResourceName.ORDERS,
     codec=PydanticRecordMappingCodec(OrderPayload),
 )
-stream = ctx.dep(StreamCommandDepKey, route=stream_spec.name)(ctx, stream_spec)
+stream = ctx.deps.resolve_configurable(
+    ctx, StreamCommandDepKey, stream_spec, route=stream_spec.name
+)
 entry_id = await stream.append("orders", payload, type="order.created")
 ```
 
@@ -116,7 +124,7 @@ Use `StreamQueryDepKey` for `read` / `tail`, and `StreamGroupQueryDepKey` for co
 2. **Using queue names as spec names by accident** — spec names route deps; queue/topic/stream names are provider-level names.
 3. **Acknowledging before processing succeeds** — failures become data loss.
 4. **Assuming Redis pub/sub/stream deps maps are wired in `RedisDepsModule`** — use a custom module or mock until maps exist.
-5. **Importing SQS/RabbitMQ adapters in usecases** — use contracts and dependency keys.
+5. **Importing SQS/RabbitMQ adapters in handlers** — use contracts and dependency keys.
 
 ## Reference
 

@@ -13,10 +13,6 @@ from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.application.execution.registry import (
-    FrozenOperationRegistry,
-    make_registry_operation_resolver,
-)
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey
 
@@ -29,7 +25,7 @@ ExecutionContextFactoryPort = Callable[
 """Factory that builds request-scoped :class:`ExecutionContext` instances."""
 
 HandlerResolverPort = Callable[[ExecutionContext, StrKey], Handler[Any, Any]]
-"""Resolver that maps operation keys to composed usecases."""
+"""Resolver that maps operation keys to composed handlers."""
 
 # ....................... #
 
@@ -55,13 +51,13 @@ class SocketIORequest:
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class SocketIOCommandRoute[Args, Ack]:
-    """Typed mapping between an inbound event and a usecase operation."""
+    """Typed mapping between an inbound event and a registry operation."""
 
     event: str
     """Socket.IO event name."""
 
     operation: StrKey
-    """Usecase operation key resolved by :class:`UsecaseRegistry`."""
+    """Operation key resolved by :class:`~forze.application.execution.OperationRegistry`."""
 
     payload_type: Any
     """Validation type consumed by :class:`pydantic.TypeAdapter` for inbound payload."""
@@ -102,16 +98,16 @@ class SocketIOCommandRoute[Args, Ack]:
         """Validate and coerce the inbound payload.
 
         :param payload: Raw event payload from Socket.IO.
-        :returns: Parsed payload value passed to the usecase.
+        :returns: Parsed payload value passed to the handler.
         """
         return self._payload_adapter.validate_python(payload)
 
     # ....................... #
 
     def parse_ack(self, value: Any) -> Ack | Any:
-        """Validate and normalize the usecase result for Socket.IO acknowledgement.
+        """Validate and normalize the handler result for Socket.IO acknowledgement.
 
-        :param value: Raw usecase result.
+        :param value: Raw handler result.
         :returns: JSON-compatible acknowledgement payload.
         """
         if self._ack_adapter is None:
@@ -181,7 +177,7 @@ class SocketIONamespaceRouter:
         """Add a typed command route.
 
         :param event: Socket.IO event name.
-        :param operation: Usecase operation key.
+        :param operation: Operation key on the frozen registry.
         :param payload_type: Type used to validate inbound payload.
         :param ack_type: Optional type used to validate acknowledgement payload.
         :returns: Current router for chaining.
@@ -203,13 +199,13 @@ class SocketIONamespaceRouter:
         sio: AsyncServer,
         *,
         context_factory: ExecutionContextFactoryPort,
-        usecase_resolver: HandlerResolverPort,
+        operation_resolver: HandlerResolverPort,
     ) -> "SocketIONamespaceRouter":
         """Bind registered command routes to a Socket.IO server.
 
         :param sio: Socket.IO async server.
         :param context_factory: Factory for request-scoped execution context.
-        :param usecase_resolver: Resolver that builds a usecase by operation.
+        :param operation_resolver: Resolver that builds a handler by operation key.
         :returns: Current router for chaining.
         """
         namespace = self.namespace
@@ -230,8 +226,8 @@ class SocketIONamespaceRouter:
                 )
                 ctx = await _resolve_context(context_factory, request)
                 args = _route.parse_payload(payload)
-                usecase = usecase_resolver(ctx, _route.operation)
-                result = await usecase(args)
+                op = operation_resolver(ctx, _route.operation)
+                result = await op(args)
 
                 return _route.parse_ack(result)
 
@@ -246,7 +242,7 @@ class SocketIONamespaceRouter:
 @final
 @attrs.define(slots=True, kw_only=True)
 class ForzeSocketIOAdapter:
-    """Socket.IO transport adapter for routing command events to usecases."""
+    """Socket.IO transport adapter for routing command events to handlers."""
 
     sio: AsyncServer
     """Bound Socket.IO server instance."""
@@ -254,8 +250,8 @@ class ForzeSocketIOAdapter:
     context_factory: ExecutionContextFactoryPort
     """Factory that builds request-scoped execution contexts."""
 
-    usecase_resolver: HandlerResolverPort
-    """Operation resolver used to build composed usecases."""
+    operation_resolver: HandlerResolverPort
+    """Resolver that builds composed handlers from operation keys."""
 
     __routers: dict[str, SocketIONamespaceRouter] = attrs.field(
         factory=dict,
@@ -290,7 +286,7 @@ class ForzeSocketIOAdapter:
         router.bind(
             self.sio,
             context_factory=self.context_factory,
-            usecase_resolver=self.usecase_resolver,
+            operation_resolver=self.operation_resolver,
         )
 
         return self
@@ -310,21 +306,6 @@ class ForzeSocketIOAdapter:
             self.include_router(router)
 
         return self
-
-
-# ....................... #
-
-
-def make_registry_usecase_resolver(
-    registry: FrozenOperationRegistry,
-) -> HandlerResolverPort:
-    """Build a resolver backed by :class:`FrozenOperationRegistry`.
-
-    :param registry: Frozen operation registry.
-    :returns: Callable resolver suitable for :class:`ForzeSocketIOAdapter`.
-    """
-
-    return make_registry_operation_resolver(registry)
 
 
 # ....................... #

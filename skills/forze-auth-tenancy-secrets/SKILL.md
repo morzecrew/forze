@@ -9,7 +9,7 @@ description: >-
 
 # Forze auth, tenancy, and secrets
 
-Use when identity, tenant routing, authorization, secret resolution, or external IdP integration affects application behavior. Keep binding at the boundary; usecases read context and resolve ports.
+Use when identity, tenant routing, authorization, secret resolution, or external IdP integration affects application behavior. Keep binding at the boundary; handlers read context and resolve ports.
 
 ## Boundary binding
 
@@ -90,8 +90,9 @@ The resolvers forward `scheme` and API-key `prefix` as routing hints; the verifi
 ```python
 from forze.application.contracts.authn import AuthnDepKey, PasswordCredentials
 
-factory = ctx.dep(AuthnDepKey, route=authn_spec.name)
-authn = factory(ctx, authn_spec)
+authn = ctx.deps.resolve_configurable(
+    ctx, AuthnDepKey, authn_spec, route=authn_spec.name
+)
 identity = await authn.authenticate_with_password(
     PasswordCredentials(login=email, password=password)
 )
@@ -198,7 +199,7 @@ See [`pages/docs/concepts/multi-tenancy.md`](../../pages/docs/concepts/multi-ten
 ```python
 from forze.application.contracts.secrets import SecretRef, SecretsDepKey, resolve_structured
 
-secrets = ctx.dep(SecretsDepKey)
+secrets = ctx.deps.provide(SecretsDepKey)
 dsn = await resolve_structured(secrets, SecretRef("postgres/main"), PostgresDsnSecret)
 ```
 
@@ -206,7 +207,7 @@ Use secrets for credentials and routed client configuration; avoid putting secre
 
 ## Anti-patterns
 
-1. **Binding identity inside usecases** — bind at the boundary only.
+1. **Binding identity inside handlers** — bind at the boundary only.
 2. **Passing tenant ids through every DTO for routing** — bind `TenantIdentity` and use tenant-aware adapters.
 3. **Hard-coding credentials in deps modules** — resolve via secrets/config.
 4. **Treating authz as domain-only state** — use authz ports for policy decisions that depend on external grants.

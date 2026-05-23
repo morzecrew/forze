@@ -8,7 +8,7 @@
 |------|---------|
 | What it provides | A `PostgresClient`, lifecycle hooks, dependency module, document adapters, search adapters, an introspector, and a transaction manager. |
 | Supported Forze contracts | `DocumentQueryDepKey`, `DocumentCommandDepKey`, `SearchQueryDepKey`, `HubSearchQueryDepKey`, `FederatedSearchQueryDepKey`, and `TxManagerDepKey`. |
-| When to use it | Use this integration when PostgreSQL is the system of record, when projections/search indexes live in PostgreSQL, or when usecases need transaction boundaries around Postgres-backed adapters. |
+| When to use it | Use this integration when PostgreSQL is the system of record, when projections/search indexes live in PostgreSQL, or when handlers need transaction boundaries around Postgres-backed adapters. |
 
 <div class="d2-diagram">
   <img class="d2-light" src="/forze/assets/diagrams/light/document-cache-flow.svg" alt="Document read path with cache hit, cache miss, and database fallback">
@@ -136,7 +136,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Hub search | `ConfigurablePostgresHubSearch` | `HubSearchQueryDepKey`, route usually equal to the hub search spec name. | Member relations and hub foreign-key mappings must be configured consistently. |
 | Federated search | `ConfigurablePostgresFederatedSearch` | `FederatedSearchQueryDepKey`, route usually equal to federated search spec name. | Requires at least two member configurations; result merging uses configured reciprocal-rank-fusion options. |
 | Transactions | `postgres_txmanager` | `TxManagerDepKey`, route from the module `tx` set. | Only coordinates operations that use the same Postgres client/context. |
-| Raw client/introspection | `PostgresClient` and `PostgresIntrospector` | `PostgresClientDepKey` and `PostgresIntrospectorDepKey`. | Use raw access sparingly; prefer contracts in usecases. |
+| Raw client/introspection | `PostgresClient` and `PostgresIntrospector` | `PostgresClientDepKey` and `PostgresIntrospectorDepKey`. | Use raw access sparingly; prefer contracts in handlers. |
 
 ## Complete recipe link
 
@@ -162,7 +162,7 @@ Filters that drill into JSON/JSONB with nested `->` / `->>` paths are rendered a
 
 ### Retry/timeout behavior
 
-Connection recovery is bounded by `reconnect_timeout`. Query-level retries should be handled at usecase or adapter-call boundaries only when the operation is safe to repeat. Use transactions for multi-step writes that must commit atomically.
+Connection recovery is bounded by `reconnect_timeout`. Query-level retries should be handled at handler or adapter-call boundaries only when the operation is safe to repeat. Use transactions for multi-step writes that must commit atomically.
 
 ## Operational notes
 

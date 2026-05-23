@@ -1,6 +1,6 @@
 # Contracts
 
-Contracts are the protocol interfaces that define what the application needs from infrastructure. Each contract is a Python `Protocol` class — adapters implement them, and usecases consume them through `ExecutionContext`. For the architectural rationale, see [Contracts and Adapters](../concepts/contracts-adapters.md). This page is the complete API reference.
+Contracts are the protocol interfaces that define what the application needs from infrastructure. Each contract is a Python `Protocol` class — adapters implement them, and handlers consume them through `ExecutionContext`. For the architectural rationale, see [Contracts and Adapters](../concepts/contracts-adapters.md). This page is the complete API reference.
 
 ## Structure of a contract
 
@@ -230,9 +230,15 @@ Postgres index and heap names belong in `PostgresDepsModule.searches[name]` (`Po
 
 ### SearchQueryPort[R]
 
+Result shape and pagination mode are encoded in the method name:
+
 | Method | Purpose |
 |--------|---------|
-| `search(query, filters?, limit?, offset?, sorts?, *, options?, return_model?, return_fields?)` | Full-text search with optional filters and pagination |
+| `search` | Typed `R` hits; offset pagination; no total count query |
+| `search_page` | Typed `R` hits with total matching count |
+| `project_search` / `project_search_page` | Projected `JsonDict` rows (`fields` required) |
+| `select_search` / `select_search_page` | Hits validated as `return_type` |
+| `search_cursor` / `project_search_cursor` / `select_search_cursor` | Keyset cursor pagination |
 
 ### Dependency keys
 

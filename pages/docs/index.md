@@ -20,7 +20,7 @@ Forze helps you keep business logic stable while storage and framework choices e
 - **Layered** — four clean layers (domain, application, infrastructure, interface) with strict dependency rules
 - **Explicit** — contracts (ports) describe what the app needs; adapters deliver it
 - **Composable** — adapters are wired declaratively via dependency plans
-- **Testable** — usecases run with fake or in-memory dependencies
+- **Testable** — handlers run with fake or in-memory dependencies
 - **Framework-agnostic** — core modules are not tied to any web framework, database, or cloud service
 
 /// note
@@ -34,7 +34,7 @@ Forze organizes code into four layers. Dependencies flow **inward**: the interfa
 | Layer | Responsibility | Examples |
 |-------|----------------|----------|
 | **Domain** | Business logic, invariants, validation | Models, commands, value objects |
-| **Application** | Orchestration, contracts, composition | Usecases, ports, execution runtime |
+| **Application** | Orchestration, contracts, composition | Handlers, ports, execution runtime |
 | **Infrastructure** | Concrete adapter implementations | Postgres, Redis, S3, MongoDB |
 | **Interface** | User-facing entry points | FastAPI routes, Socket.IO handlers |
 

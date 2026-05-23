@@ -10,11 +10,11 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.registry import OperationRegistry
 from forze.base.errors import CoreError
+from forze.application.execution import make_registry_operation_resolver
 from forze_socketio.routing import (
     ForzeSocketIOAdapter,
     SocketIONamespaceRouter,
     SocketIORequest,
-    make_registry_usecase_resolver,
 )
 
 # ----------------------- #
@@ -84,7 +84,7 @@ class TestSocketIORouting:
         adapter = ForzeSocketIOAdapter(
             sio=sio,  # pyright: ignore[reportArgumentType]
             context_factory=context_factory,
-            usecase_resolver=make_registry_usecase_resolver(registry),
+            operation_resolver=make_registry_operation_resolver(registry),
         )
         adapter.include_router(router)
 
@@ -130,7 +130,7 @@ async def test_event_dispatch_without_ack_type_returns_raw_value() -> None:
     adapter = ForzeSocketIOAdapter(
         sio=sio,  # pyright: ignore[reportArgumentType]
         context_factory=context_factory,
-        usecase_resolver=make_registry_usecase_resolver(registry),
+        operation_resolver=make_registry_operation_resolver(registry),
     )
     adapter.include_router(router)
 

@@ -4,12 +4,12 @@ description: >-
   Wires Forze ExecutionRuntime, DepsPlan, lifecycle, built-in deps modules,
   document/search composition, registry stage authoring, and interface entry
   points. Use when bootstrapping an app or composing runtime, lifecycle, and
-  usecase registries.
+  operation registries.
 ---
 
 # Forze Wiring
 
-Use when setting up the Forze runtime, dependency plan, lifecycle, usecase composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](../forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day usecase code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
+Use when setting up the Forze runtime, dependency plan, lifecycle, operation composition, and interface layer. For logical spec names, routes, and `StrEnum` wiring, see [`forze-specs-infrastructure`](../forze-specs-infrastructure/SKILL.md). For custom dependency modules, see [`forze-deps-modules`](../forze-deps-modules/SKILL.md). For HTTP details, see [`forze-fastapi-interface`](../forze-fastapi-interface/SKILL.md). For day-to-day handler code, see [`forze-framework-usage`](../forze-framework-usage/SKILL.md).
 
 ## Runtime setup
 
@@ -104,12 +104,12 @@ async with runtime.scope():
 
 ### Registry and transaction plan
 
-`build_document_registry` registers standard CRUD usecases. **Transactions are not implicit** — author them directly on the registry with `.tx(..., route=...)` using keys from :func:`~forze.application.execution.operation_namespace_for`, or call `apply_default_tx_document_registry(...)`:
+`build_document_registry` registers standard CRUD handlers. **Transactions are not implicit** — bind a transaction route on write operations, then **freeze** before HTTP attach:
 
 ```python
 from forze.application.composition.document import (
     DocumentDTOs,
-    apply_default_tx_document_registry,
+    DocumentKernelOp,
     build_document_registry,
 )
 
@@ -119,60 +119,78 @@ project_dtos = DocumentDTOs(
     update=UpdateProjectCmd,
 )
 
-registry = build_document_registry(project_spec, project_dtos)
-apply_default_tx_document_registry(registry, project_spec, "default")
+write_ops = [
+    project_spec.default_namespace.key(op)
+    for op in (
+        DocumentKernelOp.CREATE,
+        DocumentKernelOp.UPDATE,
+        DocumentKernelOp.DELETE,
+        DocumentKernelOp.KILL,
+        DocumentKernelOp.RESTORE,
+    )
+]
+
+registry = (
+    build_document_registry(project_spec, project_dtos)
+    .bind(*write_ops)
+    .bind_tx()
+    .set_route("default")
+    .finish(deep=True)
+    .freeze()
+)
 ```
 
-Equivalent explicit plan:
+### Custom handlers and stage hooks
 
 ```python
+from forze.application.contracts.execution import BeforeStep
 from forze.application.composition.document import DocumentKernelOp
-from forze.application.execution import operation_namespace_for
 
-_ops = operation_namespace_for(project_spec)
-_K = DocumentKernelOp
-
-registry.tx(_ops.op(_K.CREATE), route="default")
-registry.tx(_ops.op(_K.UPDATE), route="default")
-registry.tx(_ops.op(_K.KILL), route="default")
-registry.tx(_ops.op(_K.DELETE), route="default")
-registry.tx(_ops.op(_K.RESTORE), route="default")
-```
-
-### Custom usecases and middleware
-
-```python
-from forze.application.composition.document import DocumentKernelOp
-from forze.application.execution import operation_namespace_for
-
-_ops = operation_namespace_for(project_spec)
-_K = DocumentKernelOp
+create_op = project_spec.default_namespace.key(DocumentKernelOp.CREATE)
 
 
-def auth_guard(ctx):
-    async def guard(args):
+def auth_before_factory(ctx):
+    async def _before(args):
         if not is_authorized(ctx):
             raise PermissionError("Not authorized")
-    return guard
+    return _before
 
 
-registry.before(_ops.op(_K.CREATE), auth_guard, priority=100)
-registry.after_commit(_ops.op(_K.CREATE), notify_effect)
+registry = (
+    build_document_registry(project_spec, project_dtos)
+    .bind(create_op)
+    .bind_tx()
+    .set_route("default")
+    .finish(deep=False)
+    .bind_outer()
+    .before(BeforeStep(id="auth", factory=auth_before_factory, priority=100))
+    .finish(deep=True)
+    .freeze()
+)
 ```
 
-Custom operations use **string** keys merged into the same registry/plan:
+Custom operations use explicit operation keys on the same registry:
 
 ```python
-registry.register(
-    "archive",
-    lambda ctx: ArchiveProject(ctx=ctx),
+archive_op = project_spec.default_namespace.key("archive")
+
+registry = build_document_registry(project_spec, project_dtos)
+registry = registry.set_handler(
+    archive_op,
+    lambda ctx: ArchiveProject(doc=ctx.document.command(project_spec)),
 )
-registry.tx("archive", route="default")
+registry = (
+    registry.bind(archive_op)
+    .bind_tx()
+    .set_route("default")
+    .finish(deep=True)
+    .freeze()
+)
 ```
 
-### Plan buckets (order)
+### Stage order
 
-`outer_before` → `outer_wrap` → [transaction] → `in_tx_before` → `in_tx_wrap` → usecase → `in_tx_after` → `outer_after` → `after_commit`. Higher priority runs first within a bucket.
+Outer `before` / `wrap` / `on_success` / `on_failure` / `finally_`, then optional transaction scope (`tx_before`, handler, transactional `on_success`, `after_commit`, `dispatch_after_commit`). Higher `priority` runs first within the same stage. See [`pages/docs/reference/middleware-plans.md`](../../pages/docs/reference/middleware-plans.md).
 
 ## FastAPI integration
 
@@ -221,7 +239,7 @@ app = FastAPI(lifespan=lifespan)
 
 ## Mapping steps
 
-Inject computed fields (e.g. `number_id`, `creator_id`) before the usecase:
+Inject computed fields (e.g. `number_id`, `creator_id`) before the handler runs:
 
 ```python
 from forze.application.composition.document import build_document_create_mapper
@@ -272,12 +290,13 @@ result = await facade.search(SearchRequestDTO(query="roadmap", limit=20))
 2. **Skipping lifecycle** — real adapters need pools started/stopped.
 3. **`get_context()` outside `runtime.scope()`** — raises `RuntimeError`.
 4. **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.
-5. **Expecting `tx_document_plan`** — use `apply_default_tx_document_registry(...)` or direct `registry.tx(...)` calls.
+5. **Attaching HTTP routes without `.freeze()`** — call `.freeze()` after `bind_tx().set_route(...).finish(...)`.
 6. **Duplicating literal route strings** — use shared `StrEnum` values for spec names and transaction routes.
 
 ## Reference
 
 - [`pages/docs/getting-started.md`](../../pages/docs/getting-started.md)
+- [`pages/docs/concepts/operation-composition.md`](../../pages/docs/concepts/operation-composition.md)
 - [`pages/docs/reference/composition.md`](../../pages/docs/reference/composition.md)
 - [`pages/docs/integrations/fastapi.md`](../../pages/docs/integrations/fastapi.md)
 - [`pages/docs/integrations/mock.md`](../../pages/docs/integrations/mock.md)

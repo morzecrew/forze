@@ -13,7 +13,7 @@ Use this recipe when document reads are stable enough to cache and you want adap
 1. Add a `CacheSpec` to the `DocumentSpec`.
 2. Register the same cache name in `RedisDepsModule.caches`.
 3. Ensure the document adapter can resolve the cache route while building query and command ports.
-4. Keep cache invalidation in the adapter/coordinator layer instead of usecases when possible.
+4. Keep cache invalidation in the adapter/coordinator layer instead of handlers when possible.
 
 ## Minimal shape
 

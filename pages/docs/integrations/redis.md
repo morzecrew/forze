@@ -94,7 +94,7 @@ Use `routed_redis_lifecycle_step(client=routed_redis)` with `RoutedRedisClient` 
 | Idempotency | `ConfigurableRedisIdempotency` / `RedisIdempotencyAdapter` | `IdempotencyDepKey`, plain or routed by `IdempotencySpec.name`. | Correctness depends on stable idempotency keys and a TTL long enough for client retries. |
 | Search result snapshots | `ConfigurableRedisSearchResultSnapshot` / `RedisSearchResultSnapshotAdapter` | `SearchResultSnapshotDepKey`, route usually equal to `SearchResultSnapshotSpec.name`. | Snapshot IDs expire; clients must handle expired pagination snapshots. |
 | Distributed locks | `ConfigurableRedisDistributedLock` / `RedisDistributedLockAdapter` | `DistributedLockQueryDepKey` and `DistributedLockCommandDepKey`, route usually equal to `DistributedLockSpec.name`. | Lock safety depends on Redis availability, expiry settings, and clock/timeout choices. |
-| Raw client | `RedisClient` | `RedisClientDepKey`. | Prefer contract adapters in usecases unless raw Redis commands are truly infrastructure-specific. |
+| Raw client | `RedisClient` | `RedisClientDepKey`. | Prefer contract adapters in handlers unless raw Redis commands are truly infrastructure-specific. |
 
 ## Idempotency
 

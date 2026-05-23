@@ -2,7 +2,7 @@
 
 The execution system wraps handlers with stage hooks (before, on-success, transaction boundaries, after-commit, failure, finally). The public composition surface is `OperationRegistry` plus explicit `OperationPlan` steps.
 
-For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Operation composition](../concepts/usecase-composition.md). For capability-aware ordering inside one stage, see [Capability execution](capability-execution.md).
+For the conceptual overview, see [Application Layer](../concepts/application-layer.md) and [Operation composition](../concepts/operation-composition.md). For capability-aware ordering inside one stage, see [Capability execution](capability-execution.md).
 
 ## Handler
 

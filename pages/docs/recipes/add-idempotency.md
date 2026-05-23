@@ -17,7 +17,7 @@ Use this recipe when clients may retry mutating requests and you need duplicate 
 
 ## Where to configure it
 
-Keep idempotency at the interface/adapter boundary. Usecases should model business intent and should not need to know whether the HTTP request was retried.
+Keep idempotency at the interface/adapter boundary. Handlers should model business intent and should not need to know whether the HTTP request was retried.
 
 ## Learn more
 

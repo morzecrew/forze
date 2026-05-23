@@ -16,7 +16,7 @@ Application: {
         stroke: "#4a90d9"
     }
 
-    usecases: Usecases
+    handlers: Handlers
     contracts: {
         shape: rectangle
         doc: Document query/command ports
@@ -36,7 +36,7 @@ Infrastructure: {
     mongo: Mongo adapter
 }
 
-Application.usecases -> Application.contracts: resolve via context
+Application.handlers -> Application.contracts: resolve via context
 
 Infrastructure.postgres -> Application.contracts.doc: implements
 Infrastructure.pg_search -> Application.contracts.search: implements

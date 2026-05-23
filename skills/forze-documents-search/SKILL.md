@@ -91,12 +91,12 @@ Keep snapshot storage and cursor/keyset behavior in infrastructure config; use t
 
 - Postgres and Mongo implement document query/command gateways and history where configured.
 - Mock implements document/search behavior for unit tests.
-- Use adapters in integration tests or deps modules, not usecases.
+- Use adapters in integration tests or deps modules, not handlers.
 
 ## Anti-patterns
 
 1. **Putting table/collection/index names in `DocumentSpec` or `SearchSpec`** — use deps-module configs.
-2. **Importing Postgres/Mongo adapters in usecases** — use ports.
+2. **Importing Postgres/Mongo adapters in handlers** — use ports.
 3. **Using old `ctx.doc_read` / `ctx.doc_write` / `ctx.search` helpers** — use current helpers.
 4. **Sorting cursor pages without stable key fields** — include deterministic sort keys, usually `id`.
 5. **Bypassing revision fields on writes** — preserve optimistic concurrency semantics.

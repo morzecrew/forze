@@ -40,12 +40,12 @@ Populate `details` with sanitized data only:
 
 Single entry point for safe copies destined for clients or logs:
 
-```python
-from forze.base.scrubbing import sanitize
+    ```python
+    from forze.base.scrubbing import sanitize
 
-sanitize(payload, context="egress")  # API / CoreError.details — key mask only
-sanitize(payload, context="log")     # structured log extras — keys + log string rules
-```
+    sanitize(payload, context="egress")  # API / CoreError.details — key mask only
+    sanitize(payload, context="log")     # structured log extras — keys + log string rules
+    ```
 
 `configure_logging()` scrubs log event fields by default (`sanitize_logs=True`). Log string scrubbing uses the same `**********` placeholder as sensitive keys (Logfire-aligned substring patterns plus email and Bearer tokens). Innocent words inside log message fields may be redacted; set `text_scrub=False` to disable string rules. Use `context="egress"` for HTTP and errors; do not scrub payloads before persisting to storage.
 
@@ -264,7 +264,7 @@ Use `scope()` for nested isolation:
 | `clear()` | Clear the buffer |
 | `scope()` | Context manager providing an isolated buffer; restores previous state on exit |
 
-The outbox feature uses `ContextualBuffer` to collect events during a usecase and flush them after commit.
+The outbox feature uses `ContextualBuffer` to collect events during a handler and flush them after commit.
 
 ## Serialization
 

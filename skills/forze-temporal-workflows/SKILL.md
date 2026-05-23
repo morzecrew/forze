@@ -9,7 +9,7 @@ description: >-
 
 # Forze Temporal workflows
 
-Use when starting, signaling, updating, querying, or testing workflow-backed usecases. The core application depends on workflow contracts; `forze_temporal` supplies the Temporal adapter.
+Use when starting, signaling, updating, querying, or testing workflow-backed handlers. The core application depends on workflow contracts; `forze_temporal` supplies the Temporal adapter.
 
 ## Workflow spec
 
@@ -74,29 +74,42 @@ lifecycle = LifecyclePlan.from_steps(
 
 If `workflows` is empty, only `TemporalClientDepKey` is registered.
 
-## Usecase resolution
+## Handler resolution
 
-There is no `ctx.workflow_command(...)` helper. Resolve the routed factory explicitly.
+There is no `ctx.workflow_command(...)` helper. Resolve workflow ports with `ctx.deps.resolve_configurable`.
 
 ```python
+import attrs
+
+from forze.application.contracts.execution import Handler
 from forze.application.contracts.workflow import WorkflowCommandDepKey, WorkflowQueryDepKey
 
 
-class StartProjectOnboarding(Usecase[StartOnboarding, WorkflowHandle]):
-    async def main(self, args: StartOnboarding) -> WorkflowHandle:
-        factory = self.ctx.dep(
-            WorkflowCommandDepKey,
-            route=project_onboarding.name,
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StartProjectOnboarding(Handler[StartOnboarding, WorkflowHandle]):
+    commands: WorkflowCommandPort
+
+    async def __call__(self, args: StartOnboarding) -> WorkflowHandle:
+        return await self.commands.start(
+            args,
+            workflow_id=f"project:{args.project_id}",
         )
-        workflow = factory(self.ctx, project_onboarding)
-        return await workflow.start(args, workflow_id=f"project:{args.project_id}")
 
 
-class GetOnboardingResult(Usecase[WorkflowHandle, OnboardingResult]):
-    async def main(self, args: WorkflowHandle) -> OnboardingResult:
-        factory = self.ctx.dep(WorkflowQueryDepKey, route=project_onboarding.name)
-        workflow = factory(self.ctx, project_onboarding)
-        return await workflow.result(args)
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class GetOnboardingResult(Handler[WorkflowHandle, OnboardingResult]):
+    queries: WorkflowQueryPort
+
+    async def __call__(self, args: WorkflowHandle) -> OnboardingResult:
+        return await self.queries.result(args)
+
+
+# Register on OperationRegistry:
+# lambda ctx: StartProjectOnboarding(
+#     commands=ctx.deps.resolve_configurable(
+#         ctx, WorkflowCommandDepKey, project_onboarding, route=project_onboarding.name
+#     ),
+# )
 ```
 
 ## Context and tenancy
@@ -105,13 +118,13 @@ Use `ExecutionContextInterceptor` and `TemporalContextCodec` when `InvocationMet
 
 ## Testing
 
-Use the repository’s Temporal testing patterns when workflow code itself is under test. For usecases that only need to verify a workflow command was issued, register fake `WorkflowCommandDepKey` / `WorkflowQueryDepKey` factories in `Deps`.
+Use the repository’s Temporal testing patterns when workflow code itself is under test. For handlers that only need to verify a workflow command was issued, register fake `WorkflowCommandDepKey` / `WorkflowQueryDepKey` factories in `Deps`.
 
 ## Anti-patterns
 
-1. **Looking for `ctx.workflow_*` helpers** — use `ctx.dep(..., route=spec.name)`.
+1. **Looking for `ctx.workflow_*` helpers** — use `ctx.deps.resolve_configurable(ctx, WorkflowCommandDepKey, spec, route=spec.name)`.
 2. **Putting Temporal task queues in `WorkflowSpec`** — queues belong in `TemporalWorkflowConfig`.
-3. **Using raw Temporal SDK types in usecases** — keep usecases on `WorkflowSpec`, ports, and Pydantic DTOs.
+3. **Using raw Temporal SDK types in handlers** — keep handlers on `WorkflowSpec`, ports, and Pydantic DTOs.
 4. **Skipping lifecycle** — the client connects through `temporal_lifecycle_step`.
 5. **Ignoring context propagation in workers** — register interceptors on both client and worker when identity/correlation matters.
 

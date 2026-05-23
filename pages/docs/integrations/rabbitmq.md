@@ -83,7 +83,7 @@ Use `routed_rabbitmq_lifecycle_step(client=routed_rabbit)` with `RoutedRabbitMQC
 |----------------|------------------------|--------------------------|-------------|
 | Queue reads | `ConfigurableRabbitMQQueueRead` / `RabbitMQQueueAdapter`. | `QueueQueryDepKey`, route usually equal to `QueueSpec.name`. | Requires queues/exchanges/routing choices to align with broker topology; consumers must ack/nack messages. |
 | Queue writes | `ConfigurableRabbitMQQueueWrite` / `RabbitMQQueueAdapter`. | `QueueCommandDepKey`, route usually equal to `QueueSpec.name`. | Publisher confirms and persistence depend on `RabbitMQConfig` and broker policy. |
-| Raw client | `RabbitMQClient` or `RoutedRabbitMQClient`. | `RabbitMQClientDepKey`. | Prefer queue contracts in usecases unless broker-specific operations are required. |
+| Raw client | `RabbitMQClient` or `RoutedRabbitMQClient`. | `RabbitMQClientDepKey`. | Prefer queue contracts in handlers unless broker-specific operations are required. |
 
 ## Complete recipe link
 

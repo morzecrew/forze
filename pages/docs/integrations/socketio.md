@@ -1,134 +1,119 @@
 # Socket.IO Integration
 
-## What this integration provides
+`forze_socketio` routes typed Socket.IO command events to frozen `OperationRegistry` handlers and emits validated server events. Business logic stays in handlers and ports; this package handles payload validation, `ExecutionContext` creation, and acknowledgements.
 
-Expose typed realtime events while keeping event handlers wired to application handlers instead of transport-specific business logic.
-
-## When to use it
-
-Use this when clients need bidirectional updates, command events, or server-emitted events over Socket.IO.
-
-## Standard setup checklist
-
-1. Install the matching optional extra.
-2. Create the integration client or module configuration.
-3. Register the module in `DepsPlan` with routes that match your specs.
-4. Add lifecycle steps when the integration opens network connections.
-5. Resolve ports from `ExecutionContext`; do not import adapters in handlers.
-
-
-`forze_socketio` connects Forze handlers to real-time Socket.IO events. It provides typed command routing, operation dispatch through `ExecutionContext`, typed server event emission, and optional Redis backplane support for distributed deployments.
+| Topic | Details |
+|------|---------|
+| What it provides | Namespace routers, `ForzeSocketIOAdapter`, `make_registry_operation_resolver`, server/ASGI builders, typed emitters. |
+| When to use it | Realtime command/ack flows, multi-namespace APIs, optional Redis backplane for multi-process deployments. |
+| Registry | **Frozen** registry required — same as FastAPI `attach_*` helpers. |
 
 ## Installation
 
-    :::bash
-    uv add 'forze[socketio]'
+```bash
+uv add 'forze[socketio]'
+```
 
-## Building a server
+## Server
 
-Create an async Socket.IO server with `build_socketio_server`. Optionally enable the Redis manager for multi-process clustering:
+```python
+from forze_socketio import build_socketio_server
 
-    :::python
-    from forze_socketio import build_socketio_server
+sio = build_socketio_server(
+    async_mode="asgi",
+    cors_allowed_origins="*",
+    redis_url="redis://localhost:6379/0",  # optional: multi-process backplane
+)
+```
 
-    sio = build_socketio_server(
-        async_mode="asgi",
-        cors_allowed_origins="*",
-        redis_url="redis://localhost:6379/0",  # optional, for distributed setups
-    )
+Without `redis_url`, transport is in-process only (single worker).
 
-Without `redis_url`, the server uses in-memory transport (single-process only).
+## Command routing
 
-## Command event routing
+Each command maps an event name to an operation key, validates the inbound payload, runs the handler through `ExecutionContext`, and optionally validates the ack.
 
-Define namespace routes as typed command events. Each event validates input against a Pydantic model, builds an `ExecutionContext`, resolves the operation, executes the handler, and returns a validated acknowledgement payload.
+```python
+from pydantic import BaseModel
 
-### Define DTOs
-
-    :::python
-    from pydantic import BaseModel
-
-
-    class JoinRoomCmd(BaseModel):
-        room: str
-        user_id: str
-
-
-    class JoinRoomAck(BaseModel):
-        room: str
-        joined: bool
-
-### Create a handler
-
-    :::python
-    from forze.application.contracts.execution import Handler
+from forze.application.contracts.execution import Handler
+from forze.application.execution import Deps, ExecutionContext, OperationRegistry
+from forze_socketio import (
+    ForzeSocketIOAdapter,
+    SocketIONamespaceRouter,
+    make_registry_operation_resolver,
+)
 
 
-    class JoinRoom(Handler[JoinRoomCmd, JoinRoomAck]):
-        async def __call__(self, args: JoinRoomCmd) -> JoinRoomAck:
-            return JoinRoomAck(room=args.room, joined=True)
-
-### Register and route
-
-    :::python
-    from forze.application.execution import Deps, ExecutionContext, OperationRegistry
-    from forze_socketio import (
-        ForzeSocketIOAdapter,
-        SocketIONamespaceRouter,
-        make_registry_operation_resolver,
-    )
-
-    registry = (
-        OperationRegistry(handlers={"chat.join": lambda _ctx: JoinRoom()})
-        .freeze()
-    )
-
-    router = SocketIONamespaceRouter(namespace="/chat").command(
-        event="join",
-        operation="chat.join",
-        payload_type=JoinRoomCmd,
-        ack_type=JoinRoomAck,
-    )
+class JoinRoomCmd(BaseModel):
+    room: str
+    user_id: str
 
 
-    def context_factory(request) -> ExecutionContext:
-        return ExecutionContext(deps=Deps())
+class JoinRoomAck(BaseModel):
+    room: str
+    joined: bool
 
 
-    adapter = ForzeSocketIOAdapter(
-        sio=sio,
-        context_factory=context_factory,
-        usecase_resolver=make_registry_operation_resolver(registry),
-    )
-    adapter.include_router(router)
+class JoinRoom(Handler[JoinRoomCmd, JoinRoomAck]):
+    async def __call__(self, args: JoinRoomCmd) -> JoinRoomAck:
+        return JoinRoomAck(room=args.room, joined=True)
 
-`make_registry_usecase_resolver` is a deprecated alias for `make_registry_operation_resolver`.
 
-The adapter handles:
+registry = OperationRegistry(handlers={"chat.join": lambda _ctx: JoinRoom()}).freeze()
 
-1. Deserializing the incoming event payload into `JoinRoomCmd`
-2. Calling `context_factory` to create a request-scoped `ExecutionContext`
-3. Resolving `chat.join` from the frozen registry with the context
-4. Executing the handler and serializing the result as `JoinRoomAck`
-5. Returning the acknowledgement to the client
+router = SocketIONamespaceRouter(namespace="/chat").command(
+    event="join",
+    operation="chat.join",
+    payload_type=JoinRoomCmd,
+    ack_type=JoinRoomAck,
+)
+
+
+def context_factory(_request) -> ExecutionContext:
+    return ExecutionContext(deps=Deps())
+
+
+adapter = ForzeSocketIOAdapter(
+    sio=sio,
+    context_factory=context_factory,
+    operation_resolver=make_registry_operation_resolver(registry),
+)
+adapter.include_router(router)
+```
+
+Flow: validate payload → `context_factory` → `operation_resolver(ctx, operation)` → `await handler(args)` → serialize ack.
 
 ### Multiple namespaces
 
-Register multiple routers for different namespaces:
+```python
+chat = SocketIONamespaceRouter(namespace="/chat").command(
+    event="join",
+    operation="chat.join",
+    payload_type=JoinRoomCmd,
+    ack_type=JoinRoomAck,
+)
+tasks = SocketIONamespaceRouter(namespace="/tasks").command(
+    event="start",
+    operation="tasks.start",
+    payload_type=StartTaskCmd,
+    ack_type=StartTaskAck,
+)
+adapter.include_routers(chat, tasks)
+```
 
-    :::python
-    chat_router = SocketIONamespaceRouter(namespace="/chat").command(
-        event="join", operation="chat.join",
-        payload_type=JoinRoomCmd, ack_type=JoinRoomAck,
-    ).command(
-        event="leave", operation="chat.leave",
-        payload_type=LeaveRoomCmd, ack_type=LeaveRoomAck,
-    )
+Bind `InvocationMetadata`, authn, and tenant identity in `context_factory` (or middleware around it) — handlers read `ctx.inv`, they do not bind at the socket layer themselves.
 
-    tasks_router = SocketIONamespaceRouter(namespace="/tasks").command(
-        event="start", operation="tasks.start",
-        payload_type=StartTaskCmd, ack_type=StartTaskAck,
-    )
+## Server events
 
-    adapter.include_router(chat_router)
-    adapter.include_router(tasks_router)
+Use `SocketIOEventEmitter` / `SocketIONamespaceEmitter` with `SocketIOServerEvent` for typed outbound payloads. See `forze_socketio.emitter`.
+
+## ASGI
+
+Mount with `build_socketio_asgi_app(sio, other_asgi_app=...)` when Socket.IO shares an app with FastAPI or another ASGI stack.
+
+## Anti-patterns
+
+1. **Unfrozen registry** — call `.freeze()` after binding transaction routes and stage hooks.
+2. **Importing adapter code in handlers** — resolve ports from `ExecutionContext`.
+3. **Skipping `context_factory` wiring** — every event needs a request-scoped context with the same `DepsPlan` as HTTP.
+4. **Duplicate event names per namespace** — `SocketIONamespaceRouter.command` raises on collision.

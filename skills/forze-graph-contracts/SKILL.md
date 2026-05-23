@@ -61,7 +61,9 @@ Graph ports do not have `ExecutionContext` convenience helpers. Resolve routed f
 ```python
 from forze.application.contracts.graph import GraphCommandDepKey, GraphQueryDepKey, VertexRef
 
-query = ctx.dep(GraphQueryDepKey, route=project_graph.name)(ctx, project_graph)
+query = ctx.deps.resolve_configurable(
+    ctx, GraphQueryDepKey, project_graph, route=project_graph.name
+)
 owner_rows = await query.neighbors(
     VertexRef(kind="user", key=user_id),
     direction=GraphDirection.OUT,
@@ -69,7 +71,9 @@ owner_rows = await query.neighbors(
     limit=20,
 )
 
-command = ctx.dep(GraphCommandDepKey, route=project_graph.name)(ctx, project_graph)
+command = ctx.deps.resolve_configurable(
+    ctx, GraphCommandDepKey, project_graph, route=project_graph.name
+)
 created = await command.create_vertex("project", CreateProjectNode(name="Demo"))
 ```
 

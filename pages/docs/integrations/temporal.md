@@ -85,7 +85,7 @@ Use `routed_temporal_lifecycle_step(client=routed_temporal)` with `RoutedTempora
 |----------------|------------------------|--------------------------|-------------|
 | Workflow commands | `ConfigurableTemporalWorkflowCommand` / Temporal workflow command adapter. | `WorkflowCommandDepKey`, route usually equal to `WorkflowSpec.name`. | Requires a worker to register the workflow/activity implementation and poll the configured task queue. |
 | Workflow queries | `ConfigurableTemporalWorkflowQuery` / Temporal workflow query adapter. | `WorkflowQueryDepKey`, route usually equal to `WorkflowSpec.name`. | Query availability depends on Temporal workflow state and query handlers. |
-| Raw Temporal client | `TemporalClient` or `RoutedTemporalClient`. | `TemporalClientDepKey`. | Prefer workflow contracts in usecases to keep Temporal details at the infrastructure edge. |
+| Raw Temporal client | `TemporalClient` or `RoutedTemporalClient`. | `TemporalClientDepKey`. | Prefer workflow contracts in handlers to keep Temporal details at the infrastructure edge. |
 | Context propagation | `ExecutionContextInterceptor`. | Configured in `TemporalConfig.interceptors`. | Only propagates context fields supported by the interceptor and Temporal payload/headers. |
 
 ## Complete recipe link

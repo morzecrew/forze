@@ -14,7 +14,7 @@ Use this recipe when another system owns writes and your service only exposes ty
 1. Define a `ReadDocument` subclass for the response shape.
 2. Create a `DocumentSpec` with the logical name and read model only.
 3. Register a read-only document route in the storage dependency module.
-4. Expose `get`, `get_many`, or `find_many` operations from a usecase or FastAPI endpoint.
+4. Expose `get`, `get_many`, or `find_many` operations from a handler or FastAPI endpoint.
 
 ## Minimal shape
 
