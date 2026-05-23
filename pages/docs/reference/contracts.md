@@ -273,8 +273,12 @@ S3-style blob storage:
 
     :::python
     from forze.application.contracts.queue import QueueSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    order_queue = QueueSpec(name="orders", model=OrderPayload)
+    order_queue = QueueSpec(
+        name="orders",
+        codec=PydanticRecordMappingCodec(OrderPayload),
+    )
 
 ### QueueReadPort[M]
 
@@ -315,8 +319,12 @@ S3-style blob storage:
 
     :::python
     from forze.application.contracts.pubsub import PubSubSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    events_spec = PubSubSpec(name="events", model=EventPayload)
+    events_spec = PubSubSpec(
+        name="events",
+        codec=PydanticRecordMappingCodec(EventPayload),
+    )
 
 ### PubSubCommandPort[M]
 
@@ -354,8 +362,12 @@ S3-style blob storage:
 
     :::python
     from forze.application.contracts.stream import StreamSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    audit_stream = StreamSpec(name="audit", model=AuditEntry)
+    audit_stream = StreamSpec(
+        name="audit",
+        codec=PydanticRecordMappingCodec(AuditEntry),
+    )
 
 ### StreamQueryPort[M]
 

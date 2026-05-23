@@ -137,7 +137,7 @@ class RedisStreamAdapter[M: BaseModel](
                 await asyncio.sleep(0)
 
             for m in messages:
-                cursor[m["stream"]] = m["id"]
+                cursor[m.stream] = m.id
                 yield m
 
     # ....................... #
@@ -232,7 +232,7 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
                 await asyncio.sleep(0)
 
             for m in messages:
-                cursor[m["stream"]] = m["id"]
+                cursor[m.stream] = m.id
                 yield m
 
     # ....................... #

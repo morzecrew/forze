@@ -15,6 +15,7 @@ pytest.importorskip("aio_pika")
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from forze_rabbitmq.kernel.platform import RabbitMQClient, RabbitMQConfig
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 def _ensure_docker_available() -> None:
@@ -81,7 +82,7 @@ async def rabbitmq_queue(
 
     return RabbitMQQueueAdapter(
         client=rabbitmq_client,
-        codec=RabbitMQQueueCodec(model=_QueuePayload),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_QueuePayload)),
         namespace=namespace,
     )
 

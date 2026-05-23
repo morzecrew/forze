@@ -133,7 +133,15 @@ def _walk_through_ann(
     origin = get_origin(ann)
 
     if origin is list:
-        return None
+        args = get_args(ann)
+        if not args:
+            return None
+        elem = _unwrap_optional(args[0])
+        if not segments:
+            return elem
+        if _is_basemodel_type(elem):
+            return _walk_field_chain(elem, segments, filter_path=filter_path)
+        return _walk_through_ann(elem, segments, filter_path=filter_path)
 
     return None
 

@@ -1,13 +1,14 @@
 from datetime import datetime
-from typing import NotRequired, TypedDict
+from typing import final
 
-from pydantic import BaseModel
+import attrs
 
 # ----------------------- #
-#! TODO: repurpose into attrs class (or msgspec.Struct)
 
 
-class StreamMessage[M: BaseModel](TypedDict):
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StreamMessage[M]:
     """Message as read from or written to a stream backend."""
 
     stream: str
@@ -19,11 +20,11 @@ class StreamMessage[M: BaseModel](TypedDict):
     payload: M
     """Structured payload carried by the message."""
 
-    type: NotRequired[str | None]
+    type: str | None = None
     """Optional message type or category."""
 
-    timestamp: NotRequired[datetime | None]
+    timestamp: datetime | None = None
     """Optional timestamp associated with the message."""
 
-    key: NotRequired[str | None]
+    key: str | None = None
     """Optional partitioning key for the message."""

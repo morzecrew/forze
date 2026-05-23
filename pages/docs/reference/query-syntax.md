@@ -11,11 +11,12 @@ A filter expression is one of:
 - combined constraints: `{"$values": {...}, "$fields": {...}}` (implicit AND)
 - conjunction: `{"$and": [expr, ...]}`
 - disjunction: `{"$or": [expr, ...]}`
+- negation: `{"$not": expr}` (single child object, not an array)
 
 Where `expr` is recursively one of the shapes above.
 
 You may combine `$values` and `$fields` in one object; all constraints are ANDed.
-Do not mix `$and` / `$or` with `$values` / `$fields` in the same object.
+Do not mix `$and` / `$or` / `$not` with `$values` / `$fields` in the same object.
 
 ## Literal shortcuts (`$values`)
 
@@ -78,6 +79,67 @@ Example:
 | `$subset` | array | field contains no values outside list |
 | `$overlaps` | array | field intersects list |
 | `$disjoint` | array | field does not intersect list |
+
+### Array element quantifiers (`$any`, `$all`, `$none`)
+
+Apply a predicate to **individual elements** inside an array field (native Postgres
+arrays or JSON/JSONB arrays). Use one quantifier per field; do not combine with other
+operators on the same key.
+
+| Operator | Meaning |
+|----------|---------|
+| `$any` | at least one element matches the inner predicate |
+| `$all` | every element matches (vacuous **true** when the field is missing, null, or `[]`) |
+| `$none` | no element matches (vacuous **true** when missing, null, or `[]`) |
+
+**Scalar arrays** — inner predicate is `$eq` / `$neq` / ordering ops, or a scalar
+shortcut:
+
+    :::python
+    {"$values": {"tags": {"$any": "urgent"}}}
+    {"$values": {"scores": {"$any": {"$gte": 10}}}}
+
+**Object arrays** — inner predicate is element-relative `$values` (implicit AND):
+
+    :::python
+    filters = {
+        "$values": {
+            "items": {
+                "$any": {
+                    "$values": {
+                        "status": "open",
+                        "qty": {"$gte": 1},
+                    },
+                },
+            },
+        },
+    }
+
+Inner operators are limited to equality and ordering (`$eq`, `$neq`, `$gt`, `$gte`,
+`$lt`, `$lte`). Nested quantifiers are not supported.
+
+## Negation (`$not`)
+
+Negate any filter expression:
+
+    :::python
+    filters = {
+        "$not": {
+            "$values": {"status": "archived"},
+        },
+    }
+
+    filters = {
+        "$not": {
+            "$or": [
+                {"$values": {"priority": {"$lt": 3}}},
+                {"$values": {"is_deleted": True}},
+            ],
+        },
+    }
+
+On MongoDB, top-level `$not` is rendered as `$nor` with one operand (semantically
+equivalent for boolean filters).
 
 ## Field-to-field compare (`$fields`)
 
@@ -280,7 +342,7 @@ Filter expressions are validated at parse time. Default bounds (override per gat
 
 | Limit | Default | Applies to |
 |-------|---------|------------|
-| ``max_depth`` | 32 | Nesting of ``$and`` / ``$or`` |
+| ``max_depth`` | 32 | Nesting of ``$and`` / ``$or`` / ``$not`` |
 | ``max_clauses`` | 256 | Combinator children, ``$values`` / ``$fields`` keys, and per-field operator entries |
 | ``max_in_size`` | 1000 | ``$in`` / ``$nin``, array shortcuts, and set-relation operands |
 

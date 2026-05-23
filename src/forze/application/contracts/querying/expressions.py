@@ -34,11 +34,63 @@ QueryValueOpConjunction = TypedDict(
 )
 """Operator map for field-to-literal filters."""
 
-QueryValueMapValue = QueryValueOpConjunction | QueryValueShortcutValue
-"""Value for a single field: operator map or shortcut."""
+# ....................... #
+# Element quantifiers (under $values)
+
+QueryElementOpConjunction = TypedDict(
+    "QueryElementOpConjunction",
+    {
+        "$eq": Scalar,
+        "$neq": Scalar,
+        "$gt": Numeric,
+        "$gte": Numeric,
+        "$lt": Numeric,
+        "$lte": Numeric,
+    },
+    total=False,
+)
+"""Operator map for a single array element (equality and ordering only)."""
+
+QueryElementValueMapValue = QueryElementOpConjunction | Scalar
+"""Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``."""
+
+QueryElementValueMap = Mapping[str, QueryElementValueMapValue]
+"""Element-relative field map (object arrays)."""
+
+QueryElementValuesPredicate = TypedDict(
+    "QueryElementValuesPredicate",
+    {"$values": QueryElementValueMap},
+)
+"""Element-relative ``$values`` bundle for object-array quantifiers."""
+
+QueryElementConstraint = (
+    QueryElementOpConjunction | Scalar | QueryElementValuesPredicate
+)
+"""Inner constraint for ``$any`` / ``$all`` / ``$none`` (op map, scalar shortcut, or ``$values``)."""
+
+QueryElementQuantifierExpression = TypedDict(
+    "QueryElementQuantifierExpression",
+    {
+        "$any": QueryElementConstraint,
+        "$all": QueryElementConstraint,
+        "$none": QueryElementConstraint,
+    },
+    total=False,
+)
+"""Element quantifier application on an array field."""
+
+QueryValueMapValue = (
+    QueryValueOpConjunction
+    | QueryValueShortcutValue
+    | QueryElementQuantifierExpression
+)
+"""Value for a single field: operator map, shortcut, or element quantifier."""
 
 QueryValueMap = Mapping[str, QueryValueMapValue]
 """Map of field names to literal filter values (dot paths for nested JSON)."""
+
+QueryValuesPredicate = TypedDict("QueryValuesPredicate", {"$values": QueryValueMap})
+"""Literal-only constraint (``$values``)."""
 
 # ....................... #
 # Filter: field-to-field constraints ($fields)
@@ -76,9 +128,6 @@ QueryConstraintPredicate = TypedDict(
 )
 """Literal and/or field-to-field constraints (implicit AND when both keys present)."""
 
-QueryValuesPredicate = TypedDict("QueryValuesPredicate", {"$values": QueryValueMap})
-"""Literal-only constraint (``$values``)."""
-
 QueryFieldsPredicate = TypedDict("QueryFieldsPredicate", {"$fields": QueryFieldsMap})
 """Field-to-field-only constraint (``$fields``)."""
 
@@ -96,10 +145,19 @@ QueryDisjunction = TypedDict(
 )
 """Disjunction of filter expressions."""
 
-QueryFilterExpression: TypeAlias = (
-    QueryConstraintPredicate | QueryConjunction | QueryDisjunction
+QueryNegation = TypedDict(
+    "QueryNegation",
+    {"$not": "QueryFilterExpression"},
 )
-"""Recursive filter expression (constraints, and, or)."""
+"""Negation of a single filter expression."""
+
+QueryFilterExpression: TypeAlias = (
+    QueryConstraintPredicate
+    | QueryConjunction
+    | QueryDisjunction
+    | QueryNegation
+)
+"""Recursive filter expression (constraints, and, or, not)."""
 
 # ....................... #
 

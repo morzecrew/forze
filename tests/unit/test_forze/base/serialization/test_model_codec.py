@@ -7,9 +7,11 @@ from pydantic import BaseModel, ValidationError, computed_field
 
 from forze.base.serialization import (
     PydanticRecordMappingCodec,
+    pydantic_decode_json_bytes,
     pydantic_dump,
     pydantic_dump_many,
     pydantic_dump_many_batched,
+    pydantic_encode_json_bytes,
     pydantic_field_names,
     pydantic_transform,
     pydantic_transform_many,
@@ -181,3 +183,70 @@ def test_stored_field_names_without_computed_matches_pydantic_field_names() -> N
     assert codec.stored_field_names(
         include_computed=False,
     ) == pydantic_field_names(FieldsModel, include_computed=False)
+
+
+def test_encode_json_bytes_matches_pydantic_encode_json_bytes() -> None:
+    codec = PydanticRecordMappingCodec(SampleModel)
+    model = SampleModel(a=1, b=2)
+
+    assert codec.encode_json_bytes(model) == pydantic_encode_json_bytes(model)
+
+
+def test_encode_json_bytes_exclude_unset_matches_pydantic_encode_json_bytes() -> None:
+    codec = PydanticRecordMappingCodec(SampleModel)
+    model = SampleModel(a=1)
+
+    assert codec.encode_json_bytes(
+        model,
+        exclude={"unset": True},
+    ) == pydantic_encode_json_bytes(model, exclude={"unset": True})
+
+
+def test_encode_json_bytes_json_mode_types() -> None:
+    codec = PydanticRecordMappingCodec(JsonModeModel)
+    model = JsonModeModel(
+        id=uuid4(),
+        created_at=datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC),
+    )
+
+    raw = codec.encode_json_bytes(model).decode()
+
+    assert '"id"' in raw
+    assert "2025-01-02" in raw
+
+
+def test_decode_json_bytes_matches_pydantic_decode_json_bytes() -> None:
+    codec = PydanticRecordMappingCodec(SampleModel)
+    payload = b'{"a": 1, "b": 2}'
+
+    assert codec.decode_json_bytes(payload) == pydantic_decode_json_bytes(
+        SampleModel,
+        payload,
+    )
+
+
+def test_decode_json_bytes_accepts_str() -> None:
+    codec = PydanticRecordMappingCodec(SampleModel)
+
+    assert codec.decode_json_bytes('{"a": 1}') == SampleModel(a=1)
+
+
+def test_decode_json_bytes_forbid_extra_matches_pydantic_decode_json_bytes() -> None:
+    codec = PydanticRecordMappingCodec(SampleModel)
+    payload = b'{"a": 1, "extra": 2}'
+
+    with pytest.raises(ValidationError) as expected:
+        pydantic_decode_json_bytes(SampleModel, payload, forbid_extra=True)
+
+    with pytest.raises(ValidationError) as actual:
+        codec.decode_json_bytes(payload, forbid_extra=True)
+
+    assert type(actual.value) is type(expected.value)
+    assert actual.value.errors() == expected.value.errors()
+
+
+def test_json_bytes_round_trip() -> None:
+    codec = PydanticRecordMappingCodec(SampleModel)
+    model = SampleModel(a=1, b=2)
+
+    assert codec.decode_json_bytes(codec.encode_json_bytes(model)) == model

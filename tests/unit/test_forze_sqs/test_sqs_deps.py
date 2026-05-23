@@ -8,9 +8,13 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_sqs.adapters import SQSQueueAdapter
 from forze_sqs.execution.deps import SQSClientDepKey, SQSDepsModule
-from forze_sqs.execution.deps.deps import ConfigurableSQSQueueRead, ConfigurableSQSQueueWrite
+from forze_sqs.execution.deps.deps import (
+    ConfigurableSQSQueueRead,
+    ConfigurableSQSQueueWrite,
+)
 from forze_sqs.kernel.platform import SQSClient
 
 
@@ -22,7 +26,10 @@ def test_sqs_queue_factory_builds_adapter() -> None:
     sqs_mock = Mock(spec=SQSClient)
     deps = Deps.plain({SQSClientDepKey: sqs_mock})
     context = ExecutionContext(deps=deps)
-    spec = QueueSpec(name="events", model=_QueuePayload)
+    spec = QueueSpec(
+        name="events",
+        codec=PydanticRecordMappingCodec(model_type=_QueuePayload),
+    )
 
     reader = ConfigurableSQSQueueRead(
         config={"namespace": "events", "tenant_aware": False},
@@ -31,7 +38,7 @@ def test_sqs_queue_factory_builds_adapter() -> None:
 
     assert isinstance(queue, SQSQueueAdapter)
     assert queue.client is sqs_mock
-    assert queue.codec.model is _QueuePayload
+    assert queue.codec.payload_codec.model_type is _QueuePayload
     assert queue.namespace == "events"
 
     writer = ConfigurableSQSQueueWrite(

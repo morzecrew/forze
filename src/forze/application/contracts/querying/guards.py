@@ -1,22 +1,26 @@
 """Type guards for filter expression discrimination."""
 
-from typing import TypeGuard
+from typing import TypeGuard, get_args
 
 from .expressions import (
     QueryConstraintPredicate,
     QueryConjunction,
     QueryDisjunction,
+    QueryElementQuantifierExpression,
     QueryFieldsOpConjunction,
     QueryFilterExpression,
+    QueryNegation,
     QueryValueMapValue,
     QueryValueOpConjunction,
     QueryValueShortcutValue,
 )
+from .types import QueryElementQuantifier
 
 # ----------------------- #
 
-_COMBINATOR_KEYS = frozenset({"$and", "$or"})
+_COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})
 _CONSTRAINT_KEYS = frozenset({"$values", "$fields"})
+_ELEMENT_QUANTIFIER_KEYS = frozenset(get_args(QueryElementQuantifier))  # type: ignore[arg-type]
 
 
 def is_query_conjunction(expr: QueryFilterExpression) -> TypeGuard[QueryConjunction]:  # type: ignore[valid-type]
@@ -29,6 +33,12 @@ def is_query_disjunction(expr: QueryFilterExpression) -> TypeGuard[QueryDisjunct
     """Return ``True`` when the expression is a disjunction (``$or``)."""
 
     return "$or" in expr.keys()  # type: ignore[attr-defined]
+
+
+def is_query_negation(expr: QueryFilterExpression) -> TypeGuard[QueryNegation]:  # type: ignore[valid-type]
+    """Return ``True`` when the expression is a negation (``$not``)."""
+
+    return "$not" in expr.keys()  # type: ignore[attr-defined]
 
 
 def is_query_constraint(expr: QueryFilterExpression) -> TypeGuard[QueryConstraintPredicate]:  # type: ignore[valid-type]
@@ -50,12 +60,23 @@ def has_query_fields(expr: QueryFilterExpression) -> bool:  # type: ignore[valid
     return "$fields" in expr.keys()  # type: ignore[attr-defined]
 
 
+def is_query_element_quantifier(
+    map_: QueryValueMapValue,
+) -> TypeGuard[QueryElementQuantifierExpression]:
+    """Return ``True`` when the value is an element quantifier map (``$any`` / ``$all`` / ``$none``)."""
+
+    if not isinstance(map_, dict):
+        return False
+    keys = map_.keys()  # type: ignore[attr-defined]
+    return bool(_ELEMENT_QUANTIFIER_KEYS & keys) and len(keys) == 1
+
+
 def is_query_value_conjunction(
     map_: QueryValueOpConjunction | QueryValueMapValue,
 ) -> TypeGuard[QueryValueOpConjunction]:
-    """Return ``True`` when the value is an operator map (dict)."""
+    """Return ``True`` when the value is a field operator map (dict, not a quantifier)."""
 
-    return isinstance(map_, dict)
+    return isinstance(map_, dict) and not is_query_element_quantifier(map_)  # type: ignore[arg-type]
 
 
 def is_query_value_shortcut(

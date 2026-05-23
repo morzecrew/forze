@@ -70,14 +70,14 @@ async def test_queue_adapter_enqueue_receive_ack(
 
     message = await _receive_until(rabbitmq_queue, queue)
 
-    assert message["id"] == message_id
-    assert message["queue"] == queue
-    assert message["payload"].value == "hello"
-    assert message["type"] == "created"
-    assert message["key"] == "partition-a"
-    assert message["enqueued_at"] == ts
+    assert message.id == message_id
+    assert message.queue == queue
+    assert message.payload.value == "hello"
+    assert message.type == "created"
+    assert message.key == "partition-a"
+    assert message.enqueued_at == ts
 
-    assert await rabbitmq_queue.ack(queue, [message["id"]]) == 1
+    assert await rabbitmq_queue.ack(queue, [message.id]) == 1
 
 
 @pytest.mark.asyncio
@@ -101,19 +101,19 @@ async def test_queue_adapter_enqueue_many_receive_ack(
     )
 
     messages = await _receive_exact(rabbitmq_queue, queue, expected=3)
-    received_ids = [message["id"] for message in messages]
+    received_ids = [message.id for message in messages]
 
     assert len(message_ids) == 3
     assert set(received_ids) == set(message_ids)
-    assert all(message["queue"] == queue for message in messages)
-    assert {message["payload"].value for message in messages} == {
+    assert all(message.queue == queue for message in messages)
+    assert {message.payload.value for message in messages} == {
         "hello-1",
         "hello-2",
         "hello-3",
     }
-    assert all(message["type"] == "created" for message in messages)
-    assert all(message["key"] == "partition-b" for message in messages)
-    assert all(message["enqueued_at"] == ts for message in messages)
+    assert all(message.type == "created" for message in messages)
+    assert all(message.key == "partition-b" for message in messages)
+    assert all(message.enqueued_at == ts for message in messages)
     assert await rabbitmq_queue.ack(queue, received_ids) == 3
 
 
@@ -129,9 +129,9 @@ async def test_queue_adapter_consume(
     message = await asyncio.wait_for(anext(stream), timeout=5)
     await stream.aclose()
 
-    assert message["queue"] == queue
-    assert message["payload"].value == "consume"
-    assert await rabbitmq_queue.ack(queue, [message["id"]]) == 1
+    assert message.queue == queue
+    assert message.payload.value == "consume"
+    assert await rabbitmq_queue.ack(queue, [message.id]) == 1
 
 
 @pytest.mark.asyncio
@@ -145,11 +145,11 @@ async def test_queue_adapter_nack_requeues(
     await rabbitmq_queue.enqueue(queue, queue_payload_cls(value="retry-me"))
 
     first = await _receive_until(rabbitmq_queue, queue)
-    assert first["payload"].value == "retry-me"
+    assert first.payload.value == "retry-me"
 
-    assert await rabbitmq_queue.nack(queue, [first["id"]], requeue=True) == 1
+    assert await rabbitmq_queue.nack(queue, [first.id], requeue=True) == 1
 
     second = await _receive_until(rabbitmq_queue, queue)
-    assert second["payload"].value == "retry-me"
+    assert second.payload.value == "retry-me"
 
-    assert await rabbitmq_queue.ack(queue, [second["id"]]) == 1
+    assert await rabbitmq_queue.ack(queue, [second.id]) == 1

@@ -10,11 +10,11 @@ subscriber interested in a topic should see the published event.
 | Purpose | Names a logical pub/sub namespace and message payload model. |
 | Import path | `from forze.application.contracts.pubsub import PubSubSpec` |
 | Type parameters | `M`, the Pydantic payload model. |
-| Required fields | `name`, `model`. |
+| Required fields | `name`, `codec`. |
 | Returned values | Passed to pub/sub dep factories. |
 | Common implementations | Mock pub/sub adapter, Redis / Valkey pub/sub adapter. |
 | Related dependency keys | `PubSubCommandDepKey`, `PubSubQueryDepKey`. |
-| Minimal example | `events = PubSubSpec(name="events", model=EventPayload)` |
+| Minimal example | `events = PubSubSpec(name="events", codec=PydanticRecordMappingCodec(EventPayload))` |
 | Related pages | [Redis / Valkey](../../integrations/redis.md). |
 
 ## `PubSubCommandPort[M]`
@@ -54,14 +54,18 @@ subscriber interested in a topic should see the published event.
 | Type parameters | `M`, the Pydantic payload model. |
 | Required fields | `topic`, `payload`; optional `type`, `published_at`, `key`. |
 | Returned values | N/A; this is the returned value type. |
-| Common implementations | `TypedDict` produced by pub/sub adapters. |
+| Common implementations | Frozen attrs instances produced by pub/sub adapters. |
 | Related dependency keys | Produced through `PubSubQueryDepKey` implementations. |
-| Minimal example | `event = message["payload"]` |
+| Minimal example | `event = message.payload` |
 | Related pages | [Mock integration](../../integrations/mock.md). |
 
     :::python
     from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    events = PubSubSpec(name="events", model=EventPayload)
+    events = PubSubSpec(
+        name="events",
+        codec=PydanticRecordMappingCodec(EventPayload),
+    )
     publisher = ctx.deps.resolve_configurable(ctx, PubSubCommandDepKey, events, route=events.name)
     await publisher.publish("projects.created", EventPayload(project_id="p1"))

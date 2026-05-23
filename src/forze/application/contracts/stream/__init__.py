@@ -1,7 +1,7 @@
 from .deps import StreamCommandDepKey, StreamGroupQueryDepKey, StreamQueryDepKey
 from .ports import StreamCommandPort, StreamGroupQueryPort, StreamQueryPort
 from .specs import StreamSpec
-from .types import StreamMessage
+from .value_objects import StreamMessage
 
 # ----------------------- #
 

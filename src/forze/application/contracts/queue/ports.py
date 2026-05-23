@@ -7,15 +7,13 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel
-
-from .types import QueueMessage
+from .value_objects import QueueMessage
 
 # ----------------------- #
 
 
 @runtime_checkable
-class QueueQueryPort[M: BaseModel](Protocol):
+class QueueQueryPort[M](Protocol):
     """Contract for reading and acknowledging messages from a queue backend."""
 
     def receive(
@@ -62,7 +60,7 @@ class QueueQueryPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class QueueCommandPort[M: BaseModel](Protocol):
+class QueueCommandPort[M](Protocol):
     """Contract for publishing messages to a queue backend."""
 
     def enqueue(

@@ -2,7 +2,10 @@
 
 import attrs
 
-from ..types import Array, CompareOp, Op, Scalar
+from ..types import Array, CompareOp, Op, QueryElementQuantifier, Scalar
+
+# Sentinel field name for scalar array element predicates in :class:`QueryField`.
+ELEM_SCALAR_FIELD = "$"
 
 # ----------------------- #
 
@@ -26,6 +29,14 @@ class QueryOr(QueryExpr):
 
     items: tuple[QueryExpr, ...]
     """Child expressions."""
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
+class QueryNot(QueryExpr):
+    """Negation of a single child expression."""
+
+    item: QueryExpr
+    """Child expression."""
 
 
 # ....................... #
@@ -60,3 +71,20 @@ class QueryCompare(QueryExpr):
 
     right: str
     """Right-hand field path."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True, match_args=True)
+class QueryElem(QueryExpr):
+    """Array element quantifier over a document field path."""
+
+    path: str
+    """Document field path (e.g. ``tags``, ``line_items``)."""
+
+    quantifier: QueryElementQuantifier
+    """``$any``, ``$all``, or ``$none``."""
+
+    inner: QueryExpr
+    """Element predicate (often :class:`QueryAnd` of element-relative :class:`QueryField` nodes)."""

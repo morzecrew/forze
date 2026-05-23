@@ -113,7 +113,7 @@ See [Background Workflow](../recipes/background-workflow.md) for the long-form b
 
 ### Serialization settings
 
-The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Use Pydantic models in `QueueSpec` to validate payloads after receive.
+The adapter encodes message bodies safely for SQS and stores message metadata in SQS message attributes. Bind a `RecordMappingCodec` on `QueueSpec` (for example `PydanticRecordMappingCodec`) to validate payloads after receive.
 
 ### Retry/timeout behavior
 

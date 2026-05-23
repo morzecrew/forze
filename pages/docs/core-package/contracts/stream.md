@@ -10,11 +10,11 @@ plain reads and consumer-group reads with acknowledgments.
 | Purpose | Names a stream namespace and the Pydantic model for stream entries. |
 | Import path | `from forze.application.contracts.stream import StreamSpec` |
 | Type parameters | `M`, the stream payload model. |
-| Required fields | `name`, `model`. |
+| Required fields | `name`, `codec`. |
 | Returned values | Passed to stream dep factories. |
 | Common implementations | Mock stream adapter, Redis / Valkey streams. |
 | Related dependency keys | `StreamQueryDepKey`, `StreamCommandDepKey`, `StreamGroupQueryDepKey`. |
-| Minimal example | `audit_stream = StreamSpec(name="audit", model=AuditEntry)` |
+| Minimal example | `audit_stream = StreamSpec(name="audit", codec=PydanticRecordMappingCodec(AuditEntry))` |
 | Related pages | [Redis / Valkey](../../integrations/redis.md). |
 
 ## `StreamQueryPort[M]`
@@ -42,7 +42,7 @@ plain reads and consumer-group reads with acknowledgments.
 | Returned values | Message lists/iterators; `ack` returns acknowledged count. |
 | Common implementations | Mock stream group adapter, Redis / Valkey streams. |
 | Related dependency keys | `StreamGroupQueryDepKey`. |
-| Minimal example | `await group_reader.ack("workers", "audit", [entry["id"]])` |
+| Minimal example | `await group_reader.ack("workers", "audit", [entry.id])` |
 | Related pages | [Background Workflow](../../recipes/background-workflow.md). |
 
 ## `StreamCommandPort[M]`
@@ -68,14 +68,18 @@ plain reads and consumer-group reads with acknowledgments.
 | Type parameters | `M`, the stream payload model. |
 | Required fields | `stream`, `id`, `payload`; optional `type`, `timestamp`, `key`. |
 | Returned values | N/A; this is the returned value type. |
-| Common implementations | `TypedDict` produced by stream adapters. |
+| Common implementations | Frozen attrs instances produced by stream adapters. |
 | Related dependency keys | Produced through stream query dep keys. |
-| Minimal example | `payload = entry["payload"]` |
+| Minimal example | `payload = entry.payload` |
 | Related pages | [Mock integration](../../integrations/mock.md). |
 
     :::python
     from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    audit_stream = StreamSpec(name="audit", model=AuditEntry)
+    audit_stream = StreamSpec(
+        name="audit",
+        codec=PydanticRecordMappingCodec(AuditEntry),
+    )
     writer = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, audit_stream, route=audit_stream.name)
     entry_id = await writer.append("audit", AuditEntry(action="created"))

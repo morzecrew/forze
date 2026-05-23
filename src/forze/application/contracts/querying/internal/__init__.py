@@ -9,7 +9,16 @@ from .aggregate import (
     ParsedAggregates,
 )
 from .cast import QueryValueCaster
-from .nodes import QueryAnd, QueryCompare, QueryExpr, QueryField, QueryOr
+from .nodes import (
+    ELEM_SCALAR_FIELD,
+    QueryAnd,
+    QueryCompare,
+    QueryElem,
+    QueryExpr,
+    QueryField,
+    QueryNot,
+    QueryOr,
+)
 from .parse import QueryFilterExpressionParser, QueryFilterLimits
 
 # ----------------------- #
@@ -24,9 +33,12 @@ __all__ = [
     "QueryFilterExpressionParser",
     "QueryFilterLimits",
     "QueryValueCaster",
+    "ELEM_SCALAR_FIELD",
     "QueryAnd",
     "QueryCompare",
+    "QueryElem",
     "QueryExpr",
     "QueryField",
+    "QueryNot",
     "QueryOr",
 ]

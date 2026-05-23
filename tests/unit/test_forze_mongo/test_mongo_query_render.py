@@ -9,10 +9,14 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
+    ELEM_SCALAR_FIELD,
     QueryAnd,
     QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
+    QueryFilterExpressionParser,
+    QueryNot,
     QueryOr,
 )
 from forze.base.errors import CoreError
@@ -78,6 +82,105 @@ class TestMongoQueryRenderer:
         assert r.render(QueryCompare("meta.score", "$gte", "meta.min")) == {
             "$expr": {"$gte": ["$meta.score", "$meta.min"]},
         }
+
+    def test_query_not_renders_nor(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$not": {"$values": {"status": "archived"}}},
+        )
+        r = MongoQueryRenderer()
+        out = r.render(expr)
+        assert "$nor" in out
+
+    def test_element_any_scalar_eq(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$any": "urgent"}}},
+        )
+        r = MongoQueryRenderer()
+        out = r.render(expr)
+        assert out["$or"][1] == {
+            "$and": [
+                {
+                    "$and": [
+                        {"tags": {"$exists": True}},
+                        {"tags": {"$type": "array"}},
+                        {"tags": {"$not": {"$size": 0}}},
+                    ],
+                },
+                {"tags": "urgent"},
+            ],
+        }
+        assert out["$or"][0]["$and"][1] == {"$expr": False}
+
+    def test_element_any_object_elem_match(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"status": "open", "qty": {"$gte": 1}}},
+                    },
+                },
+            },
+        )
+        r = MongoQueryRenderer()
+        out = r.render(expr)
+        match = out["$or"][1]["$and"][1]
+        assert match == {"items": {"$elemMatch": {"status": "open", "qty": {"$gte": 1}}}}
+
+    def test_element_all_scalar_eq_uses_min_max_expr(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$all": {"$eq": "x"}}}},
+        )
+        r = MongoQueryRenderer()
+        match = r.render(expr)["$or"][1]["$and"][1]
+        assert "$expr" in match
+        assert "$min" in str(match)
+
+    def test_element_none_scalar_eq_uses_nor(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$none": "spam"}}},
+        )
+        r = MongoQueryRenderer()
+        match = r.render(expr)["$or"][1]["$and"][1]
+        assert match == {"$nor": [{"tags": "spam"}]}
+
+    def test_element_any_scalar_gte_uses_expr(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gte": 10}}}},
+        )
+        r = MongoQueryRenderer()
+        match = r.render(expr)["$or"][1]["$and"][1]
+        assert match == {"$expr": {"$gte": [{"$max": "$scores"}, 10]}}
+
+    def test_element_all_object_uses_not_elem_match(self) -> None:
+        inner = QueryAnd(
+            (
+                QueryField("status", "$eq", "open"),
+                QueryField("qty", "$gte", 1),
+            ),
+        )
+        r = MongoQueryRenderer()
+        match = r.render(
+            QueryElem("items", "$all", inner),
+        )["$or"][1]["$and"][1]
+        assert "items" in match
+        assert "$not" in match["items"]
+        assert "$elemMatch" in match["items"]["$not"]
+
+    def test_not_with_elem_inside_and(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$not": {
+                    "$and": [
+                        {"$values": {"a": 1}},
+                        {"$values": {"tags": {"$any": "x"}}},
+                    ],
+                },
+            },
+        )
+        r = MongoQueryRenderer()
+        out = r.render(expr)
+        assert "$nor" in out
+        assert len(out["$nor"]) == 1
 
     def test_compare_with_fields_in_and(self) -> None:
         r = MongoQueryRenderer()
@@ -344,6 +447,24 @@ class TestMongoQueryRendererExprPredicate:
             QueryAnd((QueryField("a", "$eq", 1),)),
         )
         assert one == {"$eq": ["$a", 1]}
+
+    def test_not_expr_predicate(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render_expr_predicate(
+            QueryNot(QueryField("a", "$eq", 1)),
+        )
+        assert out == {"$nor": [{"$eq": ["$a", 1]}]}
+
+    def test_elem_expr_predicate_scalar_any(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render_expr_predicate(
+            QueryElem(
+                "tags",
+                "$any",
+                QueryField(ELEM_SCALAR_FIELD, "$eq", "z"),
+            ),
+        )
+        assert "$or" in out
 
     def test_or_multi_and_empty(self) -> None:
         r = MongoQueryRenderer()

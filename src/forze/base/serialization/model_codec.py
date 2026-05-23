@@ -111,3 +111,18 @@ class RecordMappingCodec[T, TSource](Protocol):
         *,
         include_computed: bool = True,
     ) -> frozenset[str]: ...
+
+    def encode_json_bytes(
+        self,
+        obj: T,
+        *,
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> bytes: ...
+
+    def decode_json_bytes(
+        self,
+        raw: bytes | str,
+        *,
+        forbid_extra: bool = False,
+        encoding: str = "utf-8",
+    ) -> T: ...

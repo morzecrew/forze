@@ -156,6 +156,57 @@ def pydantic_dump(
 # ....................... #
 
 
+def pydantic_encode_json_bytes(
+    obj: BaseModel,
+    *,
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> bytes:
+    """Serialize a Pydantic model to JSON UTF-8 bytes for wire transport."""
+
+    logger.trace(
+        "Encoding %s to JSON bytes (exclude=%s)",
+        type(obj).__name__,
+        exclude,
+    )
+
+    return obj.model_dump_json(
+        exclude_unset=exclude.get("unset", False),
+        exclude_none=exclude.get("none", False),
+        exclude_defaults=exclude.get("defaults", False),
+    ).encode("utf-8")
+
+
+# ....................... #
+
+
+def pydantic_decode_json_bytes[M: BaseModel](
+    cls: type[M],
+    raw: bytes | str,
+    *,
+    forbid_extra: bool = False,
+    encoding: str = "utf-8",
+) -> M:
+    """Deserialize JSON UTF-8 bytes or text into a Pydantic model instance."""
+
+    if isinstance(raw, bytes):
+        raw = raw.decode(encoding)
+
+    logger.trace(
+        "Decoding JSON bytes into %s (forbid_extra=%s)",
+        cls.__name__,
+        forbid_extra,
+    )
+
+    adapter = TypeAdapter(cls)  # type: ignore[valid-type]
+    return adapter.validate_json(
+        raw,
+        extra="forbid" if forbid_extra else "ignore",
+    )
+
+
+# ....................... #
+
+
 def pydantic_dump_many(
     objs: Sequence[BaseModel],
     *,

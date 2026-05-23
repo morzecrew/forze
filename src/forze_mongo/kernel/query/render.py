@@ -6,6 +6,7 @@ from typing import Any
 import attrs
 
 from forze.application.contracts.querying import (
+    ELEM_SCALAR_FIELD,
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
@@ -15,9 +16,11 @@ from forze.application.contracts.querying import (
     ParsedAggregates,
     QueryAnd,
     QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
     QueryFilterExpressionParser,
+    QueryNot,
     QueryOp,
     QueryOr,
     QuerySortExpression,
@@ -91,15 +94,18 @@ class MongoQueryRenderer:
             group_stage[computed.alias] = self._render_aggregate_function(computed)
 
         pipeline.append({"$group": group_stage})
-
         project: JsonDict = {"_id": 0}
+
         for group_key in parsed.groups:
             project[group_key.alias] = f"$_id.{group_key.alias}"
+
         for computed in parsed.computed_fields:
             project[computed.alias] = 1
+
         pipeline.append({"$project": project})
 
         sort = self.render_aggregate_sorts(parsed, sorts)
+
         if sort:
             pipeline.append({"$sort": dict(sort)})
 
@@ -138,10 +144,12 @@ class MongoQueryRenderer:
 
     def _render_group_id_element(self, group_key: GroupKey) -> object:
         expr = group_key.expr
+
         if isinstance(expr, GroupRef):
             return f"${expr.field}"
 
         trunc = expr
+
         return {
             "$dateTrunc": {
                 "date": f"${trunc.field}",
@@ -151,18 +159,23 @@ class MongoQueryRenderer:
             },
         }
 
+    # ....................... #
+
     @staticmethod
     def _mongo_date_trunc_timezone(trunc: GroupTrunc) -> str:
         tz = trunc.timezone
+
         if tz.mode == "iana":
             return tz.iana
 
         off = tz.offset if tz.offset is not None else timedelta(0)
         total_sec = int(off.total_seconds())
         sign = "+" if total_sec >= 0 else "-"
+
         total_sec = abs(total_sec)
         h, rem = divmod(total_sec, 3600)
         m = rem // 60
+
         return f"{sign}{h:02d}:{m:02d}"
 
     # ....................... #
@@ -176,6 +189,7 @@ class MongoQueryRenderer:
             raise CoreError("Computed field has no field path")
 
         field_ref = f"${computed.field}"
+
         match computed.function:
             case "$sum":
                 return {"$sum": self._conditional_value(computed, field_ref, 0)}
@@ -220,6 +234,8 @@ class MongoQueryRenderer:
     def _field_ref(path: str) -> str:
         return f"${path}"
 
+    # ....................... #
+
     def _render_compare_expr(
         self,
         left: str,
@@ -242,6 +258,8 @@ class MongoQueryRenderer:
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise CoreError(f"Unknown compare operator: {op!r}")
 
+    # ....................... #
+
     def render_expr_predicate(self, expr: QueryExpr) -> JsonDict:
         """Render a parsed query expression as a Mongo aggregation predicate."""
 
@@ -263,6 +281,12 @@ class MongoQueryRenderer:
                     return {"$const": False}
                 parts = [self.render_expr_predicate(item) for item in items]
                 return parts[0] if len(parts) == 1 else {"$or": parts}
+
+            case QueryNot(item):
+                return {"$nor": [self.render_expr_predicate(item)]}
+
+            case QueryElem(path, quantifier, inner):
+                return self._render_elem_predicate(path, quantifier, inner)
 
             case _:
                 raise CoreError(f"Unknown expression: {expr!r}")
@@ -403,8 +427,214 @@ class MongoQueryRenderer:
 
                 return {"$or": parts}
 
+            case QueryNot(item):
+                return {"$nor": [self._render_expr(item)]}
+
+            case QueryElem(path, quantifier, inner):
+                return self._render_elem(path, quantifier, inner)
+
             case _:
                 raise CoreError(f"Unknown expression: {expr!r}")
+
+    # ....................... #
+
+    def _render_elem(
+        self,
+        path: str,
+        quantifier: str,
+        inner: QueryExpr,
+    ) -> JsonDict:
+        vacuous_val = quantifier in ("$all", "$none")
+        has_array: JsonDict = {
+            "$and": [
+                {path: {"$exists": True}},
+                {path: {"$type": "array"}},
+                {path: {"$not": {"$size": 0}}},
+            ],
+        }
+        match_body = self._render_elem_match(path, quantifier, inner)
+        missing_or_empty: JsonDict = {
+            "$or": [
+                {path: {"$exists": False}},
+                {path: {"$size": 0}},
+            ],
+        }
+
+        return {
+            "$or": [
+                {
+                    "$and": [
+                        missing_or_empty,
+                        {"$expr": vacuous_val},
+                    ],
+                },
+                {"$and": [has_array, match_body]},
+            ],
+        }
+
+    # ....................... #
+
+    def _render_elem_predicate(
+        self,
+        path: str,
+        quantifier: str,
+        inner: QueryExpr,
+    ) -> JsonDict:
+        return self._render_elem(path, quantifier, inner)
+
+    # ....................... #
+
+    def _render_elem_match(
+        self,
+        path: str,
+        quantifier: str,
+        inner: QueryExpr,
+    ) -> JsonDict:
+        if self._elem_inner_is_scalar(inner):
+            return self._render_elem_scalar_match(path, quantifier, inner)
+
+        elem_match = self._render_elem_object_match(inner)
+
+        if quantifier == "$any":
+            return {path: {"$elemMatch": elem_match}}
+
+        if quantifier == "$all":
+            return {
+                path: {"$not": {"$elemMatch": self._negate_elem_object(elem_match)}}
+            }
+
+        return {"$nor": [{path: {"$elemMatch": elem_match}}]}
+
+    # ....................... #
+
+    @staticmethod
+    def _elem_inner_is_scalar(inner: QueryExpr) -> bool:
+        match inner:
+            case QueryField(name, _, _):
+                return name == ELEM_SCALAR_FIELD
+
+            case QueryAnd(items):
+                return all(
+                    isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
+                    for i in items
+                )
+
+            case _:
+                return False
+
+    # ....................... #
+
+    def _render_elem_scalar_match(
+        self,
+        path: str,
+        quantifier: str,
+        inner: QueryExpr,
+    ) -> JsonDict:
+        match inner:
+            case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
+                fields = [inner]
+
+            case QueryAnd(items):
+                fields = [i for i in items if isinstance(i, QueryField)]
+
+            case _:
+                raise CoreError(f"Invalid scalar element inner: {inner!r}")
+
+        if len(fields) != 1:
+            raise CoreError("Scalar element quantifier supports one comparison only")
+
+        field = fields[0]
+        op = field.op
+        val = self.caster.pass_through(field.value)
+        ref = f"${path}"
+
+        if op == "$eq" and quantifier == "$any":
+            return {path: val}
+
+        if op == "$eq" and quantifier == "$none":
+            return {"$nor": [{path: val}]}
+
+        if op == "$eq" and quantifier == "$all":
+            return {
+                "$expr": {
+                    "$and": [
+                        {"$eq": [{"$min": ref}, val]},
+                        {"$eq": [{"$max": ref}, val]},
+                    ],
+                },
+            }
+
+        agg = "$max" if quantifier == "$any" else "$min"
+
+        if op in ("$lt", "$lte") and quantifier == "$any":
+            agg = "$min"
+
+        if op in ("$lt", "$lte") and quantifier == "$all":
+            agg = "$max"
+
+        cmp_op = op if op in ("$gt", "$gte", "$lt", "$lte") else None
+
+        if cmp_op is None:
+            if op == "$neq" and quantifier == "$any":
+                return {
+                    "$expr": {
+                        "$gt": [
+                            {
+                                "$size": {
+                                    "$filter": {
+                                        "input": ref,
+                                        "cond": {"$ne": ["$$this", val]},
+                                    },
+                                },
+                            },
+                            0,
+                        ],
+                    },
+                }
+
+            raise CoreError(f"Unsupported scalar element operator {op!r}")
+
+        return {"$expr": {cmp_op: [{agg: ref}, val]}}
+
+    # ....................... #
+
+    def _render_elem_object_match(self, inner: QueryExpr) -> JsonDict:
+        match inner:
+            case QueryAnd(items):
+                fields = [i for i in items if isinstance(i, QueryField)]
+
+            case QueryField() as f:
+                fields = [f]
+
+            case _:
+                raise CoreError(f"Invalid object element inner: {inner!r}")
+
+        out: JsonDict = {}
+
+        for f in fields:
+            if f.op == "$eq":
+                out[f.name] = self.caster.pass_through(f.value)
+
+            else:
+                out[f.name] = {f.op: self.caster.pass_through(f.value)}
+
+        return out
+
+    # ....................... #
+
+    @staticmethod
+    def _negate_elem_object(match: JsonDict) -> JsonDict:
+        negated: JsonDict = {}
+
+        for key, spec in match.items():
+            if isinstance(spec, dict):
+                op_key = next(iter(spec))  # type: ignore[arg-type]
+                negated[key] = {"$not": {op_key: spec[op_key]}}
+
+            else:
+                negated[key] = {"$ne": spec}
+
+        return negated
 
     # ....................... #
 

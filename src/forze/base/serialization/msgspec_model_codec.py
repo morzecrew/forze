@@ -9,9 +9,11 @@ from pydantic import BaseModel
 from ..primitives import JsonDict
 from .model_codec import EncodeMode, RecordMappingCodec, RecordMappingDumpExcludeOptions
 from .msgspec import (
+    msgspec_decode_json_bytes,
     msgspec_dump,
     msgspec_dump_many,
     msgspec_dump_many_batched,
+    msgspec_encode_json_bytes,
     msgspec_field_names,
     msgspec_transform,
     msgspec_transform_many,
@@ -157,4 +159,30 @@ class MsgspecRecordMappingCodec[T: msgspec.Struct](RecordMappingCodec[T, SourceT
         return msgspec_field_names(
             self.model_type,
             include_computed=include_computed,
+        )
+
+    # ....................... #
+
+    def encode_json_bytes(
+        self,
+        obj: T,
+        *,
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> bytes:
+        return msgspec_encode_json_bytes(obj, exclude=exclude)
+
+    # ....................... #
+
+    def decode_json_bytes(
+        self,
+        raw: bytes | str,
+        *,
+        forbid_extra: bool = False,
+        encoding: str = "utf-8",
+    ) -> T:
+        return msgspec_decode_json_bytes(
+            self.model_type,
+            raw,
+            forbid_extra=forbid_extra,
+            encoding=encoding,
         )

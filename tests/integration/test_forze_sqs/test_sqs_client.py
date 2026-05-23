@@ -41,12 +41,14 @@ async def test_client_enqueue_receive_ack(
         message = messages[0]
 
         assert message["queue"] == sqs_queue_url
+        # enqueue() returns a send-side id; receive() id is the receipt handle for ack.
+        assert message_id
         assert message["id"]
+        assert message["id"] != message_id
         assert message["body"] == b'{"value":"hello"}'
         assert message["type"] == "created"
         assert message["key"] == "partition-1"
         assert message["enqueued_at"] == ts
-        assert message_id
 
         assert await sqs_client.ack(sqs_queue_url, [message["id"]]) == 1
         assert await sqs_client.receive(sqs_queue_url, limit=1) == []

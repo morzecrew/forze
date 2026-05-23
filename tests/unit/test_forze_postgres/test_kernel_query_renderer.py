@@ -11,10 +11,14 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
+    ELEM_SCALAR_FIELD,
     QueryAnd,
     QueryCompare,
+    QueryElem,
     QueryExpr,
     QueryField,
+    QueryFilterExpressionParser,
+    QueryNot,
     QueryOr,
 )
 from forze.base.errors import CoreError
@@ -280,6 +284,125 @@ class TestPsycopgQueryRenderer:
         assert params == [["z"]]
         b = sql_out.as_bytes()
         assert b"unnest" in b and b"NOT" in b and b"&&" not in b
+
+    def test_query_not_renders_sql_negation(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$not": {"$values": {"status": "archived"}}},
+        )
+        r = PsycopgQueryRenderer()
+        sql_out, params = r.render(expr)
+        assert b"NOT" in sql_out.as_bytes()
+        assert params == ["archived"]
+
+    def test_element_any_scalar_native_array(self) -> None:
+        types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$any": "urgent"}}},
+        )
+        r = PsycopgQueryRenderer(types=types)
+        sql_out, params = r.render(expr)
+        b = sql_out.as_bytes()
+        assert b"unnest" in b and b"EXISTS" in b
+        assert params == ["urgent"]
+
+    def test_element_all_vacuous_on_empty_array_column(self) -> None:
+        types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
+        expr = QueryElem(
+            "tags",
+            "$all",
+            QueryField(ELEM_SCALAR_FIELD, "$eq", "x"),
+        )
+        r = PsycopgQueryRenderer(types=types)
+        sql_out, _params = r.render(expr)
+        assert b"TRUE" in sql_out.as_bytes()
+
+    def test_element_any_object_jsonb(self) -> None:
+        class _Item(BaseModel):
+            status: str
+
+        class _Row(BaseModel):
+            items: list[_Item]
+
+        types: PostgresColumnTypes = {"items": _t("jsonb")}
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"status": "open"}},
+                    },
+                },
+            },
+        )
+        r = PsycopgQueryRenderer(types=types, model_type=_Row)
+        sql_out, params = r.render(expr)
+        b = sql_out.as_bytes()
+        assert b"jsonb_array_elements" in b
+        assert params == ["open"]
+
+    def test_element_none_scalar_native_array(self) -> None:
+        types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$none": "urgent"}}},
+        )
+        r = PsycopgQueryRenderer(types=types)
+        sql_out, params = r.render(expr)
+        b = sql_out.as_bytes()
+        assert b"unnest" in b
+        assert b"NOT (EXISTS" in b
+        assert params == ["urgent"]
+
+    def test_element_all_scalar_forall_sql(self) -> None:
+        types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"tags": {"$all": {"$eq": "ops"}}}},
+        )
+        r = PsycopgQueryRenderer(types=types)
+        sql_out, _params = r.render(expr)
+        b = sql_out.as_bytes()
+        assert b"NOT EXISTS" in b
+        assert b"unnest" in b
+
+    def test_element_any_scalar_gte(self) -> None:
+        types: PostgresColumnTypes = {"scores": _t("int4", is_array=True)}
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gte": 10}}}},
+        )
+        r = PsycopgQueryRenderer(types=types)
+        sql_out, params = r.render(expr)
+        assert b">=" in sql_out.as_bytes()
+        assert params == [10]
+
+    def test_not_nested_or(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$not": {
+                    "$or": [
+                        {"$values": {"status": "archived"}},
+                        {"$values": {"status": "pending"}},
+                    ],
+                },
+            },
+        )
+        r = PsycopgQueryRenderer()
+        sql_out, params = r.render(expr)
+        b = sql_out.as_bytes()
+        assert b"NOT" in b
+        assert b" OR " in b
+        assert set(params) == {"archived", "pending"}
+
+    def test_query_not_with_query_and_child(self) -> None:
+        expr = QueryNot(
+            QueryAnd(
+                (
+                    QueryField("a", "$eq", 1),
+                    QueryField("b", "$eq", 2),
+                ),
+            ),
+        )
+        r = PsycopgQueryRenderer()
+        sql_out, params = r.render(expr)
+        assert b"NOT" in sql_out.as_bytes()
+        assert params == [1, 2]
 
     def test_typed_scalar_coercion(self) -> None:
         """With a type map, scalar operands are coerced."""

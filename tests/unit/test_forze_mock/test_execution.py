@@ -16,8 +16,9 @@ from forze.application.contracts.stream import (
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.execution import ExecutionContext
+from forze.base.serialization import PydanticRecordMappingCodec
+from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 from forze_contrib.soft_deletion.models import DocWithSoftDeletion
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
 from forze_mock.execution import MockStateDepKey
 
@@ -92,19 +93,30 @@ async def test_execution_context_can_use_mock_document_and_search() -> None:
 async def test_execution_context_resolves_optional_contract_ports() -> None:
     ctx = ExecutionContext(deps=MockDepsModule()())
 
-    queue_read = ctx.deps.provide(QueueQueryDepKey)(ctx, QueueSpec(name="q", model=_Msg))
-    queue_write = ctx.deps.provide(QueueCommandDepKey)(ctx, QueueSpec(name="q", model=_Msg))
-    pubsub = ctx.deps.provide(PubSubCommandDepKey)(ctx, PubSubSpec(name="p", model=_Msg))
-    stream_write = ctx.deps.provide(StreamCommandDepKey)(ctx, StreamSpec(name="s", model=_Msg))
-    stream_group = ctx.deps.provide(StreamGroupQueryDepKey)(ctx, StreamSpec(name="s", model=_Msg))
+    queue_read = ctx.deps.provide(QueueQueryDepKey)(
+        ctx, QueueSpec(name="q", codec=PydanticRecordMappingCodec(model_type=_Msg))
+    )
+    queue_write = ctx.deps.provide(QueueCommandDepKey)(
+        ctx, QueueSpec(name="q", codec=PydanticRecordMappingCodec(model_type=_Msg))
+    )
+    pubsub = ctx.deps.provide(PubSubCommandDepKey)(
+        ctx, PubSubSpec(name="p", codec=PydanticRecordMappingCodec(model_type=_Msg))
+    )
+    stream_write = ctx.deps.provide(StreamCommandDepKey)(
+        ctx, StreamSpec(name="s", codec=PydanticRecordMappingCodec(model_type=_Msg))
+    )
+    stream_group = ctx.deps.provide(StreamGroupQueryDepKey)(
+        ctx,
+        StreamSpec(name="s", codec=PydanticRecordMappingCodec(model_type=_Msg)),
+    )
 
     msg_id = await queue_write.enqueue("tasks", _Msg(value="x"))
     received = await queue_read.receive("tasks")
-    assert received[0]["id"] == msg_id
+    assert received[0].id == msg_id
 
     await pubsub.publish("topic", _Msg(value="ping"))
 
     stream_id = await stream_write.append("events", _Msg(value="a"))
     rows = await stream_group.read("g", "c", {"events": "0"})
-    assert rows[0]["id"] == stream_id
-    assert rows[0]["payload"].value == "a"
+    assert rows[0].id == stream_id
+    assert rows[0].payload.value == "a"

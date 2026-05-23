@@ -11,6 +11,7 @@ pytest.importorskip("redis")
 from forze_redis.adapters.stream import RedisStreamAdapter, RedisStreamGroupAdapter
 from forze_redis.adapters.codecs import RedisStreamCodec
 from forze_redis.kernel.platform.client import RedisClient
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 class _Payload(BaseModel):
@@ -19,7 +20,7 @@ class _Payload(BaseModel):
 
 @pytest.fixture
 def codec() -> RedisStreamCodec[_Payload]:
-    return RedisStreamCodec(model=_Payload)
+    return RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
 
 
 @pytest.mark.asyncio
@@ -48,10 +49,10 @@ async def test_stream_adapter_read_decodes_entries(codec: RedisStreamCodec[_Payl
         block_ms=2000,
     )
     assert len(out) == 1
-    assert out[0]["stream"] == "events"
-    assert out[0]["id"] == "0-1"
-    assert out[0]["payload"].n == 7
-    assert out[0]["type"] == "evt"
+    assert out[0].stream == "events"
+    assert out[0].id == "0-1"
+    assert out[0].payload.n == 7
+    assert out[0].type == "evt"
 
 
 @pytest.mark.asyncio
@@ -110,8 +111,8 @@ async def test_stream_group_adapter_read_and_ack(codec: RedisStreamCodec[_Payloa
     )
 
     assert len(msgs) == 1
-    assert msgs[0]["stream"] == "jobs"
-    assert msgs[0]["payload"].n == 1
+    assert msgs[0].stream == "jobs"
+    assert msgs[0].payload.n == 1
 
     client.xgroup_read.assert_awaited_once_with(
         group="g1",

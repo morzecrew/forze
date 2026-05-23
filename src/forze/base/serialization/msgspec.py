@@ -507,6 +507,63 @@ def msgspec_dump_many_batched(
 # ....................... #
 
 
+def msgspec_encode_json_bytes(
+    obj: msgspec.Struct,
+    *,
+    exclude: RecordMappingDumpExcludeOptions = {},
+) -> bytes:
+    """Serialize a msgspec struct to JSON UTF-8 bytes for wire transport."""
+
+    _ensure_unset_not_requested(exclude)
+
+    logger.trace(
+        "Encoding %s to JSON bytes (exclude=%s)",
+        type(obj).__name__,
+        exclude,
+    )
+
+    if exclude.get("none") or exclude.get("defaults") or exclude.get("computed_fields"):
+        return msgspec.json.encode(msgspec_dump(obj, mode="json", exclude=exclude))
+
+    return msgspec.json.encode(obj)
+
+
+# ....................... #
+
+
+def msgspec_decode_json_bytes[T: msgspec.Struct](
+    cls: type[T],
+    raw: bytes | str,
+    *,
+    forbid_extra: bool = False,
+    encoding: str = "utf-8",
+) -> T:
+    """Deserialize JSON UTF-8 bytes or text into a msgspec struct instance."""
+
+    if isinstance(raw, str):
+        raw = raw.encode(encoding)
+
+    logger.trace(
+        "Decoding JSON bytes into %s (forbid_extra=%s)",
+        cls.__name__,
+        forbid_extra,
+    )
+
+    if forbid_extra:
+        data = msgspec.json.decode(raw)
+        if not isinstance(data, dict):
+            msg = f"Expected object at $, got {type(data).__name__}"
+            raise msgspec.ValidationError(msg)
+
+        _validate_no_unknown_fields(data, cls)
+        return msgspec.convert(data, cls, strict=False)
+
+    return msgspec.json.decode(raw, type=cls)
+
+
+# ....................... #
+
+
 def msgspec_field_names(
     cls: type[msgspec.Struct],
     *,

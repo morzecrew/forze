@@ -34,7 +34,7 @@ class ConfigurableSQSQueueRead(QueueQueryDepPort):
         spec: QueueSpec[Any],
     ) -> SQSQueueAdapter[Any]:
         client = ctx.deps.provide(SQSClientDepKey)
-        codec = SQSQueueCodec(model=spec.model)
+        codec = SQSQueueCodec(payload_codec=spec.codec)
 
         return SQSQueueAdapter(
             client=client,
@@ -64,7 +64,7 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
         spec: QueueSpec[Any],
     ) -> SQSQueueAdapter[Any]:
         client = ctx.deps.provide(SQSClientDepKey)
-        codec = SQSQueueCodec(model=spec.model)
+        codec = SQSQueueCodec(payload_codec=spec.codec)
 
         return SQSQueueAdapter(
             client=client,

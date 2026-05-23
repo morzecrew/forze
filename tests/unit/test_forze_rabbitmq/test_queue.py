@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from forze_rabbitmq.kernel.platform import RabbitMQClient
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 class _Payload(BaseModel):
@@ -14,7 +15,7 @@ class _Payload(BaseModel):
 
 
 def test_queue_codec_encode_decode_roundtrip() -> None:
-    codec = RabbitMQQueueCodec(model=_Payload)
+    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     ts = datetime(2025, 1, 1, 12, 0, 0)
 
     encoded = codec.encode(_Payload(value="hello"))
@@ -30,12 +31,12 @@ def test_queue_codec_encode_decode_roundtrip() -> None:
         },
     )
 
-    assert decoded["queue"] == "jobs"
-    assert decoded["id"] == "msg-1"
-    assert decoded["payload"].value == "hello"
-    assert decoded["type"] == "created"
-    assert decoded["enqueued_at"] == ts
-    assert decoded["key"] == "partition-a"
+    assert decoded.queue == "jobs"
+    assert decoded.id == "msg-1"
+    assert decoded.payload.value == "hello"
+    assert decoded.type == "created"
+    assert decoded.enqueued_at == ts
+    assert decoded.key == "partition-a"
 
 
 @pytest.mark.asyncio
@@ -44,7 +45,7 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
     client.enqueue = AsyncMock(return_value="msg-1")
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(model=_Payload),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
         namespace="ns",
     )
 
@@ -59,7 +60,7 @@ async def test_queue_adapter_enqueue_uses_namespaced_queue() -> None:
 async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
     client = Mock(spec=RabbitMQClient)
     client.enqueue_many = AsyncMock(return_value=["msg-1", "msg-2"])
-    codec = RabbitMQQueueCodec(model=_Payload)
+    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     adapter = RabbitMQQueueAdapter(client=client, codec=codec, namespace="ns")
 
     message_ids = await adapter.enqueue_many(
@@ -85,7 +86,7 @@ async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
                 "enqueued_at": None,
                 "key": None,
             },
-        )["payload"].value
+        ).payload.value
         == "hello"
     )
     assert (
@@ -99,7 +100,7 @@ async def test_queue_adapter_enqueue_many_uses_namespaced_queue() -> None:
                 "enqueued_at": None,
                 "key": None,
             },
-        )["payload"].value
+        ).payload.value
         == "world"
     )
     assert client.enqueue_many.await_args.kwargs["type"] == "created"
@@ -112,7 +113,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
     client.enqueue_many = AsyncMock()
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(model=_Payload),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
         namespace="ns",
     )
 
@@ -125,7 +126,7 @@ async def test_queue_adapter_enqueue_many_with_empty_payloads() -> None:
 @pytest.mark.asyncio
 async def test_queue_adapter_receive_decodes_messages() -> None:
     client = Mock(spec=RabbitMQClient)
-    codec = RabbitMQQueueCodec(model=_Payload)
+    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     ts = datetime(2025, 1, 1, 12, 0, 0)
     client.receive = AsyncMock(
         return_value=[
@@ -145,18 +146,18 @@ async def test_queue_adapter_receive_decodes_messages() -> None:
     messages = await adapter.receive("jobs", limit=2, timeout=timeout)
 
     assert len(messages) == 1
-    assert messages[0]["queue"] == "jobs"
-    assert messages[0]["payload"].value == "hello"
-    assert messages[0]["type"] == "created"
-    assert messages[0]["enqueued_at"] == ts
-    assert messages[0]["key"] == "partition-a"
+    assert messages[0].queue == "jobs"
+    assert messages[0].payload.value == "hello"
+    assert messages[0].type == "created"
+    assert messages[0].enqueued_at == ts
+    assert messages[0].key == "partition-a"
     client.receive.assert_awaited_once_with("ns:jobs", limit=2, timeout=timeout)
 
 
 @pytest.mark.asyncio
 async def test_queue_adapter_consume_decodes_messages() -> None:
     client = Mock(spec=RabbitMQClient)
-    codec = RabbitMQQueueCodec(model=_Payload)
+    codec = RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():
@@ -184,8 +185,8 @@ async def test_queue_adapter_consume_decodes_messages() -> None:
 
     assert captured["queue"] == "ns:jobs"
     assert captured["timeout"] == timeout
-    assert message["queue"] == "jobs"
-    assert message["payload"].value == "hello"
+    assert message.queue == "jobs"
+    assert message.payload.value == "hello"
 
 
 @pytest.mark.asyncio
@@ -195,7 +196,7 @@ async def test_queue_adapter_ack_and_nack_use_namespaced_queue() -> None:
     client.nack = AsyncMock(return_value=1)
     adapter = RabbitMQQueueAdapter(
         client=client,
-        codec=RabbitMQQueueCodec(model=_Payload),
+        codec=RabbitMQQueueCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
         namespace="ns",
     )
 

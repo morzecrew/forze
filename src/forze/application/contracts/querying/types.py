@@ -29,6 +29,12 @@ EqOp = Literal["$eq", "$neq"]
 CompareOp = Literal["$eq", "$neq", "$gt", "$gte", "$lt", "$lte"]
 """Field-to-field compare operators (equality and ordering only)."""
 
+ElementOp = EqOp | OrdOp
+"""Operators allowed inside array element quantifiers (``$any``, ``$all``, ``$none``)."""
+
+QueryElementQuantifier = Literal["$any", "$all", "$none"]
+"""Array element quantifier operators under ``$values``."""
+
 MembOp = Literal["$in", "$nin"]
 """Membership operators."""
 
@@ -49,6 +55,7 @@ class QueryOp:
     Ord = OrdOp
     Eq = EqOp
     Compare = CompareOp
+    Element = ElementOp
     Memb = MembOp
     SetRel = SetRelOp
     All = Op

@@ -12,6 +12,7 @@ from forze.application.contracts.queue import (
     QueueQueryPort,
     QueueSpec,
 )
+from forze.base.serialization import PydanticRecordMappingCodec
 
 # ----------------------- #
 
@@ -28,7 +29,15 @@ class _StubQueue(QueueQueryPort[_QueuePayload], QueueCommandPort[_QueuePayload])
         limit: int | None = None,
         timeout: timedelta | None = None,
     ):
-        return [{"queue": queue, "id": "1", "payload": _QueuePayload(value="x")}]
+        from forze.application.contracts.queue import QueueMessage
+
+        return [
+            QueueMessage(
+                queue=queue,
+                id="1",
+                payload=_QueuePayload(value="x"),
+            )
+        ]
 
     async def consume(
         self,
@@ -36,7 +45,13 @@ class _StubQueue(QueueQueryPort[_QueuePayload], QueueCommandPort[_QueuePayload])
         *,
         timeout: timedelta | None = None,
     ) -> AsyncIterator:
-        yield {"queue": queue, "id": "1", "payload": _QueuePayload(value="x")}
+        from forze.application.contracts.queue import QueueMessage
+
+        yield QueueMessage(
+            queue=queue,
+            id="1",
+            payload=_QueuePayload(value="x"),
+        )
 
     async def ack(self, queue: str, ids: list[str]) -> int:
         return len(ids)
@@ -57,11 +72,14 @@ class _StubQueue(QueueQueryPort[_QueuePayload], QueueCommandPort[_QueuePayload])
 
 
 class TestQueueSpec:
-    def test_spec_contains_name_and_model(self) -> None:
-        spec = QueueSpec(name="jobs", model=_QueuePayload)
+    def test_spec_contains_name_and_codec(self) -> None:
+        spec = QueueSpec(
+            name="jobs", codec=PydanticRecordMappingCodec(model_type=_QueuePayload)
+        )
 
         assert spec.name == "jobs"
-        assert spec.model is _QueuePayload
+        assert spec.model_type is _QueuePayload
+        assert spec.codec.model_type is _QueuePayload
 
 
 class TestQueueDepKeys:

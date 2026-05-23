@@ -34,7 +34,7 @@ class ConfigurableRabbitMQQueueRead(QueueQueryDepPort):
         spec: QueueSpec[Any],
     ) -> RabbitMQQueueAdapter[Any]:
         client = ctx.deps.provide(RabbitMQClientDepKey)
-        codec = RabbitMQQueueCodec(model=spec.model)
+        codec = RabbitMQQueueCodec(payload_codec=spec.codec)
 
         return RabbitMQQueueAdapter(
             client=client,
@@ -64,7 +64,7 @@ class ConfigurableRabbitMQQueueWrite(QueueCommandDepPort):
         spec: QueueSpec[Any],
     ) -> RabbitMQQueueAdapter[Any]:
         client = ctx.deps.provide(RabbitMQClientDepKey)
-        codec = RabbitMQQueueCodec(model=spec.model)
+        codec = RabbitMQQueueCodec(payload_codec=spec.codec)
 
         return RabbitMQQueueAdapter(
             client=client,

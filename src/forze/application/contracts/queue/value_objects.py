@@ -1,13 +1,14 @@
 from datetime import datetime
-from typing import NotRequired, TypedDict
+from typing import final
 
-from pydantic import BaseModel
+import attrs
 
 # ----------------------- #
-#! TODO: repurpose into attrs class (or msgspec.Struct)
 
 
-class QueueMessage[M: BaseModel](TypedDict):
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class QueueMessage[M]:
     """Message as read from or written to a queue backend."""
 
     queue: str
@@ -19,11 +20,11 @@ class QueueMessage[M: BaseModel](TypedDict):
     payload: M
     """Structured payload carried by the message."""
 
-    type: NotRequired[str | None]
+    type: str | None = None
     """Optional message type or category."""
 
-    enqueued_at: NotRequired[datetime | None]
+    enqueued_at: datetime | None = None
     """Optional timestamp associated with the message."""
 
-    key: NotRequired[str | None]
+    key: str | None = None
     """Optional partitioning key for the message."""

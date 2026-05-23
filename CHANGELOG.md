@@ -9,20 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Query DSL:** Filter combinator `$not` (single child expression). Array element quantifiers `$any`, `$all`, and `$none` under `$values` with equality/ordering inner predicates (scalar shortcuts, operator maps, or element-relative `$values` for object arrays). Vacuous `$all` / `$none` on missing or empty arrays.
 - **Scrubbing:** `forze.base.scrubbing` with `sanitize(value, context="egress"|"log")`, Pydantic error helpers, and default structlog field scrubbing via `configure_logging(sanitize_logs=True)`.
-
-### Changed
-
-- **Scrubbing:** log-context string scrub uses `**********` and Logfire-aligned substring rules (email, Bearer, `key=value` assignments, secrets in free text) instead of scrubadub `{{TYPE}}` placeholders.
-- **Postgres search:** Internal refactor of FTS, PGroonga, vector, and hub search adapters — shared projection-index CTE builders (`_pipeline_sql`), leg scorers (`_leg_*`), and offset/snapshot execution (`_offset_run`); no public API change.
-- **Execution:** `ResolvedOperationPlan` now drives operation runtime: stage hooks (`before`, `wrap`, `on_success`, `on_failure`, `finally_`, `dispatch`), transaction scopes, and `after_commit` / `dispatch_after_commit` deferral run in documented order when calling `FrozenOperationRegistry.resolve(...)(args)` (previously only the bare handler ran).
-
-### Removed
-
-- **Scrubbing:** `scrubadub` core dependency (replaced by Forze-owned policy in `forze.base.scrubbing.policy`).
-
-### Added
-
 - **Execution:** `OperationRegistry.freeze()` rejects orphan plan patches, equal-specificity patch merge conflicts, and operations with transaction-scoped stages or dispatch but no `set_route`.
 - **Query DSL:** Configurable filter abuse limits (`QueryFilterLimits`: `max_depth`, `max_clauses`, `max_in_size`) enforced at parse time; `QueryFilterExpressionParser` is an attrs instance (`parse_filter`) with a classmethod `parse` shim; gateways expose `compile_filters` and accept pre-parsed `QueryExpr` on `where_clause` / `render_filters`; aggregate computed fields store `parsed_filter` to avoid re-parsing; `DocumentCoordinator` offset pages compile filters once and pass `parsed` through `count` / `find_many` gateway calls.
 - **Execution:** Registry-centered composition with `OperationRegistry`, `FrozenOperationRegistry`, `Handler` implementations, and stage hooks as `BeforeStep` / `OnSuccessStep` on `bind_outer()` / `bind_tx()`; `make_registry_operation_resolver` for FastAPI and Socket.IO; `facade_op` descriptors on `DocumentFacade`, `SearchFacade`, `StorageFacade`, and `AuthnFacade`; `StrKeyNamespace` on specs (`default_namespace`); optional `DepsResolutionTrace` (`FORZE_DEPS_TRACE`); cyclic dependency detection on `Deps`.
@@ -35,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Record mapping:** `RecordMappingCodec` adds `encode_json_bytes` / `decode_json_bytes` with fast-path Pydantic (`model_dump_json` / `model_validate_json`) and msgspec (`msgspec.json.encode` / `decode`) implementations.
+- **Messaging contracts:** `QueueMessage`, `PubSubMessage`, and `StreamMessage` are frozen attrs value objects (replacing `TypedDict`). `QueueSpec`, `PubSubSpec`, and `StreamSpec` require a `codec: RecordMappingCodec[...]` (for example `PydanticRecordMappingCodec(model)`). Integration queue/pubsub/stream adapters take `payload_codec` from the spec.
+- **Scrubbing:** log-context string scrub uses `**********` and Logfire-aligned substring rules (email, Bearer, `key=value` assignments, secrets in free text) instead of scrubadub `{{TYPE}}` placeholders.
+- **Postgres search:** Internal refactor of FTS, PGroonga, vector, and hub search adapters — shared projection-index CTE builders (`_pipeline_sql`), leg scorers (`_leg_*`), and offset/snapshot execution (`_offset_run`); no public API change.
+- **Execution:** `ResolvedOperationPlan` now drives operation runtime: stage hooks (`before`, `wrap`, `on_success`, `on_failure`, `finally_`, `dispatch`), transaction scopes, and `after_commit` / `dispatch_after_commit` deferral run in documented order when calling `FrozenOperationRegistry.resolve(...)(args)` (previously only the bare handler ran).
 - **Breaking — execution & composition:** `Usecase` / `UsecaseRegistry` replaced by `Handler` + `OperationRegistry`. Register handlers with `set_handler`, author shared plans with `.patch(str_key_selector.all_keys())` (or other selectors) and per-operation overlays with `.bind(...)`, then `.bind_outer() / .bind_tx().finish(deep=True).freeze()`; resolve with `registry.resolve(operation, ctx)`. Stage hooks use explicit step types; handler results are owned by `__call__`, not replaced by hooks. Capability keys on graph steps are plain `str` (`requires` / `provides` on `BeforeStep`, etc.). Inter-operation dispatch is declared on the registry plan only.
 - **Breaking — `ExecutionContext`:** `ctx.doc_query` / `ctx.doc_command` → `ctx.document.query` / `ctx.document.command`; `ctx.dep(...)` → `ctx.deps.provide` or `ctx.deps.resolve_configurable`; `ctx.transaction(...)` → `ctx.tx.scope(...)`; `ctx.txmanager(...)` → `ctx.tx.resolver(...)`; `CallContext` / `bind_call` / `get_authn_identity()` → `InvocationMetadata` / `ctx.inv.bind` / `ctx.inv.get_authn()` (and `get_tenant()`). Document dep factories are `factory(ctx, spec)`; resolve cache inside factories via `ctx.cache(spec.cache)` when `DocumentSpec.cache` is set.
 - **Breaking — document & search ports:** Result shape and pagination mode are chosen by **method name**, not `return_type` / `return_fields` / `return_count` flags. Examples: `find_page` vs `find_many` vs `find_cursor`; `search_page` vs `search` vs `search_cursor`; `project_*` and `select_*` variants mirror the same pattern. `find_many_with_cursor` is removed (use `find_cursor`).
