@@ -7,15 +7,13 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel
-
-from .types import PubSubMessage
+from .value_objects import PubSubMessage
 
 # ----------------------- #
 
 
 @runtime_checkable
-class PubSubCommandPort[M: BaseModel](Protocol):
+class PubSubCommandPort[M](Protocol):
     """Contract for publishing messages to a pubsub backend."""
 
     def publish(
@@ -35,7 +33,7 @@ class PubSubCommandPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class PubSubQueryPort[M: BaseModel](Protocol):
+class PubSubQueryPort[M](Protocol):
     """Contract for subscribing to messages from a pubsub backend."""
 
     def subscribe(

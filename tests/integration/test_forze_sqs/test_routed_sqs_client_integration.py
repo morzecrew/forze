@@ -17,7 +17,6 @@ from testcontainers.localstack import LocalStackContainer
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
-
 from forze_sqs.kernel.platform import RoutedSQSClient, SQSClient
 
 
@@ -75,7 +74,8 @@ class _MemSecretsTenantJson(_MemSecretsJson):
         broken_tenant: UUID | None = None,
     ) -> None:
         paths = {
-            f"tenants/{tid}/sqs": json.dumps(payload) for tid, payload in payloads.items()
+            f"tenants/{tid}/sqs": json.dumps(payload)
+            for tid, payload in payloads.items()
         }
         mp = f"tenants/{missing_tenant}/sqs" if missing_tenant else None
         bp = f"tenants/{broken_tenant}/sqs" if broken_tenant else None
@@ -167,6 +167,7 @@ async def test_routed_sqs_enqueue_receive_consume_ack(
         second = (await _receive_until(routed, url))[0]
         assert second["body"] == b'{"value":"requeue"}'
         assert await routed.ack(url, [second["id"]]) == 1
+
     finally:
         await routed.close()
 
@@ -227,7 +228,9 @@ async def test_routed_sqs_requires_startup_and_tenant(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_sqs_secret_errors(localstack_container: LocalStackContainer) -> None:
+async def test_routed_sqs_secret_errors(
+    localstack_container: LocalStackContainer,
+) -> None:
     endpoint = localstack_container.get_url()
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
     tenant_get, tenant_set = _tenant_holder()
@@ -268,7 +271,7 @@ async def test_routed_sqs_secret_errors(localstack_container: LocalStackContaine
 async def test_routed_sqs_invalid_json_raises_core_error(
     localstack_container: LocalStackContainer,
 ) -> None:
-    endpoint = localstack_container.get_url()
+    # endpoint = localstack_container.get_url()
     t1 = uuid4()
     secrets = _MemSecretsJson(
         {f"tenants/{t1}/sqs": "{bad-json"},
@@ -283,16 +286,20 @@ async def test_routed_sqs_invalid_json_raises_core_error(
     )
     tenant_set(t1)
     await routed.startup()
+
     try:
         with pytest.raises(CoreError, match="SQSRoutingCredentials"):
             await routed.health()
+
     finally:
         await routed.close()
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_sqs_lru_and_evict(localstack_container: LocalStackContainer) -> None:
+async def test_routed_sqs_lru_and_evict(
+    localstack_container: LocalStackContainer,
+) -> None:
     endpoint = localstack_container.get_url()
     p = _payload(endpoint)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()

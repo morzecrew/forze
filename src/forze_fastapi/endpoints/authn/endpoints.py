@@ -18,7 +18,6 @@ from forze.domain.models import BaseDTO
 
 from .._utils import path_coerce
 from ..http import (
-    AuthnRequirement,
     BodyAsIsMapper,
     EmptyMapper,
     HttpBodyMode,
@@ -28,7 +27,6 @@ from ..http import (
     HttpSpec,
     build_http_endpoint_spec,
 )
-from ..http.policy import apply_authn_requirement
 from .features import (
     TokenTransportInputFeature,
     TokenTransportOutputFeature,
@@ -235,7 +233,7 @@ def build_authn_logout_endpoint_spec(
 
     path = path_coerce(path_override or "/logout")
 
-    http_spec: HttpSpec = {"method": "POST", "path": path, "status_code": 204}
+    http_spec: HttpSpec = {"method": "DELETE", "path": path, "status_code": 204}
 
     output_feature: TokenTransportOutputFeature[
         Any, Any, Any, Any, Any, BaseDTO, None, None
@@ -300,23 +298,3 @@ def build_authn_change_password_endpoint_spec(
         metadata=metadata,
         request_mapper=BodyAsIsMapper(AuthnChangePasswordRequestDTO),
     )
-
-
-# ....................... #
-
-
-__all__ = [
-    "build_authn_change_password_endpoint_spec",
-    "build_authn_logout_endpoint_spec",
-    "build_authn_password_login_endpoint_spec",
-    "build_authn_refresh_endpoint_spec",
-    "ChangePasswordEndpointSpec",
-    "LogoutEndpointSpec",
-    "PasswordLoginEndpointSpec",
-    "RefreshEndpointSpec",
-]
-
-
-# Keep an explicit re-export of helpers used by attach.py to avoid surprising
-# downstream consumers depending on this implementation file directly.
-_ = AuthnRequirement, apply_authn_requirement

@@ -16,8 +16,11 @@ from testcontainers.rabbitmq import RabbitMqContainer
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
-
-from forze_rabbitmq.kernel.platform import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
+from forze_rabbitmq.kernel.platform import (
+    RabbitMQClient,
+    RabbitMQConfig,
+    RoutedRabbitMQClient,
+)
 
 
 def _ref(tid: UUID) -> SecretRef:
@@ -127,7 +130,9 @@ async def _receive_exact(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_rabbitmq_queue_roundtrip(rabbitmq_container: RabbitMqContainer) -> None:
+async def test_routed_rabbitmq_queue_roundtrip(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
     secrets = _MemSecretsTenantDsn({t1: dsn})
@@ -282,7 +287,9 @@ async def test_routed_rabbitmq_secret_errors(
     await r2.startup()
     try:
         tenant_set(t_break)
-        with pytest.raises(InfrastructureError, match="Failed to resolve RabbitMQ secret"):
+        with pytest.raises(
+            InfrastructureError, match="Failed to resolve RabbitMQ secret"
+        ):
             await r2.health()
     finally:
         await r2.close()
@@ -290,7 +297,9 @@ async def test_routed_rabbitmq_secret_errors(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_rabbitmq_lru_and_evict(rabbitmq_container: RabbitMqContainer) -> None:
+async def test_routed_rabbitmq_lru_and_evict(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
     dsn = _dsn(rabbitmq_container)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
     secrets = _MemSecretsTenantDsn({t1: dsn, t2: dsn, t3: dsn})

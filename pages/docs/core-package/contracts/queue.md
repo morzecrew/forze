@@ -7,14 +7,14 @@ acknowledge, and optionally requeue messages.
 
 | Section | Details |
 |---------|---------|
-| Purpose | Names a logical queue namespace and the Pydantic payload model. |
+| Purpose | Names a logical queue namespace and the payload record codec. |
 | Import path | `from forze.application.contracts.queue import QueueSpec` |
 | Type parameters | `M`, the message payload model. |
-| Required fields | `name`, `model`. |
+| Required fields | `name`, `codec`. |
 | Returned values | Passed to queue dep factories to build query or command ports. |
 | Common implementations | Mock queue adapter, SQS adapter, RabbitMQ adapter. |
 | Related dependency keys | `QueueQueryDepKey`, `QueueCommandDepKey`. |
-| Minimal example | `order_queue = QueueSpec(name="orders", model=OrderPayload)` |
+| Minimal example | `order_queue = QueueSpec(name="orders", codec=PydanticRecordMappingCodec(OrderPayload))` |
 | Related pages | [SQS](../../integrations/sqs.md), [RabbitMQ](../../integrations/rabbitmq.md). |
 
 ## `QueueQueryPort[M]`
@@ -52,16 +52,20 @@ acknowledge, and optionally requeue messages.
 | Purpose | Typed message shape returned by queue query ports. |
 | Import path | `from forze.application.contracts.queue import QueueMessage` |
 | Type parameters | `M`, the message payload model. |
-| Required fields | `queue`, `id`, `payload`; optional `type`, `enqueued_at`, `key`. |
+| Required fields | `queue`, `id`, `payload`; optional `type`, `enqueued_at`, `key` (attrs, default `None`). |
 | Returned values | N/A; this is the returned value type. |
-| Common implementations | `TypedDict` produced by queue adapters. |
+| Common implementations | Frozen attrs instances produced by queue adapters. |
 | Related dependency keys | Produced through `QueueQueryDepKey` implementations. |
-| Minimal example | `payload = message["payload"]` |
+| Minimal example | `payload = message.payload` |
 | Related pages | [Mock integration](../../integrations/mock.md). |
 
     :::python
     from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    order_queue = QueueSpec(name="orders", model=OrderPayload)
+    order_queue = QueueSpec(
+        name="orders",
+        codec=PydanticRecordMappingCodec(OrderPayload),
+    )
     writer = ctx.deps.resolve_configurable(ctx, QueueCommandDepKey, order_queue, route=order_queue.name)
     message_id = await writer.enqueue("orders", OrderPayload(order_id="A-1"))

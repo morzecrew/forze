@@ -333,13 +333,15 @@ The `exclude` parameter for `pydantic_dump` accepts a `TypedDict` with optional 
 
 | Type / factory | Purpose |
 |----------------|---------|
-| `RecordMappingCodec[...]` | Protocol for mapping decode/encode, batched operations, transforms, and stored-field introspection |
+| `RecordMappingCodec[...]` | Protocol for mapping decode/encode, JSON bytes wire helpers, batched operations, transforms, and stored-field introspection |
 | `PydanticRecordMappingCodec[...]` | Frozen default implementation backed by the `pydantic_*` helper functions |
 | `MsgspecRecordMappingCodec[...]` | Frozen msgspec implementation backed by the `msgspec_*` helper functions |
 
 Use the codec API when a component should depend on a record-mapping abstraction. The `pydantic_*` and `msgspec_*` helpers remain available as the low-level function APIs and are the single behavior sources used by the codec classes.
 
 The msgspec codec intentionally does **not** support `exclude={"unset": True}` because msgspec structs do not track unset-versus-default state. Strip unset fields at the Pydantic application boundary before constructing or transcoding msgspec models.
+
+`encode_json_bytes` / `decode_json_bytes` target JSON UTF-8 wire transport. Pydantic uses `model_dump_json` / `validate_json`; msgspec uses `msgspec.json.encode` / `decode`. Do not route payload bytes through `JsonCodec` when wire compatibility with existing messages matters (sorted keys would change on-the-wire JSON).
 
 ## File I/O
 

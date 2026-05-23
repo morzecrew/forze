@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from forze.base.errors import CoreError
 from forze_redis.adapters.pubsub import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.kernel.platform.client import RedisClient
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 class _Payload(BaseModel):
@@ -15,7 +16,7 @@ class _Payload(BaseModel):
 
 
 def test_pubsub_codec_encode_decode_roundtrip() -> None:
-    codec = RedisPubSubCodec(model=_Payload)
+    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     payload = _Payload(value="hello")
     now = datetime(2025, 1, 1, 12, 0, 0)
 
@@ -27,15 +28,15 @@ def test_pubsub_codec_encode_decode_roundtrip() -> None:
     )
     decoded = codec.decode("orders", encoded)
 
-    assert decoded["topic"] == "orders"
-    assert decoded["payload"].value == "hello"
-    assert decoded["type"] == "created"
-    assert decoded["key"] == "partition-a"
-    assert decoded["published_at"] == now
+    assert decoded.topic == "orders"
+    assert decoded.payload.value == "hello"
+    assert decoded.type == "created"
+    assert decoded.key == "partition-a"
+    assert decoded.published_at == now
 
 
 def test_pubsub_codec_decode_without_payload_raises() -> None:
-    codec = RedisPubSubCodec(model=_Payload)
+    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
 
     with pytest.raises(CoreError, match="has no payload"):
         codec.decode("orders", b'{"type":"created"}')
@@ -45,7 +46,7 @@ def test_pubsub_codec_decode_without_payload_raises() -> None:
 async def test_pubsub_adapter_publish_calls_client_publish() -> None:
     client = Mock(spec=RedisClient)
     client.publish = AsyncMock(return_value=1)
-    adapter = RedisPubSubAdapter(client=client, codec=RedisPubSubCodec(model=_Payload))
+    adapter = RedisPubSubAdapter(client=client, codec=RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload)))
 
     await adapter.publish("orders", _Payload(value="hello"))
 
@@ -55,7 +56,7 @@ async def test_pubsub_adapter_publish_calls_client_publish() -> None:
 @pytest.mark.asyncio
 async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
     client = Mock(spec=RedisClient)
-    codec = RedisPubSubCodec(model=_Payload)
+    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():
@@ -75,14 +76,14 @@ async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
 
     assert captured["topics"] == ["orders"]
     assert captured["timeout"] is None
-    assert msg["topic"] == "orders"
-    assert msg["payload"].value == "hello"
+    assert msg.topic == "orders"
+    assert msg.payload.value == "hello"
 
 
 @pytest.mark.asyncio
 async def test_pubsub_adapter_subscribe_passes_timeout() -> None:
     client = Mock(spec=RedisClient)
-    codec = RedisPubSubCodec(model=_Payload)
+    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
     captured: dict[str, object] = {}
 
     async def _iter():
@@ -103,4 +104,4 @@ async def test_pubsub_adapter_subscribe_passes_timeout() -> None:
 
     assert captured["topics"] == ["orders"]
     assert captured["timeout"] == timeout
-    assert msg["payload"].value == "hello"
+    assert msg.payload.value == "hello"

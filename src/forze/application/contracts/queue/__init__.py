@@ -6,7 +6,7 @@ from .deps import (
 )
 from .ports import QueueCommandPort, QueueQueryPort
 from .specs import QueueSpec
-from .types import QueueMessage
+from .value_objects import QueueMessage
 
 # ----------------------- #
 

@@ -89,7 +89,7 @@ async def test_sqs_enqueue_receive_ack_benchmark(
                 queue, limit=1, timeout=timedelta(seconds=2)
             )
             assert len(messages) == 1
-            assert messages[0]["id"]
-            await sqs_client.ack(queue, [messages[0]["id"]])
+            assert messages[0].id
+            await sqs_client.ack(queue, [messages[0].id])
 
     await async_benchmark(run)

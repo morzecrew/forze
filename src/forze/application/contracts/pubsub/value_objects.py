@@ -1,13 +1,14 @@
 from datetime import datetime
-from typing import NotRequired, TypedDict
+from typing import final
 
-from pydantic import BaseModel
+import attrs
 
 # ----------------------- #
-#! TODO: repurpose into attrs class (or msgspec.Struct)
 
 
-class PubSubMessage[M: BaseModel](TypedDict):
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PubSubMessage[M]:
     """Message as read from or written to a pubsub backend."""
 
     topic: str
@@ -16,11 +17,11 @@ class PubSubMessage[M: BaseModel](TypedDict):
     payload: M
     """Structured payload carried by the message."""
 
-    type: NotRequired[str | None]
+    type: str | None = None
     """Optional message type or category."""
 
-    published_at: NotRequired[datetime | None]
+    published_at: datetime | None = None
     """Optional timestamp associated with the message."""
 
-    key: NotRequired[str | None]
+    key: str | None = None
     """Optional partitioning key for the message."""

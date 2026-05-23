@@ -107,6 +107,7 @@ from forze.application.contracts.transaction import (
 from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
+    RecordMappingCodec,
     pydantic_dump,
     pydantic_validate,
     pydantic_validate_many,
@@ -3050,12 +3051,12 @@ def _sleep_interval(timeout: timedelta | None) -> float:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockQueueAdapter[M: BaseModel](QueueQueryPort[M], QueueCommandPort[M]):
+class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
     """In-memory queue adapter with ack/nack support."""
 
     state: MockState
     namespace: str
-    model: type[M]
+    codec: RecordMappingCodec[M, Any]
 
     # ....................... #
 
@@ -3085,14 +3086,14 @@ class MockQueueAdapter[M: BaseModel](QueueQueryPort[M], QueueCommandPort[M]):
         enqueued_at: datetime | None = None,
     ) -> str:
         message_id = self.state.next_id("queue")
-        message: QueueMessage[M] = {
-            "queue": queue,
-            "id": message_id,
-            "payload": payload,
-            "type": type,
-            "key": key,
-            "enqueued_at": enqueued_at or utcnow(),
-        }
+        message = QueueMessage(
+            queue=queue,
+            id=message_id,
+            payload=payload,
+            type=type,
+            key=key,
+            enqueued_at=enqueued_at or utcnow(),
+        )
         with self.state.lock:
             self._queue_store().setdefault(queue, []).append(message)
         return message_id
@@ -3138,7 +3139,7 @@ class MockQueueAdapter[M: BaseModel](QueueQueryPort[M], QueueCommandPort[M]):
             batch = messages[:count]
             del messages[:count]
             for msg in batch:
-                pending[msg["id"]] = msg
+                pending[msg.id] = msg
             return list(batch)
 
     # ....................... #
@@ -3193,12 +3194,12 @@ class MockQueueAdapter[M: BaseModel](QueueQueryPort[M], QueueCommandPort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockPubSubAdapter[M: BaseModel](PubSubCommandPort[M], PubSubQueryPort[M]):
+class MockPubSubAdapter[M](PubSubCommandPort[M], PubSubQueryPort[M]):
     """In-memory pub/sub adapter backed by append-only topic logs."""
 
     state: MockState
     namespace: str
-    model: type[M]
+    codec: RecordMappingCodec[M, Any]
 
     # ....................... #
 
@@ -3219,13 +3220,13 @@ class MockPubSubAdapter[M: BaseModel](PubSubCommandPort[M], PubSubQueryPort[M]):
         key: str | None = None,
         published_at: datetime | None = None,
     ) -> None:
-        message: PubSubMessage[M] = {
-            "topic": topic,
-            "payload": payload,
-            "type": type,
-            "key": key,
-            "published_at": published_at or utcnow(),
-        }
+        message = PubSubMessage(
+            topic=topic,
+            payload=payload,
+            type=type,
+            key=key,
+            published_at=published_at or utcnow(),
+        )
         with self.state.lock:
             self._topic_store().setdefault(topic, []).append(message)
 
@@ -3265,12 +3266,12 @@ class MockPubSubAdapter[M: BaseModel](PubSubCommandPort[M], PubSubQueryPort[M]):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
+class MockStreamAdapter[M](StreamQueryPort[M], StreamCommandPort[M]):
     """In-memory stream adapter with monotonic message identifiers."""
 
     state: MockState
     namespace: str
-    model: type[M]
+    codec: RecordMappingCodec[M, Any]
 
     # ....................... #
 
@@ -3301,14 +3302,14 @@ class MockStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
         timestamp: datetime | None = None,
     ) -> str:
         message_id = self.state.next_id("stream")
-        message: StreamMessage[M] = {
-            "stream": stream,
-            "id": message_id,
-            "payload": payload,
-            "type": type,
-            "key": key,
-            "timestamp": timestamp or utcnow(),
-        }
+        message = StreamMessage(
+            stream=stream,
+            id=message_id,
+            payload=payload,
+            type=type,
+            key=key,
+            timestamp=timestamp or utcnow(),
+        )
         with self.state.lock:
             self._stream_store().setdefault(stream, []).append(message)
         return message_id
@@ -3329,7 +3330,7 @@ class MockStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
                 log = self._stream_store().setdefault(stream, [])
                 last_num = self._id_to_int(last_id)
                 for msg in log:
-                    if self._id_to_int(msg["id"]) > last_num:
+                    if self._id_to_int(msg.id) > last_num:
                         out.append(msg)
                         if limit is not None and len(out) >= limit:
                             return out
@@ -3347,7 +3348,7 @@ class MockStreamAdapter[M: BaseModel](StreamQueryPort[M], StreamCommandPort[M]):
         while True:
             messages = await self.read(cursor, timeout=timeout)
             for message in messages:
-                cursor[message["stream"]] = message["id"]
+                cursor[message.stream] = message.id
                 yield message
             if not messages:
                 await asyncio.sleep(_sleep_interval(timeout))

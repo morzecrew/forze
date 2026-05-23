@@ -162,7 +162,7 @@ class ConfigurableMockQueue:
         spec: QueueSpec[Any],
     ) -> MockQueueAdapter[Any]:
         state = context.deps.provide(MockStateDepKey)
-        return MockQueueAdapter(state=state, namespace=spec.name, model=spec.model)
+        return MockQueueAdapter(state=state, namespace=spec.name, codec=spec.codec)
 
 
 @final
@@ -176,7 +176,7 @@ class ConfigurableMockPubSub:
         spec: PubSubSpec[Any],
     ) -> MockPubSubAdapter[Any]:
         state = context.deps.provide(MockStateDepKey)
-        return MockPubSubAdapter(state=state, namespace=spec.name, model=spec.model)
+        return MockPubSubAdapter(state=state, namespace=spec.name, codec=spec.codec)
 
 
 @final
@@ -190,7 +190,7 @@ class ConfigurableMockStream:
         spec: StreamSpec[Any],
     ) -> MockStreamAdapter[Any]:
         state = context.deps.provide(MockStateDepKey)
-        return MockStreamAdapter(state=state, namespace=spec.name, model=spec.model)
+        return MockStreamAdapter(state=state, namespace=spec.name, codec=spec.codec)
 
 
 @final
@@ -204,7 +204,7 @@ class ConfigurableMockStreamGroup:
         spec: StreamSpec[Any],
     ) -> MockStreamGroupAdapter[Any]:
         state = context.deps.provide(MockStateDepKey)
-        stream = MockStreamAdapter(state=state, namespace=spec.name, model=spec.model)
+        stream = MockStreamAdapter(state=state, namespace=spec.name, codec=spec.codec)
         return MockStreamGroupAdapter(stream=stream, state=state, namespace=spec.name)
 
 

@@ -11,6 +11,7 @@ from forze.application.contracts.pubsub import (
     PubSubQueryPort,
     PubSubSpec,
 )
+from forze.base.serialization import PydanticRecordMappingCodec
 
 # ----------------------- #
 
@@ -19,9 +20,7 @@ class _PubSubPayload(BaseModel):
     value: str
 
 
-class _StubPubSub(
-    PubSubCommandPort[_PubSubPayload], PubSubQueryPort[_PubSubPayload]
-):
+class _StubPubSub(PubSubCommandPort[_PubSubPayload], PubSubQueryPort[_PubSubPayload]):
     async def publish(
         self,
         topic: str,
@@ -37,18 +36,23 @@ class _StubPubSub(
         if not topics:
             return
 
-        yield {
-            "topic": topics[0],
-            "payload": _PubSubPayload(value="x"),
-        }
+        from forze.application.contracts.pubsub import PubSubMessage
+
+        yield PubSubMessage(
+            topic=topics[0],
+            payload=_PubSubPayload(value="x"),
+        )
 
 
 class TestPubSubSpec:
-    def test_spec_contains_name_and_model(self) -> None:
-        spec = PubSubSpec(name="events", model=_PubSubPayload)
+    def test_spec_contains_name_and_codec(self) -> None:
+        spec = PubSubSpec(
+            name="events", codec=PydanticRecordMappingCodec(model_type=_PubSubPayload)
+        )
 
         assert spec.name == "events"
-        assert spec.model is _PubSubPayload
+        assert spec.model_type is _PubSubPayload
+        assert spec.codec.model_type is _PubSubPayload
 
 
 class TestPubSubDepKeys:

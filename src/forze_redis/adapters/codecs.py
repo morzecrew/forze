@@ -2,12 +2,12 @@ from datetime import datetime
 from typing import Any, Final, final
 
 import attrs
-from pydantic import BaseModel
 
 from forze.application.contracts.pubsub import PubSubMessage
 from forze.application.contracts.stream import StreamMessage
 from forze.base.codecs import JsonCodec, TextCodec
 from forze.base.errors import CoreError
+from forze.base.serialization import RecordMappingCodec
 
 # ----------------------- #
 
@@ -64,17 +64,17 @@ _F_TIMESTAMP: Final[str] = "timestamp"
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisPubSubCodec[M: BaseModel]:
+class RedisPubSubCodec[M]:
     """JSON codec that serialises and deserialises :class:`~forze.application.contracts.pubsub.PubSubMessage` payloads.
 
-    :meth:`encode` wraps a Pydantic model into a JSON envelope with optional
+    :meth:`encode` wraps a payload record into a JSON envelope with optional
     metadata fields (``type``, ``key``, ``published_at``).  :meth:`decode`
     reconstructs the :class:`~forze.application.contracts.pubsub.PubSubMessage`
     from the raw channel bytes.
     """
 
-    model: type[M]
-    """Pydantic model type."""
+    payload_codec: RecordMappingCodec[M, Any]
+    """Codec for pubsub message payloads."""
 
     # ....................... #
 
@@ -86,7 +86,9 @@ class RedisPubSubCodec[M: BaseModel]:
         key: str | None = None,
         published_at: datetime | None = None,
     ) -> bytes:
-        data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
+        data: dict[str, str] = {
+            _F_PAYLOAD: self.payload_codec.encode_json_bytes(payload).decode(),
+        }
 
         if type is not None:
             data[_F_TYPE] = type
@@ -126,7 +128,7 @@ class RedisPubSubCodec[M: BaseModel]:
 
         return PubSubMessage(
             topic=topic,
-            payload=self.model.model_validate_json(payload_raw),
+            payload=self.payload_codec.decode_json_bytes(payload_raw),
             type=type_raw if isinstance(type_raw, str) else None,
             key=key_raw if isinstance(key_raw, str) else None,
             published_at=(
@@ -142,17 +144,17 @@ class RedisPubSubCodec[M: BaseModel]:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisStreamCodec[M: BaseModel]:
+class RedisStreamCodec[M]:
     """JSON codec for Redis Stream entries.
 
-    :meth:`encode` converts a Pydantic model into a ``dict[str, str]`` suitable
+    :meth:`encode` converts a payload record into a ``dict[str, str]`` suitable
     for ``XADD``.  :meth:`decode` reconstructs a
     :class:`~forze.application.contracts.stream.StreamMessage` from the raw
     bytes-keyed field map returned by ``XREAD`` / ``XREADGROUP``.
     """
 
-    model: type[M]
-    """Pydantic model type."""
+    payload_codec: RecordMappingCodec[M, Any]
+    """Codec for stream message payloads."""
 
     # ....................... #
 
@@ -164,7 +166,9 @@ class RedisStreamCodec[M: BaseModel]:
         key: str | None = None,
         timestamp: datetime | None = None,
     ) -> dict[str, str]:
-        data: dict[str, str] = {_F_PAYLOAD: payload.model_dump_json()}
+        data: dict[str, str] = {
+            _F_PAYLOAD: self.payload_codec.encode_json_bytes(payload).decode(),
+        }
 
         if type is not None:
             data[_F_TYPE] = type
@@ -196,7 +200,7 @@ class RedisStreamCodec[M: BaseModel]:
         return StreamMessage(
             stream=stream,
             id=id,
-            payload=self.model.model_validate_json(payload_raw),
+            payload=self.payload_codec.decode_json_bytes(payload_raw),
             type=decoded.get(_F_TYPE),
             key=decoded.get(_F_KEY),
             timestamp=datetime.fromisoformat(timestamp_raw) if timestamp_raw else None,

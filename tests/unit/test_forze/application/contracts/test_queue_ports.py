@@ -24,20 +24,20 @@ class _StubQueueQuery:
         timeout: timedelta | None = None,
     ) -> list[QueueMessage[_Msg]]:
         return [
-            {
-                "queue": queue,
-                "id": "1",
-                "payload": _Msg(body="hi"),
-            }
+            QueueMessage(
+                queue=queue,
+                id="1",
+                payload=_Msg(body="hi"),
+            )
         ]
 
     async def consume(self, queue: str, *, timeout: timedelta | None = None):
         _ = timeout
-        yield {
-            "queue": queue,
-            "id": "c1",
-            "payload": _Msg(body="streamed"),
-        }
+        yield QueueMessage(
+            queue=queue,
+            id="c1",
+            payload=_Msg(body="streamed"),
+        )
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         return len(ids)
@@ -96,7 +96,7 @@ class TestQueueQueryPort:
         async for msg in stub.consume("q", timeout=timedelta(seconds=0.1)):
             out.append(msg)
         assert len(out) == 1
-        assert out[0]["payload"].body == "streamed"
+        assert out[0].payload.body == "streamed"
 
     def test_non_conforming_not_instance(self) -> None:
         class Bad:

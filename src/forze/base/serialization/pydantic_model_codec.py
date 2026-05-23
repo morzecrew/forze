@@ -9,9 +9,11 @@ from pydantic import BaseModel
 from ..primitives import JsonDict
 from .model_codec import RecordMappingCodec, RecordMappingDumpExcludeOptions
 from .pydantic import (
+    pydantic_decode_json_bytes,
     pydantic_dump,
     pydantic_dump_many,
     pydantic_dump_many_batched,
+    pydantic_encode_json_bytes,
     pydantic_field_names,
     pydantic_transform,
     pydantic_transform_many,
@@ -155,4 +157,30 @@ class PydanticRecordMappingCodec[T: BaseModel](RecordMappingCodec[T, BaseModel])
         return pydantic_field_names(
             self.model_type,
             include_computed=include_computed,
+        )
+
+    # ....................... #
+
+    def encode_json_bytes(
+        self,
+        obj: T,
+        *,
+        exclude: RecordMappingDumpExcludeOptions = {},
+    ) -> bytes:
+        return pydantic_encode_json_bytes(obj, exclude=exclude)
+
+    # ....................... #
+
+    def decode_json_bytes(
+        self,
+        raw: bytes | str,
+        *,
+        forbid_extra: bool = False,
+        encoding: str = "utf-8",
+    ) -> T:
+        return pydantic_decode_json_bytes(
+            self.model_type,
+            raw,
+            forbid_extra=forbid_extra,
+            encoding=encoding,
         )

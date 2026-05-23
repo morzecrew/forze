@@ -25,22 +25,22 @@ class _StubStreamQuery:
         timeout: timedelta | None = None,
     ) -> list[StreamMessage[_Msg]]:
         return [
-            {
-                "stream": "s",
-                "id": "1",
-                "payload": _Msg(v=1),
-            }
+            StreamMessage(
+                stream="s",
+                id="1",
+                payload=_Msg(v=1),
+            )
         ]
 
     async def tail(
         self, stream_mapping: dict[str, str], *, timeout: timedelta | None = None
     ) -> AsyncIterator[StreamMessage[_Msg]]:
         _ = stream_mapping, timeout
-        yield {
-            "stream": "s",
-            "id": "t1",
-            "payload": _Msg(v=2),
-        }
+        yield StreamMessage(
+            stream="s",
+            id="t1",
+            payload=_Msg(v=2),
+        )
 
 
 class _StubStreamGroupQuery:
@@ -64,11 +64,11 @@ class _StubStreamGroupQuery:
         timeout: timedelta | None = None,
     ) -> AsyncIterator[StreamMessage[_Msg]]:
         _ = group, consumer, stream_mapping, timeout
-        yield {
-            "stream": "s",
-            "id": "gt1",
-            "payload": _Msg(v=3),
-        }
+        yield StreamMessage(
+            stream="s",
+            id="gt1",
+            payload=_Msg(v=3),
+        )
 
     async def ack(self, group: str, stream: str, ids: Sequence[str]) -> int:
         return len(ids)
@@ -99,7 +99,7 @@ class TestStreamQueryPort:
         async for msg in stub.tail({"x": "0"}):
             rows.append(msg)
         assert len(rows) == 1
-        assert rows[0]["payload"].v == 2
+        assert rows[0].payload.v == 2
 
 
 class TestStreamGroupQueryPort:
@@ -117,7 +117,7 @@ class TestStreamGroupQueryPort:
         async for msg in stub.tail("g", "c", {"a": "0"}):
             rows.append(msg)
         assert len(rows) == 1
-        assert rows[0]["payload"].v == 3
+        assert rows[0].payload.v == 3
 
 
 class TestStreamCommandPort:

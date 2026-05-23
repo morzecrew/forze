@@ -24,6 +24,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 class ResourceName(StrEnum):
@@ -35,14 +36,17 @@ class OrderPayload(BaseModel):
     customer_id: str
 
 
-order_queue = QueueSpec(name=ResourceName.ORDERS, model=OrderPayload)
+order_queue = QueueSpec(
+    name=ResourceName.ORDERS,
+    codec=PydanticRecordMappingCodec(OrderPayload),
+)
 
 writer = ctx.dep(QueueCommandDepKey, route=order_queue.name)(ctx, order_queue)
 await writer.enqueue("orders", OrderPayload(order_id="o-1", customer_id="c-1"))
 
 reader = ctx.dep(QueueQueryDepKey, route=order_queue.name)(ctx, order_queue)
 messages = await reader.receive("orders", limit=10)
-await reader.ack("orders", [msg["id"] for msg in messages])
+await reader.ack("orders", [msg.id for msg in messages])
 ```
 
 ## SQS and RabbitMQ wiring
@@ -72,7 +76,10 @@ Use pub/sub for broadcast-style events where subscribers receive messages by top
 ```python
 from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
 
-events = PubSubSpec(name=ResourceName.ORDERS, model=OrderPayload)
+events = PubSubSpec(
+    name=ResourceName.ORDERS,
+    codec=PydanticRecordMappingCodec(OrderPayload),
+)
 publisher = ctx.dep(PubSubCommandDepKey, route=events.name)(ctx, events)
 await publisher.publish("orders.created", payload, type="order.created")
 ```
@@ -86,7 +93,10 @@ Streams model append-only logs and consumer-group reads.
 ```python
 from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 
-stream_spec = StreamSpec(name=ResourceName.ORDERS, model=OrderPayload)
+stream_spec = StreamSpec(
+    name=ResourceName.ORDERS,
+    codec=PydanticRecordMappingCodec(OrderPayload),
+)
 stream = ctx.dep(StreamCommandDepKey, route=stream_spec.name)(ctx, stream_spec)
 entry_id = await stream.append("orders", payload, type="order.created")
 ```

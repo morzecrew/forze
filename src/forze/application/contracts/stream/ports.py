@@ -7,15 +7,13 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel
-
-from .types import StreamMessage
+from .value_objects import StreamMessage
 
 # ----------------------- #
 
 
 @runtime_checkable
-class StreamQueryPort[M: BaseModel](Protocol):
+class StreamQueryPort[M](Protocol):
     """Contract for querying messages from one or more streams."""
 
     def read(
@@ -44,7 +42,7 @@ class StreamQueryPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class StreamGroupQueryPort[M: BaseModel](Protocol):
+class StreamGroupQueryPort[M](Protocol):
     """Contract for consumer-group-based stream reads and acknowledgments."""
 
     def read(
@@ -83,7 +81,7 @@ class StreamGroupQueryPort[M: BaseModel](Protocol):
 
 
 @runtime_checkable
-class StreamCommandPort[M: BaseModel](Protocol):
+class StreamCommandPort[M](Protocol):
     """Contract for appending messages to a stream backend."""
 
     def append(

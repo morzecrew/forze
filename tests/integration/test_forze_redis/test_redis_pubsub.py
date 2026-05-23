@@ -55,8 +55,8 @@ async def test_pubsub_publish_and_subscribe(
         pubsub_payload_cls(value="hello"),
     )
 
-    assert message["topic"] == topic
-    assert message["payload"].value == "hello"
+    assert message.topic == topic
+    assert message.payload.value == "hello"
 
 
 @pytest.mark.asyncio
@@ -75,6 +75,6 @@ async def test_pubsub_publish_with_metadata(
         published_at=ts,
     )
 
-    assert message["type"] == "event"
-    assert message["key"] == "partition-1"
-    assert message["published_at"] == ts
+    assert message.type == "event"
+    assert message.key == "partition-1"
+    assert message.published_at == ts

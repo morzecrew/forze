@@ -12,6 +12,7 @@ from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.execution.deps.deps import ConfigurableRedisCounter
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.platform.client import RedisClient
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 def test_redis_counter_factory_builds_adapter() -> None:
@@ -60,8 +61,8 @@ class _PubSubPayload(BaseModel):
 
 def test_redis_pubsub_adapter_constructible() -> None:
     redis_mock = Mock(spec=RedisClient)
-    codec = RedisPubSubCodec(model=_PubSubPayload)
+    codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_PubSubPayload))
     adapter = RedisPubSubAdapter(client=redis_mock, codec=codec)
 
     assert adapter.client is redis_mock
-    assert adapter.codec.model is _PubSubPayload
+    assert adapter.codec.payload_codec.model_type is _PubSubPayload

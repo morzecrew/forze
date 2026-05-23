@@ -10,9 +10,11 @@ from pydantic import BaseModel
 from forze.base.errors import CoreError
 from forze.base.serialization import MsgspecRecordMappingCodec
 from forze.base.serialization.msgspec import (
+    msgspec_decode_json_bytes,
     msgspec_dump,
     msgspec_dump_many,
     msgspec_dump_many_batched,
+    msgspec_encode_json_bytes,
     msgspec_field_names,
     msgspec_transform,
     msgspec_transform_many,
@@ -174,3 +176,66 @@ def test_stored_field_names_ignores_include_computed_toggle() -> None:
     assert codec.stored_field_names(
         include_computed=False,
     ) == msgspec_field_names(RenamedStruct, include_computed=False)
+
+
+def test_encode_json_bytes_matches_msgspec_encode_json_bytes() -> None:
+    codec = MsgspecRecordMappingCodec(SampleStruct)
+    model = SampleStruct(a=1, b=2)
+
+    assert codec.encode_json_bytes(model) == msgspec_encode_json_bytes(model)
+
+
+def test_encode_json_bytes_rejects_unset_exclusion() -> None:
+    codec = MsgspecRecordMappingCodec(SampleStruct)
+
+    with pytest.raises(
+        CoreError,
+        match="msgspec codec does not support exclude=\\{'unset': True\\}",
+    ):
+        codec.encode_json_bytes(SampleStruct(a=1), exclude={"unset": True})
+
+
+def test_encode_json_bytes_json_mode_types() -> None:
+    codec = MsgspecRecordMappingCodec(RichStruct)
+    model = RichStruct(
+        id=UUID("12345678-1234-5678-1234-567812345678"),
+        created_at=datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC),
+        amount=Decimal("1.23"),
+    )
+
+    raw = codec.encode_json_bytes(model).decode()
+
+    assert "12345678-1234-5678-1234-567812345678" in raw
+    assert "2025-01-02" in raw
+    assert "1.23" in raw
+
+
+def test_decode_json_bytes_matches_msgspec_decode_json_bytes() -> None:
+    codec = MsgspecRecordMappingCodec(SampleStruct)
+    payload = b'{"a": 1, "b": 2}'
+
+    assert codec.decode_json_bytes(payload) == msgspec_decode_json_bytes(
+        SampleStruct,
+        payload,
+    )
+
+
+def test_decode_json_bytes_accepts_str() -> None:
+    codec = MsgspecRecordMappingCodec(SampleStruct)
+
+    assert codec.decode_json_bytes('{"a": 1}') == SampleStruct(a=1)
+
+
+def test_decode_json_bytes_forbid_extra() -> None:
+    codec = MsgspecRecordMappingCodec(SampleStruct)
+    payload = b'{"a": 1, "extra": 2}'
+
+    with pytest.raises(msgspec.ValidationError):
+        codec.decode_json_bytes(payload, forbid_extra=True)
+
+
+def test_json_bytes_round_trip() -> None:
+    codec = MsgspecRecordMappingCodec(SampleStruct)
+    model = SampleStruct(a=1, b=2)
+
+    assert codec.decode_json_bytes(codec.encode_json_bytes(model)) == model

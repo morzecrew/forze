@@ -8,6 +8,7 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter
 from forze_rabbitmq.execution.deps import RabbitMQClientDepKey, RabbitMQDepsModule
 from forze_rabbitmq.execution.deps.deps import (
@@ -25,7 +26,9 @@ def test_rabbitmq_queue_factory_builds_adapter() -> None:
     rabbitmq_mock = Mock(spec=RabbitMQClient)
     deps = Deps.plain({RabbitMQClientDepKey: rabbitmq_mock})
     context = ExecutionContext(deps=deps)
-    spec = QueueSpec(name="events", model=_QueuePayload)
+    spec = QueueSpec(
+        name="events", codec=PydanticRecordMappingCodec(model_type=_QueuePayload)
+    )
 
     reader = ConfigurableRabbitMQQueueRead(
         config={"namespace": "events", "tenant_aware": False},
@@ -34,7 +37,7 @@ def test_rabbitmq_queue_factory_builds_adapter() -> None:
 
     assert isinstance(queue, RabbitMQQueueAdapter)
     assert queue.client is rabbitmq_mock
-    assert queue.codec.model is _QueuePayload
+    assert queue.codec.payload_codec.model_type is _QueuePayload
     assert queue.namespace == "events"
 
     writer = ConfigurableRabbitMQQueueWrite(

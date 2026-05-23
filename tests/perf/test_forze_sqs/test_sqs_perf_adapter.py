@@ -82,7 +82,7 @@ async def test_sqs_adapter_enqueue_receive_ack_benchmark(
         await sqs_queue.enqueue(queue, queue_payload_cls(value="roundtrip"))
         messages = await sqs_queue.receive(queue, limit=1, timeout=timedelta(seconds=2))
         assert len(messages) == 1
-        assert messages[0]["id"]
-        await sqs_queue.ack(queue, [messages[0]["id"]])
+        assert messages[0].id
+        await sqs_queue.ack(queue, [messages[0].id])
 
     await async_benchmark(run)

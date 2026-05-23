@@ -27,9 +27,9 @@ async def test_stream_append_and_read(
 
     messages = await redis_stream.read({stream: "0"}, limit=10)
     assert len(messages) == 1
-    assert messages[0]["stream"] == stream
-    assert messages[0]["id"] == msg_id
-    assert messages[0]["payload"].value == "hello"
+    assert messages[0].stream == stream
+    assert messages[0].id == msg_id
+    assert messages[0].payload.value == "hello"
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,7 @@ async def test_stream_read_with_cursor(
     # Read from after mid_id
     messages = await redis_stream.read({stream: mid_id}, limit=5)
     assert len(messages) == 1
-    assert messages[0]["payload"].value == "third"
+    assert messages[0].payload.value == "third"
 
 
 @pytest.mark.asyncio
@@ -68,9 +68,9 @@ async def test_stream_append_with_metadata(
     )
     messages = await redis_stream.read({stream: "0"}, limit=5)
     assert len(messages) == 1
-    assert messages[0]["type"] == "event"
-    assert messages[0]["key"] == "partition-1"
-    assert messages[0]["timestamp"] == ts
+    assert messages[0].type == "event"
+    assert messages[0].key == "partition-1"
+    assert messages[0].timestamp == ts
 
 
 @pytest.mark.asyncio
@@ -92,7 +92,7 @@ async def test_stream_group_read(
 
     messages = await redis_stream_group.read(group, consumer, {stream: ">"}, limit=10)
     assert len(messages) == 2
-    values = [m["payload"].value for m in messages]
+    values = [m.payload.value for m in messages]
     assert "one" in values
     assert "two" in values
 
@@ -114,7 +114,7 @@ async def test_stream_group_ack(
 
     messages = await redis_stream_group.read(group, consumer, {stream: ">"}, limit=5)
     assert len(messages) == 1
-    msg_id = messages[0]["id"]
+    msg_id = messages[0].id
 
     acked = await redis_stream_group.ack(group, stream, [msg_id])
     assert isinstance(acked, int)
@@ -138,6 +138,6 @@ async def test_stream_tail_polls_new_messages(
     finally:
         await agen.aclose()
 
-    assert m1["payload"].value == "first"
-    assert m2["payload"].value == "second"
-    assert m1["stream"] == stream == m2["stream"]
+    assert m1.payload.value == "first"
+    assert m2.payload.value == "second"
+    assert m1.stream == stream == m2.stream

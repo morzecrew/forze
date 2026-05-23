@@ -64,7 +64,7 @@ async def test_rabbitmq_enqueue_receive_ack_benchmark(
             queue, limit=1, timeout=timedelta(seconds=2)
         )
         assert len(messages) == 1
-        assert messages[0]["id"] == msg_id
+        assert messages[0].id == msg_id
         await rabbitmq_client.ack(queue, [msg_id])
 
     await async_benchmark(run)

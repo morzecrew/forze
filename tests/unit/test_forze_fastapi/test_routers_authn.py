@@ -7,22 +7,21 @@ from typing import Any
 import attrs
 import pytest
 from fastapi import APIRouter, FastAPI
+from registry_helpers import freeze_registry
 from starlette.testclient import TestClient
 
 from forze.application.composition.authn import (
     AuthnKernelOp,
 )
 from forze.application.contracts.authn import AuthnSpec
+from forze.application.execution import ExecutionContext
+from forze.application.execution.registry import OperationRegistry
 from forze.application.handlers.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
     AuthnTokenResponseDTO,
 )
-from forze.application.execution import ExecutionContext
-from forze.application.execution.registry import OperationRegistry
-from registry_helpers import freeze_registry
-
 from forze_fastapi.endpoints.authn import (
     CookieTokenTransportSpec,
     HeaderTokenTransportSpec,
@@ -424,7 +423,7 @@ class TestLogout:
         app.include_router(router)
         client = TestClient(app)
 
-        res = client.post("/auth/logout", cookies={"at": "STALE"})
+        res = client.delete("/auth/logout", cookies={"at": "STALE"})
         assert res.status_code == 204
         assert called == [True]
         # Cookie deletion sets it to empty value with Max-Age=0 in Set-Cookie

@@ -1,9 +1,9 @@
-from typing import final
+from typing import Any, final
 
 import attrs
-from pydantic import BaseModel
 
 from forze.application.contracts.queue import QueueMessage
+from forze.base.serialization import RecordMappingCodec
 
 from ..kernel.platform import SQSQueueMessage
 
@@ -12,13 +12,16 @@ from ..kernel.platform import SQSQueueMessage
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class SQSQueueCodec[M: BaseModel]:
-    model: type[M]
+class SQSQueueCodec[M]:
+    """SQS queue payload codec backed by a record-mapping codec."""
+
+    payload_codec: RecordMappingCodec[M, Any]
+    """Codec for queue message payloads."""
 
     # ....................... #
 
     def encode(self, payload: M) -> bytes:
-        return payload.model_dump_json().encode("utf-8")
+        return self.payload_codec.encode_json_bytes(payload)
 
     # ....................... #
 
@@ -28,7 +31,7 @@ class SQSQueueCodec[M: BaseModel]:
         return QueueMessage(
             queue=queue,
             id=raw["id"],
-            payload=self.model.model_validate_json(body),
+            payload=self.payload_codec.decode_json_bytes(body),
             type=raw.get("type"),
             enqueued_at=raw.get("enqueued_at"),
             key=raw.get("key"),

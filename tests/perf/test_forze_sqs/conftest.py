@@ -14,6 +14,7 @@ pytest.importorskip("testcontainers.localstack")
 
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.platform import SQSClient
+from forze.base.serialization import PydanticRecordMappingCodec
 
 
 def _ensure_docker_available() -> None:
@@ -88,6 +89,6 @@ async def sqs_queue(
     """Provide a queue adapter with a unique namespace per test."""
     return SQSQueueAdapter(
         client=sqs_client,
-        codec=SQSQueueCodec(model=_QueuePayload),
+        codec=SQSQueueCodec(payload_codec=PydanticRecordMappingCodec(_QueuePayload)),
         namespace=_perf_namespace("queue"),
     )

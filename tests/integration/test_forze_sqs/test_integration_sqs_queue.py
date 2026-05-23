@@ -85,15 +85,15 @@ async def test_queue_adapter_enqueue_receive_ack(
 
     message = await _receive_until(sqs_queue, queue)
 
-    assert message["id"]
-    assert message["queue"] == queue
-    assert message["payload"].value == "hello"
-    assert message["type"] == "created"
-    assert message["key"] == "partition-a"
-    assert message["enqueued_at"] == ts
+    assert message.id
+    assert message.queue == queue
+    assert message.payload.value == "hello"
+    assert message.type == "created"
+    assert message.key == "partition-a"
+    assert message.enqueued_at == ts
     assert message_id
 
-    assert await sqs_queue.ack(queue, [message["id"]]) == 1
+    assert await sqs_queue.ack(queue, [message.id]) == 1
 
 
 @pytest.mark.asyncio
@@ -119,19 +119,19 @@ async def test_queue_adapter_enqueue_many_receive_ack(
     )
 
     messages = await _receive_exact(sqs_queue, queue, expected=3)
-    received_ids = [message["id"] for message in messages]
+    received_ids = [message.id for message in messages]
 
     assert len(message_ids) == 3
     assert len(received_ids) == 3
-    assert all(message["queue"] == queue for message in messages)
-    assert {message["payload"].value for message in messages} == {
+    assert all(message.queue == queue for message in messages)
+    assert {message.payload.value for message in messages} == {
         "hello-1",
         "hello-2",
         "hello-3",
     }
-    assert all(message["type"] == "created" for message in messages)
-    assert all(message["key"] == "partition-b" for message in messages)
-    assert all(message["enqueued_at"] == ts for message in messages)
+    assert all(message.type == "created" for message in messages)
+    assert all(message.key == "partition-b" for message in messages)
+    assert all(message.enqueued_at == ts for message in messages)
     assert await sqs_queue.ack(queue, received_ids) == 3
 
 
@@ -149,9 +149,9 @@ async def test_queue_adapter_consume(
     message = await asyncio.wait_for(anext(stream), timeout=5)
     await stream.aclose()
 
-    assert message["queue"] == queue
-    assert message["payload"].value == "consume"
-    assert await sqs_queue.ack(queue, [message["id"]]) == 1
+    assert message.queue == queue
+    assert message.payload.value == "consume"
+    assert await sqs_queue.ack(queue, [message.id]) == 1
 
 
 @pytest.mark.asyncio
@@ -166,8 +166,8 @@ async def test_queue_adapter_nack_makes_message_visible_again(
 
     await sqs_queue.enqueue(queue, queue_payload_cls(value="nack-me"))
     first = await _receive_until(sqs_queue, queue)
-    assert await sqs_queue.nack(queue, [first["id"]], requeue=True) == 1
+    assert await sqs_queue.nack(queue, [first.id], requeue=True) == 1
 
     second = await _receive_until(sqs_queue, queue)
-    assert second["payload"].value == "nack-me"
-    assert await sqs_queue.ack(queue, [second["id"]]) == 1
+    assert second.payload.value == "nack-me"
+    assert await sqs_queue.ack(queue, [second.id]) == 1

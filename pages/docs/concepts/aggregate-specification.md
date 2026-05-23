@@ -106,16 +106,26 @@ Resolved with `ctx.counter(tickets)`.
 
 ### QueueSpec, PubSubSpec, StreamSpec
 
-Each subclasses `BaseSpec` with a `name` and a `model` type (Pydantic) for payloads.
+Each subclasses `BaseSpec` with a `name` and a `codec` (`RecordMappingCodec`) for payloads.
 
     :::python
     from forze.application.contracts.queue import QueueSpec
     from forze.application.contracts.pubsub import PubSubSpec
     from forze.application.contracts.stream import StreamSpec
+    from forze.base.serialization import PydanticRecordMappingCodec
 
-    order_queue = QueueSpec(name="orders", model=OrderPayload)
-    events_pubsub = PubSubSpec(name="events", model=EventPayload)
-    audit_stream = StreamSpec(name="audit", model=AuditEntry)
+    order_queue = QueueSpec(
+        name="orders",
+        codec=PydanticRecordMappingCodec(OrderPayload),
+    )
+    events_pubsub = PubSubSpec(
+        name="events",
+        codec=PydanticRecordMappingCodec(EventPayload),
+    )
+    audit_stream = StreamSpec(
+        name="audit",
+        codec=PydanticRecordMappingCodec(AuditEntry),
+    )
 
 ### StorageSpec
 

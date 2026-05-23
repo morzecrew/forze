@@ -1,9 +1,9 @@
-from typing import final
+from typing import Any, final
 
 import attrs
-from pydantic import BaseModel
 
 from forze.application.contracts.queue import QueueMessage
+from forze.base.serialization import RecordMappingCodec
 
 from ..kernel.platform import RabbitMQQueueMessage
 
@@ -12,18 +12,18 @@ from ..kernel.platform import RabbitMQQueueMessage
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RabbitMQQueueCodec[M: BaseModel]:
-    """RabbitMQ queue codec."""
+class RabbitMQQueueCodec[M]:
+    """RabbitMQ queue payload codec backed by a record-mapping codec."""
 
-    model: type[M]
-    """Pydantic model type of payloads."""
+    payload_codec: RecordMappingCodec[M, Any]
+    """Codec for queue message payloads."""
 
     # ....................... #
 
     def encode(self, payload: M) -> bytes:
         """Encode a payload into a bytes string."""
 
-        return payload.model_dump_json().encode("utf-8")
+        return self.payload_codec.encode_json_bytes(payload)
 
     # ....................... #
 
@@ -35,7 +35,7 @@ class RabbitMQQueueCodec[M: BaseModel]:
         return QueueMessage(
             queue=queue,
             id=raw["id"],
-            payload=self.model.model_validate_json(body),
+            payload=self.payload_codec.decode_json_bytes(body),
             type=raw.get("type"),
             enqueued_at=raw.get("enqueued_at"),
             key=raw.get("key"),

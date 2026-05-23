@@ -9,8 +9,9 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import UploadedObject
-from forze_contrib.soft_deletion.models import DocWithSoftDeletion
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
+from forze_contrib.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import (
     MockCacheAdapter,
     MockDocumentAdapter,
@@ -85,7 +86,15 @@ async def test_mock_shared_state_document_search_storage_cache_and_queue() -> No
     )
     storage = MockStorageAdapter(state=state, bucket="files")
     cache = MockCacheAdapter(state=state, namespace="session")
-    queue = MockQueueAdapter(state=state, namespace="jobs", model=_QMsg)
+    from forze.application.contracts.queue import QueueSpec
+
+    queue = MockQueueAdapter(
+        state=state,
+        namespace="jobs",
+        codec=QueueSpec(
+            name="jobs", codec=PydanticRecordMappingCodec(model_type=_QMsg)
+        ).codec,
+    )
 
     created = await docs.create(_ItemCreate(title="integrate-me"))
     assert created.title == "integrate-me"
@@ -115,7 +124,7 @@ async def test_mock_shared_state_document_search_storage_cache_and_queue() -> No
 
     mid = await queue.enqueue("jobs", _QMsg(body="process"), enqueued_at=now)
     batch = await queue.receive("jobs", limit=5)
-    assert batch[0]["id"] == mid
+    assert batch[0].id == mid
     assert await queue.ack("jobs", [mid]) == 1
 
 

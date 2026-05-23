@@ -31,6 +31,11 @@ def _require_non_empty(value: str, *, label: str) -> None:
 class _AllKeys:
     """Select every key."""
 
+    except_keys: frozenset[str] = attrs.field(factory=frozenset)
+
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -125,10 +130,10 @@ class StrKeySelector:
 
     # ....................... #
 
-    def all_keys(self) -> Spec:
+    def all_keys(self, *except_: StrKey) -> Spec:
         """Build a selector that matches every key."""
 
-        return _AllKeys()
+        return _AllKeys(except_keys=frozenset(map(_normalize_key, except_)))
 
     # ....................... #
 
@@ -176,8 +181,8 @@ class StrKeySelector:
         normalized = _normalize_key(key)
 
         match selector:
-            case _AllKeys():
-                return True
+            case _AllKeys(except_keys=except_keys):
+                return key not in except_keys
 
             case _ExactKeys(keys=keys):
                 return normalized in keys
