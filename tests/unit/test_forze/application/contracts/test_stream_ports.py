@@ -8,8 +8,12 @@ from typing import Sequence
 
 from pydantic import BaseModel
 
-from forze.application.contracts.stream import StreamCommandPort, StreamGroupQueryPort, StreamQueryPort
-from forze.application.contracts.stream.types import StreamMessage
+from forze.application.contracts.stream import (
+    StreamCommandPort,
+    StreamGroupQueryPort,
+    StreamMessage,
+    StreamQueryPort,
+)
 
 
 class _Msg(BaseModel):

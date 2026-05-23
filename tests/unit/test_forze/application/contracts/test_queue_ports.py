@@ -7,8 +7,11 @@ from typing import Sequence
 
 from pydantic import BaseModel
 
-from forze.application.contracts.queue import QueueCommandPort, QueueQueryPort
-from forze.application.contracts.queue.types import QueueMessage
+from forze.application.contracts.queue import (
+    QueueCommandPort,
+    QueueMessage,
+    QueueQueryPort,
+)
 
 
 class _Msg(BaseModel):
