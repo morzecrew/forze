@@ -98,6 +98,8 @@ nav:
     - Redis / Valkey: integrations/redis.md
     - S3-Compatible Storage: integrations/s3.md
     - Google Cloud Storage: integrations/gcs.md
+    - Google BigQuery: integrations/bigquery.md
+    - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
     - Cloud Firestore: integrations/firestore.md
     - Temporal: integrations/temporal.md

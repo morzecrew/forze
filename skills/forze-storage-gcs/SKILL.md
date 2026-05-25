@@ -50,7 +50,7 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
-For local fake-gcs-server, pass `emulator_host="http://localhost:4443"` (mapped port). Optional `service_file` for explicit service account JSON (ADC otherwise).
+For local fake-gcs-server, set `STORAGE_EMULATOR_HOST=http://localhost:4443` before startup (mapped port). Optional `service_file` on lifecycle for explicit service account JSON (ADC otherwise).
 
 ## Handler pattern
 

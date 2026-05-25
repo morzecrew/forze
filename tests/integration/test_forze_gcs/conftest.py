@@ -63,10 +63,8 @@ def fake_gcs_container():
 async def gcs_client(fake_gcs_container: str) -> GCSClient:
     """Provides an initialized GCS client connected to fake-gcs-server."""
     client = GCSClient()
-    await client.initialize(
-        TEST_PROJECT_ID,
-        emulator_host=fake_gcs_container,
-    )
+    _ = fake_gcs_container
+    await client.initialize(TEST_PROJECT_ID)
 
     yield client
 

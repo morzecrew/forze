@@ -1,6 +1,6 @@
 """Unit tests for forze.base.codecs."""
 
-from forze.base.codecs import AsciiB64Codec, JsonCodec, TextCodec
+from forze.base.codecs import AsciiB64Codec, B64UrlJsonCodec, JsonCodec, TextCodec
 
 # ----------------------- #
 
@@ -45,3 +45,14 @@ class TestAsciiB64Codec:
         encoded = codec.dumps("café")
         assert encoded.startswith("b64://")
         assert codec.loads(encoded) == "café"
+
+
+class TestB64UrlJsonCodec:
+    """Tests for B64UrlJsonCodec."""
+
+    def test_roundtrip_dict(self) -> None:
+        codec = B64UrlJsonCodec()
+        payload = {"pt": "abc", "n": 1}
+        token = codec.dumps(payload)
+        assert "=" not in token
+        assert codec.loads(token) == payload

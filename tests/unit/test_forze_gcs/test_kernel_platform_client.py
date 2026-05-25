@@ -1,9 +1,12 @@
+import os
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from forze.base.errors import CoreError
 from forze_gcs.kernel.platform.client import GCSClient
+from forze_gcs.kernel.platform.value_objects import GCSConfig
 
 
 @pytest.mark.asyncio
@@ -16,10 +19,11 @@ async def test_initialize_creates_storage_client() -> None:
         "forze_gcs.kernel.platform.client.Storage",
         return_value=fake_storage,
     ) as storage_ctor:
-        await client.initialize(
-            "test-project",
-            emulator_host="http://localhost:4443",
-        )
+        with patch.dict(
+            os.environ,
+            {"STORAGE_EMULATOR_HOST": "http://localhost:4443"},
+        ):
+            await client.initialize("test-project")
 
     storage_ctor.assert_called_once_with(
         service_file=None,
@@ -38,14 +42,21 @@ async def test_initialize_uses_service_file_from_config() -> None:
         "forze_gcs.kernel.platform.client.Storage",
         return_value=fake_storage,
     ) as storage_ctor:
-        await client.initialize(
-            "test-project",
-            config={"service_file": "/keys/sa.json", "timeout": 60},
-        )
+        with patch.dict(
+            os.environ,
+            {"STORAGE_EMULATOR_HOST": ""},
+        ):
+            await client.initialize(
+                project_id="test-project",
+                config=GCSConfig(
+                    service_file="/keys/sa.json",
+                    timeout=timedelta(seconds=60),
+                ),
+            )
 
     storage_ctor.assert_called_once_with(
-        service_file="/keys/sa.json",
         api_root=None,
+        service_file="/keys/sa.json",
     )
 
 
@@ -85,7 +96,9 @@ async def test_ensure_bucket_creates_when_missing() -> None:
     client._GCSClient__storage = MagicMock()
 
     with (
-        patch.object(client, "bucket_exists", new_callable=AsyncMock, return_value=False),
+        patch.object(
+            client, "bucket_exists", new_callable=AsyncMock, return_value=False
+        ),
         patch.object(client, "create_bucket", new_callable=AsyncMock) as create_mock,
     ):
         await client.ensure_bucket("new-bucket")

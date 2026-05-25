@@ -44,15 +44,12 @@ Use this when you run on GCP (or local fake-gcs-server) and want native GCS buck
 
 ### Emulator (fake-gcs-server)
 
-For local development with [fake-gcs-server](https://github.com/fsouza/fake-gcs-server):
+For local development and integration tests, set `STORAGE_EMULATOR_HOST` to the emulator base URL **before** starting the runtime (for example `http://localhost:4443`). The client reads this environment variable at initialization; lifecycle and application code do not take an emulator URL parameter.
+
+Start [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) (mapped port), then wire lifecycle as usual:
 
     :::python
-    gcs_lifecycle_step(
-        project_id="local-dev",
-        emulator_host="http://localhost:4443",
-    )
-
-Set `emulator_host` to the reachable base URL (including mapped Docker port). The lifecycle hook sets `STORAGE_EMULATOR_HOST` for the async client.
+    gcs_lifecycle_step(project_id="local-dev")
 
 ### Service account credentials
 

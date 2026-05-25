@@ -20,13 +20,9 @@ from forze.base.errors import CoreError
 
 from .errors import gcs_handled
 from .port import GCSClientPort
-from .value_objects import GCSConfig, GCSHead, GCSListedObject
+from .value_objects import DEFAULT_TIMEOUT, GCSConfig, GCSHead, GCSListedObject
 
 # ----------------------- #
-
-_DEFAULT_TIMEOUT = 30
-
-# ....................... #
 
 
 @final
@@ -55,15 +51,12 @@ class GCSClient(GCSClientPort):
         project_id: str,
         *,
         service_file: str | None = None,
-        emulator_host: str | None = None,
         config: GCSConfig | None = None,
     ) -> None:
-        """Configure the client with project id and optional emulator settings.
+        """Configure the client with project id and shared storage client.
 
         :param project_id: GCP project id used for bucket operations.
         :param service_file: Optional path to a service account JSON key file.
-        :param emulator_host: If set, configures ``STORAGE_EMULATOR_HOST`` and
-            passes ``api_root`` to the storage client (fake-gcs-server).
         :param config: Optional client configuration overrides.
         """
 
@@ -73,18 +66,14 @@ class GCSClient(GCSClientPort):
         self.__project_id = project_id
         self.__config = config
 
-        if emulator_host is not None:
-            os.environ["STORAGE_EMULATOR_HOST"] = emulator_host.rstrip("/")
-
-        api_root = emulator_host
-
-        if config is not None and (root := config.get("api_root")):
-            api_root = root
+        api_root: str | None = None
+        if host := os.environ.get("STORAGE_EMULATOR_HOST"):
+            api_root = host.rstrip("/")
 
         key_file = service_file
 
         if key_file is None and config is not None:
-            key_file = config.get("service_file")
+            key_file = config.service_file
 
         self.__storage = Storage(
             service_file=key_file,
@@ -120,13 +109,10 @@ class GCSClient(GCSClientPort):
         return self.__project_id
 
     def __timeout(self) -> int:
-        if (
-            self.__config is not None
-            and (t := self.__config.get("timeout")) is not None
-        ):
-            return t
+        if self.__config is not None:
+            return max(1, int(self.__config.timeout.total_seconds()))
 
-        return _DEFAULT_TIMEOUT
+        return max(1, int(DEFAULT_TIMEOUT.total_seconds()))
 
     # ....................... #
 

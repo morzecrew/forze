@@ -14,7 +14,7 @@ synchronous append (Lane B).
 | Named, parameterized reads (`run`, `run_page`, `run_chunked`, …) | OLTP aggregates (`DocumentQueryPort`) |
 | Optional `append` ingest rows | Airflow-style DAGs, CDC, sink topology |
 | `ctx.analytics.query` / `ctx.analytics.ingest` | Raw SQL strings on application ports |
-| Future adapters: BigQuery, ClickHouse, RisingWave | RisingWave used as Postgres OLTP (`Document*`) |
+| BigQuery (`forze_bigquery`), ClickHouse (`forze_clickhouse`), future RisingWave | RisingWave used as Postgres OLTP (`Document*`) |
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ flowchart LR
 | `queries` | `Mapping[str, AnalyticsQueryDefinition]` | `query_key` → parameter model. |
 | `ingest` | `type[I] \| None` | Append row model; `None` disables ingest. |
 
-Physical dataset/table names belong in integration config (e.g. future `BigQueryDepsModule`),
+Physical dataset/table names belong in integration config (e.g. `BigQueryDepsModule`, `ClickHouseDepsModule`),
 not on the kernel spec.
 
 ## `AnalyticsQueryDefinition`
@@ -108,14 +108,34 @@ is unset.
         page = await q.run_page("daily", DailyParams(day="2026-01-01"))
         await ctx.analytics.ingest(spec).append([EventRow(event="signup")])
 
-## Mock adapter
+## Implementations
+
+| Package | Notes |
+|---------|-------|
+| `forze_mock` | `MockAnalyticsAdapter` — seeded query hits and ingest log in `MockState` |
+| `forze_bigquery` | `BigQueryAnalyticsAdapter` — Standard SQL, streaming insert, emulator support |
+| `forze_clickhouse` | `ClickHouseAnalyticsAdapter` — server-side `{name:Type}` params, offset cursors, insert ingest |
+
+### Mock adapter
 
 `MockAnalyticsAdapter` reads seeded rows from `MockState.analytics_query_hits[route][query_key]`
 and writes ingest payloads to `MockState.analytics_ingest_log[route]`. See
 [Mock integration](../../integrations/mock.md).
+
+### BigQuery adapter
+
+`BigQueryDepsModule` maps each `AnalyticsSpec` route to dataset, SQL templates, and optional
+`ingest_table`. See [BigQuery integration](../../integrations/bigquery.md).
+
+### ClickHouse adapter
+
+`ClickHouseDepsModule` maps each `AnalyticsSpec` route to database, SQL templates, and optional
+`ingest_table`. See [ClickHouse integration](../../integrations/clickhouse.md).
 
 ## Related pages
 
 - [Contracts overview](../contracts.md)
 - [Queue contracts](queue.md) — Lane A event handoff
 - [Stream contracts](stream.md) — ordered append log
+- [BigQuery integration](../../integrations/bigquery.md)
+- [ClickHouse integration](../../integrations/clickhouse.md)

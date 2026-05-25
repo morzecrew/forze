@@ -1,21 +1,25 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TypedDict, final
+
+import attrs
 
 # ----------------------- #
 
+DEFAULT_TIMEOUT = timedelta(seconds=30)
+
+# ....................... #
+
 
 @final
-class GCSConfig(TypedDict, total=False):
-    """Optional :class:`gcloud.aio.storage.Storage` configuration."""
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class GCSConfig:
+    """Optional overrides for :class:`GCSClient`."""
 
-    service_file: str
+    service_file: str | None = None
     """Path to a GCP service account JSON key file."""
 
-    timeout: int
-    """Request timeout in seconds for GCS API calls."""
-
-    api_root: str
-    """Override API root URL (alternative to ``STORAGE_EMULATOR_HOST``)."""
+    timeout: timedelta = attrs.field(default=DEFAULT_TIMEOUT)
+    """Request timeout for GCS API calls."""
 
 
 # ....................... #
