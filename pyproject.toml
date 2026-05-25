@@ -325,6 +325,12 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Authz contracts do not import execution contracts"
+type = "forbidden"
+source_modules = ["forze.application.contracts.authz"]
+forbidden_modules = ["forze.application.contracts.execution"]
+
+[[tool.importlinter.contracts]]
 name = "Layered `forze.domain` module architecture"
 type = "layers"
 layers = ["forze.domain.models", "forze.domain.validation"]

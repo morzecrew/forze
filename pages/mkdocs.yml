@@ -74,6 +74,7 @@ nav:
     - Base Layer: reference/base-layer.md
     - Domain Models: reference/domain-models.md
     - Authentication: reference/authentication.md
+    - Authorization: reference/authorization.md
     - Contracts:
       - Overview: core-package/contracts.md
       - Document: core-package/contracts/document.md

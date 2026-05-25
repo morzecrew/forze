@@ -10,6 +10,7 @@ from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
+from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.tenancy import TenancyDeps
 from forze.application.contracts.transaction import (
     TransactionManagerDepKey,
@@ -70,6 +71,9 @@ class ExecutionContext:
     tenancy: TenancyDeps = attrs.field(factory=TenancyDeps, init=False)
     """Tenancy dependencies."""
 
+    authz: AuthzDeps = attrs.field(factory=AuthzDeps, init=False)
+    """Authorization dependencies."""
+
     # ....................... #
 
     @property
@@ -99,6 +103,7 @@ class ExecutionContext:
         self.embeddings.lock(self)
         self.dlock.lock(self)
         self.tenancy.lock(self)
+        self.authz.lock(self)
 
 
 # ....................... #

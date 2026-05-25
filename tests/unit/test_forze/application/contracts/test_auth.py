@@ -15,7 +15,6 @@ from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
     AuthnDepKey,
     AuthnIdentity,
-    AuthnResult,
     AuthnSpec,
     IssuedAccessToken,
     IssuedApiKey,
@@ -28,10 +27,26 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authn.ports import AuthnPort
 from forze.application.contracts.authn.value_objects import CredentialLifetime
-from forze.application.contracts.authz import AuthzDepKey, coalesce_authz_tenant_id
-from forze.application.contracts.authz.ports import AuthzPort
-from forze.application.contracts.authz.value_objects import PrincipalRef
+from forze.application.contracts.authz import (
+    AuthzDecision,
+    AuthzRequest,
+    AuthzDecisionDepKey,
+    AuthzSubject,
+    GrantQueryDepKey,
+    AuthzScope,
+    AuthzResource,
+    resolve_policy_scope,
+    subject_for_grant_query,
+    subject_from_authn,
+)
+from forze.application.contracts.authz.specs import AuthzSpec
+from forze.application.contracts.authz.value_objects import (
+    EffectiveGrants,
+    PermissionRef,
+)
 from forze.base.errors import CoreError
+
+# ----------------------- #
 
 
 class TestAuthnSpec:
@@ -47,102 +62,60 @@ class TestAuthnIdentity:
         assert ident.principal_id == pid
 
 
-class TestCredentialsAndTokens:
-    def test_password_credentials(self) -> None:
-        cred = PasswordCredentials(login="user", password="secret")
-        assert cred.login == "user"
-        assert cred.password == "secret"
+class TestResolveAuthzScope:
+    def test_explicit_tenant(self) -> None:
+        tid = uuid4()
+        spec = AuthzSpec(name="z")
 
-    def test_api_key_credentials_optional_prefix(self) -> None:
-        bare = ApiKeyCredentials(key="k")
-        prefixed = ApiKeyCredentials(key="k", prefix="pk_live_")
-        assert bare.prefix is None
-        assert prefixed.prefix == "pk_live_"
-
-    def test_access_token_credentials_default_scheme(self) -> None:
-        cred = AccessTokenCredentials(token="t")
-        assert cred.scheme == "Bearer"
-        assert cred.profile is None
-
-    def test_access_token_credentials_custom_scheme_and_profile(self) -> None:
-        cred = AccessTokenCredentials(
-            token="t",
-            scheme="Token",
-            profile="firebase",
+        scope = resolve_policy_scope(
+            spec=spec,
+            explicit=AuthzScope(tenant_id=tid),
+            invocation_tenant_id=None,
         )
-        assert cred.scheme == "Token"
-        assert cred.profile == "firebase"
 
-    def test_refresh_token_credentials(self) -> None:
-        cred = RefreshTokenCredentials(token="r")
-        assert cred.token == "r"
+        assert scope.tenant_id == tid
 
-    def test_issued_api_key_response(self) -> None:
-        key_cred = ApiKeyCredentials(key="secret")
-        api_resp = IssuedApiKey(
-            key=key_cred,
-            lifetime=CredentialLifetime(expires_in=timedelta(hours=1)),
+    def test_require_invocation_tenant(self) -> None:
+        tid = uuid4()
+        spec = AuthzSpec(name="z", tenancy_mode="require_invocation_tenant")
+
+        scope = resolve_policy_scope(
+            spec=spec,
+            explicit=AuthzScope(tenant_id=tid),
+            invocation_tenant_id=tid,
         )
-        assert api_resp.key is key_cred
-        assert api_resp.lifetime is not None
-        assert api_resp.lifetime.expires_in == timedelta(hours=1)
 
-    def test_issued_tokens_optional_refresh(self) -> None:
-        access = IssuedAccessToken(token=AccessTokenCredentials(token="x"))
-        bundle = IssuedTokens(access=access, refresh=None)
-        assert bundle.access is access
-        assert bundle.refresh is None
+        assert scope.tenant_id == tid
 
-    def test_issued_tokens_with_refresh(self) -> None:
-        access = IssuedAccessToken(token=AccessTokenCredentials(token="a"))
-        refresh = IssuedRefreshToken(token=RefreshTokenCredentials(token="r"))
-        bundle = IssuedTokens(access=access, refresh=refresh)
-        assert bundle.refresh is refresh
+    def test_conflict_raises(self) -> None:
+        spec = AuthzSpec(name="z", tenancy_mode="require_invocation_tenant")
+
+        with pytest.raises(CoreError, match="disagree"):
+            resolve_policy_scope(
+                spec=spec,
+                explicit=AuthzScope(tenant_id=uuid4()),
+                invocation_tenant_id=uuid4(),
+            )
+
+
+class TestSubjectHelpers:
+    def test_subject_from_authn(self) -> None:
+        pid = uuid4()
+        subject = subject_from_authn(AuthnIdentity(principal_id=pid))
+        assert subject.principal_id == pid
+
+    def test_subject_for_grant_query_variants(self) -> None:
+        pid = uuid4()
+        assert subject_for_grant_query(pid) == pid
+        assert subject_for_grant_query(AuthnIdentity(principal_id=pid)) == pid
+        assert subject_for_grant_query(AuthzSubject(principal_id=pid)) == pid
 
 
 class TestAuthnAndAuthzDepKeys:
     def test_dep_key_names_are_stable(self) -> None:
         assert AuthnDepKey.name == "authn"
-        assert AuthzDepKey.name == "authz"
-        assert TokenLifecycleDepKey.name == "authn_token_lifecycle"
-        assert ApiKeyLifecycleDepKey.name == "authn_api_key_lifecycle"
-
-
-class TestCoalesceAuthzTenantId:
-    def test_explicit_wins_over_unscoped_ref(self) -> None:
-        tid = uuid4()
-        pid = uuid4()
-        ref = PrincipalRef(principal_id=pid, kind="user")
-
-        assert coalesce_authz_tenant_id(ref, tenant_id=tid) == tid
-
-    def test_ref_tenant_when_explicit_none(self) -> None:
-        tid = uuid4()
-        pid = uuid4()
-        ref = PrincipalRef(principal_id=pid, kind="user", tenant_id=tid)
-
-        assert coalesce_authz_tenant_id(ref, tenant_id=None) == tid
-
-    def test_matching_explicit_and_ref(self) -> None:
-        tid = uuid4()
-        pid = uuid4()
-        ref = PrincipalRef(principal_id=pid, kind="user", tenant_id=tid)
-
-        assert coalesce_authz_tenant_id(ref, tenant_id=tid) == tid
-
-    def test_uuid_principal_uses_explicit_only(self) -> None:
-        tid = uuid4()
-        pid = uuid4()
-
-        assert coalesce_authz_tenant_id(pid, tenant_id=tid) == tid
-        assert coalesce_authz_tenant_id(pid, tenant_id=None) is None
-
-    def test_conflict_raises(self) -> None:
-        pid = uuid4()
-        ref = PrincipalRef(principal_id=pid, kind="user", tenant_id=uuid4())
-
-        with pytest.raises(CoreError, match="Conflicting tenant_id"):
-            coalesce_authz_tenant_id(ref, tenant_id=uuid4())
+        assert AuthzDecisionDepKey.name == "authz_decision"
+        assert GrantQueryDepKey.name == "authz_grant_query"
 
 
 def _pid_from_str(value: str) -> UUID:
@@ -151,35 +124,26 @@ def _pid_from_str(value: str) -> UUID:
 
 class _StubAuthenticationPort:
     async def authenticate_with_password(
-        self, credentials: PasswordCredentials
-    ) -> AuthnResult:
-        return AuthnResult(
-            identity=AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
-        )
+        self,
+        credentials: PasswordCredentials,
+    ) -> AuthnIdentity:
+        return AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
 
     async def authenticate_with_token(
-        self, credentials: AccessTokenCredentials
-    ) -> AuthnResult:
-        return AuthnResult(
-            identity=AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
-        )
+        self,
+        credentials: AccessTokenCredentials,
+    ) -> AuthnIdentity:
+        return AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
 
     async def authenticate_with_api_key(
-        self, credentials: ApiKeyCredentials
-    ) -> AuthnResult:
-        return AuthnResult(
-            identity=AuthnIdentity(principal_id=_pid_from_str("key:" + credentials.key))
-        )
+        self,
+        credentials: ApiKeyCredentials,
+    ) -> AuthnIdentity:
+        return AuthnIdentity(principal_id=_pid_from_str("key:" + credentials.key))
 
 
 class _StubTokenLifecyclePort:
-    async def issue_tokens(
-        self,
-        identity: AuthnIdentity,
-        *,
-        tenant_id: UUID | None = None,
-    ) -> IssuedTokens:
-        _ = identity, tenant_id
+    async def issue_tokens(self, identity: AuthnIdentity) -> IssuedTokens:
         return IssuedTokens(
             access=IssuedAccessToken(token=AccessTokenCredentials(token="issued")),
         )
@@ -212,19 +176,10 @@ class _StubApiKeyLifecyclePort:
         return None
 
 
-class _StubAuthzPort:
-    async def permits(
-        self,
-        principal: Any,
-        permission_key: str,
-        *,
-        tenant_id: UUID | None = None,
-        resource: str | None = None,
-        context: dict[str, Any] | None = None,
-    ) -> bool:
-        _ = permission_key, resource, context, tenant_id, principal
-
-        return True
+class _StubRuntimePort:
+    async def authorize(self, request: AuthzRequest) -> AuthzDecision:
+        _ = request
+        return AuthzDecision(allowed=True, matched_permission_key="read")
 
 
 @pytest.mark.asyncio
@@ -233,37 +188,17 @@ async def test_authentication_port_stub_round_trip() -> None:
     pw = await port.authenticate_with_password(
         PasswordCredentials(login="alice", password="x"),
     )
-    assert pw.identity.principal_id == _pid_from_str("pw:alice")
-    tok = await port.authenticate_with_token(AccessTokenCredentials(token="t"))
-    assert tok.identity.principal_id == _pid_from_str("tok:t")
-    key = await port.authenticate_with_api_key(ApiKeyCredentials(key="k"))
-    assert key.identity.principal_id == _pid_from_str("key:k")
+    assert pw.principal_id == _pid_from_str("pw:alice")
 
 
 @pytest.mark.asyncio
-async def test_token_lifecycle_port_stub() -> None:
-    port: TokenLifecyclePort = _StubTokenLifecyclePort()
+async def test_runtime_port_stub() -> None:
+    port = _StubRuntimePort()
     ident = AuthnIdentity(principal_id=uuid4())
-    issued = await port.issue_tokens(ident)
-    assert issued.access.token.token == "issued"
-    refreshed = await port.refresh_tokens(RefreshTokenCredentials(token="r"))
-    assert refreshed.access.token.token == "refreshed"
-    await port.revoke_tokens(ident)
-
-
-@pytest.mark.asyncio
-async def test_api_key_lifecycle_port_stub() -> None:
-    port: ApiKeyLifecyclePort = _StubApiKeyLifecyclePort()
-    ident = AuthnIdentity(principal_id=uuid4())
-    issued = await port.issue_api_key(ident)
-    assert issued.key.key == "issued"
-    assert await port.refresh_api_key(ApiKeyCredentials(key="k")) is not None
-    await port.revoke_api_key("kid")
-    await port.revoke_many_api_keys(("x",))
-
-
-@pytest.mark.asyncio
-async def test_authz_port_stub() -> None:
-    port: AuthzPort = _StubAuthzPort()
-    ident = AuthnIdentity(principal_id=uuid4())
-    assert await port.permits(ident, "read") is True
+    decision = await port.authorize(
+        AuthzRequest(
+            subject=subject_from_authn(ident),
+            action="documents.read",
+        ),
+    )
+    assert decision.allowed is True

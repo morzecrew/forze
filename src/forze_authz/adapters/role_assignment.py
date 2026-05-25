@@ -3,12 +3,17 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
+    AuthzSubject,
+    AuthzScope,
     PrincipalRef,
     RoleAssignmentPort,
     RoleRef,
-    coalesce_authz_tenant_id,
+    resolve_policy_scope,
+    subject_for_grant_query,
 )
+from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.errors import CoreError
 
@@ -25,18 +30,12 @@ from ._utils import find_policy_principal_by_id, validate_secure_authz_document_
 # ----------------------- #
 
 
-def _principal_id(principal: PrincipalRef | UUID) -> UUID:
-    return principal.principal_id if isinstance(principal, PrincipalRef) else principal
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RoleAssignmentAdapter(RoleAssignmentPort):
     """Principal-role bindings backed by junction documents."""
 
+    spec: AuthzSpec
     principal_qry: DocumentQueryPort[ReadPolicyPrincipal]
     role_qry: DocumentQueryPort[ReadRoleDefinition]
     pr_binding_qry: DocumentQueryPort[ReadPrincipalRoleBinding]
@@ -71,19 +70,21 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
 
     async def assign_role(
         self,
-        principal: PrincipalRef | UUID,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
         role_key: str,
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> None:
-        _ = coalesce_authz_tenant_id(principal, tenant_id=tenant_id)
-        pid = _principal_id(principal)
+        _ = resolve_policy_scope(
+            spec=self.spec,
+            explicit=scope,
+            invocation_tenant_id=scope.tenant_id if scope is not None else None,
+        )
+        pid = subject_for_grant_query(subject)
         principal_row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if principal_row is None:
             raise CoreError("Policy principal not found for role assignment")
-
-        _ = principal_row
 
         role = await self.role_qry.find(
             filters={"$values": {"role_key": role_key}},
@@ -106,19 +107,21 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
 
     async def revoke_role(
         self,
-        principal: PrincipalRef | UUID,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
         role_key: str,
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> None:
-        _ = coalesce_authz_tenant_id(principal, tenant_id=tenant_id)
-        pid = _principal_id(principal)
+        _ = resolve_policy_scope(
+            spec=self.spec,
+            explicit=scope,
+            invocation_tenant_id=scope.tenant_id if scope is not None else None,
+        )
+        pid = subject_for_grant_query(subject)
         principal_row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if principal_row is None:
             raise CoreError("Policy principal not found for role revocation")
-
-        _ = principal_row
 
         role = await self.role_qry.find(
             filters={"$values": {"role_key": role_key}},
@@ -138,20 +141,22 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
 
     async def list_roles(
         self,
-        principal: PrincipalRef | UUID,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> frozenset[RoleRef]:
-        scope_tid = coalesce_authz_tenant_id(principal, tenant_id=tenant_id)
-        pid = _principal_id(principal)
+        resolved = resolve_policy_scope(
+            spec=self.spec,
+            explicit=scope,
+            invocation_tenant_id=scope.tenant_id if scope is not None else None,
+        )
+        pid = subject_for_grant_query(subject)
         principal_row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if principal_row is None:
             raise CoreError("Policy principal not found when listing roles")
 
-        _ = principal_row
-
-        return await self.resolver.list_assigned_roles(pid, tenant_id=scope_tid)
+        return await self.resolver.list_assigned_roles(pid, scope=resolved)
 
     # ....................... #
 

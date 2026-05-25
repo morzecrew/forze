@@ -1,11 +1,10 @@
-"""Permission evaluation against resolved :class:`EffectiveGrants`."""
+"""Policy evaluation for document-backed grants."""
 
-from collections.abc import Mapping
-from typing import Any, final
+from typing import final
 
 import attrs
 
-from forze.application.contracts.authz import EffectiveGrants
+from forze.application.contracts.authz import AuthzDecision, AuthzRequest, EffectiveGrants
 
 # ----------------------- #
 
@@ -13,23 +12,55 @@ from forze.application.contracts.authz import EffectiveGrants
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class AuthzPolicyService:
-    """Evaluate ``permits`` using catalog permission keys on resolved grants."""
+    """Evaluate authorization using catalog permission keys and optional ABAC hints."""
 
-    # ....................... #
-
-    def permits(
+    def decide(
         self,
         grants: EffectiveGrants,
-        permission_key: str,
+        request: AuthzRequest,
         *,
-        resource: str | None = None,
-        context: Mapping[str, Any] | None = None,
-    ) -> bool:
-        """Return whether ``permission_key`` matches any effective permission ref.
+        principal_active: bool = True,
+    ) -> AuthzDecision:
+        """Return an :class:`AuthzDecision` for ``request``."""
 
-        ``resource`` and ``context`` are reserved for future ABAC-style matchers.
-        """
+        if not principal_active:
+            return AuthzDecision(
+                allowed=False,
+                reason="Policy principal is inactive",
+            )
 
-        _ = resource, context
+        action = request.action
 
-        return any(p.permission_key == permission_key for p in grants.permissions)
+        matched = next(
+            (p for p in grants.permissions if p.permission_key == action),
+            None,
+        )
+
+        if matched is None:
+            return AuthzDecision(
+                allowed=False,
+                reason=f"No grant for permission {action!r}",
+            )
+
+        resource = request.resource
+
+        if resource is not None:
+            owner_id = resource.attributes.get("owner_id")
+
+            if owner_id is not None:
+                subject_id = request.subject.principal_id
+
+                if str(owner_id) != str(subject_id):
+                    admin_keys = {f"{resource.resource_type}.admin", "admin"}
+                    if not any(
+                        p.permission_key in admin_keys for p in grants.permissions
+                    ):
+                        return AuthzDecision(
+                            allowed=False,
+                            reason="Resource owner does not match subject",
+                        )
+
+        return AuthzDecision(
+            allowed=True,
+            matched_permission_key=matched.permission_key,
+        )

@@ -6,13 +6,17 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from forze.application.contracts.authz import AuthzDepKey
+from forze.application.contracts.authz import (
+    AuthzDecisionDepKey,
+    AuthzScopeDepKey,
+    GrantQueryDepKey,
+)
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.errors import CoreError
 from forze_authz.execution import (
     AuthzDepsModule,
     AuthzKernelConfig,
-    ConfigurableAuthz,
+    ConfigurableAuthzDecision,
     build_authz_shared_services,
 )
 
@@ -25,12 +29,19 @@ class TestAuthzDepsModule:
 
     def test_requires_kernel_when_routes_registered(self) -> None:
         with pytest.raises(CoreError, match="kernel"):
-            AuthzDepsModule(authz={"main"})()
+            AuthzDepsModule(decision={"main"})()
 
-    def test_registers_authz_route_with_kernel(self) -> None:
-        deps = AuthzDepsModule(kernel=AuthzKernelConfig(), authz={"main"})()
+    def test_registers_decision_and_scope_routes(self) -> None:
+        deps = AuthzDepsModule(
+            kernel=AuthzKernelConfig(),
+            decision={"main"},
+            scope={"main"},
+            grant_query={"main"},
+        )()
 
-        assert deps.exists(AuthzDepKey, route="main")
+        assert deps.exists(AuthzDecisionDepKey, route="main")
+        assert deps.exists(AuthzScopeDepKey, route="main")
+        assert deps.exists(GrantQueryDepKey, route="main")
 
 
 class TestAuthzSharedServices:
@@ -40,16 +51,16 @@ class TestAuthzSharedServices:
         assert shared.policy is not None
 
 
-class TestConfigurableAuthzFactory:
+class TestConfigurableRuntimeFactory:
     def test_builds_adapter(self) -> None:
         from unittest.mock import MagicMock
 
+        from forze.application.contracts.authz import AuthzSpec
         from forze.application.contracts.document import (
             DocumentCommandDepKey,
             DocumentQueryDepKey,
         )
-        from forze.application.contracts.authz import AuthzSpec
-        from forze.application.execution import Deps
+        from forze_authz.adapters.authorization import AuthzDecisionAdapter
         from forze_authz.application.constants import AuthzResourceName
 
         def factory(ctx: object, spec: object) -> MagicMock:
@@ -82,8 +93,9 @@ class TestConfigurableAuthzFactory:
 
         shared = build_authz_shared_services(AuthzKernelConfig())
 
-        port = ConfigurableAuthz(shared=shared)(ctx, AuthzSpec(name="z"))
+        port = ConfigurableAuthzDecision(shared=shared)(
+            ctx,
+            AuthzSpec(name="z"),
+        )
 
-        from forze_authz.adapters.authorization import AuthzAdapter
-
-        assert isinstance(port, AuthzAdapter)
+        assert isinstance(port, AuthzDecisionAdapter)

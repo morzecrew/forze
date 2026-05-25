@@ -6,7 +6,7 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.authz import EffectiveGrants, PermissionRef, RoleRef
+from forze.application.contracts.authz import AuthzScope, EffectiveGrants, PermissionRef, RoleRef
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
 
@@ -100,11 +100,11 @@ class AuthzGrantResolver:
         self,
         principal_id: UUID,
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> frozenset[RoleRef]:
         """Roles from principal-role and group-role bindings (no lineage expansion)."""
 
-        _ = tenant_id
+        _ = scope
 
         direct_ids = await self._direct_role_ids(principal_id)
 
@@ -122,11 +122,11 @@ class AuthzGrantResolver:
         self,
         principal_id: UUID,
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> EffectiveGrants:
         """Union permissions from expanded roles, direct principal and group grants."""
 
-        _ = tenant_id
+        _ = scope
 
         deps = self.deps
 

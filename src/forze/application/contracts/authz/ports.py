@@ -1,14 +1,88 @@
-from typing import Any, Awaitable, Mapping, Protocol
+"""Authz port protocols."""
+
+from collections.abc import Awaitable
+from typing import Protocol
 from uuid import UUID
 
+from forze.application.contracts.authn import AuthnIdentity
+
 from .types import PrincipalKind
-from .value_objects import EffectiveGrants, PrincipalRef, RoleRef
+from .value_objects import (
+    AuthzDecision,
+    AuthzDocumentScope,
+    AuthzDocumentScopeRequest,
+    AuthzRequest,
+    AuthzScope,
+    AuthzSensitiveAccessRequest,
+    AuthzSubject,
+    EffectiveGrants,
+    PrincipalRef,
+    RoleRef,
+)
 
 # ----------------------- #
 
 
+class AuthzDecisionPort(Protocol):
+    """Port for operation-level allow/deny decisions."""
+
+    def authorize(self, request: AuthzRequest) -> Awaitable[AuthzDecision]:
+        """Evaluate whether ``request`` is permitted."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class AuthzScopePort(Protocol):
+    """Port for deriving data-access constraints."""
+
+    def scope_document(
+        self,
+        request: AuthzDocumentScopeRequest,
+    ) -> Awaitable[AuthzDocumentScope]:
+        """Return query constraints for a document list/search/read path."""
+        ...  # pragma: no cover
+
+    def authorize_sensitive_resource(
+        self,
+        request: AuthzSensitiveAccessRequest,
+    ) -> Awaitable[bool]:
+        """Whether the subject may access the given resource instance."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+class GrantQueryPort(Protocol):
+    """Port for resolving effective grants for a subject."""
+
+    def resolve_effective_grants(
+        self,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+        *,
+        scope: AuthzScope | None = None,
+    ) -> Awaitable[EffectiveGrants]:
+        """Resolve effective grants for a subject in an optional policy partition."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
 class PrincipalRegistryPort(Protocol):
-    """Port for registering and resolving policy principals (anchors for authz)."""
+    """Port for registering and resolving policy principals."""
+
+    def ensure_principal(
+        self,
+        principal_id: UUID,
+        kind: PrincipalKind,
+        *,
+        is_active: bool = True,
+    ) -> Awaitable[PrincipalRef]:
+        """Create or return the policy principal for ``principal_id`` (idempotent)."""
+        ...  # pragma: no cover
 
     def create_principal(self, kind: PrincipalKind) -> Awaitable[PrincipalRef]:
         """Create a new principal row and return its stable reference."""
@@ -19,29 +93,7 @@ class PrincipalRegistryPort(Protocol):
         ...  # pragma: no cover
 
     def deactivate_principal(self, principal_id: UUID) -> Awaitable[None]:
-        """Mark the principal inactive for policy purposes (exact semantics adapter-defined)."""
-        ...  # pragma: no cover
-
-
-# ....................... #
-
-
-class EffectiveGrantsPort(Protocol):
-    """Port for resolving effective grants for a principal."""
-
-    def resolve_effective_grants(
-        self,
-        principal: PrincipalRef | UUID,
-        *,
-        tenant_id: UUID | None = None,
-    ) -> Awaitable[EffectiveGrants]:
-        """Resolve effective grants for a principal in an optional tenant partition.
-
-        :param tenant_id: Explicit tenant scope for the call. When ``principal`` is a
-            :class:`~forze.application.contracts.authz.value_objects.PrincipalRef` with
-            :attr:`~forze.application.contracts.authz.value_objects.PrincipalRef.tenant_id`
-            set, both must agree or :class:`~forze.base.errors.CoreError` is raised.
-        """
+        """Mark the principal inactive for policy purposes."""
         ...  # pragma: no cover
 
 
@@ -53,60 +105,29 @@ class RoleAssignmentPort(Protocol):
 
     def assign_role(
         self,
-        principal: PrincipalRef | UUID,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
         role_key: str,  # noqa: F841
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> Awaitable[None]:
-        """Grant a role (catalog ``role_key``) to the principal.
-
-        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
-        """
+        """Grant a role (catalog ``role_key``) to the subject."""
         ...  # pragma: no cover
 
     def revoke_role(
         self,
-        principal: PrincipalRef | UUID,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
         role_key: str,  # noqa: F841
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> Awaitable[None]:
-        """Revoke a role (catalog ``role_key``) from the principal.
-
-        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
-        """
+        """Revoke a role (catalog ``role_key``) from the subject."""
         ...  # pragma: no cover
 
     def list_roles(
         self,
-        principal: PrincipalRef | UUID,
+        subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
         *,
-        tenant_id: UUID | None = None,
+        scope: AuthzScope | None = None,
     ) -> Awaitable[frozenset[RoleRef]]:
-        """Enumerate roles assigned via principal-role bindings (including via groups).
-
-        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
-        """
-        ...  # pragma: no cover
-
-
-# ....................... #
-
-
-class AuthzPort(Protocol):
-    """Port for runtime permission evaluation given a resolved principal."""
-
-    def permits(
-        self,
-        principal: PrincipalRef | UUID,
-        permission_key: str,  # noqa: F841
-        *,
-        tenant_id: UUID | None = None,
-        resource: str | None = None,  # noqa: F841
-        context: Mapping[str, Any] | None = None,  # noqa: F841
-    ) -> Awaitable[bool]:
-        """Whether the principal satisfies the catalog permission (``permission_key``).
-
-        :param tenant_id: Optional tenant scope; merged with ``PrincipalRef.tenant_id`` when present.
-        """
+        """Enumerate roles assigned to the subject."""
         ...  # pragma: no cover

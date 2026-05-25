@@ -1,7 +1,8 @@
 from .configs import AuthzKernelConfig, AuthzSharedServices, build_authz_shared_services
 from .deps import (
-    ConfigurableAuthz,
-    ConfigurableEffectiveGrants,
+    ConfigurableAuthzDecision,
+    ConfigurableAuthzScope,
+    ConfigurableGrantQuery,
     ConfigurablePrincipalRegistry,
     ConfigurableRoleAssignment,
 )
@@ -13,8 +14,9 @@ __all__ = [
     "AuthzDepsModule",
     "AuthzKernelConfig",
     "AuthzSharedServices",
-    "ConfigurableAuthz",
-    "ConfigurableEffectiveGrants",
+    "ConfigurableAuthzDecision",
+    "ConfigurableAuthzScope",
+    "ConfigurableGrantQuery",
     "ConfigurablePrincipalRegistry",
     "ConfigurableRoleAssignment",
     "build_authz_shared_services",

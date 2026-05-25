@@ -1,35 +1,75 @@
 from uuid import UUID
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.base.errors import CoreError
 
-from .value_objects import PrincipalRef
+from .specs import AuthzSpec
+from .value_objects import AuthzScope, AuthzSubject, PrincipalRef
 
 # ----------------------- #
 
 
-def coalesce_authz_tenant_id(
-    principal: PrincipalRef | UUID,
+def resolve_policy_scope(
     *,
-    tenant_id: UUID | None,
-) -> UUID | None:
-    """Return the effective tenant scope for an authz call.
+    spec: AuthzSpec,
+    explicit: AuthzScope | None = None,
+    invocation_tenant_id: UUID | None = None,
+) -> AuthzScope:
+    """Resolve effective policy scope for a decision or scoping call."""
 
-    Explicit ``tenant_id`` wins over :attr:`PrincipalRef.tenant_id`. When both are
-    set they must match or :class:`~forze.base.errors.CoreError` is raised.
+    if explicit is not None and explicit.tenant_id is not None:
+        scope = explicit
+    elif invocation_tenant_id is not None:
+        scope = AuthzScope(tenant_id=invocation_tenant_id)
+    else:
+        scope = AuthzScope()
 
-    :param principal: Policy principal reference or bare principal id.
-    :param tenant_id: Explicit tenant from the port call site.
-    :returns: Resolved tenant id or ``None`` when the call is tenant-unscoped.
-    """
+    if spec.tenancy_mode == "require_invocation_tenant":
+        if invocation_tenant_id is None:
+            raise CoreError(
+                "AuthzSpec requires a bound tenant on the invocation context",
+            )
 
-    ref_tid = principal.tenant_id if isinstance(principal, PrincipalRef) else None
+        if scope.tenant_id is None:
+            raise CoreError(
+                "AuthzSpec requires tenant_id on AuthzScope for this route",
+            )
 
-    if tenant_id is not None and ref_tid is not None and tenant_id != ref_tid:
-        raise CoreError(
-            "Conflicting tenant_id: PrincipalRef.tenant_id and explicit tenant_id disagree",
-        )
+        if scope.tenant_id != invocation_tenant_id:
+            raise CoreError(
+                "AuthzScope.tenant_id disagrees with invocation tenant",
+            )
 
-    if tenant_id is not None:
-        return tenant_id
+    return scope
 
-    return ref_tid
+
+# ....................... #
+
+
+def subject_for_grant_query(
+    principal: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
+) -> UUID:
+    """Normalize grant-query subject input to a principal id."""
+
+    if isinstance(principal, UUID):
+        return principal
+
+    return principal.principal_id
+
+
+# ....................... #
+
+
+def subject_from_authn(identity: AuthnIdentity) -> AuthzSubject:
+    """Build an :class:`AuthzSubject` from a bound :class:`AuthnIdentity`."""
+
+    return AuthzSubject(principal_id=identity.principal_id)
+
+
+def subject_from_principal_ref(principal: PrincipalRef) -> AuthzSubject:
+    """Build an :class:`AuthzSubject` from a :class:`PrincipalRef`."""
+
+    return AuthzSubject(
+        principal_id=principal.principal_id,
+        kind=principal.kind,
+    )
