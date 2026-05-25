@@ -31,21 +31,7 @@ class DeterministicUuidResolver(PrincipalResolverPort):
     async def resolve(self, assertion: VerifiedAssertion) -> AuthnIdentity:
         principal_id = uuid4({"iss": assertion.issuer, "sub": assertion.subject})
 
-        tenant_id: UUID | None = None
-
-        if assertion.tenant_hint is not None:
-            try:
-                tenant_id = UUID(assertion.tenant_hint)
-
-            except ValueError:
-                tenant_id = uuid4(
-                    {
-                        "iss": assertion.issuer,
-                        "tid": assertion.tenant_hint,
-                    },
-                )
-
-        return AuthnIdentity(principal_id=principal_id, tenant_id=tenant_id)
+        return AuthnIdentity(principal_id=principal_id)
 
 
 # ....................... #

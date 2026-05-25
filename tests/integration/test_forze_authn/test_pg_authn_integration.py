@@ -24,8 +24,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.execution import Deps, ExecutionContext
-from forze.application.execution import InvocationMetadata
+from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_authn import (
     Argon2PasswordVerifier,
     AuthnOrchestrator,
@@ -281,7 +280,7 @@ async def test_pg_password_authentication(pg_client: PostgresClient) -> None:
         identity = await authn.authenticate_with_password(
             PasswordCredentials(login="alice", password="correct horse battery staple"),
         )
-    assert identity.principal_id == pid
+    assert identity.identity.principal_id == pid
 
     with pytest.raises(Exception, match="Invalid password|authentication"):
         with ctx.inv.bind(metadata=_invocation_metadata()):
@@ -338,7 +337,7 @@ async def test_pg_issue_oauth_tokens_and_bearer_auth(pg_client: PostgresClient) 
     with ctx.inv.bind(metadata=_invocation_metadata()):
         bearer_id = await authn.authenticate_with_token(sub)
 
-    assert bearer_id.principal_id == pid
+    assert bearer_id.identity.principal_id == pid
 
     with ctx.inv.bind(metadata=_invocation_metadata()):
         page = await ctx.document.query(session_spec).find_many(
@@ -400,7 +399,7 @@ async def test_pg_api_key_issue_and_authenticate(pg_client: PostgresClient) -> N
         authed = await authn.authenticate_with_api_key(
             ApiKeyCredentials(key=issued_key, prefix=resp.key.prefix),
         )
-    assert authed.principal_id == pid
+    assert authed.identity.principal_id == pid
 
 
 @pytest.mark.integration
@@ -550,7 +549,7 @@ async def test_pg_execution_deps_password_authentication(
             PasswordCredentials(login="alice", password="correct horse battery staple"),
         )
 
-    assert identity.principal_id == pid
+    assert identity.identity.principal_id == pid
 
 
 @pytest.mark.integration
@@ -612,7 +611,7 @@ async def test_pg_execution_deps_issue_tokens_and_bearer_auth(
     with ctx.inv.bind(metadata=_invocation_metadata()):
         bearer_id = await authn.authenticate_with_token(sub)
 
-    assert bearer_id.principal_id == pid
+    assert bearer_id.identity.principal_id == pid
 
     with ctx.inv.bind(metadata=_invocation_metadata()):
         page = await ctx.document.query(session_spec).find_many(

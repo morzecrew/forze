@@ -21,9 +21,9 @@ pytestmark = pytest.mark.unit
 
 from forze.application.contracts.authn import (
     ApiKeyCredentials,
-    AuthnIdentity,
     PasswordCredentials,
     AccessTokenCredentials,
+    AuthnIdentity,
     VerifiedAssertion,
 )
 from forze.base.errors import AuthenticationError, CoreError
@@ -45,7 +45,7 @@ class TestVerifiedAssertion:
         assert a.issuer == "forze:jwt"
         assert a.subject == "abc"
         assert a.audience is None
-        assert a.tenant_hint is None
+        assert a.issuer_tenant_hint is None
         assert a.claims == {}
 
     def test_full_payload_and_immutability(self) -> None:
@@ -54,14 +54,14 @@ class TestVerifiedAssertion:
             issuer="https://issuer.example",
             subject="firebase-uid-1",
             audience="my-app",
-            tenant_hint="tenant-7",
+            issuer_tenant_hint="tenant-7",
             issued_at=now,
             expires_at=now,
             claims={"role": "admin"},
         )
 
         assert a.audience == "my-app"
-        assert a.tenant_hint == "tenant-7"
+        assert a.issuer_tenant_hint == "tenant-7"
         assert a.claims["role"] == "admin"
 
         with pytest.raises(Exception):
@@ -79,20 +79,20 @@ class TestJwtNativeUuidResolver:
         ident = await JwtNativeUuidResolver().resolve(a)
 
         assert ident.principal_id == pid
-        assert ident.tenant_id is None
+        assert not hasattr(ident, "tenant_id")
 
     @pytest.mark.asyncio
-    async def test_uuid_subject_with_tenant_hint(self) -> None:
+    async def test_uuid_subject_ignores_issuer_tenant_hint(self) -> None:
         pid = uuid4()
-        tid = uuid4()
         a = VerifiedAssertion(
             issuer="forze:jwt",
             subject=str(pid),
-            tenant_hint=str(tid),
+            issuer_tenant_hint="not-a-uuid",
         )
         ident = await JwtNativeUuidResolver().resolve(a)
 
-        assert ident.tenant_id == tid
+        assert ident.principal_id == pid
+        assert not hasattr(ident, "tenant_id")
 
     @pytest.mark.asyncio
     async def test_rejects_non_uuid_subject(self) -> None:
@@ -100,16 +100,6 @@ class TestJwtNativeUuidResolver:
 
         with pytest.raises(AuthenticationError):
             await JwtNativeUuidResolver().resolve(a)
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_uuid_tenant_hint(self) -> None:
-        a = VerifiedAssertion(
-            issuer="forze:jwt", subject=str(uuid4()), tenant_hint="not-a-uuid"
-        )
-
-        with pytest.raises(AuthenticationError):
-            await JwtNativeUuidResolver().resolve(a)
-
 
 # ....................... #
 
@@ -134,22 +124,16 @@ class TestDeterministicUuidResolver:
         assert ident_a.principal_id != ident_b.principal_id
 
     @pytest.mark.asyncio
-    async def test_uuid_tenant_hint_is_used_directly(self) -> None:
-        tid = uuid4()
+    async def test_issuer_tenant_hint_is_not_folded_into_identity(self) -> None:
         a = VerifiedAssertion(
-            issuer="firebase", subject="x", tenant_hint=str(tid)
+            issuer="firebase",
+            subject="x",
+            issuer_tenant_hint="acme",
         )
         ident = await DeterministicUuidResolver().resolve(a)
 
-        assert ident.tenant_id == tid
-
-    @pytest.mark.asyncio
-    async def test_non_uuid_tenant_hint_is_derived(self) -> None:
-        a = VerifiedAssertion(issuer="firebase", subject="x", tenant_hint="acme")
-        ident = await DeterministicUuidResolver().resolve(a)
-
-        assert ident.tenant_id is not None
-        assert isinstance(ident.tenant_id, UUID)
+        assert isinstance(ident.principal_id, UUID)
+        assert not hasattr(ident, "tenant_id")
 
     def test_helper_matches_resolver(self) -> None:
         derived = derive_principal_id("firebase", "user:42")
@@ -174,6 +158,15 @@ class _StubTokenVerifier:
     async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
         return VerifiedAssertion(
             issuer="stub:token", subject="00000000-0000-0000-0000-000000000002"
+        )
+
+
+class _StubScopedTokenVerifier:
+    async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
+        return VerifiedAssertion(
+            issuer="stub:token",
+            subject="00000000-0000-0000-0000-000000000002",
+            issuer_tenant_hint="tenant-7",
         )
 
 
@@ -246,11 +239,26 @@ class TestAuthnOrchestrator:
             resolver=resolver,
         )
 
-        ident = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
 
-        assert isinstance(ident, AuthnIdentity)
+        assert isinstance(result.identity, AuthnIdentity)
+        assert result.identity.principal_id == UUID(
+            "00000000-0000-0000-0000-000000000002"
+        )
+        assert result.issuer_tenant_hint is None
         assert len(resolver.calls) == 1
         assert resolver.calls[0].issuer == "stub:token"
+
+    @pytest.mark.asyncio
+    async def test_token_flow_preserves_issuer_tenant_hint_on_result(self) -> None:
+        orch = self._orch(
+            frozenset({"token"}),
+            token=_StubScopedTokenVerifier(),
+        )
+
+        result = await orch.authenticate_with_token(AccessTokenCredentials(token="t"))
+
+        assert result.issuer_tenant_hint == "tenant-7"
 
     @pytest.mark.asyncio
     async def test_multi_method_route_uses_distinct_verifiers(self) -> None:

@@ -13,7 +13,7 @@ from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
     AuthnDepKey,
-    AuthnIdentity,
+    AuthnResult,
     AuthnSpec,
 )
 from forze.application.execution import ExecutionContext
@@ -64,7 +64,7 @@ class HeaderTokenAuthnIdentityResolver(AuthnIdentityResolverPort):
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> AuthnIdentity | None:
+    ) -> AuthnResult | None:
         raw = request.headers.get(self.token_header)
 
         if raw is None:
@@ -127,7 +127,7 @@ class CookieTokenAuthnIdentityResolver(AuthnIdentityResolverPort):
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> AuthnIdentity | None:
+    ) -> AuthnResult | None:
         raw = request.cookies.get(self.cookie_name)
 
         if raw is None or not str(raw).strip():
@@ -181,7 +181,7 @@ class HeaderApiKeyAuthnIdentityResolver(AuthnIdentityResolverPort):
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> AuthnIdentity | None:
+    ) -> AuthnResult | None:
         raw = request.headers.get(self.api_key_header)
 
         if raw is None:

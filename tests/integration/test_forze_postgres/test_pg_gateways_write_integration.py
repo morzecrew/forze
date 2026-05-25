@@ -105,9 +105,6 @@ async def test_postgres_write_gateway_roundtrip_and_projections(
     by_id = await read.get(created.id)
     assert by_id.name == "pg-gw"
 
-    proj = await read.get(created.id, return_fields=["name"])
-    assert proj["name"] == "pg-gw"
-
     await write.create(PgGwCreate(name="other-row"))
 
     rows = await read.find_many(limit=5)

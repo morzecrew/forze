@@ -8,7 +8,7 @@ from typing import Awaitable, Protocol
 
 from fastapi import Request
 
-from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authn import AuthnResult
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 
@@ -31,13 +31,13 @@ class InvocationMetadataCodecPort(Protocol):
 
 
 class AuthnIdentityResolverPort(Protocol):
-    """Async resolver for authenticating a request into an identity."""
+    """Async resolver for authenticating a request into a boundary authn result."""
 
     def resolve(
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> Awaitable[AuthnIdentity | None]: ...  # pragma: no cover
+    ) -> Awaitable[AuthnResult | None]: ...  # pragma: no cover
 
 
 # ....................... #
@@ -59,5 +59,5 @@ class TenantIdentityResolverPort(Protocol):
         self,
         request: Request,
         ctx: ExecutionContext,
-        identity: AuthnIdentity | None,
+        authn: AuthnResult | None,
     ) -> Awaitable[TenantIdentity | None]: ...  # pragma: no cover

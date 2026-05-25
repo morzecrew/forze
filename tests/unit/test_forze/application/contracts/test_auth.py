@@ -15,6 +15,7 @@ from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
     AuthnDepKey,
     AuthnIdentity,
+    AuthnResult,
     AuthnSpec,
     IssuedAccessToken,
     IssuedApiKey,
@@ -151,22 +152,34 @@ def _pid_from_str(value: str) -> UUID:
 class _StubAuthenticationPort:
     async def authenticate_with_password(
         self, credentials: PasswordCredentials
-    ) -> AuthnIdentity:
-        return AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
+    ) -> AuthnResult:
+        return AuthnResult(
+            identity=AuthnIdentity(principal_id=_pid_from_str("pw:" + credentials.login))
+        )
 
     async def authenticate_with_token(
         self, credentials: AccessTokenCredentials
-    ) -> AuthnIdentity:
-        return AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
+    ) -> AuthnResult:
+        return AuthnResult(
+            identity=AuthnIdentity(principal_id=_pid_from_str("tok:" + credentials.token))
+        )
 
     async def authenticate_with_api_key(
         self, credentials: ApiKeyCredentials
-    ) -> AuthnIdentity:
-        return AuthnIdentity(principal_id=_pid_from_str("key:" + credentials.key))
+    ) -> AuthnResult:
+        return AuthnResult(
+            identity=AuthnIdentity(principal_id=_pid_from_str("key:" + credentials.key))
+        )
 
 
 class _StubTokenLifecyclePort:
-    async def issue_tokens(self, identity: AuthnIdentity) -> IssuedTokens:
+    async def issue_tokens(
+        self,
+        identity: AuthnIdentity,
+        *,
+        tenant_id: UUID | None = None,
+    ) -> IssuedTokens:
+        _ = identity, tenant_id
         return IssuedTokens(
             access=IssuedAccessToken(token=AccessTokenCredentials(token="issued")),
         )
@@ -220,11 +233,11 @@ async def test_authentication_port_stub_round_trip() -> None:
     pw = await port.authenticate_with_password(
         PasswordCredentials(login="alice", password="x"),
     )
-    assert pw.principal_id == _pid_from_str("pw:alice")
+    assert pw.identity.principal_id == _pid_from_str("pw:alice")
     tok = await port.authenticate_with_token(AccessTokenCredentials(token="t"))
-    assert tok.principal_id == _pid_from_str("tok:t")
+    assert tok.identity.principal_id == _pid_from_str("tok:t")
     key = await port.authenticate_with_api_key(ApiKeyCredentials(key="k"))
-    assert key.principal_id == _pid_from_str("key:k")
+    assert key.identity.principal_id == _pid_from_str("key:k")
 
 
 @pytest.mark.asyncio

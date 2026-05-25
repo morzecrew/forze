@@ -1,0 +1,2 @@
+IF_NONE_MATCH_HEADER_KEY = "If-None-Match"
+ETAG_HEADER_KEY = "ETag"

@@ -111,19 +111,10 @@ async def test_mongo_gateways_create_read_projections_and_list(
     read = write.read_gw
 
     created = await write.create(GwCreate(name="gateway-one"))
-    other = await write.create(GwCreate(name="gateway-two"))
+    await write.create(GwCreate(name="gateway-two"))
 
     full = await read.get(created.id)
     assert full.name == "gateway-one"
-
-    proj = await read.get(created.id, return_fields=["name"])
-    assert proj["name"] == "gateway-one"
-
-    many_proj = await read.get_many(
-        [created.id, other.id],
-        return_fields=["id", "name"],
-    )
-    assert {row["name"] for row in many_proj} == {"gateway-one", "gateway-two"}
 
     one = await read.find(
         {"$values": {"name": {"$eq": "gateway-one"}}},
@@ -351,14 +342,7 @@ async def test_mongo_read_gateway_return_model_and_find_many_validation(
     read = write.read_gw
 
     a = await write.create(GwCreate(name="ma"))
-    b = await write.create(GwCreate(name="mb"))
-
-    typed = await read.get(a.id, return_model=GwProj)
-    assert isinstance(typed, GwProj)
-    assert typed.name == "ma"
-
-    gm = await read.get_many([b.id, a.id], return_model=GwProj)
-    assert [x.name for x in gm] == ["mb", "ma"]
+    await write.create(GwCreate(name="mb"))
 
     fo = await read.find(
         {"$values": {"name": "mb"}},

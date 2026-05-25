@@ -16,10 +16,10 @@ from forze.application.contracts.search import (
     SearchSpec,
     calculate_effective_field_weights,
 )
-from forze.base.errors import CoreError
 
 from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.introspect import PostgresIntrospector
+from ._pgroonga_index_fields import resolve_pgroonga_index_alignment
 
 # ----------------------- #
 
@@ -48,21 +48,6 @@ def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:
 # ....................... #
 
 
-def pgroonga_heap_column_names(
-    search: SearchSpec[Any],
-    index_field_map: Mapping[str, str] | None,
-) -> list[str]:
-    """Resolve heap column names for :class:`SearchSpec` fields."""
-
-    if index_field_map is None:
-        return list(search.fields)
-
-    return [index_field_map.get(f, f) for f in search.fields]
-
-
-# ....................... #
-
-
 async def pgroonga_match_clause(
     *,
     search: SearchSpec[Any],
@@ -83,6 +68,22 @@ async def pgroonga_match_clause(
     if not query:
         return sql.SQL("TRUE"), []
 
+    index_info = await introspector.get_index_info(
+        index=index_qname.name,
+        schema=index_qname.schema,
+    )
+
+    eff_float = calculate_effective_field_weights(search, options)
+    eff_weights = {f: int(w * 100) for f, w in eff_float.items()}
+
+    heap_cols, weights, uses_array = resolve_pgroonga_index_alignment(
+        search,
+        index_info,
+        index_field_map,
+        eff_weights,
+        index_qname=index_qname,
+    )
+
     params: list[Any] = [query, index]
 
     q_ph = sql.Placeholder()
@@ -90,14 +91,6 @@ async def pgroonga_match_clause(
     r_ph = sql.Placeholder()
     w_ph = sql.Placeholder()
 
-    eff_float = calculate_effective_field_weights(search, options)
-    eff_weights = {f: int(w * 100) for f, w in eff_float.items()}
-    heap_cols = pgroonga_heap_column_names(search, index_field_map)
-
-    if len(heap_cols) != len(eff_weights):
-        raise CoreError("Search field / weight alignment error.")
-
-    weights = [eff_weights[f] for f in search.fields]
     use_fuzzy = options.get("fuzzy", False)
 
     if search.fuzzy is not None:
@@ -106,12 +99,7 @@ async def pgroonga_match_clause(
     else:
         ratio = 0.34
 
-    index_info = await introspector.get_index_info(
-        index=index_qname.name,
-        schema=index_qname.schema,
-    )
-
-    if index_info.expr is None or ("ARRAY" not in index_info.expr.upper()):
+    if not uses_array:
         col = heap_cols[0]
         text_expr = sql.SQL("coalesce({}::text, '')").format(
             sql.Identifier(ia, col),

@@ -4,6 +4,7 @@ import asyncio
 from functools import cached_property
 from typing import (
     Any,
+    Awaitable,
     Literal,
     Never,
     Protocol,
@@ -66,6 +67,8 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
     @property
     def model_type(self) -> type[M]: ...
 
+    # ....................... #
+
     def compile_filters(
         self,
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
@@ -75,100 +78,16 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
 
     # ....................... #
 
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> M: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> T: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never: ...
-
-    async def get(
+    def get(
         self,
         pk: UUID,
         *,
         for_update: bool = False,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> M | T | JsonDict: ...
+    ) -> Awaitable[M]: ...
 
     # ....................... #
 
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> list[M]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> list[T]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> list[JsonDict]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never: ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]: ...
+    def get_many(self, pks: Sequence[UUID]) -> Awaitable[list[M]]: ...
 
     # ....................... #
 
@@ -414,9 +333,11 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
 # ....................... #
 
 
-class DocumentWriteGatewayPort[D_co: Document, C_co: CreateDocumentCmd, U_co: BaseDTO](
-    Protocol
-):
+class DocumentWriteGatewayPort[
+    D_co: Document,
+    C_co: CreateDocumentCmd,
+    U_co: BaseDTO,
+](Protocol):
     """Write gateway operations required by :class:`DocumentCoordinator`."""
 
     async def create(self, dto: C_co) -> D_co: ...

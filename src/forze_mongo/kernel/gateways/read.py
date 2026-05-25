@@ -54,70 +54,18 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     an alternative model type.
     """
 
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> M:
-        """Fetch a document by primary key as the gateway model."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> T:
-        """Fetch a document by primary key validated against *return_model*."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict:
-        """Fetch a document by primary key projected to *return_fields*."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never:
-        """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
-
     async def get(
         self,
         pk: UUID,
         *,
         for_update: bool = False,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> M | T | JsonDict:
+    ) -> M:
         """Fetch a single document by primary key.
 
         When *for_update* is ``True``, an active transaction is required.
 
         :param pk: Document primary key.
         :param for_update: Require a transaction context for pessimistic reads.
-        :param return_model: Optional alternative Pydantic model for validation.
-        :param return_fields: Optional field subset to project.
         :raises NotFoundError: If no document matches the primary key.
         """
 
@@ -130,7 +78,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         raw = await self.client.find_one(
             await self.coll(),
             filters,
-            projection=self.render_projection(return_fields),
+            projection=self.render_projection(None),
         )
 
         if raw is None:
@@ -138,72 +86,14 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
 
         data = self._from_storage_doc(raw)
 
-        if return_model is not None:
-            return pydantic_validate(return_model, data)
-
-        if return_fields is not None:
-            return self.return_subset(data, return_fields)
-
         return pydantic_validate(self.model_type, data)
 
     # ....................... #
 
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> list[M]:
-        """Fetch multiple documents as the gateway model."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> list[T]:
-        """Fetch multiple documents validated against *return_model*."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> list[JsonDict]:
-        """Fetch multiple documents projected to *return_fields*."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never:
-        """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]:
+    async def get_many(self, pks: Sequence[UUID]) -> list[M]:
         """Fetch multiple documents by primary key, preserving input order.
 
         :param pks: Primary keys to fetch.
-        :param return_model: Optional alternative Pydantic model.
-        :param return_fields: Optional field subset to project.
         :raises NotFoundError: If any primary key is missing.
         """
 
@@ -217,7 +107,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         rows = await self.client.find_many(
             await self.coll(),
             filters,
-            projection=self.render_projection(return_fields),
+            projection=self.render_projection(None),
         )
 
         by_pk: dict[str, JsonDict] = {}
@@ -232,12 +122,6 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             raise NotFoundError(f"Some records not found: {missing}")
 
         ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
-
-        if return_model is not None:
-            return pydantic_validate_many(return_model, ordered)
-
-        if return_fields is not None:
-            return [self.return_subset(row, return_fields) for row in ordered]
 
         return pydantic_validate_many(self.model_type, ordered)
 

@@ -6,8 +6,6 @@ require_socketio()
 
 # ....................... #
 
-from forze.application.execution import make_registry_operation_resolver
-
 from .emitter import (
     SocketIOEventEmitter,
     SocketIONamespaceEmitter,
@@ -32,7 +30,6 @@ __all__ = [
     "SocketIOCommandRoute",
     "SocketIONamespaceRouter",
     "ForzeSocketIOAdapter",
-    "make_registry_operation_resolver",
     "SocketIOServerEvent",
     "SocketIOEventEmitter",
     "SocketIONamespaceEmitter",

@@ -1,0 +1,152 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from forze.base.errors import CoreError
+from forze_gcs.kernel.platform.client import GCSClient
+
+
+@pytest.mark.asyncio
+async def test_initialize_creates_storage_client() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.close = AsyncMock()
+
+    with patch(
+        "forze_gcs.kernel.platform.client.Storage",
+        return_value=fake_storage,
+    ) as storage_ctor:
+        await client.initialize(
+            "test-project",
+            emulator_host="http://localhost:4443",
+        )
+
+    storage_ctor.assert_called_once_with(
+        service_file=None,
+        api_root="http://localhost:4443",
+    )
+    assert client._GCSClient__storage is fake_storage
+    assert client._GCSClient__project_id == "test-project"
+
+
+@pytest.mark.asyncio
+async def test_initialize_uses_service_file_from_config() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+
+    with patch(
+        "forze_gcs.kernel.platform.client.Storage",
+        return_value=fake_storage,
+    ) as storage_ctor:
+        await client.initialize(
+            "test-project",
+            config={"service_file": "/keys/sa.json", "timeout": 60},
+        )
+
+    storage_ctor.assert_called_once_with(
+        service_file="/keys/sa.json",
+        api_root=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_objects_applies_offset_and_limit() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    bucket_ref = MagicMock()
+    bucket_ref.list_blobs = AsyncMock(return_value=["a", "b", "c", "d"])
+    fake_storage.get_bucket.return_value = bucket_ref
+    client._GCSClient__storage = fake_storage
+
+    items, total_count = await client.list_objects(
+        bucket="bucket",
+        prefix="",
+        limit=2,
+        offset=1,
+    )
+
+    assert [item["Key"] for item in items] == ["b", "c"]
+    assert total_count == 4
+    bucket_ref.list_blobs.assert_awaited_once_with(prefix="")
+
+
+@pytest.mark.asyncio
+async def test_list_objects_rejects_invalid_limit() -> None:
+    client = GCSClient()
+    client._GCSClient__storage = MagicMock()
+
+    with pytest.raises(CoreError, match="limit must be > 0"):
+        await client.list_objects(bucket="b", limit=0)
+
+
+@pytest.mark.asyncio
+async def test_ensure_bucket_creates_when_missing() -> None:
+    client = GCSClient()
+    client._GCSClient__storage = MagicMock()
+
+    with (
+        patch.object(client, "bucket_exists", new_callable=AsyncMock, return_value=False),
+        patch.object(client, "create_bucket", new_callable=AsyncMock) as create_mock,
+    ):
+        await client.ensure_bucket("new-bucket")
+        create_mock.assert_awaited_once_with("new-bucket")
+
+
+@pytest.mark.asyncio
+async def test_client_context_manager_nested_depth() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    client._GCSClient__storage = fake_storage
+
+    async with client.client() as c:
+        assert c is fake_storage
+        async with client.client() as c2:
+            assert c2 is fake_storage
+
+
+@pytest.mark.asyncio
+async def test_upload_bytes_passes_nested_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.upload = AsyncMock()
+    client._GCSClient__storage = fake_storage
+
+    await client.upload_bytes(
+        "bucket",
+        "key",
+        b"data",
+        content_type="text/plain",
+        metadata={"filename": "x"},
+    )
+
+    fake_storage.upload.assert_awaited_once_with(
+        "bucket",
+        "key",
+        b"data",
+        content_type="text/plain",
+        metadata={"metadata": {"filename": "x"}},
+        timeout=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_head_object_maps_download_metadata() -> None:
+    client = GCSClient()
+    fake_storage = MagicMock()
+    fake_storage.download_metadata = AsyncMock(
+        return_value={
+            "contentType": "text/plain",
+            "metadata": {"filename": "Zm9v"},
+            "size": 42,
+            "updated": "2025-01-15T12:00:00Z",
+            "etag": '"abc"',
+        },
+    )
+    client._GCSClient__storage = fake_storage
+
+    head = await client.head_object("bucket", "key")
+
+    assert head["content_type"] == "text/plain"
+    assert head["metadata"] == {"filename": "Zm9v"}
+    assert head["size"] == 42
+    assert head["etag"] == "abc"

@@ -1,7 +1,8 @@
-from typing import Any, final
+from typing import Any, Callable, final
 
 import attrs
 
+from forze.application.contracts.analytics import AnalyticsDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
 from forze.application.contracts.dlock import DistributedLockDeps
@@ -47,6 +48,9 @@ class ExecutionContext:
     search: SearchDeps = attrs.field(factory=SearchDeps, init=False)
     """Search dependencies."""
 
+    analytics: AnalyticsDeps = attrs.field(factory=AnalyticsDeps, init=False)
+    """Analytics dependencies."""
+
     cache: CacheDeps = attrs.field(factory=CacheDeps, init=False)
     """Cache dependencies."""
 
@@ -88,9 +92,16 @@ class ExecutionContext:
         self.tx.lock(_tx_resolver)
         self.document.lock(self)
         self.search.lock(self)
+        self.analytics.lock(self)
         self.cache.lock(self)
         self.counter.lock(self)
         self.storage.lock(self)
         self.embeddings.lock(self)
         self.dlock.lock(self)
         self.tenancy.lock(self)
+
+
+# ....................... #
+
+ExecutionContextFactory = Callable[[], ExecutionContext]
+"""Factory callable for creating :class:`ExecutionContext` instances."""

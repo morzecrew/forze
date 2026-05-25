@@ -74,7 +74,7 @@ class TestOidcClaimMapper:
         assert a.audience == "app"
         assert a.issued_at is not None
         assert a.expires_at is not None
-        assert a.tenant_hint is None
+        assert a.issuer_tenant_hint is None
 
     def test_audience_array_picks_first_string(self) -> None:
         mapper = OidcClaimMapper()
@@ -96,7 +96,7 @@ class TestOidcClaimMapper:
                 "firebase_tenant": "tenant-7",
             }
         )
-        assert a.tenant_hint == "tenant-7"
+        assert a.issuer_tenant_hint == "tenant-7"
 
     def test_rejects_missing_required_claims(self) -> None:
         mapper = OidcClaimMapper()

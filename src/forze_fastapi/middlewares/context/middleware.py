@@ -10,7 +10,7 @@ import attrs
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authn import AuthnIdentity, AuthnResult
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.errors import AuthenticationError, CoreError
@@ -97,40 +97,40 @@ class ContextBindingMiddleware:
 
     # ....................... #
 
-    async def _resolve_identity(
+    async def _resolve_authn(
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> AuthnIdentity | None:
+    ) -> AuthnResult | None:
         if not self.authn_identity_resolvers:
             return None
 
-        identities: list[AuthnIdentity] = []
+        results: list[AuthnResult] = []
 
         for resolver in self.authn_identity_resolvers:
-            ident = await resolver.resolve(request, ctx)
+            result = await resolver.resolve(request, ctx)
 
-            if ident is None:
+            if result is None:
                 continue
 
-            identities.append(ident)
+            results.append(result)
 
             if self.when_multiple_credentials == "first_in_order":
                 # Short-circuit: keep first hit; do not continue (later resolvers
                 # may still raise on bad-but-present creds, but the user picked
                 # "first_in_order" which means they don't want that surface).
-                return ident
+                return result
 
-        if not identities:
+        if not results:
             return None
 
-        if self.when_multiple_credentials == "reject" and len(identities) > 1:
+        if self.when_multiple_credentials == "reject" and len(results) > 1:
             raise AuthenticationError(
                 "Multiple authentication credentials present",
                 code="ambiguous_credentials",
             )
 
-        return identities[0]
+        return results[0]
 
     # ....................... #
 
@@ -142,11 +142,12 @@ class ContextBindingMiddleware:
         request = Request(scope, receive)
         ctx = self.ctx_dep()
         invocation_metadata = self.invocation_metadata_codec.decode(request)
-        identity: AuthnIdentity | None = await self._resolve_identity(request, ctx)
+        authn = await self._resolve_authn(request, ctx)
+        identity: AuthnIdentity | None = authn.identity if authn is not None else None
         tenant: TenantIdentity | None = None
 
         if self.tenant_identity_resolver is not None:
-            tenant = await self.tenant_identity_resolver.resolve(request, ctx, identity)
+            tenant = await self.tenant_identity_resolver.resolve(request, ctx, authn)
 
         elif self.tenant_identity_codec is not None:
             tenant = self.tenant_identity_codec.decode(request)

@@ -98,6 +98,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     async def issue_tokens(
         self,
         identity: AuthnIdentity,
+        *,
+        tenant_id: UUID | None = None,
     ) -> IssuedTokens:
         now = utcnow()
 
@@ -106,7 +108,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         access_token = self.access_svc.issue_token(
             principal_id=identity.principal_id,
-            tenant_id=identity.tenant_id,
+            tenant_id=tenant_id,
         )
 
         refresh_token = self.refresh_svc.generate_token()
@@ -114,7 +116,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         session_cmd = CreateSessionCmd(
             principal_id=identity.principal_id,
-            tenant_id=identity.tenant_id,
+            tenant_id=tenant_id,
             refresh_digest=refresh_digest,
             expires_at=refresh_expires_at,
         )

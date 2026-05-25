@@ -1,3 +1,4 @@
+from .catalog import SEARCH_OPERATIONS, SearchOperationEntry, SearchPreset
 from .facades import SearchFacade
 from .factories import (
     build_federated_search_registry,
@@ -10,8 +11,11 @@ from .value_objects import SearchDTOs, SearchMappers
 # ----------------------- #
 
 __all__ = [
+    "SEARCH_OPERATIONS",
     "SearchFacade",
     "SearchKernelOp",
+    "SearchOperationEntry",
+    "SearchPreset",
     "build_search_registry",
     "SearchDTOs",
     "SearchMappers",

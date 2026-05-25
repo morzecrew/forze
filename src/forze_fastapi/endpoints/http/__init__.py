@@ -1,5 +1,3 @@
-from forze.application.execution import make_registry_operation_resolver
-
 from .composition import (
     attach_http_endpoint,
     attach_http_endpoints,
@@ -75,7 +73,6 @@ __all__ = [
     "DocumentUpdateResDataMapper",
     "QueryAsIsBodyAssignMapper",
     "QueryAsIsMapper",
-    "make_registry_operation_resolver",
     "SimpleHttpEndpointSpec",
     "EmptyMapper",
     "HttpBodyMode",

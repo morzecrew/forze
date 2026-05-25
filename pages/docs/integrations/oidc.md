@@ -52,7 +52,7 @@ hs_keys = StaticKeyProvider(key=b"some-shared-secret")
 ```python
 from forze_oidc import OidcClaimMapper
 
-# Default: tenant_hint stays None.
+# Default: issuer_tenant_hint stays None.
 default_mapper = OidcClaimMapper()
 
 # Casdoor includes the org id under "organization".
@@ -68,7 +68,7 @@ casdoor_mapper = OidcClaimMapper(tenant_claim="organization")
 | `subject_claim` | `"sub"` | Source for `VerifiedAssertion.subject`. |
 | `audience_claim` | `"aud"` | Optional; takes the first string when the IdP returns an array. |
 | `issued_at_claim` / `expires_at_claim` | `"iat"` / `"exp"` | Coerced to `datetime` when present as integer/float. |
-| `tenant_claim` | `None` | When set, the resolver picks tenant context from this claim. |
+| `tenant_claim` | `None` | When set, the mapper copies this claim into `VerifiedAssertion.issuer_tenant_hint` for later tenancy resolution. |
 
 ### Verifier
 

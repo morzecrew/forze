@@ -84,54 +84,14 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         return self.find_many_implicit_limit
 
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> M: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> T: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never: ...
+    # ....................... #
 
     async def get(
         self,
         pk: UUID,
         *,
         for_update: ForUpdateMode = False,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> M | T | JsonDict:
+    ) -> M:
         where_sql = sql.SQL("{pk} = {ph}").format(
             pk=self.ident_pk(),
             ph=sql.Placeholder(),
@@ -141,7 +101,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=self.return_clause(return_model, return_fields),
+            cols=self.return_clause(),
             table=self.source_qname.ident(),
             where=where_sql,
         )
@@ -157,59 +117,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         if row is None:
             raise NotFoundError(f"Record not found: {pk}")
 
-        if return_model is not None:
-            return pydantic_validate(return_model, row)
-
-        if return_fields is not None:
-            return {k: row.get(k, None) for k in return_fields}
-
         return pydantic_validate(self.model_type, row)
 
     # ....................... #
 
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> list[M]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> list[T]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> list[JsonDict]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never: ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]:
+    async def get_many(self, pks: Sequence[UUID]) -> list[M]:
         if not pks:
             return []
 
@@ -222,7 +134,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=self.return_clause(return_model, return_fields),
+            cols=self.return_clause(),
             table=self.source_qname.ident(),
             where=where_sql,
         )
@@ -235,12 +147,6 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         if missing:
             raise NotFoundError(f"Some records not found: {missing}")
-
-        if return_model is not None:
-            return pydantic_validate_many(return_model, ordered)
-
-        if return_fields is not None:
-            return [{k: row.get(k, None) for k in return_fields} for row in ordered]
 
         return pydantic_validate_many(self.model_type, ordered)
 

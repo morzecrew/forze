@@ -6,8 +6,8 @@ from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
-    AuthnIdentity,
     AuthnPort,
+    AuthnResult,
     AuthnSpec,
     PasswordCredentials,
     PasswordVerifierPort,
@@ -90,7 +90,7 @@ class AuthnOrchestrator(AuthnPort):
     async def authenticate_with_password(
         self,
         credentials: PasswordCredentials,
-    ) -> AuthnIdentity:
+    ) -> AuthnResult:
         if "password" not in self.enabled_methods or self.password_verifier is None:
             raise AuthenticationError(
                 "Password authentication is not enabled for this route",
@@ -98,15 +98,19 @@ class AuthnOrchestrator(AuthnPort):
             )
 
         assertion = await self.password_verifier.verify_password(credentials)
+        identity = await self.resolver.resolve(assertion)
 
-        return await self.resolver.resolve(assertion)
+        return AuthnResult(
+            identity=identity,
+            issuer_tenant_hint=assertion.issuer_tenant_hint,
+        )
 
     # ....................... #
 
     async def authenticate_with_token(
         self,
         credentials: AccessTokenCredentials,
-    ) -> AuthnIdentity:
+    ) -> AuthnResult:
         if "token" not in self.enabled_methods or self.token_verifier is None:
             raise AuthenticationError(
                 "Token authentication is not enabled for this route",
@@ -114,15 +118,19 @@ class AuthnOrchestrator(AuthnPort):
             )
 
         assertion = await self.token_verifier.verify_token(credentials)
+        identity = await self.resolver.resolve(assertion)
 
-        return await self.resolver.resolve(assertion)
+        return AuthnResult(
+            identity=identity,
+            issuer_tenant_hint=assertion.issuer_tenant_hint,
+        )
 
     # ....................... #
 
     async def authenticate_with_api_key(
         self,
         credentials: ApiKeyCredentials,
-    ) -> AuthnIdentity:
+    ) -> AuthnResult:
         if "api_key" not in self.enabled_methods or self.api_key_verifier is None:
             raise AuthenticationError(
                 "API key authentication is not enabled for this route",
@@ -130,5 +138,9 @@ class AuthnOrchestrator(AuthnPort):
             )
 
         assertion = await self.api_key_verifier.verify_api_key(credentials)
+        identity = await self.resolver.resolve(assertion)
 
-        return await self.resolver.resolve(assertion)
+        return AuthnResult(
+            identity=identity,
+            issuer_tenant_hint=assertion.issuer_tenant_hint,
+        )

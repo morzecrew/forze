@@ -12,8 +12,15 @@ class TenantResolverPort(Protocol):
     def resolve_from_principal(
         self,
         principal_id: UUID,
+        *,
+        requested_tenant_id: UUID | None = None,
     ) -> Awaitable[TenantIdentity | None]:
-        """Resolve the tenant identity from the principal ID."""
+        """Resolve the tenant identity from the principal ID.
+
+        ``requested_tenant_id`` is an optional non-authoritative tenant request
+        (for example from a verified issuer claim or HTTP header). Implementations
+        should validate it against principal membership rather than trusting it.
+        """
         ...
 
 

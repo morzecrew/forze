@@ -24,7 +24,7 @@ ExecutionContextFactoryPort = Callable[
 ]
 """Factory that builds request-scoped :class:`ExecutionContext` instances."""
 
-HandlerResolverPort = Callable[[ExecutionContext, StrKey], Handler[Any, Any]]
+HandlerResolverPort = Callable[[StrKey, ExecutionContext], Handler[Any, Any]]
 """Resolver that maps operation keys to composed handlers."""
 
 # ....................... #
@@ -226,7 +226,7 @@ class SocketIONamespaceRouter:
                 )
                 ctx = await _resolve_context(context_factory, request)
                 args = _route.parse_payload(payload)
-                op = operation_resolver(ctx, _route.operation)
+                op = operation_resolver(_route.operation, ctx)
                 result = await op(args)
 
                 return _route.parse_ack(result)

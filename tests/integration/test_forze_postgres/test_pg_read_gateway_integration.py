@@ -90,12 +90,6 @@ async def test_postgres_read_gateway_get_find_and_projections(
     full = await gw.get(alpha_id)
     assert full.name == "alpha"
 
-    proj = await gw.get(alpha_id, return_fields=["name"])
-    assert proj == {"name": "alpha"}
-
-    typed = await gw.get(alpha_id, return_model=RdNameOnly)
-    assert typed.name == "alpha"
-
     one = await gw.find({"$values": {"name": "beta"}}, return_fields=["id", "name"])
     assert one is not None
     assert one["name"] == "beta"

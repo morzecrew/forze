@@ -1,0 +1,424 @@
+"""Firestore gateway for document write operations."""
+
+from forze_firestore._compat import require_firestore
+
+require_firestore()
+
+# ....................... #
+
+from typing import Sequence, final
+from uuid import UUID
+
+import attrs
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from forze.application.contracts.querying import QueryFilterExpression
+from forze.base.errors import (
+    ConcurrencyError,
+    ConflictError,
+    CoreError,
+    NotFoundError,
+    ValidationError,
+)
+from forze.base.primitives import JsonDict
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_validate,
+    pydantic_validate_many,
+)
+from forze.domain.constants import REV_FIELD
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+
+from .base import FirestoreGateway
+from .history import FirestoreHistoryGateway
+from .read import FirestoreReadGateway
+
+# ----------------------- #
+
+
+def optimistic_retry(*, attempts: int = 3):  # type: ignore[no-untyped-def]
+    return retry(
+        retry=retry_if_exception_type(ConcurrencyError),
+        stop=stop_after_attempt(attempts),
+        wait=wait_exponential(multiplier=0.01, min=0.01, max=0.2),
+        reraise=True,
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FirestoreWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
+    FirestoreGateway[D]
+):
+    """Write gateway for Firestore documents with optimistic concurrency."""
+
+    read_gw: FirestoreReadGateway[D]
+    create_cmd_type: type[C]
+    update_cmd_type: type[U] | None = attrs.field(default=None)
+    history_gw: FirestoreHistoryGateway[D] | None = attrs.field(default=None)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.collection != self.read_gw.collection:
+            raise CoreError(
+                "Collection mismatch. Write gateway and nested read gateway must match."
+            )
+
+        if self.client is not self.read_gw.client:
+            raise CoreError("Client mismatch between write and read gateways.")
+
+        if self.database != self.read_gw.database:
+            raise CoreError("Database mismatch between write and read gateways.")
+
+        if self.tenant_aware != self.read_gw.tenant_aware:
+            raise CoreError(
+                "Tenant awareness mismatch between write and read gateways."
+            )
+
+    # ....................... #
+
+    def _require_update_cmd(self) -> None:
+        if self.update_cmd_type is None:
+            raise CoreError("Update command type is not supported for this model")
+
+    # ....................... #
+
+    async def _write_history(self, *data: D) -> None:
+        if self.history_gw is not None:
+            await self.history_gw.write_many(data)
+
+    # ....................... #
+
+    def _materialize_after_write(self, payload: JsonDict) -> D:
+        """Build a domain model from written storage without a post-write read."""
+
+        return pydantic_validate(self.model_type, self._from_storage_doc(payload))
+
+    # ....................... #
+
+    async def _load_after_write(self, pk: UUID, *, merged: JsonDict | None = None) -> D:
+        """Return a document after a write, avoiding read-after-write inside transactions."""
+
+        if merged is not None and self.client.is_in_transaction():
+            return pydantic_validate(self.model_type, merged)
+
+        return await self.read_gw.get(pk)
+
+    # ....................... #
+
+    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
+        if self.history_gw is None:
+            for current, rev, _ in data:
+                if rev != current.rev:
+                    raise ConflictError("Revision mismatch", code="revision_mismatch")
+
+            return
+
+        to_check = [
+            (current, rev, update)
+            for current, rev, update in data
+            if rev != current.rev
+        ]
+        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
+
+        if bad_records:
+            raise ValidationError("Invalid revision number")
+
+        if to_check:
+            pks_to_check = [current.id for current, _, _ in to_check]
+            revs_to_check = [rev for _, rev, _ in to_check]
+            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
+
+            if len(hist_records) != len(to_check):
+                raise NotFoundError(
+                    "History records not found. Please retry with actual revision number."
+                )
+
+            for (current, _, update), historical in zip(
+                to_check, hist_records, strict=True
+            ):
+                if not current.validate_historical_consistency(historical, update):
+                    raise ConflictError(
+                        "Historical consistency violation during update",
+                        code="historical_consistency_violation",
+                    )
+
+    # ....................... #
+
+    def _from_cdto(self, dto: C) -> D:
+        data = pydantic_dump(dto, exclude={"unset": True})
+        return pydantic_validate(self.model_type, data)
+
+    # ....................... #
+
+    def _from_cdto_many(self, dtos: Sequence[C]) -> Sequence[D]:
+        data = pydantic_dump_many(dtos, exclude={"unset": True})
+        return pydantic_validate_many(self.model_type, data)
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def create(self, dto: C) -> D:
+        model = self._from_cdto(dto)
+        data = pydantic_dump(model)
+        data = self.adapt_payload_for_write(data, create=True)
+        coll = await self.coll()
+        await self.client.set_document(coll, self._storage_pk(model.id), data)
+        if self.client.is_in_transaction():
+            created = self._materialize_after_write(data)
+        else:
+            created = await self.read_gw.get(model.id)
+        await self._write_history(created)
+        return created
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def create_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        if not dtos:
+            return []
+
+        models = self._from_cdto_many(dtos)
+        raw_payloads = pydantic_dump_many(models)
+        payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
+        documents = [
+            (self._storage_pk(m.id), dict(p))
+            for m, p in zip(models, payloads, strict=True)
+        ]
+        await self.client.insert_many(
+            await self.coll(), documents, batch_size=batch_size
+        )
+        if self.client.is_in_transaction():
+            created = [self._materialize_after_write(dict(p)) for p in payloads]
+        else:
+            created = await self.read_gw.get_many([model.id for model in models])
+        await self._write_history(*created)
+        return created
+
+    # ....................... #
+
+    def _bump_rev(self, current: D, diff: JsonDict) -> JsonDict:
+        diff[REV_FIELD] = current.rev + 1
+        return diff
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def _patch(
+        self,
+        pk: UUID,
+        update: JsonDict | None = None,
+        *,
+        rev: int | None = None,
+    ) -> tuple[D, JsonDict]:
+        current = await self.read_gw.get(pk)
+
+        if update is not None:
+            if rev is not None:
+                await self._validate_history((current, rev, update))
+
+            _, diff = current.update(update)
+
+        else:
+            _, diff = current.touch()
+
+        if not diff:
+            return current, diff
+
+        diff = self._bump_rev(current, diff)
+        merged = pydantic_dump(current)
+        merged.update(self.adapt_payload_for_write(diff, create=False))
+
+        coll = await self.coll()
+        storage = self.adapt_payload_for_write(merged, create=False)
+        await self.client.set_document(coll, self._storage_pk(pk), storage)
+        updated = await self._load_after_write(pk, merged=merged)
+        await self._write_history(updated)
+
+        return updated, diff
+
+    # ....................... #
+
+    async def update(
+        self,
+        pk: UUID,
+        dto: U,
+        *,
+        rev: int | None = None,
+    ) -> tuple[D, JsonDict]:
+        self._require_update_cmd()
+        update_data = pydantic_dump(dto, exclude={"unset": True})
+
+        return await self._patch(pk, update_data, rev=rev)
+
+    # ....................... #
+
+    async def update_many(
+        self,
+        pks: Sequence[UUID],
+        dtos: Sequence[U],
+        *,
+        revs: Sequence[int] | None = None,
+        batch_size: int = 200,
+    ) -> tuple[Sequence[D], Sequence[JsonDict]]:
+        _ = batch_size
+        self._require_update_cmd()
+
+        if len(pks) != len(dtos):
+            raise CoreError("Length mismatch between primary keys and updates")
+
+        if len(pks) != len(set(pks)):
+            raise ValidationError("Primary keys must be unique")
+
+        if revs is not None and len(revs) != len(pks):
+            raise CoreError("Length mismatch between primary keys and revisions")
+
+        results: list[D] = []
+        diffs: list[JsonDict] = []
+
+        for pk, dto, rev in zip(
+            pks,
+            dtos,
+            revs if revs is not None else [None] * len(pks),
+            strict=True,
+        ):
+            updated, diff = await self.update(pk, dto, rev=rev)
+            results.append(updated)
+            diffs.append(diff)
+
+        return results, diffs
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def ensure(self, dto: C) -> D:
+        model = self._from_cdto(dto)
+
+        try:
+            return await self.read_gw.get(model.id)
+        except NotFoundError:
+            return await self.create(dto)
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def ensure_many(
+        self,
+        dtos: Sequence[C],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        if not dtos:
+            return []
+
+        out: list[D] = []
+
+        for dto in dtos:
+            out.append(await self.ensure(dto))
+
+        _ = batch_size
+        return out
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def upsert(self, create_dto: C, update_dto: U) -> D:
+        self._require_update_cmd()
+        model = self._from_cdto(create_dto)
+
+        try:
+            current = await self.read_gw.get(model.id)
+        except NotFoundError:
+            return await self.create(create_dto)
+
+        updated, _ = await self.update(current.id, update_dto, rev=current.rev)
+        return updated
+
+    # ....................... #
+
+    @optimistic_retry()  # type: ignore[untyped-decorator]
+    async def upsert_many(
+        self,
+        pairs: Sequence[tuple[C, U]],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        _ = batch_size
+
+        if not pairs:
+            return []
+
+        return [await self.upsert(c, u) for c, u in pairs]
+
+    # ....................... #
+
+    async def update_matching(
+        self,
+        filters: QueryFilterExpression,  # type: ignore[valid-type]
+        dto: U,
+        *,
+        batch_size: int = 200,
+    ) -> tuple[int, Sequence[D]]:
+        _ = filters, dto, batch_size
+        raise CoreError("Firestore adapter does not support update_matching in MVP")
+
+    # ....................... #
+
+    async def touch(self, pk: UUID) -> D:
+        res, _ = await self._patch(pk)
+        return res
+
+    # ....................... #
+
+    async def touch_many(
+        self,
+        pks: Sequence[UUID],
+        *,
+        batch_size: int = 200,
+    ) -> Sequence[D]:
+        _ = batch_size
+
+        if len(pks) != len(set(pks)):
+            raise ValidationError("Primary keys must be unique")
+
+        out: list[D] = []
+
+        for pk in pks:
+            doc, _ = await self._patch(pk)
+            out.append(doc)
+
+        return out
+
+    # ....................... #
+
+    async def kill(self, pk: UUID) -> None:
+        await self.client.delete_document(await self.coll(), self._storage_pk(pk))
+
+    # ....................... #
+
+    async def kill_many(self, pks: Sequence[UUID], *, batch_size: int = 200) -> None:
+        _ = batch_size
+
+        if not pks:
+            return
+
+        if len(pks) != len(set(pks)):
+            raise ValidationError("Primary keys must be unique")
+
+        for pk in pks:
+            await self.kill(pk)

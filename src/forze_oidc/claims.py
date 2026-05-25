@@ -64,19 +64,19 @@ class OidcClaimMapper:
                 # OIDC permits aud as an array; take the first string entry.
                 audience = aud_raw[0]
 
-        tenant_hint: str | None = None
+        issuer_tenant_hint: str | None = None
 
         if self.tenant_claim is not None:
             tid_raw = claims.get(self.tenant_claim)
 
             if isinstance(tid_raw, str):
-                tenant_hint = tid_raw
+                issuer_tenant_hint = tid_raw
 
         return VerifiedAssertion(
             issuer=issuer_raw,
             subject=subject_raw,
             audience=audience,
-            tenant_hint=tenant_hint,
+            issuer_tenant_hint=issuer_tenant_hint,
             issued_at=self._coerce_timestamp(claims, self.issued_at_claim),
             expires_at=self._coerce_timestamp(claims, self.expires_at_claim),
             claims=dict(claims),

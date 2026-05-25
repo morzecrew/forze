@@ -10,7 +10,7 @@ from uuid import UUID
 import attrs
 from fastapi import Request
 
-from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authn import AuthnResult
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.errors import AuthenticationError
@@ -37,7 +37,9 @@ class HeaderTenantIdentityCodec(TenantIdentityCodecPort):
         if raw is None or not raw.strip():
             return None
 
-        return TenantIdentity(tenant_id=UUID(raw.strip()))
+        return TenantIdentity(
+            tenant_id=_coerce_tenant_hint(raw, source=f"header {self.header_name!r}")
+        )
 
 
 # ....................... #
@@ -47,7 +49,12 @@ class HeaderTenantIdentityCodec(TenantIdentityCodecPort):
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TenantIdentityResolver(TenantIdentityResolverPort):
-    """Resolve tenant from authn-bound id, optional header hint, and resolver fallback."""
+    """Resolve tenant from an authenticated principal plus optional tenant hints.
+
+    Request and issuer hints can only request or validate tenant scope. The
+    authoritative tenant identity, when available, comes from the configured
+    :class:`~forze.application.contracts.tenancy.TenantResolverPort`.
+    """
 
     required: bool = False
     """Whether missing tenant should raise :class:`AuthenticationError`."""
@@ -55,48 +62,68 @@ class TenantIdentityResolver(TenantIdentityResolverPort):
     hint_codec: TenantIdentityCodecPort | None = None
     """Optional codec for tenant hints on the request (e.g. ``X-Tenant-Id``)."""
 
-    strict_tenant_sources: bool = False
-    """When ``True``, disagreeing non-null tenant ids from sources raise."""
-
     # ....................... #
 
     async def resolve(
         self,
         request: Request,
         ctx: ExecutionContext,
-        identity: AuthnIdentity | None,
+        authn: AuthnResult | None,
     ) -> TenantIdentity | None:
         hint = self.hint_codec.decode(request) if self.hint_codec is not None else None
+        issuer_hint_id = _coerce_issuer_tenant_hint(authn)
 
-        from_authn = (
-            TenantIdentity(tenant_id=identity.tenant_id)
-            if identity is not None and identity.tenant_id is not None
-            else None
-        )
+        if (
+            hint is not None
+            and issuer_hint_id is not None
+            and hint.tenant_id != issuer_hint_id
+        ):
+            raise AuthenticationError(
+                "Conflicting tenant identities from issuer and request hint",
+                code="tenant_conflict",
+            )
 
-        resolved = None
+        requested_tenant_id = hint.tenant_id if hint is not None else issuer_hint_id
+        resolved: TenantIdentity | None = None
         ten = ctx.tenancy.resolver()
 
-        if ten is not None and identity is not None:
-            resolved = await ten.resolve_from_principal(identity.principal_id)
+        if ten is not None and authn is not None:
+            resolved = await ten.resolve_from_principal(
+                authn.identity.principal_id,
+                requested_tenant_id=requested_tenant_id,
+            )
 
-        sources = [s for s in (from_authn, hint, resolved) if s is not None]
-
-        if self.strict_tenant_sources and sources:
-            ids = {s.tenant_id for s in sources}
-
-            if len(ids) > 1:
+            if requested_tenant_id is not None and resolved is None:
                 raise AuthenticationError(
-                    "Conflicting tenant identities from credential, hint, and resolver",
+                    "Requested tenant is not available for the authenticated principal",
                     code="tenant_conflict",
                 )
 
-        chosen = from_authn or hint or resolved
-
-        if self.required and chosen is None:
+        if self.required and resolved is None:
             raise AuthenticationError(
                 "Tenant identity is required",
                 code="tenant_required",
             )
 
-        return chosen
+        return resolved
+
+
+# ....................... #
+
+
+def _coerce_tenant_hint(raw: str, *, source: str) -> UUID:
+    try:
+        return UUID(raw.strip())
+
+    except ValueError as exc:
+        raise AuthenticationError(
+            f"Invalid tenant hint from {source}",
+            code="invalid_tenant_hint",
+        ) from exc
+
+
+def _coerce_issuer_tenant_hint(authn: AuthnResult | None) -> UUID | None:
+    if authn is None or authn.issuer_tenant_hint is None:
+        return None
+
+    return _coerce_tenant_hint(authn.issuer_tenant_hint, source="credential issuer")

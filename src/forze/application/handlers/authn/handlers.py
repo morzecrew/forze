@@ -43,8 +43,8 @@ class AuthnPasswordLogin(Handler[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
             password=args.password,
         )
 
-        identity = await self.authn.authenticate_with_password(creds)
-        tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(identity)
+        authn = await self.authn.authenticate_with_password(creds)
+        tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(authn.identity)
 
         return token_response_from_issued_tokens(tokens)
 

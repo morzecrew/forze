@@ -122,6 +122,60 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 ```
 
+## Transport attach (experimental)
+
+`forze_fastapi.transport.http` provides function-first route factories on a plain `APIRouter`.
+
+### Transport layers
+
+| Layer | Module | Role |
+|-------|--------|------|
+| Catalog | `forze.application.composition.*.catalog` | Which operations exist (`*_OPERATIONS`), presets (`DocumentPreset`, …), capability checks |
+| Bindings | `forze_fastapi.transport.http.bindings` | HTTP method, default path, response model, handler builder per operation |
+| Options | `forze_fastapi.transport.http.options` | Per-route `RouteOpts` and attach `config` (ETag, idempotency, token transport) |
+| Attach | `forze_fastapi.transport.http.attach` | `attach_*_routes`: `enable` loop, policies, `register_route` on `APIRouter` |
+
+Real-time Socket.IO commands use [`forze_socketio`](../integrations/socketio.md) (`SocketIONamespaceRouter.command`) — not nested under `transport.http`. A future catalog-driven `attach_*_commands` for Socket.IO would consume the same composition catalogs without importing FastAPI transport.
+
+Legacy [`attach_*_endpoints`](../../src/forze_fastapi/endpoints/) (`endpoints={...}` dicts) is unchanged; removal is planned in a follow-up PR. Prefer transport attach for new code.
+
+**Planned follow-ups:** catalog-driven `attach_*_commands` in `forze_socketio`; legacy `endpoints/` removal; native FastAPI WebSocket only if a concrete use case appears.
+
+```python
+from fastapi import APIRouter
+from forze.application.composition.document import DocumentFacade, DocumentPreset, build_document_registry
+from forze_fastapi.transport.http import attach_document_routes, make_facade_dep
+
+registry = build_document_registry(project_spec, project_dtos).freeze()
+facade_dep = make_facade_dep(
+    DocumentFacade,
+    registry=registry,
+    namespace=project_spec.default_namespace,
+    ctx_dep=context_dependency,
+)
+
+attach_document_routes(
+    projects,
+    document=project_spec,
+    dtos=project_dtos,
+    facade_dep=facade_dep,
+    ctx_dep=context_dependency,
+    registry=registry,
+    enable=DocumentPreset.CRUD,
+    per_route={"get": {"path_override": "/metadata"}},
+    config={"enable_etag": True},
+)
+```
+
+| Parameter | Role |
+|-----------|------|
+| `enable` | Tuple of operation names or a preset (`DocumentPreset.READ`, `CRUD`, `FULL`, …) from the composition catalog |
+| `paths` | Bulk path overrides keyed by enable name |
+| `per_route` | Per-operation `RouteOpts`: `path_override`, `authn`, `policies`, `include_in_schema` |
+| `config` | HTTP features such as `enable_etag` / `enable_idempotency` on document routes |
+
+Legacy `attach_*_endpoints` with `endpoints={...}` dicts remains available; prefer transport attach for new code.
+
 ## Contract coverage table
 
 | Forze contract | Adapter implementation | Dependency key/spec name | Limitations |

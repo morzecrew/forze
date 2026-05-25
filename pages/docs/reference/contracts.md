@@ -204,6 +204,53 @@ Namespace-scoped atomic counters:
 |-----|-------------|
 | `CounterDepKey` | `ctx.counter(CounterSpec(...))` |
 
+## Analytics
+
+### AnalyticsSpec
+
+    :::python
+    from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
+
+    metrics_spec = AnalyticsSpec(
+        name="events",
+        read=MetricRow,
+        queries={"daily": AnalyticsQueryDefinition(params=DailyParams)},
+        ingest=EventRow,
+    )
+
+Warehouse dataset/table names belong in future integration modules (e.g. `BigQueryDepsModule`), not on the kernel spec.
+
+| Field | Purpose |
+|-------|---------|
+| `name` | Logical route for the analytics surface |
+| `read` | Default Pydantic model for query rows |
+| `queries` | Named queries (`query_key` → parameter model) |
+| `ingest` | Optional append row model |
+
+### AnalyticsQueryPort[R]
+
+| Method | Purpose |
+|--------|---------|
+| `run` | Named query; `CountlessPage[R]` |
+| `run_page` | Named query with total count when supported |
+| `run_chunked` | Batch iterator for large scans |
+| `project_run` / `project_run_page` / `project_run_chunked` | Projected `JsonDict` rows |
+| `select_run` / … | Rows validated as `return_type` |
+| `run_cursor` / `project_run_cursor` / `select_run_cursor` | Opaque cursor pagination |
+
+### AnalyticsIngestPort[I]
+
+| Method | Purpose |
+|--------|---------|
+| `append` | Append a batch of rows; returns `AnalyticsAppendResult` |
+
+### Dependency keys
+
+| Key | Resolved via |
+|-----|-------------|
+| `AnalyticsQueryDepKey` | `ctx.analytics.query(spec)` |
+| `AnalyticsIngestDepKey` | `ctx.analytics.ingest(spec)` |
+
 ## Search
 
 ### SearchSpec
@@ -471,7 +518,7 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 ## Context handling
 
 Execution identity is represented by `InvocationMetadata`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
-`AuthnIdentity` carries the authenticated `principal_id`; `TenantIdentity` carries the current `tenant_id`. Bind them at the boundary via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
+`AuthnPort` returns `AuthnResult` at the boundary, but only its principal-only `AuthnIdentity` is bound onto `ExecutionContext`; `TenantIdentity` carries the current `tenant_id`. Bind them via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
 
 The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_authn` first-party stack, and `forze_oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
 

@@ -96,6 +96,7 @@ Use them for:
 - `src/forze_postgres/`: Postgres integration package.
 - `src/forze_redis/`: Redis integration package.
 - `src/forze_s3/`: S3 integration package.
+- `src/forze_gcs/`: Google Cloud Storage integration package.
 - `src/forze_temporal/`: Temporal integration package.
 - `src/forze_mongo/`: Mongo integration package.
 - `src/forze_mock/`: in-memory mock adapters for local development.

@@ -1,5 +1,5 @@
 from typing import Any, final
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import attrs
 
@@ -31,8 +31,8 @@ class MappingTableResolver(PrincipalResolverPort):
     :class:`AuthenticationError` (typical for invitation-only deployments where principal
     rows are pre-created and mapped out of band).
 
-    The ``tenant_hint`` from the assertion is interpreted as a UUID when present; mapping
-    rows do not carry tenant info today (left to per-deployment policy).
+    Tenant metadata asserted by the credential issuer is intentionally not folded into the
+    canonical :class:`AuthnIdentity`; tenancy resolution stays a separate concern.
     """
 
     qry: DocumentQueryPort[ReadIdentityMapping]
@@ -82,10 +82,7 @@ class MappingTableResolver(PrincipalResolverPort):
         )
 
         if existing is not None:
-            return AuthnIdentity(
-                principal_id=existing.principal_id,
-                tenant_id=self._coerce_tenant(assertion),
-            )
+            return AuthnIdentity(principal_id=existing.principal_id)
 
         if not self.provision_on_first_sight:
             raise AuthenticationError(
@@ -109,20 +106,4 @@ class MappingTableResolver(PrincipalResolverPort):
             return_new=False,
         )
 
-        return AuthnIdentity(
-            principal_id=new_pid,
-            tenant_id=self._coerce_tenant(assertion),
-        )
-
-    # ....................... #
-
-    @staticmethod
-    def _coerce_tenant(assertion: VerifiedAssertion) -> UUID | None:
-        if assertion.tenant_hint is None:
-            return None
-
-        try:
-            return UUID(assertion.tenant_hint)
-
-        except ValueError:
-            return None
+        return AuthnIdentity(principal_id=new_pid)

@@ -8,6 +8,7 @@ from .deps import (
     RoleAssignmentDepKey,
     RoleAssignmentDepPort,
 )
+from .helpers import coalesce_authz_tenant_id
 from .ports import (
     AuthzPort,
     EffectiveGrantsPort,
@@ -22,7 +23,6 @@ from .value_objects import (
     PermissionRef,
     PrincipalRef,
     RoleRef,
-    coalesce_authz_tenant_id,
 )
 
 # ----------------------- #

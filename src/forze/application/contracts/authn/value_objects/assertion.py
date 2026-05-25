@@ -28,8 +28,8 @@ class VerifiedAssertion:
     audience: str | None = attrs.field(default=None)
     """Optional audience the assertion is bound to."""
 
-    tenant_hint: str | None = attrs.field(default=None)
-    """Raw tenant identifier as provided by the issuer; resolvers decide how to map it."""
+    issuer_tenant_hint: str | None = attrs.field(default=None)
+    """Raw tenant identifier as asserted by the issuer; tenancy resolution decides how to validate or use it."""
 
     issued_at: datetime | None = attrs.field(default=None)
     """Optional issued-at timestamp."""

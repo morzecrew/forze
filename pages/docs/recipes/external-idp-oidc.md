@@ -57,6 +57,8 @@ class ConfigurableOidcTokenVerifier:
 
 `forze_authn` already ships `ConfigurableMappingTableResolver` and `ConfigurableDeterministicUuidResolver`; reuse them directly.
 
+When `tenant_claim` is set, the mapped claim becomes `issuer_tenant_hint` on the boundary authn result. Combine it with `TenantIdentityResolver` plus a registered `TenantResolverPort` if you want authoritative tenant scoping; the hint alone does not define the effective tenant.
+
 ## Module wiring
 
 ```python
