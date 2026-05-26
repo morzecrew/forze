@@ -13,7 +13,10 @@ from forze.application.contracts.analytics import (
 )
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
 from forze_clickhouse.execution.deps.configs import ClickHouseAnalyticsConfig
-from forze_clickhouse.kernel.platform.value_objects import ClickHouseQueryResult
+from forze_clickhouse.kernel.platform.value_objects import (
+    ClickHouseInsertResult,
+    ClickHouseQueryResult,
+)
 
 
 class _Row(BaseModel):
@@ -91,10 +94,10 @@ class _MockClient:
         rows: list[dict[str, Any]],
         *,
         timeout: int | None = None,
-    ) -> int:
+    ) -> ClickHouseInsertResult:
         _ = database, table, timeout
         self.inserts.append(rows)
-        return len(rows)
+        return ClickHouseInsertResult(accepted=len(rows))
 
 
 @pytest.mark.asyncio

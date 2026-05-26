@@ -43,8 +43,10 @@ module = BigQueryDepsModule(
 ```python
 async with runtime.session() as ctx:
     q = ctx.analytics.query(spec)
+    # Prefer run/run_cursor for large scans; run_page runs COUNT unless skip_total: true
     page = await q.run_page("daily", DailyParams(day="2026-01-01"))
-    await ctx.analytics.ingest(spec).append([EventRow(event="signup")])
+    result = await ctx.analytics.ingest(spec).append([EventRow(event="signup")])
+    # result.accepted, result.rejected, result.errors (partial streaming insert failures)
 ```
 
 ## Local emulator

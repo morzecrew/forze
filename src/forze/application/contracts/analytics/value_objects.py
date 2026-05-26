@@ -2,6 +2,8 @@
 
 import attrs
 
+from forze.base.primitives import JsonDict
+
 # ----------------------- #
 
 
@@ -11,3 +13,9 @@ class AnalyticsAppendResult:
 
     accepted: int
     """Number of rows accepted by the adapter."""
+
+    rejected: int = 0
+    """Number of rows rejected when the engine reports partial failures."""
+
+    errors: tuple[JsonDict, ...] = ()
+    """Optional row-level errors (capped by the integration client)."""

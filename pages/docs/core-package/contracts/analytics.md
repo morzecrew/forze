@@ -70,11 +70,21 @@ Result shape and pagination mode are encoded in the method name (same convention
 
 Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; adapters interpret them.
 
+### `AnalyticsRunOptions` by engine
+
+| Option | BigQuery | ClickHouse |
+|--------|----------|------------|
+| `timeout` | HTTP / job poll budget | `max_execution_time` (seconds) |
+| `max_rows` | Caps rows returned | Caps rows returned |
+| `dry_run` | BigQuery API dry-run (bytes on client result) | Skips execution (empty pages; no cost estimate) |
+
+Prefer `run` or `run_cursor` for large scans; `run_page` runs an extra COUNT unless `skip_total: true` is set on the query config.
+
 ## `AnalyticsIngestPort`
 
 | Method | Purpose |
 |--------|---------|
-| `append(rows)` | Append a batch; returns `AnalyticsAppendResult` with `accepted` count. |
+| `append(rows)` | Append a batch; returns `AnalyticsAppendResult` (`accepted`, optional `rejected`, `errors`). |
 
 Register `AnalyticsIngestDepKey` only when ingest is required. Mock adapter raises if `spec.ingest`
 is unset.

@@ -87,3 +87,38 @@ async def test_deps_module_wiring(bigquery_client, analytics_dataset) -> None:
     port = ctx.analytics.query(spec)
     page = await port.run("all", _Params())
     assert len(page.hits) >= 0
+
+
+@pytest.mark.asyncio
+async def test_run_cursor_round_trip(bigquery_client, analytics_dataset) -> None:
+    dataset_id, table_id = analytics_dataset
+    spec = _spec()
+    adapter = BigQueryAnalyticsAdapter(
+        client=bigquery_client,
+        spec=spec,
+        config={
+            "dataset": dataset_id,
+            "queries": {
+                "all": {"sql": f"SELECT event, value FROM {dataset_id}.{table_id}"},
+            },
+            "ingest_table": table_id,
+        },
+    )
+
+    await adapter.append([_Ingest(event="cursor_a", value=1)])
+    first = await adapter.run_cursor("all", _Params(), cursor={"limit": 1})
+    assert len(first.hits) >= 1
+
+    if first.next_cursor:
+        second = await adapter.run_cursor(
+            "all",
+            _Params(),
+            cursor={"limit": 1, "after": first.next_cursor},
+        )
+        assert len(second.hits) >= 0
+
+
+@pytest.mark.asyncio
+async def test_client_health(bigquery_client) -> None:
+    message, ok = await bigquery_client.health()
+    assert ok is True

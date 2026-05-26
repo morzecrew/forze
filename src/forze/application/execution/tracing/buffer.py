@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import final
+from typing import ClassVar, final
 
 import attrs
 
@@ -16,15 +16,39 @@ from .events import TracingEvent
 class RuntimeTrace:
     """Append-only sequence of observed runtime events for one async task."""
 
+    MAX_EVENTS: ClassVar[int] = 10_000
+    """Maximum stored events before truncation."""
+
     events: list[TracingEvent] = attrs.field(factory=list)
     """Recorded events in execution order."""
 
     _next_seq: int = attrs.field(default=0, init=False)
+    _truncated: bool = attrs.field(default=False, init=False)
 
     # ....................... #
 
     def record(self, event: TracingEvent) -> None:
         """Append an event (caller supplies ``seq`` via :meth:`next_event`)."""
+
+        if self._truncated:
+            return
+
+        if len(self.events) >= self.MAX_EVENTS:
+            self._truncated = True
+            self.events.append(
+                TracingEvent(
+                    seq=self._next_seq,
+                    domain="tracing",
+                    op="truncated",
+                    surface=None,
+                    route=None,
+                    phase=None,
+                    tx_depth=0,
+                    tx_route=None,
+                )
+            )
+            self._next_seq += 1
+            return
 
         self.events.append(event)
 

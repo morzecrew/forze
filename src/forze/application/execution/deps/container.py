@@ -393,7 +393,26 @@ class Deps[K: StrKey]:
 
         try:
             factory = self._lookup(key, route=route)
-            return factory(ctx)
+            result = factory(ctx)
+
+            if self.trace_runtime:
+                from ..tracing.metadata import infer_port_metadata
+
+                domain, surface, route_name, phase = infer_port_metadata(
+                    key,
+                    object(),
+                    route=route,
+                )
+                self.record_runtime_event(
+                    domain=domain,
+                    op="resolve",
+                    surface=surface,
+                    route=route_name,
+                    phase=phase,
+                    tx_depth=ctx.tx.depth(),
+                )
+
+            return result
 
         finally:
             self._pop_frame(token)

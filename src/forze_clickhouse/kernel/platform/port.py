@@ -1,12 +1,12 @@
 """Structural protocol for ClickHouse clients."""
 
-from typing import Any, AsyncContextManager, Awaitable, Protocol
+from typing import Awaitable, Protocol
 
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
-from .value_objects import ClickHouseQueryResult
+from .value_objects import ClickHouseInsertResult, ClickHouseQueryResult
 
 # ----------------------- #
 
@@ -16,12 +16,12 @@ class ClickHouseClientPort(Protocol):
 
     def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    def client(self) -> AsyncContextManager[Any]: ...  # pragma: no cover
+    def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
     def run_query(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | None = None,
         *,
         database: str | None = None,
         max_rows: int | None = None,
@@ -48,4 +48,13 @@ class ClickHouseClientPort(Protocol):
         rows: list[JsonDict],
         *,
         timeout: int | None = None,
-    ) -> Awaitable[int]: ...  # pragma: no cover
+    ) -> Awaitable[ClickHouseInsertResult]: ...  # pragma: no cover
+
+    def run_command(
+        self,
+        command: str,
+        params: BaseModel | None = None,
+        *,
+        database: str | None = None,
+        timeout: int | None = None,
+    ) -> Awaitable[None]: ...  # pragma: no cover

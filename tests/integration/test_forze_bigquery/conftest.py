@@ -12,10 +12,9 @@ import pytest_asyncio
 pytest.importorskip("gcloud.aio.bigquery")
 pytest.importorskip("testcontainers")
 
+from gcloud.aio.bigquery import Dataset, Table
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
-
-from gcloud.aio.bigquery import Dataset, Table
 
 from forze_bigquery.kernel.platform.client import BigQueryClient
 
@@ -76,51 +75,50 @@ async def analytics_dataset(bigquery_client: BigQueryClient) -> str:
     table_id = f"events_{uuid4().hex[:12]}"
     project = TEST_PROJECT_ID
 
-    async with bigquery_client.client():
-        bq_dataset = Dataset(
-            dataset_name=dataset_id,
-            project=project,
-            session=bigquery_client.session,
-            api_root=bigquery_client.api_root,
+    bq_dataset = Dataset(
+        dataset_name=dataset_id,
+        project=project,
+        session=bigquery_client.session,
+        api_root=bigquery_client.api_root,
+    )
+    try:
+        await bq_dataset.insert(
+            {
+                "datasetReference": {
+                    "projectId": project,
+                    "datasetId": dataset_id,
+                }
+            },
+            timeout=30,
         )
-        try:
-            await bq_dataset.insert(
-                {
-                    "datasetReference": {
-                        "projectId": project,
-                        "datasetId": dataset_id,
-                    }
-                },
-                timeout=30,
-            )
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-        bq_table = Table(
-            dataset_name=dataset_id,
-            table_name=table_id,
-            project=project,
-            session=bigquery_client.session,
-            api_root=bigquery_client.api_root,
-        )
-        try:
-            await bq_table.create(
-                {
-                    "tableReference": {
-                        "projectId": project,
-                        "datasetId": dataset_id,
-                        "tableId": table_id,
-                    },
-                    "schema": {
-                        "fields": [
-                            {"name": "event", "type": "STRING", "mode": "NULLABLE"},
-                            {"name": "value", "type": "INTEGER", "mode": "NULLABLE"},
-                        ]
-                    },
+    bq_table = Table(
+        dataset_name=dataset_id,
+        table_name=table_id,
+        project=project,
+        session=bigquery_client.session,
+        api_root=bigquery_client.api_root,
+    )
+    try:
+        await bq_table.create(
+            {
+                "tableReference": {
+                    "projectId": project,
+                    "datasetId": dataset_id,
+                    "tableId": table_id,
                 },
-                timeout=30,
-            )
-        except Exception:
-            pass
+                "schema": {
+                    "fields": [
+                        {"name": "event", "type": "STRING", "mode": "NULLABLE"},
+                        {"name": "value", "type": "INTEGER", "mode": "NULLABLE"},
+                    ]
+                },
+            },
+            timeout=30,
+        )
+    except Exception:
+        pass
 
     return dataset_id, table_id

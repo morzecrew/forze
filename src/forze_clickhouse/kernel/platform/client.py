@@ -4,23 +4,39 @@ require_clickhouse()
 
 # ....................... #
 
-from contextlib import asynccontextmanager
-from contextvars import ContextVar
-from typing import Any, AsyncIterator, final
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any, Sequence, TypeVar, final
 
 import attrs
-import clickhouse_connect  # pyright: ignore[reportMissingTypeStubs]
+from clickhouse_connect.driver import (  # pyright: ignore[reportMissingTypeStubs]
+    create_async_client,  # pyright: ignore[reportUnknownVariableType]
+)
+from clickhouse_connect.driver.asyncclient import (  # pyright: ignore[reportMissingTypeStubs]
+    AsyncClient,
+)
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.errors import CoreError, InfrastructureError
 from forze.base.primitives import JsonDict
 
 from .errors import clickhouse_handled
 from .port import ClickHouseClientPort
 from .query import apply_limit_offset, parameters_from_model
-from .value_objects import DEFAULT_TIMEOUT, ClickHouseConfig, ClickHouseQueryResult
+from .value_objects import (
+    DEFAULT_TIMEOUT,
+    ClickHouseConfig,
+    ClickHouseInsertResult,
+    ClickHouseQueryResult,
+    resolve_password,
+)
 
 # ----------------------- #
+
+T = TypeVar("T")
+_READ_RETRY_EXC = (InfrastructureError, TimeoutError, OSError, ConnectionError)
+
+# ....................... #
 
 
 @final
@@ -28,13 +44,8 @@ from .value_objects import DEFAULT_TIMEOUT, ClickHouseConfig, ClickHouseQueryRes
 class ClickHouseClient(ClickHouseClientPort):
     """Async ClickHouse client backed by :mod:`clickhouse_connect`."""
 
-    __client: Any = attrs.field(default=None, init=False)
+    __client: AsyncClient | None = attrs.field(default=None, init=False)
     __config: ClickHouseConfig | None = attrs.field(default=None, init=False)
-
-    __ctx_depth: ContextVar[int] = attrs.field(
-        factory=lambda: ContextVar("clickhouse_depth", default=0),
-        init=False,
-    )
 
     # ....................... #
 
@@ -45,15 +56,19 @@ class ClickHouseClient(ClickHouseClientPort):
             return
 
         self.__config = config
-        self.__client = await clickhouse_connect.get_async_client(  # type: ignore[reportUnknownReturnType]
+        timeout_sec = int(config.timeout.total_seconds())
+        self.__client = await create_async_client(  # type: ignore[reportUnknownReturnType]
             host=config.host,
             port=config.port,
             username=config.username,
-            password=config.password,
+            password=resolve_password(config.password),
             database=config.database,
             secure=config.secure,
-            connect_timeout=int(config.timeout.total_seconds()),
-            send_receive_timeout=int(config.timeout.total_seconds()),
+            connect_timeout=timeout_sec,
+            send_receive_timeout=timeout_sec,
+            connector_limit=config.connector_limit,
+            connector_limit_per_host=config.connector_limit_per_host,
+            keepalive_timeout=config.keepalive_timeout,
         )
 
     # ....................... #
@@ -69,11 +84,19 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    def __require_client(self) -> Any:
+    def __require_client(self) -> AsyncClient:
         if self.__client is None:
             raise CoreError("ClickHouse client is not initialized")
 
         return self.__client
+
+    # ....................... #
+
+    def __require_config(self) -> ClickHouseConfig:
+        if self.__config is None:
+            raise CoreError("ClickHouse client is not initialized")
+
+        return self.__config
 
     # ....................... #
 
@@ -99,28 +122,45 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
-    @asynccontextmanager
-    async def client(self) -> AsyncIterator[Any]:
-        depth = self.__ctx_depth.get()
+    def __query_settings(
+        self,
+        *,
+        database: str,
+        timeout_sec: int,
+    ) -> dict[str, Any]:
+        return {
+            "database": database,
+            "max_execution_time": timeout_sec,
+        }
 
-        if depth > 0:
-            self.__ctx_depth.set(depth + 1)
+    # ....................... #
 
+    async def __maybe_read_retry(
+        self,
+        op: str,
+        fn: Callable[[], Awaitable[T]],
+    ) -> T:
+        cfg = self.__require_config()
+        attempts = max(0, cfg.read_retry_attempts)
+        base = max(0.0, cfg.read_retry_base_delay.total_seconds())
+        last: BaseException | None = None
+
+        for i in range(attempts + 1):
             try:
-                yield self.__require_client()
+                return await fn()
 
-            finally:
-                self.__ctx_depth.set(depth)
+            except _READ_RETRY_EXC as e:
+                last = e
 
-            return
+                if i >= attempts:
+                    raise
 
-        token = self.__ctx_depth.set(1)
+                await asyncio.sleep(base * (2**i))
 
-        try:
-            yield self.__require_client()
+        if last is None:
+            raise CoreError("Last exception is None")
 
-        finally:
-            self.__ctx_depth.reset(token)
+        raise last
 
     # ....................... #
 
@@ -131,11 +171,24 @@ class ClickHouseClient(ClickHouseClientPort):
 
     # ....................... #
 
+    async def health(self) -> tuple[str, bool]:
+        """Check ClickHouse connectivity with ``SELECT 1``."""
+
+        try:
+            ch = self.__require_client()
+            await ch.command("SELECT 1", use_database=False)  # type: ignore[untyped-call]
+            return "ok", True
+
+        except Exception as e:
+            return str(e), False
+
+    # ....................... #
+
     @clickhouse_handled("clickhouse.run_query")  # type: ignore[untyped-decorator]
     async def run_query(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | Sequence[Any] | None = None,
         *,
         database: str | None = None,
         max_rows: int | None = None,
@@ -143,36 +196,40 @@ class ClickHouseClient(ClickHouseClientPort):
         offset: int | None = None,
         timeout: int | None = None,
     ) -> ClickHouseQueryResult:
-        effective_limit = limit
+        async def _run() -> ClickHouseQueryResult:
+            effective_limit = limit
 
-        if max_rows is not None:
-            effective_limit = (
-                min(effective_limit, max_rows)
-                if effective_limit is not None
-                else max_rows
-            )
+            if max_rows is not None:
+                effective_limit = (
+                    min(effective_limit, max_rows)
+                    if effective_limit is not None
+                    else max_rows
+                )
 
-        query_sql = apply_limit_offset(sql, limit=effective_limit, offset=offset)
-        parameters = parameters_from_model(params) if params is not None else None
-        timeout_sec = self.__timeout_sec(timeout)
-        ch = self.__require_client()
-        target_db = self.__database(database)
-        prev_db = ch.database
+            query_sql = apply_limit_offset(sql, limit=effective_limit, offset=offset)
 
-        try:
-            ch.database = target_db
-            result = await ch.query(
+            if isinstance(params, BaseModel):
+                bound_params = parameters_from_model(params)
+
+            else:
+                bound_params = params  # type: ignore[assignment]
+
+            timeout_sec = self.__timeout_sec(timeout)
+            target_db = self.__database(database)
+            ch = self.__require_client()
+            result = await ch.query(  # type: ignore[untyped-call]
                 query_sql,
-                parameters=parameters,
-                settings={"max_execution_time": timeout_sec},
+                parameters=bound_params,
+                settings=self.__query_settings(
+                    database=target_db,
+                    timeout_sec=timeout_sec,
+                ),
             )
+            rows = self.__rows_from_result(result)
 
-        finally:
-            ch.database = prev_db
+            return ClickHouseQueryResult(rows=rows, row_count=len(rows))
 
-        rows = self.__rows_from_result(result)
-
-        return ClickHouseQueryResult(rows=rows, row_count=len(rows))
+        return await self.__maybe_read_retry("run_query", _run)
 
     # ....................... #
 
@@ -180,7 +237,7 @@ class ClickHouseClient(ClickHouseClientPort):
     async def run_query_all_pages(
         self,
         sql: str,
-        params: BaseModel | None = None,
+        params: BaseModel | JsonDict | Sequence[Any] | None = None,
         *,
         database: str | None = None,
         max_rows: int | None = None,
@@ -190,36 +247,39 @@ class ClickHouseClient(ClickHouseClientPort):
         if fetch_batch_size < 1:
             raise CoreError("fetch_batch_size must be >= 1")
 
-        all_rows: list[JsonDict] = []
-        offset = 0
+        async def _run() -> list[JsonDict]:
+            all_rows: list[JsonDict] = []
+            offset = 0
 
-        while True:
-            batch_limit = fetch_batch_size
+            while True:
+                batch_limit = fetch_batch_size
 
-            if max_rows is not None:
-                remaining = max_rows - len(all_rows)
+                if max_rows is not None:
+                    remaining = max_rows - len(all_rows)
 
-                if remaining <= 0:
+                    if remaining <= 0:
+                        break
+
+                    batch_limit = min(batch_limit, remaining)
+
+                result = await self.run_query(
+                    sql,
+                    params,
+                    database=database,
+                    limit=batch_limit,
+                    offset=offset,
+                    timeout=timeout,
+                )
+                all_rows.extend(result.rows)
+
+                if result.row_count < batch_limit:
                     break
 
-                batch_limit = min(batch_limit, remaining)
+                offset += batch_limit
 
-            result = await self.run_query(
-                sql,
-                params,
-                database=database,
-                limit=batch_limit,
-                offset=offset,
-                timeout=timeout,
-            )
-            all_rows.extend(result.rows)
+            return all_rows
 
-            if result.row_count < batch_limit:
-                break
-
-            offset += batch_limit
-
-        return all_rows
+        return await self.__maybe_read_retry("run_query_all_pages", _run)
 
     # ....................... #
 
@@ -231,20 +291,58 @@ class ClickHouseClient(ClickHouseClientPort):
         rows: list[JsonDict],
         *,
         timeout: int | None = None,
-    ) -> int:
+    ) -> ClickHouseInsertResult:
         if not rows:
-            return 0
+            return ClickHouseInsertResult(accepted=0)
 
-        columns = list(rows[0].keys())
-        data = [[row.get(col) for col in columns] for row in rows]
+        cfg = self.__require_config()
+        batch_size = max(1, cfg.insert_batch_size)
         timeout_sec = self.__timeout_sec(timeout)
+        ch = self.__require_client()
+        accepted_total = 0
 
-        await self.__require_client().insert(
-            table,
-            data,
-            column_names=columns,
-            database=database,
-            settings={"max_execution_time": timeout_sec},
+        for start in range(0, len(rows), batch_size):
+            batch = rows[start : start + batch_size]
+            columns = list(batch[0].keys())
+            data = [[row.get(col) for col in columns] for row in batch]
+
+            await ch.insert(
+                table,
+                data,
+                column_names=columns,
+                database=database,
+                settings={"max_execution_time": timeout_sec},
+            )
+            accepted_total += len(batch)
+
+        return ClickHouseInsertResult(accepted=accepted_total)
+
+    # ....................... #
+
+    @clickhouse_handled("clickhouse.run_command")  # type: ignore[untyped-decorator]
+    async def run_command(
+        self,
+        command: str,
+        params: BaseModel | JsonDict | Sequence[Any] | None = None,
+        *,
+        database: str | None = None,
+        timeout: int | None = None,
+    ) -> None:
+        if isinstance(params, BaseModel):
+            bound_params = parameters_from_model(params)
+
+        else:
+            bound_params = params  # type: ignore[assignment]
+
+        timeout_sec = self.__timeout_sec(timeout)
+        target_db = self.__database(database)
+        ch = self.__require_client()
+
+        await ch.command(  # type: ignore[untyped-call]
+            command,
+            parameters=bound_params,
+            settings=self.__query_settings(
+                database=target_db,
+                timeout_sec=timeout_sec,
+            ),
         )
-
-        return len(rows)

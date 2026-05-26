@@ -90,9 +90,10 @@ Physical mapping lives on `BigQueryDepsModule.analytics`, keyed by `AnalyticsSpe
 | Field | Purpose |
 |-------|---------|
 | `dataset` | BigQuery dataset id for the route |
-| `queries` | Map of `query_key` → `sql` (+ optional `maximum_bytes_billed`) |
+| `queries` | Map of `query_key` → `sql` (+ optional `maximum_bytes_billed`, `skip_total`) |
 | `ingest_table` | Table id for `append`; required when `spec.ingest` is set |
 | `insert_id_field` | Optional row field for streaming insert deduplication |
+| `max_append_rows` | Optional cap per `append` batch (default 10_000) |
 
 Query keys in config **must** match `AnalyticsSpec.queries`. The module validates this at build time.
 
@@ -101,7 +102,8 @@ Query keys in config **must** match `AnalyticsSpec.queries`. The module validate
 - Use **Standard SQL** (`use_legacy_sql=False` is enforced in the adapter).
 - Name parameters with `@field` placeholders; values come from the spec’s Pydantic `params` model via BigQuery `queryParameters`.
 - Offset pagination is applied in SQL (`LIMIT` / `OFFSET`) or by slicing small result sets.
-- `run_page` runs a `COUNT(*)` wrapper around your query SQL, then the data query, so totals are available on `Page.total`.
+- `run_page` runs a `COUNT(*)` wrapper around your query SQL, then the data query, so totals are available on `Page.total`. Set `skip_total: true` on a query to skip the COUNT (``Page.total`` is ``None``).
+- Streaming inserts may partially fail; `AnalyticsAppendResult.rejected` and `.errors` surface row-level `insertErrors` when present.
 
 ## Using analytics ports
 
@@ -125,9 +127,22 @@ Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; the a
 | `run_chunked` | Page through `get_query_results` until exhausted |
 | `append` | Streaming `Table.insert` with optional `insert_id_field` |
 
+## Multi-tenant datasets
+
+v1 uses a single `project_id` per `BigQueryClient`. For multiple tenants, either:
+
+- Register separate `AnalyticsSpec` routes per tenant with distinct `dataset` values in `BigQueryDepsModule.analytics`, or
+- Resolve the dataset in application code and pass tenant-specific specs/config at deploy time.
+
+A future `RoutedBigQueryClient` may resolve dataset from `ctx.inv` tenant identity; not included in v1.
+
+## Client health
+
+Call `await client.health()` after lifecycle startup for readiness checks (lightweight dry-run query).
+
 ## Out of scope (v1)
 
-Load jobs, `MERGE`, DDL, tenancy routing (single `project_id` per client), and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
+Load jobs, `MERGE`, DDL, automatic tenancy routing, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
 
 ## Related pages
 

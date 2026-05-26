@@ -1,12 +1,12 @@
 """Structural protocol for BigQuery clients."""
 
-from typing import Any, AsyncContextManager, Awaitable, Protocol
+from typing import Any, Awaitable, Protocol
 
 from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
-from .value_objects import BigQueryQueryResult
+from .value_objects import BigQueryInsertResult, BigQueryQueryResult
 
 # ----------------------- #
 
@@ -16,7 +16,7 @@ class BigQueryClientPort(Protocol):
 
     def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
-    def client(self) -> AsyncContextManager[Any]: ...  # pragma: no cover
+    def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
     def run_query(
         self,
@@ -50,10 +50,8 @@ class BigQueryClientPort(Protocol):
         *,
         insert_id_field: str | None = None,
         timeout: int | None = None,
-    ) -> Awaitable[int]: ...  # pragma: no cover
+    ) -> Awaitable[BigQueryInsertResult]: ...  # pragma: no cover
 
-    def table(
-        self, dataset: str, table: str
-    ) -> Any: ...  # pragma: no cover
+    def table(self, dataset: str, table: str) -> Any: ...  # pragma: no cover
 
     def job(self, job_id: str | None = None) -> Any: ...  # pragma: no cover

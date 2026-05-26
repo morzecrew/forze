@@ -1,21 +1,22 @@
-"""Dry-run strategies for runtime tracing (seeds; no harness yet).
+"""Dry-run strategies for runtime tracing.
 
 Runtime tracing records **port/coordinator** calls, not gateway internals.
 Validators therefore express handler intent; adapter-only reads after writes
 are invisible unless integration tests cover the adapter layer.
 
-Future strategies
------------------
+Canonical entry point
+---------------------
+
+Use :func:`~forze.application.execution.tracing.harness.run_traced_operation` with
+``MockDepsModule``, ``trace_runtime=True``, and integration validators.
+
+Other strategies
+----------------
 
 **Static replay**
     Commit a golden ``Sequence[TracingEvent]`` per operation and run
     :func:`~forze.application.execution.tracing.validate.validate_runtime_trace`
-    with an integration-specific ``validator`` — no handler execution, no infra.
-
-**Mock dry-run**
-    ``DepsPlan.from_modules(MockDepsModule(...)).build(trace_runtime=True)``,
-    ``ExecutionContext(deps=...)``, ``registry.resolve(op, ctx)``, then
-    ``await resolved(args)``; assert ``deps.runtime_trace()`` and validators.
+    or :func:`~forze.application.execution.tracing.match.assert_trace_contains`.
 
 **Factory hot-patch**
     Override routed factories on a merged :class:`~forze.application.execution.deps.container.Deps`
@@ -29,3 +30,12 @@ See :data:`~forze.application.execution.tracing.validate.RuntimeTraceValidator`
 for the validator contract integrations implement (for example in
 ``forze_firestore.execution.trace_validation``).
 """
+
+from .harness import TracedOperationResult, run_traced_operation
+from .validate import RuntimeTraceValidator
+
+__all__ = [
+    "RuntimeTraceValidator",
+    "TracedOperationResult",
+    "run_traced_operation",
+]

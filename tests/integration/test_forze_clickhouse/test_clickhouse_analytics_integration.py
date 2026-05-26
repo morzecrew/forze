@@ -89,3 +89,41 @@ async def test_deps_module_wiring(clickhouse_client, analytics_table) -> None:
     port = ctx.analytics.query(spec)
     page = await port.run("all", _Params())
     assert len(page.hits) >= 0
+
+
+@pytest.mark.asyncio
+async def test_client_health(clickhouse_client) -> None:
+    message, ok = await clickhouse_client.health()
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_run_chunked_reads_batches(clickhouse_client, analytics_table) -> None:
+    database_id, table_id = analytics_table
+    spec = _spec()
+    adapter = ClickHouseAnalyticsAdapter(
+        client=clickhouse_client,
+        spec=spec,
+        config={
+            "database": database_id,
+            "queries": {
+                "all": {
+                    "sql": f"SELECT event, value FROM {database_id}.{table_id}",
+                },
+            },
+            "ingest_table": table_id,
+        },
+    )
+
+    await adapter.append([_Ingest(event=f"evt_{i}", value=i) for i in range(3)])
+
+    batches = [
+        batch
+        async for batch in adapter.run_chunked(
+            "all",
+            _Params(),
+            fetch_batch_size=2,
+        )
+    ]
+    total = sum(len(batch) for batch in batches)
+    assert total >= 3

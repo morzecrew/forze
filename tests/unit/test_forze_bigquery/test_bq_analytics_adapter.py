@@ -11,9 +11,13 @@ from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
 )
+from forze.application.contracts.base import CountlessPage, Page
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
 from forze_bigquery.execution.deps.configs import BigQueryAnalyticsConfig
-from forze_bigquery.kernel.platform.value_objects import BigQueryQueryResult
+from forze_bigquery.kernel.platform.value_objects import (
+    BigQueryInsertResult,
+    BigQueryQueryResult,
+)
 
 
 class _Row(BaseModel):
@@ -100,10 +104,10 @@ class _MockClient:
         *,
         insert_id_field: str | None = None,
         timeout: int | None = None,
-    ) -> int:
+    ) -> BigQueryInsertResult:
         _ = dataset, table, insert_id_field, timeout
         self.inserts.append(rows)
-        return len(rows)
+        return BigQueryInsertResult(accepted=len(rows))
 
 
 @pytest.mark.asyncio
@@ -123,6 +127,41 @@ async def test_run_cursor_exposes_next_token() -> None:
     page = await adapter.run_cursor("counts", _Params())
     assert page.has_more is True
     assert page.next_cursor is not None
+
+
+@pytest.mark.asyncio
+async def test_run_page_skip_total_skips_count_query() -> None:
+    mock = _MockClient()
+    config: BigQueryAnalyticsConfig = {
+        "dataset": "analytics",
+        "queries": {
+            "counts": {
+                "sql": "SELECT value FROM t WHERE day = @day",
+                "skip_total": True,
+            },
+        },
+        "ingest_table": "events_raw",
+    }
+    spec = AnalyticsSpec(
+        name="events",
+        read=_Row,
+        queries={"counts": AnalyticsQueryDefinition(params=_Params)},
+        ingest=_Ingest,
+    )
+    adapter = BigQueryAnalyticsAdapter(client=mock, spec=spec, config=config)
+    page = await adapter.run_page("counts", _Params())
+    assert isinstance(page, CountlessPage)
+    assert not isinstance(page, Page)
+    assert not any("COUNT(*)" in q for q in mock.queries)
+
+
+@pytest.mark.asyncio
+async def test_run_with_dry_run_does_not_execute_data_query() -> None:
+    mock = _MockClient()
+    adapter = _adapter(mock)
+    page = await adapter.run("counts", _Params(), options={"dry_run": True})
+    assert page.hits == []
+    assert mock.queries == []
 
 
 @pytest.mark.asyncio

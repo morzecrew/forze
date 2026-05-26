@@ -8,10 +8,17 @@ from .registry import FrozenOperationRegistry, OperationRegistry
 from .runtime import ExecutionRuntime
 from .tracing import (
     RuntimeTrace,
+    RuntimeTraceValidationError,
     RuntimeTraceValidator,
+    TraceExpectation,
+    TracedOperationResult,
     TracingEvent,
     TracingViolation,
     active_deps,
+    assert_runtime_trace_valid,
+    assert_trace_contains,
+    assert_trace_equals,
+    run_traced_operation,
     validate_runtime_trace,
 )
 
@@ -29,9 +36,16 @@ __all__ = [
     "OperationPlan",
     "OperationRegistry",
     "RuntimeTrace",
+    "RuntimeTraceValidationError",
     "RuntimeTraceValidator",
+    "TraceExpectation",
+    "TracedOperationResult",
     "TracingEvent",
     "TracingViolation",
     "active_deps",
+    "assert_runtime_trace_valid",
+    "assert_trace_contains",
+    "assert_trace_equals",
+    "run_traced_operation",
     "validate_runtime_trace",
 ]

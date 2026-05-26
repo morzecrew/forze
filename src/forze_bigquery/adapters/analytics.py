@@ -9,10 +9,18 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import (
     AnalyticsAppendResult,
     AnalyticsIngestPort,
-    AnalyticsQueryDefinition,
     AnalyticsQueryPort,
     AnalyticsRunOptions,
     AnalyticsSpec,
+)
+from forze.application.contracts.analytics._adapter_common import (
+    dry_run_enabled,
+    dry_run_offset_page,
+    pagination_window,
+    parse_count_row,
+    shape_rows,
+    timeout_seconds,
+    validated_params,
 )
 from forze.application.contracts.base import (
     CountlessPage,
@@ -76,27 +84,8 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _definition(self, query_key: str) -> AnalyticsQueryDefinition:
-        try:
-            return self.spec.queries[query_key]
-
-        except KeyError as exc:
-            raise CoreError(f"Unknown analytics query key: {query_key!r}") from exc
-
-    # ....................... #
-
     def _validated_params(self, query_key: str, params: BaseModel) -> BaseModel:
-        defn = self._definition(query_key)
-
-        if isinstance(params, defn.params):
-            return params
-
-        if isinstance(
-            params, BaseModel
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
-            return pydantic_validate(defn.params, params.model_dump())
-
-        raise CoreError("Analytics params must be a Pydantic model instance.")
+        return validated_params(self.spec, query_key, params)
 
     # ....................... #
 
@@ -117,34 +106,17 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _timeout_sec(self, options: AnalyticsRunOptions | None) -> int | None:
-        if options is None:
-            return None
-
-        timeout = options.get("timeout")
-
-        if timeout is None:
-            return None
-
-        return max(1, int(timeout.total_seconds()))
+        return timeout_seconds(options)
 
     # ....................... #
 
-    def _dry_run(self, options: AnalyticsRunOptions | None) -> bool:
-        return bool((options or {}).get("dry_run"))
+    def _skip_total(self, query_key: str) -> bool:
+        return bool(self._query_config(query_key).get("skip_total"))
 
     # ....................... #
 
-    def _pagination_window(
-        self,
-        pagination: PaginationExpression | None,
-    ) -> tuple[int | None, int | None]:
-        p = dict(pagination or {})
-        limit = p.get("limit")
-        offset = p.get("offset")
-        max_results = int(cast(Any, limit)) if limit is not None else None
-        start_index = int(cast(Any, offset)) if offset is not None else None
-
-        return max_results, start_index
+    def _max_append_rows(self) -> int:
+        return int(self.config.get("max_append_rows", 10_000))
 
     # ....................... #
 
@@ -213,7 +185,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return await self.client.run_query(
             self._sql(query_key),
             params,
-            dry_run=self._dry_run(options),
+            dry_run=dry_run_enabled(options),
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_results=effective_max,
             start_index=start_index,
@@ -240,29 +212,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             timeout=self._timeout_sec(options),
         )
 
-        if not result.rows:
-            return 0
-
-        raw = result.rows[0].get("forze_cnt", 0)
-
-        return int(raw)
-
-    # ....................... #
-
-    def _shape_rows(
-        self,
-        rows: list[JsonDict],
-        *,
-        return_type: type[T] | None,
-        return_fields: Sequence[str] | None,
-    ) -> list[Any]:
-        if return_fields is not None:
-            return [{k: row.get(k) for k in return_fields} for row in rows]
-
-        if return_type is not None:
-            return pydantic_validate_many(return_type, rows)
-
-        return pydantic_validate_many(self.spec.read, rows)
+        return parse_count_row(result.rows)
 
     # ....................... #
 
@@ -279,15 +229,10 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     ) -> CountlessPage[Any] | Page[Any]:
         params = self._validated_params(query_key, params)
 
-        if self._dry_run(options):
-            empty: list[Any] = []
+        if dry_run_enabled(options):
+            return dry_run_offset_page(pagination, return_count=return_count)
 
-            if return_count:
-                return page_from_limit_offset(empty, pagination, total=0)
-
-            return page_from_limit_offset(empty, pagination, total=None)
-
-        max_results, start_index = self._pagination_window(pagination)
+        max_results, start_index = pagination_window(pagination)
         result = await self._fetch_rows(
             query_key,
             params,
@@ -296,13 +241,17 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             start_index=start_index,
             page_token=None,
         )
-        data = self._shape_rows(
+        data = shape_rows(
             result.rows,
+            read_type=self.spec.read,
             return_type=return_type,
             return_fields=return_fields,
         )
 
         if return_count:
+            if self._skip_total(query_key):
+                return page_from_limit_offset(data, pagination, total=None)
+
             total = await self._total_count(query_key, params, options=options)
             return page_from_limit_offset(data, pagination, total=total)
 
@@ -364,7 +313,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     ) -> AsyncIterator[Sequence[R]]:
         params = self._validated_params(query_key, params)
 
-        if self._dry_run(options):
+        if dry_run_enabled(options):
             return
 
         max_rows = (options or {}).get("max_rows")
@@ -506,7 +455,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         fetch_batch_size: int = 2000,
     ) -> AsyncIterator[Sequence[T]]:
         params = self._validated_params(query_key, params)
-        if self._dry_run(options):
+        if dry_run_enabled(options):
             return
 
         max_rows = (options or {}).get("max_rows")
@@ -535,7 +484,8 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_fields: Sequence[str] | None,
     ) -> CursorPage[Any]:
         params = self._validated_params(query_key, params)
-        if self._dry_run(options):
+
+        if dry_run_enabled(options):
             return CursorPage(
                 hits=[], next_cursor=None, prev_cursor=None, has_more=False
             )
@@ -549,8 +499,9 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             start_index=None,
             page_token=page_token,
         )
-        hits = self._shape_rows(
+        hits = shape_rows(
             result.rows,
+            read_type=self.spec.read,
             return_type=return_type,
             return_fields=return_fields,
         )
@@ -641,6 +592,13 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         if not rows:
             return AnalyticsAppendResult(accepted=0)
 
+        max_append = self._max_append_rows()
+
+        if len(rows) > max_append:
+            raise CoreError(
+                f"Analytics append batch exceeds max_append_rows ({max_append})."
+            )
+
         ingest_type = self.spec.ingest
         payloads: list[JsonDict] = []
 
@@ -660,11 +618,15 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                     "Analytics ingest rows must be Pydantic model instances."
                 )
 
-        accepted = await self.client.insert_rows(
+        insert_result = await self.client.insert_rows(
             self.config["dataset"],
             table,
             payloads,
             insert_id_field=self.config.get("insert_id_field"),
         )
 
-        return AnalyticsAppendResult(accepted=accepted)
+        return AnalyticsAppendResult(
+            accepted=insert_result.accepted,
+            rejected=insert_result.rejected,
+            errors=insert_result.errors,
+        )

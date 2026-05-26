@@ -4,7 +4,7 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Callable, Literal, Sequence
+from typing import Literal, Sequence
 
 import attrs
 from starlette.requests import Request
@@ -12,7 +12,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.application.contracts.authn import AuthnIdentity, AuthnResult
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import ExecutionContext
+from forze.application.execution.context import (
+    ExecutionContext,
+    ExecutionContextFactory,
+)
 from forze.base.errors import AuthenticationError, CoreError
 from forze.base.validators import NoneValidator
 
@@ -51,7 +54,7 @@ class ContextBindingMiddleware:
     app: ASGIApp
     """The next ASGI application."""
 
-    ctx_dep: Callable[[], ExecutionContext] = attrs.field(kw_only=True)
+    ctx_dep: ExecutionContextFactory = attrs.field(kw_only=True)
     """The dependency to resolve the execution context."""
 
     invocation_metadata_codec: InvocationMetadataCodecPort = attrs.field(
@@ -141,8 +144,10 @@ class ContextBindingMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
+
         invocation_metadata = self.invocation_metadata_codec.decode(request)
         authn = await self._resolve_authn(request, ctx)
+
         identity: AuthnIdentity | None = authn.identity if authn is not None else None
         tenant: TenantIdentity | None = None
 

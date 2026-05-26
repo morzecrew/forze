@@ -10,6 +10,10 @@ from forze.base.primitives import JsonDict
 # ----------------------- #
 
 _DEFAULT_TIMEOUT = timedelta(seconds=60)
+_DEFAULT_POLL_INTERVAL = timedelta(milliseconds=250)
+_DEFAULT_MAX_POLL_ATTEMPTS = 240
+_DEFAULT_INSERT_BATCH_SIZE = 500
+_MAX_INSERT_ERRORS = 50
 
 # ....................... #
 
@@ -27,6 +31,24 @@ class BigQueryConfig:
 
     maximum_bytes_billed: int | None = None
     """Default maximum bytes billed per query."""
+
+    poll_interval: timedelta = attrs.field(default=_DEFAULT_POLL_INTERVAL)
+    """Delay between async job status polls."""
+
+    max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS
+    """Upper bound on job poll iterations (also capped by request timeout)."""
+
+    read_retry_attempts: int = 0
+    """Retry count for idempotent read operations."""
+
+    read_retry_base_delay: timedelta = attrs.field(default=timedelta(seconds=0.1))
+    """Base delay between read retries (exponential backoff)."""
+
+    insert_batch_size: int = _DEFAULT_INSERT_BATCH_SIZE
+    """Maximum rows per streaming insert request."""
+
+    max_append_rows: int = 10_000
+    """Soft cap enforced by analytics adapter ``append``."""
 
 
 # ....................... #
@@ -48,3 +70,24 @@ class BigQueryQueryResult:
 
     job_id: str | None = None
     """Job id when results require follow-up paging via jobs API."""
+
+    total_bytes_processed: int | None = None
+    """Bytes processed (populated for dry-run queries)."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class BigQueryInsertResult:
+    """Outcome of a BigQuery streaming insert batch."""
+
+    accepted: int
+    """Rows accepted."""
+
+    rejected: int = 0
+    """Rows rejected."""
+
+    errors: tuple[JsonDict, ...] = ()
+    """Row-level insert errors (capped)."""

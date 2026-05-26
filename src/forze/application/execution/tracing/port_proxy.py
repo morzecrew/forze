@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
+from functools import wraps
 from typing import TYPE_CHECKING, Any, cast
 
 import attrs
@@ -24,7 +26,7 @@ def _default_tx_depth() -> int:
 
 @attrs.define(slots=True)
 class TracingPortProxy:
-    """Wrap a port and record async method calls before ``await``."""
+    """Wrap a port and record sync and async method calls."""
 
     inner: Any
     deps: Deps[Any]
@@ -34,7 +36,16 @@ class TracingPortProxy:
     phase: str | None
     tx_depth_getter: Callable[[], int] = attrs.field(default=_default_tx_depth)
 
-    # ....................... #
+    def _record_call(self, name: str) -> None:
+        record(
+            domain=self.domain,
+            op=name,
+            surface=self.surface,
+            route=self.route,
+            phase=self.phase,
+            tx_depth=self.tx_depth_getter(),
+            deps=self.deps,
+        )
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self.inner, name)
@@ -42,19 +53,21 @@ class TracingPortProxy:
         if not callable(attr):
             return attr
 
-        async def traced(*args: Any, **kwargs: Any) -> Any:
-            record(
-                domain=self.domain,
-                op=name,
-                surface=self.surface,
-                route=self.route,
-                phase=self.phase,
-                tx_depth=self.tx_depth_getter(),
-                deps=self.deps,
-            )
-            return await attr(*args, **kwargs)  # type: ignore[return-value]
+        if inspect.iscoroutinefunction(attr):
 
-        return traced
+            @wraps(attr)
+            async def traced_async(*args: Any, **kwargs: Any) -> Any:
+                self._record_call(name)
+                return await attr(*args, **kwargs)
+
+            return traced_async
+
+        @wraps(attr)
+        def traced_sync(*args: Any, **kwargs: Any) -> Any:
+            self._record_call(name)
+            return attr(*args, **kwargs)
+
+        return traced_sync
 
 
 # ....................... #

@@ -13,6 +13,9 @@ class BigQueryQueryConfig(TypedDict):
     maximum_bytes_billed: NotRequired[int]
     """Per-query override for maximum bytes billed."""
 
+    skip_total: NotRequired[bool]
+    """When ``True``, ``run_page`` skips the COUNT wrapper (``Page.total`` is ``None``)."""
+
 
 # ....................... #
 
@@ -32,3 +35,6 @@ class BigQueryAnalyticsConfig(TypedDict):
 
     insert_id_field: NotRequired[str]
     """Optional row field used as streaming ``insertId``."""
+
+    max_append_rows: NotRequired[int]
+    """Maximum rows per ``append`` call (raises when exceeded)."""

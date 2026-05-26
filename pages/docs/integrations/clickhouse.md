@@ -79,8 +79,9 @@ Physical mapping lives on `ClickHouseDepsModule.analytics`, keyed by `AnalyticsS
 | Field | Purpose |
 |-------|---------|
 | `database` | ClickHouse database for the route |
-| `queries` | Map of `query_key` → `sql` |
+| `queries` | Map of `query_key` → `sql` (+ optional `skip_total`, `cursor_column`) |
 | `ingest_table` | Table name for `append`; required when `spec.ingest` is set |
+| `max_append_rows` | Optional cap per `append` batch (default 10_000) |
 
 Query keys in config **must** match `AnalyticsSpec.queries`. The module validates this at build time.
 
@@ -89,8 +90,10 @@ Query keys in config **must** match `AnalyticsSpec.queries`. The module validate
 - Use ClickHouse **server-side** parameters: `{field:Type}` (for example `{day:Date}`, `{uid:UInt64}`).
 - Values come from the spec’s Pydantic `params` model via `model_dump()` passed as `parameters`.
 - Offset pagination uses `LIMIT` / `OFFSET` appended by the adapter.
-- `run_page` runs a `count()` wrapper around your query SQL, then the data query.
-- `run_cursor` uses **offset cursors** encoded in `B64UrlJsonCodec` (`{"o": offset}`); not stable under concurrent writes—prefer keyset/offset `run` when that matters.
+- `run_page` runs a `count()` wrapper unless `skip_total: true` is set on the query config.
+- `run_cursor` defaults to **offset cursors** (`{"o": offset}`); unstable under concurrent writes. For keyset pagination, set `cursor_column` on the query config and include `{forze_after:Type}` in SQL (the adapter injects `forze_after` from the cursor).
+- `dry_run` skips execution (empty pages); ClickHouse does not estimate query cost via this option.
+- The shared async client selects the database per request via query settings (safe under concurrent handlers).
 
 ## Using analytics ports
 
@@ -114,9 +117,17 @@ Pass `AnalyticsRunOptions` (`dry_run`, `max_rows`, `timeout`) per request; `dry_
 | `run_chunked` | Repeated queries with increasing `OFFSET` |
 | `append` | `insert` rows into `ingest_table` |
 
+## Multi-tenant databases
+
+v1 uses one `ClickHouseConfig` per client. For multiple tenants, register separate analytics routes with distinct `database` values, or deploy per-tenant connection config. Routed clients are not included in v1.
+
+## Client health
+
+Call `await client.health()` after lifecycle startup (`SELECT 1` probe).
+
 ## Out of scope (v1)
 
-Load jobs, `MERGE`, DDL, tenancy routing, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
+Load jobs, `MERGE`, DDL, automatic tenancy routing, and bulk ETL. Prefer queue/stream handoff plus external loaders for large pipelines; see [Analytics contracts](../core-package/contracts/analytics.md).
 
 ## Related pages
 

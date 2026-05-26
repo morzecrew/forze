@@ -53,6 +53,8 @@ async with runtime.session() as ctx:
     await ctx.analytics.ingest(spec).append([EventRow(event="signup")])
 ```
 
+`dry_run` on ClickHouse skips execution (no cost estimate). Use `cursor_column` + `{forze_after:Type}` in SQL for keyset cursors.
+
 ## Local Docker
 
 Pass `ClickHouseConfig(host=..., port=8123, username=..., password=...)` to `clickhouse_lifecycle_step(connection=...)`. See integration tests under `tests/integration/test_forze_clickhouse/`.
