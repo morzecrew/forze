@@ -82,3 +82,8 @@ class TestFirestoreQueryRenderer:
         r = FirestoreQueryRenderer()
         with pytest.raises(CoreError, match="Unknown expression"):
             r.render(_UnknownExpr())
+
+    def test_ilike_raises(self) -> None:
+        r = FirestoreQueryRenderer()
+        with pytest.raises(CoreError, match="text pattern"):
+            r.render(QueryField("title", "$ilike", "%x%"))

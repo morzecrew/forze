@@ -1,7 +1,5 @@
 """Wire authz into :class:`~forze.application.execution.registry.OperationRegistry` plans."""
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from typing import Any, final
 
@@ -15,16 +13,18 @@ from forze.application.contracts.authz import (
     AuthzSpec,
     subject_from_authn,
 )
-from forze.application.contracts.execution import BeforeStep, MiddlewareStep
-from forze.application.contracts.execution.protocols import (
+from forze.application.contracts.execution import (
     Before,
     BeforeFactory,
+    BeforeStep,
     Middleware,
     MiddlewareFactory,
+    MiddlewareStep,
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution.context import ExecutionContext
 from forze.base.errors import AuthorizationError
+from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO
 
 # ----------------------- #
@@ -63,7 +63,7 @@ def merge_query_filters(
 
 
 @final
-@attrs.define(slots=True, kw_only=True)
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthzBeforeAuthorize(BeforeFactory):
     """Before-hook factory that calls :meth:`AuthzDecisionPort.authorize`."""
 
@@ -85,7 +85,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
             if identity is None:
                 raise AuthorizationError(
                     "Authentication required",
-                    code="principal_required",
+                    code="auth_required",
                 )
 
             resource = (
@@ -112,11 +112,12 @@ class AuthzBeforeAuthorize(BeforeFactory):
 
     # ....................... #
 
-    def to_before_step(
+    def to_step(
         self,
         *,
-        step_id: str,
-        requires: tuple[str, ...] = ("authn.principal",),
+        step_id: StrKey,
+        requires: tuple[StrKey, ...] = ("authn.principal",),
+        depends_on: tuple[StrKey, ...] = (),
         priority: int = 50,
     ) -> BeforeStep:
         """Build a :class:`BeforeStep` using this factory."""
@@ -125,6 +126,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
             id=step_id,
             factory=self,
             requires=requires,
+            depends_on=depends_on,
             priority=priority,
         )
 
@@ -133,7 +135,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
 
 
 @final
-@attrs.define(slots=True, kw_only=True)
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthzDocumentScopeWrap(MiddlewareFactory):
     """Wrap middleware factory that injects policy filters into list-style request DTOs."""
 
@@ -157,7 +159,7 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             if identity is None:
                 raise AuthorizationError(
                     "Authentication required",
-                    code="principal_required",
+                    code="auth_required",
                 )
 
             base_filters = getattr(args, self.args_filter_attr, None)
@@ -190,65 +192,12 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
 
     # ....................... #
 
-    def to_middleware_step(
+    def to_step(
         self,
         *,
-        step_id: str,
+        step_id: StrKey,
         priority: int = 40,
     ) -> MiddlewareStep:
         """Build a :class:`MiddlewareStep` using this factory."""
 
-        return MiddlewareStep(
-            id=step_id,
-            factory=self,
-            priority=priority,
-        )
-
-
-# ....................... #
-# Convenience assemblers
-
-
-def authorize_before_step(
-    *,
-    step_id: str,
-    spec: AuthzSpec,
-    action: str,
-    requires: tuple[str, ...] = ("authn.principal",),
-    priority: int = 50,
-    resource_factory: (
-        Callable[[ExecutionContext, Any], AuthzResource | None] | None
-    ) = None,
-    context_factory: Callable[[ExecutionContext, Any], dict[str, Any]] | None = None,
-) -> BeforeStep:
-    """Ready-made :class:`BeforeStep` for operation-level permission checks."""
-
-    return AuthzBeforeAuthorize(
-        spec=spec,
-        action=action,
-        resource_factory=resource_factory,
-        context_factory=context_factory,
-    ).to_before_step(
-        step_id=step_id,
-        requires=requires,
-        priority=priority,
-    )
-
-
-def document_scope_wrap_step(
-    *,
-    step_id: str,
-    spec: AuthzSpec,
-    document_name: str,
-    operation: str,
-    action: str | None = None,
-    priority: int = 40,
-) -> MiddlewareStep:
-    """Ready-made :class:`MiddlewareStep` for document list/search scope injection."""
-
-    return AuthzDocumentScopeWrap(
-        spec=spec,
-        document_name=document_name,
-        operation=operation,
-        action=action,
-    ).to_middleware_step(step_id=step_id, priority=priority)
+        return MiddlewareStep(id=step_id, factory=self, priority=priority)

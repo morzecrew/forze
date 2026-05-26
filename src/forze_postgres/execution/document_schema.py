@@ -15,6 +15,10 @@ from ..kernel.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )
+from ..kernel.validate_bookkeeping import (
+    PostgresDocumentBookkeepingSpec,
+    validate_postgres_document_bookkeeping,
+)
 from .deps.configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
 from .deps.keys import PostgresIntrospectorDepKey
 
@@ -70,6 +74,7 @@ def postgres_document_schema_spec_for_binding(
         write_relation=config.get("write"),  # type: ignore[arg-type]
         history_enabled=spec.history_enabled,
         history_relation=hist,
+        bookkeeping_strategy=config.get("bookkeeping_strategy"),  # type: ignore[arg-type]
     )
 
 
@@ -90,6 +95,23 @@ class PostgresDocumentSchemaValidationHook(LifecycleHook):
 
         try:
             await validate_postgres_document_schemas(introspector, self.specs)
+
+            bookkeeping_specs = [
+                PostgresDocumentBookkeepingSpec(
+                    name=s.name,
+                    bookkeeping_strategy=s.bookkeeping_strategy,  # type: ignore[arg-type]
+                    write_relation=s.write_relation,  # type: ignore[arg-type]
+                    history_enabled=s.history_enabled,
+                )
+                for s in self.specs
+                if s.write_relation is not None and s.bookkeeping_strategy is not None
+            ]
+
+            if bookkeeping_specs:
+                await validate_postgres_document_bookkeeping(
+                    introspector,
+                    bookkeeping_specs,
+                )
 
         except CoreError as e:
             if getattr(e, "code", None) == "introspection_partition_required":

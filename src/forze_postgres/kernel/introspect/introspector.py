@@ -27,6 +27,8 @@ from .types import (
     PostgresIndexInfo,
     PostgresRelationCache,
     PostgresRelationKind,
+    PostgresRelationTriggers,
+    PostgresTriggerCache,
     PostgresType,
 )
 from .utils import extract_index_expr_from_indexdef, normalize_pg_type
@@ -82,10 +84,15 @@ class PostgresIntrospector:
     )
 
     __column_cache: PostgresColumnCache = attrs.field(factory=dict, init=False)
+    __trigger_cache: PostgresTriggerCache = attrs.field(factory=dict, init=False)
     __index_cache: PostgresIndexCache = attrs.field(factory=dict, init=False)
     __relation_cache: PostgresRelationCache = attrs.field(factory=dict, init=False)
     __index_def_cache: PostgresIndexDefCache = attrs.field(factory=dict, init=False)
     __column_cache_ts: dict[tuple[str, str, str], float] = attrs.field(
+        factory=dict,
+        init=False,
+    )
+    __trigger_cache_ts: dict[tuple[str, str, str], float] = attrs.field(
         factory=dict,
         init=False,
     )
@@ -479,6 +486,90 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    def _trigger_store(
+        self,
+        key: tuple[str, str, str],
+        triggers: PostgresRelationTriggers,
+    ) -> None:
+        self.__trigger_cache[key] = triggers
+
+        if self._ttl_seconds() is not None:
+            self.__trigger_cache_ts[key] = monotonic()
+
+        self._trim_cache(self.__trigger_cache, self.__trigger_cache_ts)
+
+    def _trigger_ttl_expired(self, key: tuple[str, str, str]) -> bool:
+        ttl = self._ttl_seconds()
+
+        if ttl is None:
+            return False
+
+        t0 = self.__trigger_cache_ts.get(key)
+
+        if t0 is None:
+            return False
+
+        return monotonic() - t0 >= ttl
+
+    async def _fetch_relation_update_triggers_uncached(
+        self,
+        schema: str,
+        relation: str,
+        key: tuple[str, str, str],
+    ) -> PostgresRelationTriggers:
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            SELECT t.tgname AS trigger_name
+            FROM pg_trigger t
+            JOIN pg_class c ON t.tgrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = {schema}
+              AND c.relname = {relation}
+              AND NOT t.tgisinternal
+              AND (t.tgtype & 2) <> 0
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+        )
+        names = frozenset(str(r["trigger_name"]) for r in rows)
+        self._trigger_store(key, names)
+        return names
+
+    async def get_relation_update_triggers(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> PostgresRelationTriggers:
+        """Return user-visible trigger names on *relation* that fire on UPDATE."""
+
+        schema = self.__normalize_schema(schema)
+        key = self._rel_key(schema, relation)
+
+        if key in self.__trigger_cache:
+            if self._trigger_ttl_expired(key):
+                self.__trigger_cache.pop(key, None)
+                self.__trigger_cache_ts.pop(key, None)
+            else:
+                return self.__trigger_cache[key]
+
+        return await self._await_singleflight(
+            ("pg_rel_triggers", *key),
+            lambda: self._fetch_relation_update_triggers_uncached(
+                schema,
+                relation,
+                key,
+            ),
+        )
+
+    # ....................... #
+
     async def _fetch_index_def_uncached(
         self,
         schema: str,
@@ -671,6 +762,8 @@ class PostgresIntrospector:
         self.__relation_cache_ts.pop(rk, None)
         self.__column_cache.pop(rk, None)
         self.__column_cache_ts.pop(rk, None)
+        self.__trigger_cache.pop(rk, None)
+        self.__trigger_cache_ts.pop(rk, None)
 
     # ....................... #
 
@@ -688,9 +781,11 @@ class PostgresIntrospector:
 
         self.__relation_cache.clear()
         self.__column_cache.clear()
+        self.__trigger_cache.clear()
         self.__index_cache.clear()
         self.__index_def_cache.clear()
         self.__relation_cache_ts.clear()
         self.__column_cache_ts.clear()
+        self.__trigger_cache_ts.clear()
         self.__index_cache_ts.clear()
         self.__inflight_tasks.clear()

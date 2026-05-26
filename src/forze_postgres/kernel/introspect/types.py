@@ -32,6 +32,12 @@ PostgresColumnTypes = dict[str, PostgresType]
 PostgresColumnCache = dict[tuple[str, str, str], PostgresColumnTypes]
 """Cache keyed by ``(partition, schema, relation)`` holding column type maps."""
 
+PostgresRelationTriggers = frozenset[str]
+"""User-visible trigger names on a relation that fire on UPDATE."""
+
+PostgresTriggerCache = dict[tuple[str, str, str], PostgresRelationTriggers]
+"""Cache keyed by ``(partition, schema, relation)`` holding UPDATE trigger names."""
+
 # ....................... #
 
 

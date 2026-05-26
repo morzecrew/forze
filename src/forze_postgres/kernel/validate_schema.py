@@ -10,7 +10,13 @@ from forze.base.errors import CoreError
 from forze.base.serialization import pydantic_field_names
 from forze.domain.models import DocumentHistory
 
-from .introspect import PostgresIntrospector
+from .introspect import PostgresIntrospector, PostgresType
+from ._logger import logger
+from .gateways.types import PostgresBookkeepingStrategy
+from .validate_schema_types import (
+    validate_field_nullability,
+    validate_field_type_compatibility,
+)
 
 # ----------------------- #
 
@@ -71,6 +77,9 @@ class PostgresDocumentSchemaSpec:
     history_omit_fields: frozenset[str] = frozenset()
     """History row field names omitted from the physical table."""
 
+    bookkeeping_strategy: PostgresBookkeepingStrategy | None = None
+    """Bookkeeping strategy for the write relation; ``None`` when read-only."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -116,6 +125,121 @@ async def _require_columns(
         )
 
 
+async def _validate_relation_models(
+    introspector: PostgresIntrospector,
+    *,
+    schema: str,
+    relation: str,
+    models: Sequence[tuple[type[BaseModel], frozenset[str], str]],
+) -> None:
+    column_types = await introspector.get_column_types(schema=schema, relation=relation)
+
+    for model, omit_fields, label in models:
+        validate_field_type_compatibility(
+            model=model,
+            column_types=column_types,
+            omit_fields=omit_fields,
+            label=label,
+        )
+        validate_field_nullability(
+            model=model,
+            column_types=column_types,
+            omit_fields=omit_fields,
+            label=label,
+        )
+
+
+async def _validate_tenant_column(
+    introspector: PostgresIntrospector,
+    *,
+    schema: str,
+    relation: str,
+    label: str,
+) -> None:
+    types = await introspector.get_column_types(schema=schema, relation=relation)
+    pg_t = types.get(TENANT_ID_FIELD)
+
+    if pg_t is None:
+        raise CoreError(
+            f"Postgres schema validation failed for {label!r}: "
+            f"tenant-aware document requires column {TENANT_ID_FIELD!r}.",
+            code="postgres_schema_validation_failed",
+            details={"label": label, "schema": schema, "relation": relation},
+        )
+
+    if pg_t.base != "uuid" or pg_t.is_array:
+        raise CoreError(
+            f"Postgres schema validation failed for {label!r}: "
+            f"{TENANT_ID_FIELD!r} must be type uuid.",
+            code="postgres_schema_validation_failed",
+            details={
+                "label": label,
+                "actual_base": pg_t.base,
+                "is_array": pg_t.is_array,
+            },
+        )
+
+    if not pg_t.not_null:
+        raise CoreError(
+            f"Postgres schema validation failed for {label!r}: "
+            f"{TENANT_ID_FIELD!r} must be NOT NULL.",
+            code="postgres_schema_validation_failed",
+            details={"label": label},
+        )
+
+
+def _warn_read_not_subset_of_write(
+    *,
+    spec: PostgresDocumentSchemaSpec,
+    write_column_types: dict[str, PostgresType],
+) -> None:
+    if spec.write_relation is None:
+        return
+
+    if spec.read_relation == spec.write_relation:
+        return
+
+    read_fields = (
+        pydantic_field_names(spec.read_model, include_computed=False)
+        - spec.read_omit_fields
+    )
+    write_cols = frozenset(write_column_types.keys())
+    extra = read_fields - write_cols
+
+    if extra:
+        logger.warning(
+            "Postgres schema validation for document %r: read fields %s are not on "
+            "write relation %s.%s (expected for views; silence with read_omit_fields).",
+            spec.name,
+            sorted(extra),
+            spec.write_relation[0],
+            spec.write_relation[1],
+        )
+
+
+def _warn_unused_tenant_column(
+    *,
+    spec: PostgresDocumentSchemaSpec,
+    write_column_types: dict[str, PostgresType],
+) -> None:
+    if spec.tenant_aware or spec.write_relation is None:
+        return
+
+    if TENANT_ID_FIELD not in write_column_types:
+        return
+
+    schema, relation = spec.write_relation
+    logger.warning(
+        "Postgres schema validation for document %r: write relation %s.%s has "
+        "column %r but tenant_aware=False — row-level isolation is disabled; "
+        "confirm wiring or enable tenant_aware.",
+        spec.name,
+        schema,
+        relation,
+        TENANT_ID_FIELD,
+    )
+
+
 async def validate_postgres_document_schemas(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentSchemaSpec],
@@ -133,6 +257,19 @@ async def validate_postgres_document_schemas(
             relation=spec.read_relation[1],
             required=read_need,
             label=f"{spec.name} read",
+        )
+
+        await _validate_relation_models(
+            introspector,
+            schema=spec.read_relation[0],
+            relation=spec.read_relation[1],
+            models=[
+                (
+                    spec.read_model,
+                    spec.read_omit_fields,
+                    f"{spec.name} read",
+                ),
+            ],
         )
 
         if spec.write_relation is not None:
@@ -162,6 +299,50 @@ async def validate_postgres_document_schemas(
                 label=f"{spec.name} write",
             )
 
+            write_models: list[tuple[type[BaseModel], frozenset[str], str]] = [
+                (
+                    spec.write_domain_model,
+                    spec.write_omit_fields,
+                    f"{spec.name} write domain",
+                ),
+                (
+                    spec.write_create_model,
+                    spec.write_omit_fields,
+                    f"{spec.name} write create",
+                ),
+            ]
+
+            if spec.write_update_model is not None:
+                write_models.append(
+                    (
+                        spec.write_update_model,
+                        spec.write_omit_fields,
+                        f"{spec.name} write update",
+                    ),
+                )
+
+            await _validate_relation_models(
+                introspector,
+                schema=spec.write_relation[0],
+                relation=spec.write_relation[1],
+                models=write_models,
+            )
+
+            if spec.tenant_aware:
+                await _validate_tenant_column(
+                    introspector,
+                    schema=spec.write_relation[0],
+                    relation=spec.write_relation[1],
+                    label=f"{spec.name} write",
+                )
+
+            write_types = await introspector.get_column_types(
+                schema=spec.write_relation[0],
+                relation=spec.write_relation[1],
+            )
+            _warn_read_not_subset_of_write(spec=spec, write_column_types=write_types)
+            _warn_unused_tenant_column(spec=spec, write_column_types=write_types)
+
         if spec.history_relation is not None:
             hist_need = (
                 frozenset(pydantic_field_names(DocumentHistory, include_computed=False))
@@ -178,3 +359,24 @@ async def validate_postgres_document_schemas(
                 required=hist_need,
                 label=f"{spec.name} history",
             )
+
+            await _validate_relation_models(
+                introspector,
+                schema=spec.history_relation[0],
+                relation=spec.history_relation[1],
+                models=[
+                    (
+                        DocumentHistory,
+                        spec.history_omit_fields,
+                        f"{spec.name} history",
+                    ),
+                ],
+            )
+
+            if spec.tenant_aware:
+                await _validate_tenant_column(
+                    introspector,
+                    schema=spec.history_relation[0],
+                    relation=spec.history_relation[1],
+                    label=f"{spec.name} history",
+                )

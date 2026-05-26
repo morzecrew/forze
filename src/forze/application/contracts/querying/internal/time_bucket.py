@@ -1,7 +1,5 @@
 """Timezone and calendar bucketing helpers for aggregate time windows."""
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -15,6 +13,8 @@ from forze.base.errors import CoreError
 _TIMEZONE_OFFSET_RE = re.compile(r"^([+-])(\d{1,2})(?::?(\d{2}))?\Z")
 
 TimeBucketMode = Literal["iana", "fixed"]
+
+# ....................... #
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +68,9 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
     return ResolvedTimeBucketTimezone(mode="iana", iana=s, offset=None)
 
 
+# ....................... #
+
+
 def tzinfo_from_resolved(resolved: ResolvedTimeBucketTimezone) -> timezone | ZoneInfo:
     """``tzinfo`` for mock bucketing aligned with Postgres/Mongo semantics."""
 
@@ -77,6 +80,9 @@ def tzinfo_from_resolved(resolved: ResolvedTimeBucketTimezone) -> timezone | Zon
         return timezone(off)
 
     return ZoneInfo(resolved.iana)
+
+
+# ....................... #
 
 
 def floor_to_time_bucket(

@@ -80,6 +80,31 @@ Example:
 | `$overlaps` | array | field intersects list |
 | `$disjoint` | array | field does not intersect list |
 
+### Text matching
+
+| Operator | Value type | Meaning |
+|----------|------------|---------|
+| `$like` | string or string array | SQL `LIKE` match (`%`, `_` wildcards; `\` escapes `%`, `_`, `\`) |
+| `$ilike` | string or string array | case-insensitive `LIKE` (Postgres `ILIKE`; Mongo `$regex` with `i`) |
+| `$regex` | string or string array | POSIX regex match (Postgres `~`; Mongo `$regex`) |
+
+When the operand is a **sequence of strings**, the parser expands it to an implicit
+**OR** of single-pattern constraints on the same field (no separate `$ilike_any`
+operator).
+
+Pseudo-search example:
+
+    :::python
+    filters = {"$values": {"title": {"$ilike": "%road%"}}}
+
+Multi-pattern OR:
+
+    :::python
+    filters = {"$values": {"title": {"$ilike": ["%road%", "%map%"]}}}
+
+`$regex` patterns are validated at parse time for length and known ReDoS shapes;
+this is best-effort safety, not a performance guarantee.
+
 ### Array element quantifiers (`$any`, `$all`, `$none`)
 
 Apply a predicate to **individual elements** inside an array field (native Postgres
@@ -92,8 +117,8 @@ operators on the same key.
 | `$all` | every element matches (vacuous **true** when the field is missing, null, or `[]`) |
 | `$none` | no element matches (vacuous **true** when missing, null, or `[]`) |
 
-**Scalar arrays** — inner predicate is `$eq` / `$neq` / ordering ops, or a scalar
-shortcut:
+**Scalar arrays** — inner predicate is `$eq` / `$neq` / ordering ops, text pattern
+ops (`$like`, `$ilike`, `$regex`), or a scalar shortcut:
 
     :::python
     {"$values": {"tags": {"$any": "urgent"}}}
@@ -115,8 +140,9 @@ shortcut:
         },
     }
 
-Inner operators are limited to equality and ordering (`$eq`, `$neq`, `$gt`, `$gte`,
-`$lt`, `$lte`). Nested quantifiers are not supported.
+Inner operators include equality, ordering (`$eq`, `$neq`, `$gt`, `$gte`, `$lt`,
+`$lte`), and text patterns (`$like`, `$ilike`, `$regex`). Nested quantifiers are
+not supported.
 
 ## Negation (`$not`)
 
@@ -345,6 +371,8 @@ Filter expressions are validated at parse time. Default bounds (override per gat
 | ``max_depth`` | 32 | Nesting of ``$and`` / ``$or`` / ``$not`` |
 | ``max_clauses`` | 256 | Combinator children, ``$values`` / ``$fields`` keys, and per-field operator entries |
 | ``max_in_size`` | 1000 | ``$in`` / ``$nin``, array shortcuts, and set-relation operands |
+| ``max_pattern_length`` | 256 | each ``$like`` / ``$ilike`` / ``$regex`` pattern string |
+| ``max_pattern_or_branches`` | 32 | patterns when a text operator operand is a sequence (OR) |
 
 Violations raise :class:`~forze.base.errors.ValidationError` before any query is sent to the database.
 
@@ -360,3 +388,14 @@ Violations raise :class:`~forze.base.errors.ValidationError` before any query is
 
 - Semantics are shared, but rendering is backend-specific (Postgres vs Mongo).
 - In Mongo renderer defaults, `$null: true` matches both explicit `null` and missing fields.
+
+### Text pattern operator support
+
+| Operator | Postgres | MongoDB | Firestore (MVP) |
+|----------|----------|---------|-----------------|
+| `$like` | `LIKE` | `$regex` (LIKE→regex) | not supported (`CoreError`) |
+| `$ilike` | `ILIKE` | `$regex` + `i` | not supported (`CoreError`) |
+| `$regex` | `~` | `$regex` | not supported (`CoreError`) |
+
+Leading `%` patterns may require indexes (for example Postgres `pg_trgm`) for
+acceptable performance on large tables.

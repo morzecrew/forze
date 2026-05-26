@@ -9,7 +9,6 @@ require_psycopg()
 from typing import (
     Any,
     AsyncIterator,
-    Literal,
     Never,
     Sequence,
     TypeVar,
@@ -22,6 +21,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.document import RowLockMode
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -46,10 +46,8 @@ from .base import PostgresGateway
 
 # ----------------------- #
 
-ForUpdateMode = bool | Literal["nowait", "skip_locked"]
 
-
-def _for_update_sql(mode: ForUpdateMode) -> sql.SQL | None:
+def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
     if mode is False:
         return None
 
@@ -90,7 +88,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         pk: UUID,
         *,
-        for_update: ForUpdateMode = False,
+        for_update: RowLockMode = False,
     ) -> M:
         where_sql = sql.SQL("{pk} = {ph}").format(
             pk=self.ident_pk(),
@@ -157,7 +155,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None: ...
@@ -167,7 +165,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None: ...
@@ -177,7 +175,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None: ...
@@ -187,7 +185,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never: ...
@@ -196,7 +194,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = False,
+        for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None:

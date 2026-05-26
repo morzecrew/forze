@@ -1,7 +1,5 @@
 """Aggregate expression parsing and validation."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Mapping
 from typing import Any, Literal, cast, get_args
@@ -22,6 +20,8 @@ _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
 _UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
 _GROUP_OPS: frozenset[str] = frozenset(("$trunc",))
 
+# ....................... #
+
 
 @attrs.define(slots=True, frozen=True, match_args=True)
 class GroupRef:
@@ -29,6 +29,9 @@ class GroupRef:
 
     field: str
     """Source field path."""
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
@@ -45,6 +48,9 @@ class GroupTrunc:
     """Resolved IANA or fixed-offset timezone."""
 
 
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True, match_args=True)
 class GroupKey:
     """One aggregate group dimension with its output alias."""
@@ -54,6 +60,9 @@ class GroupKey:
 
     expr: GroupRef | GroupTrunc
     """Group dimension expression."""
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
@@ -76,6 +85,9 @@ class AggregateComputedField:
     """Parsed AST for :attr:`filter`, set when the aggregate expression is validated."""
 
 
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True, match_args=True)
 class ParsedAggregates:
     """Validated aggregate expression."""
@@ -86,6 +98,8 @@ class ParsedAggregates:
     computed_fields: tuple[AggregateComputedField, ...]
     """Computed aggregate fields."""
 
+    # ....................... #
+
     @property
     def aliases(self) -> frozenset[str]:
         """All output aliases declared by the expression."""
@@ -95,6 +109,9 @@ class ParsedAggregates:
         ]
 
         return frozenset(keys)
+
+
+# ....................... #
 
 
 class AggregatesExpressionParser:

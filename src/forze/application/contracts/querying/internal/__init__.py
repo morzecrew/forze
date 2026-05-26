@@ -20,6 +20,7 @@ from .nodes import (
     QueryOr,
 )
 from .parse import QueryFilterExpressionParser, QueryFilterLimits
+from .text_pattern import like_pattern_to_regex, validate_text_pattern
 
 # ----------------------- #
 
@@ -41,4 +42,6 @@ __all__ = [
     "QueryField",
     "QueryNot",
     "QueryOr",
+    "like_pattern_to_regex",
+    "validate_text_pattern",
 ]

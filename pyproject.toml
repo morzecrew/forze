@@ -63,6 +63,9 @@ dev = [
     "types-pyyaml>=6.0.12.20250915",
     "vulture>=2.14",
     "pre-commit>=4.5.1",
+    "dirty-equals>=0.11",
+    "polyfactory>=3.3.0",
+    "hypothesis>=6.153.0",
 ]
 docs = [
     "mkdocs>=1.6.1,<2.0.0",

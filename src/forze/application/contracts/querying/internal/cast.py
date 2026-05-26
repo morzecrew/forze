@@ -14,7 +14,7 @@ class QueryValueCaster:
     """Static methods for casting raw values to typed scalars.
 
     Used when rendering filter expressions to backend-specific formats
-    (e.g. MongoDB, Postgres) where values may arrive as strings or numbers.
+    where values may arrive as strings or numbers.
     """
 
     @staticmethod

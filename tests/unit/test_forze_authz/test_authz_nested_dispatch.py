@@ -9,9 +9,9 @@ import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzSpec
-from forze.application.hooks.authz import authorize_before_step
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.application.execution.registry import OperationRegistry
+from forze.application.hooks.authz import AuthzBeforeAuthorize
 from forze.base.errors import AuthorizationError
 from forze.base.primitives import str_key_selector
 
@@ -51,10 +51,11 @@ async def test_patch_inherits_authz_before_on_child_operation() -> None:
         .patch(str_key_selector.prefix("child."))
         .bind_outer()
         .before(
-            authorize_before_step(
-                step_id="authz_child",
+            AuthzBeforeAuthorize(
                 spec=AuthzSpec(name="main"),
                 action="child.read",
+            ).to_step(
+                step_id="authz_child",
                 requires=(),
             ),
         )
@@ -82,10 +83,11 @@ async def test_patch_authz_denies_child_without_grant() -> None:
         .patch(str_key_selector.exact("child.read"))
         .bind_outer()
         .before(
-            authorize_before_step(
-                step_id="authz_child",
+            AuthzBeforeAuthorize(
                 spec=AuthzSpec(name="main"),
                 action="child.read",
+            ).to_step(
+                step_id="authz_child",
                 requires=(),
             ),
         )

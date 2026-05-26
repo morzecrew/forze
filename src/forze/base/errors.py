@@ -394,10 +394,16 @@ def _cached_signature(fn: Callable[..., Any]) -> inspect.Signature:
     return inspect.signature(fn)
 
 
+# ....................... #
+
+
 def _resolve_op(fn: Callable[..., Any], op: str | None) -> str:
     """Return the operation name, falling back to the callable's ``__name__``."""
 
     return op or fn.__name__
+
+
+# ....................... #
 
 
 def _prepare_fn(
@@ -421,6 +427,9 @@ def _prepare_fn(
     from forze.base.scrubbing import dump_bound_args_for_errors
 
     return op, dump_bound_args_for_errors(all_args)
+
+
+# ....................... #
 
 
 def _handler_context(
@@ -565,10 +574,14 @@ def handled(h: ErrorHandler, op: str | None = None):  # type: ignore[no-untyped-
                 return _awaited()  # pragma: no cover
 
             if _is_async_contextmanager(res):
-                return _AsyncCmWrapper(res, h, operation, kwargs=handler_ctx)  # pragma: no cover
+                return _AsyncCmWrapper(
+                    res, h, operation, kwargs=handler_ctx
+                )  # pragma: no cover
 
             if _is_contextmanager(res):
-                return _CmWrapper(res, h, operation, kwargs=handler_ctx)  # pragma: no cover
+                return _CmWrapper(
+                    res, h, operation, kwargs=handler_ctx
+                )  # pragma: no cover
 
             if _is_async_iterator(res):
                 return _wrap_async_iterator(res, h, operation)

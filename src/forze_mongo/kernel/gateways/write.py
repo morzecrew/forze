@@ -266,12 +266,12 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             flt,
             {"$setOnInsert": storage},
         )
-        created = await self.read_gw.get(model.id)
 
         if res.upserted_id is not None:
-            await self._write_history(created)
+            await self._write_history(model)
+            return model
 
-        return created
+        return await self.read_gw.get(model.id)
 
     # ....................... #
 
@@ -315,12 +315,23 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             for idx in umap:
                 new_indices.append(offset + int(idx))
 
-        if new_indices:
-            new_pks = [models[i].id for i in new_indices]
-            hist = await self.read_gw.get_many(new_pks)
-            await self._write_history(*hist)
+        inserted_idx: set[int] = set(new_indices)
 
-        return await self.read_gw.get_many([m.id for m in models])
+        if inserted_idx:
+            inserted = [models[i] for i in inserted_idx]
+            await self._write_history(*inserted)
+
+        conflict_ids = [m.id for i, m in enumerate(models) if i not in inserted_idx]
+        by_existing: dict[UUID, D] = {}
+
+        if conflict_ids:
+            fetched = await self.read_gw.get_many(conflict_ids)
+            by_existing = {d.id: d for d in fetched}
+
+        return [
+            models[i] if i in inserted_idx else by_existing[models[i].id]
+            for i in range(len(models))
+        ]
 
     # ....................... #
 
@@ -345,9 +356,8 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             {"$setOnInsert": storage},
         )
         if res.upserted_id is not None:
-            created = await self.read_gw.get(model.id)
-            await self._write_history(created)
-            return created
+            await self._write_history(model)
+            return model
 
         current = await self.read_gw.get(model.id)
         u_res, _ = await self.update(model.id, update_dto, rev=current.rev)
@@ -403,11 +413,11 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
         inserted_idx: set[int] = set(new_indices)
 
         if inserted_idx:
-            new_pks = [models[i].id for i in inserted_idx]
-            hist = await self.read_gw.get_many(new_pks)
-            await self._write_history(*hist)
+            inserted = [models[i] for i in inserted_idx]
+            await self._write_history(*inserted)
 
         to_update: list[tuple[UUID, U]] = []
+        by_updated: dict[UUID, D] = {}
 
         for i, m in enumerate(models):
             if i in inserted_idx:
@@ -421,9 +431,15 @@ class MongoWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](MongoGate
             currents = await self.read_gw.get_many(pks)
             by_c = {c.id: c for c in currents}
             revs = [by_c[pk].rev for pk in pks]
-            await self.update_many(pks, u_dtos, revs=revs, batch_size=batch_size)
+            updated, _ = await self.update_many(
+                pks, u_dtos, revs=revs, batch_size=batch_size
+            )
+            by_updated = {d.id: d for d in updated}
 
-        return await self.read_gw.get_many([m.id for m in models])
+        return [
+            models[i] if i in inserted_idx else by_updated[models[i].id]
+            for i in range(len(models))
+        ]
 
     # ....................... #
 

@@ -20,7 +20,11 @@ from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, DepsModule
 
 from ...kernel.introspect import PostgresIntrospector
-from ...kernel.platform import PostgresClientPort
+from ...kernel.platform import PostgresClientPort, RoutedPostgresClient
+from ...kernel.validate_tenancy import (
+    PostgresTenancyRouteSpec,
+    validate_postgres_tenancy_wiring,
+)
 from .configs import (
     PostgresDocumentConfig,
     PostgresFederatedSearchConfig,
@@ -83,6 +87,69 @@ class PostgresDepsModule[K: str | StrEnum](DepsModule[K]):
 
     tx: set[K] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        routes: list[PostgresTenancyRouteSpec] = []
+
+        if self.ro_documents:
+            for name, cfg in self.ro_documents.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=cfg.get("tenant_aware", False),
+                        kind="document",
+                    ),
+                )
+
+        if self.rw_documents:
+            for name, cfg in self.rw_documents.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=cfg.get("tenant_aware", False),
+                        kind="document",
+                    ),
+                )
+
+        if self.searches:
+            for name, search_cfg in self.searches.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=search_cfg.get("tenant_aware", False),
+                        kind="search",
+                    ),
+                )
+
+        if self.hub_searches:
+            for name, hub_search_cfg in self.hub_searches.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=hub_search_cfg.get("tenant_aware", False),
+                        kind="hub_search",
+                    ),
+                )
+
+        if self.federated_searches:
+            for name, federated_search_cfg in self.federated_searches.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=federated_search_cfg.get("tenant_aware", False),
+                        kind="federated_search",
+                    ),
+                )
+
+        validate_postgres_tenancy_wiring(
+            client_is_routed=isinstance(self.client, RoutedPostgresClient),
+            introspector_cache_partition_key_set=(
+                self.introspector_cache_partition_key is not None
+            ),
+            routes=routes,
+        )
 
     # ....................... #
 

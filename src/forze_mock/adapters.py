@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -51,6 +52,7 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    RowLockMode,
     require_create_id,
     require_create_id_for_many,
 )
@@ -76,6 +78,9 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
     QuerySortExpression,
+)
+from forze.application.contracts.querying.internal.text_pattern import (
+    like_pattern_to_regex,
 )
 from forze.application.contracts.querying.internal.time_bucket import (
     floor_to_time_bucket,
@@ -272,6 +277,27 @@ def _memb_contains(field_value: Any, values: Sequence[Any]) -> bool:
     return any(_eq(field_value, candidate) for candidate in values)
 
 
+def _match_text(value: Any, op: str, pattern: str) -> bool:
+    if value is _MISSING:
+        return False
+    text = str(value)
+    match op:
+        case "$like":
+            return re.search(like_pattern_to_regex(pattern), text) is not None
+        case "$ilike":
+            return (
+                re.search(
+                    like_pattern_to_regex(pattern, case_insensitive=True),
+                    text,
+                )
+                is not None
+            )
+        case "$regex":
+            return re.search(pattern, text) is not None
+        case _:
+            return False
+
+
 def _match_field(doc: JsonDict, field: QueryField) -> bool:
     value = _path_get(doc, field.name)
 
@@ -366,6 +392,9 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             values = cast(Sequence[Any], field.value)
             return not _coerce_set(value).isdisjoint(values)
 
+        case "$like" | "$ilike" | "$regex":
+            return _match_text(value, field.op, str(field.value))
+
 
 def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
     left_value = _path_get(doc, node.left)
@@ -446,6 +475,8 @@ def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
             return all(
                 _match_field(elem_doc, i) for i in items if isinstance(i, QueryField)
             )
+        case QueryOr(items):
+            return any(_match_elem_inner(elem, item) for item in items)
         case _:
             return False
 
@@ -824,7 +855,7 @@ class MockDocumentAdapter(
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
         del for_update, skip_cache
@@ -856,7 +887,7 @@ class MockDocumentAdapter(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> R | None:
         del for_update
 
@@ -875,7 +906,7 @@ class MockDocumentAdapter(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         fields: Sequence[str],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> JsonDict | None:
         del for_update
 
@@ -895,7 +926,7 @@ class MockDocumentAdapter(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         return_type: type[T],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> T | None:
         del for_update
 
@@ -1310,6 +1341,92 @@ class MockDocumentAdapter(
             sorts=sorts,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
+
+    async def select_cursor(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[T]:
+        page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
+        return CursorPage(
+            hits=[pydantic_validate(return_type, hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
+            next_cursor=page.next_cursor,
+            prev_cursor=page.prev_cursor,
+            has_more=page.has_more,
+        )
+
+    # ....................... #
+
+    async def find_stream(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[R]]:
+        cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        while True:
+            page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
+            if not page.hits:
+                break
+            yield page.hits
+            if not page.has_more or page.next_cursor is None:
+                break
+            cursor = {"limit": chunk_size, "after": page.next_cursor}
+
+    # ....................... #
+
+    async def project_stream(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[JsonDict]]:
+        cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        while True:
+            page = await self.project_cursor(
+                fields,
+                filters=filters,
+                cursor=cursor,
+                sorts=sorts,
+            )
+            if not page.hits:
+                break
+            yield page.hits
+            if not page.has_more or page.next_cursor is None:
+                break
+            cursor = {"limit": chunk_size, "after": page.next_cursor}
+
+    # ....................... #
+
+    async def select_stream(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[T]]:
+        cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        while True:
+            page = await self.select_cursor(
+                return_type,
+                filters=filters,
+                cursor=cursor,
+                sorts=sorts,
+            )
+            if not page.hits:
+                break
+            yield page.hits
+            if not page.has_more or page.next_cursor is None:
+                break
+            cursor = {"limit": chunk_size, "after": page.next_cursor}
 
     @overload
     async def _mock_cursor_page(

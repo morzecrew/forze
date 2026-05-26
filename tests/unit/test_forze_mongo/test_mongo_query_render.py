@@ -263,6 +263,44 @@ class TestMongoQueryRenderer:
             "$and": [{"e": {"$ne": []}}, {"e": {"$exists": True}}],
         }
 
+    def test_ilike_renders_regex_with_i_option(self) -> None:
+        r = MongoQueryRenderer()
+        out = r.render(QueryField("title", "$ilike", "%road%"))
+        assert out == {"title": {"$regex": "^.*road.*$", "$options": "i"}}
+
+    def test_ilike_sequence_parsed_as_or(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {"$values": {"title": {"$ilike": ["%a%", "%b%"]}}},
+        )
+        r = MongoQueryRenderer()
+        out = r.render(expr)
+        assert "$or" in out
+        assert len(out["$or"]) == 2
+
+    def test_element_any_object_ilike(self) -> None:
+        expr = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"name": {"$ilike": "%x%"}}},
+                    },
+                },
+            },
+        )
+        r = MongoQueryRenderer()
+        out = r.render(expr)
+
+        def _has_elem_match(node: object) -> bool:
+            if isinstance(node, dict):
+                if "$elemMatch" in node:
+                    return True
+                return any(_has_elem_match(v) for v in node.values())
+            if isinstance(node, list):
+                return any(_has_elem_match(v) for v in node)
+            return False
+
+        assert _has_elem_match(out)
+
     def test_passes_uuid_through(self) -> None:
         u = uuid4()
         r = MongoQueryRenderer()

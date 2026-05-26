@@ -113,7 +113,7 @@ Filters use the shared DSL: `{"$values": {...}}`, `{"$and": [...]}`, `{"$or": [.
 | `["a", "b"]` | `$in` |
 | `null` | `$null: true` |
 
-**Operators:** `$eq`, `$neq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$null`, `$empty`, `$superset`, `$subset`, `$overlaps`, `$disjoint`.
+**Operators:** `$eq`, `$neq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$null`, `$empty`, `$superset`, `$subset`, `$overlaps`, `$disjoint`, `$like`, `$ilike`, `$regex`.
 
 **Sorts:** `{"created_at": "desc", "id": "asc"}`.
 

@@ -35,6 +35,7 @@ from ..types import (
     QueryElementQuantifier,
     Scalar,
     SetRelOp,
+    TextOp,
     UnaryOp,
 )
 from .nodes import (
@@ -47,12 +48,14 @@ from .nodes import (
     QueryNot,
     QueryOr,
 )
+from .text_pattern import validate_text_pattern
 
 # ----------------------- #
 
 _EQ_OPS: frozenset[str] = frozenset(get_args(EqOp))
 _ORD_OPS: frozenset[str] = frozenset(get_args(OrdOp))
-_ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS
+_TEXT_OPS: frozenset[str] = frozenset(get_args(TextOp))
+_ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS
 _COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
 _MEMB_OPS: frozenset[str] = frozenset(get_args(MembOp))
 _UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
@@ -63,7 +66,7 @@ _QUANTIFIER_OPS: frozenset[str] = frozenset(get_args(QueryElementQuantifier))
 _COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})
 _CONSTRAINT_KEYS = frozenset({"$values", "$fields"})
 
-# ----------------------- #
+# ....................... #
 
 
 @attrs.define(frozen=True, slots=True)
@@ -79,6 +82,12 @@ class QueryFilterLimits:
     max_in_size: int = 1_000
     """Maximum length of membership and set-relation operand lists."""
 
+    max_pattern_length: int = 256
+    """Maximum length of each ``$like`` / ``$ilike`` / ``$regex`` pattern string."""
+
+    max_pattern_or_branches: int = 32
+    """Maximum number of patterns when a text operator operand is a sequence (OR)."""
+
 
 # ....................... #
 
@@ -89,7 +98,7 @@ class _ParseCtx:
     clause_count: int = 0
 
 
-# ----------------------- #
+# ....................... #
 
 
 @attrs.define(frozen=True, slots=True)
@@ -311,7 +320,7 @@ class QueryFilterExpressionParser:
             field_nodes: list[QueryExpr] = []
 
             for op, value in raw.items():
-                field_nodes.append(self._validate_op_impl(field, op, value))
+                field_nodes.append(self._validate_op_impl(field, op, value, ctx))
 
             self._validate_value_field(field, field_nodes)
 
@@ -387,11 +396,11 @@ class QueryFilterExpressionParser:
 
             op, value = next(iter(raw.items()))
 
-            return self._validate_element_op(ELEM_SCALAR_FIELD, op, value)
+            return self._validate_element_op(ELEM_SCALAR_FIELD, op, value, ctx)
 
         raise ValidationError(
             "Element constraint must be a scalar shortcut, an operator map "
-            '($eq/$neq/$gt/...), or {"$values": {...}} for object arrays',
+            '($eq/$neq/$gt/.../$like/...), or {"$values": {...}} for object arrays',
         )
 
     # ....................... #
@@ -436,12 +445,12 @@ class QueryFilterExpressionParser:
 
                 op, value = next(iter(raw.items()))
 
-                return [self._validate_element_op(rel_field, op, value)]
+                return [self._validate_element_op(rel_field, op, value, ctx)]
 
             self._add_clauses(ctx, len(raw))
 
             return [
-                self._validate_element_op(rel_field, op, value)
+                self._validate_element_op(rel_field, op, value, ctx)
                 for op, value in raw.items()
             ]
 
@@ -449,10 +458,21 @@ class QueryFilterExpressionParser:
 
     # ....................... #
 
-    @staticmethod
-    def _validate_element_op(field: str, op: str, value: Any) -> QueryField:
+    def _validate_element_op(
+        self,
+        field: str,
+        op: str,
+        value: Any,
+        ctx: _ParseCtx,
+    ) -> QueryExpr:
         if op not in _ELEMENT_OPS:
             raise ValidationError(f"Invalid element operator: {op!r}")
+
+        if op in _TEXT_OPS:
+            expanded = self._expand_text_op(field, op, value)
+            if isinstance(expanded, QueryOr):
+                self._add_clauses(ctx, len(expanded.items) - 1)
+            return expanded
 
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
@@ -467,6 +487,20 @@ class QueryFilterExpressionParser:
     # ....................... #
 
     @staticmethod
+    def _field_ops_from_nodes(nodes: list[QueryExpr]) -> set[str]:
+        ops: set[str] = set()
+        for node in nodes:
+            if isinstance(node, QueryField):
+                ops.add(node.op)
+            elif isinstance(node, QueryOr):
+                for item in node.items:
+                    if isinstance(item, QueryField):
+                        ops.add(item.op)
+        return ops
+
+    # ....................... #
+
+    @staticmethod
     def _validate_value_field(field: str, nodes: list[QueryExpr]) -> None:
         if any(isinstance(n, QueryElem) for n in nodes):
             if len(nodes) > 1:
@@ -475,7 +509,7 @@ class QueryFilterExpressionParser:
                 )
             return
 
-        ops = {n.op for n in nodes if isinstance(n, QueryField)}
+        ops = QueryFilterExpressionParser._field_ops_from_nodes(nodes)
 
         if "$null" in ops:
             null_node = next(
@@ -516,7 +550,36 @@ class QueryFilterExpressionParser:
 
     # ....................... #
 
-    def _validate_op_impl(self, field: str, op: str, value: Any) -> QueryField:
+    def _expand_text_op(self, field: str, op: str, value: Any) -> QueryExpr:
+        patterns = validate_text_pattern(
+            op,
+            value,
+            max_pattern_length=self.limits.max_pattern_length,
+            max_pattern_or_branches=self.limits.max_pattern_or_branches,
+        )
+        if len(patterns) == 1:
+            return QueryField(field, op, patterns[0])  # type: ignore[arg-type]
+        branches = tuple(
+            QueryField(field, op, pattern)  # type: ignore[arg-type]
+            for pattern in patterns
+        )
+        return QueryOr(branches)
+
+    # ....................... #
+
+    def _validate_op_impl(
+        self,
+        field: str,
+        op: str,
+        value: Any,
+        ctx: _ParseCtx,
+    ) -> QueryExpr:
+        if op in _TEXT_OPS:
+            expanded = self._expand_text_op(field, op, value)
+            if isinstance(expanded, QueryOr):
+                self._add_clauses(ctx, len(expanded.items) - 1)
+            return expanded
+
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
                 raise ValidationError(f"Invalid value for {op} operator: {value!r}")
@@ -547,10 +610,10 @@ class QueryFilterExpressionParser:
     # ....................... #
 
     @staticmethod
-    def _validate_op(field: str, op: str, value: Any) -> QueryField:
+    def _validate_op(field: str, op: str, value: Any) -> QueryExpr:
         """Validate a single operator using the module default parser limits."""
 
-        return _default._validate_op_impl(field, op, value)
+        return _default._validate_op_impl(field, op, value, _ParseCtx())
 
 
 # ....................... #

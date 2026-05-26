@@ -507,6 +507,49 @@ class TestQueryFilterExpressionParser:
             assert isinstance(f, QueryField)
             assert f.op == op
 
+    def test_parse_ilike_single_pattern(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"title": {"$ilike": "%road%"}}},
+        )
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$ilike"
+        assert f.value == "%road%"
+
+    def test_parse_ilike_sequence_desugars_to_or(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"title": {"$ilike": ["%road%", "%map%"]}}},
+        )
+        assert isinstance(result, QueryAnd)
+        or_node = result.items[0]
+        assert isinstance(or_node, QueryOr)
+        assert len(or_node.items) == 2
+        assert all(isinstance(i, QueryField) and i.op == "$ilike" for i in or_node.items)
+
+    def test_parse_element_any_ilike(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"name": {"$ilike": "%foo%"}}},
+                    },
+                },
+            },
+        )
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        inner = elem.inner
+        assert isinstance(inner, QueryAnd)
+        field = inner.items[0]
+        assert isinstance(field, QueryField)
+        assert field.op == "$ilike"
+
+    def test_parse_regex_rejects_unsafe_pattern(self) -> None:
+        with pytest.raises(ValidationError, match="nested quantifiers"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"title": {"$regex": "(a+)+"}}},
+            )
+
     # Conjunction / disjunction
     def test_parse_conjunction(self) -> None:
         expr = {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}

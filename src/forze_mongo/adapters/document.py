@@ -8,6 +8,7 @@ require_mongo()
 
 
 from typing import (
+    Any,
     TypeVar,
     final,
 )
@@ -19,6 +20,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.coordinators import DocumentCacheCoordinator, DocumentCoordinator
+from forze.application.coordinators.hydration import can_hydrate_read_from_write_domain
 from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -67,3 +69,17 @@ class MongoDocumentAdapter(DocumentCoordinator[R, D, C, U]):
                 raise CoreError(
                     "Write and read gateways must have the same tenant awareness."
                 )
+
+            if self.spec.write is not None:
+                hydrate = can_hydrate_read_from_write_domain(
+                    read_model=self.read_gw.model_type,
+                    domain_model=self.spec.write["domain"],
+                    read_source_key=_mongo_source_key(self.read_gw),
+                    write_source_key=_mongo_source_key(self.write_gw),
+                )
+                object.__setattr__(self, "hydrate_from_write", hydrate)
+
+
+def _mongo_source_key(gw: MongoReadGateway[Any] | MongoWriteGateway[Any, Any, Any]) -> str:
+    db = gw.database or ""
+    return f"{db}:{gw.collection}"

@@ -124,6 +124,7 @@ Not supported in MVP (explicit errors):
 |---------|--------|
 | `$fields`, `$not` | `CoreError` |
 | `$any` / `$all` / `$none` | `CoreError` |
+| `$like` / `$ilike` / `$regex` | `CoreError` |
 | Aggregates / `aggregate_page` / `select_page_aggregated` | `CoreError` |
 | Large offset pagination | `InvalidOperationError` (use cursor pagination) |
 | `update_matching` | `CoreError` |

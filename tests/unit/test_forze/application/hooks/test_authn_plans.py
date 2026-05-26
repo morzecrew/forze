@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.application.hooks.authn import AuthnRequired, authn_required_before_step
+from forze.application.hooks.authn import AuthnRequired
 from forze.base.errors import AuthenticationError
 
 pytestmark = pytest.mark.unit
@@ -37,11 +37,3 @@ async def test_authn_before_required_denies_when_missing() -> None:
             await hook(None)
 
     assert exc_info.value.code == "auth_required"
-
-
-def test_authn_required_before_step_builds_step() -> None:
-    step = authn_required_before_step(step_id="check_authn")
-
-    assert step.id == "check_authn"
-    assert step.priority == 10
-    assert isinstance(step.factory, AuthnRequired)

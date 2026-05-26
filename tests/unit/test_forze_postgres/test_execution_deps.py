@@ -48,6 +48,8 @@ from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGat
 from forze_postgres.kernel.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
+from forze_postgres.kernel.platform import RoutedPostgresClient
+from forze.application.contracts.secrets import SecretRef
 
 
 class _R(ReadDocument):
@@ -201,6 +203,38 @@ class TestPostgresDepsModule:
 
         with pytest.raises(CoreError, match="FTS groups are required"):
             module()
+
+    def test_routed_client_requires_introspector_partition_key(self) -> None:
+        from uuid import UUID
+
+        tid = UUID("11111111-1111-1111-1111-111111111111")
+        secrets = MagicMock()
+        routed = RoutedPostgresClient(
+            secrets=secrets,
+            secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/dsn"),
+            tenant_provider=lambda: tid,
+        )
+
+        with pytest.raises(CoreError, match="postgres_tenancy_validation_failed"):
+            PostgresDepsModule(client=routed)
+
+    def test_routed_client_with_partition_key_builds(self) -> None:
+        from uuid import UUID
+
+        tid = UUID("11111111-1111-1111-1111-111111111111")
+        secrets = MagicMock()
+        routed = RoutedPostgresClient(
+            secrets=secrets,
+            secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/dsn"),
+            tenant_provider=lambda: tid,
+        )
+
+        module = PostgresDepsModule(
+            client=routed,
+            introspector_cache_partition_key=lambda: str(tid),
+        )
+        deps = module()
+        assert deps.exists(PostgresClientDepKey)
 
 
 class TestConfigurablePostgresDocumentFactories:

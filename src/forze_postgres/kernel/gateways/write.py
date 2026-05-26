@@ -424,7 +424,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 await self._write_history(res)
                 return res
 
-            existing = await self.read_gw.get(model.id)
+            existing = await self._fetch_domain_by_pk(model.id)
             return existing
 
     # ....................... #
@@ -492,7 +492,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 by_returned: dict[UUID, JsonDict] = {_pk_from_row(r): r for r in rows}
                 need = [m.id for m in model_batch if m.id not in by_returned]
                 if need:
-                    fetched = await self.read_gw.get_many(need)
+                    fetched = await self._fetch_domains_by_pks(need)
                     by_existing = {d.id: d for d in fetched}
                 else:
                     by_existing = {}
@@ -594,7 +594,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 await self._write_history(res)
                 return res
 
-            current = await self.read_gw.get(model.id)
+            current = await self._fetch_domain_by_pk(model.id, for_update=True)
             res, _ = await self.update(model.id, update_dto, rev=current.rev)
             return res
 
@@ -680,7 +680,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
                 if need_u:
                     pks_u = [a[0] for a in need_u]
                     u_dtos = [a[1] for a in need_u]
-                    currents = await self.read_gw.get_many(pks_u)
+                    currents = await self._fetch_domains_by_pks(pks_u, for_update=True)
                     by_cur = {c.id: c for c in currents}
                     revs = [by_cur[pk].rev for pk in pks_u]
                     updated, _ = await self.update_many(

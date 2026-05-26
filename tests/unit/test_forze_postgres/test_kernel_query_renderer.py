@@ -478,6 +478,26 @@ class TestPsycopgQueryRenderer:
         with pytest.raises(CoreError, match="json or jsonb"):
             r.render(QueryField("meta.score", "$eq", 1))
 
+    def test_ilike_renders_sql_with_bound_param(self) -> None:
+        types: PostgresColumnTypes = {"title": _t("text")}
+        r = PsycopgQueryRenderer(types=types)
+        _sql, params = r.render(QueryField("title", "$ilike", "%road%"))
+        assert params == ["%road%"]
+        assert b"ILIKE" in _sql.as_bytes()
+
+    def test_ilike_rejects_non_text_column(self) -> None:
+        types: PostgresColumnTypes = {"n": _t("int8")}
+        r = PsycopgQueryRenderer(types=types)
+        with pytest.raises(CoreError, match="text-like"):
+            r.render(QueryField("n", "$ilike", "%x%"))
+
+    def test_regex_renders_tilde_operator(self) -> None:
+        types: PostgresColumnTypes = {"title": _t("text")}
+        r = PsycopgQueryRenderer(types=types)
+        _sql, params = r.render(QueryField("title", "$regex", "^foo"))
+        assert params == ["^foo"]
+        assert b"~" in _sql.as_bytes()
+
 
 class _OrderRow(BaseModel):
     category: str

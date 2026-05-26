@@ -53,6 +53,16 @@ project_document_config = PostgresDocumentConfig(
 )
 ```
 
+`bookkeeping_strategy` controls who bumps `rev` and timestamps:
+
+| Strategy | Application | Database |
+|----------|-------------|----------|
+| Revision bumps | Write gateway (`__bump_rev` / SQL increment) | `BEFORE UPDATE` trigger on write table |
+| History rows | `PostgresHistoryGateway` writes on mutation | Triggers (app history gateway is no-op) |
+| Startup validation | Warns if UPDATE triggers exist | **Fails** if no UPDATE trigger on write table |
+
+Example trigger name: `{table}_bump_rev` (see [First project walkthrough](../first-project-walkthrough.md)).
+
 For search, use `PostgresSearchConfig`, `PostgresHubSearchConfig`, or `PostgresFederatedSearchConfig` and choose `engine="pgroonga"`, `engine="fts"`, or `engine="vector"`.
 
 ### Deps module
@@ -125,6 +135,7 @@ lifecycle = LifecyclePlan.from_steps(
 - **`warm_postgres_catalog` / `postgres_catalog_warmup_lifecycle_step`** prefetch relation column types and index catalog metadata used by FTS/PGroonga search (and vector read/heap relations). They are safe no-ops when `PostgresDepsModule.introspector_cache_partition_key` is set but no tenant is available during startup (trace log only).
 - **`PostgresDepsModule.introspector_cache_ttl`** passes a TTL into `PostgresIntrospector` so cached catalog rows expire without a process restart (useful after migrations).
 - **`postgres_document_schema_spec_for_binding`** and **`postgres_document_schema_validation_lifecycle_step`** optionally assert that read (and write/history) relations expose the columns implied by your `DocumentSpec` and Pydantic models. Use `read_omit_fields` / `write_omit_fields` / `history_omit_fields` on `PostgresDocumentSchemaSpec` when a field is not stored as its own column.
+- **Tenancy wiring validation:** `PostgresDepsModule` fails at build time when `RoutedPostgresClient` is used without `introspector_cache_partition_key`. It warns when any route has `tenant_aware=True` on a routed client (redundant row filter). Schema validation warns when a write table has `tenant_id` but `tenant_aware=False`.
 
 ## Contract coverage table
 
@@ -187,4 +198,5 @@ Connection recovery is bounded by `reconnect_timeout`. Query-level retries shoul
 | `Write relation is required for non read-only documents`. | A read-write document was registered without `write`. | Add `write=(schema, table)` or register the document under `ro_documents`. | [Contract coverage table](#contract-coverage-table) |
 | Search configuration validation fails. | Engine-specific fields are missing, such as `fts_groups`, `vector_column`, `embedding_dimensions`, or `embeddings_name`. | Add the required fields for the selected search engine. | [Configuration reference](#configuration-reference) |
 | Tenant A sees schema metadata from tenant B. | A routed client uses introspection cache without a partition key. | Set `introspector_cache_partition_key` to the same tenant or route identity used for routing. | [Operational notes](#operational-notes) |
+| `PostgresDepsModule` raises `postgres_tenancy_validation_failed` at import/wiring. | `RoutedPostgresClient` registered without `introspector_cache_partition_key`. | Pass a callable that returns the current tenant id (same as routing). | [Catalog warmup](#catalog-warmup-introspector-ttl-and-document-schema-checks) |
 | Pool exhaustion or slow batch operations. | Pool sizes and batch concurrency are too small for workload. | Increase `max_size`, tune `pool_headroom`/`max_concurrent_queries`, or reduce batch size. | [Pool settings](#pool-settings) |

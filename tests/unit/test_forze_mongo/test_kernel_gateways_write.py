@@ -173,6 +173,40 @@ class TestMongoWriteGateway:
 
         assert client.update_one.await_count == 3
 
+    @pytest.mark.asyncio
+    async def test_ensure_many_reads_conflicts_only(self) -> None:
+        pk_new = uuid4()
+        pk_existing = uuid4()
+        now = datetime.now(tz=UTC)
+        existing = _domain_doc(pk_existing, name="existing")
+        dtos = [
+            MyCreateDoc(id=pk_existing, created_at=now, name="try"),
+            MyCreateDoc(id=pk_new, created_at=now, name="new"),
+        ]
+        client = _build_client()
+        bulk_result = MagicMock()
+        bulk_result.upserted_ids = {1: str(pk_new)}
+        client.bulk_write = AsyncMock(return_value=bulk_result)
+        read = _build_read(client)
+        read.get_many = AsyncMock(return_value=[existing])
+
+        gw = MongoWriteGateway(
+            model_type=MyDoc,
+            collection="docs",
+            database=None,
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+        )
+
+        out = await gw.ensure_many(dtos, batch_size=20)
+
+        assert [d.id for d in out] == [pk_existing, pk_new]
+        assert out[0].name == "existing"
+        assert out[1].name == "new"
+        read.get_many.assert_awaited_once_with([pk_existing])
+
 
 class TestOptimisticRetry:
     def test_optimistic_retry_returns_tenacity_decorator(self) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Mapping, NotRequired, Sequence, TypeAlias, TypedDict
 
-from .types import Array, Numeric, Scalar
+from .types import Array, Numeric, Scalar, TextPatternValue
 
 # ----------------------- #
 # Filter: literal constraints ($values)
@@ -29,6 +29,9 @@ QueryValueOpConjunction = TypedDict(
         "$subset": Array,
         "$disjoint": Array,
         "$overlaps": Array,
+        "$like": TextPatternValue,
+        "$ilike": TextPatternValue,
+        "$regex": TextPatternValue,
     },
     total=False,
 )
@@ -46,10 +49,13 @@ QueryElementOpConjunction = TypedDict(
         "$gte": Numeric,
         "$lt": Numeric,
         "$lte": Numeric,
+        "$like": TextPatternValue,
+        "$ilike": TextPatternValue,
+        "$regex": TextPatternValue,
     },
     total=False,
 )
-"""Operator map for a single array element (equality and ordering only)."""
+"""Operator map for a single array element (equality, ordering, and text patterns)."""
 
 QueryElementValueMapValue = QueryElementOpConjunction | Scalar
 """Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``."""

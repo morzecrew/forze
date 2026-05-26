@@ -18,7 +18,7 @@ from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.execution.document_schema import (
     postgres_document_schema_validation_lifecycle_step,
 )
-from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
@@ -132,8 +132,8 @@ async def test_validate_postgres_document_schemas_read_only() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.get_column_types = AsyncMock(
         return_value={
-            "a": MagicMock(),
-            "b": MagicMock(),
+            "a": PostgresType(base="int4", is_array=False, not_null=True),
+            "b": PostgresType(base="text", is_array=False, not_null=False),
         },
     )
 
@@ -148,13 +148,17 @@ async def test_validate_postgres_document_schemas_read_only() -> None:
         ],
     )
 
-    intro.get_column_types.assert_awaited_once_with(schema="public", relation="r")
+    intro.get_column_types.assert_awaited()
+    assert intro.get_column_types.await_count == 2
+    intro.get_column_types.assert_any_await(schema="public", relation="r")
 
 
 @pytest.mark.asyncio
 async def test_validate_postgres_document_schemas_missing_column() -> None:
     intro = MagicMock(spec=PostgresIntrospector)
-    intro.get_column_types = AsyncMock(return_value={"a": MagicMock()})
+    intro.get_column_types = AsyncMock(
+        return_value={"a": PostgresType(base="int4", is_array=False, not_null=True)},
+    )
 
     with pytest.raises(CoreError, match="missing columns"):
         await validate_postgres_document_schemas(

@@ -158,5 +158,10 @@ class FirestoreQueryRenderer:
             case "$superset" | "$subset" | "$overlaps" | "$disjoint":
                 raise CoreError(f"Firestore adapter does not support set operator {op!r} in MVP")
 
+            case "$like" | "$ilike" | "$regex":
+                raise CoreError(
+                    f"Firestore adapter does not support text pattern operator {op!r} in MVP"
+                )
+
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise CoreError(f"Unknown operator: {op!r}")

@@ -6,18 +6,19 @@ require_psycopg()
 
 # ....................... #
 
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Mapping
+from uuid import UUID
 
 import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
+    ELEM_SCALAR_FIELD,
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
-    ELEM_SCALAR_FIELD,
     GroupKey,
     GroupRef,
     GroupTrunc,
@@ -52,6 +53,8 @@ _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
     ("$empty", "$superset", "$subset", "$disjoint", "$overlaps"),
 )
 
+_TEXT_LIKE_BASES: frozenset[str] = frozenset({"text", "varchar", "char", "citext"})
+
 _COMPARE_EQ_SQL: dict[str, str] = {"$eq": "=", "$neq": "<>"}
 _COMPARE_ORD_SQL: dict[str, str] = {
     "$gt": ">",
@@ -65,6 +68,8 @@ _COMPARE_COMPAT_BASE_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"float4", "float8", "numeric"}),
     frozenset({"timestamp", "timestamptz"}),
 )
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True)
@@ -225,12 +230,16 @@ class PsycopgQueryRenderer:
         group: GroupKey,
     ) -> tuple[sql.Composable, sql.Composable]:
         ident = sql.Identifier(group.alias)
+
         if isinstance(group.expr, GroupRef):
             expr = self._render_source_expr(group.expr.field)
+
         else:
             expr = self._render_trunc_expr(group.expr)
 
         return expr, ident
+
+    # ....................... #
 
     def _render_trunc_expr(self, trunc: GroupTrunc) -> sql.Composable:
         col = self._render_source_expr(trunc.field)
@@ -245,6 +254,7 @@ class PsycopgQueryRenderer:
             )
 
         offset = tz.offset if tz.offset is not None else timedelta(0)
+
         return sql.SQL("date_trunc({}, {} AT TIME ZONE 'UTC' + {})").format(
             sql.Literal(unit),
             col,
@@ -270,6 +280,7 @@ class PsycopgQueryRenderer:
             raise CoreError(f"Invalid aggregate sort fields: {bad}")
 
         parts: list[sql.Composable] = []
+
         for field, order in sorts.items():
             direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
             parts.append(sql.SQL("{} {}").format(sql.Identifier(field), direction))
@@ -326,6 +337,7 @@ class PsycopgQueryRenderer:
             return expr
 
         filter_expr = computed.parsed_filter
+
         if filter_expr is None:
             filter_expr = QueryFilterExpressionParser.parse(computed.filter)
 
@@ -353,7 +365,8 @@ class PsycopgQueryRenderer:
     # ....................... #
 
     def _resolve_column_expr(
-        self, field: str
+        self,
+        field: str,
     ) -> tuple[sql.Composable, PostgresType | None]:
         """Resolve a field path to a SQL column/expression and optional Postgres type."""
 
@@ -380,8 +393,10 @@ class PsycopgQueryRenderer:
 
         if self.types is not None:
             t = self.types.get(segments[0])
+
             if t is None:
                 raise CoreError(f"Unknown column: {segments[0]!r}")
+
         else:
             t = None
 
@@ -390,6 +405,7 @@ class PsycopgQueryRenderer:
             if self.table_alias is not None
             else sql.Identifier(segments[0])
         )
+
         return col, t
 
     # ....................... #
@@ -426,6 +442,7 @@ class PsycopgQueryRenderer:
     def _render_compare(self, left: str, op: QueryOp.Compare, right: str) -> sql.Composable:  # type: ignore[valid-type]
         left_expr, left_t = self._resolve_column_expr(left)
         right_expr, right_t = self._resolve_column_expr(right)
+
         self._assert_compare_types_compatible(left, right, left_t, right_t)
 
         if op in _COMPARE_EQ_SQL:
@@ -450,21 +467,25 @@ class PsycopgQueryRenderer:
 
             case QueryField(name, op, value):
                 segments = name.split(".")
+
                 if len(segments) > 1:
                     if self.types is None:
                         raise CoreError(
                             f"Nested filter path {name!r} requires column type metadata "
                             "(introspected types).",
                         )
+
                     if self.model_type is None:
                         raise CoreError(
                             f"Nested filter path {name!r} requires gateway model_type "
                             "for read-model validation.",
                         )
+
                     if op in _NESTED_JSON_UNSUPPORTED:
                         raise CoreError(
                             f"Operator {op!r} is not supported for nested JSON path {name!r}.",
                         )
+
                     col_expr, t = build_nested_json_scalar_expr(
                         path=name,
                         segments=segments,
@@ -473,6 +494,7 @@ class PsycopgQueryRenderer:
                         nested_field_hints=self.nested_field_hints,
                         table_alias=self.table_alias,
                     )
+
                     return self._render_field(col_expr, op, value, t=t)
 
                 if self.types is not None:
@@ -549,8 +571,55 @@ class PsycopgQueryRenderer:
             case "$superset" | "$subset" | "$disjoint" | "$overlaps":
                 return self._render_set_rel(col, op, value, t=t)
 
+            case "$like" | "$ilike" | "$regex":
+                return self._render_text(col, op, value, t=t)
+
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise CoreError(f"Unknown operator: {op!r}")
+
+    # ....................... #
+
+    def _ensure_text_column(self, t: PostgresType | None, op: str) -> None:
+        if t is None:
+            return
+
+        if t.is_array:
+            raise CoreError(
+                f"Operator {op!r} is not supported on array column type {t!r}",
+            )
+
+        if t.base not in _TEXT_LIKE_BASES:
+            raise CoreError(
+                f"Operator {op!r} requires a text-like column; got {t.base!r}",
+            )
+
+    # ....................... #
+
+    def _render_text(
+        self,
+        col: sql.Composable,
+        op: QueryOp.All,  # type: ignore[valid-type]
+        value: Any,
+        *,
+        t: PostgresType | None,
+    ) -> sql.Composable:
+        self._ensure_text_column(t, op)
+        pattern = str(self.coercer.scalar(value, t=t))
+
+        match op:
+            case "$like":
+                op_sql = sql.SQL("LIKE")
+
+            case "$ilike":
+                op_sql = sql.SQL("ILIKE")
+
+            case "$regex":
+                op_sql = sql.SQL("~")
+
+            case _:
+                raise CoreError(f"Unknown text operator: {op!r}")
+
+        return sql.SQL("{} {} {}").format(col, op_sql, self.binder.add(pattern))
 
     # ....................... #
 
@@ -598,6 +667,7 @@ class PsycopgQueryRenderer:
         # JSON/JSONB columns store JSON arrays; cardinality() is for native PG arrays only.
         if t is not None and not t.is_array and t.base in ("jsonb", "json"):
             j = sql.SQL("({})::jsonb").format(col)
+
             if value is True:
                 return sql.SQL(
                     "(jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) = 0)"
@@ -629,6 +699,7 @@ class PsycopgQueryRenderer:
             "$lt": "<",
             "$lte": "<=",
         }
+
         op_sql = sql.SQL(op_map[op])  # pyright: ignore[reportArgumentType]
         value = self.coercer.scalar(value, t=t)
 
@@ -660,7 +731,9 @@ class PsycopgQueryRenderer:
                     "use $null for null checks, $superset / $overlaps / $in for "
                     "containment-style matches.",
                 )
+
             bound = self.binder.add(self.coercer.array(value, t=t))
+
             return sql.SQL("{} {} {}").format(col, op_sql, bound)
 
         value = self.coercer.scalar(value, t=t)
@@ -721,7 +794,10 @@ class PsycopgQueryRenderer:
     def _elem_vacuous_sql(self, quantifier: str) -> sql.Composable:
         if quantifier in ("$all", "$none"):
             return sql.SQL("TRUE")
+
         return sql.SQL("FALSE")
+
+    # ....................... #
 
     def _elem_has_array_sql(
         self,
@@ -732,9 +808,12 @@ class PsycopgQueryRenderer:
             return sql.SQL("{} IS NOT NULL").format(col)
 
         j = sql.SQL("({})::jsonb").format(col)
+
         return sql.SQL(
             "({col} IS NOT NULL AND jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) > 0)",
         ).format(col=col, j=j)
+
+    # ....................... #
 
     def _render_elem(
         self,
@@ -757,24 +836,30 @@ class PsycopgQueryRenderer:
             exists = sql.SQL(
                 "EXISTS (SELECT 1 FROM unnest({col}) AS _fz_elem WHERE {pred})",
             ).format(col=col, pred=elem_pred)
+
             forall = sql.SQL(
                 "NOT EXISTS (SELECT 1 FROM unnest({col}) AS _fz_elem WHERE NOT ({pred}))",
             ).format(col=col, pred=elem_pred)
+
         else:
             arr = sql.SQL(
                 "CASE WHEN jsonb_typeof({col}::jsonb) = 'array' THEN {col}::jsonb ELSE '[]'::jsonb END",
             ).format(col=col)
+
             exists = sql.SQL(
                 "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS _fz_elem WHERE {pred})",
             ).format(arr=arr, pred=elem_pred)
+
             forall = sql.SQL(
                 "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS _fz_elem WHERE NOT ({pred}))",
             ).format(arr=arr, pred=elem_pred)
 
         if quantifier == "$any":
             match = exists
+
         elif quantifier == "$all":
             match = forall
+
         else:
             match = sql.SQL("NOT ({})").format(exists)
 
@@ -787,16 +872,20 @@ class PsycopgQueryRenderer:
             match=match,
         )
 
+    # ....................... #
+
     def _resolve_column_and_type(
         self,
         path: str,
     ) -> tuple[sql.Composable, PostgresType | None]:
         segments = path.split(".")
+
         if len(segments) > 1:
             if self.types is None or self.model_type is None:
                 raise CoreError(
                     f"Nested element path {path!r} requires column types and model_type",
                 )
+
             col_expr, t = build_nested_json_scalar_expr(
                 path=path,
                 segments=segments,
@@ -805,12 +894,15 @@ class PsycopgQueryRenderer:
                 nested_field_hints=self.nested_field_hints,
                 table_alias=self.table_alias,
             )
+
             return col_expr, t
 
         if self.types is not None:
             t = self.types.get(path)
+
             if t is None:
                 raise CoreError(f"Unknown column: {path!r}")
+
         else:
             t = None
 
@@ -819,7 +911,10 @@ class PsycopgQueryRenderer:
             if self.table_alias is not None
             else sql.Identifier(path)
         )
+
         return col, t
+
+    # ....................... #
 
     def _render_elem_inner(
         self,
@@ -833,18 +928,27 @@ class PsycopgQueryRenderer:
 
         return self._render_elem_object_inner(inner, col, t, path)
 
+    # ....................... #
+
     @staticmethod
     def _elem_inner_is_scalar(inner: QueryExpr) -> bool:
         match inner:
             case QueryField(name, _, _):
                 return name == ELEM_SCALAR_FIELD
+
             case QueryAnd(items):
                 return all(
                     isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
                     for i in items
                 )
+
+            case QueryOr(items):
+                return all(PsycopgQueryRenderer._elem_inner_is_scalar(i) for i in items)
+
             case _:
                 return False
+
+    # ....................... #
 
     def _render_elem_scalar_inner(
         self,
@@ -854,22 +958,38 @@ class PsycopgQueryRenderer:
         match inner:
             case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
                 fields = [inner]
+
             case QueryAnd(items):
                 fields = [i for i in items if isinstance(i, QueryField)]
+
+            case QueryOr(items):
+                parts = [self._render_elem_scalar_inner(i, t) for i in items]
+
+                if len(parts) == 1:
+                    return parts[0]
+                return sql.SQL("(") + sql.SQL(" OR ").join(parts) + sql.SQL(")")
+
             case _:
                 raise CoreError(f"Invalid scalar element inner: {inner!r}")
 
         elem_t = (
-            PostgresType(base=t.base, is_array=False, not_null=True) if t and t.is_array else t
+            PostgresType(base=t.base, is_array=False, not_null=True)
+            if t and t.is_array
+            else t
         )
+
         elem = sql.Identifier("_fz_elem")
         parts = [
             self._render_field(elem, f.op, f.value, t=elem_t)  # type: ignore[arg-type]
             for f in fields
         ]
+
         if len(parts) == 1:
             return parts[0]
+
         return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    # ....................... #
 
     def _render_elem_object_inner(
         self,
@@ -881,17 +1001,32 @@ class PsycopgQueryRenderer:
         match inner:
             case QueryAnd(items):
                 fields = [i for i in items if isinstance(i, QueryField)]
+
             case QueryField() as f:
                 fields = [f]
+
+            case QueryOr(items):
+                or_parts = [
+                    self._render_elem_object_inner(i, col, t, path) for i in items
+                ]
+
+                if len(or_parts) == 1:
+                    return or_parts[0]
+
+                return sql.SQL("(") + sql.SQL(" OR ").join(or_parts) + sql.SQL(")")
+
             case _:
                 raise CoreError(f"Invalid object element inner: {inner!r}")
 
         parts: list[sql.Composable] = []
+
         for f in fields:
             segments = f.name.split(".")
             leaf_t = None
+
             if self.model_type is not None:
                 ann = walk_pydantic_path(self.model_type, [path, *segments])
+
                 if ann is not None:
                     try:
                         leaf_t = resolve_leaf_python_type(
@@ -902,43 +1037,57 @@ class PsycopgQueryRenderer:
                         )
                     except CoreError:
                         leaf_t = None
+
             pg_t = self._python_ann_to_postgres_type(leaf_t) if leaf_t else None
+
             if len(segments) == 1:
                 key = segments[0]
                 field_expr = sql.SQL("(_fz_elem ->> {})").format(sql.Literal(key))
+
             else:
                 field_expr = sql.SQL("(_fz_elem #>> {})").format(
                     sql.Literal("{" + ",".join(segments) + "}"),
                 )
+
             if pg_t is not None:
                 cast = cast_sql_for_column_type(pg_t)
+
                 if cast is not None:
                     field_expr = sql.SQL("({})::{}").format(field_expr, cast)
+
             parts.append(self._render_field(field_expr, f.op, f.value, t=pg_t))
 
         if len(parts) == 1:
             return parts[0]
+
         return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    # ....................... #
 
     @staticmethod
     def _python_ann_to_postgres_type(ann: Any) -> PostgresType | None:
         if ann is None:
             return None
-        from datetime import date, datetime
-        from uuid import UUID
 
         if ann is UUID:
             return PostgresType(base="uuid", is_array=False, not_null=False)
+
         if ann is bool:
             return PostgresType(base="bool", is_array=False, not_null=False)
+
         if ann is int:
             return PostgresType(base="int8", is_array=False, not_null=False)
+
         if ann is float:
             return PostgresType(base="float8", is_array=False, not_null=False)
+
         if ann is datetime:
             return PostgresType(base="timestamptz", is_array=False, not_null=False)
+
         if ann is date:
             return PostgresType(base="date", is_array=False, not_null=False)
+
         if ann is str:
             return PostgresType(base="text", is_array=False, not_null=False)
+
         return None

@@ -11,6 +11,11 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from forze.application.contracts.document.types import (
+    RowLockMode,
+    log_non_postgres_lock_degrade,
+    row_lock_requires_transaction,
+)
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -58,18 +63,20 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> M:
         """Fetch a single document by primary key.
 
-        When *for_update* is ``True``, an active transaction is required.
+        When *for_update* is not ``False``, an active transaction is required.
+        ``"nowait"`` and ``"skip_locked"`` are degraded to a transactional read.
 
         :param pk: Document primary key.
-        :param for_update: Require a transaction context for pessimistic reads.
+        :param for_update: Pessimistic read / transactional read mode.
         :raises NotFoundError: If no document matches the primary key.
         """
 
-        if for_update:
+        if row_lock_requires_transaction(for_update):
+            log_non_postgres_lock_degrade(for_update, backend="mongo")
             self.client.require_transaction()
 
         filters = {"_id": self._storage_pk(pk)}
@@ -132,7 +139,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None:
@@ -144,7 +151,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None:
@@ -156,7 +163,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None:
@@ -168,7 +175,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never:
@@ -179,7 +186,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None:
@@ -193,7 +200,8 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         :param return_fields: Optional field subset to project.
         """
 
-        if for_update:
+        if row_lock_requires_transaction(for_update):
+            log_non_postgres_lock_degrade(for_update, backend="mongo")
             self.client.require_transaction()
 
         query = self.render_filters(filters)

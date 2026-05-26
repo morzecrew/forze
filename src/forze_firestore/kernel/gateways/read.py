@@ -12,6 +12,11 @@ from uuid import UUID
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
+from forze.application.contracts.document.types import (
+    RowLockMode,
+    log_non_postgres_lock_degrade,
+    row_lock_requires_transaction,
+)
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -45,8 +50,9 @@ M = TypeVar("M", bound=BaseModel)
 class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
     """Read-only Firestore gateway."""
 
-    async def get(self, pk: UUID, *, for_update: bool = False) -> M:
-        if for_update:
+    async def get(self, pk: UUID, *, for_update: RowLockMode = False) -> M:
+        if row_lock_requires_transaction(for_update):
+            log_non_postgres_lock_degrade(for_update, backend="firestore")
             self.client.require_transaction()
 
         raw = await self.client.get_document(
@@ -95,7 +101,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None:
@@ -107,7 +113,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None:
@@ -119,7 +125,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None:
@@ -131,7 +137,7 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never:
@@ -142,11 +148,12 @@ class FirestoreReadGateway[M: BaseModel](FirestoreGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None:
-        if for_update:
+        if row_lock_requires_transaction(for_update):
+            log_non_postgres_lock_degrade(for_update, backend="firestore")
             self.client.require_transaction()
 
         flt = self.render_filters(filters)

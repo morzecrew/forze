@@ -318,10 +318,12 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                 v_col = c.get("vector_column")
                 v_dim = c.get("embedding_dimensions")
                 e_name = c.get("embeddings_name")
+
                 if v_col is None or v_dim is None or e_name is None:
                     raise CoreError(
                         "vector hub leg requires vector_column, embedding_dimensions, and embeddings_name.",
                     )
+
                 vector_embedders[i] = context.embeddings.provider(
                     EmbeddingsSpec(
                         name=str(e_name),
@@ -337,6 +339,7 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
 
             if c.get("same_heap_as_hub"):
                 hub_fields = pydantic_field_names(spec.model_type)
+
                 for field in m.fields:
                     if field not in hub_fields:
                         raise CoreError(
@@ -345,8 +348,10 @@ class ConfigurablePostgresHubSearch(HubSearchQueryDepPort):
                         )
 
             pg_sv: Literal["v1", "v2"] | None = None
+
             if engine == "pgroonga":
                 pg_sv = c.get("pgroonga_score_version", "v2")
+
                 if pg_sv not in ("v1", "v2"):
                     raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")
 

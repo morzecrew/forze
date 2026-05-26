@@ -1,6 +1,7 @@
 """Coordinator implementing document ports over pluggable persistence gateways."""
 
 import asyncio
+from collections.abc import AsyncIterator
 from functools import cached_property
 from typing import (
     Any,
@@ -28,6 +29,7 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    RowLockMode,
     require_create_id,
     require_create_id_for_many,
 )
@@ -44,6 +46,12 @@ from forze.application.contracts.querying import (
 )
 from forze.base.errors import CoreError, InvalidOperationError
 from forze.base.primitives import JsonDict
+from forze.base.serialization import (
+    pydantic_dump,
+    pydantic_dump_many,
+    pydantic_validate,
+    pydantic_validate_many,
+)
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
@@ -82,7 +90,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> Awaitable[M]: ...
 
     # ....................... #
@@ -96,7 +104,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None: ...
@@ -106,7 +114,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None: ...
@@ -116,7 +124,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None: ...
@@ -126,7 +134,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never: ...
@@ -135,7 +143,7 @@ class DocumentReadGatewayPort[M: BaseModel](Protocol):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None: ...
@@ -436,6 +444,9 @@ class DocumentCoordinator(
     enforce_primary_key_cursor_sort: bool = False
     """When ``True``, reject cursor queries unless sorted solely by ``id``."""
 
+    hydrate_from_write: bool = False
+    """When ``True``, map write-gateway domain rows to the read model without a re-read."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -469,6 +480,76 @@ class DocumentCoordinator(
 
     # ....................... #
 
+    def _eff_stream_chunk_size(self, chunk_size: int) -> int:
+        if chunk_size < 10:
+            logger.warning("Stream chunk size is too small, using default value of 500")
+            return 500
+
+        if chunk_size > 20000:
+            logger.warning("Stream chunk size is too large, using default value of 500")
+            return 500
+
+        return chunk_size
+
+    # ....................... #
+
+    async def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> R:
+        if self.hydrate_from_write and domain is not None:
+            return pydantic_validate(self.read_gw.model_type, pydantic_dump(domain))
+
+        doc_pk = domain.id if domain is not None else pk
+
+        if doc_pk is None:
+            raise CoreError(
+                "Cannot load read model after write: domain row missing and no primary key.",
+                code="document_hydration_failed",
+            )
+
+        return await self.read_gw.get(doc_pk)
+
+    # ....................... #
+
+    async def _to_read_many(
+        self,
+        domains: Sequence[D | None],
+        *,
+        pks: Sequence[UUID] | None = None,
+    ) -> Sequence[R]:
+        if not domains:
+            if pks:
+                return await self.read_gw.get_many(list(pks))
+
+            return []
+
+        if self.hydrate_from_write and all(d is not None for d in domains):
+            return pydantic_validate_many(
+                self.read_gw.model_type,
+                pydantic_dump_many(domains),  # type: ignore[arg-type]
+            )
+
+        if pks is not None and len(pks) != len(domains):
+            raise CoreError(
+                "Primary keys length must match domain rows for read-back.",
+                code="document_hydration_failed",
+            )
+
+        keys: list[UUID] = []
+
+        for i, domain in enumerate(domains):
+            if domain is not None:
+                keys.append(domain.id)
+            elif pks is not None:
+                keys.append(pks[i])
+            else:
+                raise CoreError(
+                    "Cannot load read models after write: domain row missing and no primary key.",
+                    code="document_hydration_failed",
+                )
+
+        return await self.read_gw.get_many(keys)
+
+    # ....................... #
+
     def _require_write(self) -> DocumentWriteGatewayPort[D, C, U]:
         if self.write_gw is None:
             raise CoreError("Write gateway is not configured")
@@ -481,7 +562,7 @@ class DocumentCoordinator(
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
         """Fetch a single document by primary key, using the cache when available."""
@@ -541,7 +622,7 @@ class DocumentCoordinator(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> R | None:
         """Find a single document matching the given filters."""
 
@@ -554,7 +635,7 @@ class DocumentCoordinator(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         fields: Sequence[str],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> JsonDict | None:
         """Find one document matching filters and project ``fields``."""
 
@@ -571,7 +652,7 @@ class DocumentCoordinator(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         return_type: type[T],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> T | None:
         """Find one document matching filters as ``return_type``."""
 
@@ -1023,6 +1104,7 @@ class DocumentCoordinator(
             filters=filters,
             cursor=cursor,
             sorts=sorts,
+            return_model=None,
             return_fields=None,
         )
 
@@ -1039,8 +1121,82 @@ class DocumentCoordinator(
             filters=filters,
             cursor=cursor,
             sorts=sorts,
+            return_model=None,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
+
+    async def select_cursor(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[T]:
+        return await self._cursor_page(
+            filters=filters,
+            cursor=cursor,
+            sorts=sorts,
+            return_model=return_type,
+            return_fields=None,
+        )
+
+    # ....................... #
+
+    async def find_stream(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[R]]:
+        async for chunk in self._stream(
+            filters=filters,
+            sorts=sorts,
+            chunk_size=chunk_size,
+            return_model=None,
+            return_fields=None,
+        ):
+            yield chunk
+
+    # ....................... #
+
+    async def project_stream(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[JsonDict]]:
+        async for chunk in self._stream(
+            filters=filters,
+            sorts=sorts,
+            chunk_size=chunk_size,
+            return_model=None,
+            return_fields=tuple(fields),
+        ):
+            yield chunk
+
+    # ....................... #
+
+    async def select_stream(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[T]]:
+        async for chunk in self._stream(
+            filters=filters,
+            sorts=sorts,
+            chunk_size=chunk_size,
+            return_model=return_type,
+            return_fields=None,
+        ):
+            yield chunk
 
     # ....................... #
 
@@ -1051,6 +1207,7 @@ class DocumentCoordinator(
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
+        return_model: None,
         return_fields: None,
     ) -> CursorPage[R]: ...
 
@@ -1061,8 +1218,20 @@ class DocumentCoordinator(
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
+        return_model: None,
         return_fields: Sequence[str],
     ) -> CursorPage[JsonDict]: ...
+
+    @overload
+    async def _cursor_page(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        return_model: type[T],
+        return_fields: None,
+    ) -> CursorPage[T]: ...
 
     async def _cursor_page(
         self,
@@ -1070,8 +1239,12 @@ class DocumentCoordinator(
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
+        return_model: type[Any] | None,
         return_fields: Sequence[str] | None,
-    ) -> CursorPage[R] | CursorPage[JsonDict]:
+    ) -> CursorPage[R] | CursorPage[JsonDict] | CursorPage[T]:
+        if return_model is not None and return_fields is not None:
+            raise CoreError("return_model and return_fields cannot be combined")
+
         normalized = normalize_sorts_with_id(sorts)
 
         sort_keys = [k for k, _ in normalized]
@@ -1094,11 +1267,11 @@ class DocumentCoordinator(
             filters,
             cursor=cursor,
             sorts=sorts,
-            return_model=None,
+            return_model=return_model,  # type: ignore[arg-type]
             return_fields=return_fields,  # type: ignore[typeddict, arg-type, misc]
         )
 
-        def _dump(o: R | JsonDict) -> JsonDict:
+        def _dump(o: R | JsonDict | T) -> JsonDict:
             if isinstance(o, dict):
                 return o
 
@@ -1111,6 +1284,14 @@ class DocumentCoordinator(
             directions=directions,
             dump_row=_dump,
         )
+
+        if return_model is not None:
+            return CursorPage(
+                hits=cast(list[T], list(page_raw)),
+                next_cursor=next_tok,
+                prev_cursor=prev_tok,
+                has_more=has_more,
+            )
 
         if return_fields is not None:
             return CursorPage(
@@ -1126,6 +1307,95 @@ class DocumentCoordinator(
             prev_cursor=prev_tok,
             has_more=has_more,
         )
+
+    # ....................... #
+
+    @overload
+    def _stream(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        chunk_size: int,
+        return_model: None,
+        return_fields: None,
+    ) -> AsyncIterator[Sequence[R]]: ...
+
+    @overload
+    def _stream(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        chunk_size: int,
+        return_model: None,
+        return_fields: Sequence[str],
+    ) -> AsyncIterator[Sequence[JsonDict]]: ...
+
+    @overload
+    def _stream(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        chunk_size: int,
+        return_model: type[T],
+        return_fields: None,
+    ) -> AsyncIterator[Sequence[T]]: ...
+
+    async def _stream(
+        self,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        chunk_size: int,
+        return_model: type[T] | None,
+        return_fields: Sequence[str] | None,
+    ) -> AsyncIterator[Sequence[R] | Sequence[JsonDict] | Sequence[T]]:
+        eff = self._eff_stream_chunk_size(chunk_size)
+        cursor: CursorPaginationExpression = {"limit": eff}
+        page: CursorPage[R] | CursorPage[JsonDict] | CursorPage[T]
+
+        while True:
+            if return_model is not None:
+
+                page = await self._cursor_page(
+                    filters=filters,
+                    cursor=cursor,
+                    sorts=sorts,
+                    return_model=return_model,
+                    return_fields=None,
+                )
+
+            elif return_fields is not None:
+
+                page = await self._cursor_page(
+                    filters=filters,
+                    cursor=cursor,
+                    sorts=sorts,
+                    return_model=None,
+                    return_fields=return_fields,
+                )
+
+            else:
+
+                page = await self._cursor_page(
+                    filters=filters,
+                    cursor=cursor,
+                    sorts=sorts,
+                    return_model=None,
+                    return_fields=None,
+                )
+
+            if not page.hits:
+                break
+
+            yield page.hits
+
+            if not page.has_more or page.next_cursor is None:
+                break
+
+            cursor = {"limit": eff, "after": page.next_cursor}
 
     # ....................... #
 
@@ -1160,7 +1430,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get(domain.id)
+        res = await self._to_read(domain)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_one(res)
         )
@@ -1212,7 +1482,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get_many(pks_new)
+        res = await self._to_read_many(domains)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)
         )
@@ -1247,7 +1517,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get(domain.id)
+        res = await self._to_read(domain)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_one(res)
         )
@@ -1295,7 +1565,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get_many(pks)
+        res = await self._to_read_many(domains)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)
         )
@@ -1338,7 +1608,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get(domain.id)
+        res = await self._to_read(domain)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_one(res)
         )
@@ -1386,7 +1656,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get_many(pks)
+        res = await self._to_read_many(domains)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)
         )
@@ -1457,7 +1727,7 @@ class DocumentCoordinator(
 
         w = self._require_write()
 
-        (_, diff), _ = await asyncio.gather(
+        (domain, diff), _ = await asyncio.gather(
             w.update(pk, dto, rev=rev),
             self.cache_coord.invalidate_keys_now(pk),
         )
@@ -1468,7 +1738,7 @@ class DocumentCoordinator(
 
             return None
 
-        res = await self.read_gw.get(pk)
+        res = await self._to_read(domain, pk=pk)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_one(res)
         )
@@ -1547,7 +1817,7 @@ class DocumentCoordinator(
         revs = [x[1] for x in updates]
         dtos = [x[2] for x in updates]
 
-        (_, diffs), _ = await asyncio.gather(
+        (domains, diffs), _ = await asyncio.gather(
             w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size),
             self.cache_coord.invalidate_keys_now(*pks),
         )
@@ -1558,7 +1828,7 @@ class DocumentCoordinator(
 
             return None
 
-        res = await self.read_gw.get_many(pks)
+        res = await self._to_read_many(domains, pks=pks)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)
         )
@@ -1612,7 +1882,7 @@ class DocumentCoordinator(
         if not return_new:
             return count
 
-        res = await self.read_gw.get_many(pks)
+        res = await self._to_read_many(domains)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)
         )
@@ -1731,7 +2001,7 @@ class DocumentCoordinator(
 
         w = self._require_write()
 
-        await asyncio.gather(
+        domain, _ = await asyncio.gather(
             w.touch(pk),
             self.cache_coord.invalidate_keys_now(pk),
         )
@@ -1739,7 +2009,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get(pk)
+        res = await self._to_read(domain, pk=pk)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_one(res)
         )
@@ -1783,7 +2053,7 @@ class DocumentCoordinator(
 
             return []
 
-        await asyncio.gather(
+        domains, _ = await asyncio.gather(
             w.touch_many(pks, batch_size=self.eff_batch_size),
             self.cache_coord.invalidate_keys_now(*pks),
         )
@@ -1791,7 +2061,7 @@ class DocumentCoordinator(
         if not return_new:
             return None
 
-        res = await self.read_gw.get_many(pks)
+        res = await self._to_read_many(domains)
         await self.cache_coord.after_commit_or_now(
             lambda: self.cache_coord.set_many(res)
         )

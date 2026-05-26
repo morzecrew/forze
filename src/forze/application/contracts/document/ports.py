@@ -1,5 +1,6 @@
 """Ports for document storage and retrieval."""
 
+from collections.abc import AsyncIterator
 from typing import (
     Any,
     Awaitable,
@@ -26,6 +27,7 @@ from ..querying import (
     QuerySortExpression,
 )
 from .specs import DocumentSpec
+from .types import RowLockMode
 
 # ----------------------- #
 
@@ -58,14 +60,19 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
     explicit ``return_type``; ``*_many`` is countless offset pagination;
     ``*_page`` includes a total count; ``*_cursor`` is keyset pagination;
     ``aggregate_*`` returns aggregate rows as JSON; ``select_*_aggregated``
-    validates aggregate rows against ``return_type``.
+    validates aggregate rows against ``return_type``; ``*_stream`` yields keyset
+    batches for large exports.
+
+    ``for_update`` uses :data:`~forze.application.contracts.document.RowLockMode`.
+    Postgres honors ``"nowait"`` and ``"skip_locked"``; other backends treat
+    those modes as ``True`` (transaction required) and log at debug level.
     """
 
     def get(
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> Awaitable[R]:
         """Fetch a single document by primary key as the typed read model."""
@@ -84,7 +91,7 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> Awaitable[R | None]:
         """Find a single document by filters or return ``None`` when missing."""
         ...  # pragma: no cover
@@ -94,7 +101,7 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         fields: Sequence[str],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> Awaitable[JsonDict | None]:
         """Find a single document by filters and project ``fields`` to a JSON mapping."""
         ...  # pragma: no cover
@@ -104,7 +111,7 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         return_type: type[T],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> Awaitable[T | None]:
         """Find a single document by filters and validate as ``return_type``."""
         ...  # pragma: no cover
@@ -184,6 +191,48 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         sorts: QuerySortExpression | None = None,
     ) -> Awaitable[CursorPage[JsonDict]]:
         """Keyset / cursor page with field projection."""
+        ...  # pragma: no cover
+
+    def select_cursor(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> Awaitable[CursorPage[T]]:
+        """Keyset / cursor page validating each row as ``return_type``."""
+        ...  # pragma: no cover
+
+    def find_stream(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[R]]:
+        """Yield keyset batches of read models for large exports (no total count)."""
+        ...  # pragma: no cover
+
+    def project_stream(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[JsonDict]]:
+        """Yield keyset batches with field projection for large exports."""
+        ...  # pragma: no cover
+
+    def select_stream(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncIterator[Sequence[T]]:
+        """Yield keyset batches validated as ``return_type`` for large exports."""
         ...  # pragma: no cover
 
     def aggregate_many(
@@ -301,8 +350,9 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         """Insert when missing; if a row with the same primary key exists, return it unchanged.
 
         Requires :attr:`~CreateDocumentCmd.id` to be set on ``dto`` so the
-        operation is idempotent by primary key (insert-only; no updates to
-        existing rows).
+        operation is idempotent by primary key. **Insert-only on conflict** — existing
+        rows are never mutated. Gateways may hydrate the returned domain row from the
+        write payload when read and write share the same physical source.
         """
         ...  # pragma: no cover
 
@@ -376,6 +426,9 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
 
         Requires :attr:`~CreateDocumentCmd.id` on ``create_dto``. The update branch
         uses the current stored revision (same optimistic rules as :meth:`update`).
+        This is **not** a Mongo replace-all upsert — conflict rows are patched via
+        domain apply. Gateways may hydrate insert results from the write payload when
+        read and write share the same physical source.
         """
         ...  # pragma: no cover
 
@@ -568,18 +621,27 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | int]:
-        """Apply the same partial update to every document matching *filters* using a fast store path.
+        """Apply the same partial update to every document matching *filters* (bulk patch).
 
-        Does not take per-row expected revisions. Revision bumps are handled in the
-        database (Postgres: single ``UPDATE … WHERE``; Mongo: batched ``update_many`` on
-        ``_id`` sets). Semantics may differ from :meth:`update` when domain models derive
-        fields during apply.
+        **Fast store path** — does not take per-row expected revisions and does
+        **not** run domain :meth:`~forze.domain.models.Document.update` (no computed-field
+        side effects, soft-delete validators, or per-row OCC). Suitable for admin or
+        batch flags (for example ``archived=true``). Prefer :meth:`update_matching_strict`
+        when business rules must match :meth:`update` / :meth:`update_many`.
 
-        :param filters: Required filter expression (same shape as :meth:`DocumentQueryPort.find_many` / :meth:`DocumentQueryPort.find_page`).
+        Postgres applies a single ``UPDATE … WHERE … RETURNING``; Mongo keyset-pages
+        ids and runs batched ``update_many`` with ``$inc`` on ``rev``.
+
+        :param filters: Required filter expression (same shape as query ``find_many``).
         :param dto: Patch applied uniformly to each matching row.
-        :param return_new: When ``True``, reload and return read models for updated rows
-            (Postgres: ``RETURNING``; Mongo: ``get_many`` per chunk). When ``False``, return
-            the number of rows the store reported as updated.
+        :param return_new: When ``True``, return read models for updated rows. Postgres
+            hydrates from ``RETURNING`` domain rows when the coordinator can map write
+            results to the read model; Mongo re-reads updated ids per chunk. When
+            ``False``, return the number of rows the store reported as updated.
+
+        With Postgres ``bookkeeping_strategy="database"``, revision bumps and timestamps
+        rely on DB triggers; ``RETURNING`` may reflect pre- or post-trigger values
+        depending on trigger timing (``BEFORE`` vs ``AFTER`` UPDATE).
         """
         ...  # pragma: no cover
 
@@ -619,8 +681,9 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     ) -> Awaitable[Sequence[R] | int]:
         """Apply the same partial update to every matching document using optimistic revisions.
 
-        Loads documents in chunks (keyset by primary key), then calls :meth:`update_many`
-        so each row uses its current ``rev`` like :meth:`update`.
+        Same semantics as :meth:`update_many`: chunked keyset reads, per-row expected
+        ``rev``, and domain :meth:`~forze.domain.models.Document.update` apply.
+        Use instead of :meth:`update_matching` when business rules must be preserved.
 
         :param filters: Required filter expression.
         :param dto: Patch applied uniformly to each row in a chunk.

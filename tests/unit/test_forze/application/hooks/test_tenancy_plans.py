@@ -8,7 +8,7 @@ import pytest
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.application.hooks.tenancy import TenantRequired, tenant_required_before_step
+from forze.application.hooks.tenancy import TenantRequired
 from forze.base.errors import AuthenticationError
 
 pytestmark = pytest.mark.unit
@@ -37,11 +37,3 @@ async def test_tenancy_before_required_denies_when_missing() -> None:
             await hook(None)
 
     assert exc_info.value.code == "tenant_required"
-
-
-def test_tenant_required_before_step_builds_step() -> None:
-    step = tenant_required_before_step(step_id="check_tenant")
-
-    assert step.id == "check_tenant"
-    assert step.priority == 20
-    assert isinstance(step.factory, TenantRequired)

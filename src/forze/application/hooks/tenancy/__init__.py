@@ -1,10 +1,9 @@
 """Tenancy operation-plan hooks."""
 
-from .plans import TenantRequired, tenant_required_before_step
+from .plans import TenantRequired
 
 # ----------------------- #
 
 __all__ = [
     "TenantRequired",
-    "tenant_required_before_step",
 ]

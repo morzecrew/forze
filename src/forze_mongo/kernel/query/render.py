@@ -27,6 +27,9 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
 )
+from forze.application.contracts.querying.internal.text_pattern import (
+    like_pattern_to_regex,
+)
 from forze.base.errors import CoreError
 from forze.base.primitives import JsonDict
 
@@ -387,7 +390,48 @@ class MongoQueryRenderer:
                     ],
                 }
 
+            case "$like" | "$ilike" | "$regex":
+                return self._render_text_predicate(ref, op, value)
+
     # ....................... #
+
+    @staticmethod
+    def _text_regex_and_options(op: QueryOp.All, pattern: str) -> tuple[str, str]:  # type: ignore[valid-type]
+        match op:
+            case "$like":
+                return like_pattern_to_regex(pattern, case_insensitive=False), ""
+            case "$ilike":
+                return like_pattern_to_regex(pattern, case_insensitive=False), "i"
+            case "$regex":
+                return pattern, ""
+            case _:
+                raise CoreError(f"Unknown text operator: {op!r}")
+
+    def _render_text_predicate(
+        self,
+        ref: str,
+        op: QueryOp.All,  # type: ignore[valid-type]
+        value: Any,
+    ) -> JsonDict:
+        pattern = str(self.caster.pass_through(value))
+        regex, options = self._text_regex_and_options(op, pattern)
+        spec: JsonDict = {"$regexMatch": {"input": ref, "regex": regex}}
+        if options:
+            spec["$regexMatch"]["options"] = options
+        return spec
+
+    def _render_text_field(
+        self,
+        field: str,
+        op: QueryOp.All,  # type: ignore[valid-type]
+        value: Any,
+    ) -> JsonDict:
+        pattern = str(self.caster.pass_through(value))
+        regex, options = self._text_regex_and_options(op, pattern)
+        spec: JsonDict = {"$regex": regex}
+        if options:
+            spec["$options"] = options
+        return {field: spec}
 
     def _render_expr(self, expr: QueryExpr) -> JsonDict:
         match expr:
@@ -519,6 +563,11 @@ class MongoQueryRenderer:
                     for i in items
                 )
 
+            case QueryOr(items):
+                return all(
+                    MongoQueryRenderer._elem_inner_is_scalar(i) for i in items
+                )
+
             case _:
                 return False
 
@@ -536,6 +585,18 @@ class MongoQueryRenderer:
 
             case QueryAnd(items):
                 fields = [i for i in items if isinstance(i, QueryField)]
+
+            case QueryOr(items):
+                parts = [
+                    self._render_elem_scalar_match(path, quantifier, i)
+                    for i in items
+                ]
+                if len(parts) == 1:
+                    return parts[0]
+                key = "$or" if quantifier == "$any" else "$and"
+                if quantifier == "$none":
+                    key = "$and"
+                return {key: parts}
 
             case _:
                 raise CoreError(f"Invalid scalar element inner: {inner!r}")
@@ -560,6 +621,32 @@ class MongoQueryRenderer:
                     "$and": [
                         {"$eq": [{"$min": ref}, val]},
                         {"$eq": [{"$max": ref}, val]},
+                    ],
+                },
+            }
+
+        if op in ("$like", "$ilike", "$regex"):
+            regex, options = self._text_regex_and_options(op, str(val))
+            cond: JsonDict = {"$regexMatch": {"input": "$$this", "regex": regex}}
+            if options:
+                cond["$regexMatch"]["options"] = options
+            filtered = {
+                "$size": {
+                    "$filter": {
+                        "input": ref,
+                        "cond": cond,
+                    },
+                },
+            }
+            if quantifier == "$any":
+                return {"$expr": {"$gt": [filtered, 0]}}
+            if quantifier == "$none":
+                return {"$expr": {"$eq": [filtered, 0]}}
+            return {
+                "$expr": {
+                    "$eq": [
+                        {"$size": ref},
+                        filtered,
                     ],
                 },
             }
@@ -606,6 +693,11 @@ class MongoQueryRenderer:
             case QueryField() as f:
                 fields = [f]
 
+            case QueryOr(items):
+                return {
+                    "$or": [self._render_elem_object_match(i) for i in items],
+                }
+
             case _:
                 raise CoreError(f"Invalid object element inner: {inner!r}")
 
@@ -614,6 +706,14 @@ class MongoQueryRenderer:
         for f in fields:
             if f.op == "$eq":
                 out[f.name] = self.caster.pass_through(f.value)
+
+            elif f.op in ("$like", "$ilike", "$regex"):
+                pattern = str(self.caster.pass_through(f.value))
+                regex, options = self._text_regex_and_options(f.op, pattern)
+                spec: JsonDict = {"$regex": regex}
+                if options:
+                    spec["$options"] = options
+                out[f.name] = spec
 
             else:
                 out[f.name] = {f.op: self.caster.pass_through(f.value)}
@@ -654,6 +754,9 @@ class MongoQueryRenderer:
 
             case "$superset" | "$subset" | "$disjoint" | "$overlaps":
                 return self._render_set_rel(field, op, value)
+
+            case "$like" | "$ilike" | "$regex":
+                return self._render_text_field(field, op, value)
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise CoreError(f"Unknown operator: {op!r}")
