@@ -1,5 +1,5 @@
 from typing import Any, final
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import attrs
 
@@ -9,7 +9,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 from ..domain.models.identity_mapping import (
     CreateIdentityMappingCmd,
@@ -31,19 +31,22 @@ class MappingTableResolver(PrincipalResolverPort):
     :class:`AuthenticationError` (typical for invitation-only deployments where principal
     rows are pre-created and mapped out of band).
 
-    The ``tenant_hint`` from the assertion is interpreted as a UUID when present; mapping
-    rows do not carry tenant info today (left to per-deployment policy).
+    Tenant metadata asserted by the credential issuer is intentionally not folded into the
+    canonical :class:`AuthnIdentity`; tenancy resolution stays a separate concern.
     """
 
     qry: DocumentQueryPort[ReadIdentityMapping]
     """Identity mapping query port."""
 
-    cmd: DocumentCommandPort[
-        ReadIdentityMapping,
-        IdentityMapping,
-        CreateIdentityMappingCmd,
-        Any,
-    ] | None = attrs.field(default=None)
+    cmd: (
+        DocumentCommandPort[
+            ReadIdentityMapping,
+            IdentityMapping,
+            CreateIdentityMappingCmd,
+            Any,
+        ]
+        | None
+    ) = attrs.field(default=None)
     """Command port; required when ``provision_on_first_sight`` is ``True``."""
 
     provision_on_first_sight: bool = attrs.field(default=False)
@@ -55,17 +58,17 @@ class MappingTableResolver(PrincipalResolverPort):
         spec = self.qry.spec
 
         if spec.cache is not None:
-            raise CoreError(
+            raise exc.configuration(
                 "Identity mapping caching is forbidden by security reasons"
             )
 
         if spec.history_enabled:
-            raise CoreError(
+            raise exc.configuration(
                 "Identity mapping history is forbidden by security reasons"
             )
 
         if self.provision_on_first_sight and self.cmd is None:
-            raise CoreError(
+            raise exc.configuration(
                 "MappingTableResolver requires a command port to provision new mappings",
             )
 
@@ -82,19 +85,16 @@ class MappingTableResolver(PrincipalResolverPort):
         )
 
         if existing is not None:
-            return AuthnIdentity(
-                principal_id=existing.principal_id,
-                tenant_id=self._coerce_tenant(assertion),
-            )
+            return AuthnIdentity(principal_id=existing.principal_id)
 
         if not self.provision_on_first_sight:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "No identity mapping for this subject",
                 code="unknown_external_subject",
             )
 
         if self.cmd is None:  # defensive; covered by post-init
-            raise CoreError(
+            raise exc.configuration(
                 "MappingTableResolver requires a command port to provision new mappings",
             )
 
@@ -109,20 +109,4 @@ class MappingTableResolver(PrincipalResolverPort):
             return_new=False,
         )
 
-        return AuthnIdentity(
-            principal_id=new_pid,
-            tenant_id=self._coerce_tenant(assertion),
-        )
-
-    # ....................... #
-
-    @staticmethod
-    def _coerce_tenant(assertion: VerifiedAssertion) -> UUID | None:
-        if assertion.tenant_hint is None:
-            return None
-
-        try:
-            return UUID(assertion.tenant_hint)
-
-        except ValueError:
-            return None
+        return AuthnIdentity(principal_id=new_pid)

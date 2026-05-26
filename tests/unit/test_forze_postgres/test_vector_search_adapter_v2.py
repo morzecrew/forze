@@ -6,13 +6,14 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
 
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchSpec
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search import PostgresVectorSearchAdapter
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.kernel.gateways import PostgresQualifiedName
@@ -48,7 +49,7 @@ def _minimal_vector_port(
 
 
 def test_join_pairs_must_use_unique_projection_columns() -> None:
-    with pytest.raises(CoreError, match="unique projection"):
+    with pytest.raises(CoreException, match="unique projection"):
         _minimal_vector_port(
             join_pairs=(("id", "a"), ("id", "b")),
         )

@@ -4,8 +4,8 @@ This recipe describes how Forze separates **boundary authentication** (who is ca
 
 ## Two trust boundaries
 
-1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves `AuthnIdentity` and optional `TenantIdentity`, then `ctx.inv.bind(...)` stores them for the request. Downstream code should read `ctx.inv.get_authn()` / `ctx.inv.get_tenant()`, not re-parse headers everywhere.
-2. **Route / handler boundary** — Optional `HttpEndpointFeaturePort` wrappers (for example `RequireAuthnFeature`, `RequireTenantFeature`) can enforce policy **after** the execution context exists but **before** the handler runs (fast-fail at the HTTP edge). Prefer **authoritative** checks on the operation plan via `BeforeStep` hooks that call `AuthzPort.permits` so non-HTTP callers hit the same rules. Align OpenAPI with `HttpMetadataSpec` (`dependencies`, `openapi_extra`) on `build_http_endpoint_spec` / `attach_http_endpoint` (see below).
+1. **ASGI / FastAPI boundary** — `ContextBindingMiddleware` resolves boundary authentication (`AuthnResult`), derives optional `TenantIdentity`, then `ctx.inv.bind(...)` stores the principal-only `AuthnIdentity` plus tenant for the request. Downstream code should read `ctx.inv.get_authn()` / `ctx.inv.get_tenant()`, not re-parse headers everywhere.
+2. **Route / handler boundary** — Optional `HttpEndpointFeaturePort` wrappers (for example `RequireAuthnFeature`, `RequireTenantFeature`) can enforce policy **after** the execution context exists but **before** the handler runs (fast-fail at the HTTP edge). Prefer **authoritative** checks on the operation plan: `authn_required_before_step` and `tenant_required_before_step` from `forze.application.hooks.authn` / `hooks.tenancy`, plus `authorize_before_step` / `document_scope_wrap_step` from `forze.application.hooks.authz`, so non-HTTP callers hit the same rules. Align OpenAPI with `HttpMetadataSpec` (`dependencies`, `openapi_extra`) on `build_http_endpoint_spec` / `attach_http_endpoint` (see below).
 
 ```mermaid
 flowchart TB
@@ -19,14 +19,14 @@ flowchart TB
 
 - Register **authn** and **authz** dep routes on the kernel `Deps` (`AuthnDepsModule`, `AuthzDepsModule`, document stores for auth specs).
 - Use one or more of `HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver` for credentials.
-- For tenant, you must still configure **exactly one** tenant strategy on the middleware: for example `TenantIdentityResolver(required=False)` with **no** `TenantResolverDepKey` registered, so `TenantIdentity` stays `None`.
-- Call `AuthzPort.permits(..., tenant_id=None)` unless you scope policy by tenant.
+- For tenant, you must still configure **exactly one** tenant strategy on the middleware: for example `TenantIdentityResolver(required=False)` with **no** `TenantResolverDepKey` registered, so `TenantIdentity` stays `None` even if request or issuer hints are present.
+- Build `AuthzScope` from `ctx.inv.get_tenant()` (or pass `AuthzScope()` when policy is global). Use `ctx.authz.decision(spec).authorize(...)` on the operation plan — see [Authorization reference](../reference/authorization.md).
 
 ## With tenancy
 
-- Resolve tenant with `TenantIdentityResolver` (merges optional JWT `tid`, optional header hint, optional `TenantResolverPort`).
+- Resolve tenant with `TenantIdentityResolver` (validates optional issuer `tid` and optional header hint against `TenantResolverPort`; the resolver is authoritative and hints never outrank it).
 - Keep **authentication document routes** on **tenant-unaware** document clients until `TenantIdentity` is known (see `AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES` in `forze_authn.application` and [Multi-tenancy](../concepts/multi-tenancy.md)).
-- Pass `tenant_id` into `permits` / other authz ports from `ctx.inv.get_tenant().tenant_id` when your policy store is partitioned.
+- Pass `AuthzScope(tenant_id=ctx.inv.get_tenant().tenant_id)` into decision and scoping requests when your policy store is partitioned.
 
 ## Credential sources on the boundary
 
@@ -74,32 +74,22 @@ app.add_middleware(
 
 ## Operation-plan authz and OpenAPI alignment
 
-Register **authorization** on the frozen registry with `BeforeStep` hooks that resolve `AuthzPort` from `ctx.deps` and call `permits`. Use capability metadata when authz depends on a prior “principal present” step (see [Capability execution](../reference/capability-execution.md)):
+Register **authorization** on the frozen registry with `authorize_before_step` (uses `ctx.authz.decision` and `ctx.inv`). Add `document_scope_wrap_step` on list/search operations to merge tenant or policy filters. See [Authorization reference](../reference/authorization.md) and [Capability execution](../reference/capability-execution.md).
 
 ```python
 from forze.application.contracts.authz import AuthzSpec
-from forze.application.contracts.authz.ports import AuthzPort
-from forze.application.contracts.execution import BeforeStep
-from forze.application.execution import OperationRegistry
-
-def authz_factory(ctx, *, authz: AuthzPort, permission: str):
-    async def _before(_args) -> None:
-        identity = ctx.inv.get_authn()
-        tenant = ctx.inv.get_tenant()
-        tid = tenant.tenant_id if tenant else None
-        if identity is None or not await authz.permits(identity, permission, tenant_id=tid):
-            raise PermissionError(permission)
-    return _before
+from forze.application.hooks.authz import authorize_before_step
+from forze.application.execution.registry import OperationRegistry
 
 registry = (
     OperationRegistry(handlers={"widgets.read": read_factory})
     .bind("widgets.read")
     .bind_outer()
     .before(
-        BeforeStep(
-            id="authz",
-            factory=lambda ctx: authz_factory(ctx, authz=..., permission="widgets.read"),
-            requires=("authn.principal",),
+        authorize_before_step(
+            step_id="authz",
+            spec=AuthzSpec(name="main"),
+            action="widgets.read",
         ),
     )
     .finish(deep=True)
@@ -121,7 +111,7 @@ metadata = {
 # Pass metadata into build_http_endpoint_spec(..., metadata=metadata) for custom routes.
 ```
 
-Wire `forze_authz` via `AuthzDepsModule` and document-backed policy stores — see [Authentication reference](../reference/authentication.md).
+Wire `forze_authz` via `AuthzDepsModule` (`decision`, `scope`, `grant_query` routes) and document-backed policy stores — see [Authorization reference](../reference/authorization.md) and [Authentication reference](../reference/authentication.md).
 
 ## Generated routes and default features
 

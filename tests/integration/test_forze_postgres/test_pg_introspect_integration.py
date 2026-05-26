@@ -4,7 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import CoreException
+
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
@@ -50,7 +51,7 @@ async def test_require_relation_rejects_non_table(
 
     intro = PostgresIntrospector(client=pg_client)
 
-    with pytest.raises(CoreError, match="Unsupported relation kind"):
+    with pytest.raises(CoreException, match="Unsupported relation kind"):
         await intro.require_relation(
             schema="public",
             relation=idx,
@@ -146,7 +147,7 @@ async def test_get_relation_missing_raises(pg_client: PostgresClient) -> None:
     intro = PostgresIntrospector(client=pg_client)
     missing = f"no_such_tbl_{uuid4().hex[:12]}"
 
-    with pytest.raises(CoreError, match="Relation not found"):
+    with pytest.raises(CoreException, match="Relation not found"):
         await intro.get_relation(schema="public", relation=missing)
 
 
@@ -166,7 +167,7 @@ async def test_require_relation_rejects_disallowed_kind(
 
     intro = PostgresIntrospector(client=pg_client)
 
-    with pytest.raises(CoreError, match="Unsupported relation kind"):
+    with pytest.raises(CoreException, match="Unsupported relation kind"):
         await intro.require_relation(
             schema="public",
             relation=vname,

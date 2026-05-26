@@ -1,4 +1,4 @@
-"""Unit tests for forze_fastapi.handlers.exceptions."""
+"""Unit tests for forze_fastapi.exceptions."""
 
 import json
 
@@ -7,13 +7,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from forze.base.errors import (
-    ConflictError,
-    CoreError,
-    InfrastructureError,
-    NotFoundError,
-    ValidationError,
-)
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze_fastapi.exceptions import (
     ERROR_CODE_HEADER,
@@ -25,57 +19,50 @@ from forze_fastapi.exceptions import (
 
 
 class TestForzeExceptionHandler:
-    """Tests for forze_exception_handler."""
-
     @pytest.mark.asyncio
     async def test_not_found_returns_404(self) -> None:
-        """NotFoundError maps to 404."""
-        exc = NotFoundError(message="Document not found")
+        err = exc.not_found("Document not found")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
         assert response.status_code == 404
         assert response.body == b'{"detail":"Document not found"}'
-        assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
     @pytest.mark.asyncio
     async def test_conflict_returns_409(self) -> None:
-        """ConflictError maps to 409."""
-        exc = ConflictError(message="Revision mismatch")
+        err = exc.conflict("Revision mismatch")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
         assert response.status_code == 409
-        assert response.headers.get(ERROR_CODE_HEADER) == "conflict"
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.conflict"
 
     @pytest.mark.asyncio
     async def test_validation_returns_422(self) -> None:
-        """ValidationError maps to 422."""
-        exc = ValidationError(message="Invalid input")
+        err = exc.validation("Invalid input")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
         assert response.status_code == 422
-        assert response.headers.get(ERROR_CODE_HEADER) == "validation_error"
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.validation"
 
     @pytest.mark.asyncio
-    async def test_unknown_core_error_returns_500(self) -> None:
-        """Unmapped CoreError maps to 500."""
-        exc = CoreError(message="Something went wrong", code="internal")
+    async def test_internal_returns_500(self) -> None:
+        err = exc.internal("Something went wrong", code="internal")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
         assert response.status_code == 500
         assert response.headers.get(ERROR_CODE_HEADER) == "internal"
 
     @pytest.mark.asyncio
     async def test_includes_context_when_error_has_details(self) -> None:
-        """Responses include context payload when CoreError details are present."""
-        exc = NotFoundError(
-            message="Document not found",
+        err = exc.not_found(
+            "Document not found",
             details={"table": "users", "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af"},
         )
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 404
-        assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
         assert json.loads(response.body) == {
             "detail": "Document not found",
             "context": {
@@ -86,13 +73,12 @@ class TestForzeExceptionHandler:
 
     @pytest.mark.asyncio
     async def test_redacts_sensitive_keys_in_context(self) -> None:
-        """Sensitive keys in details are redacted before the response is sent."""
-        exc = ValidationError(
-            message="Invalid input",
+        err = exc.validation(
+            "Invalid input",
             details={"password": "hunter2", "field": "email"},
         )
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 422
         body = json.loads(response.body)
@@ -101,28 +87,24 @@ class TestForzeExceptionHandler:
 
     @pytest.mark.asyncio
     async def test_omits_context_on_500(self) -> None:
-        """Internal errors do not expose structured context on the wire."""
-        exc = InfrastructureError(
-            message="Database down",
+        err = exc.infrastructure(
+            "Database down",
             details={"dsn": "postgres://user:pass@localhost/db"},
         )
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
-        response = await _forze_exception_handler(request, exc)
+        response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
         assert json.loads(response.body) == {"detail": "Database down"}
 
 
 class TestRegisterExceptionHandlers:
-    """Tests for register_exception_handlers."""
-
     def test_registers_handler(self) -> None:
-        """register_exception_handlers wires CoreError to the app."""
         app = FastAPI()
 
         @app.get("/raise")
         def raise_core_error() -> None:
-            raise NotFoundError(message="Not found")
+            raise exc.not_found("Not found")
 
         register_exception_handlers(app)
 
@@ -130,10 +112,9 @@ class TestRegisterExceptionHandlers:
         response = client.get("/raise")
         assert response.status_code == 404
         assert response.json() == {"detail": "Not found"}
-        assert response.headers.get(ERROR_CODE_HEADER) == "not_found"
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
     def test_unhandled_exception_returns_500(self) -> None:
-        """Unhandled (non-CoreError) exceptions return 500."""
         app = FastAPI()
 
         @app.get("/raise")

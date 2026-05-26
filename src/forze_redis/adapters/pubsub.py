@@ -7,7 +7,7 @@ require_redis()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence, final
+from typing import AsyncGenerator, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -84,7 +84,7 @@ class RedisPubSubAdapter[M: BaseModel](
         topics: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[PubSubMessage[M]]:
+    ) -> AsyncGenerator[PubSubMessage[M]]:
         topics = list(map(self.__topic, topics))
 
         async for topic, raw_data in self.client.subscribe(topics, timeout=timeout):

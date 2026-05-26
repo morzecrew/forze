@@ -8,7 +8,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.application.contracts.document import DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 from ..adapters._utils import find_password_account_by_login
 from ..domain.constants import ISSUER_FORZE_PASSWORD
@@ -41,12 +41,12 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
         spec = self.pa_qry.spec
 
         if spec.cache is not None:
-            raise CoreError(
+            raise exc.internal(
                 "Password account caching is forbidden by security reasons"
             )
 
         if spec.history_enabled:
-            raise CoreError(
+            raise exc.internal(
                 "Password account history is forbidden by security reasons"
             )
 
@@ -59,7 +59,7 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
         account = await find_password_account_by_login(self.pa_qry, credentials.login)
 
         if account is None or not account.is_active:
-            raise AuthenticationError("Password account not found")
+            raise exc.authentication("Password account not found")
 
         ok = self.password_svc.verify_password(
             password=credentials.password,
@@ -67,7 +67,7 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
         )
 
         if not ok:
-            raise AuthenticationError("Invalid password")
+            raise exc.authentication("Invalid password")
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_PASSWORD,

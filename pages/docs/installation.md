@@ -34,6 +34,7 @@ Install only what you need. Extras map directly to integration packages:
 | `postgres` | Postgres integration (`forze_postgres`) |
 | `redis` | Redis/Valkey integration (`forze_redis`) |
 | `s3` | S3-compatible integration (`forze_s3`) |
+| `gcs` | Google Cloud Storage integration (`forze_gcs`) |
 | `mongo` | MongoDB integration (`forze_mongo`) |
 | `temporal` | Temporal integration (`forze_temporal`) |
 | `socketio` | Socket.IO integration (`forze_socketio`) |

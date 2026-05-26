@@ -1,11 +1,12 @@
 """Unit tests for :class:`RedisSearchResultSnapshotAdapter` (no I/O)."""
 
 import json
-
-import pytest
 from unittest.mock import AsyncMock
 
-from forze.base.errors import CoreError
+import pytest
+
+from forze.base.exceptions import CoreException
+
 from forze_redis.adapters import RedisKeyCodec, RedisSearchResultSnapshotAdapter
 
 
@@ -30,7 +31,7 @@ async def test_append_chunk_cas_conflict_raises() -> None:
         key_codec=RedisKeyCodec(namespace="u:snap:cas"),
     )
 
-    with pytest.raises(CoreError, match="Concurrent snapshot append"):
+    with pytest.raises(CoreException, match="Concurrent snapshot append"):
         await adapter.append_chunk(
             run_id="r1",
             chunk_index=0,
@@ -80,5 +81,5 @@ async def test_get_id_range_rejects_zero_limit() -> None:
         client=AsyncMock(),
         key_codec=RedisKeyCodec(namespace="u:snap:unit"),
     )
-    with pytest.raises(CoreError, match="limit"):
+    with pytest.raises(CoreException, match="limit"):
         await adapter.get_id_range("run", 0, 0)

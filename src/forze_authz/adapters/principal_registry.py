@@ -3,11 +3,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.authz import (
-    PrincipalKind,
-    PrincipalRef,
-    PrincipalRegistryPort,
-)
+from forze.application.contracts.authz import PrincipalKind, PrincipalRef, PrincipalRegistryPort
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 
 from ..domain.models.policy_principal import (
@@ -39,6 +35,41 @@ class PrincipalRegistryAdapter(PrincipalRegistryPort):
     def __attrs_post_init__(self) -> None:
         validate_secure_authz_document_spec(self.principal_qry.spec)
         validate_secure_authz_document_spec(self.principal_cmd.spec)
+
+    # ....................... #
+
+    async def ensure_principal(
+        self,
+        principal_id: UUID,
+        kind: PrincipalKind,
+        *,
+        is_active: bool = True,
+    ) -> PrincipalRef:
+        existing = await find_policy_principal_by_id(self.principal_qry, principal_id)
+
+        if existing is not None:
+            return PrincipalRef(
+                principal_id=existing.id,
+                kind=existing.kind,
+                is_active=existing.is_active,
+            )
+
+        dto = CreatePolicyPrincipalCmd(id=principal_id, kind=kind)
+        created = await self.principal_cmd.create(dto, return_new=True)
+
+        if not is_active:
+            await self.principal_cmd.update(
+                created.id,
+                created.rev,
+                UpdatePolicyPrincipalCmd(is_active=False),
+            )
+            created = await self.principal_qry.get(created.id)
+
+        return PrincipalRef(
+            principal_id=created.id,
+            kind=created.kind,
+            is_active=created.is_active,
+        )
 
     # ....................... #
 

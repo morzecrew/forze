@@ -16,7 +16,7 @@ from forze.application.contracts.transaction import (
 )
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 
 from ...adapters import MongoDocumentAdapter, MongoTxManagerAdapter
@@ -103,7 +103,9 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
         tenant_aware = config.get("tenant_aware", False)
 
         if spec.write is None:
-            raise CoreError("Write relation is required for non read-only documents.")
+            raise exc.internal(
+                "Write relation is required for non read-only documents."
+            )
 
         read = read_gw(
             ctx,

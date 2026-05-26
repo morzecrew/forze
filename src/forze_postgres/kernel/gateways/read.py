@@ -8,8 +8,7 @@ require_psycopg()
 
 from typing import (
     Any,
-    AsyncIterator,
-    Literal,
+    AsyncGenerator,
     Never,
     Sequence,
     TypeVar,
@@ -22,6 +21,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.document import RowLockMode
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -29,7 +29,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from forze.base.errors import CoreError, NotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -46,10 +46,8 @@ from .base import PostgresGateway
 
 # ----------------------- #
 
-ForUpdateMode = bool | Literal["nowait", "skip_locked"]
 
-
-def _for_update_sql(mode: ForUpdateMode) -> sql.SQL | None:
+def _for_update_sql(mode: RowLockMode) -> sql.SQL | None:
     if mode is False:
         return None
 
@@ -62,7 +60,7 @@ def _for_update_sql(mode: ForUpdateMode) -> sql.SQL | None:
     if mode == "skip_locked":
         return sql.SQL(" FOR UPDATE SKIP LOCKED")
 
-    raise CoreError(f"Invalid for_update mode: {mode!r}")
+    raise exc.internal(f"Invalid for_update mode: {mode!r}")
 
 
 # ----------------------- #
@@ -84,54 +82,14 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
 
         return self.find_many_implicit_limit
 
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> M: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> T: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict: ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: ForUpdateMode = ...,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never: ...
+    # ....................... #
 
     async def get(
         self,
         pk: UUID,
         *,
-        for_update: ForUpdateMode = False,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> M | T | JsonDict:
+        for_update: RowLockMode = False,
+    ) -> M:
         where_sql = sql.SQL("{pk} = {ph}").format(
             pk=self.ident_pk(),
             ph=sql.Placeholder(),
@@ -141,7 +99,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=self.return_clause(return_model, return_fields),
+            cols=self.return_clause(),
             table=self.source_qname.ident(),
             where=where_sql,
         )
@@ -155,61 +113,13 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         row = await self.client.fetch_one(stmt, where_params, row_factory="dict")
 
         if row is None:
-            raise NotFoundError(f"Record not found: {pk}")
-
-        if return_model is not None:
-            return pydantic_validate(return_model, row)
-
-        if return_fields is not None:
-            return {k: row.get(k, None) for k in return_fields}
+            raise exc.not_found(f"Record not found: {pk}")
 
         return pydantic_validate(self.model_type, row)
 
     # ....................... #
 
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> list[M]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> list[T]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> list[JsonDict]: ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never: ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]:
+    async def get_many(self, pks: Sequence[UUID]) -> list[M]:
         if not pks:
             return []
 
@@ -222,7 +132,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
 
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=self.return_clause(return_model, return_fields),
+            cols=self.return_clause(),
             table=self.source_qname.ident(),
             where=where_sql,
         )
@@ -234,13 +144,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         missing = [x for x in pks if x not in m]
 
         if missing:
-            raise NotFoundError(f"Some records not found: {missing}")
-
-        if return_model is not None:
-            return pydantic_validate_many(return_model, ordered)
-
-        if return_fields is not None:
-            return [{k: row.get(k, None) for k in return_fields} for row in ordered]
+            raise exc.not_found(f"Some records not found: {missing}")
 
         return pydantic_validate_many(self.model_type, ordered)
 
@@ -251,7 +155,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None: ...
@@ -261,7 +165,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None: ...
@@ -271,7 +175,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None: ...
@@ -281,7 +185,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never: ...
@@ -290,7 +194,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: ForUpdateMode = False,
+        for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None:
@@ -477,7 +381,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         fetch_batch_size: int = 2000,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> AsyncIterator[list[M] | list[T] | list[JsonDict]]:
+    ) -> AsyncGenerator[list[M] | list[T] | list[JsonDict]]:
         """Like :meth:`find_many` but yield validated row batches from the driver.
 
         Each yielded list has at most ``fetch_batch_size`` rows (except possibly
@@ -486,7 +390,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         """
 
         if return_model is not None and return_fields is not None:
-            raise CoreError("return_model and return_fields cannot be combined")
+            raise exc.internal("return_model and return_fields cannot be combined")
 
         where, params = await self.where_clause(filters)
         sort_clause = await self.order_by_clause(sorts)
@@ -548,7 +452,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         """Find aggregate rows."""
 
         if return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.internal("Aggregates cannot be combined with return_fields")
 
         where, params = await self.where_clause(filters, parsed=parsed)
         types = await self.column_types()
@@ -691,7 +595,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -700,7 +604,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         lim: int = 10 if limit_raw is None else int(limit_raw)  # type: ignore[call-overload]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -731,11 +635,11 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
             tk, td, tv = decode_keyset_v1(token)
 
             if tk != sort_keys or len(td) != len(directions):
-                raise CoreError("Cursor does not match current sort keys")
+                raise exc.internal("Cursor does not match current sort keys")
 
             for i in range(len(directions)):
                 if (td[i] or "").lower() != (directions[i] or "").lower():
-                    raise CoreError("Cursor does not match current sort order")
+                    raise exc.internal("Cursor does not match current sort order")
 
             seek_sql, seek_params = build_seek_condition(
                 exprs,

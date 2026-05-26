@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -12,7 +13,6 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import ConflictError, NotFoundError, ValidationError
 from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
@@ -23,35 +23,27 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
-
 class _Doc(Document):
     title: str
-
 
 class _Create(CreateDocumentCmd):
     title: str
 
-
 class _Update(BaseDTO):
     title: str | None = None
-
 
 class _Read(ReadDocument):
     title: str
 
-
 class _SoftDoc(DocWithSoftDeletion):
     title: str
-
 
 class _SoftUpdate(UpdateCmdWithSoftDeletion):
     title: str | None = None
 
-
 class _SoftRead(ReadDocument):
     title: str
     is_deleted: bool = False
-
 
 def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
     doc = ConfigurablePostgresDocument(
@@ -72,14 +64,12 @@ def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
         )
     )
 
-
 def _spec() -> DocumentSpec:
     return DocumentSpec(
         name="err_ns",
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-
 
 @pytest.mark.asyncio
 async def test_get_missing_raises_not_found(pg_client: PostgresClient) -> None:
@@ -97,9 +87,8 @@ async def test_get_missing_raises_not_found(pg_client: PostgresClient) -> None:
     )
     ctx = _ctx(pg_client, t)
     query = ctx.document.query(_spec())
-    with pytest.raises(NotFoundError, match="Record not found"):
+    with pytest.raises(CoreException, match="Record not found"):
         await query.get(uuid4())
-
 
 @pytest.mark.asyncio
 async def test_find_missing_returns_none(pg_client: PostgresClient) -> None:
@@ -121,7 +110,6 @@ async def test_find_missing_returns_none(pg_client: PostgresClient) -> None:
         await query.find({"$values": {"title": "does-not-exist"}}) is None
     )
 
-
 @pytest.mark.asyncio
 async def test_update_with_stale_rev_raises_conflict(pg_client: PostgresClient) -> None:
     t = f"e_rev_{uuid4().hex[:12]}"
@@ -140,9 +128,8 @@ async def test_update_with_stale_rev_raises_conflict(pg_client: PostgresClient) 
     cmd = ctx.document.command(_spec())
     doc = await cmd.create(_Create(title="v1"))
     await cmd.update(doc.id, doc.rev, _Update(title="v2"))
-    with pytest.raises(ConflictError, match="Revision mismatch"):
+    with pytest.raises(CoreException, match="Revision mismatch"):
         await cmd.update(doc.id, 1, _Update(title="stale"))
-
 
 @pytest.mark.asyncio
 async def test_touch_missing_raises_not_found(pg_client: PostgresClient) -> None:
@@ -160,9 +147,8 @@ async def test_touch_missing_raises_not_found(pg_client: PostgresClient) -> None
     )
     ctx = _ctx(pg_client, t)
     cmd = ctx.document.command(_spec())
-    with pytest.raises(NotFoundError):
+    with pytest.raises(CoreException):
         await cmd.touch(uuid4())
-
 
 @pytest.mark.asyncio
 async def test_cannot_update_non_deleted_fields_when_soft_deleted(
@@ -190,9 +176,8 @@ async def test_cannot_update_non_deleted_fields_when_soft_deleted(
     cmd = ctx.document.command(spec)
     doc = await cmd.create(_Create(title="live"))
     deleted = await cmd.update(doc.id, doc.rev, _SoftUpdate(is_deleted=True))
-    with pytest.raises(ValidationError, match="soft-deleted"):
+    with pytest.raises(CoreException, match="soft-deleted"):
         await cmd.update(deleted.id, deleted.rev, _SoftUpdate(title="nope"))
-
 
 @pytest.mark.asyncio
 async def test_count_and_find_many_on_empty_table(pg_client: PostgresClient) -> None:
@@ -220,7 +205,6 @@ async def test_count_and_find_many_on_empty_table(pg_client: PostgresClient) -> 
     rows = __p.hits
     total = __p.count
     assert rows == [] and total == 0
-
 
 @pytest.mark.asyncio
 async def test_count_with_field_filter(pg_client: PostgresClient) -> None:

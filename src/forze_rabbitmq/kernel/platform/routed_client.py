@@ -5,14 +5,14 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence, final
+from typing import AsyncGenerator, Sequence, final
 from uuid import UUID
 
 import attrs
 from aio_pika.abc import AbstractChannel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 
 from .client import RabbitMQClient
 from .port import RabbitMQClientPort
@@ -50,7 +50,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -92,7 +92,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed RabbitMQ access",
                 code="tenant_required",
             )
@@ -103,7 +103,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
 
     async def _get_client(self) -> RabbitMQClient:
         if not self._started:
-            raise InfrastructureError("Routed RabbitMQ client is not started")
+            raise exc.internal("Routed RabbitMQ client is not started")
 
         tid = self._require_tenant_id()
 
@@ -118,11 +118,11 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
             try:
                 dsn = await self.secrets.resolve_str(ref)
 
-            except SecretNotFoundError:
+            except exc:
                 raise
 
             except Exception as e:
-                raise InfrastructureError(
+                raise exc.internal(
                     f"Failed to resolve RabbitMQ secret for tenant {tid}: {e}",
                 ) from e
 
@@ -146,7 +146,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def channel(self) -> AsyncIterator[AbstractChannel]:
+    async def channel(self) -> AsyncGenerator[AbstractChannel]:
         inner = await self._get_client()
 
         async with inner.channel() as ch:
@@ -209,7 +209,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RabbitMQQueueMessage]:
+    ) -> AsyncGenerator[RabbitMQQueueMessage]:
         inner = await self._get_client()
         async for msg in inner.consume(queue, timeout=timeout):
             yield msg

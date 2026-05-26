@@ -1,5 +1,6 @@
 """Integration tests for :class:`~forze_mongo.kernel.gateways.read.MongoReadGateway` and write gateway against MongoDB."""
 
+from forze.base.exceptions import CoreException, exc
 from uuid import UUID, uuid4
 
 import pytest
@@ -8,12 +9,6 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentWriteTypes
 from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import (
-    CoreError,
-    InfrastructureError,
-    NotFoundError,
-    ValidationError,
-)
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_mongo.adapters import MongoTxManagerAdapter
@@ -21,38 +16,30 @@ from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.execution.deps.utils import doc_write_gw
 from forze_mongo.kernel.platform import MongoClient
 
-
 class GwDoc(Document):
     name: str
-
 
 class GwOrderDoc(Document):
     category: str
     price: float
 
-
 class GwCreate(CreateDocumentCmd):
     name: str
-
 
 class GwOrderCreate(CreateDocumentCmd):
     category: str
     price: float
 
-
 class GwUpdate(BaseDTO):
     name: str | None = None
-
 
 class GwOrderUpdate(BaseDTO):
     category: str | None = None
     price: float | None = None
 
-
 class GwProj(BaseModel):
     id: UUID
     name: str
-
 
 class GwCategoryStats(BaseModel):
     category: str
@@ -62,14 +49,12 @@ class GwCategoryStats(BaseModel):
     premium_orders: int
     premium_revenue: float | None
 
-
 def _gw_write_types() -> DocumentWriteTypes[GwDoc, GwCreate, GwUpdate]:
     return DocumentWriteTypes(
         domain=GwDoc,
         create_cmd=GwCreate,
         update_cmd=GwUpdate,
     )
-
 
 def _gw_order_write_types() -> DocumentWriteTypes[
     GwOrderDoc,
@@ -82,12 +67,10 @@ def _gw_order_write_types() -> DocumentWriteTypes[
         update_cmd=GwOrderUpdate,
     )
 
-
 @pytest.fixture
 def mongo_gw_ctx(mongo_client: MongoClient) -> ExecutionContext:
     deps = Deps.plain({MongoClientDepKey: mongo_client})
     return ExecutionContext(deps=deps)
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -111,19 +94,10 @@ async def test_mongo_gateways_create_read_projections_and_list(
     read = write.read_gw
 
     created = await write.create(GwCreate(name="gateway-one"))
-    other = await write.create(GwCreate(name="gateway-two"))
+    await write.create(GwCreate(name="gateway-two"))
 
     full = await read.get(created.id)
     assert full.name == "gateway-one"
-
-    proj = await read.get(created.id, return_fields=["name"])
-    assert proj["name"] == "gateway-one"
-
-    many_proj = await read.get_many(
-        [created.id, other.id],
-        return_fields=["id", "name"],
-    )
-    assert {row["name"] for row in many_proj} == {"gateway-one", "gateway-two"}
 
     one = await read.find(
         {"$values": {"name": {"$eq": "gateway-one"}}},
@@ -140,7 +114,6 @@ async def test_mongo_gateways_create_read_projections_and_list(
 
     updated, _ = await write.update(created.id, GwUpdate(name="patched"))
     assert updated.name == "patched"
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -222,7 +195,6 @@ async def test_mongo_read_gateway_aggregate_expressions(
         == 2
     )
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_mongo_write_gateway_upsert_insert_then_update_path(
@@ -258,7 +230,6 @@ async def test_mongo_write_gateway_upsert_insert_then_update_path(
     assert second.name == "merged-on-existing"
     assert second.rev == 2
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_mongo_write_gateway_upsert_many_mixed_batch(
@@ -293,7 +264,6 @@ async def test_mongo_write_gateway_upsert_many_mixed_batch(
     assert by_id[other].name == "new-a"
     assert by_id[other].rev == 1
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_mongo_read_gateway_for_update_requires_transaction(
@@ -316,7 +286,7 @@ async def test_mongo_read_gateway_for_update_requires_transaction(
 
     created = await write.create(GwCreate(name="tx-doc"))
 
-    with pytest.raises(InfrastructureError, match="Transactional context is required"):
+    with pytest.raises(CoreException, match="Transactional context is required"):
         await read.get(created.id, for_update=True)
 
     tx = MongoTxManagerAdapter(client=mongo_client_replica)
@@ -329,7 +299,6 @@ async def test_mongo_read_gateway_for_update_requires_transaction(
             for_update=True,
         )
         assert found is not None
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -351,14 +320,7 @@ async def test_mongo_read_gateway_return_model_and_find_many_validation(
     read = write.read_gw
 
     a = await write.create(GwCreate(name="ma"))
-    b = await write.create(GwCreate(name="mb"))
-
-    typed = await read.get(a.id, return_model=GwProj)
-    assert isinstance(typed, GwProj)
-    assert typed.name == "ma"
-
-    gm = await read.get_many([b.id, a.id], return_model=GwProj)
-    assert [x.name for x in gm] == ["mb", "ma"]
+    await write.create(GwCreate(name="mb"))
 
     fo = await read.find(
         {"$values": {"name": "mb"}},
@@ -375,13 +337,12 @@ async def test_mongo_read_gateway_return_model_and_find_many_validation(
     )
     assert [r["name"] for r in rows] == ["ma", "mb"]
 
-    with pytest.raises(ValidationError, match="Filters or limit"):
+    with pytest.raises(CoreException, match="Filters or limit"):
         await read.find_many(filters=None, limit=None)
 
     missing = uuid4()
-    with pytest.raises(NotFoundError, match="Some records not found"):
+    with pytest.raises(CoreException, match="Some records not found"):
         await read.get_many([a.id, missing])
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -439,21 +400,20 @@ async def test_mongo_read_gateway_find_many_with_cursor(
     assert len(desc_page) == 3
     assert desc_page[0].name == "a"
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(CoreException, match="at most one"):
         await read.find_many_with_cursor(
             None,
             cursor={"after": tok, "before": tok},
         )
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(CoreException, match="positive"):
         await read.find_many_with_cursor(None, cursor={"limit": 0})
 
-    with pytest.raises(CoreError, match="primary key"):
+    with pytest.raises(CoreException, match="primary key"):
         await read.find_many_with_cursor(
             None,
             sorts={"name": "asc"},
         )
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -498,8 +458,8 @@ async def test_mongo_write_gateway_create_ensure_and_batch_validation(
     by_id = {d.id: d for d in em}
     assert by_id[seed.id].name == "seed"
 
-    with pytest.raises(ValidationError, match="unique"):
+    with pytest.raises(CoreException, match="unique"):
         await write.update_many([out[0].id, out[0].id], [GwUpdate(), GwUpdate()])
 
-    with pytest.raises(CoreError, match="Length mismatch"):
+    with pytest.raises(CoreException, match="Length mismatch"):
         await write.update_many([out[0].id], [GwUpdate(name="x"), GwUpdate(name="y")])

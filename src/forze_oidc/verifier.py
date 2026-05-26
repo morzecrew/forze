@@ -17,7 +17,7 @@ from forze.application.contracts.authn import (
     TokenVerifierPort,
     VerifiedAssertion,
 )
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 
 from .claims import OidcClaimMapper
 from .keys import SigningKeyProviderPort
@@ -78,16 +78,16 @@ class OidcTokenVerifier(TokenVerifierPort):
                 options={"require": ["iss", "sub", "exp"]},
             )
 
-        except ExpiredSignatureError as exc:
-            raise AuthenticationError(
+        except ExpiredSignatureError as e:
+            raise exc.authentication(
                 "OIDC token expired",
                 code="oidc_token_expired",
-            ) from exc
+            ) from e
 
-        except InvalidTokenError as exc:
-            raise AuthenticationError(
+        except InvalidTokenError as e:
+            raise exc.authentication(
                 "Invalid OIDC token",
                 code="invalid_oidc_token",
-            ) from exc
+            ) from e
 
         return self.claim_mapper.map(claims)

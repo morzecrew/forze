@@ -6,6 +6,7 @@ IdP integration plug into the same dependency keys without touching core contrac
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException
 import secrets
 from datetime import timedelta
 from uuid import uuid4
@@ -19,7 +20,6 @@ pytestmark = pytest.mark.unit
 import jwt
 
 from forze.application.contracts.authn import AccessTokenCredentials, VerifiedAssertion
-from forze.base.errors import AuthenticationError
 from forze.base.primitives import utcnow
 from forze_authn import DeterministicUuidResolver, MappingTableResolver
 from forze_oidc import (
@@ -29,7 +29,6 @@ from forze_oidc import (
 )
 
 # ----------------------- #
-
 
 def _hs256_token(
     secret: bytes,
@@ -53,9 +52,7 @@ def _hs256_token(
 
     return jwt.encode(payload, secret, algorithm="HS256")
 
-
 # ....................... #
-
 
 class TestOidcClaimMapper:
     def test_default_mapping(self) -> None:
@@ -74,7 +71,7 @@ class TestOidcClaimMapper:
         assert a.audience == "app"
         assert a.issued_at is not None
         assert a.expires_at is not None
-        assert a.tenant_hint is None
+        assert a.issuer_tenant_hint is None
 
     def test_audience_array_picks_first_string(self) -> None:
         mapper = OidcClaimMapper()
@@ -96,16 +93,14 @@ class TestOidcClaimMapper:
                 "firebase_tenant": "tenant-7",
             }
         )
-        assert a.tenant_hint == "tenant-7"
+        assert a.issuer_tenant_hint == "tenant-7"
 
     def test_rejects_missing_required_claims(self) -> None:
         mapper = OidcClaimMapper()
         with pytest.raises(ValueError, match="iss"):
             mapper.map({"sub": "u"})
 
-
 # ....................... #
-
 
 class TestOidcTokenVerifier:
     @pytest.mark.asyncio
@@ -136,7 +131,7 @@ class TestOidcTokenVerifier:
         )
         token = _hs256_token(secret, issuer="other", subject="u")
 
-        with pytest.raises(AuthenticationError):
+        with pytest.raises(CoreException):
             await verifier.verify_token(AccessTokenCredentials(token=token))
 
     @pytest.mark.asyncio
@@ -156,7 +151,7 @@ class TestOidcTokenVerifier:
             expires_in=timedelta(seconds=-300),
         )
 
-        with pytest.raises(AuthenticationError) as ei:
+        with pytest.raises(CoreException) as ei:
             await verifier.verify_token(AccessTokenCredentials(token=expired))
         assert ei.value.code == "oidc_token_expired"
 

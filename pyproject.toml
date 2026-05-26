@@ -58,11 +58,14 @@ dev = [
     "pytest-xdist>=3.8.0",
     "radon>=6.0.1",
     "ruff>=0.15.5",
-    "testcontainers[minio,rabbitmq]>=4.14.1",
+    "testcontainers[minio,rabbitmq,vault,google,clickhouse]>=4.14.1",
     "types-python-dateutil>=2.9.0.20260305",
     "types-pyyaml>=6.0.12.20250915",
     "vulture>=2.14",
     "pre-commit>=4.5.1",
+    "dirty-equals>=0.11",
+    "polyfactory>=3.3.0",
+    "hypothesis>=6.153.0",
 ]
 docs = [
     "mkdocs>=1.6.1,<2.0.0",
@@ -105,6 +108,10 @@ sqs = [
     "types-aiobotocore>=3.1.3",
 ]
 mongo = ["pymongo>=4.16.0"]
+firestore = ["google-cloud-firestore>=2.21.0"]
+gcs = ["aiohttp>=3.11.0", "gcloud-aio-storage>=9.6.0", "python-magic>=0.4.27"]
+bigquery = ["aiohttp>=3.11.0", "gcloud-aio-bigquery>=7.1.0"]
+clickhouse = ["clickhouse-connect[async]>=1.0.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
 socketio = [
     "python-socketio>=5.16.1",
@@ -117,9 +124,15 @@ authn = [
     "email-validator>=2.3.0",
     "pyjwt[crypto]>=2.12.1",
 ]
-authz = []
+authz = [] #! redundant
 oidc = ["pyjwt[crypto]>=2.12.1"]
 casbin = ["pycasbin>=2.8.0"]
+vault = [
+    "hvac[parser]>=2.4.0",
+    "requests>=2.34.2",
+    "types-hvac>=2.4.0.20260518",
+    "urllib3>=2.7.0",
+]
 
 # ....................... #
 
@@ -155,10 +168,14 @@ packages = [
     "src/forze_fastapi",
     "src/forze_mock",
     "src/forze_mongo",
+    "src/forze_firestore",
     "src/forze_postgres",
     "src/forze_rabbitmq",
     "src/forze_redis",
     "src/forze_s3",
+    "src/forze_gcs",
+    "src/forze_bigquery",
+    "src/forze_clickhouse",
     "src/forze_authn",
     "src/forze_authz",
     "src/forze_oidc",
@@ -166,6 +183,8 @@ packages = [
     "src/forze_socketio",
     "src/forze_sqs",
     "src/forze_temporal",
+    "src/forze_secrets",
+    "src/forze_vault",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -207,11 +226,16 @@ omit = [
     # DI lifecycle modules are integration/service wiring (containers, signals), not core library logic.
     "*/forze_postgres/execution/lifecycle.py",
     "*/forze_mongo/execution/lifecycle.py",
+    "*/forze_firestore/execution/lifecycle.py",
     "*/forze_redis/execution/lifecycle.py",
     "*/forze_s3/execution/lifecycle.py",
+    "*/forze_gcs/execution/lifecycle.py",
+    "*/forze_bigquery/execution/lifecycle.py",
+    "*/forze_clickhouse/execution/lifecycle.py",
     "*/forze_rabbitmq/execution/lifecycle.py",
     "*/forze_sqs/execution/lifecycle.py",
     "*/forze_temporal/execution/lifecycle.py",
+    "*/forze_vault/execution/lifecycle.py",
     # Temporal worker interceptors are exercised with a full SDK runtime.
     "*/forze_temporal/interceptors/*",
     "*/forze_temporal/execution/deps/deps.py",
@@ -241,6 +265,21 @@ strict = true
 warn_return_any = false
 warn_unused_ignores = false
 
+[[tool.mypy.overrides]]
+module = ["forze_gcs", "forze_gcs.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["forze_bigquery", "forze_bigquery.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["forze_clickhouse", "forze_clickhouse.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
 # ....................... #
 # Import contracts
 
@@ -253,15 +292,21 @@ root_packages = [
     "forze_postgres",
     "forze_redis",
     "forze_s3",
+    "forze_gcs",
+    "forze_bigquery",
+    "forze_clickhouse",
     "forze_socketio",
     "forze_temporal",
     "forze_mongo",
+    "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
     "forze_authn",
     "forze_authz",
     "forze_oidc",
     "forze_tenancy",
+    "forze_secrets",
+    "forze_vault",
 ]
 exclude_type_checking_imports = true
 
@@ -283,6 +328,12 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Authz contracts do not import execution contracts"
+type = "forbidden"
+source_modules = ["forze.application.contracts.authz"]
+forbidden_modules = ["forze.application.contracts.execution"]
+
+[[tool.importlinter.contracts]]
 name = "Layered `forze.domain` module architecture"
 type = "layers"
 layers = ["forze.domain.models", "forze.domain.validation"]
@@ -296,11 +347,17 @@ protected_modules = [
     "forze_postgres",
     "forze_redis",
     "forze_s3",
+    "forze_gcs",
+    "forze_bigquery",
+    "forze_clickhouse",
     "forze_socketio",
     "forze_temporal",
     "forze_mongo",
+    "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
+    "forze_secrets",
+    "forze_vault",
 ]
 allowed_importers = []
 as_packages = true
@@ -317,15 +374,21 @@ paths = [
     "src/forze_postgres",
     "src/forze_redis",
     "src/forze_s3",
+    "src/forze_gcs",
+    "src/forze_bigquery",
+    "src/forze_clickhouse",
     "src/forze_socketio",
     "src/forze_temporal",
     "src/forze_mongo",
+    "src/forze_firestore",
     "src/forze_rabbitmq",
     "src/forze_sqs",
     "src/forze_authn",
     "src/forze_authz",
     "src/forze_oidc",
     "src/forze_tenancy",
+    "src/forze_secrets",
+    "src/forze_vault",
 ]
 sort_by_size = true
 min_confidence = 80
@@ -350,15 +413,21 @@ known_first_party = [
     "forze_postgres",
     "forze_redis",
     "forze_s3",
+    "forze_gcs",
+    "forze_bigquery",
+    "forze_clickhouse",
     "forze_socketio",
     "forze_temporal",
     "forze_mongo",
+    "forze_firestore",
     "forze_rabbitmq",
     "forze_sqs",
     "forze_authn",
     "forze_authz",
     "forze_oidc",
     "forze_tenancy",
+    "forze_secrets",
+    "forze_vault",
 ]
 ignore_notebooks = true
 
@@ -377,6 +446,7 @@ DEP002 = [
     "python-arango-async",
     "pycasbin",
     "uvicorn",
+    "types-hvac",
 ]
 DEP003 = [
     "types_aiobotocore_s3",

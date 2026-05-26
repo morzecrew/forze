@@ -45,6 +45,7 @@ The package supplies a single `MockDepsModule` that registers in-memory adapters
 | `MockPubSubAdapter` | `PubSubCommandPort`, `PubSubQueryPort` |
 | `MockStreamAdapter` | `StreamQueryPort`, `StreamCommandPort` |
 | `MockStreamGroupAdapter` | `StreamGroupQueryPort` |
+| `MockAnalyticsAdapter` | `AnalyticsQueryPort`, `AnalyticsIngestPort` |
 
 ## Runtime wiring
 

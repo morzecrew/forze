@@ -74,6 +74,7 @@ nav:
     - Base Layer: reference/base-layer.md
     - Domain Models: reference/domain-models.md
     - Authentication: reference/authentication.md
+    - Authorization: reference/authorization.md
     - Contracts:
       - Overview: core-package/contracts.md
       - Document: core-package/contracts/document.md
@@ -84,6 +85,7 @@ nav:
       - Storage: core-package/contracts/storage.md
       - Workflow: core-package/contracts/workflow.md
       - Idempotency: core-package/contracts/idempotency.md
+      - Analytics: core-package/contracts/analytics.md
     - Execution: reference/execution.md
     - Middleware & Plans: reference/middleware-plans.md
     - Capability execution: reference/capability-execution.md
@@ -96,7 +98,11 @@ nav:
     - PostgreSQL: integrations/postgres.md
     - Redis / Valkey: integrations/redis.md
     - S3-Compatible Storage: integrations/s3.md
+    - Google Cloud Storage: integrations/gcs.md
+    - Google BigQuery: integrations/bigquery.md
+    - ClickHouse: integrations/clickhouse.md
     - MongoDB: integrations/mongo.md
+    - Cloud Firestore: integrations/firestore.md
     - Temporal: integrations/temporal.md
     - SQS: integrations/sqs.md
     - RabbitMQ: integrations/rabbitmq.md

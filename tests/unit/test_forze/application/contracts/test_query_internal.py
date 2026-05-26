@@ -1,5 +1,6 @@
 """Unit tests for forze.application.contracts.querying.internal."""
 
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -21,10 +22,8 @@ from forze.application.contracts.querying.internal import (
     QueryOr,
     QueryValueCaster,
 )
-from forze.base.errors import CoreError, ValidationError
 
 # ----------------------- #
-
 
 class TestAggregatesExpressionParser:
     def test_parses_group_fields_and_computed_fields(self) -> None:
@@ -54,7 +53,7 @@ class TestAggregatesExpressionParser:
         assert [g.expr.field for g in parsed.groups] == ["detail_id", "warehouse_id"]
 
     def test_rejects_invalid_count_argument(self) -> None:
-        with pytest.raises(CoreError, match="expects no field"):
+        with pytest.raises(CoreException, match="expects no field"):
             AggregatesExpressionParser.parse(
                 {"$computed": {"rows": {"$count": "id"}}},
             )
@@ -90,7 +89,7 @@ class TestAggregatesExpressionParser:
         }
 
     def test_rejects_conditional_value_aggregate_without_field(self) -> None:
-        with pytest.raises(CoreError, match="requires a field"):
+        with pytest.raises(CoreException, match="requires a field"):
             AggregatesExpressionParser.parse(
                 {
                     "$computed": {
@@ -102,7 +101,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_duplicate_aliases(self) -> None:
-        with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
+        with pytest.raises(CoreException, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {"total": "category"},
@@ -111,7 +110,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_invalid_group_keys_type(self) -> None:
-        with pytest.raises(CoreError, match=r"Invalid aggregate \$groups"):
+        with pytest.raises(CoreException, match=r"Invalid aggregate \$groups"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": "category",
@@ -158,7 +157,7 @@ class TestAggregatesExpressionParser:
         assert all(isinstance(g.expr, GroupTrunc) for g in parsed.groups)
 
     def test_rejects_duplicate_trunc_alias(self) -> None:
-        with pytest.raises(CoreError, match="Duplicate aggregate aliases"):
+        with pytest.raises(CoreException, match="Duplicate aggregate aliases"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {
@@ -170,7 +169,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_unknown_group_operator(self) -> None:
-        with pytest.raises(CoreError, match="Invalid \\$groups operator"):
+        with pytest.raises(CoreException, match="Invalid \\$groups operator"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {"x": {"$unknown": {"field": "ts"}}},
@@ -179,7 +178,7 @@ class TestAggregatesExpressionParser:
             )
 
     def test_rejects_bare_trunc_spec_without_operator(self) -> None:
-        with pytest.raises(CoreError, match="exactly one operator"):
+        with pytest.raises(CoreException, match="exactly one operator"):
             AggregatesExpressionParser.parse(
                 {
                     "$groups": {"day": {"field": "ts", "unit": "day"}},
@@ -187,9 +186,7 @@ class TestAggregatesExpressionParser:
                 },
             )
 
-
 # ----------------------- #
-
 
 class TestQueryValueCaster:
     # as_bool
@@ -233,15 +230,15 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_bool("  false  ") is False
 
     def test_as_bool_invalid_string_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid boolean"):
+        with pytest.raises(CoreException, match="Invalid boolean"):
             QueryValueCaster.as_bool("maybe")
 
     def test_as_bool_invalid_int_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid boolean"):
+        with pytest.raises(CoreException, match="Invalid boolean"):
             QueryValueCaster.as_bool(42)
 
     def test_as_bool_invalid_type_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid boolean"):
+        with pytest.raises(CoreException, match="Invalid boolean"):
             QueryValueCaster.as_bool(3.14)
 
     # as_uuid
@@ -254,11 +251,11 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_uuid(s) == UUID(s)
 
     def test_as_uuid_invalid_string_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid UUID"):
+        with pytest.raises(CoreException, match="Invalid UUID"):
             QueryValueCaster.as_uuid("not-a-uuid")
 
     def test_as_uuid_invalid_type_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid UUID"):
+        with pytest.raises(CoreException, match="Invalid UUID"):
             QueryValueCaster.as_uuid(42)
 
     # as_int
@@ -273,19 +270,19 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_int(42.0) == 42
 
     def test_as_int_bool_raises(self) -> None:
-        with pytest.raises(ValidationError, match="got bool"):
+        with pytest.raises(CoreException, match="got bool"):
             QueryValueCaster.as_int(True)
 
     def test_as_int_invalid_string_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid int"):
+        with pytest.raises(CoreException, match="Invalid int"):
             QueryValueCaster.as_int("abc")
 
     def test_as_int_invalid_type_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid int"):
+        with pytest.raises(CoreException, match="Invalid int"):
             QueryValueCaster.as_int([1])
 
     def test_as_int_non_integer_float_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid int"):
+        with pytest.raises(CoreException, match="Invalid int"):
             QueryValueCaster.as_int(3.14)
 
     # as_float
@@ -302,15 +299,15 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_float("3,14") == 3.14
 
     def test_as_float_bool_raises(self) -> None:
-        with pytest.raises(ValidationError, match="got bool"):
+        with pytest.raises(CoreException, match="got bool"):
             QueryValueCaster.as_float(True)
 
     def test_as_float_invalid_string_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid float"):
+        with pytest.raises(CoreException, match="Invalid float"):
             QueryValueCaster.as_float("abc")
 
     def test_as_float_invalid_type_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid float"):
+        with pytest.raises(CoreException, match="Invalid float"):
             QueryValueCaster.as_float([1.0])
 
     # _to_seconds
@@ -372,11 +369,11 @@ class TestQueryValueCaster:
         assert result.tzinfo is None
 
     def test_as_datetime_invalid_string_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid datetime"):
+        with pytest.raises(CoreException, match="Invalid datetime"):
             QueryValueCaster.as_datetime("not-a-date", force_tz=True)
 
     def test_as_datetime_invalid_type_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid datetime"):
+        with pytest.raises(CoreException, match="Invalid datetime"):
             QueryValueCaster.as_datetime([2024], force_tz=True)
 
     def test_as_datetime_from_milliseconds(self) -> None:
@@ -400,11 +397,11 @@ class TestQueryValueCaster:
         assert isinstance(result, date)
 
     def test_as_date_invalid_string_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid date"):
+        with pytest.raises(CoreException, match="Invalid date"):
             QueryValueCaster.as_date("not-a-date")
 
     def test_as_date_invalid_type_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid date"):
+        with pytest.raises(CoreException, match="Invalid date"):
             QueryValueCaster.as_date([2024])
 
     # pass_through
@@ -420,9 +417,7 @@ class TestQueryValueCaster:
         assert QueryValueCaster.pass_through([1, 2]) == "[1, 2]"
         assert QueryValueCaster.pass_through({"a": 1}) == "{'a': 1}"
 
-
 # ----------------------- #
-
 
 class TestQueryFilterExpressionParser:
     # Predicate shortcuts
@@ -507,6 +502,51 @@ class TestQueryFilterExpressionParser:
             assert isinstance(f, QueryField)
             assert f.op == op
 
+    def test_parse_ilike_single_pattern(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"title": {"$ilike": "%road%"}}},
+        )
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$ilike"
+        assert f.value == "%road%"
+
+    def test_parse_ilike_sequence_desugars_to_or(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {"$values": {"title": {"$ilike": ["%road%", "%map%"]}}},
+        )
+        assert isinstance(result, QueryAnd)
+        or_node = result.items[0]
+        assert isinstance(or_node, QueryOr)
+        assert len(or_node.items) == 2
+        assert all(
+            isinstance(i, QueryField) and i.op == "$ilike" for i in or_node.items
+        )
+
+    def test_parse_element_any_ilike(self) -> None:
+        result = QueryFilterExpressionParser.parse(
+            {
+                "$values": {
+                    "items": {
+                        "$any": {"$values": {"name": {"$ilike": "%foo%"}}},
+                    },
+                },
+            },
+        )
+        elem = result.items[0]
+        assert isinstance(elem, QueryElem)
+        inner = elem.inner
+        assert isinstance(inner, QueryAnd)
+        field = inner.items[0]
+        assert isinstance(field, QueryField)
+        assert field.op == "$ilike"
+
+    def test_parse_regex_rejects_unsafe_pattern(self) -> None:
+        with pytest.raises(CoreException, match="nested quantifiers"):
+            QueryFilterExpressionParser.parse(
+                {"$values": {"title": {"$regex": "(a+)+"}}},
+            )
+
     # Conjunction / disjunction
     def test_parse_conjunction(self) -> None:
         expr = {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}
@@ -540,48 +580,48 @@ class TestQueryFilterExpressionParser:
 
     # Validation errors
     def test_parse_invalid_expression_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid filter expression"):
+        with pytest.raises(CoreException, match="Invalid filter expression"):
             QueryFilterExpressionParser.parse({})
 
     def test_parse_unknown_key_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid filter expression"):
+        with pytest.raises(CoreException, match="Invalid filter expression"):
             QueryFilterExpressionParser.parse({"$unknown": []})
 
     def test_parse_empty_field_map_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Empty \\$values"):
+        with pytest.raises(CoreException, match="Empty \\$values"):
             QueryFilterExpressionParser.parse({"$values": {"x": {}}})
 
     def test_parse_eq_invalid_value_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid value for"):
+        with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$values": {"x": {"$eq": [1, 2]}}})
 
     def test_parse_ord_invalid_value_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid value for"):
+        with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"x": {"$gte": "not-numeric"}}}
             )
 
     def test_parse_in_invalid_value_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid value for"):
+        with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$values": {"x": {"$in": "not-a-list"}}})
 
     def test_parse_null_invalid_value_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid value for"):
+        with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$values": {"x": {"$null": "not-bool"}}})
 
     def test_parse_invalid_operator_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid operator"):
+        with pytest.raises(CoreException, match="Invalid operator"):
             QueryFilterExpressionParser.parse({"$values": {"x": {"$unknown": 1}}})
 
     def test_parse_set_rel_invalid_value_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid value for"):
+        with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"x": {"$superset": "not-list"}}}
             )
 
     # Validate null=True with other ops
     def test_null_true_with_other_ops_raises(self) -> None:
-        with pytest.raises(ValidationError, match="cannot be null"):
+        with pytest.raises(CoreException, match="cannot be null"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"x": {"$null": True, "$eq": 1}}}
             )
@@ -594,7 +634,7 @@ class TestQueryFilterExpressionParser:
 
     # Validate empty=True with other ops
     def test_empty_true_with_other_ops_raises(self) -> None:
-        with pytest.raises(ValidationError, match="cannot be empty"):
+        with pytest.raises(CoreException, match="cannot be empty"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"x": {"$empty": True, "$eq": 1}}}
             )
@@ -611,7 +651,6 @@ class TestQueryFilterExpressionParser:
         result = QueryFilterExpressionParser.parse(expr)
         assert isinstance(result, QueryAnd)
         assert len(result.items) == 2
-
 
 class TestQueryCompareExpressionParser:
     def test_parse_compare_eq_shortcut(self) -> None:
@@ -673,29 +712,29 @@ class TestQueryCompareExpressionParser:
         assert isinstance(result.items[1], QueryCompare)
 
     def test_parse_constraint_with_and_raises(self) -> None:
-        with pytest.raises(ValidationError, match="cannot mix"):
+        with pytest.raises(CoreException, match="cannot mix"):
             QueryFilterExpressionParser.parse(
                 {"$and": [], "$values": {"a": 1}},
             )
 
     def test_parse_empty_fields_map_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Empty \\$fields"):
+        with pytest.raises(CoreException, match="Empty \\$fields"):
             QueryFilterExpressionParser.parse({"$fields": {}})
 
     def test_parse_compare_invalid_operator_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid field compare operator"):
+        with pytest.raises(CoreException, match="Invalid field compare operator"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"a": {"$in": "b"}}},
             )
 
     def test_parse_compare_scalar_rhs_raises(self) -> None:
-        with pytest.raises(ValidationError, match="field path string"):
+        with pytest.raises(CoreException, match="field path string"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"a": {"$eq": 1}}},
             )
 
     def test_parse_compare_empty_rhs_raises(self) -> None:
-        with pytest.raises(ValidationError, match="field path string"):
+        with pytest.raises(CoreException, match="field path string"):
             QueryFilterExpressionParser.parse(
                 {"$fields": {"a": {"$eq": ""}}},
             )
@@ -707,7 +746,7 @@ class TestQueryCompareExpressionParser:
         parser = QueryFilterExpressionParser(
             limits=QueryFilterLimits(max_depth=3, max_clauses=100, max_in_size=100),
         )
-        with pytest.raises(ValidationError, match="maximum depth"):
+        with pytest.raises(CoreException, match="maximum depth"):
             parser.parse_filter(expr)  # type: ignore[arg-type]
 
     def test_parse_exceeds_max_clauses(self) -> None:
@@ -721,21 +760,21 @@ class TestQueryCompareExpressionParser:
                 {"$values": {"c": 3}},
             ],
         }
-        with pytest.raises(ValidationError, match="maximum clause count"):
+        with pytest.raises(CoreException, match="maximum clause count"):
             parser.parse_filter(expr)  # type: ignore[arg-type]
 
     def test_parse_exceeds_max_in_size(self) -> None:
         parser = QueryFilterExpressionParser(
             limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=2),
         )
-        with pytest.raises(ValidationError, match="maximum size"):
+        with pytest.raises(CoreException, match="maximum size"):
             parser.parse_filter({"$values": {"x": [1, 2, 3]}})  # type: ignore[arg-type]
 
     def test_parse_exceeds_max_in_size_operator_form(self) -> None:
         parser = QueryFilterExpressionParser(
             limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=1),
         )
-        with pytest.raises(ValidationError, match="maximum size"):
+        with pytest.raises(CoreException, match="maximum size"):
             parser.parse_filter({"$values": {"x": {"$in": [1, 2]}}})  # type: ignore[arg-type]
 
     def test_parse_not(self) -> None:
@@ -760,7 +799,7 @@ class TestQueryCompareExpressionParser:
         assert isinstance(result.item, QueryOr)
 
     def test_parse_not_mix_constraint_raises(self) -> None:
-        with pytest.raises(ValidationError, match="cannot mix"):
+        with pytest.raises(CoreException, match="cannot mix"):
             QueryFilterExpressionParser.parse(
                 {"$not": {"$values": {"a": 1}}, "$values": {"b": 2}},
             )
@@ -820,20 +859,18 @@ class TestQueryCompareExpressionParser:
         assert none_result.items[0].quantifier == "$none"
 
     def test_parse_element_invalid_nested_quantifier_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Nested element quantifiers"):
+        with pytest.raises(CoreException, match="Nested element quantifiers"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"tags": {"$any": {"$all": "x"}}}},
             )
 
     def test_parse_element_invalid_operator_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Element constraint must be"):
+        with pytest.raises(CoreException, match="Element constraint must be"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"tags": {"$any": {"$in": ["a"]}}}},
             )
 
-
 # ----------------------- #
-
 
 class TestMockElementQuantifiers:
     def test_match_elem_any_scalar(self) -> None:
@@ -961,7 +998,6 @@ class TestMockElementQuantifiers:
             )
             is False
         )
-
 
 class TestQueryNodes:
     def test_query_field(self) -> None:

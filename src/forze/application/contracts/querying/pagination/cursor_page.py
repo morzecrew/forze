@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .cursor_token import encode_keyset_v1, row_value_for_sort_key
@@ -23,7 +23,7 @@ def assert_cursor_projection_includes_sort_keys(
         return
     if all(f in return_fields for f in sort_keys):
         return
-    raise CoreError(
+    raise exc.internal(
         "When using return_fields with cursor list, the projection must include "
         "all sort and tie-breaker fields (including id).",
     )

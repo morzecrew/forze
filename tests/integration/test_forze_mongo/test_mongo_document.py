@@ -1,4 +1,6 @@
+from forze.base.exceptions import CoreException
 from uuid import UUID, uuid4
+
 
 import pytest
 from forze_contrib.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
@@ -10,29 +12,23 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import ConflictError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
-
 class MyDoc(DocWithSoftDeletion):
     name: str
-
 
 class MyCreateDoc(CreateDocumentCmd):
     name: str
 
-
 class MyUpdateDoc(UpdateCmdWithSoftDeletion):
     name: str | None = None
-
 
 class MyReadDoc(ReadDocument):
     name: str
     is_deleted: bool = False
-
 
 @pytest.mark.asyncio
 async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> None:
@@ -97,7 +93,7 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
     assert updated.name == "alpha-2"
     assert updated.rev == 2
 
-    with pytest.raises(ConflictError, match="Historical consistency violation"):
+    with pytest.raises(CoreException, match="Historical consistency violation"):
         await adapter.update(created.id, 1, MyUpdateDoc(name="alpha-3"))
 
     touched = await adapter.touch(created.id)
@@ -128,7 +124,6 @@ async def test_mongo_document_adapter_roundtrip(mongo_client: MongoClient) -> No
 
     await adapter.kill(created.id)
     assert await adapter.count() == 0
-
 
 @pytest.mark.asyncio
 async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> None:

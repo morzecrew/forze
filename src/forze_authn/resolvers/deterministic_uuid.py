@@ -8,7 +8,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverPort,
     VerifiedAssertion,
 )
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 from forze.base.primitives import uuid4
 
 # ----------------------- #
@@ -31,21 +31,7 @@ class DeterministicUuidResolver(PrincipalResolverPort):
     async def resolve(self, assertion: VerifiedAssertion) -> AuthnIdentity:
         principal_id = uuid4({"iss": assertion.issuer, "sub": assertion.subject})
 
-        tenant_id: UUID | None = None
-
-        if assertion.tenant_hint is not None:
-            try:
-                tenant_id = UUID(assertion.tenant_hint)
-
-            except ValueError:
-                tenant_id = uuid4(
-                    {
-                        "iss": assertion.issuer,
-                        "tid": assertion.tenant_hint,
-                    },
-                )
-
-        return AuthnIdentity(principal_id=principal_id, tenant_id=tenant_id)
+        return AuthnIdentity(principal_id=principal_id)
 
 
 # ....................... #
@@ -55,6 +41,6 @@ def derive_principal_id(issuer: str, subject: str) -> UUID:
     """Public helper for tests / migrations to compute the same UUID this resolver emits."""
 
     if not issuer or not subject:
-        raise AuthenticationError("issuer and subject must be non-empty")
+        raise exc.authentication("issuer and subject must be non-empty")
 
     return uuid4({"iss": issuer, "sub": subject})

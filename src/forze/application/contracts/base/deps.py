@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .specs import BaseSpec
@@ -71,7 +71,7 @@ class ConvenientDeps:
 
     def lock(self, ctx: "ExecutionContext") -> None:
         if self._locked:
-            raise CoreError("Convenience layer already locked")
+            raise exc.internal("Convenience layer already locked")
 
         self._locked = True
         self.ctx = ctx
@@ -80,7 +80,7 @@ class ConvenientDeps:
 
     def _require_ctx(self) -> "ExecutionContext":
         if self.ctx is None:
-            raise CoreError("Execution context is not set")
+            raise exc.internal("Execution context is not set")
 
         return self.ctx
 
@@ -89,7 +89,7 @@ class ConvenientDeps:
     def _resolve_configurable(
         self,
         key: DepKey[Any],
-        spec: object,
+        spec: BaseSpec,
         *,
         route: StrKey | None = None,
     ) -> Any:

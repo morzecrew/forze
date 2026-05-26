@@ -8,7 +8,7 @@ import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, cast, final
+from typing import Any, AsyncGenerator, cast, final
 
 import aioboto3
 import attrs
@@ -17,9 +17,9 @@ from pydantic import SecretStr
 from types_aiobotocore_s3.client import S3Client as AsyncS3Client
 from types_aiobotocore_s3.type_defs import ObjectTypeDef
 
-from forze.base.errors import CoreError, NotFoundError
+from forze.base.exceptions import exc
 
-from .errors import s3_handled
+from .errors import exc_interceptor
 from .port import S3ClientPort
 from .value_objects import S3Config, S3ConnectionOpts, S3Head
 
@@ -75,6 +75,7 @@ class S3Client(S3ClientPort):
 
         if config is None:
             aio_params = S3Config(retries={"max_attempts": 3, "mode": "adaptive"})
+
         else:
             aio_params = cast(S3Config, dict(config))
             if "retries" not in aio_params:
@@ -109,7 +110,7 @@ class S3Client(S3ClientPort):
 
     def __require_session(self) -> aioboto3.Session:
         if self.__session is None:
-            raise CoreError("S3 session is not initialized")
+            raise exc.internal("S3 session is not initialized")
 
         return self.__session
 
@@ -124,14 +125,14 @@ class S3Client(S3ClientPort):
         c = self.__current_client()
 
         if c is None:
-            raise CoreError("S3 client is not initialized")
+            raise exc.internal("S3 client is not initialized")
 
         return c
 
     # ....................... #
 
     @asynccontextmanager
-    async def client(self) -> AsyncIterator[AsyncS3Client]:
+    async def client(self) -> AsyncGenerator[AsyncS3Client]:
         """Yield a context-scoped S3 client.
 
         On first entry a new ``aioboto3`` client is created; nested calls reuse
@@ -157,7 +158,7 @@ class S3Client(S3ClientPort):
         opts = self.__opts
 
         if opts is None:
-            raise CoreError("S3 client options are not initialized")
+            raise exc.internal("S3 client options are not initialized")
 
         cm = session.client(  # type: ignore
             "s3",
@@ -199,7 +200,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.bucket_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.bucket_exists")  # type: ignore[untyped-decorator]
     async def bucket_exists(self, bucket: str) -> bool:
         """Return whether the given bucket exists.
 
@@ -222,7 +223,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.create_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.create_bucket")  # type: ignore[untyped-decorator]
     async def create_bucket(self, bucket: str) -> None:
         """Create a bucket, silently succeeding if it already exists.
 
@@ -244,7 +245,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.ensure_bucket")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.ensure_bucket")  # type: ignore[untyped-decorator]
     async def ensure_bucket(self, bucket: str) -> None:
         """Assert that the bucket exists.
 
@@ -253,11 +254,11 @@ class S3Client(S3ClientPort):
         """
 
         if not await self.bucket_exists(bucket):
-            raise NotFoundError("Bucket does not exist")
+            raise exc.not_found("Bucket does not exist")
 
     # ....................... #
 
-    @s3_handled("s3.object_exists")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.object_exists")  # type: ignore[untyped-decorator]
     async def object_exists(self, bucket: str, key: str) -> bool:
         """Return whether the given object key exists in the bucket.
 
@@ -281,7 +282,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.upload_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.upload_bytes")  # type: ignore[untyped-decorator]
     async def upload_bytes(
         self,
         bucket: str,
@@ -325,7 +326,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.download_bytes")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.download_bytes")  # type: ignore[untyped-decorator]
     async def download_bytes(self, bucket: str, key: str) -> bytes:
         """Download the full content of an S3 object as bytes.
 
@@ -343,7 +344,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.delete_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.delete_object")  # type: ignore[untyped-decorator]
     async def delete_object(self, bucket: str, key: str) -> None:
         """Delete an object from the bucket.
 
@@ -357,7 +358,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.list_objects")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.list_objects")  # type: ignore[untyped-decorator]
     async def list_objects(
         self,
         bucket: str,
@@ -377,7 +378,7 @@ class S3Client(S3ClientPort):
         :param offset: Number of objects to skip before collecting results.
         :returns: A tuple of ``(items, total_count)`` where *total_count*
             reflects the full (unpaginated) result set.
-        :raises CoreError: If *limit* is non-positive or *offset* is negative.
+        :raises exc.internal: If *limit* is non-positive or *offset* is negative.
         """
 
         c = self.__require_client()
@@ -386,10 +387,10 @@ class S3Client(S3ClientPort):
         _prefix = prefix or ""
 
         if limit is not None and limit <= 0:
-            raise CoreError("limit must be > 0")  # Validation ?
+            raise exc.internal("limit must be > 0")  # Validation ?
 
         if offset is not None and offset < 0:
-            raise CoreError("offset must be >= 0")  # Validation ?
+            raise exc.internal("offset must be >= 0")  # Validation ?
 
         # Defaults
         _limit = limit if limit is not None else 10_000_000  # effectively "no limit"
@@ -426,7 +427,7 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
-    @s3_handled("s3.head_object")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("s3.head_object")  # type: ignore[untyped-decorator]
     async def head_object(self, bucket: str, key: str) -> S3Head:
         """Retrieve object metadata without downloading the body.
 

@@ -18,10 +18,10 @@ handler can depend only on the side it needs.
 | Type parameters | `R` read model, `D` domain document, `C` create command, `U` update DTO. |
 | Required fields | `name`, `read`; `write` is required for command ports and may be `None` for read-only resources. |
 | Returned values | The spec itself is passed to `ctx.document.query(spec)` or `ctx.document.command(spec)` to build ports. |
-| Common implementations | Mock document adapter, Postgres document adapters, Mongo document adapters. |
+| Common implementations | Mock document adapter, Postgres document adapters, Mongo document adapters, Firestore document adapters. |
 | Related dependency keys | `DocumentQueryDepKey`, `DocumentCommandDepKey`; optional `CacheDepKey` when `cache` is set. |
 | Minimal example | See below. |
-| Related pages | [Contracts overview](../contracts.md), [PostgreSQL](../../integrations/postgres.md), [MongoDB](../../integrations/mongo.md), [Query Syntax](../query-syntax.md). |
+| Related pages | [Contracts overview](../contracts.md), [PostgreSQL](../../integrations/postgres.md), [MongoDB](../../integrations/mongo.md), [Cloud Firestore](../../integrations/firestore.md), [Query Syntax](../query-syntax.md). |
 
 Required fields:
 
@@ -81,7 +81,7 @@ Helper methods:
 | Type parameters | `R`, the read model for full-document reads. |
 | Required methods | Identity: `get`, `get_many`. Single row by filters: `find`, `project`, `select`. Offset listing: `find_many`, `find_page`, `project_many`, `project_page`, `select_many`, `select_page`. Keyset: `find_cursor`, `project_cursor`. Aggregates: `aggregate_many`, `aggregate_page`, `select_many_aggregated`, `select_page_aggregated`. `count`. |
 | Returned values | `R`, `Sequence[R]`, `JsonDict`, `Page[...]`, `CountlessPage[...]`, `CursorPage[...]`, or `int` depending on the method. |
-| Common implementations | Mock, Postgres, Mongo document adapters (via `DocumentCoordinator`). |
+| Common implementations | Mock, Postgres, Mongo, Firestore document adapters (via `DocumentCoordinator`). |
 | Related dependency keys | `DocumentQueryDepKey`; resolve with `ctx.document.query(spec)`. |
 | Minimal example | `project = await ctx.document.query(project_spec).get(project_id)` |
 | Related pages | [Query Syntax](../query-syntax.md), [Cache contracts](cache.md). |
@@ -111,7 +111,7 @@ Methods (result shape is encoded in the name; use `pagination` / `sorts` keyword
 | Type parameters | `R` read model, `D` domain document, `C` create command, `U` update DTO. |
 | Required methods | `create`, `create_many`, `update`, `update_many`, `update_matching`, `touch`, `kill`, `delete`, `restore`, `ensure`, and batch variants. |
 | Returned values | Usually the updated/read model `R`, sequences of `R`, counts for matching updates, or `None` for kill operations. |
-| Common implementations | Mock, Postgres, Mongo document command adapters. |
+| Common implementations | Mock, Postgres, Mongo, Firestore document command adapters. |
 | Related dependency keys | `DocumentCommandDepKey`; resolve with `ctx.document.command(spec)`. |
 | Minimal example | `created = await ctx.document.command(project_spec).create(cmd)` |
 | Related pages | [Domain Models](../../reference/domain-models.md), [Execution](../../reference/execution.md). |

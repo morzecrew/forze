@@ -13,7 +13,7 @@ from typing import Any, Final, TypedDict, final
 import attrs
 
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySnapshot
-from forze.base.errors import ConflictError
+from forze.base.exceptions import exc
 
 from ._logger import logger
 from .base import RedisBaseAdapter
@@ -101,7 +101,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
                 logger.debug("Idempotency key is acquired")
                 return None
 
-            raise ConflictError("Idempotency is in progress (not readable)")
+            raise exc.conflict("Idempotency is in progress (not readable)")
 
         data: dict[str, Any] = default_json_codec.loads(raw)
 
@@ -109,22 +109,25 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         data_ph = str(data.get("ph", ""))
 
         if data_ph != payload_hash:
-            raise ConflictError("Payload hash mismatch")
+            raise exc.precondition("Payload hash mismatch")
 
         if data_st == _PENDING:
-            raise ConflictError("Idempotency is in progress (pending)")
+            raise exc.conflict("Idempotency is in progress (pending)")
 
         if data_st != _DONE:
-            raise ConflictError("Idempotency is in progress (unknown state)")
+            raise exc.conflict("Idempotency is in progress (unknown state)")
 
         body_raw = await self.client.get(self.__body_key(op, key))
+
         if body_raw is None:
             # Legacy layout: body embedded as base64 in JSON.
             legacy_b64 = data.get("body_b64")
+
             if isinstance(legacy_b64, str):
                 body = base64.b64decode(legacy_b64.encode("ascii"))
+
             else:
-                raise ConflictError("Idempotency is in progress (done without body)")
+                raise exc.conflict("Idempotency is in progress (done without body)")
 
         else:
             body = (
@@ -180,9 +183,11 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
             )
 
         raw_check = await self.client.get(meta_k)
+
         if raw_check is None:
-            raise ConflictError("Idempotency commit failed (key missing or expired)")
+            raise exc.conflict("Idempotency commit failed (key missing or expired)")
 
         done_meta: dict[str, Any] = default_json_codec.loads(raw_check)
+
         if str(done_meta.get("st", "")) != _DONE:
-            raise ConflictError("Idempotency commit failed (key missing or expired)")
+            raise exc.conflict("Idempotency commit failed (key missing or expired)")

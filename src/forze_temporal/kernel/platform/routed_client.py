@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from temporalio.client import WorkflowHandle
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 
 from .client import TemporalClient
 from .port import TemporalClientPort
@@ -42,6 +42,8 @@ class RoutedTemporalClient(TemporalClientPort):
     connection_config: TemporalConfig = attrs.field(factory=TemporalConfig)
     max_cached_tenants: int = 100
 
+    # ....................... #
+
     _lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
     _clients: OrderedDict[UUID, TemporalClient] = attrs.field(
         factory=OrderedDict,
@@ -53,7 +55,7 @@ class RoutedTemporalClient(TemporalClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -95,7 +97,7 @@ class RoutedTemporalClient(TemporalClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed Temporal access",
                 code="tenant_required",
             )
@@ -106,7 +108,7 @@ class RoutedTemporalClient(TemporalClientPort):
 
     async def _get_client(self) -> TemporalClient:
         if not self._started:
-            raise InfrastructureError("Routed Temporal client is not started")
+            raise exc.internal("Routed Temporal client is not started")
 
         tid = self._require_tenant_id()
 
@@ -121,11 +123,11 @@ class RoutedTemporalClient(TemporalClientPort):
             try:
                 host = await self.secrets.resolve_str(ref)
 
-            except SecretNotFoundError:
+            except exc:
                 raise
 
             except Exception as e:
-                raise InfrastructureError(
+                raise exc.internal(
                     f"Failed to resolve Temporal secret for tenant {tid}: {e}",
                 ) from e
 
@@ -145,7 +147,10 @@ class RoutedTemporalClient(TemporalClientPort):
 
     async def health(self) -> tuple[str, bool]:
         inner = await self._get_client()
+
         return await inner.health()
+
+    # ....................... #
 
     async def start_workflow(
         self,
@@ -165,22 +170,29 @@ class RoutedTemporalClient(TemporalClientPort):
             raise_on_already_started=raise_on_already_started,
         )
 
+    # ....................... #
+
     def get_workflow_handle(
-        self, workflow_id: str, *, run_id: str | None = None
+        self,
+        workflow_id: str,
+        *,
+        run_id: str | None = None,
     ) -> WorkflowHandle[Any, Any]:
         if not self._started:
-            raise InfrastructureError("Routed Temporal client is not started")
+            raise exc.internal("Routed Temporal client is not started")
 
         tid = self._require_tenant_id()
         inner = self._clients.get(tid)
 
         if inner is None:
-            raise InfrastructureError(
+            raise exc.internal(
                 "No Temporal client for this tenant in cache; call an async method "
                 "(e.g. :meth:`start_workflow` or :meth:`health`) first to connect.",
             )
 
         return inner.get_workflow_handle(workflow_id, run_id=run_id)
+
+    # ....................... #
 
     async def signal_workflow(
         self,
@@ -198,6 +210,8 @@ class RoutedTemporalClient(TemporalClientPort):
             run_id=run_id,
         )
 
+    # ....................... #
+
     async def query_workflow(
         self,
         workflow_id: str,
@@ -213,6 +227,8 @@ class RoutedTemporalClient(TemporalClientPort):
             arg=arg,
             run_id=run_id,
         )
+
+    # ....................... #
 
     async def update_workflow(
         self,
@@ -230,6 +246,8 @@ class RoutedTemporalClient(TemporalClientPort):
             run_id=run_id,
         )
 
+    # ....................... #
+
     async def get_workflow_result(
         self,
         workflow_id: str,
@@ -239,6 +257,8 @@ class RoutedTemporalClient(TemporalClientPort):
         inner = await self._get_client()
         return await inner.get_workflow_result(workflow_id, run_id=run_id)
 
+    # ....................... #
+
     async def cancel_workflow(
         self,
         workflow_id: str,
@@ -247,6 +267,8 @@ class RoutedTemporalClient(TemporalClientPort):
     ) -> None:
         inner = await self._get_client()
         await inner.cancel_workflow(workflow_id, run_id=run_id)
+
+    # ....................... #
 
     async def terminate_workflow(
         self,

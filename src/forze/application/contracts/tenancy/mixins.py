@@ -2,7 +2,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .ports import TenantProviderPort
 
@@ -26,11 +26,12 @@ class TenancyMixin:
             return None
 
         if self.tenant_provider is None:
-            raise CoreError("Tenant provider is required")
+            raise exc.configuration("Tenant provider is required")
 
         tenant = self.tenant_provider()
 
         if tenant is None:
-            raise CoreError("Tenant ID is required")
+            #! most likely wrong exception kind
+            raise exc.internal("Tenant ID is required")
 
         return tenant.tenant_id

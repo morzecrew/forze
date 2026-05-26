@@ -1,0 +1,78 @@
+"""Integration tests for Firestore query filters and sorts."""
+
+from uuid import uuid4
+
+import pytest
+
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+    DocumentSpec,
+)
+from forze.application.execution import Deps, ExecutionContext
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
+from forze_firestore.execution.deps.keys import FirestoreClientDepKey
+from forze_firestore.kernel.platform import FirestoreClient
+
+
+class FilterDoc(Document):
+    sku: str
+
+
+class FilterCreate(CreateDocumentCmd):
+    sku: str
+
+
+class FilterUpdate(BaseDTO):
+    sku: str | None = None
+
+
+class FilterRead(ReadDocument):
+    sku: str
+
+
+@pytest.mark.asyncio
+async def test_find_many_with_and_filter(
+    firestore_client: FirestoreClient,
+) -> None:
+    collection = f"filters_{uuid4().hex[:8]}"
+    spec = DocumentSpec(
+        name="filters",
+        read=FilterRead,
+        write={
+            "domain": FilterDoc,
+            "create_cmd": FilterCreate,
+            "update_cmd": FilterUpdate,
+        },
+    )
+    fac = ConfigurableFirestoreDocument(
+        config={"read": ("(default)", collection), "write": ("(default)", collection)}
+    )
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                FirestoreClientDepKey: firestore_client,
+                DocumentQueryDepKey: fac,
+                DocumentCommandDepKey: fac,
+            }
+        )
+    )
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(FilterCreate(sku="keep-a"))
+    await cmd.create(FilterCreate(sku="keep-b"))
+    await cmd.create(FilterCreate(sku="drop"))
+
+    page = await query.find_page(
+        filters={
+            "$and": [
+                {"$values": {"sku": {"$in": ["keep-a", "keep-b"]}}},
+            ]
+        },
+        sorts={"sku": "asc"},
+        pagination={"limit": 10, "offset": 0},
+    )
+    assert page.count == 2
+    assert [r.sku for r in page.hits] == ["keep-a", "keep-b"]

@@ -54,6 +54,9 @@ def _iter_bytes(data: bytes, chunk_size: int = 32 * 1024) -> Iterator[bytes]:
         yield data[i : i + chunk_size]
 
 
+# ....................... #
+
+
 def _iter_fileobj(
     f: io.BufferedReader | io.BytesIO,
     chunk_size: int = 32 * 1024,
@@ -71,6 +74,9 @@ def _iter_fileobj(
 
     finally:
         f.close()
+
+
+# ....................... #
 
 
 def iter_file(b: bytes | io.BytesIO, *, chunk_size: int = 32 * 1024) -> Iterator[bytes]:

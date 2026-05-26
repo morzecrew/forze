@@ -1,7 +1,7 @@
 """Structural protocol for SQS clients (single endpoint or tenant-routed)."""
 
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, AsyncIterator, Awaitable, Protocol, Sequence
+from typing import AsyncContextManager, AsyncGenerator, Awaitable, Protocol, Sequence
 
 from types_aiobotocore_sqs.client import SQSClient as AsyncSQSClient
 
@@ -63,7 +63,7 @@ class SQSClientPort(Protocol):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[SQSQueueMessage]: ...  # pragma: no cover
+    ) -> AsyncGenerator[SQSQueueMessage]: ...  # pragma: no cover
 
     def ack(
         self, queue: str, ids: Sequence[str]

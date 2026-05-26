@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import (
-    AsyncIterator,
+    AsyncGenerator,
     Awaitable,
     Protocol,
     Sequence,
@@ -41,6 +41,6 @@ class PubSubQueryPort[M](Protocol):
         topics: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[PubSubMessage[M]]:
+    ) -> AsyncGenerator[PubSubMessage[M]]:
         """Yield messages from the given *topics* until *timeout* elapses."""
         ...

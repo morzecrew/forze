@@ -17,9 +17,9 @@ Read this when you wire authentication for a new route, integrate an external Id
 
 1. **Boundary** — one or more single-source resolvers (`HeaderTokenAuthnIdentityResolver` / `HeaderApiKeyAuthnIdentityResolver` / `CookieTokenAuthnIdentityResolver`) extract raw credentials from the request and ask the configured `AuthnPort` to authenticate them. `ContextBindingMiddleware` accepts a `Sequence` of resolvers plus a `when_multiple_credentials` policy to fail closed on ambiguous credentials.
 2. **Orchestration** — `AuthnPort` (default implementation: `AuthnOrchestrator` from `forze_authn`) dispatches by credential family (`password`, `token`, `api_key`).
-3. **Verification** — A `*VerifierPort` proves the credential is valid against its issuer (signature, hash, JWKS, etc.) and emits a `VerifiedAssertion` carrying `(issuer, subject, audience, tenant_hint, claims)`.
-4. **Resolution** — A `PrincipalResolverPort` maps the assertion to a canonical `AuthnIdentity` with `UUID` `principal_id` and optional `tenant_id`.
-5. **Binding** — The middleware binds the resolved identity onto `ExecutionContext` so handlers, document/tenancy ports, and authz checks read it via `ctx.inv.get_authn()`.
+3. **Verification** — A `*VerifierPort` proves the credential is valid against its issuer (signature, hash, JWKS, etc.) and emits a `VerifiedAssertion` carrying `(issuer, subject, audience, issuer_tenant_hint, claims)`.
+4. **Resolution** — A `PrincipalResolverPort` maps the assertion to a canonical, principal-only `AuthnIdentity` with `UUID` `principal_id`.
+5. **Binding** — The boundary keeps the optional `issuer_tenant_hint` beside the identity long enough for tenancy resolution, then binds only the resolved `AuthnIdentity` onto `ExecutionContext` so handlers, document/tenancy ports, and authz checks read it via `ctx.inv.get_authn()`.
 
 The verifier and resolver are **two separable concerns** that meet at the `VerifiedAssertion` value object — that is the entire seam.
 
@@ -32,7 +32,7 @@ A `VerifiedAssertion` (see [`src/forze/application/contracts/authn/value_objects
 | `issuer` | Stable identifier of the authority that produced the assertion (e.g. `"forze:jwt"`, an OIDC `iss` URL, `"firebase:project-id"`). |
 | `subject` | Raw external subject identifier (string form, **not** coerced to a UUID). |
 | `audience` | Optional `aud` value the assertion is bound to. |
-| `tenant_hint` | Raw tenant identifier as provided by the issuer; the resolver decides how to interpret it. |
+| `issuer_tenant_hint` | Raw tenant identifier asserted by the issuer; tenancy resolution may validate or use it, but it is never canonical by itself. |
 | `issued_at` / `expires_at` | Optional timestamps. |
 | `claims` | Opaque snapshot of all claims for resolvers and audit trails (not consumed by domain code). |
 

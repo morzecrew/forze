@@ -5,7 +5,7 @@ import json
 from typing import Any, Sequence
 
 from forze.application.contracts.querying import QuerySortExpression
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
@@ -67,14 +67,14 @@ def normalize_sorts_with_id(
     dirs: set[str] = {s[k] for k in s}  # type: ignore[assignment, operator]
 
     if len(dirs) != 1:
-        raise CoreError(
+        raise exc.internal(
             "Keyset (cursor) pagination requires all sort directions to match "
             "(all ``asc`` or all ``desc``).",
         )
     direction = next(iter(dirs))
 
     if direction not in _DIRECTIONS:
-        raise CoreError("Invalid sort direction in sorts expression")
+        raise exc.internal("Invalid sort direction in sorts expression")
 
     order_keys: list[str] = [k for k in s if k != ID_FIELD]
 
@@ -101,7 +101,9 @@ def encode_keyset_v1(
         or len(sort_keys) != len(directions)
         or not sort_keys
     ):
-        raise CoreError("Keyset token fields must be aligned in length and non-empty")
+        raise exc.internal(
+            "Keyset token fields must be aligned in length and non-empty"
+        )
 
     payload: dict[str, Any] = {
         "v": _KEYSET_V1,
@@ -138,27 +140,27 @@ def decode_keyset_v1(token: str) -> tuple[list[str], list[str], list[Any]]:
         data: Any = json.loads(raw.decode("utf-8"))
 
     except (ValueError, json.JSONDecodeError) as e:
-        raise CoreError("Invalid cursor token") from e
+        raise exc.internal("Invalid cursor token") from e
 
     if not isinstance(data, dict) or int(data.get("v", 0)) != _KEYSET_V1:  # type: ignore[arg-type]
-        raise CoreError("Invalid cursor token")
+        raise exc.internal("Invalid cursor token")
 
     k = data.get("k")  # type: ignore[assignment, misc]
     d = data.get("d")  # type: ignore[assignment, misc]
     x = data.get("x")  # type: ignore[assignment, misc]
 
     if not isinstance(k, list) or not isinstance(d, list) or not isinstance(x, list):
-        raise CoreError("Invalid cursor token")
+        raise exc.internal("Invalid cursor token")
 
     if len(k) != len(d) or len(k) != len(x):  # type: ignore[arg-type]
-        raise CoreError("Invalid cursor token")
+        raise exc.internal("Invalid cursor token")
 
     keys = [str(a) for a in k]  # type: ignore[arg-type]
     dirs = [str(a).lower() for a in d]  # type: ignore[arg-type]
 
     for dr in dirs:
         if dr not in _DIRECTIONS:
-            raise CoreError("Invalid cursor token")
+            raise exc.internal("Invalid cursor token")
 
     vals = [_parse_value(v) for v in x]  # type: ignore[arg-type]
 

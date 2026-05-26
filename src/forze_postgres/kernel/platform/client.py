@@ -18,7 +18,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, Literal, Sequence, final, overload
+from typing import Any, AsyncGenerator, Literal, Sequence, final, overload
 from uuid import uuid4
 
 import attrs
@@ -26,11 +26,11 @@ from psycopg import AsyncConnection, Column, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool
 
-from forze.base.errors import InfrastructureError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .._logger import logger
-from .errors import psycopg_handled
+from .errors import exc_interceptor
 from .helpers import isolation_level_psycopg
 from .port import PostgresClientPort
 from .types import RowFactory
@@ -206,7 +206,7 @@ class PostgresClient(PostgresClientPort):
         """Returns the active pool. Raises :exc:`InfrastructureError` if not initialized."""
 
         if self.__pool is None:
-            raise InfrastructureError("Postgres client is not initialized")
+            raise exc.internal("Postgres client is not initialized")
 
         return self.__pool
 
@@ -238,7 +238,7 @@ class PostgresClient(PostgresClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def __acquire_conn(self) -> AsyncIterator[AsyncConnection]:
+    async def __acquire_conn(self) -> AsyncGenerator[AsyncConnection]:
         """Yields the context-bound connection or a new one from the pool."""
 
         conn = self.__current_conn()
@@ -260,6 +260,8 @@ class PostgresClient(PostgresClientPort):
 
         return self.__ctx_depth.get() > 0 and self.__current_conn() is not None
 
+    # ....................... #
+
     def query_concurrency_limit(self) -> int:
         """Maximum parallel operations that should each acquire a pool connection.
 
@@ -268,24 +270,28 @@ class PostgresClient(PostgresClientPort):
 
         return self.__max_concurrent_queries
 
+    # ....................... #
+
     def gather_concurrency_semaphore(self) -> asyncio.Semaphore:
         """Semaphore shared by all coroutines using this client for :func:`gather_db_work`."""
 
         if self.__gather_sem is None:
-            raise InfrastructureError("Postgres client is not initialized")
+            raise exc.internal("Postgres client is not initialized")
 
         return self.__gather_sem
+
+    # ....................... #
 
     def require_transaction(self) -> None:
         """Raises :exc:`InfrastructureError` if the current context is not inside a transaction."""
 
         if not self.is_in_transaction():
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
     # ....................... #
 
     @asynccontextmanager
-    async def bound_connection(self) -> AsyncIterator[AsyncConnection]:
+    async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
         """Check out one pool connection and bind it as the current context connection.
 
         While this context is active, query methods and a top-level
@@ -301,12 +307,12 @@ class PostgresClient(PostgresClientPort):
         """
 
         if self.__ctx_depth.get() > 0:
-            raise InfrastructureError(
+            raise exc.internal(
                 "Cannot bind a connection while already inside a transaction",
             )
 
         if self.__current_conn() is not None:
-            raise InfrastructureError("A connection is already bound in this context")
+            raise exc.internal("A connection is already bound in this context")
 
         async with self.__require_pool().connection(
             timeout=self.__acquire_timeout.total_seconds()
@@ -326,13 +332,15 @@ class PostgresClient(PostgresClientPort):
     ) -> None:
         await conn.set_isolation_level(isolation_level_psycopg(options.isolation))
 
-    @psycopg_handled("postgres.transaction")  # type: ignore[untyped-decorator]
+    # ....................... #
+
+    @exc_interceptor.asynccontextmanager("postgres.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncIterator[AsyncConnection]:
+    ) -> AsyncGenerator[AsyncConnection]:
         """Enters a transaction (or nested savepoint), yielding the connection.
 
         Nested calls use savepoints; the top-level call uses psycopg's
@@ -429,6 +437,8 @@ class PostgresClient(PostgresClientPort):
 
         return [dict(zip(cols, row)) for row in rows]
 
+    # ....................... #
+
     @staticmethod
     def _row_to_dict(
         description: Sequence[Column] | None,
@@ -460,7 +470,7 @@ class PostgresClient(PostgresClientPort):
         return_rowcount: Literal[True],
     ) -> int: ...
 
-    @psycopg_handled("postgres.execute")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("postgres.execute")  # type: ignore[untyped-decorator]
     async def execute(
         self,
         query: QueryNoTemplate,
@@ -495,9 +505,11 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    @psycopg_handled("postgres.execute_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("postgres.execute_many")  # type: ignore[untyped-decorator]
     async def execute_many(
-        self, query: QueryNoTemplate, params: Sequence[Params]
+        self,
+        query: QueryNoTemplate,
+        params: Sequence[Params],
     ) -> None:
         """Executes the same statement for each parameter set.
 
@@ -534,7 +546,7 @@ class PostgresClient(PostgresClientPort):
         commit: bool = False,
     ) -> list[tuple[Any, ...]]: ...
 
-    @psycopg_handled("postgres.fetch_all")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("postgres.fetch_all")  # type: ignore[untyped-decorator]
     async def fetch_all(
         self,
         query: QueryNoTemplate,
@@ -575,7 +587,7 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    @psycopg_handled("postgres.fetch_all_batched")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asyncgenerator("postgres.fetch_all_batched")  # type: ignore[untyped-decorator]
     async def fetch_all_batched(
         self,
         query: QueryNoTemplate,
@@ -584,7 +596,7 @@ class PostgresClient(PostgresClientPort):
         batch_size: int = 2000,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+    ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
         """Execute *query* and yield row chunks of at most *batch_size* rows.
 
         Uses :meth:`psycopg.AsyncCursor.fetchmany` on a forward-only cursor so
@@ -637,7 +649,7 @@ class PostgresClient(PostgresClientPort):
         commit: bool = False,
     ) -> tuple[Any, ...] | None: ...
 
-    @psycopg_handled("postgres.fetch_one")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("postgres.fetch_one")  # type: ignore[untyped-decorator]
     async def fetch_one(
         self,
         query: QueryNoTemplate,
@@ -681,7 +693,7 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    @psycopg_handled("postgres.fetch_value")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("postgres.fetch_value")  # type: ignore[untyped-decorator]
     async def fetch_value(
         self,
         query: QueryNoTemplate,

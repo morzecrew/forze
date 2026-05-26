@@ -174,6 +174,17 @@ Both ports also have `*_many` batch variants for all applicable operations.
 |--------|---------|
 | `append(stream, payload, *, type?, key?, timestamp?)` | Append an entry |
 
+### Analytics
+
+**`AnalyticsQueryPort[R]`** / **`AnalyticsIngestPort[I]`**: query pre-provisioned warehouse relations by **named `query_key`** and optional append-only ingest. Not document CRUD, not ETL—use queue/stream for Lane A events and external loaders. Resolve with **`AnalyticsQueryDepKey`** / **`AnalyticsIngestDepKey`** and **`ctx.analytics`** (see [Analytics contracts](../core-package/contracts/analytics.md)).
+
+| Method | Purpose |
+|--------|---------|
+| `run` / `run_page` / `run_chunked` | Parameterized named query |
+| `project_run*` / `select_run*` | Projected or alternate row types |
+| `run_cursor` / … | Cursor pagination |
+| `append` | Batch append rows (ingest port) |
+
 ### Idempotency
 
 **`IdempotencyPort`**: deduplicate HTTP requests:
@@ -209,6 +220,7 @@ Each contract has a corresponding `DepKey` for registration and resolution. Inte
     cache = self.ctx.cache(cache_spec)         # resolves CacheDepKey
     counter = self.ctx.counter(CounterSpec(name="tickets"))  # resolves CounterDepKey
     storage = self.ctx.storage(StorageSpec(name="attachments"))  # resolves StorageDepKey
+    metrics = self.ctx.analytics.query(metrics_spec)  # resolves AnalyticsQueryDepKey
 
 For contracts without convenience methods on `ExecutionContext`, use `ctx.deps.resolve_configurable`:
 

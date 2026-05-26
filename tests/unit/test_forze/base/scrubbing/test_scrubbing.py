@@ -1,5 +1,6 @@
 """Unit tests for forze.base.scrubbing."""
 
+from forze.base.exceptions import CoreException
 import pytest
 from pydantic import BaseModel, EmailStr, SecretStr, ValidationError
 
@@ -13,11 +14,9 @@ from forze.base.scrubbing import (
 
 # ----------------------- #
 
-
 class _SecretModel(BaseModel):
     password: str
     api_key: SecretStr
-
 
 class TestSanitizeEgress:
     def test_secret_str_masked(self) -> None:
@@ -33,7 +32,6 @@ class TestSanitizeEgress:
     def test_egress_does_not_scrub_email_in_note(self) -> None:
         data = {"note": "contact alice@example.com"}
         assert sanitize(data, context="egress") == data
-
 
 class TestSanitizeLog:
     def test_masks_sensitive_keys(self) -> None:
@@ -69,7 +67,6 @@ class TestSanitizeLog:
         data = {"note": "contact alice@example.com"}
         assert sanitize(data, context="log", text_scrub=False) == data
 
-
 class TestSanitizePydanticErrors:
     def test_strips_input_and_ctx(self) -> None:
         class M(BaseModel):
@@ -85,14 +82,12 @@ class TestSanitizePydanticErrors:
         assert "loc" in sanitized[0]
         assert "msg" in sanitized[0]
 
-
 class TestDumpForErrorContext:
     def test_masks_secret_str_and_plain_password_field(self) -> None:
         model = _SecretModel(password="plain-secret", api_key=SecretStr("key-secret"))
         dumped = dump_for_error_context(model)
         assert dumped["password"] == SECRET_PLACEHOLDER
         assert dumped["api_key"] == SECRET_PLACEHOLDER
-
 
 class TestDumpBoundArgsForErrors:
     def test_dumps_base_model_args(self) -> None:

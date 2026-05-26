@@ -11,10 +11,10 @@ Storage contracts provide S3-style object storage for binary data and metadata.
 | Type parameters | None. |
 | Required fields | `name`. |
 | Returned values | Passed to `ctx.storage(spec)` to resolve `StoragePort`. |
-| Common implementations | Mock storage adapter, S3-compatible adapter. |
+| Common implementations | Mock storage adapter, S3-compatible adapter, GCS adapter. |
 | Related dependency keys | `StorageDepKey`. |
 | Minimal example | `attachments = StorageSpec(name="attachments")` |
-| Related pages | [S3-Compatible Storage](../../integrations/s3.md). |
+| Related pages | [S3-Compatible Storage](../../integrations/s3.md), [Google Cloud Storage](../../integrations/gcs.md). |
 
 ## `StoragePort`
 
@@ -25,7 +25,7 @@ Storage contracts provide S3-style object storage for binary data and metadata.
 | Type parameters | None. |
 | Required methods | `upload`, `download`, `delete`, `list`. |
 | Returned values | `StoredObject`, `DownloadedObject`, `None`, or `(list[StoredObject], int)`. |
-| Common implementations | Mock, S3-compatible storage. |
+| Common implementations | Mock, S3-compatible storage, GCS. |
 | Related dependency keys | `StorageDepKey`; resolve with `ctx.storage(spec)`. |
 | Minimal example | See below. |
 | Related pages | [Contracts overview](../contracts.md), [Mock integration](../../integrations/mock.md). |

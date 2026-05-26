@@ -1,24 +1,16 @@
+from forze.base.primitives import JsonDict
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
 
 # ....................... #
 
-from typing import Any, Final
+from typing import Final
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from forze.base.errors import (
-    AuthenticationError,
-    AuthorizationError,
-    ConflictError,
-    CoreError,
-    DomainError,
-    InvalidOperationError,
-    NotFoundError,
-    ValidationError,
-)
+from forze.base.exceptions import CoreException, ExceptionKind, exception_egress_policy
 from forze.base.scrubbing import sanitize
 
 # ----------------------- #
@@ -29,29 +21,29 @@ ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
 # ....................... #
 
 
-def _status_code_mapper(exc: CoreError) -> int:
-    """Map a :class:`CoreError` subclass to the appropriate HTTP status code."""
+def _status_code_mapper(kind: ExceptionKind) -> int:
+    """Map a :class:`exc.internal` subclass to the appropriate HTTP status code."""
 
-    match exc:
-        case NotFoundError():
+    match kind:
+        case ExceptionKind.NOT_FOUND:
             return 404
 
-        case ConflictError():
+        case ExceptionKind.CONFLICT:
             return 409
 
-        case ValidationError():
+        case ExceptionKind.VALIDATION:
             return 422
 
-        case DomainError():
+        case ExceptionKind.DOMAIN:
             return 400
 
-        case InvalidOperationError():
+        case ExceptionKind.PRECONDITION:
             return 400
 
-        case AuthenticationError():
+        case ExceptionKind.AUTHENTICATION:
             return 401
 
-        case AuthorizationError():
+        case ExceptionKind.AUTHORIZATION:
             return 403
 
         case _:
@@ -61,13 +53,14 @@ def _status_code_mapper(exc: CoreError) -> int:
 # ....................... #
 
 
-async def _forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
-    """FastAPI exception handler that converts :class:`CoreError` to a JSON response."""
+async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONResponse:
+    """FastAPI exception handler that converts :class:`exc.internal` to a JSON response."""
 
-    status_code = _status_code_mapper(exc)
-    content: dict[str, Any] = {"detail": exc.message}
+    policy = exception_egress_policy(exc.kind)
+    status_code = _status_code_mapper(exc.kind)
+    content: JsonDict = {"detail": exc.summary}
 
-    if exc.details and status_code != 500:
+    if exc.details and policy.expose_details:
         content["context"] = sanitize(exc.details, context="egress")
 
     return JSONResponse(
@@ -83,4 +76,4 @@ async def _forze_exception_handler(_: Request, exc: CoreError) -> JSONResponse:
 def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers on *app*."""
 
-    app.exception_handler(CoreError)(_forze_exception_handler)
+    app.exception_handler(CoreException)(_forze_exception_handler)

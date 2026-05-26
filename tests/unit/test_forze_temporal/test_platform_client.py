@@ -1,5 +1,6 @@
 """Unit tests for :mod:`forze_temporal.kernel.platform.client`."""
 
+from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,18 +9,14 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 pytest.importorskip("temporalio")
 
-from forze.base.errors import InfrastructureError
 from forze_temporal.kernel.platform.client import TemporalClient, TemporalConfig
-
 
 class _Arg(BaseModel):
     """Workflow argument model for tests."""
 
     n: int = 1
 
-
 # ----------------------- #
-
 
 class TestTemporalConfig:
     """Tests for :class:`TemporalConfig`."""
@@ -42,7 +39,6 @@ class TestTemporalConfig:
         cfg = TemporalConfig(interceptors=[sentinel])  # type: ignore[list-item]
         assert cfg.interceptors is not None
         assert cfg.interceptors[0] is sentinel
-
 
 class TestTemporalClientLifecycle:
     """Initialize, close, and health checks."""
@@ -139,7 +135,6 @@ class TestTemporalClientLifecycle:
         assert ok is False
         assert "unreachable" in status
 
-
 class TestTemporalClientWorkflowApi:
     """start_workflow, handles, signal, query, update, result, cancel, terminate."""
 
@@ -155,28 +150,28 @@ class TestTemporalClientWorkflowApi:
         client = TemporalClient()
         arg = _Arg()
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.start_workflow("q", "wf", arg, workflow_id="wid")
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             client.get_workflow_handle("wid")
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.signal_workflow("wid", signal="s", arg=arg)
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.query_workflow("wid", query="q", arg=arg)
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.update_workflow("wid", update="u", arg=arg)
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.get_workflow_result("wid")
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.cancel_workflow("wid")
 
-        with pytest.raises(InfrastructureError, match="not initialized"):
+        with pytest.raises(CoreException, match="not initialized"):
             await client.terminate_workflow("wid")
 
     @pytest.mark.asyncio

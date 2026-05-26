@@ -1,15 +1,20 @@
 """Unit tests for StorageKernelOp and StorageFacade."""
 
+from datetime import datetime
+
 import attrs
 import pytest
+
+from forze.base.exceptions import CoreException
 
 from forze.application.composition.storage import StorageFacade, StorageKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.registry import OperationRegistry
-from forze.application.handlers.storage.dto import StoredObjectDTO, UploadObjectRequestDTO
-from forze.base.errors import CoreError
+from forze.application.handlers.storage.dto import (
+    StoredObjectDTO,
+    UploadObjectRequestDTO,
+)
 from forze.base.primitives import StrKeyNamespace
-from datetime import datetime
 
 # ----------------------- #
 
@@ -67,5 +72,5 @@ class TestStorageFacade:
             registry=frozen,
             namespace=_STORAGE_KEYS,
         )
-        with pytest.raises(CoreError, match="Handler factory not found"):
+        with pytest.raises(CoreException, match="Handler factory not found"):
             _ = facade.list

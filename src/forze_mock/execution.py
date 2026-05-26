@@ -29,6 +29,11 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
+from forze.application.contracts.analytics import (
+    AnalyticsIngestDepKey,
+    AnalyticsQueryDepKey,
+    AnalyticsSpec,
+)
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.contracts.storage import StorageDepKey, StoragePort, StorageSpec
 from forze.application.contracts.stream import (
@@ -44,6 +49,7 @@ from forze.application.contracts.transaction import (
 from forze.application.execution import Deps, DepsModule, ExecutionContext
 
 from .adapters import (
+    MockAnalyticsAdapter,
     MockCacheAdapter,
     MockCounterAdapter,
     MockDocumentAdapter,
@@ -91,6 +97,20 @@ class ConfigurableMockDocument:
             read_model=spec.read,
             domain_model=domain_model,
         )
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurableMockAnalytics:
+    """Build a :class:`MockAnalyticsAdapter` for any analytics spec route."""
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: AnalyticsSpec[Any, Any],
+    ) -> MockAnalyticsAdapter[Any, Any]:
+        state = context.deps.provide(MockStateDepKey)
+        return MockAnalyticsAdapter(state=state, spec=spec)
 
 
 @final
@@ -234,6 +254,8 @@ class MockDepsModule(DepsModule[Any]):
                 DocumentQueryDepKey: document,
                 DocumentCommandDepKey: document,
                 SearchQueryDepKey: ConfigurableMockSearch(),
+                AnalyticsQueryDepKey: ConfigurableMockAnalytics(),
+                AnalyticsIngestDepKey: ConfigurableMockAnalytics(),
                 CounterDepKey: ConfigurableMockCounter(),
                 CacheDepKey: ConfigurableMockCache(),
                 IdempotencyDepKey: ConfigurableMockIdempotency(),

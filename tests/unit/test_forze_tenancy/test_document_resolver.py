@@ -1,5 +1,6 @@
 """Unit tests for :mod:`forze_tenancy` document resolver."""
 
+from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -14,7 +15,6 @@ from forze_tenancy.domain.models.principal_tenant_binding import (
 )
 from forze_tenancy.domain.models.tenant import ReadTenant
 
-
 def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
     now = utcnow()
     return ReadPrincipalTenantBinding(
@@ -25,7 +25,6 @@ def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
         principal_id=pid,
         tenant_id=tid,
     )
-
 
 @pytest.mark.asyncio
 async def test_resolver_returns_tenant_from_binding() -> None:
@@ -45,7 +44,6 @@ async def test_resolver_returns_tenant_from_binding() -> None:
 
     assert got is not None
     assert got.tenant_id == tid
-
 
 @pytest.mark.asyncio
 async def test_resolver_returns_none_when_inactive_and_verifying() -> None:
@@ -78,3 +76,39 @@ async def test_resolver_returns_none_when_inactive_and_verifying() -> None:
     got = await resolver.resolve_from_principal(pid)
 
     assert got is None
+
+@pytest.mark.asyncio
+async def test_resolver_uses_requested_tenant_when_present() -> None:
+    pid = uuid4()
+    tid = uuid4()
+    bind = _binding_row(pid=pid, tid=tid)
+
+    binding_qry = AsyncMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_qry.find_many = AsyncMock(
+        return_value=CountlessPage(hits=[bind], page=1, size=1),
+    )
+
+    resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
+
+    got = await resolver.resolve_from_principal(pid, requested_tenant_id=tid)
+
+    assert got is not None
+    assert got.tenant_id == tid
+
+@pytest.mark.asyncio
+async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
+    pid = uuid4()
+    bind_a = _binding_row(pid=pid, tid=uuid4())
+    bind_b = _binding_row(pid=pid, tid=uuid4())
+
+    binding_qry = AsyncMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_qry.find_many = AsyncMock(
+        return_value=CountlessPage(hits=[bind_a, bind_b], page=1, size=2),
+    )
+
+    resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
+
+    with pytest.raises(CoreException, match="ambiguous"):
+        await resolver.resolve_from_principal(pid)

@@ -2,7 +2,7 @@ from typing import Literal
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..base import BaseSpec
 
@@ -47,6 +47,6 @@ class AuthnSpec(BaseSpec):
 
     def __attrs_post_init__(self) -> None:
         if not self.enabled_methods:
-            raise CoreError(
+            raise exc.configuration(
                 "AuthnSpec.enabled_methods must contain at least one credential family",
             )

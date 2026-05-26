@@ -1,7 +1,8 @@
-from typing import Any, final
+from typing import Any, Callable, final
 
 import attrs
 
+from forze.application.contracts.analytics import AnalyticsDeps
 from forze.application.contracts.cache import CacheDeps
 from forze.application.contracts.counter import CounterDeps
 from forze.application.contracts.dlock import DistributedLockDeps
@@ -9,6 +10,7 @@ from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
+from forze.application.contracts.authz import AuthzDeps
 from forze.application.contracts.tenancy import TenancyDeps
 from forze.application.contracts.transaction import (
     TransactionManagerDepKey,
@@ -17,6 +19,7 @@ from forze.application.contracts.transaction import (
 from forze.base.primitives import StrKey
 
 from ..deps import Deps
+from ..tracing import bind_active_deps, init_runtime_tracing
 from .invocation import InvocationContext
 from .transaction import TransactionContext
 
@@ -47,6 +50,9 @@ class ExecutionContext:
     search: SearchDeps = attrs.field(factory=SearchDeps, init=False)
     """Search dependencies."""
 
+    analytics: AnalyticsDeps = attrs.field(factory=AnalyticsDeps, init=False)
+    """Analytics dependencies."""
+
     cache: CacheDeps = attrs.field(factory=CacheDeps, init=False)
     """Cache dependencies."""
 
@@ -65,6 +71,9 @@ class ExecutionContext:
     #! maybe rename to TenancyDeps, TenancyResolver, TenancyManager
     tenancy: TenancyDeps = attrs.field(factory=TenancyDeps, init=False)
     """Tenancy dependencies."""
+
+    authz: AuthzDeps = attrs.field(factory=AuthzDeps, init=False)
+    """Authorization dependencies."""
 
     # ....................... #
 
@@ -85,12 +94,23 @@ class ExecutionContext:
                 )
                 return dep(self)
 
+        bind_active_deps(self.deps)
+        init_runtime_tracing(self.deps)
+
         self.tx.lock(_tx_resolver)
         self.document.lock(self)
         self.search.lock(self)
+        self.analytics.lock(self)
         self.cache.lock(self)
         self.counter.lock(self)
         self.storage.lock(self)
         self.embeddings.lock(self)
         self.dlock.lock(self)
         self.tenancy.lock(self)
+        self.authz.lock(self)
+
+
+# ....................... #
+
+ExecutionContextFactory = Callable[[], ExecutionContext]
+"""Factory callable for creating :class:`ExecutionContext` instances."""

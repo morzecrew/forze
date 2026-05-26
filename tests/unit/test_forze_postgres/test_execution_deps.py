@@ -5,6 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
@@ -16,9 +18,9 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
+from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters import (
     PostgresDocumentAdapter,
@@ -47,6 +49,7 @@ from forze_postgres.execution.deps.utils import doc_write_gw, read_gw
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 from forze_postgres.kernel.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.kernel.introspect import PostgresIntrospector
+from forze_postgres.kernel.platform import RoutedPostgresClient
 from forze_postgres.kernel.platform.client import PostgresClient
 
 
@@ -104,7 +107,7 @@ class TestValidatePgSearchConf:
         )
 
     def test_fts_requires_groups(self) -> None:
-        with pytest.raises(CoreError, match="FTS groups are required"):
+        with pytest.raises(CoreException, match="FTS groups are required"):
             validate_pg_search_conf(
                 {
                     "engine": "fts",
@@ -114,7 +117,7 @@ class TestValidatePgSearchConf:
             )
 
     def test_fts_rejects_duplicate_fields_across_groups(self) -> None:
-        with pytest.raises(CoreError, match="duplicate"):
+        with pytest.raises(CoreException, match="duplicate"):
             validate_pg_search_conf(
                 {
                     "engine": "fts",
@@ -199,8 +202,40 @@ class TestPostgresDepsModule:
             },
         )
 
-        with pytest.raises(CoreError, match="FTS groups are required"):
+        with pytest.raises(CoreException, match="FTS groups are required"):
             module()
+
+    def test_routed_client_requires_introspector_partition_key(self) -> None:
+        from uuid import UUID
+
+        tid = UUID("11111111-1111-1111-1111-111111111111")
+        secrets = MagicMock()
+        routed = RoutedPostgresClient(
+            secrets=secrets,
+            secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/dsn"),
+            tenant_provider=lambda: tid,
+        )
+
+        with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+            PostgresDepsModule(client=routed)
+
+    def test_routed_client_with_partition_key_builds(self) -> None:
+        from uuid import UUID
+
+        tid = UUID("11111111-1111-1111-1111-111111111111")
+        secrets = MagicMock()
+        routed = RoutedPostgresClient(
+            secrets=secrets,
+            secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/dsn"),
+            tenant_provider=lambda: tid,
+        )
+
+        module = PostgresDepsModule(
+            client=routed,
+            introspector_cache_partition_key=lambda: str(tid),
+        )
+        deps = module()
+        assert deps.exists(PostgresClientDepKey)
 
 
 class TestConfigurablePostgresDocumentFactories:
@@ -242,7 +277,7 @@ class TestConfigurablePostgresDocumentFactories:
         ctx = _ctx()
         spec = DocumentSpec(name="no_write", read=_R)
 
-        with pytest.raises(CoreError, match="Write relation is required"):
+        with pytest.raises(CoreException, match="Write relation is required"):
             factory(ctx, spec)
 
     def test_command_builds_adapter_with_batch_size(self) -> None:
@@ -336,7 +371,7 @@ class TestConfigurablePostgresSearch:
         )
         ctx = _ctx()
 
-        with pytest.raises(CoreError, match="FTS groups are required"):
+        with pytest.raises(CoreException, match="FTS groups are required"):
             factory(ctx, self._search_spec())
 
     def test_fts_validate_groups_requires_all_search_fields(self) -> None:
@@ -355,7 +390,7 @@ class TestConfigurablePostgresSearch:
         )
         ctx = _ctx()
 
-        with pytest.raises(CoreError, match="All search fields must be included"):
+        with pytest.raises(CoreException, match="All search fields must be included"):
             factory(ctx, spec)
 
     def test_pgroonga_invalid_score_version_validates(self) -> None:
@@ -368,7 +403,7 @@ class TestConfigurablePostgresSearch:
             }
         )
         ctx = _ctx()
-        with pytest.raises(CoreError, match="pgroonga_score_version"):
+        with pytest.raises(CoreException, match="pgroonga_score_version"):
             factory(ctx, self._search_spec())
 
     def test_pgroonga_score_version_v1_builds(self) -> None:
@@ -444,10 +479,10 @@ def test_normalize_hub_fk_columns_str_and_sequence() -> None:
 
 
 def test_normalize_hub_fk_columns_rejects_empty_and_dupes() -> None:
-    with pytest.raises(CoreError, match="at least one column"):
+    with pytest.raises(CoreException, match="at least one column"):
         normalize_hub_fk_columns([])
 
-    with pytest.raises(CoreError, match="unique within a leg"):
+    with pytest.raises(CoreException, match="unique within a leg"):
         normalize_hub_fk_columns(("p", "p"))
 
 
@@ -470,7 +505,7 @@ def test_validate_postgres_hub_search_conf_rejects_empty_members() -> None:
         "hub": ("public", "h"),
         "members": {},
     }
-    with pytest.raises(CoreError, match="at least one leg"):
+    with pytest.raises(CoreException, match="at least one leg"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -509,7 +544,7 @@ def test_validate_postgres_hub_search_conf_duplicate_hub_fk() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="duplicate column across legs"):
+    with pytest.raises(CoreException, match="duplicate column across legs"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -529,7 +564,7 @@ def test_validate_postgres_hub_search_conf_duplicate_hub_fk_within_leg() -> None
             },
         },
     }
-    with pytest.raises(CoreError, match="unique within a leg"):
+    with pytest.raises(CoreException, match="unique within a leg"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -549,7 +584,7 @@ def test_validate_postgres_hub_search_conf_list_overlaps_other_leg() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="duplicate column across legs"):
+    with pytest.raises(CoreException, match="duplicate column across legs"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -571,7 +606,7 @@ def test_validate_postgres_hub_search_conf_fts_requires_fts_groups() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="fts_groups"):
+    with pytest.raises(CoreException, match="fts_groups"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -602,7 +637,7 @@ def test_validate_postgres_hub_search_conf_same_heap_as_hub_mismatched_read() ->
             },
         },
     }
-    with pytest.raises(CoreError, match="same qualified relation"):
+    with pytest.raises(CoreException, match="same qualified relation"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -619,7 +654,7 @@ def test_validate_postgres_hub_search_conf_same_heap_as_hub_fk_not_pk() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="heap_pk"):
+    with pytest.raises(CoreException, match="heap_pk"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -637,7 +672,7 @@ def test_validate_postgres_hub_search_conf_same_heap_as_hub_fts() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="same_heap_as_hub with engine 'fts'"):
+    with pytest.raises(CoreException, match="same_heap_as_hub with engine 'fts'"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -654,7 +689,7 @@ def test_validate_postgres_hub_search_conf_same_heap_as_hub_field_map() -> None:
             },
         },
     }
-    with pytest.raises(CoreError, match="field_map"):
+    with pytest.raises(CoreException, match="field_map"):
         validate_postgres_hub_search_conf(cfg)
 
 
@@ -671,5 +706,5 @@ def test_validate_postgres_hub_search_conf_same_heap_as_hub_pgroonga_v1() -> Non
             },
         },
     }
-    with pytest.raises(CoreError, match="v2"):
+    with pytest.raises(CoreException, match="v2"):
         validate_postgres_hub_search_conf(cfg)

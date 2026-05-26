@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import CoreException
 from forze.base.logging import Logger
 from forze_fastapi._logging import ForzeFastAPILogger
 
@@ -76,8 +76,8 @@ class LoggingMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
 
-        except CoreError:
-            # Pass through CoreError to be handled by the exception handler
+        except CoreException:
+            # Pass through exc.internal to be handled by the exception handler
             raise
 
         except Exception:

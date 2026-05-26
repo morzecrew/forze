@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytest.importorskip("pymongo")
 
 from forze.application.contracts.document import (
@@ -13,7 +15,6 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
 from forze_mongo.execution.deps import MongoClientDepKey, MongoDepsModule
@@ -53,7 +54,9 @@ def _rw_spec(*, history_enabled: bool = False) -> DocumentSpec:
 
 
 def _ctx() -> ExecutionContext:
-    return ExecutionContext(deps=Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)}))
+    return ExecutionContext(
+        deps=Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)})
+    )
 
 
 def test_mongo_deps_module_registers_client_only() -> None:
@@ -114,7 +117,7 @@ def test_configurable_mongo_document_requires_write_spec() -> None:
     )
     ctx = _ctx()
 
-    with pytest.raises(CoreError, match="Write relation is required"):
+    with pytest.raises(CoreException, match="Write relation is required"):
         factory(ctx, DocumentSpec(name="n", read=_R))
 
 

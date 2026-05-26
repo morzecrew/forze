@@ -4,35 +4,57 @@ require_sqs()
 
 # ....................... #
 
-from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 from botocore import exceptions as sqs_errors
 
-from forze.base.errors import CoreError, InfrastructureError, error_handler, handled
+from forze.base.conformity import static_fn_conformity
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionInterceptor,
+    ExceptionMapper,
+    default_chain_exc_mapper,
+)
 
 # ----------------------- #
 
 
-@error_handler
-def _sqs_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
-    """Normalize low-level SQS/botocore errors into CoreError hierarchy."""
+@static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
+def _sqs_eh(
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException | None:
+    """Normalize low-level SQS/botocore errors into exc.internal hierarchy."""
 
-    match e:
-        case CoreError():
-            return e
+    match exc:
+        case CoreException():
+            return exc
 
         case sqs_errors.EndpointConnectionError():
-            return InfrastructureError("SQS endpoint connection error.")
+            return CoreException.infrastructure(
+                "SQS endpoint connection error.",
+                details=details,
+            )
 
         case sqs_errors.ConnectTimeoutError() | sqs_errors.ReadTimeoutError():
-            return InfrastructureError("SQS request timed out.")
+            return CoreException.infrastructure(
+                "SQS request timed out.",
+                details=details,
+            )
 
         case sqs_errors.NoCredentialsError() | sqs_errors.PartialCredentialsError():
-            return InfrastructureError("SQS credentials are not configured correctly.")
+            return CoreException.infrastructure(
+                "SQS credentials are not configured correctly.",
+                details=details,
+            )
 
         case sqs_errors.SSLError():
-            return InfrastructureError("SQS SSL error.")
+            return CoreException.infrastructure(
+                "SQS SSL error.",
+                details=details,
+            )
 
         case sqs_errors.ClientError() as ce:
             resp: dict[str, Any] = getattr(ce, "response", {}) or {}
@@ -40,14 +62,20 @@ def _sqs_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
             code = str(err.get("Code") or "")
 
             if code in {"AccessDenied", "AccessDeniedException"}:
-                return InfrastructureError("SQS access denied.")
+                return CoreException.infrastructure(
+                    "SQS access denied.",
+                    details=details,
+                )
 
             if code in {
                 "QueueDoesNotExist",
                 "AWS.SimpleQueueService.NonExistentQueue",
                 "ResourceNotFoundException",
             }:
-                return InfrastructureError("SQS queue does not exist.")
+                return CoreException.infrastructure(
+                    "SQS queue does not exist.",
+                    details=details,
+                )
 
             if code in {
                 "Throttling",
@@ -55,22 +83,36 @@ def _sqs_eh(e: Exception, op: str, **kwargs: Any) -> CoreError:
                 "RequestThrottled",
                 "TooManyRequestsException",
             }:
-                return InfrastructureError("SQS request throttled.")
+                return CoreException.infrastructure(
+                    "SQS request throttled.",
+                    details=details,
+                )
 
             if code in {"InternalError", "InternalFailure", "ServiceUnavailable"}:
-                return InfrastructureError("SQS internal service error.")
+                return CoreException.infrastructure(
+                    "SQS internal service error.",
+                    details=details,
+                )
 
-            return InfrastructureError(f"SQS client error ({code}).")
+            return CoreException.infrastructure(
+                f"SQS client error ({code}).",
+                details=details,
+            )
 
-        case sqs_errors.BotoCoreError():
-            return InfrastructureError(f"SQS core error: {e}")
+        case sqs_errors.BotoCoreError() as be:
+            return CoreException.infrastructure(
+                f"SQS core error: {be}",
+                details=details,
+            )
 
         case _:
-            return InfrastructureError(
-                f"An error occurred while executing SQS operation {op}: {e}"
+            return CoreException.infrastructure(
+                f"An error occurred while executing SQS operation {site}: {exc}",
+                details=details,
             )
 
 
-# ----------------------- #
+# ....................... #
 
-sqs_handled = partial(handled, _sqs_eh)
+_sqs_chain = default_chain_exc_mapper.chain(_sqs_eh)
+exc_interceptor = ExceptionInterceptor(mapper=_sqs_chain)

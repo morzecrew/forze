@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 
+from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
@@ -50,5 +51,15 @@ def test_mock_deps_module_resolves_shared_state_and_core_ports() -> None:
 
     search = SearchSpec(name="s", model_type=_S, fields=["t"])
     assert ctx.search.query(search) is not None
+
+    class _P(BaseModel):
+        n: str = ""
+
+    aspec = AnalyticsSpec(
+        name="a",
+        read=_S,
+        queries={"q": AnalyticsQueryDefinition(params=_P)},
+    )
+    assert ctx.analytics.query(aspec) is not None
 
     assert ctx.cache(CacheSpec(name="cache1")) is not None

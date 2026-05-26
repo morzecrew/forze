@@ -5,6 +5,7 @@ external infrastructure. It is intended for development and tests.
 """
 
 from .adapters import (
+    MockAnalyticsAdapter,
     MockCacheAdapter,
     MockCounterAdapter,
     MockDocumentAdapter,
@@ -28,6 +29,7 @@ __all__ = [
     "MockStateDepKey",
     "MockDepsModule",
     "MockDocumentAdapter",
+    "MockAnalyticsAdapter",
     "MockSearchAdapter",
     "MockCounterAdapter",
     "MockCacheAdapter",

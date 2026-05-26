@@ -61,12 +61,15 @@ Read-only operations for document aggregates. Result shape is selected by the me
 | `find_many` / `find_page` | `(filters?, pagination?, sorts?)` | `CountlessPage[R]` / `Page[R]` |
 | `project_many` / `project_page` | `(fields, filters?, pagination?, sorts?)` | `CountlessPage[JsonDict]` / `Page[JsonDict]` |
 | `select_many` / `select_page` | `(return_type, filters?, pagination?, sorts?)` | `CountlessPage[T]` / `Page[T]` |
-| `find_cursor` / `project_cursor` | `(filters?, cursor?, sorts?)` / `(fields, ...)` | `CursorPage[R]` / `CursorPage[JsonDict]` |
+| `find_cursor` / `project_cursor` / `select_cursor` | `(filters?, cursor?, sorts?)` / `(fields, ...)` / `(return_type, ...)` | `CursorPage[R]` / `CursorPage[JsonDict]` / `CursorPage[T]` |
+| `find_stream` / `project_stream` / `select_stream` | `(filters?, *, sorts?, chunk_size=500)` / `(fields, ...)` / `(return_type, ...)` | `AsyncIterator[Sequence[R]]` / `AsyncIterator[Sequence[JsonDict]]` / `AsyncIterator[Sequence[T]]` |
 | `aggregate_many` / `aggregate_page` | `(aggregates, filters?, pagination?, sorts?)` | `CountlessPage[JsonDict]` / `Page[JsonDict]` |
 | `select_many_aggregated` / `select_page_aggregated` | `(return_type, aggregates, ...)` | `CountlessPage[T]` / `Page[T]` |
 | `count` | `(filters?)` | `int` |
 
-`for_update` locks the row when the backend supports it.
+`for_update` uses :data:`~forze.application.contracts.document.RowLockMode` (`False`, `True`, `"nowait"`, or `"skip_locked"`) to lock rows when the backend supports it. Postgres applies full SQL lock semantics; Mongo, Firestore, and Mock backends treat any non-`False` mode as a transactional read and **degrade** `"nowait"` / `"skip_locked"` to `True` (with a debug log).
+
+Stream methods export rows in keyset chunks via repeated internal cursor pages (default `chunk_size` 500, clamped 10–20 000). They do not support `for_update` or aggregates.
 
 ### DocumentCommandPort[R, D, C, U]
 
@@ -84,6 +87,18 @@ Mutation operations for document aggregates:
 | `restore` / `restore_many` | `(pk, rev)` / `(restores)` | `R` / `Sequence[R]` |
 
 Revision-bearing commands check that the current revision matches before applying the change. Batch `updates`, `deletes`, and `restores` are sequences of tuples that include the document id and expected revision.
+
+#### Bulk updates
+
+| Method | Mechanism | Domain `apply` | Per-row `rev` | Typical use |
+|--------|-----------|----------------|---------------|-------------|
+| `update` / `update_many` | per-row optimistic patch | yes | yes | business mutations |
+| `update_matching_strict` | chunked `project_many` + `update_many` | yes | yes | bulk with same rules as `update` |
+| `update_matching` | single/bulk store patch | **no** | **no** | admin flags, uniform SQL/`$set` |
+
+`ensure` is insert-only on primary-key conflict (never mutates existing rows). `upsert` inserts or runs optimistic `update` on conflict (not a full document replace).
+
+Postgres `update_matching` uses `UPDATE … RETURNING`; the coordinator hydrates read models from returned domain rows when read and write share the same source. See [Postgres integration](../integrations/postgres.md) for `bookkeeping_strategy` (`"application"` vs `"database"` triggers).
 
 ### DocumentSpec
 
@@ -203,6 +218,53 @@ Namespace-scoped atomic counters:
 | Key | Resolved via |
 |-----|-------------|
 | `CounterDepKey` | `ctx.counter(CounterSpec(...))` |
+
+## Analytics
+
+### AnalyticsSpec
+
+    :::python
+    from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
+
+    metrics_spec = AnalyticsSpec(
+        name="events",
+        read=MetricRow,
+        queries={"daily": AnalyticsQueryDefinition(params=DailyParams)},
+        ingest=EventRow,
+    )
+
+Warehouse dataset/table names belong in future integration modules (e.g. `BigQueryDepsModule`), not on the kernel spec.
+
+| Field | Purpose |
+|-------|---------|
+| `name` | Logical route for the analytics surface |
+| `read` | Default Pydantic model for query rows |
+| `queries` | Named queries (`query_key` → parameter model) |
+| `ingest` | Optional append row model |
+
+### AnalyticsQueryPort[R]
+
+| Method | Purpose |
+|--------|---------|
+| `run` | Named query; `CountlessPage[R]` |
+| `run_page` | Named query with total count when supported |
+| `run_chunked` | Batch iterator for large scans |
+| `project_run` / `project_run_page` / `project_run_chunked` | Projected `JsonDict` rows |
+| `select_run` / … | Rows validated as `return_type` |
+| `run_cursor` / `project_run_cursor` / `select_run_cursor` | Opaque cursor pagination |
+
+### AnalyticsIngestPort[I]
+
+| Method | Purpose |
+|--------|---------|
+| `append` | Append a batch of rows; returns `AnalyticsAppendResult` |
+
+### Dependency keys
+
+| Key | Resolved via |
+|-----|-------------|
+| `AnalyticsQueryDepKey` | `ctx.analytics.query(spec)` |
+| `AnalyticsIngestDepKey` | `ctx.analytics.ingest(spec)` |
 
 ## Search
 
@@ -471,7 +533,7 @@ Workflows are typed with **`WorkflowSpec`** (logical **`name`**, **`run`** invoc
 ## Context handling
 
 Execution identity is represented by `InvocationMetadata`, optional `AuthnIdentity`, and optional `TenantIdentity` on `ExecutionContext`.
-`AuthnIdentity` carries the authenticated `principal_id`; `TenantIdentity` carries the current `tenant_id`. Bind them at the boundary via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
+`AuthnPort` returns `AuthnResult` at the boundary, but only its principal-only `AuthnIdentity` is bound onto `ExecutionContext`; `TenantIdentity` carries the current `tenant_id`. Bind them via `ctx.inv.bind(metadata=..., authn=..., tenant=...)`.
 
 The full authentication contract surface — `AuthnPort`, the verifier and resolver ports, `AuthnSpec`, `VerifiedAssertion`, all dep keys, the `forze_authn` first-party stack, and `forze_oidc` — is documented on the dedicated [Authentication contracts](authentication.md) page. `forze_authz` provides catalog-backed RBAC helpers (`AuthzDepsModule`, policy principal and binding specs) on top of the same identity model. Both providers use regular document ports, so storage is selected by the existing document adapter wiring.
 

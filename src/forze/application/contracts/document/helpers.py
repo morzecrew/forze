@@ -3,7 +3,7 @@
 from typing import Any, Sequence
 from uuid import UUID
 
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 from forze.domain.models import CreateDocumentCmd
 
 # ----------------------- #
@@ -24,9 +24,8 @@ def require_create_id[X: CreateDocumentCmd](dto: X | tuple[X, Any]) -> UUID:
         dto_ = dto
 
     if dto_.id is None:
-        raise ValidationError(
+        raise exc.internal(
             "ensure, ensure_many, upsert, and upsert_many require cmd DTO id to be set",
-            code="missing_id",
         )
 
     return dto_.id
@@ -46,9 +45,8 @@ def require_create_id_for_many[X: CreateDocumentCmd](
         uid = require_create_id(d)
 
         if uid in seen:
-            raise ValidationError(
-                "ensure, ensure_many, upsert, and upsert_many require distinct id values in the batch",
-                code="duplicate_id",
+            raise exc.internal(
+                "ensure, ensure_many, upsert, and upsert_many require distinct id values in the batch"
             )
 
         seen.add(uid)

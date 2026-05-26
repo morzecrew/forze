@@ -8,9 +8,10 @@ from typing import Any, Mapping, Union
 from uuid import UUID
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
 from forze_postgres.kernel.introspect import PostgresType
 from forze_postgres.kernel.query.nested import (
     build_nested_json_scalar_expr,
@@ -80,7 +81,7 @@ def test_walk_pydantic_path_missing_returns_none() -> None:
 
 
 def test_resolve_leaf_bad_root() -> None:
-    with pytest.raises(CoreError, match="root field"):
+    with pytest.raises(CoreException, match="root field"):
         resolve_leaf_python_type(
             model_type=_Row,
             path="unknown.x",
@@ -90,7 +91,7 @@ def test_resolve_leaf_bad_root() -> None:
 
 
 def test_resolve_leaf_nested_model_not_scalar() -> None:
-    with pytest.raises(CoreError, match="nested Pydantic model"):
+    with pytest.raises(CoreException, match="nested Pydantic model"):
         resolve_leaf_python_type(
             model_type=_Row,
             path="meta.inner",
@@ -100,7 +101,7 @@ def test_resolve_leaf_nested_model_not_scalar() -> None:
 
 
 def test_resolve_leaf_list_not_supported() -> None:
-    with pytest.raises(CoreError, match="array-typed"):
+    with pytest.raises(CoreException, match="array-typed"):
         resolve_leaf_python_type(
             model_type=_RowListLeaf,
             path="meta.tags",
@@ -110,7 +111,7 @@ def test_resolve_leaf_list_not_supported() -> None:
 
 
 def test_resolve_leaf_dict_mapping_requires_hint() -> None:
-    with pytest.raises(CoreError, match="cannot infer scalar type from mapping"):
+    with pytest.raises(CoreException, match="cannot infer scalar type from mapping"):
         resolve_leaf_python_type(
             model_type=_RowDictLeaf,
             path="meta",
@@ -130,7 +131,7 @@ def test_resolve_leaf_dict_mapping_with_hint() -> None:
 
 
 def test_resolve_path_not_walkable() -> None:
-    with pytest.raises(CoreError, match="not found"):
+    with pytest.raises(CoreException, match="not found"):
         resolve_leaf_python_type(
             model_type=_Row,
             path="meta.inner.score.oops",
@@ -140,7 +141,7 @@ def test_resolve_path_not_walkable() -> None:
 
 
 def test_resolve_ambiguous_union() -> None:
-    with pytest.raises(CoreError, match="ambiguous type"):
+    with pytest.raises(CoreException, match="ambiguous type"):
         resolve_leaf_python_type(
             model_type=_TriUnion,
             path="meta",
@@ -235,7 +236,7 @@ def test_build_nested_uuid_from_mapping_str_uuid() -> None:
 
 
 def test_resolve_non_string_mapping_key_raises() -> None:
-    with pytest.raises(CoreError, match="not found under _RowIntKeyDict"):
+    with pytest.raises(CoreException, match="not found under _RowIntKeyDict"):
         resolve_leaf_python_type(
             model_type=_RowIntKeyDict,
             path="data.1",
@@ -281,7 +282,7 @@ def test_python_type_scalars() -> None:
 
 def test_build_nested_unknown_column() -> None:
     col_types = {"meta": PostgresType(base="jsonb", is_array=False, not_null=True)}
-    with pytest.raises(CoreError, match="Unknown column"):
+    with pytest.raises(CoreException, match="Unknown column"):
         build_nested_json_scalar_expr(
             path="other.x",
             segments=["other", "x"],
@@ -294,7 +295,7 @@ def test_build_nested_unknown_column() -> None:
 
 def test_build_nested_non_json_column() -> None:
     col_types = {"meta": PostgresType(base="text", is_array=False, not_null=True)}
-    with pytest.raises(CoreError, match="json or jsonb"):
+    with pytest.raises(CoreException, match="json or jsonb"):
         build_nested_json_scalar_expr(
             path="meta.inner.score",
             segments=["meta", "inner", "score"],
@@ -307,7 +308,7 @@ def test_build_nested_non_json_column() -> None:
 
 def test_build_nested_json_array_root() -> None:
     col_types = {"meta": PostgresType(base="jsonb", is_array=True, not_null=True)}
-    with pytest.raises(CoreError, match="must not be a Postgres array"):
+    with pytest.raises(CoreException, match="must not be a Postgres array"):
         build_nested_json_scalar_expr(
             path="meta.inner.score",
             segments=["meta", "inner", "score"],
@@ -320,7 +321,7 @@ def test_build_nested_json_array_root() -> None:
 
 def test_build_nested_requires_inner_path() -> None:
     col_types = {"meta": PostgresType(base="jsonb", is_array=False, not_null=True)}
-    with pytest.raises(CoreError, match="at least one segment"):
+    with pytest.raises(CoreException, match="at least one segment"):
         build_nested_json_scalar_expr(
             path="meta",
             segments=["meta"],

@@ -1,7 +1,7 @@
 """Unit tests for queue contracts (QueueSpec and dep keys)."""
 
 from datetime import timedelta
-from typing import AsyncIterator
+from typing import AsyncGenerator
 
 from pydantic import BaseModel
 
@@ -44,7 +44,7 @@ class _StubQueue(QueueQueryPort[_QueuePayload], QueueCommandPort[_QueuePayload])
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator:
+    ) -> AsyncGenerator:
         from forze.application.contracts.queue import QueueMessage
 
         yield QueueMessage(

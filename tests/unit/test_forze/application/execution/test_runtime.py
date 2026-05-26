@@ -2,6 +2,8 @@
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.execution import Deps, DepsPlan
 from forze.application.execution.lifecycle import LifecyclePlan, LifecycleStep
 from forze.application.execution.runtime import ExecutionRuntime
@@ -22,10 +24,9 @@ class TestExecutionRuntime:
         assert ctx.deps == deps
 
     def test_get_context_outside_scope_raises(self) -> None:
-        from forze.base.errors import CoreError
 
         rt = ExecutionRuntime()
-        with pytest.raises(CoreError, match="not set"):
+        with pytest.raises(CoreException, match="not set"):
             rt.get_context()
 
     @pytest.mark.asyncio
@@ -50,12 +51,11 @@ class TestExecutionRuntime:
 
     @pytest.mark.asyncio
     async def test_scope_resets_context_on_exit(self) -> None:
-        from forze.base.errors import CoreError
 
         rt = ExecutionRuntime(deps=DepsPlan.from_modules(Deps))
         async with rt.scope():
             ctx = rt.get_context()
             assert ctx is not None
 
-        with pytest.raises(CoreError, match="not set"):
+        with pytest.raises(CoreException, match="not set"):
             rt.get_context()

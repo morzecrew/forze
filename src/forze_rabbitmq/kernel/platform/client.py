@@ -10,7 +10,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Mapping, Sequence, final
+from typing import AsyncGenerator, Mapping, Sequence, final
 from uuid import uuid4
 
 import attrs
@@ -22,9 +22,9 @@ from aio_pika.abc import (
     AbstractRobustConnection,
 )
 
-from forze.base.errors import InfrastructureError
+from forze.base.exceptions import exc
 
-from .errors import rabbitmq_handled
+from .errors import exc_interceptor
 from .port import RabbitMQClientPort
 from .types import RabbitMQQueueMessage
 from .value_objects import RabbitMQConfig
@@ -109,7 +109,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     def __require_connection(self) -> AbstractRobustConnection:
         if self.__connection is None or self.__connection.is_closed:
-            raise InfrastructureError("RabbitMQ client is not initialized")
+            raise exc.internal("RabbitMQ client is not initialized")
 
         return self.__connection
 
@@ -132,9 +132,9 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.channel")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asynccontextmanager("rabbitmq.channel")  # type: ignore[untyped-decorator]
     @asynccontextmanager
-    async def channel(self) -> AsyncIterator[AbstractChannel]:
+    async def channel(self) -> AsyncGenerator[AbstractChannel]:
         depth = self.__ctx_depth.get()
         parent = self.__current_channel()
 
@@ -331,7 +331,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     #! TODO: Rewrite without enqueue_many
 
-    @rabbitmq_handled("rabbitmq.enqueue")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("rabbitmq.enqueue")  # type: ignore[untyped-decorator]
     async def enqueue(
         self,
         queue: str,
@@ -355,7 +355,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.enqueue_many")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("rabbitmq.enqueue_many")  # type: ignore[untyped-decorator]
     async def enqueue_many(
         self,
         queue: str,
@@ -370,7 +370,7 @@ class RabbitMQClient(RabbitMQClientPort):
             return []
 
         if message_ids is not None and len(message_ids) != len(bodies):
-            raise InfrastructureError(
+            raise exc.precondition(
                 "RabbitMQ message_ids size must match batch body size"
             )
 
@@ -418,7 +418,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.receive")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("rabbitmq.receive")  # type: ignore[untyped-decorator]
     async def receive(
         self,
         queue: str,
@@ -437,24 +437,27 @@ class RabbitMQClient(RabbitMQClientPort):
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
-            async for raw in it:
-                raw_messages.append(raw)
+        try:
+            async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
+                async for raw in it:
+                    raw_messages.append(raw)
 
-                if len(raw_messages) >= max_messages:
-                    break
+                    if len(raw_messages) >= max_messages:
+                        break
+        except TimeoutError:
+            pass
 
         return await self.__to_message_batch(queue, raw_messages)
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.consume")  # type: ignore[untyped-decorator]
+    @exc_interceptor.asyncgenerator("rabbitmq.consume")  # type: ignore[untyped-decorator]
     async def consume(
         self,
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RabbitMQQueueMessage]:
+    ) -> AsyncGenerator[RabbitMQQueueMessage]:
         timeout_seconds = timeout.total_seconds() if timeout is not None else 1.0
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
@@ -497,7 +500,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.ack")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("rabbitmq.ack")  # type: ignore[untyped-decorator]
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
         if not ids:
             return 0
@@ -516,7 +519,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    @rabbitmq_handled("rabbitmq.nack")  # type: ignore[untyped-decorator]
+    @exc_interceptor.coroutine("rabbitmq.nack")  # type: ignore[untyped-decorator]
     async def nack(
         self,
         queue: str,

@@ -8,7 +8,7 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..kernel.introspect import PostgresIntrospector
 from .deps.configs import (
@@ -99,7 +99,7 @@ async def warm_postgres_catalog(
                             cast(PostgresSearchConfig, member_cfg),
                         )
 
-    except CoreError as e:
+    except exc as e:
         if getattr(e, "code", None) == "introspection_partition_required":
             logger.trace(
                 "Postgres catalog warmup skipped (introspector partition unavailable)",

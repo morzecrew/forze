@@ -114,6 +114,7 @@ class TestTemporalContextCodecDecode:
         _metadata, identity, tenancy = binder.bind(decoded)
 
         assert identity is not None and identity.principal_id == pid
+        assert not hasattr(identity, "tenant_id")
         assert tenancy is None
 
     def test_bind_does_not_restore_local_execution_id_from_encoded_headers(

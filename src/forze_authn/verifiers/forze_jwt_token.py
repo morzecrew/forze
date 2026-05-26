@@ -44,7 +44,7 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
             issuer=claims["iss"],
             subject=claims["sub"],
             audience=claims["aud"],
-            tenant_hint=claims.get("tid"),
+            issuer_tenant_hint=claims.get("tid"),
             issued_at=issued_at,
             expires_at=expires_at,
             claims=dict(claims),

@@ -118,3 +118,34 @@ class AsciiB64Codec:
             return base64.b64decode(raw.encode("ascii")).decode("utf-8")
 
         return raw
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class B64UrlJsonCodec:
+    """URL-safe base64 wrapper around :class:`JsonCodec` for opaque cursor tokens.
+
+    Produces unpadded tokens suitable for query strings and pagination cursors.
+    """
+
+    json: JsonCodec = attrs.field(factory=JsonCodec)
+    """Underlying JSON serializer."""
+
+    # ....................... #
+
+    def dumps(self, value: Any) -> str:
+        """Serialize *value* to JSON and encode as unpadded URL-safe base64."""
+
+        raw = self.json.dumps(value)
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    # ....................... #
+
+    def loads(self, token: str) -> Any:
+        """Decode a token produced by :meth:`dumps`."""
+
+        pad = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(token + pad)
+        return self.json.loads(raw)

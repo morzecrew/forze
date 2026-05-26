@@ -1,4 +1,3 @@
-from forze.base.errors import CoreError
 from forze_fastapi._compat import require_fastapi
 
 require_fastapi()
@@ -11,6 +10,7 @@ import attrs
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.base.asyncio import maybe_await
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -72,7 +72,7 @@ class CustomHeadersMiddleware:
                 header_keys = set([h[0] for h in headers])
 
                 if header_keys & injected_header_keys:
-                    raise CoreError("Duplicate headers found")
+                    raise exc.internal("Duplicate headers found")
 
                 headers.extend(injected_headers)
                 message["headers"] = headers

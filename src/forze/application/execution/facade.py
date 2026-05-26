@@ -3,13 +3,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 import attrs
 
 from forze.application.contracts.execution import Handler
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyNamespace
 
-from .registry.registries import FrozenOperationRegistry
-
 if TYPE_CHECKING:
-    from .context import ExecutionContext
+    from .context import ExecutionContext, ExecutionContextFactory
+    from .registry.registries import FrozenOperationRegistry
     from .running import ResolvedOperation
 
 # ----------------------- #
@@ -27,7 +26,7 @@ class OperationFacade:
     ctx: "ExecutionContext"
     """Execution context for operation resolution."""
 
-    registry: FrozenOperationRegistry
+    registry: "FrozenOperationRegistry"
     """Frozen operation registry."""
 
     namespace: StrKeyNamespace | None = None
@@ -37,7 +36,7 @@ class OperationFacade:
 
     def __attrs_post_init__(self) -> None:
         if type(self).namespace_required and self.namespace is None:
-            raise CoreError(
+            raise exc.configuration(
                 f"{type(self).__name__} requires namespace=... at runtime",
             )
 
@@ -101,3 +100,37 @@ def namespaced_facade[X: OperationFacade](cls: type[X]) -> type[X]:
     cls.namespace_required = True
 
     return cls
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class OperationFacadeFactory[F: OperationFacade]:
+    """Factory for creating :class:`OperationFacade` instances."""
+
+    type: type[F]
+    """Type of the facade to create."""
+
+    registry: "FrozenOperationRegistry"
+    """Frozen operation registry."""
+
+    ctx_factory: "ExecutionContextFactory"
+    """Factory for creating :class:`ExecutionContext` instances."""
+
+    ns: StrKeyNamespace | None = None
+    """Namespace for the facade."""
+
+    # ....................... #
+
+    def __call__(self) -> F:
+        if self.type.namespace_required and self.ns is None:
+            raise exc.configuration(
+                f"{self.type.__name__} requires namespace at runtime"
+            )
+
+        return self.type(
+            ctx=self.ctx_factory(),
+            registry=self.registry,
+            namespace=self.ns,
+        )

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import Sequence
 
 import attrs
 from psycopg import sql
 
-from forze.base.errors import CoreError
-
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -34,7 +33,7 @@ def validate_join_pairs(join_pairs: Sequence[tuple[str, str]]) -> None:
     proj_keys = {pc for pc, _ in join_pairs}
 
     if len(proj_keys) != len(join_pairs):
-        raise CoreError("join_pairs must use unique projection column names.")
+        raise exc.internal("join_pairs must use unique projection column names.")
 
 
 # ....................... #

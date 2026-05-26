@@ -2,6 +2,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
@@ -13,7 +15,6 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import CoreError
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
 from forze_postgres.execution.deps.configs import PostgresHubSearchConfig
 from forze_postgres.execution.deps.deps import (
@@ -222,6 +223,92 @@ async def test_postgres_search_adapter(
     n_all = __p.count
     assert n_all == 1
     assert all_two[0].title == "Forze Framework"
+
+
+@pytest.mark.asyncio
+async def test_pgroonga_search_spec_field_order_does_not_change_ranking(
+    pg_client: PostgresClient,
+) -> None:
+    """``SearchSpec.fields`` order is ignored; weights stay tied to logical field names."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:12]
+    table = f"pg_order_{suffix}"
+    index_name = f"idx_pg_order_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            title text NOT NULL,
+            content text NOT NULL
+        );
+        CREATE INDEX {index_name}
+        ON {table} USING pgroonga ((ARRAY[title, content]));
+        """
+    )
+
+    doc_title_match = {
+        "id": uuid4(),
+        "title": "alpha alpha",
+        "content": "minor",
+    }
+    doc_content_match = {
+        "id": uuid4(),
+        "title": "minor",
+        "content": "alpha alpha",
+    }
+    for row in (doc_title_match, doc_content_match):
+        await pg_client.execute(
+            f"""
+            INSERT INTO {table} (id, title, content)
+            VALUES (%(id)s, %(title)s, %(content)s)
+            """,
+            row,
+        )
+
+    ctx = ExecutionContext(
+        deps=Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config={
+                        "index": ("public", index_name),
+                        "read": ("public", table),
+                        "engine": "pgroonga",
+                    }
+                ),
+            }
+        )
+    )
+
+    weights = {"title": 1.0, "content": 0.5}
+    spec_canonical = SearchSpec(
+        name="pg_order_canonical",
+        model_type=SearchableModel,
+        fields=["title", "content"],
+    )
+    spec_reversed = SearchSpec(
+        name="pg_order_reversed",
+        model_type=SearchableModel,
+        fields=["content", "title"],
+    )
+
+    page_canonical = await ctx.search.query(spec_canonical).search_page(
+        "alpha",
+        options={"weights": weights},
+    )
+    page_reversed = await ctx.search.query(spec_reversed).search_page(
+        "alpha",
+        options={"weights": weights},
+    )
+
+    assert page_canonical.count == 2
+    assert page_reversed.count == 2
+    assert [h.id for h in page_canonical.hits] == [h.id for h in page_reversed.hits]
+    assert page_canonical.hits[0].id == doc_title_match["id"]
 
 
 @pytest.mark.asyncio
@@ -1468,10 +1555,10 @@ async def test_postgres_pgroonga_v2_search_with_cursor_filter_only(
         index_field_map={"title": "doc_title", "content": "doc_body"},
     )
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(CoreException, match="at most one"):
         await adapter.search_cursor("", cursor={"after": "x", "before": "y"})
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(CoreException, match="positive"):
         await adapter.search_cursor("", cursor={"limit": 0})
 
     p0 = await adapter.project_search_cursor(
@@ -1956,13 +2043,13 @@ async def test_postgres_hub_search_with_cursor(
     )
     adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
 
-    with pytest.raises(CoreError, match="at most one"):
+    with pytest.raises(CoreException, match="at most one"):
         await adapter.search_cursor(
             "",
             cursor={"after": "x", "before": "y"},
         )
 
-    with pytest.raises(CoreError, match="positive"):
+    with pytest.raises(CoreException, match="positive"):
         await adapter.search_cursor("", cursor={"limit": 0})
 
     p0 = await adapter.project_search_cursor(

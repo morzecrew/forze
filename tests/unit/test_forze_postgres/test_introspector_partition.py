@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import CoreException
 
 from forze_postgres.kernel.introspect import PostgresIntrospector
 
@@ -47,7 +47,7 @@ async def test_partition_none_raises() -> None:
         cache_partition_key=lambda: None,
     )
 
-    with pytest.raises(CoreError, match="partition"):
+    with pytest.raises(CoreException, match="partition"):
         await intro.get_relation(schema="public", relation="t1")
 
 

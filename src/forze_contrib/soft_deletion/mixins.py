@@ -1,6 +1,6 @@
 from typing import Self
 
-from forze.base.errors import ValidationError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.models import CoreModel
 from forze.domain.validation import update_validator
@@ -14,7 +14,7 @@ class SoftDeletionMixin(CoreModel):
     """Mixin adding soft-deletion semantics via is deleted.
 
     Once a document is soft-deleted, only the is deleted field may be
-    updated; any other update raises :exc:`~forze.base.errors.ValidationError`.
+    updated; any other update raises :exc:`~forze.base.exceptions.CoreException`.
     """
 
     is_deleted: bool = False
@@ -32,4 +32,4 @@ class SoftDeletionMixin(CoreModel):
         )
 
         if before.is_deleted and not soft_deletion:
-            raise ValidationError("Cannot update a soft-deleted document.")
+            raise exc.domain("Cannot update a soft-deleted document.")

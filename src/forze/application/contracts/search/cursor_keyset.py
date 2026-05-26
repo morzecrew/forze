@@ -3,7 +3,7 @@
 from typing import Sequence
 
 from forze.application.contracts.querying import QuerySortExpression
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
@@ -52,7 +52,7 @@ def ranked_search_cursor_key_spec(
             d = str(direction).lower()
 
             if d not in ("asc", "desc"):
-                raise CoreError(
+                raise exc.internal(
                     f"Invalid sort direction in search cursor: {direction!r}"
                 )
 

@@ -7,7 +7,7 @@ import attrs
 
 from forze.application.contracts.execution import DispatchStep, HandlerFactory
 from forze.base.descriptors import hybridmethod
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import (
     DirectedAcyclicGraph,
     StrKey,
@@ -89,7 +89,7 @@ class OperationRegistry:
             op = namespace.key(op)
 
         if op in self._handlers and not override:
-            raise CoreError(f"Handler factory already set for operation: {op}")
+            raise exc.internal(f"Handler factory already set for operation: {op}")
 
         new_handlers = dict(self._handlers)
         new_handlers[op] = handler
@@ -114,7 +114,7 @@ class OperationRegistry:
 
         for op, handler in handlers.items():
             if op in new_handlers and not override:
-                raise CoreError(f"Handler factory already set for operation: {op}")
+                raise exc.internal(f"Handler factory already set for operation: {op}")
 
             new_handlers[op] = handler
 
@@ -132,7 +132,7 @@ class OperationRegistry:
         ops_ = set(ops)
 
         if not ops_:
-            raise CoreError("No operations provided")
+            raise exc.internal("No operations provided")
 
         if namespace is not None:
             ops_ = {namespace.key(op) for op in ops_}
@@ -271,16 +271,18 @@ class OperationRegistry:
             )
 
             if handler_conflicts:
-                raise CoreError(f"Conflicting handler factories: {handler_conflicts}")
+                raise exc.internal(
+                    f"Conflicting handler factories: {handler_conflicts}"
+                )
 
             if plan_conflicts:
-                raise CoreError(f"Conflicting operation plans: {plan_conflicts}")
+                raise exc.internal(f"Conflicting operation plans: {plan_conflicts}")
 
             for patch in reg._patches:
                 if any(
                     existing.selector == patch.selector for existing in merged_patches
                 ):
-                    raise CoreError(
+                    raise exc.internal(
                         f"Conflicting operation plan patches: {patch.selector!r}"
                     )
 
@@ -321,7 +323,7 @@ class OperationRegistry:
             if not any(
                 str_key_selector.matches(patch.selector, op) for op in self._handlers
             ):
-                raise CoreError(
+                raise exc.internal(
                     "Orphan plan patch: selector "
                     f"{patch.selector!r} matches no registered operations"
                 )
@@ -356,13 +358,14 @@ class OperationRegistry:
                     for index in indices:
                         merged = merged.merge(self._patches[index].plan)
 
-                except CoreError as exc:
+                except Exception as e:
                     selectors = tuple(self._patches[i].selector for i in indices)
-                    raise CoreError(
+
+                    raise exc.internal(
                         "Conflicting plan patches for operation "
                         f"{op!r} at equal specificity {spec}: "
-                        f"selectors {selectors!r}: {exc}"
-                    ) from exc
+                        f"selectors {selectors!r}: {e}"
+                    ) from e
 
     # ....................... #
 
@@ -373,7 +376,7 @@ class OperationRegistry:
             plan = self._resolve_plan(str(op))
 
             if plan.tx_requires_route() and plan.tx_route() is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Operation {op!r} has transaction stages or dispatch "
                     "but no transaction route"
                 )
@@ -394,7 +397,9 @@ class OperationRegistry:
 
             for d in p.iter_dispatch():
                 if d not in nodes:
-                    raise CoreError(f"Dispatch target {d} not found for operation {op}")
+                    raise exc.internal(
+                        f"Dispatch target {d} not found for operation {op}"
+                    )
 
                 edges.add((op, d))
 
@@ -455,7 +460,7 @@ class FrozenOperationRegistry:
         ctx: "ExecutionContext",
     ) -> ResolvedOperation[Any, Any]:
         if op not in self.handlers:
-            raise CoreError(f"Handler factory not found for operation: {op}")
+            raise exc.internal(f"Handler factory not found for operation: {op}")
 
         handler = self.handlers[op]
         plan = self.plans[op]

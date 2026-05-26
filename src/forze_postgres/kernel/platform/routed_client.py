@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, Literal, Sequence, overload
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Literal,
+    Mapping,
+    Sequence,
+    overload,
+)
 from uuid import UUID
 
 import attrs
@@ -15,7 +22,7 @@ from psycopg import AsyncConnection
 from psycopg.abc import Params, QueryNoTemplate
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .client import PostgresClient
@@ -38,6 +45,8 @@ class _TenantPoolSlot:
     condition: asyncio.Condition = attrs.field(factory=asyncio.Condition)
     draining_barrier: asyncio.Event = attrs.field(factory=asyncio.Event)
 
+    # ....................... #
+
     def __attrs_post_init__(self) -> None:
         self.draining_barrier.set()
 
@@ -51,7 +60,7 @@ class _TenantPoolSlot:
     # ....................... #
 
     @asynccontextmanager
-    async def use(self) -> AsyncIterator[PostgresClient]:
+    async def use(self) -> AsyncGenerator[PostgresClient]:
         """Increment refcount around work on :attr:`client`; close when draining and idle."""
 
         async with self.condition:
@@ -138,7 +147,7 @@ class RoutedPostgresClient(PostgresClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -216,7 +225,7 @@ class RoutedPostgresClient(PostgresClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed Postgres access",
                 code="tenant_required",
             )
@@ -258,11 +267,11 @@ class RoutedPostgresClient(PostgresClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def _client_scope(self) -> AsyncIterator[PostgresClient]:
+    async def _client_scope(self) -> AsyncGenerator[PostgresClient]:
         """Resolve the tenant slot and yield its client with refcount protection."""
 
         if not self._started:
-            raise InfrastructureError("Routed Postgres client is not started")
+            raise exc.internal("Routed Postgres client is not started")
 
         tid = self._require_tenant_id()
         await self._await_not_draining(tid)
@@ -300,11 +309,11 @@ class RoutedPostgresClient(PostgresClientPort):
             try:
                 dsn = await self.secrets.resolve_str(ref)
 
-            except SecretNotFoundError:
+            except exc:
                 raise
 
             except Exception as e:
-                raise InfrastructureError(
+                raise exc.internal(
                     f"Failed to resolve database secret for tenant {tid}: {e}",
                 ) from e
 
@@ -415,7 +424,7 @@ class RoutedPostgresClient(PostgresClientPort):
 
     def gather_concurrency_semaphore(self) -> asyncio.Semaphore:
         if not self._started or self._gather_sem is None:
-            raise InfrastructureError("Routed Postgres client is not started")
+            raise exc.internal("Routed Postgres client is not started")
 
         return self._gather_sem
 
@@ -425,19 +434,19 @@ class RoutedPostgresClient(PostgresClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
         slot = self._slot_for_tenant_read(tid)
 
         if slot is None:
-            raise InfrastructureError("Transactional context is required")
+            raise exc.internal("Transactional context is required")
 
         slot.client.require_transaction()
 
     # ....................... #
 
     @asynccontextmanager
-    async def bound_connection(self) -> AsyncIterator[AsyncConnection]:
+    async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
         async with self._client_scope() as inner:
             async with inner.bound_connection() as conn:
                 yield conn
@@ -449,7 +458,7 @@ class RoutedPostgresClient(PostgresClientPort):
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncIterator[AsyncConnection]:
+    ) -> AsyncGenerator[AsyncConnection]:
         async with self._client_scope() as inner:
             async with inner.transaction(options=options) as conn:
                 yield conn
@@ -545,7 +554,7 @@ class RoutedPostgresClient(PostgresClientPort):
         batch_size: int = 2000,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+    ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
         async with self._client_scope() as inner:
             async for chunk in inner.fetch_all_batched(
                 query,

@@ -21,7 +21,7 @@ from forze.application.contracts.authn import (
     TokenVerifierPort,
 )
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ...adapters import (
     ApiKeyLifecycleAdapter,
@@ -70,7 +70,7 @@ class ConfigurableArgon2PasswordVerifier:
         _ = spec
 
         if self.shared.password_svc is None:
-            raise CoreError(
+            raise exc.internal(
                 "Password verifier requires kernel.password",
             )
 
@@ -100,7 +100,7 @@ class ConfigurableForzeJwtTokenVerifier:
         _ = ctx, spec
 
         if self.shared.access_svc is None:
-            raise CoreError(
+            raise exc.internal(
                 "Forze JWT token verifier requires kernel.access_token_secret",
             )
 
@@ -127,7 +127,7 @@ class ConfigurableHmacApiKeyVerifier:
         _ = spec
 
         if self.shared.api_key_svc is None:
-            raise CoreError(
+            raise exc.internal(
                 "API key verifier requires kernel.api_key_pepper",
             )
 
@@ -223,7 +223,7 @@ class ConfigurableAuthn:
         # Re-validate against the live spec to guard against route name reuse with
         # mismatched method sets (the registration snapshot wins).
         if frozenset(spec.enabled_methods) != self.enabled_methods:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnSpec.enabled_methods does not match the enabled_methods registered "
                 f"for route '{spec.name}'",
             )
@@ -273,7 +273,7 @@ class ConfigurableTokenLifecycle:
         _ = spec
 
         if self.shared.access_svc is None or self.shared.refresh_svc is None:
-            raise CoreError(
+            raise exc.internal(
                 "Token lifecycle requires kernel.access_token_secret and kernel.refresh_token_pepper",
             )
 
@@ -306,7 +306,7 @@ class ConfigurablePasswordLifecycle:
         _ = spec
 
         if self.shared.password_svc is None:
-            raise CoreError("Password lifecycle requires kernel.password")
+            raise exc.internal("Password lifecycle requires kernel.password")
 
         return PasswordLifecycleAdapter(
             password_svc=self.shared.password_svc,
@@ -331,7 +331,7 @@ class ConfigurableApiKeyLifecycle:
         _ = spec
 
         if self.shared.api_key_svc is None:
-            raise CoreError("API key lifecycle requires kernel.api_key_pepper")
+            raise exc.internal("API key lifecycle requires kernel.api_key_pepper")
 
         return ApiKeyLifecycleAdapter(
             api_key_svc=self.shared.api_key_svc,
@@ -361,7 +361,7 @@ class ConfigurablePasswordAccountProvisioning:
         _ = spec
 
         if self.shared.password_svc is None:
-            raise CoreError("Password provisioning requires kernel.password")
+            raise exc.internal("Password provisioning requires kernel.password")
 
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,

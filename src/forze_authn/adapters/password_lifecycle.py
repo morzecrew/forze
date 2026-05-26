@@ -4,7 +4,7 @@ import attrs
 
 from forze.application.contracts.authn import AuthnIdentity, PasswordLifecyclePort
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 from ..domain.models.account import (
     PasswordAccount,
@@ -43,16 +43,24 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         cmd_spec = self.pa_cmd.spec
 
         if qry_spec.cache is not None:
-            raise CoreError("Password account caching is forbidden by security reasons")
+            raise exc.internal(
+                "Password account caching is forbidden by security reasons"
+            )
 
         if cmd_spec.cache is not None:
-            raise CoreError("Password account caching is forbidden by security reasons")
+            raise exc.internal(
+                "Password account caching is forbidden by security reasons"
+            )
 
         if qry_spec.history_enabled:
-            raise CoreError("Password account history is forbidden by security reasons")
+            raise exc.internal(
+                "Password account history is forbidden by security reasons"
+            )
 
         if cmd_spec.history_enabled:
-            raise CoreError("Password account history is forbidden by security reasons")
+            raise exc.internal(
+                "Password account history is forbidden by security reasons"
+            )
 
     # ....................... #
 
@@ -67,7 +75,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         )
 
         if pa is None or not pa.is_active:
-            raise AuthenticationError("Password account not found")
+            raise exc.authentication("Password account not found")
 
         new_pwd_hash = self.password_svc.hash_password(new_password)
         upd_cmd = UpdatePasswordAccountCmd(password_hash=new_pwd_hash)

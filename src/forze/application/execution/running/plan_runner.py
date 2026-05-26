@@ -11,7 +11,7 @@ from forze.application.contracts.execution import (
     Handler,
     Success,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ..planning.plans import ResolvedOperationPlan
@@ -67,7 +67,7 @@ def _assert_tx_configured(tx: ResolvedTransactionScope) -> None:
     if tx.route is not None or not _tx_has_stages(tx):
         return
 
-    raise CoreError("Transaction scope has stages but no route set")
+    raise exc.internal("Transaction scope has stages but no route set")
 
 
 # ....................... #
@@ -122,13 +122,13 @@ async def run_resolved_tx_scope[Args, R](
     route = tx.route
 
     if route is None:
-        raise CoreError("Transaction route is required to run a transaction scope")
+        raise exc.internal("Transaction route is required to run a transaction scope")
 
     async with tx_runner(route):
         await run_graph_before(tx.before, args)
 
         result: R | None = None
-        exc: Exception | None = None
+        err: Exception | None = None
 
         try:
 
@@ -152,12 +152,12 @@ async def run_resolved_tx_scope[Args, R](
             await defer_after_commit(_after_commit)
 
         except Exception as e:
-            exc = e
+            err = e
             await run_pipeline_on_failure(tx.on_failure, args, e)
             raise
 
         finally:
-            outcome = Success(value=result) if exc is None else Failure(exc=exc)
+            outcome = Success(value=result) if err is None else Failure(exc=err)
             await run_pipeline_finally(tx.finally_, args, outcome)
 
         return cast(R, result)  # type: ignore[redundant-cast]

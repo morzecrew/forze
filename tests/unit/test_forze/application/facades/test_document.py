@@ -6,11 +6,11 @@ from uuid import UUID
 import attrs
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.composition.document import DocumentFacade, DocumentKernelOp
 from forze.application.contracts.execution import Handler
-from forze.application.execution.facade import OperationFacade, facade_op
 from forze.application.execution.registry import OperationRegistry
-from forze.base.errors import CoreError
 from forze.base.primitives import StrKeyNamespace
 from forze.domain.models import ReadDocument
 
@@ -74,7 +74,7 @@ class TestDocumentFacade:
             registry=frozen,
             namespace=_DOC_KEYS,
         )
-        with pytest.raises(CoreError, match="Handler factory not found"):
+        with pytest.raises(CoreException, match="Handler factory not found"):
             _ = facade.update
 
     def test_create_not_supported_raises(
@@ -88,7 +88,7 @@ class TestDocumentFacade:
             registry=frozen,
             namespace=_DOC_KEYS,
         )
-        with pytest.raises(CoreError, match="Handler factory not found"):
+        with pytest.raises(CoreException, match="Handler factory not found"):
             _ = facade.create
 
     def test_kill_not_supported_raises(
@@ -102,5 +102,5 @@ class TestDocumentFacade:
             registry=frozen,
             namespace=_DOC_KEYS,
         )
-        with pytest.raises(CoreError, match="Handler factory not found"):
+        with pytest.raises(CoreException, match="Handler factory not found"):
             _ = facade.kill

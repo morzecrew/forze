@@ -17,6 +17,7 @@ well-known dependency keys.
 | Store and retrieve binary objects | [Storage](contracts/storage.md) | `StorageSpec`, `StoragePort` | Mock, S3-compatible storage | `StorageDepKey` |
 | Start and interact with long-running processes | [Workflow](contracts/workflow.md) | `WorkflowSpec`, workflow ports | Temporal | `WorkflowCommandDepKey`, `WorkflowQueryDepKey` |
 | Replay duplicate HTTP-style requests safely | [Idempotency](contracts/idempotency.md) | `IdempotencySpec`, `IdempotencyPort` | Mock, Redis / Valkey | `IdempotencyDepKey` |
+| Query warehouse tables or append analytics rows | [Analytics](contracts/analytics.md) | `AnalyticsSpec`, `AnalyticsQueryPort`, `AnalyticsIngestPort` | Mock, BigQuery, ClickHouse | `AnalyticsQueryDepKey`, `AnalyticsIngestDepKey` |
 
 ## Contract pattern
 
@@ -43,6 +44,7 @@ Prefer `ExecutionContext` convenience methods when available:
     doc_c = ctx.document.command(project_spec)
     cache = ctx.cache(cache_spec)
     storage = ctx.storage(storage_spec)
+    analytics_q = ctx.analytics.query(metrics_spec)
 
 For domains without a convenience helper, resolve the factory by dependency key
 and call it with `(ctx, spec)`:

@@ -1,6 +1,6 @@
 """Unit tests for pubsub contract (PubSubSpec and dep keys)."""
 
-from typing import AsyncIterator
+from typing import AsyncGenerator
 
 from pydantic import BaseModel
 
@@ -32,7 +32,7 @@ class _StubPubSub(PubSubCommandPort[_PubSubPayload], PubSubQueryPort[_PubSubPayl
     ) -> None:
         return None
 
-    async def subscribe(self, topics: list[str]) -> AsyncIterator:
+    async def subscribe(self, topics: list[str]) -> AsyncGenerator:
         if not topics:
             return
 

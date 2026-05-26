@@ -14,6 +14,7 @@ from .credentials import (
 )
 from .identity import AuthnIdentity
 from .lifetime import CredentialLifetime
+from .result import AuthnResult
 from .tokens import (
     IssuedAccessToken,
     IssuedApiKey,
@@ -27,6 +28,7 @@ __all__ = [
     "AccessTokenCredentials",
     "ApiKeyCredentials",
     "AuthnIdentity",
+    "AuthnResult",
     "CredentialLifetime",
     "IssuedAccessToken",
     "IssuedApiKey",

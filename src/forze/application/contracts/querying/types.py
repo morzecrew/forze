@@ -29,7 +29,13 @@ EqOp = Literal["$eq", "$neq"]
 CompareOp = Literal["$eq", "$neq", "$gt", "$gte", "$lt", "$lte"]
 """Field-to-field compare operators (equality and ordering only)."""
 
-ElementOp = EqOp | OrdOp
+TextOp = Literal["$like", "$ilike", "$regex"]
+"""Text pattern matching operators."""
+
+TextPatternValue = str | Sequence[str]
+"""Text operator operand: one pattern or several (OR semantics at parse time)."""
+
+ElementOp = EqOp | OrdOp | TextOp
 """Operators allowed inside array element quantifiers (``$any``, ``$all``, ``$none``)."""
 
 QueryElementQuantifier = Literal["$any", "$all", "$none"]
@@ -41,7 +47,7 @@ MembOp = Literal["$in", "$nin"]
 SetRelOp = Literal["$superset", "$subset", "$disjoint", "$overlaps"]
 """Set relation operators."""
 
-Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp
+Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp | TextOp
 """All supported filter operators."""
 
 # ....................... #
@@ -58,6 +64,7 @@ class QueryOp:
     Element = ElementOp
     Memb = MembOp
     SetRel = SetRelOp
+    Text = TextOp
     All = Op
 
 

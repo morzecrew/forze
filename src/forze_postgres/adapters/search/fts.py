@@ -39,7 +39,7 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -549,14 +549,14 @@ class PostgresFTSSearchAdapter[M: BaseModel](
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
         lim: int = 10 if c.get("limit") is None else int(c["limit"])  # type: ignore[arg-type, assignment, call-overload]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_after = c.get("after") is not None
         use_before = c.get("before") is not None
@@ -605,11 +605,11 @@ class PostgresFTSSearchAdapter[M: BaseModel](
                 tk, td, tv = decode_keyset_v1(token)
 
                 if tk != sort_keys or len(td) != len(directions):
-                    raise CoreError("Cursor does not match current search sort")
+                    raise exc.internal("Cursor does not match current search sort")
 
                 for i, di in enumerate(directions):
                     if (td[i] or "").lower() != di:
-                        raise CoreError("Cursor does not match current search sort")
+                        raise exc.internal("Cursor does not match current search sort")
 
                 sk, sp_seek = build_seek_condition(
                     exprs,
@@ -788,11 +788,11 @@ class PostgresFTSSearchAdapter[M: BaseModel](
             tk_r, td_r, tv_r = decode_keyset_v1(token_r)
 
             if tk_r != sort_keys_r or len(td_r) != len(directions_r):
-                raise CoreError("Cursor does not match current search sort")
+                raise exc.internal("Cursor does not match current search sort")
 
             for i, di in enumerate(directions_r):
                 if (td_r[i] or "").lower() != di:
-                    raise CoreError("Cursor does not match current search sort")
+                    raise exc.internal("Cursor does not match current search sort")
 
             sk_r, sp_seek_r = build_seek_condition(
                 exprs_r,

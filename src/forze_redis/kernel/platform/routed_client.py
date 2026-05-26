@@ -5,14 +5,14 @@ from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncContextManager, AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncContextManager, AsyncGenerator, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
 from redis.asyncio.client import Pipeline
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .client import RedisClient
@@ -50,7 +50,7 @@ class RoutedRedisClient(RedisClientPort):
 
     def __attrs_post_init__(self) -> None:
         if self.max_cached_tenants < 1:
-            raise CoreError("max_cached_tenants must be at least 1")
+            raise exc.internal("max_cached_tenants must be at least 1")
 
     # ....................... #
 
@@ -84,7 +84,7 @@ class RoutedRedisClient(RedisClientPort):
         tid = self.tenant_provider()
 
         if tid is None:
-            raise CoreError(
+            raise exc.internal(
                 "Tenant ID is required for routed Redis access",
                 code="tenant_required",
             )
@@ -95,7 +95,7 @@ class RoutedRedisClient(RedisClientPort):
 
     async def _get_client(self) -> RedisClient:
         if not self._started:
-            raise InfrastructureError("Routed Redis client is not started")
+            raise exc.internal("Routed Redis client is not started")
 
         tid = self._require_tenant_id()
 
@@ -110,11 +110,11 @@ class RoutedRedisClient(RedisClientPort):
         try:
             dsn = await self.secrets.resolve_str(ref)
 
-        except SecretNotFoundError:
+        except exc:
             raise
 
         except Exception as e:
-            raise InfrastructureError(
+            raise exc.internal(
                 f"Failed to resolve Redis secret for tenant {tid}: {e}",
             ) from e
 
@@ -152,7 +152,7 @@ class RoutedRedisClient(RedisClientPort):
 
     def pipeline(self, *, transaction: bool = True) -> AsyncContextManager[Pipeline]:
         @asynccontextmanager
-        async def _cm() -> AsyncIterator[Pipeline]:
+        async def _cm() -> AsyncGenerator[Pipeline]:
             inner = await self._get_client()
 
             async with inner.pipeline(transaction=transaction) as pipe:
@@ -249,7 +249,7 @@ class RoutedRedisClient(RedisClientPort):
         channels: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RedisPubSubMessage]:
+    ) -> AsyncGenerator[RedisPubSubMessage]:
         inner = await self._get_client()
         async for msg in inner.subscribe(channels, timeout=timeout):
             yield msg

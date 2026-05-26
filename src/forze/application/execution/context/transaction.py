@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncIterator, Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable
 
 import attrs
 
@@ -8,7 +8,8 @@ from forze.application.contracts.transaction import (
     TransactionHandle,
     TransactionManagerPort,
 )
-from forze.base.errors import CoreError
+from forze.application.execution.tracing import record
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 # ----------------------- #
@@ -56,7 +57,7 @@ class TransactionContext:
         """Lock the transaction context."""
 
         if self._locked:
-            raise CoreError("Transaction context already locked")
+            raise exc.internal("Transaction context already locked")
 
         self._locked = True
         self.resolver = resolver
@@ -76,7 +77,7 @@ class TransactionContext:
         q = self.__cb_stack.get()
 
         if q is None:
-            raise CoreError(
+            raise exc.internal(
                 "defer_callback requires an active TransactionContext.scope scope"
             )
 
@@ -96,11 +97,11 @@ class TransactionContext:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, route: StrKey) -> AsyncIterator[None]:
+    async def scope(self, route: StrKey) -> AsyncGenerator[None]:
         """Enter a transaction scope"""
 
         if self.resolver is None:
-            raise CoreError("Transaction resolver is not set")
+            raise exc.internal("Transaction resolver is not set")
 
         tx = self.resolver(route)
 
@@ -109,7 +110,7 @@ class TransactionContext:
 
         if depth > 0:
             if cur_scope is None or cur_scope.scope != tx.scope_key:
-                raise CoreError(
+                raise exc.internal(
                     f"Nested tx scope mismatch: active={cur_scope.scope.name if cur_scope else None} "
                     f"requested={tx.scope_key.name}"
                 )
@@ -128,6 +129,15 @@ class TransactionContext:
         token_h = self.__tx_handle.set(TransactionHandle(scope=tx.scope_key))
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
+        route_name = str(getattr(route, "value", route))
+
+        record(
+            domain="tx",
+            op="enter",
+            route=route_name,
+            tx_route=route_name,
+            tx_depth=1,
+        )
 
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
@@ -142,6 +152,13 @@ class TransactionContext:
             deferred = self.__cb_stack.get()
 
         finally:
+            record(
+                domain="tx",
+                op="exit",
+                route=route_name,
+                tx_route=route_name,
+                tx_depth=self.__tx_depth.get(),
+            )
             self.__cb_stack.reset(token_cb)
             self.__tx_handle.reset(token_h)
             self.__tx_depth.reset(token_d)

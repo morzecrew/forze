@@ -34,7 +34,6 @@ class LifecyclePlan:
 
         :param steps: Steps to include.
         :returns: New plan instance.
-        :raises CoreError: If step names collide.
         """
 
         logger.trace("Creating lifecycle plan from %s step(s)", len(steps))
@@ -49,7 +48,6 @@ class LifecyclePlan:
 
         :param steps: Steps to append.
         :returns: New plan instance.
-        :raises CoreError: If step names collide.
         """
 
         logger.trace(

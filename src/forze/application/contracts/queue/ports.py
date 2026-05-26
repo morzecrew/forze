@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import (
-    AsyncIterator,
+    AsyncGenerator,
     Awaitable,
     Protocol,
     Sequence,
@@ -33,7 +33,7 @@ class QueueQueryPort[M](Protocol):
         queue: str,  # noqa: F841
         *,
         timeout: timedelta | None = None,  # noqa: F841
-    ) -> AsyncIterator[QueueMessage[M]]:
+    ) -> AsyncGenerator[QueueMessage[M]]:
         """Yield messages continuously from *queue* until *timeout* elapses."""
         ...  # pragma: no cover
 

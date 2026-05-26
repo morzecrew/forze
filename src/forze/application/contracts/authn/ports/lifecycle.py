@@ -1,4 +1,5 @@
 from typing import Awaitable, Protocol, Sequence
+from uuid import UUID
 
 from ..value_objects import (
     ApiKeyCredentials,
@@ -30,6 +31,8 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
     def issue_tokens(
         self,
         identity: AuthnIdentity,  # noqa: F841
+        *,
+        tenant_id: UUID | None = None,
     ) -> Awaitable[IssuedTokens]: ...
 
     def refresh_tokens(

@@ -41,6 +41,7 @@ def test_get_authn_identity_roundtrip() -> None:
         got = ctx.inv.get_authn()
         assert got is not None
         assert got.principal_id == pid
+        assert not hasattr(got, "tenant_id")
         assert ctx.inv.get_tenant() is not None
         assert ctx.inv.get_tenant().tenant_id == tid
 

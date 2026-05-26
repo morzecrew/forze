@@ -12,7 +12,7 @@ from typing import (
 )
 
 from forze.application.contracts.search import SearchSpec
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 
 from ...adapters import FtsGroupLetter
@@ -216,7 +216,9 @@ def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) 
     """Validate a Postgres federated search configuration."""
 
     if len(cfg["members"]) < 2:
-        raise CoreError("Federated search requires at least two member configurations.")
+        raise exc.internal(
+            "Federated search requires at least two member configurations."
+        )
 
     for name, leg in cfg["members"].items():
         if is_postgres_federated_embedded_hub_config(leg):
@@ -224,7 +226,7 @@ def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) 
             continue
 
         if "index" not in leg or ("heap" not in leg and "read" not in leg):
-            raise CoreError(
+            raise exc.internal(
                 f"Federated search member {name!r} must include 'index' and 'heap' or 'read', "
                 "or be an embedded hub with 'hub' and 'members'.",
             )
@@ -232,21 +234,21 @@ def validate_postgres_federated_search_conf(cfg: PostgresFederatedSearchConfig) 
         eng = leg.get("engine", "pgroonga")
 
         if eng == "fts" and not leg.get("fts_groups"):
-            raise CoreError(
+            raise exc.internal(
                 f"Federated search member {name!r} with engine 'fts' requires fts_groups.",
             )
 
         if eng == "vector":
             if not leg.get("vector_column"):
-                raise CoreError(
+                raise exc.internal(
                     f"Federated search member {name!r} with engine 'vector' requires vector_column.",
                 )
             if leg.get("embedding_dimensions") is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Federated search member {name!r} with engine 'vector' requires embedding_dimensions.",
                 )
             if not leg.get("embeddings_name"):
-                raise CoreError(
+                raise exc.internal(
                     f"Federated search member {name!r} with engine 'vector' requires embeddings_name.",
                 )
 
@@ -261,12 +263,12 @@ def _validate_same_heap_as_hub(
     eng: str,
 ) -> None:
     if eng == "fts":
-        raise CoreError(
+        raise exc.internal(
             f"Hub search leg {leg_index} cannot use same_heap_as_hub with engine 'fts'.",
         )
 
     if leg.get("field_map"):
-        raise CoreError(
+        raise exc.internal(
             f"Hub search leg {leg_index} cannot use same_heap_as_hub together with 'field_map'.",
         )
 
@@ -274,12 +276,12 @@ def _validate_same_heap_as_hub(
     heap_read = leg.get("heap", leg.get("read"))
 
     if not heap_read:
-        raise CoreError(
+        raise exc.internal(
             f"Hub search leg {leg_index} with same_heap_as_hub must include 'heap' or 'read'.",
         )
 
     if tuple(hub_pair) != tuple(heap_read):
-        raise CoreError(
+        raise exc.internal(
             f"Hub search leg {leg_index} with same_heap_as_hub must use the same "
             "qualified relation as the hub in 'read' or 'heap'.",
         )
@@ -288,13 +290,13 @@ def _validate_same_heap_as_hub(
     fk_cols = normalize_hub_fk_columns(leg["hub_fk"])
 
     if len(fk_cols) != 1 or fk_cols[0] != hpk:
-        raise CoreError(
+        raise exc.internal(
             f"Hub search leg {leg_index} with same_heap_as_hub requires 'hub_fk' "
             "to be a single column name equal to 'heap_pk' (default 'id').",
         )
 
     if eng == "pgroonga" and leg.get("pgroonga_score_version", "v2") != "v2":
-        raise CoreError(
+        raise exc.internal(
             f"Hub search leg {leg_index} with same_heap_as_hub and engine 'pgroonga' "
             "requires 'pgroonga_score_version' 'v2'.",
         )
@@ -309,22 +311,22 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
     legs = list(cfg["members"].values())
 
     if not legs:
-        raise CoreError("Hub search requires at least one leg configuration.")
+        raise exc.internal("Hub search requires at least one leg configuration.")
 
     fk_seen: set[str] = set()
 
     for i, leg in enumerate(legs):
         if "index" not in leg or ("heap" not in leg and "read" not in leg):
-            raise CoreError(
+            raise exc.internal(
                 f"Hub search leg {i} must include 'index' and 'heap' or 'read'."
             )
 
         if "hub_fk" not in leg:
-            raise CoreError(f"Hub search leg {i} must include 'hub_fk'.")
+            raise exc.internal(f"Hub search leg {i} must include 'hub_fk'.")
 
         for col in normalize_hub_fk_columns(leg["hub_fk"]):
             if col in fk_seen:
-                raise CoreError(
+                raise exc.internal(
                     "Each hub_fk column may belong to at most one leg "
                     "(duplicate column across legs).",
                 )
@@ -333,21 +335,21 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
         eng = leg.get("engine", "pgroonga")
 
         if eng == "fts" and not leg.get("fts_groups"):
-            raise CoreError(
+            raise exc.internal(
                 f"Hub search leg {i} with engine 'fts' requires fts_groups."
             )
 
         if eng == "vector":
             if not leg.get("vector_column"):
-                raise CoreError(
+                raise exc.internal(
                     f"Hub search leg {i} with engine 'vector' requires vector_column."
                 )
             if leg.get("embedding_dimensions") is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Hub search leg {i} with engine 'vector' requires embedding_dimensions."
                 )
             if not leg.get("embeddings_name"):
-                raise CoreError(
+                raise exc.internal(
                     f"Hub search leg {i} with engine 'vector' requires embeddings_name."
                 )
 
@@ -357,7 +359,7 @@ def validate_postgres_hub_search_conf(cfg: PostgresHubSearchConfig) -> None:
         if eng == "pgroonga":
             pv = leg.get("pgroonga_score_version", "v2")
             if pv not in ("v1", "v2"):
-                raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")
+                raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")
 
 
 # ....................... #
@@ -370,12 +372,12 @@ def validate_fts_groups_for_search_spec(
     """Ensure ``fts_groups`` covers every field in ``spec`` (shared by search + hub)."""
 
     if not fts_groups:
-        raise CoreError("FTS groups are required for FTS engine.")
+        raise exc.internal("FTS groups are required for FTS engine.")
 
     grouped_fields = reduce(lambda a, g: a + g, map(list, fts_groups.values()))
 
     if any(f not in grouped_fields for f in spec.fields):
-        raise CoreError("All search fields must be included in FTS groups.")
+        raise exc.internal("All search fields must be included in FTS groups.")
 
 
 # ....................... #
@@ -390,26 +392,28 @@ def validate_pg_search_conf(cfg: PostgresSearchConfig) -> None:
     match eng:
         case "vector":
             if not cfg.get("vector_column"):
-                raise CoreError("vector_column is required for vector engine.")
+                raise exc.internal("vector_column is required for vector engine.")
 
             if cfg.get("embedding_dimensions") is None:
-                raise CoreError("embedding_dimensions is required for vector engine.")
+                raise exc.internal(
+                    "embedding_dimensions is required for vector engine."
+                )
 
             if not cfg.get("embeddings_name"):
-                raise CoreError("embeddings_name is required for vector engine.")
+                raise exc.internal("embeddings_name is required for vector engine.")
 
         case "fts":
             fts_groups = cfg.get("fts_groups")
 
             if not fts_groups:
-                raise CoreError("FTS groups are required for FTS engine.")
+                raise exc.internal("FTS groups are required for FTS engine.")
 
             all_fields = reduce(lambda a, g: a + g, map(list, fts_groups.values()))
 
             if len(all_fields) != len(set(all_fields)):
-                raise CoreError("FTS groups cannot contain duplicate fields.")
+                raise exc.internal("FTS groups cannot contain duplicate fields.")
 
         case "pgroonga":
             v = cfg.get("pgroonga_score_version", "v2")
             if v not in ("v1", "v2"):
-                raise CoreError("pgroonga_score_version must be 'v1' or 'v2'.")
+                raise exc.internal("pgroonga_score_version must be 'v1' or 'v2'.")

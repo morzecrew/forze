@@ -8,7 +8,7 @@ import attrs
 
 from forze.application.contracts.execution import DispatchStep, OnSuccess
 from forze.base.descriptors import hybridmethod
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .binders import ScopeBinder, TransactionScopeBinder
@@ -34,7 +34,7 @@ TxRunner = Callable[[StrKey], AbstractAsyncContextManager[None]]
 
 
 def _root_commit_fn(x: Any) -> Never:
-    raise CoreError("Cannot commit a plan to the root")
+    raise exc.internal("Cannot commit a plan to the root")
 
 
 # ....................... #

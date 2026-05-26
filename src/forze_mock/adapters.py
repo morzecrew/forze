@@ -11,12 +11,13 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import (
     Any,
-    AsyncIterator,
+    AsyncGenerator,
     Literal,
     Mapping,
     NoReturn,
@@ -31,6 +32,14 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.analytics import (
+    AnalyticsAppendResult,
+    AnalyticsIngestPort,
+    AnalyticsQueryPort,
+    AnalyticsRunOptions,
+    AnalyticsSpec,
+)
+from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -43,6 +52,7 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    RowLockMode,
     require_create_id,
     require_create_id_for_many,
 )
@@ -68,6 +78,9 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
     QuerySortExpression,
+)
+from forze.application.contracts.querying.internal.text_pattern import (
+    like_pattern_to_regex,
 )
 from forze.application.contracts.querying.internal.time_bucket import (
     floor_to_time_bucket,
@@ -104,7 +117,7 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
 )
-from forze.base.errors import ConcurrencyError, ConflictError, CoreError, NotFoundError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze.base.serialization import (
     RecordMappingCodec,
@@ -158,6 +171,13 @@ class MockState:
     )
     streams: dict[str, dict[str, list[StreamMessage[Any]]]] = attrs.field(factory=dict)
     stream_ack: dict[tuple[str, str, str], set[str]] = attrs.field(factory=dict)
+    analytics_query_hits: dict[str, dict[str, list[JsonDict]]] = attrs.field(
+        factory=dict,
+    )
+    """Route → query_key → seeded result rows for :class:`MockAnalyticsAdapter`."""
+
+    analytics_ingest_log: dict[str, list[JsonDict]] = attrs.field(factory=dict)
+    """Route → appended ingest rows."""
 
     # non-initable
     __lock: threading.RLock = attrs.field(
@@ -257,6 +277,27 @@ def _memb_contains(field_value: Any, values: Sequence[Any]) -> bool:
     return any(_eq(field_value, candidate) for candidate in values)
 
 
+def _match_text(value: Any, op: str, pattern: str) -> bool:
+    if value is _MISSING:
+        return False
+    text = str(value)
+    match op:
+        case "$like":
+            return re.search(like_pattern_to_regex(pattern), text) is not None
+        case "$ilike":
+            return (
+                re.search(
+                    like_pattern_to_regex(pattern, case_insensitive=True),
+                    text,
+                )
+                is not None
+            )
+        case "$regex":
+            return re.search(pattern, text) is not None
+        case _:
+            return False
+
+
 def _match_field(doc: JsonDict, field: QueryField) -> bool:
     value = _path_get(doc, field.name)
 
@@ -351,6 +392,9 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             values = cast(Sequence[Any], field.value)
             return not _coerce_set(value).isdisjoint(values)
 
+        case "$like" | "$ilike" | "$regex":
+            return _match_text(value, field.op, str(field.value))
+
 
 def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
     left_value = _path_get(doc, node.left)
@@ -431,6 +475,8 @@ def _match_elem_inner(elem: Any, inner: QueryExpr) -> bool:
             return all(
                 _match_field(elem_doc, i) for i in items if isinstance(i, QueryField)
             )
+        case QueryOr(items):
+            return any(_match_elem_inner(elem, item) for item in items)
         case _:
             return False
 
@@ -476,7 +522,7 @@ def _match_expr(doc: JsonDict, expr: QueryExpr) -> bool:
             return _match_elem(doc, expr)
 
         case _:
-            raise CoreError(f"Unknown query expression: {expr!r}")
+            raise exc.internal(f"Unknown query expression: {expr!r}")
 
 
 def _match_filters(doc: JsonDict, filters: QueryFilterExpression | None) -> bool:  # type: ignore[valid-type]
@@ -522,7 +568,7 @@ def _sort_docs(
 
 def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, int | float):
-        raise CoreError(
+        raise exc.internal(
             f"Aggregate {function} expects numeric values for field {field!r}",
         )
     return value
@@ -540,7 +586,7 @@ def _coerce_datetime_for_bucket(raw: Any) -> datetime:
     if isinstance(raw, (int, float)):
         return datetime.fromtimestamp(float(raw), tz=timezone.utc)
 
-    raise CoreError(f"Invalid timestamp for $trunc: {raw!r}")
+    raise exc.internal(f"Invalid timestamp for $trunc: {raw!r}")
 
 
 def _group_key_part(doc: JsonDict, expr: object) -> Any:
@@ -562,7 +608,7 @@ def _group_key_part(doc: JsonDict, expr: object) -> Any:
             )
             return floored.isoformat()
         case _:
-            raise CoreError(f"Unsupported group expression: {expr!r}")
+            raise exc.internal(f"Unsupported group expression: {expr!r}")
 
 
 def _aggregate_docs(
@@ -597,7 +643,7 @@ def _aggregate_docs(
                 continue
 
             if computed.field is None:
-                raise CoreError("Computed field has no field path")
+                raise exc.internal("Computed field has no field path")
 
             raw_values = [_path_get(doc, computed.field) for doc in computed_items]
             values = [
@@ -684,13 +730,13 @@ def _mock_cursor_start_and_limit(
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise CoreError("Cursor pagination: pass at most one of 'after' or 'before'")
+        raise exc.internal("Cursor pagination: pass at most one of 'after' or 'before'")
 
     lim_raw = c.get("limit")
     lim: int = default_limit if lim_raw is None else int(cast(Any, lim_raw))
 
     if lim < 1:
-        raise CoreError("Cursor pagination 'limit' must be positive")
+        raise exc.internal("Cursor pagination 'limit' must be positive")
 
     start = 0
 
@@ -699,7 +745,7 @@ def _mock_cursor_start_and_limit(
             payload = _b64url_json_loads_dict(str(c["after"]))
 
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            raise CoreError("Invalid cursor token") from e
+            raise exc.internal("Invalid cursor token") from e
 
         start = int(payload["s"])
 
@@ -708,7 +754,7 @@ def _mock_cursor_start_and_limit(
             payload = _b64url_json_loads_dict(str(c["before"]))
 
         except (ValueError, KeyError, json.JSONDecodeError) as e:
-            raise CoreError("Invalid cursor token") from e
+            raise exc.internal("Invalid cursor token") from e
 
         page_start = int(payload["s"])
         start = max(0, page_start - lim)
@@ -767,7 +813,7 @@ class MockDocumentAdapter(
 
     def _require_domain_model(self) -> type[D]:
         if self.domain_model is None:
-            raise CoreError("Write support requires a domain model")
+            raise exc.internal("Write support requires a domain model")
         return self.domain_model
 
     # ....................... #
@@ -780,8 +826,10 @@ class MockDocumentAdapter(
 
     def _ensure_exists(self, pk: UUID) -> JsonDict:
         store = self._store()
+
         if pk not in store:
-            raise NotFoundError(f"Document not found: {pk}")
+            raise exc.not_found(f"Document not found: {pk}")
+
         return store[pk]
 
     # ....................... #
@@ -789,8 +837,9 @@ class MockDocumentAdapter(
     def _check_rev(self, current_rev: int, expected_rev: int | None) -> None:
         if expected_rev is None:
             return
+
         if expected_rev != current_rev:
-            raise ConcurrencyError("Revision conflict")
+            raise exc.concurrency("Revision conflict")
 
     # ....................... #
 
@@ -809,7 +858,7 @@ class MockDocumentAdapter(
         self,
         pk: UUID,
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
         del for_update, skip_cache
@@ -826,11 +875,14 @@ class MockDocumentAdapter(
         skip_cache: bool = False,
     ) -> Sequence[R]:
         del skip_cache
+
         with self.state.lock:
             store = self._store()
             missing = [pk for pk in pks if pk not in store]
+
             if missing:
-                raise NotFoundError(f"Documents not found: {missing}")
+                raise exc.not_found(f"Documents not found: {missing}")
+
             docs = [dict(store[pk]) for pk in pks]
 
         return [self._to_read(doc) for doc in docs]
@@ -841,7 +893,7 @@ class MockDocumentAdapter(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> R | None:
         del for_update
 
@@ -860,7 +912,7 @@ class MockDocumentAdapter(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         fields: Sequence[str],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> JsonDict | None:
         del for_update
 
@@ -880,7 +932,7 @@ class MockDocumentAdapter(
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         return_type: type[T],
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
     ) -> T | None:
         del for_update
 
@@ -1039,7 +1091,7 @@ class MockDocumentAdapter(
         return_fields: Sequence[str] | None,
     ) -> Any:
         if aggregates is not None and return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.internal("Aggregates cannot be combined with return_fields")
 
         with self.state.lock:
             docs = [dict(doc) for doc in self._store().values()]
@@ -1295,6 +1347,92 @@ class MockDocumentAdapter(
             sorts=sorts,
             return_fields=tuple(fields),
         )
+
+    # ....................... #
+
+    async def select_cursor(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+    ) -> CursorPage[T]:
+        page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
+        return CursorPage(
+            hits=[pydantic_validate(return_type, hit.model_dump(mode="json")) for hit in page.hits],  # type: ignore[union-attr]
+            next_cursor=page.next_cursor,
+            prev_cursor=page.prev_cursor,
+            has_more=page.has_more,
+        )
+
+    # ....................... #
+
+    async def find_stream(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[R]]:
+        cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        while True:
+            page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
+            if not page.hits:
+                break
+            yield page.hits
+            if not page.has_more or page.next_cursor is None:
+                break
+            cursor = {"limit": chunk_size, "after": page.next_cursor}
+
+    # ....................... #
+
+    async def project_stream(
+        self,
+        fields: Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        while True:
+            page = await self.project_cursor(
+                fields,
+                filters=filters,
+                cursor=cursor,
+                sorts=sorts,
+            )
+            if not page.hits:
+                break
+            yield page.hits
+            if not page.has_more or page.next_cursor is None:
+                break
+            cursor = {"limit": chunk_size, "after": page.next_cursor}
+
+    # ....................... #
+
+    async def select_stream(
+        self,
+        return_type: type[T],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        *,
+        sorts: QuerySortExpression | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[T]]:
+        cursor: CursorPaginationExpression | None = {"limit": chunk_size}
+        while True:
+            page = await self.select_cursor(
+                return_type,
+                filters=filters,
+                cursor=cursor,
+                sorts=sorts,
+            )
+            if not page.hits:
+                break
+            yield page.hits
+            if not page.has_more or page.next_cursor is None:
+                break
+            cursor = {"limit": chunk_size, "after": page.next_cursor}
 
     @overload
     async def _mock_cursor_page(
@@ -1715,7 +1853,7 @@ class MockDocumentAdapter(
 
         pks = [u[0] for u in updates]
         if len(set(pks)) != len(pks):
-            raise CoreError("Primary keys must be unique")
+            raise exc.internal("Primary keys must be unique")
 
         if return_new:
             if return_diff:
@@ -1768,7 +1906,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | int:
         if not self.spec.supports_update():
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.internal("Update command type is not supported for this model")
 
         patch = pydantic_dump(dto, exclude={"unset": True})
 
@@ -1834,11 +1972,11 @@ class MockDocumentAdapter(
         chunk_size: int | None = None,
     ) -> Sequence[R] | int:
         if not self.spec.supports_update():
-            raise CoreError("Update command type is not supported for this model")
+            raise exc.internal("Update command type is not supported for this model")
 
         eff = 200 if chunk_size is None else chunk_size
         if eff < 1:
-            raise CoreError("chunk_size must be positive")
+            raise exc.internal("chunk_size must be positive")
 
         n_total = 0
         out: list[R] = []
@@ -1936,7 +2074,7 @@ class MockDocumentAdapter(
 
             return []
         if len(set(pks)) != len(pks):
-            raise CoreError("Primary keys must be unique")
+            raise exc.internal("Primary keys must be unique")
         if return_new:
             return [await self.touch(pk, return_new=True) for pk in pks]
         for pk in pks:
@@ -1954,7 +2092,7 @@ class MockDocumentAdapter(
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         if len(set(pks)) != len(pks):
-            raise CoreError("Primary keys must be unique")
+            raise exc.internal("Primary keys must be unique")
         for pk in pks:
             await self.kill(pk)
 
@@ -1987,7 +2125,7 @@ class MockDocumentAdapter(
 
     async def delete(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -2037,7 +2175,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
         if not deletes:
             if not return_new:
                 return None
@@ -2071,7 +2209,7 @@ class MockDocumentAdapter(
 
     async def restore(self, pk: UUID, rev: int, *, return_new: bool = True) -> R | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
@@ -2120,7 +2258,7 @@ class MockDocumentAdapter(
         return_new: bool = True,
     ) -> Sequence[R] | None:
         if not self._supports_soft_delete():
-            raise CoreError("Soft deletion is not supported for this model")
+            raise exc.internal("Soft deletion is not supported for this model")
         if not restores:
             if not return_new:
                 return None
@@ -2739,7 +2877,7 @@ class MockCounterAdapter(CounterPort):
         suffix: str | None = None,
     ) -> list[int]:
         if size <= 1:
-            raise CoreError("Size must be greater than 1")
+            raise exc.internal("Size must be greater than 1")
         with self.state.lock:
             key = self._key(suffix)
             prev = self.state.counters.get(key, 0)
@@ -2894,15 +3032,19 @@ class MockIdempotencyAdapter(IdempotencyPort):
         with self.state.lock:
             k = self._key(op, key)
             current = self.state.idempotency.get(k)
+
             if current is None:
                 self.state.idempotency[k] = ("pending", payload_hash, None)
                 return None
 
             status, existing_hash, snapshot = current
+
             if existing_hash != payload_hash:
-                raise ConflictError("Payload hash mismatch")
+                raise exc.conflict("Payload hash mismatch")
+
             if status != "done" or snapshot is None:
-                raise ConflictError("Idempotency is in progress")
+                raise exc.conflict("Idempotency is in progress")
+
             return snapshot
 
     # ....................... #
@@ -2922,12 +3064,12 @@ class MockIdempotencyAdapter(IdempotencyPort):
             current = self.state.idempotency.get(k)
 
             if current is None:
-                raise ConflictError("Idempotency commit failed (missing key)")
+                raise exc.conflict("Idempotency commit failed (missing key)")
 
             _, existing_hash, _ = current
 
             if existing_hash != payload_hash:
-                raise ConflictError("Payload hash mismatch")
+                raise exc.conflict("Payload hash mismatch")
 
             self.state.idempotency[k] = (  # type: ignore[assignment]
                 "done",
@@ -2981,9 +3123,11 @@ class MockStorageAdapter(StoragePort):
     async def download(self, key: str) -> DownloadedObject:
         with self.state.lock:
             if key not in self._objects() or key not in self._payloads():
-                raise NotFoundError(f"Object not found: {key}")
+                raise exc.not_found(f"Object not found: {key}")
+
             obj = self._objects()[key]
             payload = self._payloads()[key]
+
         return DownloadedObject(
             data=payload,
             content_type=obj.content_type,
@@ -3149,7 +3293,7 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[QueueMessage[M]]:
+    ) -> AsyncGenerator[QueueMessage[M]]:
         while True:
             batch = await self.receive(queue, limit=1, timeout=timeout)
             if batch:
@@ -3237,7 +3381,7 @@ class MockPubSubAdapter[M](PubSubCommandPort[M], PubSubQueryPort[M]):
         topics: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[PubSubMessage[M]]:
+    ) -> AsyncGenerator[PubSubMessage[M]]:
         with self.state.lock:
             cursors = {
                 topic: len(self._topic_store().get(topic, [])) for topic in topics
@@ -3343,7 +3487,7 @@ class MockStreamAdapter[M](StreamQueryPort[M], StreamCommandPort[M]):
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
         while True:
             messages = await self.read(cursor, timeout=timeout)
@@ -3390,7 +3534,7 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         del group, consumer
         async for item in self.stream.tail(stream_mapping, timeout=timeout):
             yield item
@@ -3404,3 +3548,452 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
             before = len(ack_set)
             ack_set.update(ids)
             return len(ack_set) - before
+
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
+    AnalyticsQueryPort[R],
+    AnalyticsIngestPort[Ing],
+):
+    """In-memory analytics adapter over seeded query hits and an ingest log."""
+
+    state: MockState
+    spec: AnalyticsSpec[R, Ing]
+
+    # ....................... #
+
+    def _route(self) -> str:
+        return str(self.spec.name)
+
+    # ....................... #
+
+    def _definition(self, query_key: str) -> AnalyticsQueryDefinition:
+        try:
+            return self.spec.queries[query_key]
+        except KeyError as e:
+            raise exc.internal(f"Unknown analytics query key: {query_key!r}") from e
+
+    # ....................... #
+
+    def _validated_params(self, query_key: str, params: BaseModel) -> BaseModel:
+        defn = self._definition(query_key)
+        if isinstance(params, defn.params):
+            return params
+        if isinstance(
+            params, BaseModel
+        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            return pydantic_validate(defn.params, params.model_dump())
+        raise exc.internal("Analytics params must be a Pydantic model instance.")
+
+    # ....................... #
+
+    def _query_rows(self, query_key: str) -> list[JsonDict]:
+        with self.state.lock:
+            route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
+            return [dict(row) for row in route_store.get(query_key, [])]
+
+    # ....................... #
+
+    def _dry_run(self, options: AnalyticsRunOptions | None) -> bool:
+        return bool((options or {}).get("dry_run"))
+
+    # ....................... #
+
+    def _apply_max_rows(
+        self,
+        rows: list[JsonDict],
+        options: AnalyticsRunOptions | None,
+    ) -> list[JsonDict]:
+        opts = options or {}
+        max_rows = opts.get("max_rows")
+        if max_rows is not None and max_rows >= 0:
+            return rows[: int(max_rows)]
+        return rows
+
+    # ....................... #
+
+    def _to_typed(self, rows: list[JsonDict]) -> list[R]:
+        return pydantic_validate_many(self.spec.read, rows)
+
+    # ....................... #
+
+    def _to_projected(
+        self,
+        rows: list[JsonDict],
+        fields: Sequence[str],
+    ) -> list[JsonDict]:
+        return [{k: row.get(k) for k in fields} for row in rows]
+
+    # ....................... #
+
+    async def _offset_page(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None,
+        *,
+        options: AnalyticsRunOptions | None,
+        return_count: bool,
+        return_type: type[T] | None,
+        return_fields: Sequence[str] | None,
+    ) -> CountlessPage[Any] | Page[Any]:
+        _ = self._validated_params(query_key, params)
+        if self._dry_run(options):
+            empty: list[Any] = []
+            if return_count:
+                return page_from_limit_offset(empty, pagination, total=0)
+            return page_from_limit_offset(empty, pagination, total=None)
+
+        rows = self._apply_max_rows(self._query_rows(query_key), options)
+        if return_fields is not None:
+            data: list[Any] = self._to_projected(rows, return_fields)
+        elif return_type is not None:
+            data = pydantic_validate_many(return_type, rows)
+        else:
+            data = self._to_typed(rows)
+
+        if return_count:
+            return page_from_limit_offset(data, pagination, total=len(data))
+        return page_from_limit_offset(data, pagination, total=None)
+
+    # ....................... #
+
+    async def _cursor_page(
+        self,
+        query_key: str,
+        params: BaseModel,
+        cursor: CursorPaginationExpression | None,
+        *,
+        options: AnalyticsRunOptions | None,
+        return_type: type[T] | None,
+        return_fields: Sequence[str] | None,
+    ) -> CursorPage[Any]:
+        _ = self._validated_params(query_key, params)
+        if self._dry_run(options):
+            return CursorPage(
+                hits=[],
+                next_cursor=None,
+                prev_cursor=None,
+                has_more=False,
+            )
+
+        rows = self._apply_max_rows(self._query_rows(query_key), options)
+        start, lim = _mock_cursor_start_and_limit(cursor)
+        window = rows[start : start + lim + 1]
+        has_more = len(window) > lim
+        page_rows = window[:lim]
+
+        if return_fields is not None:
+            hits: list[Any] = self._to_projected(page_rows, return_fields)
+        elif return_type is not None:
+            hits = pydantic_validate_many(return_type, page_rows)
+        else:
+            hits = self._to_typed(page_rows)
+
+        next_c, prev_c = _mock_cursor_tokens(start, len(page_rows), has_more=has_more)
+        return CursorPage(
+            hits=hits,
+            next_cursor=next_c,
+            prev_cursor=prev_c,
+            has_more=has_more,
+        )
+
+    # ....................... #
+
+    async def _chunked(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None,
+        *,
+        options: AnalyticsRunOptions | None,
+        return_type: type[T] | None,
+        return_fields: Sequence[str] | None,
+        fetch_batch_size: int,
+    ) -> AsyncGenerator[Sequence[Any]]:
+        _ = self._validated_params(query_key, params)
+        if self._dry_run(options):
+            return
+
+        page = await self._offset_page(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=False,
+            return_type=return_type,
+            return_fields=return_fields,
+        )
+        hits = page.hits
+        if fetch_batch_size < 1:
+            raise exc.internal("fetch_batch_size must be >= 1")
+        for offset in range(0, len(hits), fetch_batch_size):
+            yield hits[offset : offset + fetch_batch_size]
+
+    # ....................... #
+
+    async def run(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> CountlessPage[R]:
+        return await self._offset_page(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=False,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def run_page(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> Page[R]:
+        return await self._offset_page(  # type: ignore[return-value]
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=True,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def run_chunked(
+        self,
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[R]]:
+        async for chunk in self._chunked(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_type=None,
+            return_fields=None,
+            fetch_batch_size=fetch_batch_size,
+        ):
+            yield cast(Sequence[R], chunk)
+
+    async def project_run(
+        self,
+        fields: Sequence[str],
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._offset_page(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=False,
+            return_type=None,
+            return_fields=fields,
+        )
+
+    async def project_run_page(
+        self,
+        fields: Sequence[str],
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> Page[JsonDict]:
+        return await self._offset_page(  # type: ignore[return-value]
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=True,
+            return_type=None,
+            return_fields=fields,
+        )
+
+    async def project_run_chunked(
+        self,
+        fields: Sequence[str],
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
+        async for chunk in self._chunked(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_type=None,
+            return_fields=fields,
+            fetch_batch_size=fetch_batch_size,
+        ):
+            yield cast(Sequence[JsonDict], chunk)
+
+    async def select_run(
+        self,
+        return_type: type[T],
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> CountlessPage[T]:
+        return await self._offset_page(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=False,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def select_run_page(
+        self,
+        return_type: type[T],
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> Page[T]:
+        return await self._offset_page(  # type: ignore[return-value]
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_count=True,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    async def select_run_chunked(
+        self,
+        return_type: type[T],
+        query_key: str,
+        params: BaseModel,
+        pagination: PaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+        fetch_batch_size: int = 2000,
+    ) -> AsyncGenerator[Sequence[T]]:
+        async for chunk in self._chunked(
+            query_key,
+            params,
+            pagination,
+            options=options,
+            return_type=return_type,
+            return_fields=None,
+            fetch_batch_size=fetch_batch_size,
+        ):
+            yield cast(Sequence[T], chunk)
+
+    async def run_cursor(
+        self,
+        query_key: str,
+        params: BaseModel,
+        cursor: CursorPaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> CursorPage[R]:
+        return await self._cursor_page(
+            query_key,
+            params,
+            cursor,
+            options=options,
+            return_type=None,
+            return_fields=None,
+        )
+
+    async def project_run_cursor(
+        self,
+        fields: Sequence[str],
+        query_key: str,
+        params: BaseModel,
+        cursor: CursorPaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> CursorPage[JsonDict]:
+        return await self._cursor_page(
+            query_key,
+            params,
+            cursor,
+            options=options,
+            return_type=None,
+            return_fields=fields,
+        )
+
+    async def select_run_cursor(
+        self,
+        return_type: type[T],
+        query_key: str,
+        params: BaseModel,
+        cursor: CursorPaginationExpression | None = None,
+        *,
+        options: AnalyticsRunOptions | None = None,
+    ) -> CursorPage[T]:
+        return await self._cursor_page(
+            query_key,
+            params,
+            cursor,
+            options=options,
+            return_type=return_type,
+            return_fields=None,
+        )
+
+    # ....................... #
+
+    async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
+        if self.spec.ingest is None:
+            raise exc.internal(
+                f"Analytics ingest is not configured for route {self._route()!r}."
+            )
+        if not rows:
+            return AnalyticsAppendResult(accepted=0)
+
+        ingest_type = self.spec.ingest
+        accepted = 0
+        payloads: list[JsonDict] = []
+
+        for row in rows:
+            if isinstance(row, ingest_type):
+                payloads.append(pydantic_dump(row))
+            elif isinstance(
+                row, BaseModel
+            ):  # pyright: ignore[reportUnnecessaryIsInstance]
+                payloads.append(
+                    pydantic_dump(pydantic_validate(ingest_type, row.model_dump()))
+                )
+            else:
+                raise exc.internal(
+                    "Analytics ingest rows must be Pydantic model instances."
+                )
+            accepted += 1
+
+        with self.state.lock:
+            log = self.state.analytics_ingest_log.setdefault(self._route(), [])
+            log.extend(payloads)
+
+        return AnalyticsAppendResult(accepted=accepted)

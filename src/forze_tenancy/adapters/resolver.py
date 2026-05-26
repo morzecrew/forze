@@ -5,7 +5,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.tenancy import TenantIdentity, TenantResolverPort
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from ..application.specs import principal_tenant_binding_spec, tenant_spec
 from ..domain.models.principal_tenant_binding import ReadPrincipalTenantBinding
@@ -29,27 +29,42 @@ class TenantResolverAdapter(TenantResolverPort):
 
     def __attrs_post_init__(self) -> None:
         if self.binding_qry.spec.name != principal_tenant_binding_spec.name:
-            raise CoreError("binding_qry spec must match principal_tenant_binding_spec")
+            raise exc.internal(
+                "binding_qry spec must match principal_tenant_binding_spec"
+            )
 
         if (
             self.tenant_qry is not None
             and self.tenant_qry.spec.name != tenant_spec.name
         ):
-            raise CoreError("tenant_qry spec must match tenant_spec")
+            raise exc.internal("tenant_qry spec must match tenant_spec")
 
     # ....................... #
 
     async def resolve_from_principal(
         self,
         principal_id: UUID,
+        *,
+        requested_tenant_id: UUID | None = None,
     ) -> TenantIdentity | None:
+        values: dict[str, UUID] = {"principal_id": principal_id}
+
+        if requested_tenant_id is not None:
+            values["tenant_id"] = requested_tenant_id
+
         page = await self.binding_qry.find_many(
-            filters={"$values": {"principal_id": principal_id}},
-            pagination={"limit": 1},
+            filters={"$values": values},
+            pagination={"limit": 2},
         )
 
         if not page.hits:
             return None
+
+        if requested_tenant_id is None and len(page.hits) > 1:
+            raise exc.authentication(
+                "Tenant identity is ambiguous for this principal",
+                code="tenant_ambiguous",
+            )
 
         bind = page.hits[0]
         tid = bind.tenant_id

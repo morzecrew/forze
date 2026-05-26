@@ -7,6 +7,7 @@ require_psycopg()
 # ....................... #
 
 from typing import Any, Mapping, Self, Sequence, final
+from uuid import UUID
 
 import attrs
 import orjson
@@ -22,9 +23,9 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenancyMixin
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import pydantic_field_names
+from forze.base.serialization import pydantic_field_names, pydantic_validate
 from forze.domain.constants import ID_FIELD
 
 from ..introspect import PostgresColumnTypes, PostgresIntrospector, PostgresType
@@ -86,11 +87,11 @@ class PostgresQualifiedName:
 
         :param x: Qualified name string.
         :returns: Qualified name.
-        :raises: :class:`CoreError` if the string is not in the correct format.
+        :raises: :class:`exc.internal` if the string is not in the correct format.
         """
 
         if "." not in x:
-            raise CoreError(f"Invalid qualified name: {x}")
+            raise exc.internal(f"Invalid qualified name: {x}")
 
         schema, name = x.split(".", 1)
         return cls(schema=schema, name=name)
@@ -140,9 +141,13 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         cap = self.find_many_implicit_limit
 
         if cap is not None and cap < 1:
-            raise CoreError("find_many_implicit_limit must be at least 1 when set")
+            raise exc.internal("find_many_implicit_limit must be at least 1 when set")
 
-        limits = self.filter_limits if self.filter_limits is not None else QueryFilterLimits()
+        limits = (
+            self.filter_limits
+            if self.filter_limits is not None
+            else QueryFilterLimits()
+        )
         object.__setattr__(
             self,
             "filter_parser",
@@ -297,7 +302,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
         """Build a SQL expression for selecting fields from a table."""
 
         if return_fields is not None and return_type is not None:
-            raise CoreError(
+            raise exc.internal(
                 "Fields and model for mapping cannot be specified simultaneously"
             )
 
@@ -314,7 +319,7 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
         #!? explicitly exclude bad fields or not ?!
         if bad:
-            raise CoreError(f"Invalid fields: {bad}")
+            raise exc.internal(f"Invalid fields: {bad}")
 
         return sql.SQL(", ").join(
             sql.Identifier(f) if table_alias is None else sql.Identifier(table_alias, f)
@@ -392,5 +397,96 @@ class PostgresGateway[M: BaseModel](TenancyMixin):
 
             if create:
                 payload = self._add_tenant_id(payload)
+
+        return out
+
+    # ....................... #
+
+    async def _fetch_domain_by_pk(
+        self,
+        pk: UUID,
+        *,
+        for_update: bool = False,
+    ) -> M:
+        """Load a domain row from the write relation inside the current transaction."""
+
+        where = sql.SQL("{pk} = {val}").format(
+            pk=self.ident_pk(),
+            val=sql.Placeholder(),
+        )
+        params: list[Any] = [pk]
+        where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]
+        lock_sql = sql.SQL(" FOR UPDATE") if for_update else sql.SQL("")
+
+        stmt = sql.SQL("SELECT {ret} FROM {table} WHERE {where}{lock}").format(
+            ret=self.return_clause(),
+            table=self.source_qname.ident(),
+            where=where,
+            lock=lock_sql,
+        )
+
+        row = await self.client.fetch_one(
+            stmt,
+            params,
+            row_factory="dict",
+            commit=False,
+        )
+
+        if row is None:
+            raise exc.not_found(f"Record not found: {pk!s}")
+
+        return pydantic_validate(self.model_type, row)
+
+    # ....................... #
+
+    async def _fetch_domains_by_pks(
+        self,
+        pks: Sequence[UUID],
+        *,
+        for_update: bool = False,
+    ) -> Sequence[M]:
+        """Load domain rows for *pks* from the write relation, preserving input order."""
+
+        if not pks:
+            return []
+
+        where = sql.SQL("{pk} = ANY({arr})").format(
+            pk=self.ident_pk(),
+            arr=sql.Placeholder(),
+        )
+        params: list[Any] = [list(pks)]
+        where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]
+        lock_sql = sql.SQL(" FOR UPDATE") if for_update else sql.SQL("")
+
+        stmt = sql.SQL("SELECT {ret} FROM {table} WHERE {where}{lock}").format(
+            ret=self.return_clause(),
+            table=self.source_qname.ident(),
+            where=where,
+            lock=lock_sql,
+        )
+
+        rows = await self.client.fetch_all(
+            stmt,
+            params,
+            row_factory="dict",
+            commit=False,
+        )
+
+        by_id: dict[UUID, JsonDict] = {}
+
+        for row in rows:
+            raw_id = row[ID_FIELD]
+            doc_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+            by_id[doc_id] = row
+
+        out: list[M] = []
+
+        for pk in pks:
+            row_by_id = by_id.get(pk)
+
+            if row_by_id is None:
+                raise exc.not_found(f"Record not found: {pk!s}")
+
+            out.append(pydantic_validate(self.model_type, row_by_id))
 
         return out

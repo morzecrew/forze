@@ -1,4 +1,4 @@
-from .execution import ExecutionContext
+from .execution import ExecutionContext, ExecutionContextFactory
 from .invocation import InvocationMetadata
 
 # ----------------------- #
@@ -6,4 +6,5 @@ from .invocation import InvocationMetadata
 __all__ = [
     "ExecutionContext",
     "InvocationMetadata",
+    "ExecutionContextFactory",
 ]

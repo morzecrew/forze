@@ -92,25 +92,19 @@ Stages are explicit value objects from `forze.application.contracts.execution`:
 
 Each step carries an `id`, a `factory(ctx)` that returns the callable hook, and optional capability metadata (see [Capability execution](capability-execution.md)).
 
-Example authz as a `BeforeStep`:
+Example authz as a `BeforeStep` (prefer the built-in helper):
 
     :::python
     from forze.application.contracts.authz import AuthzSpec
-    from forze.application.contracts.authz.ports import AuthzPort
-    from forze.application.contracts.execution import BeforeStep
+    from forze.application.hooks.authz import authorize_before_step
 
-    def authz_before_factory(ctx, *, authz: AuthzPort, permission: str):
-        async def _before(_args) -> None:
-            identity = ctx.inv.get_authn()
-            if identity is None or not await authz.permits(identity, permission):
-                raise PermissionError(permission)
-        return _before
-
-    step = BeforeStep(
-        id="authz",
-        factory=lambda ctx: authz_before_factory(ctx, authz=..., permission="projects.write"),
-        requires=("authn.principal",),
+    step = authorize_before_step(
+        step_id="authz",
+        spec=AuthzSpec(name="main"),
+        action="projects.write",
     )
+
+List/search hardening uses `document_scope_wrap_step` on the same plan — see [Authorization](authorization.md).
 
 ## Resolve and inspect
 

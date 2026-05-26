@@ -6,13 +6,14 @@ from uuid import UUID
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.querying.pagination.cursor_token import (
     decode_keyset_v1,
     encode_keyset_v1,
     normalize_sorts_with_id,
     row_value_for_sort_key,
 )
-from forze.base.errors import CoreError
 from forze.domain.constants import ID_FIELD
 
 
@@ -33,12 +34,12 @@ def test_normalize_sorts_single_direction_appends_id_tiebreaker() -> None:
 
 
 def test_normalize_sorts_mixed_directions_rejected() -> None:
-    with pytest.raises(CoreError, match="all sort directions"):
+    with pytest.raises(CoreException, match="all sort directions"):
         normalize_sorts_with_id({"a": "asc", "b": "desc"})
 
 
 def test_normalize_sorts_invalid_direction() -> None:
-    with pytest.raises(CoreError, match="Invalid sort direction"):
+    with pytest.raises(CoreException, match="Invalid sort direction"):
         normalize_sorts_with_id({"name": "sideways"})  # type: ignore[dict-item]
 
 
@@ -63,14 +64,14 @@ def test_encode_decode_roundtrip_json_types() -> None:
 
 
 def test_encode_keyset_misaligned_raises() -> None:
-    with pytest.raises(CoreError, match="aligned"):
+    with pytest.raises(CoreException, match="aligned"):
         encode_keyset_v1(sort_keys=["a"], directions=["asc", "asc"], values=[1])
-    with pytest.raises(CoreError, match="aligned"):
+    with pytest.raises(CoreException, match="aligned"):
         encode_keyset_v1(sort_keys=[], directions=[], values=[])
 
 
 def test_decode_keyset_invalid_base64() -> None:
-    with pytest.raises(CoreError, match="Invalid cursor token"):
+    with pytest.raises(CoreException, match="Invalid cursor token"):
         decode_keyset_v1("not-valid-base64!!!")
 
 
@@ -80,7 +81,7 @@ def test_decode_keyset_wrong_version() -> None:
 
     raw = json.dumps({"v": 99, "k": ["a"], "d": ["asc"], "x": [1]}).encode()
     token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    with pytest.raises(CoreError, match="Invalid cursor token"):
+    with pytest.raises(CoreException, match="Invalid cursor token"):
         decode_keyset_v1(token)
 
 
@@ -90,7 +91,7 @@ def test_decode_keyset_invalid_direction_in_payload() -> None:
 
     raw = json.dumps({"v": 1, "k": ["a"], "d": ["sideways"], "x": [1]}).encode()
     token = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    with pytest.raises(CoreError, match="Invalid cursor token"):
+    with pytest.raises(CoreException, match="Invalid cursor token"):
         decode_keyset_v1(token)
 
 

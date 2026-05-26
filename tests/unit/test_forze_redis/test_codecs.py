@@ -3,11 +3,12 @@
 from datetime import datetime
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
-from forze_redis.adapters.codecs import RedisPubSubCodec, RedisStreamCodec
 from forze.base.serialization import PydanticRecordMappingCodec
+from forze_redis.adapters.codecs import RedisPubSubCodec, RedisStreamCodec
 
 
 class _M(BaseModel):
@@ -17,14 +18,14 @@ class _M(BaseModel):
 def test_pubsub_codec_decode_non_object_json_raises() -> None:
     codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_M))
 
-    with pytest.raises(CoreError, match="invalid payload"):
+    with pytest.raises(CoreException, match="invalid payload"):
         codec.decode("t", b"[1,2,3]")
 
 
 def test_pubsub_codec_decode_payload_not_string_raises() -> None:
     codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_M))
 
-    with pytest.raises(CoreError, match="no payload"):
+    with pytest.raises(CoreException, match="no payload"):
         codec.decode("t", b'{"payload": 42}')
 
 
@@ -61,5 +62,5 @@ def test_stream_codec_decode_roundtrip_with_timestamp() -> None:
 def test_stream_codec_decode_missing_payload_raises() -> None:
     codec = RedisStreamCodec(payload_codec=PydanticRecordMappingCodec(_M))
 
-    with pytest.raises(CoreError, match="no payload"):
+    with pytest.raises(CoreException, match="no payload"):
         codec.decode("s", "0-1", {b"type": b"x"})

@@ -11,6 +11,11 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from forze.application.contracts.document.types import (
+    RowLockMode,
+    log_non_postgres_lock_degrade,
+    row_lock_requires_transaction,
+)
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -21,7 +26,7 @@ from forze.application.contracts.querying import (
     decode_keyset_v1,
     normalize_sorts_with_id,
 )
-from forze.base.errors import CoreError, NotFoundError, ValidationError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate, pydantic_validate_many
 from forze.domain.constants import ID_FIELD
@@ -54,74 +59,24 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
     an alternative model type.
     """
 
-    @overload
     async def get(
         self,
         pk: UUID,
         *,
-        for_update: bool = ...,
-        return_model: None = ...,
-        return_fields: None = ...,
+        for_update: RowLockMode = False,
     ) -> M:
-        """Fetch a document by primary key as the gateway model."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> T:
-        """Fetch a document by primary key validated against *return_model*."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> JsonDict:
-        """Fetch a document by primary key projected to *return_fields*."""
-        ...
-
-    @overload
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = ...,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never:
-        """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
-
-    async def get(
-        self,
-        pk: UUID,
-        *,
-        for_update: bool = False,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> M | T | JsonDict:
         """Fetch a single document by primary key.
 
-        When *for_update* is ``True``, an active transaction is required.
+        When *for_update* is not ``False``, an active transaction is required.
+        ``"nowait"`` and ``"skip_locked"`` are degraded to a transactional read.
 
         :param pk: Document primary key.
-        :param for_update: Require a transaction context for pessimistic reads.
-        :param return_model: Optional alternative Pydantic model for validation.
-        :param return_fields: Optional field subset to project.
+        :param for_update: Pessimistic read / transactional read mode.
         :raises NotFoundError: If no document matches the primary key.
         """
 
-        if for_update:
+        if row_lock_requires_transaction(for_update):
+            log_non_postgres_lock_degrade(for_update, backend="mongo")
             self.client.require_transaction()
 
         filters = {"_id": self._storage_pk(pk)}
@@ -130,80 +85,22 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         raw = await self.client.find_one(
             await self.coll(),
             filters,
-            projection=self.render_projection(return_fields),
+            projection=self.render_projection(None),
         )
 
         if raw is None:
-            raise NotFoundError(f"Record not found: {pk}")
+            raise exc.not_found(f"Record not found: {pk}")
 
         data = self._from_storage_doc(raw)
-
-        if return_model is not None:
-            return pydantic_validate(return_model, data)
-
-        if return_fields is not None:
-            return self.return_subset(data, return_fields)
 
         return pydantic_validate(self.model_type, data)
 
     # ....................... #
 
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: None = ...,
-    ) -> list[M]:
-        """Fetch multiple documents as the gateway model."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: None = ...,
-    ) -> list[T]:
-        """Fetch multiple documents validated against *return_model*."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: None = ...,
-        return_fields: Sequence[str],
-    ) -> list[JsonDict]:
-        """Fetch multiple documents projected to *return_fields*."""
-        ...
-
-    @overload
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T],
-        return_fields: Sequence[str],
-    ) -> Never:
-        """Invalid combination; specifying both *return_model* and *return_fields* is unsupported."""
-        ...
-
-    async def get_many(
-        self,
-        pks: Sequence[UUID],
-        *,
-        return_model: type[T] | None = None,
-        return_fields: Sequence[str] | None = None,
-    ) -> list[M] | list[T] | list[JsonDict]:
+    async def get_many(self, pks: Sequence[UUID]) -> list[M]:
         """Fetch multiple documents by primary key, preserving input order.
 
         :param pks: Primary keys to fetch.
-        :param return_model: Optional alternative Pydantic model.
-        :param return_fields: Optional field subset to project.
         :raises NotFoundError: If any primary key is missing.
         """
 
@@ -217,7 +114,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         rows = await self.client.find_many(
             await self.coll(),
             filters,
-            projection=self.render_projection(return_fields),
+            projection=self.render_projection(None),
         )
 
         by_pk: dict[str, JsonDict] = {}
@@ -229,15 +126,9 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         missing = [pk for pk in pks if self._storage_pk(pk) not in by_pk]
 
         if missing:
-            raise NotFoundError(f"Some records not found: {missing}")
+            raise exc.not_found(f"Some records not found: {missing}")
 
         ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
-
-        if return_model is not None:
-            return pydantic_validate_many(return_model, ordered)
-
-        if return_fields is not None:
-            return [self.return_subset(row, return_fields) for row in ordered]
 
         return pydantic_validate_many(self.model_type, ordered)
 
@@ -248,7 +139,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: None = ...,
     ) -> M | None:
@@ -260,7 +151,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: None = ...,
     ) -> T | None:
@@ -272,7 +163,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: None = ...,
         return_fields: Sequence[str],
     ) -> JsonDict | None:
@@ -284,7 +175,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = ...,
+        for_update: RowLockMode = ...,
         return_model: type[T],
         return_fields: Sequence[str],
     ) -> Never:
@@ -295,7 +186,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]
         *,
-        for_update: bool = False,
+        for_update: RowLockMode = False,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> M | T | JsonDict | None:
@@ -309,7 +200,8 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         :param return_fields: Optional field subset to project.
         """
 
-        if for_update:
+        if row_lock_requires_transaction(for_update):
+            log_non_postgres_lock_degrade(for_update, backend="mongo")
             self.client.require_transaction()
 
         query = self.render_filters(filters)
@@ -470,7 +362,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
             )
 
         if not filters and limit is None:
-            raise ValidationError("Filters or limit must be provided")
+            raise exc.precondition("Filters or limit must be provided")
 
         query = self.render_filters(filters, parsed=parsed)
         rows = await self.client.find_many(
@@ -508,7 +400,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         """Find aggregate rows."""
 
         if return_fields is not None:
-            raise CoreError("Aggregates cannot be combined with return_fields")
+            raise exc.internal("Aggregates cannot be combined with return_fields")
 
         match = self.render_filters(filters, parsed=parsed)
         parsed_, pipeline = self.renderer.render_aggregates(
@@ -620,7 +512,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
-            raise CoreError(
+            raise exc.internal(
                 "Cursor pagination: pass at most one of 'after' or 'before'"
             )
 
@@ -628,7 +520,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         lim: int = 10 if limit_raw is None else int(cast(Any, limit_raw))  # type: ignore[has-type, assignment]
 
         if lim < 1:
-            raise CoreError("Cursor pagination 'limit' must be positive")
+            raise exc.internal("Cursor pagination 'limit' must be positive")
 
         use_before = c.get("before") is not None
         use_after = c.get("after") is not None
@@ -636,7 +528,7 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
         normalized = normalize_sorts_with_id(sorts)
 
         if [k for k, _ in normalized] != [ID_FIELD] or len(normalized) != 1:
-            raise CoreError(
+            raise exc.internal(
                 "Mongo find_many_with_cursor (v1) requires sorting only by primary key: "
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
             )
@@ -657,15 +549,15 @@ class MongoReadGateway[M: BaseModel](MongoGateway[M]):
                     "desc",
                 )
             ):
-                raise CoreError("Invalid cursor for current sort")
+                raise exc.internal("Invalid cursor for current sort")
 
             if str(td[0]).lower() != ("asc" if _id_asc else "desc"):
-                raise CoreError("Cursor does not match current sort order")
+                raise exc.internal("Cursor does not match current sort order")
 
             _rid = str(tv[0]) if len(tv) == 1 else None
 
             if not _rid:
-                raise CoreError("Invalid cursor for current sort")
+                raise exc.internal("Invalid cursor for current sort")
 
             if use_after and _id_asc:
                 seek = {"_id": {"$gt": _rid}}

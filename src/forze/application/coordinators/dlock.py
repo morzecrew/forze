@@ -3,11 +3,11 @@ import contextlib
 import secrets
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncGenerator, Callable
 
 import attrs
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 
 from .._logger import logger
 from ..contracts.dlock import DistributedLockCommandPort
@@ -40,7 +40,7 @@ class DistributedLockCoordinator:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, key: str) -> AsyncIterator[bool]:
+    async def scope(self, key: str) -> AsyncGenerator[bool]:
         loop = asyncio.get_running_loop()
 
         deadline = (
@@ -93,7 +93,7 @@ class DistributedLockCoordinator:
         acquired = await try_acquire_until_deadline()
 
         if not acquired:
-            raise CoreError("Failed to acquire distributed lock")
+            raise exc.internal("Failed to acquire distributed lock")
 
         extend_task: asyncio.Task[Any] | None = None
         stop_event = asyncio.Event()
@@ -151,7 +151,7 @@ class DistributedLockCoordinator:
                 pass
 
             if extend_errors:
-                raise CoreError(
+                raise exc.internal(
                     "Failed to extend distributed lock",
                     details={"error": str(extend_errors[0])},
                 )

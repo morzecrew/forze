@@ -2,7 +2,9 @@
 
 from typing import Sequence
 
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
+
+# ----------------------- #
 
 
 def normalize_hub_fk_columns(value: str | Sequence[str]) -> tuple[str, ...]:
@@ -11,9 +13,9 @@ def normalize_hub_fk_columns(value: str | Sequence[str]) -> tuple[str, ...]:
     cols: tuple[str, ...] = (value,) if isinstance(value, str) else tuple(value)
 
     if not cols:
-        raise CoreError("hub_fk must name at least one column.")
+        raise exc.internal("hub_fk must name at least one column.")
 
     if len(cols) != len(set(cols)):
-        raise CoreError("hub_fk columns must be unique within a leg.")
+        raise exc.internal("hub_fk columns must be unique within a leg.")
 
     return cols

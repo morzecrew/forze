@@ -2,7 +2,6 @@ import pytest
 
 from forze.domain.models import BaseDTO, CoreModel
 
-
 def test_core_model_uses_common_config() -> None:
     class Sample(CoreModel):
         value: int
@@ -11,7 +10,6 @@ def test_core_model_uses_common_config() -> None:
     dumped = s.model_dump()
     # config uses attribute docstrings and stable encoders; basic behavior should work
     assert dumped == {"value": 1}
-
 
 def test_base_dto_is_frozen() -> None:
     class SampleDTO(BaseDTO):

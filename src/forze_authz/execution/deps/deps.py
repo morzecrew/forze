@@ -5,17 +5,19 @@ from typing import final
 import attrs
 
 from forze.application.contracts.authz import (
-    AuthzPort,
+    AuthzDecisionPort,
+    AuthzScopePort,
     AuthzSpec,
-    EffectiveGrantsPort,
+    GrantQueryPort,
     PrincipalRegistryPort,
     RoleAssignmentPort,
 )
 from forze.application.execution import ExecutionContext
 
 from ...adapters import (
-    AuthzAdapter,
-    EffectiveGrantsAdapter,
+    AuthzDecisionAdapter,
+    AuthzScopeAdapter,
+    GrantQueryAdapter,
     PrincipalRegistryAdapter,
     RoleAssignmentAdapter,
 )
@@ -33,6 +35,7 @@ from ...application.specs import (
 )
 from ...services.grants import AuthzGrantResolver, AuthzGrantResolverDeps
 from .configs import AuthzSharedServices
+
 
 # ----------------------- #
 
@@ -61,22 +64,15 @@ def _grant_resolver(ctx: ExecutionContext) -> AuthzGrantResolver:
 class ConfigurablePrincipalRegistry:
     """Build :class:`~forze_authz.adapters.principal_registry.PrincipalRegistryAdapter`."""
 
-    # ....................... #
-
     def __call__(
         self,
         ctx: ExecutionContext,
         spec: AuthzSpec,
     ) -> PrincipalRegistryPort:
-        _ = spec
-
         return PrincipalRegistryAdapter(
             principal_qry=ctx.doc.query(policy_principal_spec),
             principal_cmd=ctx.doc.command(policy_principal_spec),
         )
-
-
-# ....................... #
 
 
 @final
@@ -84,63 +80,64 @@ class ConfigurablePrincipalRegistry:
 class ConfigurableRoleAssignment:
     """Build :class:`~forze_authz.adapters.role_assignment.RoleAssignmentAdapter`."""
 
-    # ....................... #
-
     def __call__(
         self,
         ctx: ExecutionContext,
         spec: AuthzSpec,
     ) -> RoleAssignmentPort:
-        _ = spec
-
         return RoleAssignmentAdapter(
+            spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
             role_qry=ctx.doc.query(role_definition_spec),
-            pr_binding_qry=ctx.doc.query(principal_role_binding_spec),
             pr_binding_cmd=ctx.doc.command(principal_role_binding_spec),
+            pr_binding_qry=ctx.doc.query(principal_role_binding_spec),
             resolver=_grant_resolver(ctx),
         )
 
 
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableEffectiveGrants:
-    """Build :class:`~forze_authz.adapters.effective_grants.EffectiveGrantsAdapter`."""
-
-    # ....................... #
+class ConfigurableGrantQuery:
+    """Build :class:`~forze_authz.adapters.effective_grants.GrantQueryAdapter`."""
 
     def __call__(
         self,
         ctx: ExecutionContext,
         spec: AuthzSpec,
-    ) -> EffectiveGrantsPort:
-        _ = spec
-
-        return EffectiveGrantsAdapter(
+    ) -> GrantQueryPort:
+        return GrantQueryAdapter(
+            spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx),
         )
 
 
-# ....................... #
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConfigurableAuthzDecision:
+    """Build :class:`~forze_authz.adapters.authorization.AuthzDecisionAdapter`."""
+
+    shared: AuthzSharedServices
+
+    def __call__(self, ctx: ExecutionContext, spec: AuthzSpec) -> AuthzDecisionPort:
+        return AuthzDecisionAdapter(
+            spec=spec,
+            principal_qry=ctx.doc.query(policy_principal_spec),
+            resolver=_grant_resolver(ctx),
+            policy=self.shared.policy,
+        )
 
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableAuthz:
-    """Build :class:`~forze_authz.adapters.authorization.AuthzAdapter`."""
+class ConfigurableAuthzScope:
+    """Build :class:`~forze_authz.adapters.scoping.AuthzScopeAdapter`."""
 
     shared: AuthzSharedServices
 
-    # ....................... #
-
-    def __call__(self, ctx: ExecutionContext, spec: AuthzSpec) -> AuthzPort:
-        _ = spec
-
-        return AuthzAdapter(
+    def __call__(self, ctx: ExecutionContext, spec: AuthzSpec) -> AuthzScopePort:
+        return AuthzScopeAdapter(
+            spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx),
             policy=self.shared.policy,

@@ -12,7 +12,7 @@ from forze.application.contracts.execution import (
     OnFailureStep,
     OnSuccessStep,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .scopes import Scope, TransactionScope
@@ -135,7 +135,7 @@ class ScopeBinder[P: _Parent, R]:
             return new_parent
 
         if self._root_commit_fn is None:
-            raise CoreError(
+            raise exc.internal(
                 "Cannot finish a scope binder without a root commit function"
             )
 

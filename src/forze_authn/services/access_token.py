@@ -5,7 +5,7 @@ from uuid import UUID
 import attrs
 import jwt
 
-from forze.base.errors import AuthenticationError
+from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 
 # ----------------------- #
@@ -104,13 +104,13 @@ class AccessTokenService:
             return AccessTokenClaims(**res)  # type: ignore[typeddict-item]
 
         except jwt.ExpiredSignatureError:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Access token expired",
                 code="access_token_expired",
             )
 
         except jwt.InvalidTokenError:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Invalid access token",
                 code="invalid_access_token",
             )

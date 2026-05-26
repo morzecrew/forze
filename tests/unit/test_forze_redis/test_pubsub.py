@@ -3,12 +3,13 @@ from typing import Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
-from forze.base.errors import CoreError
+from forze.base.serialization import PydanticRecordMappingCodec
 from forze_redis.adapters.pubsub import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.kernel.platform.client import RedisClient
-from forze.base.serialization import PydanticRecordMappingCodec
 
 
 class _Payload(BaseModel):
@@ -38,7 +39,7 @@ def test_pubsub_codec_encode_decode_roundtrip() -> None:
 def test_pubsub_codec_decode_without_payload_raises() -> None:
     codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
 
-    with pytest.raises(CoreError, match="has no payload"):
+    with pytest.raises(CoreException, match="has no payload"):
         codec.decode("orders", b'{"type":"created"}')
 
 
@@ -46,7 +47,10 @@ def test_pubsub_codec_decode_without_payload_raises() -> None:
 async def test_pubsub_adapter_publish_calls_client_publish() -> None:
     client = Mock(spec=RedisClient)
     client.publish = AsyncMock(return_value=1)
-    adapter = RedisPubSubAdapter(client=client, codec=RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload)))
+    adapter = RedisPubSubAdapter(
+        client=client,
+        codec=RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload)),
+    )
 
     await adapter.publish("orders", _Payload(value="hello"))
 

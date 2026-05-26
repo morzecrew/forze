@@ -1,6 +1,8 @@
 """Unit tests for search contract (SearchSpec, SearchQueryDepKey)."""
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -10,7 +12,6 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
     SearchSpec,
 )
-from forze.base.errors import CoreError
 
 # ----------------------- #
 
@@ -38,7 +39,7 @@ class TestSearchSpec:
         assert list(spec.fields) == ["title"]
 
     def test_duplicate_fields_raise(self) -> None:
-        with pytest.raises(CoreError, match="unique"):
+        with pytest.raises(CoreException, match="unique"):
             SearchSpec(
                 name="test",
                 model_type=_MinimalSearchModel,
@@ -46,7 +47,7 @@ class TestSearchSpec:
             )
 
     def test_default_weights_must_cover_all_fields(self) -> None:
-        with pytest.raises(CoreError, match="Default weights"):
+        with pytest.raises(CoreException, match="Default weights"):
             SearchSpec(
                 name="test",
                 model_type=_MinimalSearchModel,
@@ -88,7 +89,7 @@ class TestHubSearchSpec:
             model_type=_MinimalSearchModel,
             fields=["title"],
         )
-        with pytest.raises(CoreError, match="distinct name"):
+        with pytest.raises(CoreException, match="distinct name"):
             HubSearchSpec(
                 name="h",
                 model_type=_MinimalSearchModel,
@@ -137,7 +138,7 @@ class TestFederatedSearchSpec:
             model_type=_MinimalSearchModel,
             fields=["title"],
         )
-        with pytest.raises(CoreError, match="distinct name"):
+        with pytest.raises(CoreException, match="distinct name"):
             FederatedSearchSpec(name="fed", members=(a, b))
 
 

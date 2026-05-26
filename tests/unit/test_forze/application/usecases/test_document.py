@@ -1,5 +1,6 @@
 """Unit tests for forze.application.handlers.document."""
 
+from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock
 
 from uuid import uuid4
@@ -21,11 +22,9 @@ from forze.application.handlers.document.dto import (
     ProjectedCursorListRequestDTO,
     ProjectedListRequestDTO,
 )
-from forze.base.errors import NotFoundError
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 
 # ----------------------- #
-
 
 class TestGetDocument:
     @pytest.mark.asyncio
@@ -50,9 +49,8 @@ class TestGetDocument:
         stub_document_port: DocumentQueryPort,
     ) -> None:
         handler = GetDocument(doc=stub_document_port)
-        with pytest.raises(NotFoundError, match="not found"):
+        with pytest.raises(CoreException, match="not found"):
             await handler(DocumentIdDTO(id=uuid4()))
-
 
 class TestListDocuments:
     @pytest.mark.asyncio
@@ -88,7 +86,6 @@ class TestListDocuments:
         await handler(ListRequestDTO(page=1, size=10))
         mapper.assert_awaited_once()
 
-
 class TestCursorListDocuments:
     @pytest.mark.asyncio
     async def test_cursor_list_returns_cursor_paginated(
@@ -118,7 +115,6 @@ class TestCursorListDocuments:
         await handler(CursorListRequestDTO(limit=5))
         mapper.assert_awaited_once()
 
-
 class TestProjectedCursorListDocuments:
     @pytest.mark.asyncio
     async def test_projected_cursor_list_returns_projection(
@@ -136,7 +132,6 @@ class TestProjectedCursorListDocuments:
             )
         )
         assert "id" in result.hits[0]
-
 
 class TestProjectedListDocuments:
     @pytest.mark.asyncio

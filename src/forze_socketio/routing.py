@@ -13,7 +13,7 @@ from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 # ----------------------- #
@@ -24,7 +24,7 @@ ExecutionContextFactoryPort = Callable[
 ]
 """Factory that builds request-scoped :class:`ExecutionContext` instances."""
 
-HandlerResolverPort = Callable[[ExecutionContext, StrKey], Handler[Any, Any]]
+HandlerResolverPort = Callable[[StrKey, ExecutionContext], Handler[Any, Any]]
 """Resolver that maps operation keys to composed handlers."""
 
 # ....................... #
@@ -153,10 +153,10 @@ class SocketIONamespaceRouter:
 
         :param route: Event mapping configuration.
         :returns: Current router for chaining.
-        :raises CoreError: If the event is already registered.
+        :raises exc.internal: If the event is already registered.
         """
         if route.event in self.__commands:
-            raise CoreError(
+            raise exc.internal(
                 f"Socket.IO event `{route.event}` is already registered for namespace `{self.namespace}`"
             )
 
@@ -226,7 +226,7 @@ class SocketIONamespaceRouter:
                 )
                 ctx = await _resolve_context(context_factory, request)
                 args = _route.parse_payload(payload)
-                op = operation_resolver(ctx, _route.operation)
+                op = operation_resolver(_route.operation, ctx)
                 result = await op(args)
 
                 return _route.parse_ack(result)
@@ -275,10 +275,10 @@ class ForzeSocketIOAdapter:
 
         :param router: Namespace router with command registrations.
         :returns: Current adapter for chaining.
-        :raises CoreError: If namespace was already attached.
+        :raises exc.internal: If namespace was already attached.
         """
         if router.namespace in self.__routers:
-            raise CoreError(
+            raise exc.internal(
                 f"Socket.IO namespace `{router.namespace}` is already attached"
             )
 

@@ -1,0 +1,190 @@
+from typing import Sequence
+
+from fastapi import Request
+
+from forze.application.contracts.authn import (
+    AccessTokenCredentials,
+    ApiKeyCredentials,
+    AuthnDepKey,
+    AuthnPort,
+    AuthnResult,
+)
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution.context import ExecutionContext
+from forze.base.exceptions import exc
+
+from .value_objects import (
+    AuthnIngress,
+    CookieTokenAuthn,
+    HeaderApiKeyAuthn,
+    HeaderTokenAuthn,
+)
+
+# ----------------------- #
+
+
+def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
+    """Split an authorization-style header into ``(scheme, value)`` (or ``(value, None)``)."""
+
+    parts: Sequence[str] = raw.strip(sep).split(maxsplit=1)
+
+    if len(parts) == 1:
+        return parts[0], None
+
+    return parts[0], parts[1]
+
+
+# ....................... #
+
+
+async def _resolve_cookie_token_authn(
+    ingress: CookieTokenAuthn,
+    *,
+    request: Request,
+    ctx: ExecutionContext,
+) -> AuthnResult | None:
+    raw = request.cookies.get(ingress.cookie_name)
+
+    if raw is None or not str(raw).strip():
+        if ingress.required:
+            raise exc.authentication("Authentication credentials are required")
+
+        return None
+
+    creds = AccessTokenCredentials(
+        token=str(raw).strip(),
+        scheme=ingress.scheme,
+    )
+
+    authn: AuthnPort = ctx.deps.resolve_configurable(
+        ctx,
+        AuthnDepKey,
+        ingress.authn_spec,
+        route=ingress.authn_spec.name,
+    )
+
+    return await authn.authenticate_with_token(creds)
+
+
+# ....................... #
+
+
+async def _resolve_header_token_authn(
+    ingress: HeaderTokenAuthn,
+    *,
+    request: Request,
+    ctx: ExecutionContext,
+) -> AuthnResult | None:
+    raw = request.headers.get(ingress.header_name)
+
+    if raw is None or not str(raw).strip():
+        if ingress.required:
+            raise exc.authentication("Authentication credentials are required")
+
+        return None
+
+    scheme, token = _split_authorization(raw)
+
+    if token is None:
+        creds = AccessTokenCredentials(token=scheme)
+
+    else:
+        creds = AccessTokenCredentials(token=token, scheme=scheme)
+
+    #! TODO: add authn convenient deps
+    authn: AuthnPort = ctx.deps.resolve_configurable(
+        ctx,
+        AuthnDepKey,
+        ingress.authn_spec,
+        route=ingress.authn_spec.name,
+    )
+
+    return await authn.authenticate_with_token(creds)
+
+
+# ....................... #
+
+
+async def _resolve_header_api_key_authn(
+    ingress: HeaderApiKeyAuthn,
+    *,
+    request: Request,
+    ctx: ExecutionContext,
+) -> AuthnResult | None:
+    raw = request.headers.get(ingress.header_name)
+
+    if raw is None or not str(raw).strip():
+        if ingress.required:
+            raise exc.authentication("Authentication credentials are required")
+
+        return None
+
+    prefix, key = _split_authorization(raw, sep=":")
+
+    if key is None:
+        creds = ApiKeyCredentials(key=prefix)
+
+    else:
+        creds = ApiKeyCredentials(key=key, prefix=prefix)
+
+    #! TODO: add authn convenient deps
+    authn: AuthnPort = ctx.deps.resolve_configurable(
+        ctx,
+        AuthnDepKey,
+        ingress.authn_spec,
+        route=ingress.authn_spec.name,
+    )
+
+    return await authn.authenticate_with_api_key(creds)
+
+
+# ....................... #
+
+
+async def resolve_authn_ingress(
+    ingress: AuthnIngress,
+    *,
+    request: Request,
+    ctx: ExecutionContext,
+) -> AuthnResult | None:
+    match ingress:
+        case CookieTokenAuthn():
+            return await _resolve_cookie_token_authn(
+                ingress,
+                request=request,
+                ctx=ctx,
+            )
+
+        case HeaderTokenAuthn():
+            return await _resolve_header_token_authn(
+                ingress,
+                request=request,
+                ctx=ctx,
+            )
+
+        case HeaderApiKeyAuthn():
+            return await _resolve_header_api_key_authn(
+                ingress,
+                request=request,
+                ctx=ctx,
+            )
+
+
+# ....................... #
+
+
+async def resolve_tenant_identity(
+    authn: AuthnResult | None,
+    *,
+    request: Request,
+    ctx: ExecutionContext,
+) -> TenantIdentity | None:
+    ten = ctx.tenancy.resolver()
+    resolved: TenantIdentity | None = None
+
+    if ten is not None and authn is not None:
+        resolved = await ten.resolve_from_principal(
+            authn.identity.principal_id,
+        )
+
+    return resolved

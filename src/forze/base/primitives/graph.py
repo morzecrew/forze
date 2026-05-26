@@ -5,7 +5,7 @@ from typing import Any, Callable, Hashable, Iterable, Iterator, cast
 
 import attrs
 
-from forze.base.errors import CoreError
+from ..exceptions import exc
 
 # ----------------------- #
 
@@ -46,7 +46,7 @@ class DirectedAcyclicGraph[T: Hashable]:
             sorter.prepare()
 
         except CycleError as e:
-            raise CoreError(f"Graph contains a cycle: {e}") from e
+            raise exc.internal(f"Graph contains a cycle: {e}") from e
 
     # ....................... #
 
@@ -59,7 +59,7 @@ class DirectedAcyclicGraph[T: Hashable]:
             return tuple(sorter.static_order())
 
         except CycleError as e:
-            raise CoreError(f"Graph contains a cycle: {e}") from e
+            raise exc.internal(f"Graph contains a cycle: {e}") from e
 
     # ....................... #
 
@@ -94,7 +94,7 @@ class DirectedAcyclicGraph[T: Hashable]:
             sorter.prepare()
 
         except CycleError as e:
-            raise CoreError(f"Graph contains a cycle: {e}") from e
+            raise exc.internal(f"Graph contains a cycle: {e}") from e
 
         while sorter.is_active():
             ready = list(sorter.get_ready())
@@ -129,10 +129,10 @@ def build_predecessor_map[T: Hashable](
 
     for a, b in edges:
         if a not in universe or b not in universe:
-            raise CoreError(f"Edge ({a!r}, {b!r}) references unknown node")
+            raise exc.internal(f"Edge ({a!r}, {b!r}) references unknown node")
 
         if a == b:
-            raise CoreError(f"Edge ({a!r}, {b!r}) is a self-loop")
+            raise exc.internal(f"Edge ({a!r}, {b!r}) is a self-loop")
 
         u, v = (a, b) if u_before_v else (b, a)
         preds[v].add(u)

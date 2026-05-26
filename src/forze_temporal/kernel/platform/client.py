@@ -12,7 +12,7 @@ from temporalio.client import Client, WorkflowHandle
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from forze.base.errors import InfrastructureError
+from forze.base.exceptions import exc
 
 from .port import TemporalClientPort
 from .value_objects import TemporalConfig
@@ -59,7 +59,7 @@ class TemporalClient(TemporalClientPort):
 
     def __require_client(self) -> Client:
         if self.__client is None:
-            raise InfrastructureError("Temporal client is not initialized")
+            raise exc.internal("Temporal client is not initialized")
 
         return self.__client
 

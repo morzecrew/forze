@@ -29,7 +29,15 @@ Canonical authenticated subject inside Forze; everything downstream of the bound
 | Field | Type | Purpose |
 |-------|------|---------|
 | `principal_id` | `UUID` | Internal principal identifier; aligns with `forze.application.contracts.authz.PrincipalRef`. |
-| `tenant_id` | `UUID \| None` | When set, the credential or token was bound to this tenant scope. |
+
+### AuthnResult
+
+Boundary authn result returned by `AuthnPort`.
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `identity` | `AuthnIdentity` | Canonical authenticated principal. |
+| `issuer_tenant_hint` | `str \| None` | Non-authoritative tenant hint asserted by the credential issuer. |
 
 ### VerifiedAssertion
 
@@ -40,7 +48,7 @@ Vendor-flavored proof produced by a `*VerifierPort` and consumed by a `Principal
 | `issuer` | `str` | Stable identifier of the authority (e.g. `"forze:jwt"`, OIDC `iss` URL). |
 | `subject` | `str` | Raw external subject identifier (string form). |
 | `audience` | `str \| None` | Optional `aud` value the assertion is bound to. |
-| `tenant_hint` | `str \| None` | Raw tenant identifier as provided by the issuer. |
+| `issuer_tenant_hint` | `str \| None` | Raw tenant identifier asserted by the issuer; tenancy resolution may validate or use it. |
 | `issued_at` / `expires_at` | `datetime \| None` | Optional timestamps. |
 | `claims` | `Mapping[str, Any]` | Opaque claim snapshot for resolvers and audit trails. |
 
@@ -69,13 +77,13 @@ Raw credential value objects accepted by the orchestrator:
 
 ### AuthnPort
 
-Orchestration facade; one method per credential family. Default implementation: `forze_authn.AuthnOrchestrator`.
+Orchestration facade; one method per credential family. Default implementation: `forze_authn.AuthnOrchestrator`. Each method returns `AuthnResult`, not bare `AuthnIdentity`, so the boundary can carry issuer-originated tenant hints into tenancy resolution without storing them on the canonical authenticated principal.
 
 | Method | Returns |
 |--------|---------|
-| `authenticate_with_password(PasswordCredentials)` | `AuthnIdentity` |
-| `authenticate_with_token(AccessTokenCredentials)` | `AuthnIdentity` |
-| `authenticate_with_api_key(ApiKeyCredentials)` | `AuthnIdentity` |
+| `authenticate_with_password(PasswordCredentials)` | `AuthnResult` |
+| `authenticate_with_token(AccessTokenCredentials)` | `AuthnResult` |
+| `authenticate_with_api_key(ApiKeyCredentials)` | `AuthnResult` |
 
 Invoking a method whose family is not in `AuthnSpec.enabled_methods` raises `AuthenticationError(code="method_disabled")`.
 
@@ -183,7 +191,7 @@ Convenience factory: `AuthnOrchestrator.from_spec(spec, *, resolver, password_ve
 
 | Resolver | Storage | Behavior |
 |----------|---------|----------|
-| `JwtNativeUuidResolver` | None | Trusts `assertion.subject` as a UUID; `tenant_hint` as a UUID when present. |
+| `JwtNativeUuidResolver` | None | Trusts `assertion.subject` as a UUID. |
 | `DeterministicUuidResolver` | None | `principal_id = uuid4({"iss": issuer, "sub": subject})` via `forze.base.primitives.uuid4`. Helper: `derive_principal_id(issuer, subject)`. |
 | `MappingTableResolver` | `IdentityMapping` document | Looks up `(issuer, subject)`; optional just-in-time provisioning when `provision_on_first_sight=True` and a command port is supplied. |
 

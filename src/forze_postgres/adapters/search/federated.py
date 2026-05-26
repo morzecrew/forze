@@ -30,7 +30,7 @@ from forze.application.contracts.search import (
     prepare_federated_search_options,
 )
 from forze.application.coordinators import SearchResultSnapshotCoordinator
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import pydantic_validate_many
 
@@ -91,7 +91,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
 
     def __attrs_post_init__(self) -> None:
         if len(self.legs) != len(self.federated_spec.members):
-            raise CoreError(
+            raise exc.internal(
                 "Federated adapter legs must match FederatedSearchSpec.members length.",
             )
 
@@ -99,7 +99,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             self.legs, self.federated_spec.members, strict=True
         ):
             if leg_member != m.name:
-                raise CoreError(
+                raise exc.internal(
                     f"Federated leg member {leg_member!r} does not match SearchSpec.name {m.name!r}.",
                 )
 
@@ -194,7 +194,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         if return_fields is not None:
-            raise CoreError(
+            raise exc.internal(
                 "Field projection is not supported for federated search "
                 "(``project_search`` / ``project_search_page``). "
                 "Use ``select_search`` / ``select_search_page`` with a ``return_type`` instead.",
@@ -523,7 +523,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     # ....................... #
 
     def _raise_federated_cursor_not_supported(self) -> NoReturn:
-        raise CoreError(
+        raise exc.internal(
             "search_cursor is not implemented for federated (RRF) search; use "
             "search or search_page with limit/offset.",
         )

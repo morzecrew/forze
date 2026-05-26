@@ -1,5 +1,6 @@
 """Unit tests for ``forze_postgres.kernel.gateways.write``."""
 
+from forze.base.exceptions import CoreException
 import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -8,7 +9,6 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.errors import ConcurrencyError, NotFoundError
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.kernel.gateways import (
@@ -19,24 +19,21 @@ from forze_postgres.kernel.gateways import (
 from forze_postgres.kernel.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.platform import PostgresClient
 
-
 class MyDoc(Document):
     name: str
-
 
 class MyCreateDoc(CreateDocumentCmd):
     name: str
 
-
 class MyUpdateDoc(BaseDTO):
     name: str | None = None
-
 
 def _build_gateway() -> (
     tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]
 ):
     client = MagicMock(spec=PostgresClient)
     client.fetch_all = AsyncMock()
+    client.fetch_one = AsyncMock()
     client.gather_concurrency_semaphore = MagicMock(
         return_value=asyncio.Semaphore(8),
     )
@@ -62,7 +59,6 @@ def _build_gateway() -> (
     )
     return gw, client
 
-
 def _row(*, pk: UUID, name: str, ts: datetime) -> dict[str, object]:
     return {
         "id": pk,
@@ -72,14 +68,12 @@ def _row(*, pk: UUID, name: str, ts: datetime) -> dict[str, object]:
         "name": name,
     }
 
-
 def test_adapt_value_for_write_coerces_numeric_and_preserves_null() -> None:
     gw, _ = _build_gateway()
     numeric_t = PostgresType(base="numeric", is_array=False, not_null=False)
 
     assert gw.adapt_value_for_write("12.5", t=numeric_t) == 12.5
     assert gw.adapt_value_for_write(None, t=numeric_t) is None
-
 
 @pytest.mark.asyncio
 async def test_patch_group_sql_includes_column_casts() -> None:
@@ -118,7 +112,6 @@ async def test_patch_group_sql_includes_column_casts() -> None:
     assert '"rev" = v."rev"' in sql_text
     assert "CAST(%s AS numeric)" in sql_text
     assert "CAST(%s AS int4)" in sql_text
-
 
 @pytest.mark.asyncio
 async def test_create_many_batches_and_preserves_parameter_order() -> None:
@@ -167,7 +160,6 @@ async def test_create_many_batches_and_preserves_parameter_order() -> None:
     assert [x.id for x in result] == [id1, id2, id3]
     assert [x.name for x in result] == ["first", "second", "third"]
 
-
 @pytest.mark.asyncio
 async def test_create_many_raises_when_batch_returns_fewer_rows() -> None:
     gw, client = _build_gateway()
@@ -182,15 +174,13 @@ async def test_create_many_raises_when_batch_returns_fewer_rows() -> None:
 
     client.fetch_all.return_value = [_row(pk=id1, name="first", ts=ts)]
 
-    with pytest.raises(ConcurrencyError, match="mismatch in number of rows"):
+    with pytest.raises(CoreException, match="mismatch in number of rows"):
         await gw.create_many(dtos, batch_size=100)
-
 
 @pytest.mark.asyncio
 async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
     gw, client = _build_gateway()
     read = gw.read_gw
-    read.get = AsyncMock()
     read.get_many = AsyncMock()
     ts = datetime(2025, 1, 1, tzinfo=UTC)
     id1 = UUID("11111111-1111-1111-1111-111111111111")
@@ -201,24 +191,18 @@ async def test_ensure_many_skips_conflicts_and_loads_existing() -> None:
         MyCreateDoc(id=id1, created_at=ts, name="try-overwrite"),
         MyCreateDoc(id=id2, created_at=ts, name="inserted"),
     ]
-    client.fetch_all.return_value = [insert_row]
-    read.get_many = AsyncMock(
-        return_value=[
-            MyDoc(
-                id=id1,
-                rev=1,
-                created_at=ts,
-                last_update_at=ts,
-                name=conflict_row["name"],  # type: ignore[arg-type]
-            )
+    client.fetch_all = AsyncMock(
+        side_effect=[
+            [insert_row],
+            [conflict_row],
         ],
     )
     out = await gw.ensure_many(dtos, batch_size=20)
     assert [d.id for d in out] == [id1, id2]
     assert out[0].name == "unchanged"
     assert out[1].name == "inserted"
-    read.get_many.assert_awaited_once_with([id1])
-
+    read.get_many.assert_not_awaited()
+    assert client.fetch_all.await_count == 2
 
 @pytest.mark.asyncio
 async def test_upsert_inserts_or_updates() -> None:
@@ -252,6 +236,13 @@ async def test_upsert_inserts_or_updates() -> None:
         side_effect=[
             new_row,
             None,
+            {
+                "id": id2,
+                "rev": 1,
+                "created_at": ts,
+                "last_update_at": ts,
+                "name": "old",
+            },
             updated_row,
         ]
     )
@@ -266,7 +257,6 @@ async def test_upsert_inserts_or_updates() -> None:
     assert out2.rev == 2
     assert read.get.await_count >= 1
     assert any(call.args[0] == id2 for call in read.get.await_args_list)
-
 
 def _build_tenant_aware_gateway() -> (
     tuple[PostgresWriteGateway[MyDoc, MyCreateDoc, MyUpdateDoc], MagicMock]
@@ -301,7 +291,6 @@ def _build_tenant_aware_gateway() -> (
     )
     return gw, client
 
-
 @pytest.mark.asyncio
 async def test_kill_tenant_aware_uses_rowcount_and_raises_when_missing() -> None:
     gw, client = _build_tenant_aware_gateway()
@@ -313,9 +302,8 @@ async def test_kill_tenant_aware_uses_rowcount_and_raises_when_missing() -> None
     assert client.execute.await_args.kwargs.get("return_rowcount") is True
 
     client.execute = AsyncMock(return_value=0)
-    with pytest.raises(NotFoundError, match="Record not found"):
+    with pytest.raises(CoreException, match="Record not found"):
         await gw.kill(pk)
-
 
 @pytest.mark.asyncio
 async def test_kill_many_tenant_aware_raises_when_rowcount_mismatch() -> None:
@@ -328,9 +316,8 @@ async def test_kill_many_tenant_aware_raises_when_rowcount_mismatch() -> None:
     assert client.execute.await_args.kwargs.get("return_rowcount") is True
 
     client.execute = AsyncMock(return_value=0)
-    with pytest.raises(NotFoundError, match="not accessible"):
+    with pytest.raises(CoreException, match="not accessible"):
         await gw.kill_many(pks)
-
 
 @pytest.mark.asyncio
 async def test_update_tenant_aware_includes_tenant_in_where_params() -> None:

@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import (
     Any,
     AsyncContextManager,
-    AsyncIterator,
+    AsyncGenerator,
     Awaitable,
     Mapping,
     Protocol,
@@ -98,7 +98,7 @@ class RedisClientPort(Protocol):
         channels: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RedisPubSubMessage]:
+    ) -> AsyncGenerator[RedisPubSubMessage]:
         """Yield pub/sub messages until cancelled (async iterator / async generator)."""
         ...  # pragma: no cover
 

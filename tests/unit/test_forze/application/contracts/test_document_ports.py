@@ -4,6 +4,7 @@ Exercises the protocol through MockDocumentAdapter and through direct protocol
 method calls to improve coverage of ports.py.
 """
 
+from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -15,14 +16,12 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
 )
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.base.errors import NotFoundError, ValidationError
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockState
 from forze_mock.adapters import MockDocumentAdapter
 
 # ----------------------- #
-
 
 def _document_adapter() -> MockDocumentAdapter:
     """Create a MockDocumentAdapter for tests."""
@@ -43,18 +42,15 @@ def _document_adapter() -> MockDocumentAdapter:
         domain_model=Document,
     )
 
-
 class _UpdateTitle(BaseDTO):
     """Update DTO with title for update tests."""
 
     title: str | None = None
 
-
 class _CreateWithTitle(CreateDocumentCmd):
     """Create command with title for update tests."""
 
     title: str = ""
-
 
 def _document_adapter_with_title() -> MockDocumentAdapter:
     """Create a MockDocumentAdapter with mutable title for update tests."""
@@ -82,7 +78,6 @@ def _document_adapter_with_title() -> MockDocumentAdapter:
         domain_model=DocWithTitle,
     )
 
-
 class TestDocumentPortProtocolConformance:
     """Verify MockDocumentAdapter conforms to document protocols."""
 
@@ -93,7 +88,6 @@ class TestDocumentPortProtocolConformance:
     def test_mock_adapter_is_document_command_port(self) -> None:
         port = _document_adapter()
         assert isinstance(port, DocumentCommandPort)
-
 
 class TestDocumentQueryPortViaMock:
     """Test DocumentQueryPort contract through MockDocumentAdapter."""
@@ -123,7 +117,7 @@ class TestDocumentQueryPortViaMock:
     @pytest.mark.asyncio
     async def test_get_missing_raises(self) -> None:
         port = _document_adapter()
-        with pytest.raises(NotFoundError, match="not found"):
+        with pytest.raises(CoreException, match="not found"):
             await port.get(uuid4())
 
     @pytest.mark.asyncio
@@ -189,7 +183,6 @@ class TestDocumentQueryPortViaMock:
         assert isinstance(n, int)
         assert n >= 0
 
-
 class TestDocumentCommandPortViaMock:
     """Test DocumentCommandPort contract through MockDocumentAdapter."""
 
@@ -212,7 +205,7 @@ class TestDocumentCommandPortViaMock:
     @pytest.mark.asyncio
     async def test_ensure_requires_id(self) -> None:
         port = _document_adapter()
-        with pytest.raises(ValidationError, match="id"):
+        with pytest.raises(CoreException, match="id"):
             await port.ensure(CreateDocumentCmd())
 
     @pytest.mark.asyncio
@@ -228,7 +221,7 @@ class TestDocumentCommandPortViaMock:
     async def test_ensure_many_requires_distinct_ids(self) -> None:
         port = _document_adapter()
         u = uuid4()
-        with pytest.raises(ValidationError, match="distinct"):
+        with pytest.raises(CoreException, match="distinct"):
             await port.ensure_many(
                 [CreateDocumentCmd(id=u), CreateDocumentCmd(id=u)],
             )
@@ -276,7 +269,7 @@ class TestDocumentCommandPortViaMock:
         cmd = CreateDocumentCmd()
         created = await port.create(cmd)
         await port.kill(created.id)
-        with pytest.raises(NotFoundError):
+        with pytest.raises(CoreException):
             await port.get(created.id)
 
     @pytest.mark.asyncio
@@ -286,7 +279,7 @@ class TestDocumentCommandPortViaMock:
         c1 = await port.create(cmd)
         c2 = await port.create(cmd)
         await port.kill_many([c1.id, c2.id])
-        with pytest.raises(NotFoundError):
+        with pytest.raises(CoreException):
             await port.get(c1.id)
 
     @pytest.mark.asyncio
@@ -425,7 +418,6 @@ class TestDocumentCommandPortViaMock:
             [(c1.id, dr[0].rev), (c2.id, dr[1].rev)],
         )
         assert len(result) == 2
-
 
 class TestDocumentCommandReturnNewViaMock:
     """``return_new=False`` skips returning read models while still persisting."""
@@ -581,7 +573,6 @@ class TestDocumentCommandReturnNewViaMock:
             )
             is None
         )
-
 
 class TestUpdateMatchingViaMock:
     """Bulk updates by filter via :meth:`DocumentCommandPort.update_matching`."""

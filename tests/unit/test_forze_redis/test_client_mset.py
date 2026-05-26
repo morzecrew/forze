@@ -1,9 +1,11 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from forze.base.errors import CoreError
+import pytest
+
+from forze.base.exceptions import CoreException
 
 from forze_redis.kernel.platform.client import RedisClient
+
 
 @pytest.fixture
 def redis_client():
@@ -11,6 +13,7 @@ def redis_client():
     # Mocking the internal state
     client._RedisClient__client = MagicMock()
     return client
+
 
 @pytest.mark.asyncio
 async def test_mset_native_call(redis_client):
@@ -24,6 +27,7 @@ async def test_mset_native_call(redis_client):
 
     assert res is True
     client.mset.assert_awaited_once_with(mapping)
+
 
 @pytest.mark.asyncio
 async def test_mset_with_flags_uses_atomic_script(redis_client: RedisClient) -> None:
@@ -50,8 +54,9 @@ async def test_mset_with_flags_uses_atomic_script(redis_client: RedisClient) -> 
 async def test_mset_nx_and_xx_rejected(redis_client: RedisClient) -> None:
     redis_client.run_script = AsyncMock(return_value="1")  # type: ignore[method-assign]
 
-    with pytest.raises(CoreError, match="nx and xx"):
+    with pytest.raises(CoreException, match="nx and xx"):
         await redis_client.mset({"a": "1"}, nx=True, xx=True)
+
 
 @pytest.mark.asyncio
 async def test_mset_empty_mapping(redis_client):
@@ -59,6 +64,7 @@ async def test_mset_empty_mapping(redis_client):
     assert res is True
     redis_client._RedisClient__require_client().mset.assert_not_called()
     redis_client._RedisClient__require_client().pipeline.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_mset_inside_pipeline_uses_native_mset(redis_client):

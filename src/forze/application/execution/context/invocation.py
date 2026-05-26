@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Iterator, final
+from typing import Any, Final, Iterator, final
 from uuid import UUID
 
 import attrs
@@ -10,6 +10,14 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 
 # ----------------------- #
+
+EXEC_ID_KEY: Final = "execution_id"
+CORR_ID_KEY: Final = "correlation_id"
+CAUS_ID_KEY: Final = "causation_id"
+PRINCIPAL_ID_KEY: Final = "principal_id"
+TENANT_ID_KEY: Final = "tenant_id"
+
+# ....................... #
 
 
 @final
@@ -80,6 +88,59 @@ class InvocationContext:
     # ....................... #
 
     @contextmanager
+    def bind_metadata(self, *, metadata: InvocationMetadata) -> Iterator[None]:
+        """Bind the invocation metadata."""
+
+        metadata_token = self.__metadata.set(metadata)
+
+        bound: dict[str, Any] = {
+            EXEC_ID_KEY: str(metadata.execution_id),
+            CORR_ID_KEY: str(metadata.correlation_id),
+        }
+
+        if metadata.causation_id is not None:
+            bound[CAUS_ID_KEY] = str(metadata.causation_id)
+
+        try:
+            with bound_contextvars(**bound):
+                yield
+
+        finally:
+            self.__metadata.reset(metadata_token)
+
+    # ....................... #
+
+    @contextmanager
+    def bind_identity(
+        self,
+        *,
+        authn: AuthnIdentity | None = None,
+        tenant: TenantIdentity | None = None,
+    ) -> Iterator[None]:
+        """Bind the invocation context."""
+
+        authn_token = self.__authn.set(authn)
+        tenant_token = self.__tenant.set(tenant)
+
+        bound: dict[str, Any] = {}
+
+        if authn is not None:
+            bound[PRINCIPAL_ID_KEY] = authn.principal_id
+
+        if tenant is not None:
+            bound[TENANT_ID_KEY] = str(tenant.tenant_id)
+
+        try:
+            with bound_contextvars(**bound):
+                yield
+
+        finally:
+            self.__authn.reset(authn_token)
+            self.__tenant.reset(tenant_token)
+
+    # ....................... #
+
+    @contextmanager
     def bind(
         self,
         *,
@@ -94,18 +155,18 @@ class InvocationContext:
         tenant_token = self.__tenant.set(tenant)
 
         bound: dict[str, Any] = {
-            "execution_id": str(metadata.execution_id),
-            "correlation_id": str(metadata.correlation_id),
+            EXEC_ID_KEY: str(metadata.execution_id),
+            CORR_ID_KEY: str(metadata.correlation_id),
         }
 
         if metadata.causation_id is not None:
-            bound["causation_id"] = str(metadata.causation_id)
+            bound[CAUS_ID_KEY] = str(metadata.causation_id)
 
         if authn is not None:
-            bound["principal_id"] = authn.principal_id
+            bound[PRINCIPAL_ID_KEY] = authn.principal_id
 
         if tenant is not None:
-            bound["tenant_id"] = str(tenant.tenant_id)
+            bound[TENANT_ID_KEY] = str(tenant.tenant_id)
 
         try:
             with bound_contextvars(**bound):

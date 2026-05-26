@@ -8,7 +8,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.application.contracts.document import DocumentQueryPort
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY
@@ -35,12 +35,12 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         spec = self.ak_qry.spec
 
         if spec.cache is not None:
-            raise CoreError(
+            raise exc.internal(
                 "API key account caching is forbidden by security reasons"
             )
 
         if spec.history_enabled:
-            raise CoreError(
+            raise exc.internal(
                 "API key account history is forbidden by security reasons"
             )
 
@@ -54,7 +54,7 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
 
         if account is None or not account.is_active:
-            raise AuthenticationError("API key account not found")
+            raise exc.authentication("API key account not found")
 
         ok = self.api_key_svc.verify_key(
             key=credentials.key,
@@ -62,7 +62,7 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         )
 
         if not ok:
-            raise AuthenticationError("Invalid API key")
+            raise exc.authentication("Invalid API key")
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_API_KEY,

@@ -58,6 +58,20 @@ def stub_ctx(stub_deps: Deps) -> ExecutionContext:
     return ExecutionContext(deps=stub_deps)
 
 
+@pytest.fixture
+def traced_deps(mock_state: MockState) -> Deps:
+    """Mock deps with runtime tracing enabled."""
+    import attrs
+
+    return attrs.evolve(MockDepsModule(state=mock_state)(), trace_runtime=True)
+
+
+@pytest.fixture
+def traced_ctx(traced_deps: Deps) -> ExecutionContext:
+    """ExecutionContext with runtime tracing enabled."""
+    return ExecutionContext(deps=traced_deps)
+
+
 def _minimal_document_spec() -> DocumentSpec:
     """Minimal DocumentSpec for document port fixtures."""
     return DocumentSpec(

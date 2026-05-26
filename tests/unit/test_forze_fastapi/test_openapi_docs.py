@@ -1,9 +1,8 @@
 """Unit tests for forze_fastapi.openapi.docs."""
 
+import forze_fastapi.docs as docs
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-
-from forze_fastapi.openapi import docs
 
 
 # ----------------------- #

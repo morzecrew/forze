@@ -2,12 +2,13 @@
 
 import pytest
 
-from forze.base.errors import CoreError
-from forze.domain.constants import ID_FIELD
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.search import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
 )
+from forze.domain.constants import ID_FIELD
 
 
 def test_ranked_search_cursor_key_spec_adds_id_tie_breaker() -> None:
@@ -28,7 +29,7 @@ def test_ranked_search_cursor_key_spec_inherits_uniform_sort_direction_for_id() 
 
 
 def test_ranked_search_cursor_key_spec_rejects_bad_direction() -> None:
-    with pytest.raises(CoreError, match="Invalid sort direction"):
+    with pytest.raises(CoreException, match="Invalid sort direction"):
         ranked_search_cursor_key_spec(rank_field="_r", sorts={"x": "sideways"})  # type: ignore[arg-type]
 
 

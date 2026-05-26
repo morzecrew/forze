@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 import orjson
 from dateutil.parser import parse as dt_parse
 
-from ..errors import CoreError
+from ..exceptions import exc
 
 # ----------------------- #
 
@@ -62,7 +62,9 @@ def uuid7(
     """
 
     if timestamp_ms is not None and timestamp_ns is not None:
-        raise CoreError("Specify only one of timestamp_ms or timestamp_ns, not both.")
+        raise exc.internal(
+            "Specify only one of timestamp_ms or timestamp_ns, not both."
+        )
 
     if (timestamp_ms == 0 and timestamp_ns is None) or (
         timestamp_ns == 0 and timestamp_ms is None
@@ -77,7 +79,7 @@ def uuid7(
         timestamp_ns = time.time_ns()
 
     if timestamp_ns < 0:
-        raise CoreError("Timestamp must be positive.")
+        raise exc.internal("Timestamp must be positive.")
 
     timestamp_ms = timestamp_ns // 1_000_000
     sub_ms_ns = timestamp_ns % 1_000_000  # 20 bits max

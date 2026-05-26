@@ -51,6 +51,7 @@ Integration code lives in separate **distribution packages** (separate import ro
 | `forze_postgres` | Postgres-backed document, search, and transaction adapters |
 | `forze_redis` | Cache, counters, idempotency, pub/sub, and stream adapters |
 | `forze_s3` | S3-compatible storage adapter |
+| `forze_gcs` | Google Cloud Storage adapter |
 | `forze_mongo` | Mongo-backed document and transaction adapters |
 | `forze_socketio` | Socket.IO transport adapter for typed realtime events |
 | `forze_temporal` | Temporal workflow adapters and client wiring |

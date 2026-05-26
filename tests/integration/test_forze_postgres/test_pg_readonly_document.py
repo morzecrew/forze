@@ -1,12 +1,12 @@
 """Integration tests for :class:`ConfigurablePostgresReadOnlyDocument`."""
 
+from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
 
 from forze.application.contracts.document import DocumentQueryDepKey, DocumentSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import NotFoundError
 from forze.domain.models import ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresReadOnlyDocument
 from forze_postgres.execution.deps.keys import (
@@ -16,10 +16,8 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
-
 class _ReadOnlyRow(ReadDocument):
     title: str
-
 
 @pytest.mark.asyncio
 async def test_readonly_get_after_sql_insert(pg_client: PostgresClient) -> None:
@@ -65,7 +63,6 @@ async def test_readonly_get_after_sql_insert(pg_client: PostgresClient) -> None:
     row = await q.get(doc_id)
     assert row.title == "from sql"
     assert row.rev == 1
-
 
 @pytest.mark.asyncio
 async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> None:
@@ -128,7 +125,6 @@ async def test_readonly_find_many_sorts_and_count(pg_client: PostgresClient) -> 
 
     assert await q.count({"$values": {"title": "gamma"}}) == 1
 
-
 @pytest.mark.asyncio
 async def test_readonly_get_missing_raises(pg_client: PostgresClient) -> None:
     t = f"ro_miss_{uuid4().hex[:12]}"
@@ -154,9 +150,8 @@ async def test_readonly_get_missing_raises(pg_client: PostgresClient) -> None:
         )
     )
     q = ctx.document.query(DocumentSpec(name="ro_miss_ns", read=_ReadOnlyRow, write=None))
-    with pytest.raises(NotFoundError, match="Record not found"):
+    with pytest.raises(CoreException, match="Record not found"):
         await q.get(uuid4())
-
 
 @pytest.mark.asyncio
 async def test_readonly_get_many_partial_missing_raises(pg_client: PostgresClient) -> None:
@@ -191,5 +186,5 @@ async def test_readonly_get_many_partial_missing_raises(pg_client: PostgresClien
         )
     )
     q = ctx.document.query(DocumentSpec(name="ro_gm_ns", read=_ReadOnlyRow, write=None))
-    with pytest.raises(NotFoundError, match="Some records not found"):
+    with pytest.raises(CoreException, match="Some records not found"):
         await q.get_many([doc_id, uuid4()])

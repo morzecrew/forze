@@ -5,7 +5,7 @@ require_sqs()
 # ....................... #
 
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence, final
+from typing import AsyncGenerator, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -145,7 +145,7 @@ class SQSQueueAdapter[M: BaseModel](
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[QueueMessage[M]]:
+    ) -> AsyncGenerator[QueueMessage[M]]:
         physical_queue = self.__queue_name(queue)
 
         async with self.client.client():

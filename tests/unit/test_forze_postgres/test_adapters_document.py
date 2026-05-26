@@ -1,5 +1,6 @@
 """Unit tests for ``forze_postgres.adapters.document``."""
 
+from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -8,22 +9,18 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
-from forze.base.errors import CoreError, ValidationError
 from forze.base.serialization import pydantic_cache_dump
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 
-
 def _build_read_doc(pk: UUID, *, rev: int = 1) -> ReadDocument:
     now = datetime.now(tz=UTC)
     return ReadDocument(id=pk, rev=rev, created_at=now, last_update_at=now)
 
-
 def _adapter_spec() -> DocumentSpec:
     return DocumentSpec(name="pytest_doc", read=ReadDocument)
-
 
 def _build_read_gateway() -> MagicMock:
     gateway = MagicMock(spec=PostgresReadGateway)
@@ -32,7 +29,6 @@ def _build_read_gateway() -> MagicMock:
     gateway.get = AsyncMock()
     gateway.get_many = AsyncMock()
     return gateway
-
 
 def _pg_cc(
     read_gw,
@@ -47,7 +43,6 @@ def _pg_cc(
         cache=cache,
         after_commit=after_commit,
     )
-
 
 class TestPostgresDocumentAdapter:
     @pytest.mark.asyncio
@@ -201,26 +196,20 @@ class TestPostgresDocumentAdapter:
         read_gw.get_many.assert_awaited_once_with([pks[0], pks[1]])
         cache.set_many_versioned.assert_awaited_once()
 
-
 # -- Write models for command-path tests -------------------------------------
-
 
 class TRead(ReadDocument):
     title: str
 
-
 class TDoc(Document):
     title: str
-
 
 class TCreate(CreateDocumentCmd):
     title: str
 
-
 class TUpdate(BaseDTO):
     title: str | None = None
     is_deleted: bool | None = None
-
 
 def _full_spec() -> DocumentSpec:
     return DocumentSpec(
@@ -228,7 +217,6 @@ def _full_spec() -> DocumentSpec:
         read=TRead,
         write={"domain": TDoc, "create_cmd": TCreate, "update_cmd": TUpdate},
     )
-
 
 def _tread(pk: UUID | None = None, *, rev: int = 1) -> TRead:
     pk = pk or uuid4()
@@ -241,7 +229,6 @@ def _tread(pk: UUID | None = None, *, rev: int = 1) -> TRead:
         title="t",
     )
 
-
 def _tdoc(pk: UUID | None = None, *, rev: int = 1) -> TDoc:
     pk = pk or uuid4()
     now = datetime.now(tz=UTC)
@@ -252,7 +239,6 @@ def _tdoc(pk: UUID | None = None, *, rev: int = 1) -> TDoc:
         last_update_at=now,
         title="t",
     )
-
 
 def _read_gw_full() -> MagicMock:
     gw = MagicMock(spec=PostgresReadGateway)
@@ -266,7 +252,6 @@ def _read_gw_full() -> MagicMock:
     gw.count = AsyncMock()
     return gw
 
-
 def _write_gw() -> MagicMock:
     gw = MagicMock(spec=PostgresWriteGateway)
     gw.tenant_aware = False
@@ -276,14 +261,13 @@ def _write_gw() -> MagicMock:
     gw.ensure_many = AsyncMock()
     return gw
 
-
 class TestPostgresDocumentAdapterInit:
     def test_mismatched_write_client_raises(self) -> None:
         read_gw = _read_gw_full()
         write_gw = _write_gw()
         write_gw.client = object()
 
-        with pytest.raises(CoreError, match="same client"):
+        with pytest.raises(CoreException, match="same client"):
             PostgresDocumentAdapter(
                 spec=(ds := _full_spec()),
                 read_gw=read_gw,
@@ -298,14 +282,13 @@ class TestPostgresDocumentAdapterInit:
         read_gw.tenant_aware = False
         write_gw.tenant_aware = True
 
-        with pytest.raises(CoreError, match="tenant"):
+        with pytest.raises(CoreException, match="tenant"):
             PostgresDocumentAdapter(
                 spec=(ds := _full_spec()),
                 read_gw=read_gw,
                 write_gw=write_gw,
                 cache_coord=_pg_cc(read_gw, ds),
             )
-
 
 class TestPostgresDocumentAdapterEffBatchSize:
     def test_clamps_too_small(self) -> None:
@@ -340,7 +323,6 @@ class TestPostgresDocumentAdapterEffBatchSize:
             batch_size=150,
         )
         assert a.eff_batch_size == 150
-
 
 class TestPostgresDocumentAdapterGetPaths:
     @pytest.mark.asyncio
@@ -388,7 +370,6 @@ class TestPostgresDocumentAdapterGetPaths:
         assert result.id == doc.id
         read_gw.get.assert_not_awaited()
 
-
 class TestPostgresDocumentAdapterGetManyOrdering:
     @pytest.mark.asyncio
     async def test_merges_hits_and_misses_in_request_order(self) -> None:
@@ -423,7 +404,6 @@ class TestPostgresDocumentAdapterGetManyOrdering:
         assert [x.id for x in result] == pks
         read_gw.get_many.assert_awaited_once_with([pks[1]])
 
-
 class TestPostgresDocumentAdapterRequireWrite:
     @pytest.mark.asyncio
     async def test_create_without_write_gateway_raises(self) -> None:
@@ -435,9 +415,8 @@ class TestPostgresDocumentAdapterRequireWrite:
             cache_coord=_pg_cc(rg, ds),
         )
 
-        with pytest.raises(CoreError, match="not configured"):
+        with pytest.raises(CoreException, match="not configured"):
             await adapter.create(TCreate(title="x"))
-
 
 class TestPostgresDocumentAdapterQueryDelegation:
     @pytest.mark.asyncio
@@ -515,9 +494,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
             cache_coord=_pg_cc(read_gw, ds),
         )
 
-        page = await adapter.find_page(
-            filters=None, pagination={"limit": 10}
-        )
+        page = await adapter.find_page(filters=None, pagination={"limit": 10})
 
         assert page.hits == docs and page.count == 2
 
@@ -666,6 +643,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         assert read_gw.find_many_aggregates.await_count == 2
         assert read_gw.find_many_aggregates.await_args_list[0].kwargs["offset"] == 0
         assert read_gw.find_many_aggregates.await_args_list[1].kwargs["offset"] == 10
+
     async def test_count_delegates(self) -> None:
         read_gw = _read_gw_full()
         read_gw.count = AsyncMock(return_value=7)
@@ -678,7 +656,6 @@ class TestPostgresDocumentAdapterQueryDelegation:
 
         assert await adapter.count({"a": 1}) == 7
         read_gw.count.assert_awaited_once_with({"a": 1})
-
 
 class TestPostgresDocumentAdapterCommands:
     @pytest.mark.asyncio
@@ -761,7 +738,7 @@ class TestPostgresDocumentAdapterCommands:
             write_gw=write_gw,
             cache_coord=_pg_cc(read_gw, ds),
         )
-        with pytest.raises(ValidationError, match="id"):
+        with pytest.raises(CoreException, match="id"):
             await adapter.ensure(TCreate(title="n"))  # type: ignore[call-arg]
 
     @pytest.mark.asyncio
@@ -934,7 +911,6 @@ class TestPostgresDocumentAdapterCommands:
         assert await adapter.update_many([]) == []
         write_gw.update_many.assert_not_called()
 
-
 class TestPostgresDocumentAdapterGetManyBranches:
     @pytest.mark.asyncio
     async def test_empty_pks_returns_without_calling_gateway(self) -> None:
@@ -1000,7 +976,6 @@ class TestPostgresDocumentAdapterGetManyBranches:
 
         assert [x.id for x in result] == pks
         read_gw.get_many.assert_not_awaited()
-
 
 class TestPostgresDocumentAdapterBatchMutations:
     @pytest.mark.asyncio
@@ -1091,7 +1066,6 @@ class TestPostgresDocumentAdapterBatchMutations:
         assert await adapter.update(pk2, 2, TUpdate(is_deleted=True)) == r2
         assert await adapter.update(pk1, 1, TUpdate(is_deleted=False)) == r1
         assert await adapter.update(pk2, 2, TUpdate(is_deleted=False)) == r2
-
 
 class TestPostgresDocumentAdapterReturnNew:
     """``return_new=False`` performs writes but skips read-back and cache population."""

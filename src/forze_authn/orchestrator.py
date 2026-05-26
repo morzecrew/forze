@@ -6,15 +6,15 @@ from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
     ApiKeyVerifierPort,
-    AuthnIdentity,
     AuthnPort,
+    AuthnResult,
     AuthnSpec,
     PasswordCredentials,
     PasswordVerifierPort,
     PrincipalResolverPort,
     TokenVerifierPort,
 )
-from forze.base.errors import AuthenticationError, CoreError
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -49,17 +49,17 @@ class AuthnOrchestrator(AuthnPort):
 
     def __attrs_post_init__(self) -> None:
         if "password" in self.enabled_methods and self.password_verifier is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnOrchestrator: 'password' is enabled but no PasswordVerifierPort was wired",
             )
 
         if "token" in self.enabled_methods and self.token_verifier is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnOrchestrator: 'token' is enabled but no TokenVerifierPort was wired",
             )
 
         if "api_key" in self.enabled_methods and self.api_key_verifier is None:
-            raise CoreError(
+            raise exc.internal(
                 "AuthnOrchestrator: 'api_key' is enabled but no ApiKeyVerifierPort was wired",
             )
 
@@ -90,45 +90,57 @@ class AuthnOrchestrator(AuthnPort):
     async def authenticate_with_password(
         self,
         credentials: PasswordCredentials,
-    ) -> AuthnIdentity:
+    ) -> AuthnResult:
         if "password" not in self.enabled_methods or self.password_verifier is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Password authentication is not enabled for this route",
                 code="method_disabled",
             )
 
         assertion = await self.password_verifier.verify_password(credentials)
+        identity = await self.resolver.resolve(assertion)
 
-        return await self.resolver.resolve(assertion)
+        return AuthnResult(
+            identity=identity,
+            issuer_tenant_hint=assertion.issuer_tenant_hint,
+        )
 
     # ....................... #
 
     async def authenticate_with_token(
         self,
         credentials: AccessTokenCredentials,
-    ) -> AuthnIdentity:
+    ) -> AuthnResult:
         if "token" not in self.enabled_methods or self.token_verifier is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "Token authentication is not enabled for this route",
                 code="method_disabled",
             )
 
         assertion = await self.token_verifier.verify_token(credentials)
+        identity = await self.resolver.resolve(assertion)
 
-        return await self.resolver.resolve(assertion)
+        return AuthnResult(
+            identity=identity,
+            issuer_tenant_hint=assertion.issuer_tenant_hint,
+        )
 
     # ....................... #
 
     async def authenticate_with_api_key(
         self,
         credentials: ApiKeyCredentials,
-    ) -> AuthnIdentity:
+    ) -> AuthnResult:
         if "api_key" not in self.enabled_methods or self.api_key_verifier is None:
-            raise AuthenticationError(
+            raise exc.authentication(
                 "API key authentication is not enabled for this route",
                 code="method_disabled",
             )
 
         assertion = await self.api_key_verifier.verify_api_key(credentials)
+        identity = await self.resolver.resolve(assertion)
 
-        return await self.resolver.resolve(assertion)
+        return AuthnResult(
+            identity=identity,
+            issuer_tenant_hint=assertion.issuer_tenant_hint,
+        )

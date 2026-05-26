@@ -1,5 +1,6 @@
 """Integration tests for :class:`~forze_temporal.kernel.platform.RoutedTemporalClient`."""
 
+from forze.base.exceptions import CoreException, exc
 from typing import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -11,11 +12,9 @@ pytest.importorskip("temporalio")
 from temporalio.worker import Worker
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import CoreError, InfrastructureError, SecretNotFoundError
 from forze_temporal.kernel.platform import RoutedTemporalClient, TemporalClient
 
 from ._workflow_defs import ItSumWorkflow, SumIn, SumOut, it_sum_pair
-
 
 def _sum_total(out: SumOut | dict[str, object]) -> int:
     if isinstance(out, SumOut):
@@ -23,10 +22,8 @@ def _sum_total(out: SumOut | dict[str, object]) -> int:
 
     return SumOut.model_validate(out).total
 
-
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/temporal")
-
 
 class _MemSecretsHost:
     def __init__(
@@ -44,21 +41,20 @@ class _MemSecretsHost:
         if self._broken_path is not None and ref.path == self._broken_path:
             raise RuntimeError("vault unavailable")
         if self._missing_path is not None and ref.path == self._missing_path:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             )
         try:
             return self._paths[ref.path]
         except KeyError as e:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             ) from e
 
     async def exists(self, ref: SecretRef) -> bool:
         return ref.path in self._paths
-
 
 class _MemSecretsTenantHost(_MemSecretsHost):
     def __init__(
@@ -73,7 +69,6 @@ class _MemSecretsTenantHost(_MemSecretsHost):
         bp = f"tenants/{broken_tenant}/temporal" if broken_tenant else None
         super().__init__(paths, missing_path=mp, broken_path=bp)
 
-
 def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
     slot: list[UUID | None] = [None]
 
@@ -84,7 +79,6 @@ def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None],
         slot[0] = value
 
     return getter, setter
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -136,7 +130,6 @@ async def test_routed_temporal_sum_workflow_and_result(
         finally:
             await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_temporal_mapping_secret_ref(
@@ -177,7 +170,6 @@ async def test_routed_temporal_mapping_secret_ref(
         finally:
             await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_temporal_startup_tenant_and_handle_guards(
@@ -195,7 +187,7 @@ async def test_routed_temporal_startup_tenant_and_handle_guards(
         max_cached_tenants=4,
     )
     tenant_set(t1)
-    with pytest.raises(InfrastructureError, match="not started"):
+    with pytest.raises(CoreException, match="not started"):
         await unrouted.health()
 
     routed = RoutedTemporalClient(
@@ -208,18 +200,17 @@ async def test_routed_temporal_startup_tenant_and_handle_guards(
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(CoreError, match="Tenant ID"):
+        with pytest.raises(CoreException, match="Tenant ID"):
             routed.get_workflow_handle("any")
 
         tenant_set(t1)
-        with pytest.raises(InfrastructureError, match="No Temporal client"):
+        with pytest.raises(CoreException, match="No Temporal client"):
             routed.get_workflow_handle("any")
 
         await routed.health()
         _ = routed.get_workflow_handle(f"pending-{uuid4().hex[:8]}")
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -231,9 +222,8 @@ async def test_routed_temporal_get_handle_before_started() -> None:
         tenant_provider=lambda: None,
         max_cached_tenants=4,
     )
-    with pytest.raises(InfrastructureError, match="not started"):
+    with pytest.raises(CoreException, match="not started"):
         routed.get_workflow_handle("x")
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -252,7 +242,7 @@ async def test_routed_temporal_secret_errors(workflow_env_with_host_target) -> N
     await r1.startup()
     try:
         tenant_set(t_miss)
-        with pytest.raises(SecretNotFoundError):
+        with pytest.raises(CoreException):
             await r1.health()
     finally:
         await r1.close()
@@ -267,13 +257,11 @@ async def test_routed_temporal_secret_errors(workflow_env_with_host_target) -> N
     await r2.startup()
     try:
         tenant_set(t_break)
-        with pytest.raises(
-            InfrastructureError, match="Failed to resolve Temporal secret"
+        with pytest.raises(CoreException, match="Failed to resolve Temporal secret"
         ):
             await r2.health()
     finally:
         await r2.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ from forze.application.contracts.execution import (
     GraphStep,
     Step,
 )
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import AbstractSequence, DirectedAcyclicGraph, StrKey
 
 # ----------------------- #
@@ -20,7 +20,7 @@ def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionG
 
     for s in step_list:
         if s.id in steps:
-            raise CoreError(f"Step ID {s.id} is not unique")
+            raise exc.internal(f"Step ID {s.id} is not unique")
 
         steps[s.id] = s
         order[s.id] = s.priority
@@ -30,7 +30,9 @@ def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionG
     for s in step_list:
         for cap in s.provides:
             if cap in provider_by_capability:
-                raise CoreError(f"Capability {cap} is provided by more than one step")
+                raise exc.internal(
+                    f"Capability {cap} is provided by more than one step"
+                )
 
             provider_by_capability[cap] = s.id
 
@@ -40,7 +42,7 @@ def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionG
     for s in step_list:
         for dep_id in s.depends_on:
             if dep_id not in steps:
-                raise CoreError(f"Step ID {dep_id} is not found")
+                raise exc.internal(f"Step ID {dep_id} is not found")
 
             edges.add((dep_id, s.id))
 
@@ -48,7 +50,7 @@ def graph_from_sequence[X: GraphStep](seq: AbstractSequence[X], /) -> ExecutionG
             pid = provider_by_capability.get(cap)
 
             if pid is None:
-                raise CoreError(
+                raise exc.internal(
                     f"Capability {cap} is required by step {s.id} but no step provides it"
                 )
 

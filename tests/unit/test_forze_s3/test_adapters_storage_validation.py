@@ -1,17 +1,16 @@
+from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock, MagicMock
+
 
 import pytest
 
 from forze.application.contracts.storage import UploadedObject
-from forze.base.errors import ValidationError
 from forze_s3.adapters.storage import S3StorageAdapter, _object_metadata_from_s3_user
-
 
 @pytest.fixture
 def storage_adapter():
     client = MagicMock()
     return S3StorageAdapter(client=client, bucket="test-bucket")
-
 
 def test_validate_prefix_valid(storage_adapter):
     # Should not raise any exception
@@ -21,7 +20,6 @@ def test_validate_prefix_valid(storage_adapter):
     storage_adapter._validate_prefix("prefix/with/slash")
     storage_adapter._validate_prefix("prefix-with-dash_and.dot")
     storage_adapter._validate_prefix("!-_.*'()/")
-
 
 def test_validate_prefix_invalid(storage_adapter):
     invalid_prefixes = [
@@ -47,24 +45,21 @@ def test_validate_prefix_invalid(storage_adapter):
         "prefix`invalid",
     ]
     for prefix in invalid_prefixes:
-        with pytest.raises(ValidationError) as excinfo:
+        with pytest.raises(CoreException) as excinfo:
             storage_adapter._validate_prefix(prefix)
         assert f"Invalid S3 prefix: {prefix}" in str(excinfo.value)
 
-
 @pytest.mark.asyncio
 async def test_upload_invalid_prefix_raises(storage_adapter):
-    with pytest.raises(ValidationError):
+    with pytest.raises(CoreException):
         await storage_adapter.upload(
             UploadedObject(filename="file.txt", data=b"data", prefix="invalid prefix"),
         )
 
-
 @pytest.mark.asyncio
 async def test_list_invalid_prefix_raises(storage_adapter):
-    with pytest.raises(ValidationError):
+    with pytest.raises(CoreException):
         await storage_adapter.list(10, 0, prefix="invalid prefix")
-
 
 @pytest.mark.asyncio
 async def test_upload_valid_prefix_passes_validation(storage_adapter):
@@ -79,7 +74,6 @@ async def test_upload_valid_prefix_passes_validation(storage_adapter):
         UploadedObject(filename="file.txt", data=b"data", prefix="valid/prefix"),
     )
 
-
 @pytest.mark.asyncio
 async def test_list_valid_prefix_passes_validation(storage_adapter):
     # Mocking dependencies to ensure it proceeds past validation
@@ -91,7 +85,6 @@ async def test_list_valid_prefix_passes_validation(storage_adapter):
     # Should not raise ValidationError
     await storage_adapter.list(10, 0, prefix="valid/prefix")
 
-
 def test_object_metadata_from_s3_user_coerces_string_size() -> None:
     meta = _object_metadata_from_s3_user(
         {
@@ -102,7 +95,6 @@ def test_object_metadata_from_s3_user_coerces_string_size() -> None:
     )
     assert meta.size == 42
     assert meta.filename == "Zm9v.txt"
-
 
 def test_object_metadata_from_s3_user_accepts_zulu_timestamp() -> None:
     meta = _object_metadata_from_s3_user(

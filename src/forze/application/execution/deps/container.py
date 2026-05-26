@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, Self, cast, final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.base import DepKey
+from forze.application.contracts.base import DepKey, BaseSpec
+from forze.application.execution.tracing import RuntimeTrace
 from forze.base.descriptors import hybridmethod
-from forze.base.errors import CoreError
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .resolution import ResolutionFrame, format_cycle_error, frame_for
@@ -51,6 +52,9 @@ class Deps[K: StrKey]:
     trace_resolution: bool = False
     """When ``True``, record observed resolution edges for the current async task."""
 
+    trace_runtime: bool = False
+    """When ``True``, record configurable port calls and transaction boundaries."""
+
     _resolution_stack: ContextVar[tuple[ResolutionFrame, ...]] = attrs.field(
         factory=lambda: ContextVar("deps_resolution_stack", default=()),
         init=False,
@@ -69,22 +73,38 @@ class Deps[K: StrKey]:
     )
     """Per-task observed resolution graph when :attr:`trace_resolution` is enabled."""
 
+    _runtime_trace: ContextVar[RuntimeTrace | None] = attrs.field(
+        factory=lambda: ContextVar("deps_runtime_trace", default=None),
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+    """Per-task runtime event buffer when :attr:`trace_runtime` is enabled."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         for key, routes in (self.routed_deps or {}).items():
             if not routes:
-                raise CoreError(f"Routed dependency {key.name} has no routes")
+                raise exc.configuration(f"Routed dependency {key.name} has no routes")
 
     # ....................... #
 
     @classmethod
-    def plain(cls, deps: PlainDepsMap, *, trace_resolution: bool = False) -> Deps[Any]:
+    def plain(
+        cls,
+        deps: PlainDepsMap,
+        *,
+        trace_resolution: bool = False,
+        trace_runtime: bool = False,
+    ) -> Deps[Any]:
         """Create a new dependency container from plain dependencies."""
 
         return cls(
             plain_deps=deps,
             trace_resolution=trace_resolution,
+            trace_runtime=trace_runtime,
         )
 
     # ....................... #
@@ -120,7 +140,7 @@ class Deps[K: StrKey]:
         """
 
         if not routes:
-            raise CoreError("Routes must not be empty")
+            raise exc.precondition("Routes must not be empty")
 
         expanded: RoutedDeps[X] = {
             key: {name: dep for name in routes} for key, dep in deps.items()
@@ -149,6 +169,45 @@ class Deps[K: StrKey]:
 
     # ....................... #
 
+    def _runtime_trace_get_or_create(self) -> RuntimeTrace:
+        trace = self._runtime_trace.get()
+
+        if trace is None:
+            trace = RuntimeTrace()
+            self._runtime_trace.set(trace)
+
+        return trace
+
+    # ....................... #
+
+    def record_runtime_event(
+        self,
+        *,
+        domain: str,
+        op: str,
+        surface: str | None = None,
+        route: str | None = None,
+        phase: str | None = None,
+        tx_depth: int = 0,
+        tx_route: str | None = None,
+    ) -> None:
+        """Append a runtime tracing event when :attr:`trace_runtime` is enabled."""
+
+        if not self.trace_runtime:
+            return
+
+        self._runtime_trace_get_or_create().next_event(
+            domain=domain,
+            op=op,
+            surface=surface,
+            route=route,
+            phase=phase,
+            tx_depth=tx_depth,
+            tx_route=tx_route,
+        )
+
+    # ....................... #
+
     def _record_edge(self, parent: ResolutionFrame, child: ResolutionFrame) -> None:
         if not self.trace_resolution:
             return
@@ -161,7 +220,7 @@ class Deps[K: StrKey]:
         stack = self._resolution_stack_get()
 
         if frame in stack:
-            raise CoreError(format_cycle_error(stack, frame))
+            raise exc.internal(format_cycle_error(stack, frame))
 
         if stack:
             self._record_edge(stack[-1], frame)
@@ -179,7 +238,7 @@ class Deps[K: StrKey]:
         stack = self._resolution_stack_get()
 
         if frame in stack:
-            raise CoreError(format_cycle_error(stack, frame))
+            raise exc.internal(format_cycle_error(stack, frame))
 
     # ....................... #
 
@@ -196,7 +255,7 @@ class Deps[K: StrKey]:
             dep = self.plain_deps.get(key)
 
             if not dep:
-                raise CoreError(f"Plain dependency '{key.name}' not found")
+                raise exc.internal(f"Plain dependency '{key.name}' not found")
 
         else:
             routes = self.routed_deps.get(key)
@@ -205,7 +264,7 @@ class Deps[K: StrKey]:
                 if fallback_to_plain:
                     return self._lookup(key, route=None, fallback_to_plain=False)
 
-                raise CoreError(
+                raise exc.internal(
                     f"Routed dependency '{key.name}' not found for route '{route}'"
                 )
 
@@ -215,7 +274,7 @@ class Deps[K: StrKey]:
                 if fallback_to_plain:
                     return self._lookup(key, route=None, fallback_to_plain=False)
 
-                raise CoreError(
+                raise exc.internal(
                     f"Dependency '{key.name}' not found for route '{route}'"
                 )
 
@@ -236,7 +295,6 @@ class Deps[K: StrKey]:
         :param route: Optional route for routed dependencies.
         :param fallback_to_plain: If True, fallback to plain dependencies if the routed dependency is not found.
         :returns: Registered provider or instance for the key.
-        :raises CoreError: If the dependency is not registered or resolution would cycle.
         """
 
         frame = frame_for(key, route)
@@ -280,7 +338,7 @@ class Deps[K: StrKey]:
         self,
         ctx: ExecutionContext,
         key: DepKey[Any],
-        spec: object,
+        spec: BaseSpec,
         *,
         route: K | None = None,
     ) -> Any:
@@ -291,7 +349,28 @@ class Deps[K: StrKey]:
 
         try:
             factory = self._lookup(key, route=route)
-            return factory(ctx, spec)
+            result = factory(ctx, spec)
+
+            if not self.trace_runtime:
+                return result
+
+            from ..tracing.metadata import infer_port_metadata
+            from ..tracing.port_proxy import wrap_port
+
+            domain, surface, route_name, phase = infer_port_metadata(
+                key,
+                spec,
+                route=route,
+            )
+            return wrap_port(
+                result,
+                deps=self,
+                domain=domain,
+                surface=surface,
+                route=route_name,
+                phase=phase,
+                tx_depth_getter=ctx.tx.depth,
+            )
 
         finally:
             self._pop_frame(token)
@@ -312,7 +391,26 @@ class Deps[K: StrKey]:
 
         try:
             factory = self._lookup(key, route=route)
-            return factory(ctx)
+            result = factory(ctx)
+
+            if self.trace_runtime:
+                from ..tracing.metadata import infer_port_metadata
+
+                domain, surface, route_name, phase = infer_port_metadata(
+                    key,
+                    object(),
+                    route=route,
+                )
+                self.record_runtime_event(
+                    domain=domain,
+                    op="resolve",
+                    surface=surface,
+                    route=route_name,
+                    phase=phase,
+                    tx_depth=ctx.tx.depth(),
+                )
+
+            return result
 
         finally:
             self._pop_frame(token)
@@ -326,6 +424,16 @@ class Deps[K: StrKey]:
             return None
 
         return self._resolution_trace.get()
+
+    # ....................... #
+
+    def runtime_trace(self) -> RuntimeTrace | None:
+        """Return the observed runtime trace for the current task, if any."""
+
+        if not self.trace_runtime:
+            return None
+
+        return self._runtime_trace.get()
 
     # ....................... #
 
@@ -366,7 +474,6 @@ class Deps[K: StrKey]:
 
         :param deps: Containers to merge.
         :returns: New container with all dependencies.
-        :raises CoreError: If any key is registered in more than one container.
         """
 
         logger.trace("Merging %s dependency container(s)", len(deps))
@@ -374,6 +481,7 @@ class Deps[K: StrKey]:
         plain_acc: PlainDepsMap = {}
         routed_acc: RoutedDeps[X] = {}
         trace_resolution = any(d.trace_resolution for d in deps)
+        trace_runtime = any(d.trace_runtime for d in deps)
 
         for d in deps:
             # 1. merge plain
@@ -381,14 +489,16 @@ class Deps[K: StrKey]:
 
             if plain_overlap:
                 names = ", ".join(sorted(k.name for k in plain_overlap))
-                raise CoreError(f"Conflicting plain dependencies: {names}")
+
+                raise exc.internal(f"Conflicting plain dependencies: {names}")
 
             # 2. plain vs routed conflicts
             cross_overlap_left = set(plain_acc).intersection(d.routed_deps)
 
             if cross_overlap_left:
                 names = ", ".join(sorted(k.name for k in cross_overlap_left))
-                raise CoreError(
+
+                raise exc.internal(
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
@@ -396,7 +506,8 @@ class Deps[K: StrKey]:
 
             if cross_overlap_right:
                 names = ", ".join(sorted(k.name for k in cross_overlap_right))
-                raise CoreError(
+
+                raise exc.internal(
                     f"Dependency keys registered both as plain and routed: {names}"
                 )
 
@@ -415,7 +526,8 @@ class Deps[K: StrKey]:
 
                 if routing_key_overlap:
                     names = ", ".join(sorted(routing_key_overlap))
-                    raise CoreError(
+
+                    raise exc.internal(
                         f"Conflicting routed dependencies for '{key.name}': {names}"
                     )
 
@@ -426,6 +538,7 @@ class Deps[K: StrKey]:
             plain_deps=plain_acc,
             routed_deps=routed_acc,
             trace_resolution=trace_resolution,
+            trace_runtime=trace_runtime,
         )
 
     # ....................... #
@@ -436,7 +549,6 @@ class Deps[K: StrKey]:
 
         :param deps: Containers to merge.
         :returns: New container with all dependencies.
-        :raises CoreError: If any key is registered in more than one container.
         """
 
         return type(self).merge(self, *deps)
@@ -462,6 +574,7 @@ class Deps[K: StrKey]:
             plain_deps=new_plain,
             routed_deps=new_routed,
             trace_resolution=self.trace_resolution,
+            trace_runtime=self.trace_runtime,
         )
 
     # ....................... #
@@ -492,6 +605,7 @@ class Deps[K: StrKey]:
             plain_deps=dict(self.plain_deps),
             routed_deps=new_routed,
             trace_resolution=self.trace_resolution,
+            trace_runtime=self.trace_runtime,
         )
 
     # ....................... #

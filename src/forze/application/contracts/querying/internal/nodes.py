@@ -15,6 +15,9 @@ class QueryExpr:
     """Base class for all filter AST nodes."""
 
 
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True, match_args=True)
 class QueryAnd(QueryExpr):
     """Conjunction of child expressions (logical AND)."""
@@ -23,12 +26,18 @@ class QueryAnd(QueryExpr):
     """Child expressions."""
 
 
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True, match_args=True)
 class QueryOr(QueryExpr):
     """Disjunction of child expressions (logical OR)."""
 
     items: tuple[QueryExpr, ...]
     """Child expressions."""
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True, match_args=True)
