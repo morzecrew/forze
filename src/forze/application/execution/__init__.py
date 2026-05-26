@@ -6,6 +6,14 @@ from .lifecycle import LifecyclePlan
 from .planning import OperationPlan
 from .registry import FrozenOperationRegistry, OperationRegistry
 from .runtime import ExecutionRuntime
+from .tracing import (
+    RuntimeTrace,
+    RuntimeTraceValidator,
+    TracingEvent,
+    TracingViolation,
+    active_deps,
+    validate_runtime_trace,
+)
 
 # ----------------------- #
 
@@ -20,4 +28,10 @@ __all__ = [
     "LifecyclePlan",
     "OperationPlan",
     "OperationRegistry",
+    "RuntimeTrace",
+    "RuntimeTraceValidator",
+    "TracingEvent",
+    "TracingViolation",
+    "active_deps",
+    "validate_runtime_trace",
 ]

@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Runtime tracing (development):** Opt-in per-task sequence of transaction boundaries and configurable port calls under `forze.application.execution.tracing` (`RuntimeTrace`, `TracingEvent`, `FORZE_RUNTIME_TRACE`, `Deps.trace_runtime` / `deps.runtime_trace()`); `validate_runtime_trace(..., validator=...)`; Firestore validator `validate_reads_before_writes_in_tx` in `forze_firestore.execution.trace_validation`; dry-run strategy notes in `tracing.dry_run`.
 - **`forze.application.hooks.authz`:** Operation-plan helpers (`authorize_before_step`, `document_scope_wrap_step`, `policy_scope_from_invocation`, …) moved out of `forze.application.contracts.authz` so contracts stay port-only.
 - **`forze.application.hooks.authn` / `hooks.tenancy`:** `authn_required_before_step` and `tenant_required_before_step` (and `AuthnBeforeRequired` / `TenancyBeforeRequired` factories) enforce bound `ctx.inv` principal and tenant on operation plans.
 
 ### Changed
 
+- **Runtime tracing API (breaking):** Package `forze.application.execution.trace` renamed to `tracing`; `ExecutionEvent`/`ExecutionTrace` → `TracingEvent`/`RuntimeTrace`; `trace_execution`/`FORZE_EXEC_TRACE` → `trace_runtime`/`FORZE_RUNTIME_TRACE`; `execution_trace()` → `runtime_trace()`; `validate_trace` → `validate_runtime_trace`; events are contract-agnostic (`domain`, `surface`, `route`, `phase`); trace buffer uses per-`Deps` `ContextVar` (not a module-global buffer); port recording centralized in `Deps.resolve_configurable`.
 - **Authorization layering:** `contracts.authz` no longer imports `contracts.execution` or exports registry wiring helpers; import hooks from `forze.application.hooks.authz` instead.
 - **Authorization naming:** Contract types use the `Authz*` prefix (`AuthzSubject`, `AuthzScope`, `AuthzRequest`, `AuthzDecision`, …). Ports: `AuthzDecisionPort`, `AuthzScopePort`. Value objects grouped under `contracts.authz.value_objects` (`catalog`, `decision`, `scoping`, `grants`). `ctx.authz.decision(spec)` is the only decision accessor; dep key `authz_decision` (`AuthzDecisionDepKey`). `AuthzDepsModule` registers `decision=` routes (no `runtime=` / `authz=` kwargs). Hooks: typed `AuthzBeforeAuthorize` / `AuthzDocumentScopeWrap` factories with `to_before_step()` / `to_middleware_step()`. Removed backward-compatible aliases (`Authorization*`, `PolicyScope`, `ProtectedResource`, `AuthorizationRuntimePort`, …).
 

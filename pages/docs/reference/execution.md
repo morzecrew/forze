@@ -115,6 +115,20 @@ Enable tracing on a container with `Deps(trace_resolution=True)` or set `FORZE_D
 
 Read the current task's trace with `deps.resolution_trace()` and export a snapshot via `trace.to_dag()` (`DirectedAcyclicGraph` for topological order). `registered_frames()` lists all statically registered frames. Tracing is diagnostic only; runtime stack checks remain the production guard.
 
+#### Runtime tracing (development)
+
+Enable tracing with `Deps(trace_runtime=True)` or set `FORZE_RUNTIME_TRACE=1` (or `true` / `yes`) before `DepsPlan.build()` (unless `build(trace_runtime=False)` overrides it). While a handler runs, Forze records transaction scope boundaries and **configurable port** calls (via `Deps.resolve_configurable`) at the coordinator boundary — internal gateway reads after writes are not traced.
+
+Read the current task's sequence with `deps.runtime_trace()` and log-friendly lines via `trace.format_lines()`. Pass an integration-specific validator to `validate_runtime_trace(trace, validator=...)` — for example Firestore's `validate_reads_before_writes_in_tx` from `forze_firestore.execution.trace_validation`, which flags `document_query` reads after `document_command` writes in the same transaction segment (reads after `tx.exit` are allowed). Dry-run strategies are documented in `forze.application.execution.tracing.dry_run`. Tracing is diagnostic only; production code should not rely on it.
+
+Example trace lines:
+
+```text
+0000 tx enter route=mock tx=mock depth=1
+0001 document count surface=document_query route=projects phase=query depth=1
+0002 tx exit route=mock tx=mock depth=1
+```
+
 ## Dependencies
 
 ### DepKey
@@ -145,6 +159,7 @@ In-memory dependency container implementing `DepsPort`:
 | `resolve_simple(ctx, key, route=...)` | Resolve a simple port under a scope |
 | `resolution_scope(key, route=...)` | Context manager for custom lookup + invoke |
 | `resolution_trace()` | Observed edges for the current task when tracing is enabled |
+| `runtime_trace()` | Observed runtime sequence for the current task when runtime tracing is enabled |
 | `registered_frames()` | Static inventory of registered frames |
 | `exists(key, route=...)` | Check registration |
 | `merge(*deps)` | Combine containers; raises `CoreError` on key conflicts |

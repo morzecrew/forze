@@ -12,6 +12,8 @@ from forze.base.descriptors import hybridmethod
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey
 
+from forze.application.execution.tracing.buffer import RuntimeTrace
+
 from .resolution import ResolutionFrame, format_cycle_error, frame_for
 from .trace import DepsResolutionTrace
 
@@ -51,6 +53,9 @@ class Deps[K: StrKey]:
     trace_resolution: bool = False
     """When ``True``, record observed resolution edges for the current async task."""
 
+    trace_runtime: bool = False
+    """When ``True``, record configurable port calls and transaction boundaries."""
+
     _resolution_stack: ContextVar[tuple[ResolutionFrame, ...]] = attrs.field(
         factory=lambda: ContextVar("deps_resolution_stack", default=()),
         init=False,
@@ -69,6 +74,15 @@ class Deps[K: StrKey]:
     )
     """Per-task observed resolution graph when :attr:`trace_resolution` is enabled."""
 
+    _runtime_trace: ContextVar[RuntimeTrace | None] = attrs.field(
+        factory=lambda: ContextVar("deps_runtime_trace", default=None),
+        init=False,
+        repr=False,
+        eq=False,
+        hash=False,
+    )
+    """Per-task runtime event buffer when :attr:`trace_runtime` is enabled."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -79,12 +93,19 @@ class Deps[K: StrKey]:
     # ....................... #
 
     @classmethod
-    def plain(cls, deps: PlainDepsMap, *, trace_resolution: bool = False) -> Deps[Any]:
+    def plain(
+        cls,
+        deps: PlainDepsMap,
+        *,
+        trace_resolution: bool = False,
+        trace_runtime: bool = False,
+    ) -> Deps[Any]:
         """Create a new dependency container from plain dependencies."""
 
         return cls(
             plain_deps=deps,
             trace_resolution=trace_resolution,
+            trace_runtime=trace_runtime,
         )
 
     # ....................... #
@@ -146,6 +167,45 @@ class Deps[K: StrKey]:
             self._resolution_trace.set(trace)
 
         return trace
+
+    # ....................... #
+
+    def _runtime_trace_get_or_create(self) -> RuntimeTrace:
+        trace = self._runtime_trace.get()
+
+        if trace is None:
+            trace = RuntimeTrace()
+            self._runtime_trace.set(trace)
+
+        return trace
+
+    # ....................... #
+
+    def record_runtime_event(
+        self,
+        *,
+        domain: str,
+        op: str,
+        surface: str | None = None,
+        route: str | None = None,
+        phase: str | None = None,
+        tx_depth: int = 0,
+        tx_route: str | None = None,
+    ) -> None:
+        """Append a runtime tracing event when :attr:`trace_runtime` is enabled."""
+
+        if not self.trace_runtime:
+            return
+
+        self._runtime_trace_get_or_create().next_event(
+            domain=domain,
+            op=op,
+            surface=surface,
+            route=route,
+            phase=phase,
+            tx_depth=tx_depth,
+            tx_route=tx_route,
+        )
 
     # ....................... #
 
@@ -291,7 +351,28 @@ class Deps[K: StrKey]:
 
         try:
             factory = self._lookup(key, route=route)
-            return factory(ctx, spec)
+            result = factory(ctx, spec)
+
+            if not self.trace_runtime:
+                return result
+
+            from ..tracing.metadata import infer_port_metadata
+            from ..tracing.port_proxy import wrap_port
+
+            domain, surface, route_name, phase = infer_port_metadata(
+                key,
+                spec,
+                route=route,
+            )
+            return wrap_port(
+                result,
+                deps=self,
+                domain=domain,
+                surface=surface,
+                route=route_name,
+                phase=phase,
+                tx_depth_getter=ctx.tx.depth,
+            )
 
         finally:
             self._pop_frame(token)
@@ -326,6 +407,16 @@ class Deps[K: StrKey]:
             return None
 
         return self._resolution_trace.get()
+
+    # ....................... #
+
+    def runtime_trace(self) -> RuntimeTrace | None:
+        """Return the observed runtime trace for the current task, if any."""
+
+        if not self.trace_runtime:
+            return None
+
+        return self._runtime_trace.get()
 
     # ....................... #
 
@@ -374,6 +465,7 @@ class Deps[K: StrKey]:
         plain_acc: PlainDepsMap = {}
         routed_acc: RoutedDeps[X] = {}
         trace_resolution = any(d.trace_resolution for d in deps)
+        trace_runtime = any(d.trace_runtime for d in deps)
 
         for d in deps:
             # 1. merge plain
@@ -426,6 +518,7 @@ class Deps[K: StrKey]:
             plain_deps=plain_acc,
             routed_deps=routed_acc,
             trace_resolution=trace_resolution,
+            trace_runtime=trace_runtime,
         )
 
     # ....................... #
@@ -462,6 +555,7 @@ class Deps[K: StrKey]:
             plain_deps=new_plain,
             routed_deps=new_routed,
             trace_resolution=self.trace_resolution,
+            trace_runtime=self.trace_runtime,
         )
 
     # ....................... #
@@ -492,6 +586,7 @@ class Deps[K: StrKey]:
             plain_deps=dict(self.plain_deps),
             routed_deps=new_routed,
             trace_resolution=self.trace_resolution,
+            trace_runtime=self.trace_runtime,
         )
 
     # ....................... #

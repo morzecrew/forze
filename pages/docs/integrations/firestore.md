@@ -142,9 +142,10 @@ Use `ctx.tx.scope("firestore")` (or your configured tx route). Firestore require
 
 Keep transaction scope small (operation count and contention limits apply on the real service).
 
+During development, enable runtime tracing (`FORZE_RUNTIME_TRACE` or `Deps(trace_runtime=True)`) and run `validate_runtime_trace(deps.runtime_trace(), validator=validate_reads_before_writes_in_tx)` (from `forze_firestore.execution.trace_validation`) to catch handlers that call `document_query` reads after `document_command` writes in the same transaction segment. See [Execution reference](../reference/execution.md#runtime-tracing-development).
+
     :::python
     async with ctx.tx.scope("firestore"):
-        await doc_c.create(CreateProjectCmd(title="In transaction"))
         existing = await doc_q.get(existing_id)
         await doc_c.update(
             existing.id,

@@ -8,6 +8,7 @@ from forze.application.contracts.transaction import (
     TransactionHandle,
     TransactionManagerPort,
 )
+from forze.application.execution.tracing import record
 from forze.base.errors import CoreError
 from forze.base.primitives import StrKey
 
@@ -128,6 +129,15 @@ class TransactionContext:
         token_h = self.__tx_handle.set(TransactionHandle(scope=tx.scope_key))
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
+        route_name = str(getattr(route, "value", route))
+
+        record(
+            domain="tx",
+            op="enter",
+            route=route_name,
+            tx_route=route_name,
+            tx_depth=1,
+        )
 
         deferred: list[Callable[[], Awaitable[None]]] | None = None
 
@@ -142,6 +152,13 @@ class TransactionContext:
             deferred = self.__cb_stack.get()
 
         finally:
+            record(
+                domain="tx",
+                op="exit",
+                route=route_name,
+                tx_route=route_name,
+                tx_depth=self.__tx_depth.get(),
+            )
             self.__cb_stack.reset(token_cb)
             self.__tx_handle.reset(token_h)
             self.__tx_depth.reset(token_d)

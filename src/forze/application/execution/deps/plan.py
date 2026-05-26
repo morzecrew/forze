@@ -19,6 +19,12 @@ def _trace_from_env() -> bool:
     return value in _TRUTHY_ENV
 
 
+def _runtime_trace_from_env() -> bool:
+    value = os.environ.get("FORZE_RUNTIME_TRACE", "").strip().lower()
+
+    return value in _TRUTHY_ENV
+
+
 # ....................... #
 
 
@@ -70,11 +76,15 @@ class DepsPlan:
         self,
         *,
         trace_resolution: bool | None = None,
+        trace_runtime: bool | None = None,
     ) -> Deps[Any]:
         """Build a merged dependency container from all modules.
 
         :param trace_resolution: When ``True``, enable observed resolution tracing.
             When ``None`` (default), enable if ``FORZE_DEPS_TRACE`` is set to a
+            truthy value (``1``, ``true``, ``yes``).
+        :param trace_runtime: When ``True``, enable runtime tracing.
+            When ``None`` (default), enable if ``FORZE_RUNTIME_TRACE`` is set to a
             truthy value (``1``, ``true``, ``yes``).
         :returns: Merged :class:`Deps` instance.
         :raises CoreError: If any module registers a conflicting key.
@@ -88,10 +98,18 @@ class DepsPlan:
         enable_trace = (
             _trace_from_env() if trace_resolution is None else trace_resolution
         )
+        enable_runtime_trace = (
+            _runtime_trace_from_env()
+            if trace_runtime is None
+            else trace_runtime
+        )
 
         if not self.modules:
             logger.trace("Deps plan is empty; returning empty container")
-            return Deps[Any](trace_resolution=enable_trace)
+            return Deps[Any](
+                trace_resolution=enable_trace,
+                trace_runtime=enable_runtime_trace,
+            )
 
         built: list[Deps[Any]] = []
 
@@ -108,5 +126,8 @@ class DepsPlan:
 
         if enable_trace and not merged.trace_resolution:
             merged = attrs.evolve(merged, trace_resolution=True)
+
+        if enable_runtime_trace and not merged.trace_runtime:
+            merged = attrs.evolve(merged, trace_runtime=True)
 
         return merged
