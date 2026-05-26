@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -56,7 +58,7 @@ def test_write_gateway_requires_same_client() -> None:
         cache=None,
     )
 
-    with pytest.raises(exc.internal, match="same client"):
+    with pytest.raises(CoreException, match="same client"):
         FirestoreDocumentAdapter(
             spec=spec,
             read_gw=read_gw,

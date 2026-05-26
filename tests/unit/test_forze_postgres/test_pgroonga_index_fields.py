@@ -1,6 +1,8 @@
 """Unit tests for PGroonga index field resolution and alignment."""
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
@@ -62,7 +64,7 @@ def test_parse_columns_fallback() -> None:
 
 
 def test_parse_unparseable_raises() -> None:
-    with pytest.raises(exc.internal, match="Cannot resolve PGroonga index columns"):
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
         parse_pgroonga_index_heap_columns(
             "to_tsvector(title)",
             (),
@@ -79,7 +81,7 @@ def test_heap_columns_to_logical_with_field_map() -> None:
 
 
 def test_heap_columns_to_logical_ambiguous_map_raises() -> None:
-    with pytest.raises(exc.internal, match="Ambiguous field_map"):
+    with pytest.raises(CoreException, match="Ambiguous field_map"):
         heap_columns_to_logical(
             ("col",),
             {"a": "col", "b": "col"},
@@ -101,7 +103,7 @@ def test_align_uses_index_order_not_spec_order() -> None:
 
 def test_align_missing_spec_field_raises() -> None:
     spec = SearchSpec(name="t", model_type=_Doc, fields=["a"])
-    with pytest.raises(exc.internal, match="add it to SearchSpec.fields"):
+    with pytest.raises(CoreException, match="add it to SearchSpec.fields"):
         align_pgroonga_search_columns(
             spec,
             ("a", "b"),

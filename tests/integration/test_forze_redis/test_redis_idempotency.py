@@ -1,11 +1,10 @@
 """Integration tests for RedisIdempotencyAdapter."""
 
+from forze.base.exceptions import CoreException
 import pytest
 
 from forze.application.contracts.idempotency import IdempotencySnapshot
-from forze.base.errors import ConflictError
 from forze_redis.adapters import RedisIdempotencyAdapter
-
 
 @pytest.mark.asyncio
 async def test_idempotency_begin_returns_none_when_new(
@@ -19,7 +18,6 @@ async def test_idempotency_begin_returns_none_when_new(
     )
     assert result is None
 
-
 @pytest.mark.asyncio
 async def test_idempotency_begin_with_none_key_returns_none(
     redis_idempotency: RedisIdempotencyAdapter,
@@ -31,7 +29,6 @@ async def test_idempotency_begin_with_none_key_returns_none(
         payload_hash="abc123",
     )
     assert result is None
-
 
 @pytest.mark.asyncio
 async def test_idempotency_commit_and_replay(
@@ -65,7 +62,6 @@ async def test_idempotency_commit_and_replay(
     assert result.content_type == "application/json"
     assert result.body == b'{"id":"123"}'
 
-
 @pytest.mark.asyncio
 async def test_idempotency_payload_hash_mismatch_raises(
     redis_idempotency: RedisIdempotencyAdapter,
@@ -84,9 +80,8 @@ async def test_idempotency_payload_hash_mismatch_raises(
         snapshot=snapshot,
     )
 
-    with pytest.raises(ConflictError, match="Payload hash mismatch"):
+    with pytest.raises(CoreException, match="Payload hash mismatch"):
         await redis_idempotency.begin(op="op", key="k1", payload_hash="h2")
-
 
 @pytest.mark.asyncio
 async def test_idempotency_concurrent_begin_raises(
@@ -95,5 +90,5 @@ async def test_idempotency_concurrent_begin_raises(
     """Second begin before commit raises ConflictError (pending)."""
     await redis_idempotency.begin(op="op", key="k2", payload_hash="same")
 
-    with pytest.raises(ConflictError, match="in progress"):
+    with pytest.raises(CoreException, match="in progress"):
         await redis_idempotency.begin(op="op", key="k2", payload_hash="same")

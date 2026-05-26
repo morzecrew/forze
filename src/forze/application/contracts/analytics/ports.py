@@ -14,8 +14,15 @@ cheap total count.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
-from typing import Any, Awaitable, Protocol, TypeVar, runtime_checkable
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Protocol,
+    Sequence,
+    TypeVar,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel
 
@@ -88,7 +95,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[R]]:
+    ) -> AsyncGenerator[Sequence[R]]:
         """Execute a named query and yield row batches for large result sets."""
         ...  # pragma: no cover
 
@@ -125,7 +132,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[JsonDict]]:
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
         """Named query yielding projected row batches."""
         ...  # pragma: no cover
 
@@ -162,7 +169,7 @@ class AnalyticsQueryPort[R: BaseModel](BaseAnalyticsPort, Protocol):
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[T]]:
         """Named query yielding batches validated as ``return_type``."""
         ...  # pragma: no cover
 

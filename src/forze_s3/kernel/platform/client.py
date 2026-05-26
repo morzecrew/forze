@@ -8,7 +8,7 @@ import io
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, cast, final
+from typing import Any, AsyncGenerator, cast, final
 
 import aioboto3
 import attrs
@@ -132,7 +132,7 @@ class S3Client(S3ClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def client(self) -> AsyncIterator[AsyncS3Client]:
+    async def client(self) -> AsyncGenerator[AsyncS3Client]:
         """Yield a context-scoped S3 client.
 
         On first entry a new ``aioboto3`` client is created; nested calls reuse

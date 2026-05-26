@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncIterator, Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable
 
 import attrs
 
@@ -97,7 +97,7 @@ class TransactionContext:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, route: StrKey) -> AsyncIterator[None]:
+    async def scope(self, route: StrKey) -> AsyncGenerator[None]:
         """Enter a transaction scope"""
 
         if self.resolver is None:

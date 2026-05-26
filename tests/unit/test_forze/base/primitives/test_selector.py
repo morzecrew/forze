@@ -4,6 +4,8 @@ from enum import StrEnum
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.base.primitives import StrKeySelector, str_key_selector
 from forze.base.primitives.selector import _ExactKeys
 
@@ -44,12 +46,12 @@ def test_exact_accepts_str_enum() -> None:
 
 
 def test_exact_empty_raises() -> None:
-    with pytest.raises(exc.internal, match="at least one key"):
+    with pytest.raises(CoreException, match="at least one key"):
         _sel.exact()
 
 
 def test_exact_keys_empty_frozenset_raises() -> None:
-    with pytest.raises(exc.internal, match="non-empty"):
+    with pytest.raises(CoreException, match="non-empty"):
         _ExactKeys(keys=frozenset())
 
 
@@ -70,11 +72,11 @@ def test_suffix_matches_endswith() -> None:
 
 
 def test_empty_prefix_suffix_glob_raise() -> None:
-    with pytest.raises(exc.internal, match="Prefix"):
+    with pytest.raises(CoreException, match="Prefix"):
         _sel.prefix("")
-    with pytest.raises(exc.internal, match="Suffix"):
+    with pytest.raises(CoreException, match="Suffix"):
         _sel.suffix("")
-    with pytest.raises(exc.internal, match="Glob"):
+    with pytest.raises(CoreException, match="Glob"):
         _sel.glob("")
 
 

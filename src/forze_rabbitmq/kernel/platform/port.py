@@ -1,7 +1,7 @@
 """Structural protocol for RabbitMQ clients (single DSN or tenant-routed)."""
 
 from datetime import datetime, timedelta
-from typing import AsyncContextManager, AsyncIterator, Awaitable, Protocol, Sequence
+from typing import AsyncContextManager, AsyncGenerator, Awaitable, Protocol, Sequence
 
 from aio_pika.abc import AbstractChannel
 
@@ -54,7 +54,7 @@ class RabbitMQClientPort(Protocol):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RabbitMQQueueMessage]:
+    ) -> AsyncGenerator[RabbitMQQueueMessage]:
         """Async iterator of queue messages (async generator on implementations)."""
         ...  # pragma: no cover
 

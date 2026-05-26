@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytest.importorskip("pymongo")
 
 from forze.application.contracts.document import (
@@ -115,7 +117,7 @@ def test_configurable_mongo_document_requires_write_spec() -> None:
     )
     ctx = _ctx()
 
-    with pytest.raises(exc.internal, match="Write relation is required"):
+    with pytest.raises(CoreException, match="Write relation is required"):
         factory(ctx, DocumentSpec(name="n", read=_R))
 
 

@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import attrs
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -58,7 +60,7 @@ class TestMongoQueryRenderer:
 
     def test_unknown_expression_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(exc.internal, match="Unknown expression"):
+        with pytest.raises(CoreException, match="Unknown expression"):
             r.render(_UnknownExpr())
 
     def test_compare_renders_expr(self) -> None:
@@ -204,7 +206,7 @@ class TestMongoQueryRenderer:
 
     def test_unknown_operator_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(exc.internal, match="Unknown operator"):
+        with pytest.raises(CoreException, match="Unknown operator"):
             r.render(QueryField("f", "$bogus", 1))  # type: ignore[arg-type]
 
     def test_eq_neq_ord(self) -> None:
@@ -225,7 +227,7 @@ class TestMongoQueryRenderer:
 
     def test_membership_scalar_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(exc.internal, match="expects list"):
+        with pytest.raises(CoreException, match="expects list"):
             r.render(QueryField("t", "$in", 1))
 
     def test_set_relations(self) -> None:
@@ -240,7 +242,7 @@ class TestMongoQueryRenderer:
 
     def test_set_rel_scalar_raises(self) -> None:
         r = MongoQueryRenderer()
-        with pytest.raises(exc.internal, match="expects list"):
+        with pytest.raises(CoreException, match="expects list"):
             r.render(QueryField("s", "$subset", 1))
 
     def test_null_default_matches_missing(self) -> None:
@@ -417,7 +419,7 @@ class TestMongoAggregateRendering:
     def test_rejects_unknown_aggregate_sort_alias(self) -> None:
         renderer = MongoQueryRenderer()
 
-        with pytest.raises(exc.internal, match="Invalid aggregate sort fields"):
+        with pytest.raises(CoreException, match="Invalid aggregate sort fields"):
             renderer.render_aggregates(
                 {"$computed": {"orders": {"$count": None}}},
                 sorts={"missing": "asc"},
@@ -553,5 +555,5 @@ class TestMongoQueryRendererExprPredicate:
         assert r.render_expr_predicate(QueryField("s", "$disjoint", [1])) == {
             "$eq": [{"$size": {"$setIntersection": ["$s", [1]]}}, 0],
         }
-        with pytest.raises(exc.internal, match="expects list"):
+        with pytest.raises(CoreException, match="expects list"):
             r.render_expr_predicate(QueryField("t", "$in", 1))

@@ -1,5 +1,6 @@
 """Unit tests for in-memory mock adapters."""
 
+from forze.base.exceptions import CoreException
 import asyncio
 from uuid import UUID
 
@@ -8,7 +9,6 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
-from forze.base.errors import ConcurrencyError
 from forze_contrib.soft_deletion.models import DocWithSoftDeletion
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import (
@@ -20,13 +20,11 @@ from forze_mock.adapters import (
 
 # ----------------------- #
 
-
 class _ProductDoc(DocWithSoftDeletion):
     title: str
     category: str
     price: float = 0.0
     tags: list[str] = []
-
 
 class _ProductCreate(CreateDocumentCmd):
     title: str
@@ -34,12 +32,10 @@ class _ProductCreate(CreateDocumentCmd):
     price: float = 0.0
     tags: list[str] = []
 
-
 class _ProductUpdate(BaseDTO):
     title: str | None = None
     category: str | None = None
     tags: list[str] | None = None
-
 
 class _ProductRead(ReadDocument):
     title: str
@@ -48,14 +44,12 @@ class _ProductRead(ReadDocument):
     tags: list[str] = []
     is_deleted: bool = False
 
-
 class _ProductSearch(BaseModel):
     id: UUID
     title: str
     category: str
     price: float = 0.0
     tags: list[str] = []
-
 
 class _CategoryStats(BaseModel):
     category: str
@@ -64,7 +58,6 @@ class _CategoryStats(BaseModel):
     median_price: float
     expensive_products: int
     expensive_revenue: float | None
-
 
 def _document_adapter(
     state: MockState,
@@ -86,7 +79,6 @@ def _document_adapter(
         domain_model=_ProductDoc,
     )
 
-
 def _search_adapter(state: MockState) -> MockSearchAdapter[_ProductSearch]:
     spec = SearchSpec(
         name="products",
@@ -94,7 +86,6 @@ def _search_adapter(state: MockState) -> MockSearchAdapter[_ProductSearch]:
         fields=["title", "category", "tags"],
     )
     return MockSearchAdapter(state=state, spec=spec)
-
 
 @pytest.mark.asyncio
 async def test_document_filter_sort_projection_and_search() -> None:
@@ -176,7 +167,6 @@ async def test_document_filter_sort_projection_and_search() -> None:
     restored = await doc.restore(created.id, deleted.rev)
     assert restored.is_deleted is False
 
-
 @pytest.mark.asyncio
 async def test_document_aggregates_group_and_validate_return_type() -> None:
     state = MockState()
@@ -233,16 +223,14 @@ async def test_document_aggregates_group_and_validate_return_type() -> None:
         ),
     ]
 
-
 @pytest.mark.asyncio
 async def test_document_update_detects_revision_conflict() -> None:
     state = MockState()
     doc = _document_adapter(state)
     created = await doc.create(_ProductCreate(title="A", category="x"))
 
-    with pytest.raises(ConcurrencyError):
+    with pytest.raises(CoreException):
         await doc.update(created.id, created.rev + 1, _ProductUpdate(title="B"))
-
 
 @pytest.mark.asyncio
 async def test_counter_is_async_safe_under_concurrent_increments() -> None:

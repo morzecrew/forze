@@ -6,7 +6,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, AsyncContextManager, AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncContextManager, AsyncGenerator, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -210,7 +210,7 @@ class RoutedMongoClient(MongoClientPort):
         options: MongoTransactionOptions | None = None,
     ) -> AsyncContextManager[AsyncClientSession]:
         @asynccontextmanager
-        async def _cm() -> AsyncIterator[AsyncClientSession]:
+        async def _cm() -> AsyncGenerator[AsyncClientSession]:
             inner = await self._get_client()
 
             async with inner.transaction(options=options) as session:

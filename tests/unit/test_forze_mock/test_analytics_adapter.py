@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -69,5 +71,5 @@ async def test_ingest_via_ctx_analytics(ctx: ExecutionContext) -> None:
 async def test_unknown_query_key_raises(ctx: ExecutionContext) -> None:
     spec = _spec()
     port = ctx.analytics.query(spec)
-    with pytest.raises(exc.internal, match="Unknown analytics query"):
+    with pytest.raises(CoreException, match="Unknown analytics query"):
         await port.run("missing", _Params())

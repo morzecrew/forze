@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import attrs
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -44,7 +46,7 @@ class TestPsycopgQueryRenderer:
         types: PostgresColumnTypes = {"id": _t("int4")}
         r = PsycopgQueryRenderer(types=types)
 
-        with pytest.raises(exc.internal, match="Unknown column"):
+        with pytest.raises(CoreException, match="Unknown column"):
             r.render(QueryField("missing", "$eq", 1))
 
     def test_query_and_empty_is_true(self) -> None:
@@ -98,7 +100,7 @@ class TestPsycopgQueryRenderer:
     def test_unknown_expression_node_raises(self) -> None:
         """Unsupported :class:`QueryExpr` subtype raises."""
         r = PsycopgQueryRenderer()
-        with pytest.raises(exc.internal, match="Unknown expression"):
+        with pytest.raises(CoreException, match="Unknown expression"):
             r.render(_UnknownExpr())
 
     def test_compare_renders_without_parameters(self) -> None:
@@ -138,7 +140,7 @@ class TestPsycopgQueryRenderer:
             "b": _t("text", is_array=True),
         }
         r = PsycopgQueryRenderer(types=types)
-        with pytest.raises(exc.internal, match="array columns"):
+        with pytest.raises(CoreException, match="array columns"):
             r.render(QueryCompare("a", "$eq", "b"))
 
     def test_compare_incompatible_types_raises(self) -> None:
@@ -147,14 +149,14 @@ class TestPsycopgQueryRenderer:
             "b": _t("text"),
         }
         r = PsycopgQueryRenderer(types=types)
-        with pytest.raises(exc.internal, match="Incompatible types"):
+        with pytest.raises(CoreException, match="Incompatible types"):
             r.render(QueryCompare("a", "$eq", "b"))
 
     def test_unknown_operator_raises(self) -> None:
         """Unsupported operator raises."""
         r = PsycopgQueryRenderer()
         bad = QueryField("x", cast(Any, "$not_a_real_op"), 1)
-        with pytest.raises(exc.internal, match="Unknown operator"):
+        with pytest.raises(CoreException, match="Unknown operator"):
             r.render(bad)
 
     def test_null_operators(self) -> None:
@@ -264,7 +266,7 @@ class TestPsycopgQueryRenderer:
         """``$eq`` on an array column requires a list/tuple RHS."""
         types: PostgresColumnTypes = {"tags": _t("text", is_array=True)}
         r = PsycopgQueryRenderer(types=types)
-        with pytest.raises(exc.internal, match="list/tuple"):
+        with pytest.raises(CoreException, match="list/tuple"):
             r.render(QueryField("tags", "$eq", "only"))
 
     def test_array_column_in_uses_element_membership(self) -> None:
@@ -462,7 +464,7 @@ class TestPsycopgQueryRenderer:
 
         types: PostgresColumnTypes = {"meta": _t("jsonb")}
         r = PsycopgQueryRenderer(types=types, model_type=_Outer)
-        with pytest.raises(exc.internal, match="not supported for nested JSON"):
+        with pytest.raises(CoreException, match="not supported for nested JSON"):
             r.render(QueryField("meta.score", "$empty", True))
 
     def test_nested_requires_json_column(self) -> None:
@@ -474,7 +476,7 @@ class TestPsycopgQueryRenderer:
 
         types: PostgresColumnTypes = {"meta": _t("int8")}
         r = PsycopgQueryRenderer(types=types, model_type=_Outer)
-        with pytest.raises(exc.internal, match="json or jsonb"):
+        with pytest.raises(CoreException, match="json or jsonb"):
             r.render(QueryField("meta.score", "$eq", 1))
 
     def test_ilike_renders_sql_with_bound_param(self) -> None:
@@ -487,7 +489,7 @@ class TestPsycopgQueryRenderer:
     def test_ilike_rejects_non_text_column(self) -> None:
         types: PostgresColumnTypes = {"n": _t("int8")}
         r = PsycopgQueryRenderer(types=types)
-        with pytest.raises(exc.internal, match="text-like"):
+        with pytest.raises(CoreException, match="text-like"):
             r.render(QueryField("n", "$ilike", "%x%"))
 
     def test_regex_renders_tilde_operator(self) -> None:
@@ -606,5 +608,5 @@ class TestPostgresAggregateRendering:
             {"$computed": {"orders": {"$count": None}}},
         )
 
-        with pytest.raises(exc.internal, match="Invalid aggregate sort fields"):
+        with pytest.raises(CoreException, match="Invalid aggregate sort fields"):
             renderer.render_aggregate_order_by(parsed, {"missing": "asc"})

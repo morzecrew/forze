@@ -8,7 +8,7 @@ require_psycopg()
 
 from typing import (
     Any,
-    AsyncIterator,
+    AsyncGenerator,
     Never,
     Sequence,
     TypeVar,
@@ -381,7 +381,7 @@ class PostgresReadGateway[M: BaseModel](PostgresGateway[M]):
         fetch_batch_size: int = 2000,
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
-    ) -> AsyncIterator[list[M] | list[T] | list[JsonDict]]:
+    ) -> AsyncGenerator[list[M] | list[T] | list[JsonDict]]:
         """Like :meth:`find_many` but yield validated row batches from the driver.
 
         Each yielded list has at most ``fetch_batch_size`` rows (except possibly

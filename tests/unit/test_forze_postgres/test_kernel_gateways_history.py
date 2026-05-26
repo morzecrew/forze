@@ -1,12 +1,12 @@
 """Unit tests for :class:`PostgresHistoryGateway`."""
 
+from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.exceptions import NotFoundError, ValidationError
 from forze.domain.constants import HISTORY_DATA_FIELD
 from forze.domain.models import Document
 from forze_postgres.kernel.gateways import PostgresHistoryGateway, PostgresQualifiedName
@@ -15,10 +15,8 @@ from forze_postgres.kernel.platform.client import PostgresClient
 
 pytest.importorskip("psycopg")
 
-
 class _HDom(Document):
     name: str
-
 
 def _history_column_types() -> dict[str, PostgresType]:
     return {
@@ -28,7 +26,6 @@ def _history_column_types() -> dict[str, PostgresType]:
         "created_at": PostgresType(base="timestamptz", is_array=False, not_null=True),
         "data": PostgresType(base="jsonb", is_array=False, not_null=True),
     }
-
 
 def _make_doc(*, pk: UUID | None = None, rev: int = 1) -> _HDom:
     pk = pk or uuid4()
@@ -40,7 +37,6 @@ def _make_doc(*, pk: UUID | None = None, rev: int = 1) -> _HDom:
         last_update_at=now,
         name="one",
     )
-
 
 def _gw(
     *,
@@ -62,7 +58,6 @@ def _gw(
         tenant_provider=lambda: None,
     )
 
-
 class TestPostgresHistoryGatewayInit:
     """Construction and validation."""
 
@@ -72,7 +67,7 @@ class TestPostgresHistoryGatewayInit:
         intro = MagicMock(spec=PostgresIntrospector)
         intro.get_column_types = AsyncMock(return_value=_history_column_types())
 
-        with pytest.raises(exc.internal, match="Invalid bookkeeping strategy"):
+        with pytest.raises(CoreException, match="Invalid bookkeeping strategy"):
             PostgresHistoryGateway(
                 source_qname=PostgresQualifiedName(schema="public", name="h"),
                 target_qname=PostgresQualifiedName(schema="public", name="m"),
@@ -81,7 +76,6 @@ class TestPostgresHistoryGatewayInit:
                 model_type=_HDom,
                 introspector=intro,
             )
-
 
 class TestPostgresHistoryGatewayRead:
     """read / read_many."""
@@ -111,14 +105,14 @@ class TestPostgresHistoryGatewayRead:
         gw = _gw(client=client, strategy="application")
         pk = uuid4()
 
-        with pytest.raises(NotFoundError, match="History not found"):
+        with pytest.raises(CoreException, match="History not found"):
             await gw.read(pk, 1)
 
     @pytest.mark.asyncio
     async def test_read_many_mismatched_lengths_raises(self) -> None:
         gw = _gw(client=MagicMock(spec=PostgresClient), strategy="application")
 
-        with pytest.raises(ValidationError, match="Length of pks and revs"):
+        with pytest.raises(CoreException, match="Length of pks and revs"):
             await gw.read_many([uuid4()], [1, 2])
 
     @pytest.mark.asyncio
@@ -139,7 +133,6 @@ class TestPostgresHistoryGatewayRead:
         assert len(out) == 2
         assert {x.id for x in out} == {d1.id, d2.id}
         client.fetch_all.assert_awaited_once()
-
 
 class TestPostgresHistoryGatewayWrite:
     """write / write_many and database no-op path."""

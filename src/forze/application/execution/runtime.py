@@ -1,7 +1,7 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, final
+from typing import AsyncGenerator, final
 
 import attrs
 
@@ -102,7 +102,7 @@ class ExecutionRuntime:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self) -> AsyncIterator[None]:
+    async def scope(self) -> AsyncGenerator[None]:
         """Enter an execution scope: create context, startup, yield, shutdown.
 
         Use as an async context manager. On entry: create context, run startup.

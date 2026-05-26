@@ -7,8 +7,10 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze.base.exceptions import InfrastructureError
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_gcs.kernel.platform.errors import _gcs_eh
+
+# ----------------------- #
 
 
 def _client_error(status: int) -> ClientResponseError:
@@ -30,22 +32,23 @@ def _client_error(status: int) -> ClientResponseError:
 class TestGCSErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("x")
-        assert _gcs_eh(original, "op") is original
+        assert _gcs_eh(original, site="op") is original
 
     def test_not_found(self) -> None:
-        r = _gcs_eh(_client_error(404), "get")
-        assert isinstance(r, InfrastructureError)
-        assert "not found" in r.message.lower()
+        r = _gcs_eh(_client_error(404), site="get")
+        assert r is not None
+        assert r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "not found" in r.summary.lower()
 
     def test_forbidden(self) -> None:
-        r = _gcs_eh(_client_error(403), "get")
-        assert isinstance(r, InfrastructureError)
-        assert "access denied" in r.message.lower()
+        r = _gcs_eh(_client_error(403), site="get")
+        assert r is not None
+        assert "access denied" in r.summary.lower()
 
     def test_unauthorized(self) -> None:
-        r = _gcs_eh(_client_error(401), "get")
-        assert isinstance(r, InfrastructureError)
-        assert "access denied" in r.message.lower()
+        r = _gcs_eh(_client_error(401), site="get")
+        assert r is not None
+        assert "access denied" in r.summary.lower()
 
     @pytest.mark.parametrize(
         ("status", "needle"),
@@ -56,16 +59,16 @@ class TestGCSErrorHandler:
         ],
     )
     def test_api_errors(self, status: int, needle: str) -> None:
-        r = _gcs_eh(_client_error(status), "op")
-        assert isinstance(r, InfrastructureError)
-        assert needle in r.message.lower()
+        r = _gcs_eh(_client_error(status), site="op")
+        assert r is not None
+        assert needle in r.summary.lower()
 
     def test_unknown_status(self) -> None:
-        r = _gcs_eh(_client_error(418), "op")
-        assert isinstance(r, InfrastructureError)
-        assert "418" in r.message
+        r = _gcs_eh(_client_error(418), site="op")
+        assert r is not None
+        assert "418" in r.summary
 
     def test_generic_fallback(self) -> None:
-        r = _gcs_eh(ValueError("nope"), "gcs_op")
-        assert isinstance(r, InfrastructureError)
-        assert "gcs_op" in r.message
+        r = _gcs_eh(ValueError("nope"), site="gcs_op")
+        assert r is not None
+        assert "gcs_op" in r.summary

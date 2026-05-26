@@ -1,12 +1,12 @@
 """Unit tests for :mod:`forze_tenancy` document resolver."""
 
+from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 
 from forze.application.contracts.base import CountlessPage
-from forze.base.errors import AuthenticationError
 from forze.base.primitives import utcnow
 from forze_tenancy.adapters.resolver import TenantResolverAdapter
 from forze_tenancy.application.specs import principal_tenant_binding_spec, tenant_spec
@@ -14,7 +14,6 @@ from forze_tenancy.domain.models.principal_tenant_binding import (
     ReadPrincipalTenantBinding,
 )
 from forze_tenancy.domain.models.tenant import ReadTenant
-
 
 def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
     now = utcnow()
@@ -26,7 +25,6 @@ def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
         principal_id=pid,
         tenant_id=tid,
     )
-
 
 @pytest.mark.asyncio
 async def test_resolver_returns_tenant_from_binding() -> None:
@@ -46,7 +44,6 @@ async def test_resolver_returns_tenant_from_binding() -> None:
 
     assert got is not None
     assert got.tenant_id == tid
-
 
 @pytest.mark.asyncio
 async def test_resolver_returns_none_when_inactive_and_verifying() -> None:
@@ -80,7 +77,6 @@ async def test_resolver_returns_none_when_inactive_and_verifying() -> None:
 
     assert got is None
 
-
 @pytest.mark.asyncio
 async def test_resolver_uses_requested_tenant_when_present() -> None:
     pid = uuid4()
@@ -100,7 +96,6 @@ async def test_resolver_uses_requested_tenant_when_present() -> None:
     assert got is not None
     assert got.tenant_id == tid
 
-
 @pytest.mark.asyncio
 async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
     pid = uuid4()
@@ -115,5 +110,5 @@ async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
 
     resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
 
-    with pytest.raises(AuthenticationError, match="ambiguous"):
+    with pytest.raises(CoreException, match="ambiguous"):
         await resolver.resolve_from_principal(pid)

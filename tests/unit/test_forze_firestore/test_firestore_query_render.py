@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import attrs
 import pytest
+
+from forze.base.exceptions import CoreException
 from google.cloud.firestore_v1.base_query import And, FieldFilter, Or
 
 from forze.application.contracts.querying import (
@@ -48,7 +50,7 @@ class TestFirestoreQueryRenderer:
 
     def test_compare_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="field-to-field"):
+        with pytest.raises(CoreException, match="field-to-field"):
             r.render(QueryCompare("a", "$eq", "b"))
 
     def test_not_raises(self) -> None:
@@ -56,7 +58,7 @@ class TestFirestoreQueryRenderer:
             {"$not": {"$values": {"status": "archived"}}},
         )
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="\\$not"):
+        with pytest.raises(CoreException, match="\\$not"):
             r.render(expr)
 
     def test_element_quantifier_raises(self) -> None:
@@ -64,25 +66,25 @@ class TestFirestoreQueryRenderer:
             {"$values": {"tags": {"$any": "urgent"}}},
         )
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="quantifiers"):
+        with pytest.raises(CoreException, match="quantifiers"):
             r.render(expr)
 
     def test_elem_node_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="quantifiers"):
+        with pytest.raises(CoreException, match="quantifiers"):
             r.render(QueryElem("tags", "$any", QueryField("x", "$eq", 1)))
 
     def test_aggregates_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="aggregates"):
+        with pytest.raises(CoreException, match="aggregates"):
             r.render_aggregates({"$computed": {"orders": {"$count": None}}})
 
     def test_unknown_expression_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="Unknown expression"):
+        with pytest.raises(CoreException, match="Unknown expression"):
             r.render(_UnknownExpr())
 
     def test_ilike_raises(self) -> None:
         r = FirestoreQueryRenderer()
-        with pytest.raises(exc.internal, match="text pattern"):
+        with pytest.raises(CoreException, match="text pattern"):
             r.render(QueryField("title", "$ilike", "%x%"))

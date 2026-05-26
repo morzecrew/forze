@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, exc
 import json
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -16,13 +17,10 @@ pytest.importorskip("testcontainers.localstack")
 from testcontainers.localstack import LocalStackContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.exceptions import InfrastructureError, SecretNotFoundError
 from forze_sqs.kernel.platform import RoutedSQSClient, SQSClient
-
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/sqs")
-
 
 def _payload(endpoint: str) -> dict[str, str]:
     return {
@@ -31,7 +29,6 @@ def _payload(endpoint: str) -> dict[str, str]:
         "access_key_id": "test",
         "secret_access_key": "test",
     }
-
 
 class _MemSecretsJson:
     def __init__(
@@ -49,21 +46,20 @@ class _MemSecretsJson:
         if self._broken_path is not None and ref.path == self._broken_path:
             raise RuntimeError("vault unavailable")
         if self._missing_path is not None and ref.path == self._missing_path:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             )
         try:
             return self._paths[ref.path]
         except KeyError as e:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             ) from e
 
     async def exists(self, ref: SecretRef) -> bool:
         return ref.path in self._paths
-
 
 class _MemSecretsTenantJson(_MemSecretsJson):
     def __init__(
@@ -81,7 +77,6 @@ class _MemSecretsTenantJson(_MemSecretsJson):
         bp = f"tenants/{broken_tenant}/sqs" if broken_tenant else None
         super().__init__(paths, missing_path=mp, broken_path=bp)
 
-
 def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
     slot: list[UUID | None] = [None]
 
@@ -92,7 +87,6 @@ def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None],
         slot[0] = value
 
     return getter, setter
-
 
 async def _receive_until(
     client: RoutedSQSClient,
@@ -105,7 +99,6 @@ async def _receive_until(
         if messages:
             return messages
     raise AssertionError("SQS message was not received in time")
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -171,7 +164,6 @@ async def test_routed_sqs_enqueue_receive_consume_ack(
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_mapping_secret_ref(
@@ -196,7 +188,6 @@ async def test_routed_sqs_mapping_secret_ref(
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_requires_startup_and_tenant(
@@ -214,17 +205,16 @@ async def test_routed_sqs_requires_startup_and_tenant(
         max_cached_tenants=4,
     )
     tenant_set(t1)
-    with pytest.raises(InfrastructureError, match="not started"):
+    with pytest.raises(CoreException, match="not started"):
         await routed.health()
 
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(exc.internal, match="Tenant ID"):
+        with pytest.raises(CoreException, match="Tenant ID"):
             await routed.health()
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -245,7 +235,7 @@ async def test_routed_sqs_secret_errors(
     await r1.startup()
     try:
         tenant_set(t_miss)
-        with pytest.raises(SecretNotFoundError):
+        with pytest.raises(CoreException):
             await r1.health()
     finally:
         await r1.close()
@@ -260,11 +250,10 @@ async def test_routed_sqs_secret_errors(
     await r2.startup()
     try:
         tenant_set(t_break)
-        with pytest.raises(InfrastructureError, match="Failed to resolve SQS secret"):
+        with pytest.raises(CoreException, match="Failed to resolve SQS secret"):
             await r2.health()
     finally:
         await r2.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -288,12 +277,11 @@ async def test_routed_sqs_invalid_json_raises_core_error(
     await routed.startup()
 
     try:
-        with pytest.raises(exc.internal, match="SQSRoutingCredentials"):
+        with pytest.raises(CoreException, match="SQSRoutingCredentials"):
             await routed.health()
 
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio

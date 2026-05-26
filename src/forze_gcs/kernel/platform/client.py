@@ -10,7 +10,7 @@ import os
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, AsyncIterator, cast, final
+from typing import Any, AsyncGenerator, cast, final
 
 import aiohttp
 import attrs
@@ -117,7 +117,7 @@ class GCSClient(GCSClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def client(self) -> AsyncIterator[Storage]:
+    async def client(self) -> AsyncGenerator[Storage]:
         """Yield the shared storage client (depth-tracked nested scopes)."""
 
         depth = self.__ctx_depth.get()

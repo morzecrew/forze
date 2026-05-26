@@ -1,13 +1,11 @@
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from typing import AsyncGenerator, Mapping, Sequence
 
 import attrs
 
-from forze.base.codecs import JsonCodec
-
 from forze.application.contracts.tenancy import TenantIdentity
-
+from forze.base.codecs import JsonCodec
 from forze_redis.adapters.cache import RedisCacheAdapter
 from forze_redis.adapters.codecs import RedisKeyCodec
 
@@ -36,7 +34,9 @@ class FakeRedisClient:
         xx: bool = False,
     ) -> bool:
         for key, value in mapping.items():
-            self.store[key] = value if isinstance(value, bytes) else value.encode("utf-8")
+            self.store[key] = (
+                value if isinstance(value, bytes) else value.encode("utf-8")
+            )
 
         return True
 
@@ -51,7 +51,9 @@ class FakeRedisClient:
         return removed
 
     @asynccontextmanager
-    async def pipeline(self, *, transaction: bool = True) -> AsyncIterator["FakeRedisClient"]:
+    async def pipeline(
+        self, *, transaction: bool = True
+    ) -> AsyncGenerator["FakeRedisClient"]:
         yield self
 
 
@@ -65,9 +67,12 @@ def test_redis_cache_adapter_keys_no_tenant() -> None:
     )
 
     assert adapter._RedisCacheAdapter__kv_key("mykey") == "cache:kv:test:mykey"
-    assert adapter._RedisCacheAdapter__pointer_key("mykey") == "cache:pointer:test:mykey"
     assert (
-        adapter._RedisCacheAdapter__body_key("mykey", "v1") == "cache:body:test:mykey:v1"
+        adapter._RedisCacheAdapter__pointer_key("mykey") == "cache:pointer:test:mykey"
+    )
+    assert (
+        adapter._RedisCacheAdapter__body_key("mykey", "v1")
+        == "cache:body:test:mykey:v1"
     )
 
 

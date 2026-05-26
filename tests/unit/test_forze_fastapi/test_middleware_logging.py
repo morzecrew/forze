@@ -3,8 +3,11 @@
 from unittest.mock import AsyncMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from starlette.testclient import TestClient
 
+from forze.base.exceptions import CoreException, exc
 from forze_fastapi.middlewares.logging import LoggingMiddleware
 
 # ----------------------- #
@@ -47,12 +50,12 @@ class TestLoggingMiddleware:
         """exc.internal is not converted to a 500 JSON response."""
 
         async def core_app(scope: object, receive: object, send: object) -> None:
-            raise exc.internal(message="boundary", code="test")
+            raise exc.internal("boundary", code="test")
 
         mw = LoggingMiddleware(core_app)
         client = TestClient(mw, raise_server_exceptions=True)
 
-        with pytest.raises(exc.internal, match="boundary"):
+        with pytest.raises(CoreException, match="boundary"):
             client.get("/")
 
     def test_unhandled_exception_returns_500_json(self) -> None:

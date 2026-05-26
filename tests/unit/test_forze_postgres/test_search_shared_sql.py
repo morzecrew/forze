@@ -4,6 +4,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
@@ -96,7 +98,7 @@ def test_hub_leg_engine_for_rejects_unknown_engine() -> None:
         heap_pk_column="id",
         engine=cast(Any, "bogus"),
     )
-    with pytest.raises(exc.internal, match="Unsupported hub search leg engine"):
+    with pytest.raises(CoreException, match="Unsupported hub search leg engine"):
         hub_leg_engine_for(leg)
 
 
@@ -136,7 +138,7 @@ def test_hub_leg_engine_for_vector_without_embedder_raises() -> None:
         vector_column="emb",
         embedding_dimensions=2,
     )
-    with pytest.raises(exc.internal, match="embeddings provider"):
+    with pytest.raises(CoreException, match="embeddings provider"):
         hub_leg_engine_for(leg, vector_embedder=None)
 
 
@@ -152,7 +154,7 @@ async def test_fts_hub_leg_engine_requires_fts_groups() -> None:
         fts_groups=None,
     )
     eng = FtsHubLegEngine()
-    with pytest.raises(exc.internal, match="FTS hub leg requires fts_groups"):
+    with pytest.raises(CoreException, match="FTS hub leg requires fts_groups"):
         await eng.build_leg(
             leg,
             introspector=MagicMock(),

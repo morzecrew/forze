@@ -2,7 +2,7 @@
 
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
 import attrs
 from google.cloud.firestore_v1 import (
@@ -127,7 +127,7 @@ class FirestoreClient(FirestoreClientPort):
 
     @exc_interceptor.asynccontextmanager("firestore.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[AsyncTransaction]:
+    async def transaction(self) -> AsyncGenerator[AsyncTransaction]:
         depth = self.__ctx_depth.get()
         parent = self.__current_transaction()
 

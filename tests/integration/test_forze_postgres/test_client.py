@@ -1,12 +1,12 @@
+from forze.base.exceptions import CoreException
 import pytest
 
-from forze.base.errors import InfrastructureError
+
 from forze_postgres.kernel.platform.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,
 )
-
 
 @pytest.mark.asyncio
 async def test_health_reports_ok(pg_client: PostgresClient) -> None:
@@ -14,7 +14,6 @@ async def test_health_reports_ok(pg_client: PostgresClient) -> None:
     status, ok = await pg_client.health()
     assert status == "ok"
     assert ok is True
-
 
 @pytest.mark.asyncio
 async def test_execute_and_fetch(pg_client: PostgresClient) -> None:
@@ -42,7 +41,6 @@ async def test_execute_and_fetch(pg_client: PostgresClient) -> None:
     val = await pg_client.fetch_value("SELECT name FROM test_table")
     assert val == "test_name"
 
-
 @pytest.mark.asyncio
 async def test_transaction_commit(pg_client: PostgresClient) -> None:
     await pg_client.execute(
@@ -66,7 +64,6 @@ async def test_transaction_commit(pg_client: PostgresClient) -> None:
     # Verify after commit
     val_after = await pg_client.fetch_value("SELECT value FROM test_tx_commit")
     assert val_after == 42
-
 
 @pytest.mark.asyncio
 async def test_transaction_rollback(pg_client: PostgresClient) -> None:
@@ -92,7 +89,6 @@ async def test_transaction_rollback(pg_client: PostgresClient) -> None:
     # Verify after rollback
     val_after = await pg_client.fetch_value("SELECT value FROM test_tx_rollback")
     assert val_after is None
-
 
 @pytest.mark.asyncio
 async def test_nested_transaction_savepoint(pg_client: PostgresClient) -> None:
@@ -134,7 +130,6 @@ async def test_nested_transaction_savepoint(pg_client: PostgresClient) -> None:
     assert len(res_after) == 1
     assert res_after[0]["value"] == 1
 
-
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(postgres_container) -> None:
     url = postgres_container.get_connection_url()
@@ -147,12 +142,10 @@ async def test_initialize_is_idempotent(postgres_container) -> None:
     assert (await client.health())[1] is True
     await client.close()
 
-
 @pytest.mark.asyncio
 async def test_close_without_initialize_is_noop() -> None:
     client = PostgresClient()
     await client.close()
-
 
 @pytest.mark.asyncio
 async def test_health_without_initialize_reports_failure() -> None:
@@ -160,7 +153,6 @@ async def test_health_without_initialize_reports_failure() -> None:
     msg, ok = await client.health()
     assert ok is False
     assert msg
-
 
 @pytest.mark.asyncio
 async def test_query_after_close_raises(postgres_container) -> None:
@@ -172,9 +164,8 @@ async def test_query_after_close_raises(postgres_container) -> None:
     await client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=3))
     await client.close()
 
-    with pytest.raises(InfrastructureError, match="not initialized"):
+    with pytest.raises(CoreException, match="not initialized"):
         await client.fetch_one("SELECT 1")
-
 
 @pytest.mark.asyncio
 async def test_execute_with_return_rowcount(pg_client: PostgresClient) -> None:
@@ -191,7 +182,6 @@ async def test_execute_with_return_rowcount(pg_client: PostgresClient) -> None:
         return_rowcount=True,
     )
     assert n == 2
-
 
 @pytest.mark.asyncio
 async def test_execute_many(pg_client: PostgresClient) -> None:
@@ -212,7 +202,6 @@ async def test_execute_many(pg_client: PostgresClient) -> None:
     )
     assert [r["code"] for r in rows] == ["a", "b"]
 
-
 @pytest.mark.asyncio
 async def test_fetch_all_and_one_tuple_factory(pg_client: PostgresClient) -> None:
     one = await pg_client.fetch_one(
@@ -227,7 +216,6 @@ async def test_fetch_all_and_one_tuple_factory(pg_client: PostgresClient) -> Non
     )
     assert many == [(1,), (2,)]
 
-
 @pytest.mark.asyncio
 async def test_fetch_one_none(pg_client: PostgresClient) -> None:
     row = await pg_client.fetch_one(
@@ -235,7 +223,6 @@ async def test_fetch_one_none(pg_client: PostgresClient) -> None:
         row_factory="tuple",
     )
     assert row is None
-
 
 @pytest.mark.asyncio
 async def test_fetch_with_commit_flag_outside_transaction(
@@ -252,7 +239,6 @@ async def test_fetch_with_commit_flag_outside_transaction(
         commit=True,
     )
     assert len(rows) == 2
-
 
 @pytest.mark.asyncio
 async def test_nested_transaction_inner_success_releases_savepoint(
@@ -288,7 +274,6 @@ async def test_nested_transaction_inner_success_releases_savepoint(
     )
     assert [r["value"] for r in outer] == [1, 2]
 
-
 @pytest.mark.asyncio
 async def test_transaction_read_only(pg_client: PostgresClient) -> None:
     async with pg_client.transaction(
@@ -296,7 +281,6 @@ async def test_transaction_read_only(pg_client: PostgresClient) -> None:
     ):
         rows = await pg_client.fetch_all("SELECT 1 AS n")
         assert rows[0]["n"] == 1
-
 
 @pytest.mark.asyncio
 async def test_transaction_serializable_read_only(pg_client: PostgresClient) -> None:
@@ -308,7 +292,6 @@ async def test_transaction_serializable_read_only(pg_client: PostgresClient) -> 
     ):
         rows = await pg_client.fetch_all("SELECT 1 AS n")
         assert rows[0]["n"] == 1
-
 
 @pytest.mark.asyncio
 async def test_transaction_on_bound_connection_serializable(
@@ -325,10 +308,9 @@ async def test_transaction_on_bound_connection_serializable(
             rows = await pg_client.fetch_all("SELECT 1 AS n")
             assert rows[0]["n"] == 1
 
-
 @pytest.mark.asyncio
 async def test_bound_connection_rejects_nested_bind(pg_client: PostgresClient) -> None:
     async with pg_client.bound_connection():
-        with pytest.raises(InfrastructureError, match="already bound"):
+        with pytest.raises(CoreException, match="already bound"):
             async with pg_client.bound_connection():
                 pass

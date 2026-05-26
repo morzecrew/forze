@@ -2,6 +2,8 @@
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.execution import BeforeStep
 from forze.application.execution.registry import OperationRegistry
 
@@ -27,5 +29,5 @@ class TestRegistryPlanBinding:
         assert len(plans["op"]._outer.before.items) == 1
 
     def test_finish_without_ops_raises(self) -> None:
-        with pytest.raises(exc.internal, match="No operations"):
+        with pytest.raises(CoreException, match="No operations"):
             OperationRegistry().bind()

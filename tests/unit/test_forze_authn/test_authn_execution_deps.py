@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytest.importorskip("jwt")
 pytest.importorskip("argon2")
 
@@ -127,11 +129,11 @@ class TestAuthnDepsModule:
         assert isinstance(deps, Deps)
 
     def test_rejects_missing_kernel_when_routes(self) -> None:
-        with pytest.raises(exc.internal, match="kernel"):
+        with pytest.raises(CoreException, match="kernel"):
             AuthnDepsModule(authn={"main": frozenset({"token"})})()
 
     def test_rejects_method_without_required_kernel_section(self) -> None:
-        with pytest.raises(exc.internal, match="api_key"):
+        with pytest.raises(CoreException, match="api_key"):
             AuthnDepsModule(
                 kernel=_kernel_min_access(),
                 authn={"main": frozenset({"token", "api_key"})},
@@ -214,7 +216,7 @@ class TestConfigurableFactories:
         empty_shared = build_authn_shared_services(AuthnKernelConfig())
         factory = ConfigurableForzeJwtTokenVerifier(shared=empty_shared)
 
-        with pytest.raises(exc.internal, match="access_token_secret"):
+        with pytest.raises(CoreException, match="access_token_secret"):
             factory(ctx, AuthnSpec(name="s"))
 
     def test_password_verifier_factory(self) -> None:
@@ -272,7 +274,7 @@ class TestConfigurableFactories:
         ctx = ExecutionContext(deps=merged)
         factory = ctx.deps.provide(AuthnDepKey, route="main")
 
-        with pytest.raises(exc.internal, match="enabled_methods"):
+        with pytest.raises(CoreException, match="enabled_methods"):
             factory(
                 ctx,
                 AuthnSpec(
@@ -348,7 +350,7 @@ class TestConfigurableFactories:
         assert auth.password_verifier.password_svc is pl.password_svc
 
     def test_configurable_authn_post_init_validates_required_verifiers(self) -> None:
-        with pytest.raises(exc.internal, match="PasswordVerifierPort"):
+        with pytest.raises(CoreException, match="PasswordVerifierPort"):
             AuthnOrchestrator(
                 resolver=JwtNativeUuidResolver(),
                 enabled_methods=frozenset({"password"}),

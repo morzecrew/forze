@@ -7,7 +7,7 @@ require_firestore()
 # ....................... #
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, final
+from typing import AsyncGenerator, final
 
 import attrs
 
@@ -43,7 +43,7 @@ class FirestoreTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]:
+    async def transaction(self) -> AsyncGenerator[None]:
         logger.debug("Starting Firestore transaction")
 
         async with self.client.transaction():

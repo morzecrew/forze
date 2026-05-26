@@ -4,6 +4,8 @@ from typing import Any
 
 import attrs
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
@@ -102,7 +104,7 @@ class TestSocketIORouting:
             ack_type=EchoAck,
         )
 
-        with pytest.raises(exc.internal, match="already registered"):
+        with pytest.raises(CoreException, match="already registered"):
             router.command(
                 event="echo",
                 operation="chat.echo",

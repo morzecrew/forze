@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import (
-    AsyncIterator,
+    AsyncGenerator,
     Awaitable,
     Protocol,
     Sequence,
@@ -33,7 +33,7 @@ class StreamQueryPort[M](Protocol):
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         """Continuously yield new messages from the mapped streams."""
         ...  # pragma: no cover
 
@@ -66,7 +66,7 @@ class StreamGroupQueryPort[M](Protocol):
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         """Continuously yield new messages for *consumer* in *group*."""
         ...  # pragma: no cover
 

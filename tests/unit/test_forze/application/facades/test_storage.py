@@ -5,6 +5,8 @@ from datetime import datetime
 import attrs
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.composition.storage import StorageFacade, StorageKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.registry import OperationRegistry
@@ -70,5 +72,5 @@ class TestStorageFacade:
             registry=frozen,
             namespace=_STORAGE_KEYS,
         )
-        with pytest.raises(exc.internal, match="Handler factory not found"):
+        with pytest.raises(CoreException, match="Handler factory not found"):
             _ = facade.list

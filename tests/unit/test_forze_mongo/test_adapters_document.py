@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.document import DocumentSpec
 from forze.application.coordinators import DocumentCacheCoordinator
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -103,7 +105,7 @@ class TestMongoDocumentAdapter:
     def test_post_init_rejects_mismatched_gateway_clients(self) -> None:
         read_gw = _build_read_gateway()
         write_gw = _build_write_gateway(object())
-        with pytest.raises(exc.internal, match="same client"):
+        with pytest.raises(CoreException, match="same client"):
             MongoDocumentAdapter(
                 spec=(ms := _doc_spec()),
                 read_gw=read_gw,
@@ -116,7 +118,7 @@ class TestMongoDocumentAdapter:
         write_gw = _build_write_gateway(read_gw.client)
         write_gw.tenant_aware = True
         read_gw.tenant_aware = False
-        with pytest.raises(exc.internal, match="tenant"):
+        with pytest.raises(CoreException, match="tenant"):
             MongoDocumentAdapter(
                 spec=(ms := _doc_spec()),
                 read_gw=read_gw,
@@ -300,7 +302,7 @@ class TestMongoDocumentAdapter:
             cache_coord=_mongo_cc(rg, ms),
         )
 
-        with pytest.raises(exc.internal, match="Write gateway is not configured"):
+        with pytest.raises(CoreException, match="Write gateway is not configured"):
             await adapter.update(uuid4(), 1, MyUpdateDoc(name="x"))
 
 

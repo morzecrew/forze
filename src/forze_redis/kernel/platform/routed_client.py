@@ -5,7 +5,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncContextManager, AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncContextManager, AsyncGenerator, Mapping, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -152,7 +152,7 @@ class RoutedRedisClient(RedisClientPort):
 
     def pipeline(self, *, transaction: bool = True) -> AsyncContextManager[Pipeline]:
         @asynccontextmanager
-        async def _cm() -> AsyncIterator[Pipeline]:
+        async def _cm() -> AsyncGenerator[Pipeline]:
             inner = await self._get_client()
 
             async with inner.pipeline(transaction=transaction) as pipe:
@@ -249,7 +249,7 @@ class RoutedRedisClient(RedisClientPort):
         channels: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RedisPubSubMessage]:
+    ) -> AsyncGenerator[RedisPubSubMessage]:
         inner = await self._get_client()
         async for msg in inner.subscribe(channels, timeout=timeout):
             yield msg

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from re import Pattern
-from typing import Any, AsyncIterator, Final, Sequence, cast, final
+from typing import Any, AsyncGenerator, Final, Sequence, cast, final
 from uuid import uuid4
 
 import aioboto3
@@ -193,7 +193,7 @@ class SQSClient(SQSClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def client(self) -> AsyncIterator[AsyncSQSClient]:
+    async def client(self) -> AsyncGenerator[AsyncSQSClient]:
         """Yield a context-bound SQS client with nested-scope reuse."""
         depth = self.__ctx_depth.get()
         parent = self.__current_client()
@@ -602,7 +602,7 @@ class SQSClient(SQSClientPort):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[SQSQueueMessage]:
+    ) -> AsyncGenerator[SQSQueueMessage]:
         """Yield queue messages continuously using long polling."""
 
         while True:

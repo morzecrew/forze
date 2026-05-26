@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.querying import (
     decode_keyset_v1,
     encode_keyset_v1,
@@ -30,5 +32,5 @@ def test_normalize_sorts_with_id_appends_tiebreak() -> None:
 
 
 def test_normalize_rejects_mixed_directions() -> None:
-    with pytest.raises(exc.internal, match="all sort directions"):
+    with pytest.raises(CoreException, match="all sort directions"):
         normalize_sorts_with_id({ID_FIELD: "asc", "m": "desc"})

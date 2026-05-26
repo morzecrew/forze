@@ -1,4 +1,4 @@
-"""Benchmarks for core optimizations in error handling, serialization, and row conversion."""
+"""Benchmarks for core optimizations in serialization and row conversion."""
 
 import time
 from typing import Any
@@ -6,7 +6,6 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from forze.base.exceptions import handled
 from forze.base.serialization.pydantic import pydantic_field_names, pydantic_model_hash
 
 # ----------------------- #
@@ -18,47 +17,6 @@ class _SampleModel(BaseModel):
     value: int
     tags: list[str]
     nested: dict[str, Any] = {}
-
-
-# ----------------------- #
-# Error handler decorator overhead
-
-
-class TestHandledDecoratorPerf:
-    @pytest.mark.perf
-    def test_handled_decorator_overhead(self) -> None:
-        """Measure per-call overhead of the ``handled`` decorator.
-
-        The optimization removes expensive ``inspect.signature().bind_partial()``
-        calls from the hot path, replacing them with a closure-captured operation
-        name resolved once at decoration time.
-        """
-
-        def _handler(e: Exception, op: str, **kwargs: Any) -> exc.internal:
-            return exc.internal(message=str(e))
-
-        @handled(_handler, op="bench_op")
-        def decorated_fn(x: int, y: str) -> int:
-            return x
-
-        def raw_fn(x: int, y: str) -> int:
-            return x
-
-        iterations = 50_000
-        start = time.perf_counter_ns()
-        for _ in range(iterations):
-            decorated_fn(42, "hello")
-        decorated_ns = time.perf_counter_ns() - start
-
-        start = time.perf_counter_ns()
-        for _ in range(iterations):
-            raw_fn(42, "hello")
-        raw_ns = time.perf_counter_ns() - start
-
-        overhead_per_call_ns = (decorated_ns - raw_ns) / iterations
-        assert (
-            overhead_per_call_ns < 5_000
-        ), f"Decorated overhead {overhead_per_call_ns:.0f}ns/call exceeds 5us budget"
 
 
 # ----------------------- #

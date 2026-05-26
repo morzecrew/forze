@@ -3,6 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException, exc
 from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
@@ -158,7 +160,7 @@ async def test_validate_postgres_document_schemas_missing_column() -> None:
         return_value={"a": PostgresType(base="int4", is_array=False, not_null=True)},
     )
 
-    with pytest.raises(exc.internal, match="missing columns"):
+    with pytest.raises(CoreException, match="missing columns"):
         await validate_postgres_document_schemas(
             intro,
             [

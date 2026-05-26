@@ -1,8 +1,8 @@
 """Ports for document storage and retrieval."""
 
-from collections.abc import AsyncIterator
 from typing import (
     Any,
+    AsyncGenerator,
     Awaitable,
     Literal,
     Protocol,
@@ -209,7 +209,7 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[R]]:
+    ) -> AsyncGenerator[Sequence[R]]:
         """Yield keyset batches of read models for large exports (no total count)."""
         ...  # pragma: no cover
 
@@ -220,7 +220,7 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[JsonDict]]:
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
         """Yield keyset batches with field projection for large exports."""
         ...  # pragma: no cover
 
@@ -231,7 +231,7 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[T]]:
         """Yield keyset batches validated as ``return_type`` for large exports."""
         ...  # pragma: no cover
 

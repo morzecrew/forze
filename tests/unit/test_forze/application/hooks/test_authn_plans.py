@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -9,10 +10,8 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.application.hooks.authn import AuthnRequired
-from forze.base.errors import AuthenticationError
 
 pytestmark = pytest.mark.unit
-
 
 @pytest.mark.asyncio
 async def test_authn_before_required_allows_when_bound() -> None:
@@ -24,7 +23,6 @@ async def test_authn_before_required_allows_when_bound() -> None:
         hook = AuthnRequired()(ctx)
         await hook(None)
 
-
 @pytest.mark.asyncio
 async def test_authn_before_required_denies_when_missing() -> None:
     ctx = ExecutionContext(deps=Deps())
@@ -33,7 +31,7 @@ async def test_authn_before_required_denies_when_missing() -> None:
     with ctx.inv.bind(metadata=metadata):
         hook = AuthnRequired()(ctx)
 
-        with pytest.raises(AuthenticationError) as exc_info:
+        with pytest.raises(CoreException) as exc_info:
             await hook(None)
 
     assert exc_info.value.code == "auth_required"

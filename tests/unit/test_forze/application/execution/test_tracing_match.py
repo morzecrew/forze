@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.execution import (
     RuntimeTrace,
     TraceExpectation,
@@ -35,7 +37,7 @@ class TestAssertTraceContains:
         trace = RuntimeTrace()
         trace.next_event(domain="tx", op="enter", tx_depth=1)
 
-        with pytest.raises(exc.internal, match="Expected trace to contain"):
+        with pytest.raises(CoreException, match="Expected trace to contain"):
             assert_trace_contains(
                 trace,
                 [TraceExpectation(domain="document", op="create")],
@@ -60,7 +62,7 @@ class TestAssertTraceEquals:
         trace = RuntimeTrace()
         trace.next_event(domain="tx", op="enter", tx_depth=1)
 
-        with pytest.raises(exc.internal, match="Expected 2 trace event"):
+        with pytest.raises(CoreException, match="Expected 2 trace event"):
             assert_trace_equals(
                 trace,
                 [

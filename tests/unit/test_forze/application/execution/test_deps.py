@@ -2,6 +2,8 @@
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.base import DepKey
 from forze.application.execution import Deps, DepsPlan, ExecutionContext
 from forze.application.execution.deps import DepsResolutionTrace
@@ -28,11 +30,11 @@ _SPEC_B = _NamedSpec("b")
 
 class TestDepsConstruction:
     def test_routed_map_must_not_be_empty(self) -> None:
-        with pytest.raises(exc.internal, match="no routes"):
+        with pytest.raises(CoreException, match="no routes"):
             Deps(routed_deps={_R: {}})
 
     def test_routed_group_requires_non_empty_routes(self) -> None:
-        with pytest.raises(exc.internal, match="Routes must not be empty"):
+        with pytest.raises(CoreException, match="Routes must not be empty"):
             Deps.routed_group({_A: 1}, routes=set())
 
     def test_routed_group_expands_provider_across_routes(self) -> None:
@@ -44,7 +46,7 @@ class TestDepsConstruction:
 
 class TestDepsProvide:
     def test_plain_not_found_raises(self) -> None:
-        with pytest.raises(exc.internal, match="Plain dependency"):
+        with pytest.raises(CoreException, match="Plain dependency"):
             Deps().provide(_A)
 
     def test_routed_not_found_fallback_to_plain(self) -> None:
@@ -61,13 +63,13 @@ class TestDepsProvide:
     def test_routed_key_missing_no_fallback_raises(self) -> None:
         d = Deps()
 
-        with pytest.raises(exc.internal, match="Routed dependency"):
+        with pytest.raises(CoreException, match="Routed dependency"):
             d.provide(_R, route="z", fallback_to_plain=False)
 
     def test_routed_route_missing_no_fallback_raises(self) -> None:
         d = Deps.routed({_R: {"z": "z"}})
 
-        with pytest.raises(exc.internal, match="not found for route"):
+        with pytest.raises(CoreException, match="not found for route"):
             d.provide(_R, route="missing", fallback_to_plain=False)
 
 
@@ -85,28 +87,28 @@ class TestDepsMerge:
         a = Deps.plain({_A: 1})
         b = Deps.plain({_A: 2})
 
-        with pytest.raises(exc.internal, match="Conflicting plain"):
+        with pytest.raises(CoreException, match="Conflicting plain"):
             Deps.merge(a, b)
 
     def test_merge_plain_vs_routed_raises(self) -> None:
         a = Deps.plain({_A: 1})
         b = Deps.routed({_A: {"r": 2}})
 
-        with pytest.raises(exc.internal, match="both as plain and routed"):
+        with pytest.raises(CoreException, match="both as plain and routed"):
             Deps.merge(a, b)
 
     def test_merge_routed_vs_plain_raises(self) -> None:
         a = Deps.routed({_A: {"r": 1}})
         b = Deps.plain({_A: 2})
 
-        with pytest.raises(exc.internal, match="both as plain and routed"):
+        with pytest.raises(CoreException, match="both as plain and routed"):
             Deps.merge(a, b)
 
     def test_merge_routed_overlap_raises(self) -> None:
         a = Deps.routed({_R: {"x": 1}})
         b = Deps.routed({_R: {"x": 2}})
 
-        with pytest.raises(exc.internal, match="Conflicting routed"):
+        with pytest.raises(CoreException, match="Conflicting routed"):
             Deps.merge(a, b)
 
     def test_merge_combines_non_overlapping_routes_for_same_key(self) -> None:
@@ -195,14 +197,14 @@ class TestDepsCycleDetection:
         deps = Deps.plain({_A: "value"})
 
         with deps.resolution_scope(_A):
-            with pytest.raises(exc.internal, match="Cyclic dependency resolution"):
+            with pytest.raises(CoreException, match="Cyclic dependency resolution"):
                 deps.provide(_A)
 
     def test_resolution_scope_reentry_raises(self) -> None:
         deps = Deps.plain({_A: "value"})
 
         with deps.resolution_scope(_A):
-            with pytest.raises(exc.internal, match="Cyclic dependency resolution"):
+            with pytest.raises(CoreException, match="Cyclic dependency resolution"):
                 with deps.resolution_scope(_A):
                     pass
 
@@ -218,7 +220,7 @@ class TestDepsCycleDetection:
         deps = Deps.plain({_A: factory_a, _B: factory_b})
         ctx = ExecutionContext(deps=deps)
 
-        with pytest.raises(exc.internal, match="Cyclic dependency resolution"):
+        with pytest.raises(CoreException, match="Cyclic dependency resolution"):
             deps.resolve_configurable(ctx, _A, _SPEC_A, route="a")
 
     def test_plain_provide_with_empty_stack_unchanged(self) -> None:
@@ -239,7 +241,7 @@ class TestDepsCycleDetection:
         with deps_a.resolution_scope(_A):
             assert deps_b.provide(_A) == "b"
 
-            with pytest.raises(exc.internal, match="Cyclic dependency resolution"):
+            with pytest.raises(CoreException, match="Cyclic dependency resolution"):
                 deps_a.provide(_A)
 
 
@@ -278,7 +280,7 @@ class TestDepsResolutionTrace:
         trace.add_edge(frame_a, frame_b)
         trace.add_edge(frame_b, frame_a)
 
-        with pytest.raises(exc.internal, match="cycle"):
+        with pytest.raises(CoreException, match="cycle"):
             trace.to_dag()
 
     def test_two_deps_traces_isolated(self) -> None:

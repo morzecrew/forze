@@ -3,6 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -58,7 +60,7 @@ def test_prepare_hub_member_weights_out_of_range() -> None:
         model_type=_M,
         members=(_leg("a"), _leg("b")),
     )
-    with pytest.raises(exc.internal, match="0.0 and 1.0"):
+    with pytest.raises(CoreException, match="0.0 and 1.0"):
         prepare_hub_search_options(
             hub,
             {"member_weights": {"a": 2.0, "b": 0.5}},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, exc
 from collections.abc import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -11,20 +12,16 @@ import pytest
 pytest.importorskip("psycopg")
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import InfrastructureError, SecretNotFoundError
 
 from forze_postgres.kernel.platform import PostgresClient, PostgresConfig, RoutedPostgresClient
 
-
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/dsn")
-
 
 def _normalize_postgres_url(url: str) -> str:
     if url.startswith("postgresql+psycopg://"):
         return url.replace("postgresql+psycopg://", "postgresql://")
     return url
-
 
 class _MemSecretsByPath:
     """Maps secret paths to DSN strings."""
@@ -44,21 +41,20 @@ class _MemSecretsByPath:
         if self._broken_path is not None and ref.path == self._broken_path:
             raise RuntimeError("vault unavailable")
         if self._missing_path is not None and ref.path == self._missing_path:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             )
         try:
             return self._paths[ref.path]
         except KeyError as e:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             ) from e
 
     async def exists(self, ref: SecretRef) -> bool:
         return ref.path in self._paths
-
 
 class _MemSecretsCallableTenant(_MemSecretsByPath):
     """Looks up tenants/*/dsn paths (callable-style refs)."""
@@ -81,7 +77,6 @@ class _MemSecretsCallableTenant(_MemSecretsByPath):
         )
         super().__init__(paths, missing_path=missing_path, broken_path=broken_path)
 
-
 def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
     slot: list[UUID | None] = [None]
 
@@ -92,7 +87,6 @@ def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None],
         slot[0] = value
 
     return getter, setter
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -170,7 +164,6 @@ async def test_routed_postgres_sql_execute_fetch_mapping_refs(postgres_container
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_postgres_query_concurrency_branches(postgres_container) -> None:
@@ -203,7 +196,6 @@ async def test_routed_postgres_query_concurrency_branches(postgres_container) ->
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_postgres_transaction_bound_connection_require_tx(postgres_container) -> None:
@@ -231,7 +223,7 @@ async def test_routed_postgres_transaction_bound_connection_require_tx(postgres_
         await routed.fetch_one("SELECT 1")
         assert routed.is_in_transaction() is False
 
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
 
         async with routed.transaction():
@@ -245,7 +237,6 @@ async def test_routed_postgres_transaction_bound_connection_require_tx(postgres_
             assert await routed.fetch_value("SELECT 3") == 3
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -287,7 +278,6 @@ async def test_routed_postgres_lru_eviction(postgres_container) -> None:
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_postgres_require_transaction_without_context(postgres_container) -> None:
@@ -306,18 +296,17 @@ async def test_routed_postgres_require_transaction_without_context(postgres_cont
     await routed.startup()
     try:
         tenant_set(None)
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
 
         tenant_set(t1)
         await routed.fetch_one("SELECT 1")
         await routed.evict_tenant(t1)
 
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -336,7 +325,7 @@ async def test_routed_postgres_evict_unknown_and_secret_errors(postgres_containe
     await routed_miss.startup()
     try:
         tenant_set(t_miss)
-        with pytest.raises(SecretNotFoundError):
+        with pytest.raises(CoreException):
             await routed_miss.fetch_one("SELECT 1")
     finally:
         await routed_miss.close()
@@ -350,7 +339,7 @@ async def test_routed_postgres_evict_unknown_and_secret_errors(postgres_containe
     await routed_break.startup()
     try:
         tenant_set(t_break)
-        with pytest.raises(InfrastructureError, match="Failed to resolve database secret"):
+        with pytest.raises(CoreException, match="Failed to resolve database secret"):
             await routed_break.fetch_one("SELECT 1")
     finally:
         await routed_break.close()

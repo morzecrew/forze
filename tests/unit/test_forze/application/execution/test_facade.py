@@ -3,6 +3,8 @@
 import attrs
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.execution import Handler
 from forze.application.execution.facade import OperationFacade, facade_op
 from forze.application.execution.registry import OperationRegistry
@@ -56,5 +58,5 @@ class TestOperationFacade:
             handlers={"get": lambda _ctx: StubHandler()},
         ).freeze()
 
-        with pytest.raises(exc.internal, match="requires namespace"):
+        with pytest.raises(CoreException, match="requires namespace"):
             MissingNamespaceFacade(ctx=stub_ctx, registry=reg)

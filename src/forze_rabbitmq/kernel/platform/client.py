@@ -10,7 +10,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Mapping, Sequence, final
+from typing import AsyncGenerator, Mapping, Sequence, final
 from uuid import uuid4
 
 import attrs
@@ -134,7 +134,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     @exc_interceptor.asynccontextmanager("rabbitmq.channel")  # type: ignore[untyped-decorator]
     @asynccontextmanager
-    async def channel(self) -> AsyncIterator[AbstractChannel]:
+    async def channel(self) -> AsyncGenerator[AbstractChannel]:
         depth = self.__ctx_depth.get()
         parent = self.__current_channel()
 
@@ -437,12 +437,15 @@ class RabbitMQClient(RabbitMQClientPort):
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
 
-        async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
-            async for raw in it:
-                raw_messages.append(raw)
+        try:
+            async with declared.iterator(timeout=timeout_seconds, no_ack=False) as it:
+                async for raw in it:
+                    raw_messages.append(raw)
 
-                if len(raw_messages) >= max_messages:
-                    break
+                    if len(raw_messages) >= max_messages:
+                        break
+        except TimeoutError:
+            pass
 
         return await self.__to_message_batch(queue, raw_messages)
 
@@ -454,7 +457,7 @@ class RabbitMQClient(RabbitMQClientPort):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RabbitMQQueueMessage]:
+    ) -> AsyncGenerator[RabbitMQQueueMessage]:
         timeout_seconds = timeout.total_seconds() if timeout is not None else 1.0
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)

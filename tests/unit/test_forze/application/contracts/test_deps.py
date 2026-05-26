@@ -4,6 +4,8 @@ from enum import StrEnum
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.base import DepKey
 from forze.application.execution import Deps
 
@@ -21,7 +23,7 @@ class TestDepsPlain:
     def test_provide_missing_raises(self) -> None:
         deps = Deps()
         key = DepKey[str]("missing")
-        with pytest.raises(exc.internal, match="not found"):
+        with pytest.raises(CoreException, match="not found"):
             deps.provide(key)
 
     def test_exists(self) -> None:
@@ -40,14 +42,14 @@ class TestDepsPlain:
     def test_merge_conflict_raises(self) -> None:
         deps_a = Deps.plain({DepKey[str]("x"): "a"})
         deps_b = Deps.plain({DepKey[str]("x"): "b"})
-        with pytest.raises(exc.internal, match="Conflicting"):
+        with pytest.raises(CoreException, match="Conflicting"):
             Deps.merge(deps_a, deps_b)
 
     def test_without(self) -> None:
         key = DepKey[str]("x")
         deps = Deps.plain({key: "val"}).without(key)
         assert deps.exists(DepKey[str]("x")) is False
-        with pytest.raises(exc.internal, match="not found"):
+        with pytest.raises(CoreException, match="not found"):
             deps.provide(DepKey[str]("x"))
 
 

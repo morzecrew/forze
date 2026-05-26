@@ -2,6 +2,7 @@
 
 import pytest
 
+from forze.base.exceptions import CoreException
 from forze_socketio import server as server_module
 
 # ----------------------- #
@@ -54,7 +55,7 @@ class TestSocketIOServerBuilders:
 
     def test_build_server_rejects_conflicting_manager_config(self) -> None:
         with pytest.raises(
-            exc.internal, match="either `redis_url` or `client_manager`"
+            CoreException, match="either `redis_url` or `client_manager`"
         ):
             server_module.build_socketio_server(
                 redis_url="redis://localhost:6379/0",

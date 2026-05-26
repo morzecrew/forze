@@ -1,5 +1,6 @@
 """Unit tests for Vault client KV error translation (mocked hvac)."""
 
+from forze.base.exceptions import CoreException
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,11 +10,9 @@ pytest.importorskip("hvac")
 from hvac.exceptions import InvalidPath, VaultError
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import InfrastructureError, SecretNotFoundError
 from forze_vault.kernel.platform import VaultClient, VaultConfig
 
 # ----------------------- #
-
 
 @pytest.mark.asyncio
 async def test_read_kv_data_not_found() -> None:
@@ -22,9 +21,8 @@ async def test_read_kv_data_not_found() -> None:
     mock_hvac.secrets.kv.v2.read_secret_version.side_effect = InvalidPath()
     client._client = mock_hvac
 
-    with pytest.raises(SecretNotFoundError):
+    with pytest.raises(CoreException):
         await client.read_kv_data("missing/path")
-
 
 @pytest.mark.asyncio
 async def test_read_kv_data_vault_error() -> None:
@@ -33,9 +31,8 @@ async def test_read_kv_data_vault_error() -> None:
     mock_hvac.secrets.kv.v2.read_secret_version.side_effect = VaultError("down")
     client._client = mock_hvac
 
-    with pytest.raises(InfrastructureError, match="Vault read failed"):
+    with pytest.raises(CoreException, match="Vault read failed"):
         await client.read_kv_data("any/path")
-
 
 @pytest.mark.asyncio
 async def test_kv_exists_false_on_invalid_path() -> None:
@@ -45,7 +42,6 @@ async def test_kv_exists_false_on_invalid_path() -> None:
     client._client = mock_hvac
 
     assert await client.kv_exists("missing") is False
-
 
 @pytest.mark.asyncio
 async def test_read_kv_data_unwraps_value_field() -> None:

@@ -1,5 +1,6 @@
 """Unit tests for context middleware and call-context codec."""
 
+from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -17,7 +18,6 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.base.errors import AuthenticationError
 from forze_fastapi.middlewares.context import (
     CookieTokenAuthnIdentityResolver,
     HeaderApiKeyAuthnIdentityResolver,
@@ -31,17 +31,14 @@ from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #
 
-
 def _execution_ctx() -> ExecutionContext:
     return ExecutionContext(deps=MockDepsModule(state=MockState())())
-
 
 class _NullTenantCodec:
     """Synchronous no-op tenant codec."""
 
     def decode(self, request: Request) -> TenantIdentity | None:
         return None
-
 
 class _NullTenantResolver:
     """Async tenant resolver that yields no tenant."""
@@ -54,12 +51,10 @@ class _NullTenantResolver:
     ) -> TenantIdentity | None:
         return None
 
-
 def _mw_kwargs() -> dict[str, object]:
     return {
         "tenant_identity_codec": _NullTenantCodec(),
     }
-
 
 def _authn_result(
     principal_id,
@@ -70,7 +65,6 @@ def _authn_result(
         identity=AuthnIdentity(principal_id=principal_id),
         issuer_tenant_hint=issuer_tenant_hint,
     )
-
 
 class _TokenAuthPort:
     async def authenticate_with_password(
@@ -89,11 +83,9 @@ class _TokenAuthPort:
     ) -> AuthnResult | None:
         return None
 
-
 class _TokenAuthFactory:
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _TokenAuthPort:
         return _TokenAuthPort()
-
 
 class _ApiKeyAuthPort:
     async def authenticate_with_password(
@@ -116,11 +108,9 @@ class _ApiKeyAuthPort:
             uuid5(NAMESPACE_URL, "key:" + credentials.key)
         )
 
-
 class _ApiKeyAuthFactory:
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _ApiKeyAuthPort:
         return _ApiKeyAuthPort()
-
 
 class _BothPort:
     async def authenticate_with_password(
@@ -146,11 +136,9 @@ class _BothPort:
             uuid5(NAMESPACE_URL, "k:" + credentials.key),
         )
 
-
 class _BothFactory:
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _BothPort:
         return _BothPort()
-
 
 class TestHeaderInvocationMetadataCodec:
     """Tests for :class:`HeaderInvocationMetadataCodec`."""
@@ -221,7 +209,6 @@ class TestHeaderInvocationMetadataCodec:
         keys = {k.decode().lower(): v.decode() for k, v in out}
         assert "x-causation-id" in keys
         assert keys["x-causation-id"] == str(caus)
-
 
 class TestContextBindingMiddleware:
     """Tests for :class:`ContextBindingMiddleware`."""
@@ -375,7 +362,7 @@ class TestContextBindingMiddleware:
         )
         client = TestClient(mw)
 
-        with pytest.raises(AuthenticationError, match="Requested tenant"):
+        with pytest.raises(CoreException, match="Requested tenant"):
             client.get(
                 "/",
                 headers={
@@ -439,7 +426,7 @@ class TestContextBindingMiddleware:
         )
         client = TestClient(mw)
 
-        with pytest.raises(AuthenticationError, match="Multiple"):
+        with pytest.raises(CoreException, match="Multiple"):
             client.get("/")
 
     @pytest.mark.asyncio
@@ -482,7 +469,7 @@ class TestContextBindingMiddleware:
             }
         )
 
-        with pytest.raises(AuthenticationError, match="required"):
+        with pytest.raises(CoreException, match="required"):
             await resolver.resolve(req, ctx)
 
     @pytest.mark.asyncio
@@ -538,7 +525,7 @@ class TestContextBindingMiddleware:
             }
         )
 
-        with pytest.raises(AuthenticationError, match="Invalid tenant hint"):
+        with pytest.raises(CoreException, match="Invalid tenant hint"):
             codec.decode(req)
 
     @pytest.mark.asyncio
@@ -568,7 +555,7 @@ class TestContextBindingMiddleware:
 
         client = TestClient(mw)
 
-        with pytest.raises(AuthenticationError, match="Multiple"):
+        with pytest.raises(CoreException, match="Multiple"):
             client.get(
                 "/",
                 headers={

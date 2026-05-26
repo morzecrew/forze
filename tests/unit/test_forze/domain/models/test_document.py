@@ -1,11 +1,11 @@
 """Tests for forze.domain.models.document."""
 
+from forze.base.exceptions import CoreException, exc
 from datetime import datetime
 from uuid import UUID
 
 import pytest
 
-from forze.base.errors import ValidationError
 from forze.base.primitives import JsonDict
 from forze.domain.models import (
     CreateDocumentCmd,
@@ -17,11 +17,9 @@ from forze.domain.validation import update_validator
 
 # ----------------------- #
 
-
 class SampleDocument(Document):
     name: str
     value: int = 0
-
 
 class TestDocumentBasics:
     def test_default_fields(self) -> None:
@@ -33,19 +31,18 @@ class TestDocumentBasics:
 
     def test_id_is_frozen(self) -> None:
         doc = SampleDocument(name="test")
-        with pytest.raises(ValidationError):
+        with pytest.raises(CoreException):
             doc.update({"id": doc.id})
 
     def test_rev_is_frozen(self) -> None:
         doc = SampleDocument(name="test")
-        with pytest.raises(ValidationError):
+        with pytest.raises(CoreException):
             doc.update({"rev": 2})
 
     def test_created_at_is_frozen(self) -> None:
         doc = SampleDocument(name="test")
-        with pytest.raises(ValidationError):
+        with pytest.raises(CoreException):
             doc.update({"created_at": doc.created_at})
-
 
 class TestDocumentUpdate:
     def test_applies_diff_and_bumps_last_update(self) -> None:
@@ -65,7 +62,7 @@ class TestDocumentUpdate:
 
     def test_unknown_field_raises(self) -> None:
         doc = SampleDocument(name="test")
-        with pytest.raises(ValidationError):
+        with pytest.raises(CoreException):
             doc.update({"nonexistent": "val"})
 
     def test_multiple_fields_updated(self) -> None:
@@ -73,7 +70,6 @@ class TestDocumentUpdate:
         after, diff = doc.update({"name": "new", "value": 99})
         assert after.name == "new"
         assert after.value == 99
-
 
 class TestDocumentTouch:
     def test_updates_last_update_only(self) -> None:
@@ -89,7 +85,6 @@ class TestDocumentTouch:
         assert doc.name == "original"
         assert doc.value == 42
 
-
 class TestDocumentApplyUpdate:
     def test_empty_diff_returns_self(self) -> None:
         doc = SampleDocument(name="x")
@@ -101,7 +96,6 @@ class TestDocumentApplyUpdate:
         result = doc._apply_update({"name": "new"})
         assert result.name == "new"
         assert result is not doc
-
 
 class TestDocumentUpdateValidators:
     def test_validators_run_on_update(self) -> None:
@@ -159,12 +153,11 @@ class TestDocumentUpdateValidators:
             @update_validator
             def check(self, after: "Doc", diff: JsonDict) -> None:
                 if after.name == "forbidden":
-                    raise ValidationError("Name forbidden")
+                    raise exc.validation("Name forbidden")
 
         doc = Doc(name="ok")
-        with pytest.raises(ValidationError, match="forbidden"):
+        with pytest.raises(CoreException, match="forbidden"):
             doc.update({"name": "forbidden"})
-
 
 class TestValidateHistoricalConsistency:
     def test_detects_conflict(self) -> None:
@@ -185,10 +178,8 @@ class TestValidateHistoricalConsistency:
         data: JsonDict = {"name": "v2"}
         assert after.validate_historical_consistency(old, data)
 
-
 # ----------------------- #
 # DTOs
-
 
 class TestCreateDocumentCmd:
     def test_defaults(self) -> None:
@@ -205,7 +196,6 @@ class TestCreateDocumentCmd:
         assert cmd.id == uid
         assert cmd.created_at == now
 
-
 class TestReadDocument:
     def test_fields(self) -> None:
         from forze.base.primitives.uuid import uuid7
@@ -215,7 +205,6 @@ class TestReadDocument:
         rd = ReadDocument(id=uid, rev=3, created_at=now, last_update_at=now)
         assert rd.id == uid
         assert rd.rev == 3
-
 
 class TestDocumentHistory:
     def test_fields(self) -> None:

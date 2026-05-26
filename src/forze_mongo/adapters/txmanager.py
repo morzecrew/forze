@@ -7,7 +7,7 @@ require_mongo()
 # ....................... #
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, final
+from typing import AsyncGenerator, final
 
 import attrs
 
@@ -47,7 +47,7 @@ class MongoTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[None]:
+    async def transaction(self) -> AsyncGenerator[None]:
         """Open Mongo transaction for the duration of the context."""
 
         #! TODO: log options

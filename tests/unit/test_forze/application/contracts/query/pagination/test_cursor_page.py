@@ -4,6 +4,8 @@ from typing import Any, cast
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.querying.pagination.cursor_page import (
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
@@ -35,7 +37,7 @@ def test_assert_cursor_projection_ok_when_all_keys_included() -> None:
 
 
 def test_assert_cursor_projection_raises_when_sort_key_missing() -> None:
-    with pytest.raises(exc.internal, match="projection must include"):
+    with pytest.raises(CoreException, match="projection must include"):
         assert_cursor_projection_includes_sort_keys(
             return_fields=[ID_FIELD],
             sort_keys=[ID_FIELD, "name"],

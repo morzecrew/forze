@@ -9,7 +9,7 @@ require_psycopg()
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any, AsyncIterator, LiteralString, Sequence, cast, final, get_args
+from typing import Any, AsyncGenerator, LiteralString, Sequence, cast, final, get_args
 from uuid import UUID
 
 import attrs
@@ -172,7 +172,7 @@ class PostgresWriteGateway[D: Document, C: CreateDocumentCmd, U: BaseDTO](
     # ....................... #
 
     @asynccontextmanager
-    async def _write_tx(self) -> AsyncIterator[None]:
+    async def _write_tx(self) -> AsyncGenerator[None]:
         """Use an outer transaction for multi-step writes when the caller has not opened one."""
 
         if self.client.is_in_transaction():

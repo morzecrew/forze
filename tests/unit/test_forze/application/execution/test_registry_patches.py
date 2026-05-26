@@ -4,6 +4,8 @@ from enum import StrEnum
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.execution import BeforeStep, DispatchStep
 from forze.application.execution.registry import (
     FrozenOperationRegistry,
@@ -85,7 +87,7 @@ def test_patch_with_no_handlers_raises_orphan_patch() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="Orphan plan patch"):
+    with pytest.raises(CoreException, match="Orphan plan patch"):
         reg.freeze()
 
 
@@ -98,7 +100,7 @@ def test_orphan_patch_exact_selector_raises() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="Orphan plan patch"):
+    with pytest.raises(CoreException, match="Orphan plan patch"):
         reg.freeze()
 
 
@@ -136,7 +138,7 @@ def test_equal_specificity_patch_route_conflict_raises() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="Conflicting plan patches"):
+    with pytest.raises(CoreException, match="Conflicting plan patches"):
         reg.freeze()
 
 
@@ -156,7 +158,7 @@ def test_tx_dispatch_without_route_raises_at_freeze() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="no transaction route"):
+    with pytest.raises(CoreException, match="no transaction route"):
         reg.freeze()
 
 
@@ -176,7 +178,7 @@ def test_tx_dispatch_after_commit_without_route_raises_at_freeze() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="no transaction route"):
+    with pytest.raises(CoreException, match="no transaction route"):
         reg.freeze()
 
 
@@ -191,7 +193,7 @@ def test_dispatch_in_patch_validates_at_freeze() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="Dispatch target"):
+    with pytest.raises(CoreException, match="Dispatch target"):
         reg.freeze()
 
 
@@ -211,7 +213,7 @@ def test_merge_detects_patch_selector_conflict() -> None:
         .finish(deep=True)
     )
 
-    with pytest.raises(exc.internal, match="Conflicting operation plan patches"):
+    with pytest.raises(CoreException, match="Conflicting operation plan patches"):
         OperationRegistry.merge(left, right)
 
 

@@ -1,5 +1,6 @@
 """Unit tests for ``forze_mongo.kernel.gateways.write``."""
 
+from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -7,7 +8,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
-from forze.base.errors import ConcurrencyError, exc.internal
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_mongo.kernel.gateways import (
     MongoHistoryGateway,
@@ -17,31 +17,25 @@ from forze_mongo.kernel.gateways import (
 from forze_mongo.kernel.gateways.write import optimistic_retry
 from forze_mongo.kernel.platform import MongoClient
 
-
 class MyDoc(Document):
     name: str
     is_deleted: bool = False
 
-
 class MyCreateDoc(CreateDocumentCmd):
     name: str
-
 
 class MyUpdateDoc(BaseDTO):
     name: str | None = None
 
-
 def _domain_doc(pk: UUID, *, rev: int = 1, name: str = "item") -> MyDoc:
     now = datetime.now(tz=UTC)
     return MyDoc(id=pk, rev=rev, created_at=now, last_update_at=now, name=name)
-
 
 def _build_client() -> MagicMock:
     client = MagicMock(spec=MongoClient)
     client.collection.return_value = object()
     client.update_one = AsyncMock()
     return client
-
 
 def _build_read(client: MagicMock, *, collection: str = "docs") -> MagicMock:
     read = MagicMock(spec=MongoReadGateway)
@@ -52,7 +46,6 @@ def _build_read(client: MagicMock, *, collection: str = "docs") -> MagicMock:
     read.model_type = MyDoc
     read.get = AsyncMock()
     return read
-
 
 class TestMongoWriteGateway:
     @pytest.mark.asyncio
@@ -125,7 +118,7 @@ class TestMongoWriteGateway:
         after_write = _domain_doc(pk, rev=2, name="after")
         client = _build_client()
         client.update_one.side_effect = [
-            ConcurrencyError("Failed to update record"),
+            exc.concurrency("Failed to update record"),
             1,
         ]
         read = _build_read(client)
@@ -154,7 +147,7 @@ class TestMongoWriteGateway:
         pk = uuid4()
         current = _domain_doc(pk, rev=1, name="before")
         client = _build_client()
-        client.update_one.side_effect = ConcurrencyError("Failed to update record")
+        client.update_one.side_effect = exc.concurrency("Failed to update record")
         read = _build_read(client)
         read.get.return_value = current
 
@@ -168,7 +161,7 @@ class TestMongoWriteGateway:
             update_cmd_type=MyUpdateDoc,
         )
 
-        with pytest.raises(ConcurrencyError, match="Failed to update record"):
+        with pytest.raises(CoreException, match="Failed to update record"):
             await gw.update(pk, MyUpdateDoc(name="after"))
 
         assert client.update_one.await_count == 3
@@ -207,18 +200,16 @@ class TestMongoWriteGateway:
         assert out[1].name == "new"
         read.get_many.assert_awaited_once_with([pk_existing])
 
-
 class TestOptimisticRetry:
     def test_optimistic_retry_returns_tenacity_decorator(self) -> None:
         decorator = optimistic_retry(attempts=5)
         assert callable(decorator)
 
-
 class TestMongoWriteGatewayPostInit:
     def test_rejects_mismatched_read_collection(self) -> None:
         client = _build_client()
         read = _build_read(client, collection="read_col")
-        with pytest.raises(exc.internal, match="Collection mismatch"):
+        with pytest.raises(CoreException, match="Collection mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="write_col",
@@ -233,7 +224,7 @@ class TestMongoWriteGatewayPostInit:
         c_read = _build_client()
         c_write = _build_client()
         read = _build_read(c_read)
-        with pytest.raises(exc.internal, match="Client mismatch"):
+        with pytest.raises(CoreException, match="Client mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",
@@ -248,7 +239,7 @@ class TestMongoWriteGatewayPostInit:
         client = _build_client()
         read = _build_read(client)
         read.database = "db_a"
-        with pytest.raises(exc.internal, match="Database mismatch"):
+        with pytest.raises(CoreException, match="Database mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",
@@ -263,7 +254,7 @@ class TestMongoWriteGatewayPostInit:
         client = _build_client()
         read = _build_read(client)
         read.tenant_aware = True
-        with pytest.raises(exc.internal, match="Tenant awareness mismatch"):
+        with pytest.raises(CoreException, match="Tenant awareness mismatch"):
             MongoWriteGateway(
                 model_type=MyDoc,
                 collection="docs",
@@ -289,7 +280,7 @@ class TestMongoWriteGatewayPostInit:
             target_collection="docs",
         )
         with pytest.raises(
-            exc.internal, match="nested history gateway must use the same client"
+            CoreException, match="nested history gateway must use the same client"
         ):
             MongoWriteGateway(
                 model_type=MyDoc,

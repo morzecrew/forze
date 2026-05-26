@@ -5,7 +5,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence, final
+from typing import AsyncGenerator, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -146,7 +146,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def channel(self) -> AsyncIterator[AbstractChannel]:
+    async def channel(self) -> AsyncGenerator[AbstractChannel]:
         inner = await self._get_client()
 
         async with inner.channel() as ch:
@@ -209,7 +209,7 @@ class RoutedRabbitMQClient(RabbitMQClientPort):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RabbitMQQueueMessage]:
+    ) -> AsyncGenerator[RabbitMQQueueMessage]:
         inner = await self._get_client()
         async for msg in inner.consume(queue, timeout=timeout):
             yield msg

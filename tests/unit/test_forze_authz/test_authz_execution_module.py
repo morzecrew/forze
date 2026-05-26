@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytestmark = pytest.mark.unit
 
 from forze.application.contracts.authz import (
@@ -27,7 +29,7 @@ class TestAuthzDepsModule:
         assert isinstance(deps, Deps)
 
     def test_requires_kernel_when_routes_registered(self) -> None:
-        with pytest.raises(exc.internal, match="kernel"):
+        with pytest.raises(CoreException, match="kernel"):
             AuthzDepsModule(decision={"main"})()
 
     def test_registers_decision_and_scope_routes(self) -> None:

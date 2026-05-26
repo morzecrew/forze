@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 import pytest
 
 pytest.importorskip("aiohttp")
@@ -9,9 +10,7 @@ pytest.importorskip("aiohttp")
 from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
-from forze.base.exceptions import InfrastructureError
 from forze_clickhouse.kernel.platform.errors import _clickhouse_eh
-
 
 def _client_error(status: int) -> ClientResponseError:
     request_info = RequestInfo(
@@ -28,13 +27,12 @@ def _client_error(status: int) -> ClientResponseError:
         headers={},
     )
 
-
 class TestClickHouseErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("boom")
-        assert _clickhouse_eh(original, "op") is original
+        assert _clickhouse_eh(original, site="op") is original
 
     def test_not_found(self) -> None:
-        r = _clickhouse_eh(_client_error(404), "get")
-        assert isinstance(r, InfrastructureError)
-        assert "not found" in r.message.lower()
+        r = _clickhouse_eh(_client_error(404), site="get")
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert "not found" in r.summary.lower()

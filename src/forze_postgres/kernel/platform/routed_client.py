@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, Literal, Sequence, overload
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Literal,
+    Mapping,
+    Sequence,
+    overload,
+)
 from uuid import UUID
 
 import attrs
@@ -53,7 +60,7 @@ class _TenantPoolSlot:
     # ....................... #
 
     @asynccontextmanager
-    async def use(self) -> AsyncIterator[PostgresClient]:
+    async def use(self) -> AsyncGenerator[PostgresClient]:
         """Increment refcount around work on :attr:`client`; close when draining and idle."""
 
         async with self.condition:
@@ -260,7 +267,7 @@ class RoutedPostgresClient(PostgresClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def _client_scope(self) -> AsyncIterator[PostgresClient]:
+    async def _client_scope(self) -> AsyncGenerator[PostgresClient]:
         """Resolve the tenant slot and yield its client with refcount protection."""
 
         if not self._started:
@@ -439,7 +446,7 @@ class RoutedPostgresClient(PostgresClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def bound_connection(self) -> AsyncIterator[AsyncConnection]:
+    async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
         async with self._client_scope() as inner:
             async with inner.bound_connection() as conn:
                 yield conn
@@ -451,7 +458,7 @@ class RoutedPostgresClient(PostgresClientPort):
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncIterator[AsyncConnection]:
+    ) -> AsyncGenerator[AsyncConnection]:
         async with self._client_scope() as inner:
             async with inner.transaction(options=options) as conn:
                 yield conn
@@ -547,7 +554,7 @@ class RoutedPostgresClient(PostgresClientPort):
         batch_size: int = 2000,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+    ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
         async with self._client_scope() as inner:
             async for chunk in inner.fetch_all_batched(
                 query,

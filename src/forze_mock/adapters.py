@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import (
     Any,
-    AsyncIterator,
+    AsyncGenerator,
     Literal,
     Mapping,
     NoReturn,
@@ -1373,7 +1373,7 @@ class MockDocumentAdapter(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[R]]:
+    ) -> AsyncGenerator[Sequence[R]]:
         cursor: CursorPaginationExpression | None = {"limit": chunk_size}
         while True:
             page = await self.find_cursor(filters=filters, cursor=cursor, sorts=sorts)
@@ -1393,7 +1393,7 @@ class MockDocumentAdapter(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[JsonDict]]:
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
         cursor: CursorPaginationExpression | None = {"limit": chunk_size}
         while True:
             page = await self.project_cursor(
@@ -1418,7 +1418,7 @@ class MockDocumentAdapter(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[T]]:
         cursor: CursorPaginationExpression | None = {"limit": chunk_size}
         while True:
             page = await self.select_cursor(
@@ -3293,7 +3293,7 @@ class MockQueueAdapter[M](QueueQueryPort[M], QueueCommandPort[M]):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[QueueMessage[M]]:
+    ) -> AsyncGenerator[QueueMessage[M]]:
         while True:
             batch = await self.receive(queue, limit=1, timeout=timeout)
             if batch:
@@ -3381,7 +3381,7 @@ class MockPubSubAdapter[M](PubSubCommandPort[M], PubSubQueryPort[M]):
         topics: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[PubSubMessage[M]]:
+    ) -> AsyncGenerator[PubSubMessage[M]]:
         with self.state.lock:
             cursors = {
                 topic: len(self._topic_store().get(topic, [])) for topic in topics
@@ -3487,7 +3487,7 @@ class MockStreamAdapter[M](StreamQueryPort[M], StreamCommandPort[M]):
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
         while True:
             messages = await self.read(cursor, timeout=timeout)
@@ -3534,7 +3534,7 @@ class MockStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M]):
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         del group, consumer
         async for item in self.stream.tail(stream_mapping, timeout=timeout):
             yield item
@@ -3714,7 +3714,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_type: type[T] | None,
         return_fields: Sequence[str] | None,
         fetch_batch_size: int,
-    ) -> AsyncIterator[Sequence[Any]]:
+    ) -> AsyncGenerator[Sequence[Any]]:
         _ = self._validated_params(query_key, params)
         if self._dry_run(options):
             return
@@ -3780,7 +3780,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[R]]:
+    ) -> AsyncGenerator[Sequence[R]]:
         async for chunk in self._chunked(
             query_key,
             params,
@@ -3839,7 +3839,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[JsonDict]]:
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
         async for chunk in self._chunked(
             query_key,
             params,
@@ -3898,7 +3898,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[T]]:
         async for chunk in self._chunked(
             query_key,
             params,

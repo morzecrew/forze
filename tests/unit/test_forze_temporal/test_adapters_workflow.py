@@ -3,6 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 pytest.importorskip("temporalio")
@@ -198,5 +200,5 @@ class TestTemporalBaseAdapterWorkflowId:
             tenant_aware=True,
             tenant_provider=None,
         )
-        with pytest.raises(exc.internal, match="Tenant provider"):
+        with pytest.raises(CoreException, match="Tenant provider"):
             adapter.construct_workflow_id("x")

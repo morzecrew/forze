@@ -5,6 +5,8 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.base import Page
@@ -320,7 +322,7 @@ async def test_pg_adapter_project_cursor_requires_sort_fields_in_projection(
 
     await cmd.create(_CxCreate(sku="x"))
 
-    with pytest.raises(exc.internal, match="projection must include"):
+    with pytest.raises(CoreException, match="projection must include"):
         await q.project_cursor(
             ["sku"],
             None,

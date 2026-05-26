@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, Mapping, Sequence, TypeVar, cast, final
+from typing import Any, AsyncGenerator, Mapping, Sequence, TypeVar, cast, final
 
 import attrs
 from redis.asyncio.client import Pipeline, Redis
@@ -225,7 +225,7 @@ class RedisClient(RedisClientPort):
 
     @exc_interceptor.asynccontextmanager("redis.pipeline")  # type: ignore[untyped-decorator]
     @asynccontextmanager
-    async def pipeline(self, *, transaction: bool = True) -> AsyncIterator[Pipeline]:
+    async def pipeline(self, *, transaction: bool = True) -> AsyncGenerator[Pipeline]:
         depth = self.__ctx_depth.get()
         parent = self.__current_pipe()
 
@@ -505,7 +505,7 @@ class RedisClient(RedisClientPort):
         channels: Sequence[str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[RedisPubSubMessage]:
+    ) -> AsyncGenerator[RedisPubSubMessage]:
         if not channels:
             return
 

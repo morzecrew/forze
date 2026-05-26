@@ -1,10 +1,17 @@
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    aclosing,
+    closing,
+)
 from functools import wraps
 from typing import (
-    AsyncIterator,
+    Any,
+    AsyncGenerator,
     Awaitable,
     Callable,
-    Iterator,
+    Generator,
+    Mapping,
     ParamSpec,
     TypeVar,
     final,
@@ -24,6 +31,24 @@ from .protocols import ExceptionMapper
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+_BYPASS_INTERCEPTION = (GeneratorExit, KeyboardInterrupt, SystemExit)
+
+# ....................... #
+
+
+def _reraise_unless_control_flow(
+    mapper: ExceptionMapper,
+    exc: BaseException,
+    *,
+    site: str,
+    details: Mapping[str, Any] | None,
+) -> None:
+    if isinstance(exc, _BYPASS_INTERCEPTION):
+        raise exc
+
+    reraise_mapped(mapper, exc, site=site, details=details)
+
 
 # ....................... #
 
@@ -99,14 +124,14 @@ class ExceptionInterceptor:
     def asyncgenerator(
         self,
         site: str | None = None,
-    ) -> Callable[[Callable[P, AsyncIterator[R]]], Callable[P, AsyncIterator[R]]]:
+    ) -> Callable[[Callable[P, AsyncGenerator[R]]], Callable[P, AsyncGenerator[R]]]:
         """Wrap an async generator function to intercept exceptions."""
 
         def decorator(
-            fn: Callable[P, AsyncIterator[R]],
-        ) -> Callable[P, AsyncIterator[R]]:
+            fn: Callable[P, AsyncGenerator[R]],
+        ) -> Callable[P, AsyncGenerator[R]]:
             @wraps(fn)
-            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncIterator[R]:
+            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncGenerator[R]:
                 intercepted = Intercepted.from_callable(fn, *args, site=site, **kwargs)
 
                 try:
@@ -120,17 +145,18 @@ class ExceptionInterceptor:
                         details=intercepted.bound,
                     )
 
-                async for x in it:
-                    try:
-                        yield x
+                async with aclosing(it) as agen:
+                    async for x in agen:
+                        try:
+                            yield x
 
-                    except BaseException as e:
-                        reraise_mapped(
-                            self.mapper,
-                            e,
-                            site=intercepted.site,
-                            details=intercepted.bound,
-                        )
+                        except BaseException as e:
+                            _reraise_unless_control_flow(
+                                self.mapper,
+                                e,
+                                site=intercepted.site,
+                                details=intercepted.bound,
+                            )
 
             return wrapper
 
@@ -141,12 +167,12 @@ class ExceptionInterceptor:
     def generator(
         self,
         site: str | None = None,
-    ) -> Callable[[Callable[P, Iterator[R]]], Callable[P, Iterator[R]]]:
+    ) -> Callable[[Callable[P, Generator[R]]], Callable[P, Generator[R]]]:
         """Wrap a generator function to intercept exceptions."""
 
-        def decorator(fn: Callable[P, Iterator[R]]) -> Callable[P, Iterator[R]]:
+        def decorator(fn: Callable[P, Generator[R]]) -> Callable[P, Generator[R]]:
             @wraps(fn)
-            def wrapper(*args: P.args, **kwargs: P.kwargs) -> Iterator[R]:
+            def wrapper(*args: P.args, **kwargs: P.kwargs) -> Generator[R]:
                 intercepted = Intercepted.from_callable(fn, *args, site=site, **kwargs)
 
                 try:
@@ -160,17 +186,18 @@ class ExceptionInterceptor:
                         details=intercepted.bound,
                     )
 
-                for x in it:
-                    try:
-                        yield x
+                with closing(it) as gen:
+                    for x in gen:
+                        try:
+                            yield x
 
-                    except BaseException as e:
-                        reraise_mapped(
-                            self.mapper,
-                            e,
-                            site=intercepted.site,
-                            details=intercepted.bound,
-                        )
+                        except BaseException as e:
+                            _reraise_unless_control_flow(
+                                self.mapper,
+                                e,
+                                site=intercepted.site,
+                                details=intercepted.bound,
+                            )
 
             return wrapper
 

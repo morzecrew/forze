@@ -12,11 +12,10 @@ from forze.application.contracts.authz import AuthzSpec
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.application.execution.registry import OperationRegistry
 from forze.application.hooks.authz import AuthzBeforeAuthorize
-from forze.base.errors import AuthorizationError
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import str_key_selector
 
 pytestmark = pytest.mark.unit
-
 
 class _AllowRuntime:
     async def authorize(self, request):  # noqa: ANN001
@@ -25,14 +24,12 @@ class _AllowRuntime:
         _ = request
         return AuthzDecision(allowed=True, matched_permission_key="child.read")
 
-
 class _DenyRuntime:
     async def authorize(self, request):  # noqa: ANN001
         from forze.application.contracts.authz import AuthzDecision
 
         _ = request
         return AuthzDecision(allowed=False, reason="denied")
-
 
 @pytest.mark.asyncio
 async def test_patch_inherits_authz_before_on_child_operation() -> None:
@@ -72,7 +69,6 @@ async def test_patch_inherits_authz_before_on_child_operation() -> None:
             run = reg.resolve("child.read", ctx)
             assert await run(None) == "ok"
 
-
 @pytest.mark.asyncio
 async def test_patch_authz_denies_child_without_grant() -> None:
     async def _child_handler(_args):
@@ -103,5 +99,6 @@ async def test_patch_authz_denies_child_without_grant() -> None:
         with ctx.inv.bind(metadata=metadata, authn=ident):
             run = reg.resolve("child.read", ctx)
 
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(CoreException) as exc_info:
                 await run(None)
+            assert exc_info.value.kind == ExceptionKind.AUTHORIZATION

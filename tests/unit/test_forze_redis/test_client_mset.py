@@ -2,6 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze_redis.kernel.platform.client import RedisClient
 
 
@@ -52,7 +54,7 @@ async def test_mset_with_flags_uses_atomic_script(redis_client: RedisClient) -> 
 async def test_mset_nx_and_xx_rejected(redis_client: RedisClient) -> None:
     redis_client.run_script = AsyncMock(return_value="1")  # type: ignore[method-assign]
 
-    with pytest.raises(exc.internal, match="nx and xx"):
+    with pytest.raises(CoreException, match="nx and xx"):
         await redis_client.mset({"a": "1"}, nx=True, xx=True)
 
 

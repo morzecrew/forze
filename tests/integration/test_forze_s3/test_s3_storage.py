@@ -4,10 +4,8 @@ from uuid import uuid4
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.execution import ExecutionContext
-from forze.base.errors import NotFoundError
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.platform.client import S3Client
-
 
 @pytest.mark.asyncio
 async def test_s3_storage_adapter_upload_list_download_delete(
@@ -51,7 +49,6 @@ async def test_s3_storage_adapter_upload_list_download_delete(
     )
     assert total_after_delete == 0
     assert listed_after_delete == []
-
 
 @pytest.mark.asyncio
 async def test_s3_storage_list_pagination(

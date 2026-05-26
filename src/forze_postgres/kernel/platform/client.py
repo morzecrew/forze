@@ -18,7 +18,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, AsyncIterator, Literal, Sequence, final, overload
+from typing import Any, AsyncGenerator, Literal, Sequence, final, overload
 from uuid import uuid4
 
 import attrs
@@ -238,7 +238,7 @@ class PostgresClient(PostgresClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def __acquire_conn(self) -> AsyncIterator[AsyncConnection]:
+    async def __acquire_conn(self) -> AsyncGenerator[AsyncConnection]:
         """Yields the context-bound connection or a new one from the pool."""
 
         conn = self.__current_conn()
@@ -291,7 +291,7 @@ class PostgresClient(PostgresClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def bound_connection(self) -> AsyncIterator[AsyncConnection]:
+    async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
         """Check out one pool connection and bind it as the current context connection.
 
         While this context is active, query methods and a top-level
@@ -340,7 +340,7 @@ class PostgresClient(PostgresClientPort):
         self,
         *,
         options: PostgresTransactionOptions | None = None,
-    ) -> AsyncIterator[AsyncConnection]:
+    ) -> AsyncGenerator[AsyncConnection]:
         """Enters a transaction (or nested savepoint), yielding the connection.
 
         Nested calls use savepoints; the top-level call uses psycopg's
@@ -596,7 +596,7 @@ class PostgresClient(PostgresClientPort):
         batch_size: int = 2000,
         row_factory: RowFactory = "dict",
         commit: bool = False,
-    ) -> AsyncIterator[list[JsonDict] | list[tuple[Any, ...]]]:
+    ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
         """Execute *query* and yield row chunks of at most *batch_size* rows.
 
         Uses :meth:`psycopg.AsyncCursor.fetchmany` on a forward-only cursor so

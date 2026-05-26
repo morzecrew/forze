@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, exc
 from collections.abc import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -15,15 +16,12 @@ pytest.importorskip("testcontainers.mongodb")
 from testcontainers.mongodb import MongoDbContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import InfrastructureError, SecretNotFoundError
 
 from forze_mongo.kernel.platform import RoutedMongoClient
 from forze_mongo.kernel.platform.client import MongoClient
 
-
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/mongo")
-
 
 class _MemSecrets:
     def __init__(
@@ -45,14 +43,14 @@ class _MemSecrets:
         if self._missing_tenant is not None:
             tid = self._tid_for_ref(ref)
             if tid == self._missing_tenant:
-                raise SecretNotFoundError(
+                raise exc.not_found(
                     f"No secret for {ref.path!r}",
                     details={"ref": ref.path},
                 )
         for tid, uri in self._uris.items():
             if ref.path == f"tenants/{tid}/mongo":
                 return uri
-        raise SecretNotFoundError(
+        raise exc.not_found(
             f"No secret for {ref.path!r}",
             details={"ref": ref.path},
         )
@@ -71,7 +69,6 @@ class _MemSecrets:
         tid = self._tid_for_ref(ref)
         return tid is not None and tid in self._uris
 
-
 def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
     slot: list[UUID | None] = [None]
 
@@ -82,7 +79,6 @@ def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None],
         slot[0] = value
 
     return getter, setter
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -114,7 +110,6 @@ async def test_routed_mongo_health_crud_roundtrip(mongo_container: MongoDbContai
         assert await routed.count(coll, {"n": 1}) == 1
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -200,7 +195,6 @@ async def test_routed_mongo_port_delegators_roundtrip(mongo_container: MongoDbCo
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_transaction_guards_standalone(mongo_container: MongoDbContainer) -> None:
@@ -222,7 +216,7 @@ async def test_routed_mongo_transaction_guards_standalone(mongo_container: Mongo
     try:
         tenant_set(None)
         assert routed.is_in_transaction() is False
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
 
         tenant_set(t1)
@@ -231,19 +225,18 @@ async def test_routed_mongo_transaction_guards_standalone(mongo_container: Mongo
         await routed.health()
         assert routed.is_in_transaction() is False
 
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
 
         await routed.evict_tenant(t1)
         tenant_set(t1)
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
 
         tenant_set(None)
         assert routed.is_in_transaction() is False
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -299,7 +292,6 @@ async def test_routed_mongo_lru_mru_refresh_evicts_correct_tenant(
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_evict_tenant_and_unknown_noop(
@@ -326,7 +318,6 @@ async def test_routed_mongo_evict_tenant_and_unknown_noop(
         assert ok is True
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -356,7 +347,6 @@ async def test_routed_mongo_database_isolation_between_tenants(
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_secret_not_found_propagates(
@@ -376,11 +366,10 @@ async def test_routed_mongo_secret_not_found_propagates(
     await routed.startup()
     try:
         tenant_set(t_bad)
-        with pytest.raises(SecretNotFoundError):
+        with pytest.raises(CoreException):
             await routed.health()
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -401,11 +390,10 @@ async def test_routed_mongo_secret_resolve_failure_wrapped(
     await routed.startup()
     try:
         tenant_set(t_bad)
-        with pytest.raises(InfrastructureError, match="Failed to resolve Mongo secret"):
+        with pytest.raises(CoreException, match="Failed to resolve Mongo secret"):
             await routed.health()
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -430,7 +418,7 @@ async def test_routed_mongo_transaction_require_transaction_replica(
     try:
         await routed.health()
         tenant_set(t1)
-        with pytest.raises(InfrastructureError, match="Transactional context"):
+        with pytest.raises(CoreException, match="Transactional context"):
             routed.require_transaction()
 
         coll_name = f"tx_{uuid4().hex[:8]}"

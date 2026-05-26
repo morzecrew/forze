@@ -8,7 +8,7 @@ require_redis()
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence, final
+from typing import AsyncGenerator, Sequence, final
 
 import attrs
 from pydantic import BaseModel
@@ -117,7 +117,7 @@ class RedisStreamAdapter[M: BaseModel](
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
         backoff = 0.05
         max_backoff = 30.0
@@ -212,7 +212,7 @@ class RedisStreamGroupAdapter[M: BaseModel](StreamGroupQueryPort[M], TenancyMixi
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[M]]:
+    ) -> AsyncGenerator[StreamMessage[M]]:
         cursor = dict(stream_mapping)
         backoff = 0.05
         max_backoff = 30.0

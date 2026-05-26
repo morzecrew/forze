@@ -6,6 +6,8 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
@@ -76,7 +78,7 @@ class TestResolveAuthzScope:
     def test_conflict_raises(self) -> None:
         spec = AuthzSpec(name="z", tenancy_mode="require_invocation_tenant")
 
-        with pytest.raises(exc.internal, match="disagree"):
+        with pytest.raises(CoreException, match="disagree"):
             resolve_policy_scope(
                 spec=spec,
                 explicit=AuthzScope(tenant_id=uuid4()),

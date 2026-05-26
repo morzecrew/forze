@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
@@ -47,7 +49,7 @@ def _minimal_vector_port(
 
 
 def test_join_pairs_must_use_unique_projection_columns() -> None:
-    with pytest.raises(exc.internal, match="unique projection"):
+    with pytest.raises(CoreException, match="unique projection"):
         _minimal_vector_port(
             join_pairs=(("id", "a"), ("id", "b")),
         )

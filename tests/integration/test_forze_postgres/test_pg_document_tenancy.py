@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, exc
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,7 +16,6 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.base.exceptions import NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
@@ -25,26 +25,21 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
-
 class TenantDoc(Document):
     """Domain model: ``tenant_id`` is populated by the gateway on insert."""
 
     tenant_id: UUID | None = Field(default=None)
     name: str
 
-
 class TenantCreateDoc(CreateDocumentCmd):
     name: str
-
 
 class TenantUpdateDoc(BaseDTO):
     name: str | None = None
 
-
 class TenantReadDoc(ReadDocument):
     tenant_id: UUID
     name: str
-
 
 def _tenant_table_context(pg_client: PostgresClient, table: str) -> ExecutionContext:
     configurable = ConfigurablePostgresDocument(
@@ -66,10 +61,8 @@ def _tenant_table_context(pg_client: PostgresClient, table: str) -> ExecutionCon
         )
     )
 
-
 def _metadata() -> InvocationMetadata:
     return InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
-
 
 def _spec() -> DocumentSpec:
     return DocumentSpec(
@@ -81,7 +74,6 @@ def _spec() -> DocumentSpec:
             "update_cmd": TenantUpdateDoc,
         },
     )
-
 
 @pytest.mark.asyncio
 async def test_tenant_aware_requires_tenant_in_identity(
@@ -109,9 +101,8 @@ async def test_tenant_aware_requires_tenant_in_identity(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
     ):
-        with pytest.raises(exc.internal, match="Tenant ID is required"):
+        with pytest.raises(CoreException, match="Tenant ID is required"):
             await adapter.create(TenantCreateDoc(name="orphan"))
-
 
 @pytest.mark.asyncio
 async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
@@ -165,7 +156,7 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
         tenant=TenantIdentity(tenant_id=tenant_b),
     ):
         adapter = execution_context.document.command(spec)
-        with pytest.raises(NotFoundError):
+        with pytest.raises(CoreException):
             await adapter.get(pk_a)
 
         got_b = await adapter.get(doc_b.id)
@@ -182,7 +173,6 @@ async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:
         assert loaded.name == "alpha"
         assert loaded.tenant_id == tenant_a
         assert (await adapter.count({})) == 1
-
 
 @pytest.mark.asyncio
 async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
@@ -220,7 +210,7 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
         tenant=TenantIdentity(tenant_id=tenant_b),
     ):
         adapter = execution_context.document.command(spec)
-        with pytest.raises(NotFoundError, match="Record not found"):
+        with pytest.raises(CoreException, match="Record not found"):
             await adapter.kill(pk_a)
 
     n_before = await pg_client.fetch_value(
@@ -244,7 +234,6 @@ async def test_kill_respects_tenant_scope(pg_client: PostgresClient) -> None:
         default=0,
     )
     assert int(n_after) == 0
-
 
 @pytest.mark.asyncio
 async def test_update_cross_tenant_is_not_found(pg_client: PostgresClient) -> None:
@@ -281,5 +270,5 @@ async def test_update_cross_tenant_is_not_found(pg_client: PostgresClient) -> No
         tenant=TenantIdentity(tenant_id=tenant_b),
     ):
         adapter = execution_context.document.command(spec)
-        with pytest.raises(NotFoundError):
+        with pytest.raises(CoreException):
             await adapter.update(doc_a.id, doc_a.rev, TenantUpdateDoc(name="hijack"))

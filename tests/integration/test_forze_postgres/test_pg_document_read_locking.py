@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,7 +14,6 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import InfrastructureError, NotFoundError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps.deps import (
     ConfigurablePostgresDocument,
@@ -26,22 +26,17 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
-
 class _Doc(Document):
     title: str
-
 
 class _Create(CreateDocumentCmd):
     title: str
 
-
 class _Update(BaseDTO):
     title: str | None = None
 
-
 class _Read(ReadDocument):
     title: str
-
 
 def _execution_context(pg_client: PostgresClient, table: str) -> ExecutionContext:
     doc = ConfigurablePostgresDocument(
@@ -61,7 +56,6 @@ def _execution_context(pg_client: PostgresClient, table: str) -> ExecutionContex
     )
     routed = Deps.routed({TransactionManagerDepKey: {"main": postgres_txmanager}})
     return ExecutionContext(deps=plain.merge(routed))
-
 
 @pytest.mark.asyncio
 async def test_get_for_update_requires_active_transaction(
@@ -90,9 +84,8 @@ async def test_get_for_update_requires_active_transaction(
     doc = await cmd.create(_Create(title="row"))
 
     query = ctx.document.query(spec)
-    with pytest.raises(InfrastructureError, match="Transactional context is required"):
+    with pytest.raises(CoreException, match="Transactional context is required"):
         await query.get(doc.id, for_update=True)
-
 
 @pytest.mark.asyncio
 async def test_get_for_update_succeeds_inside_transaction(
@@ -124,7 +117,6 @@ async def test_get_for_update_succeeds_inside_transaction(
         row = await query.get(created.id, for_update=True)
         assert row.id == created.id
         assert row.title == "locked"
-
 
 @pytest.mark.asyncio
 async def test_find_for_update_with_projection_inside_transaction(
@@ -162,7 +154,6 @@ async def test_find_for_update_with_projection_inside_transaction(
         assert proj["title"] == "unique-find-title"
         assert isinstance(proj["id"], UUID)
 
-
 @pytest.mark.asyncio
 async def test_get_many_raises_when_any_pk_missing(
     pg_client: PostgresClient,
@@ -190,5 +181,5 @@ async def test_get_many_raises_when_any_pk_missing(
     missing = uuid4()
 
     query = ctx.document.query(spec)
-    with pytest.raises(NotFoundError, match="Some records not found"):
+    with pytest.raises(CoreException, match="Some records not found"):
         await query.get_many([existing.id, missing])

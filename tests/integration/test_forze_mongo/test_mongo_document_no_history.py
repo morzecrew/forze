@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -12,28 +13,22 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import ConflictError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps.deps import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.platform import MongoClient
 
-
 class PlainDoc(Document):
     label: str
-
 
 class PlainCreate(CreateDocumentCmd):
     label: str
 
-
 class PlainUpdate(BaseDTO):
     label: str | None = None
 
-
 class PlainRead(ReadDocument):
     label: str
-
 
 @pytest.mark.asyncio
 async def test_mongo_document_without_history_roundtrip(
@@ -83,7 +78,6 @@ async def test_mongo_document_without_history_roundtrip(
     await cmd.kill(doc.id)
     assert await query.count() == 0
 
-
 @pytest.mark.asyncio
 async def test_mongo_no_history_revision_conflict_still_enforced(
     mongo_client: MongoClient,
@@ -121,5 +115,5 @@ async def test_mongo_no_history_revision_conflict_still_enforced(
     doc = await cmd.create(PlainCreate(label="v1"))
     await cmd.update(doc.id, doc.rev, PlainUpdate(label="v2"))
 
-    with pytest.raises(ConflictError, match="Revision mismatch"):
+    with pytest.raises(CoreException, match="Revision mismatch"):
         await cmd.update(doc.id, 1, PlainUpdate(label="bad"))

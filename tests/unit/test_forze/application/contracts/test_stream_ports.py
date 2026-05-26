@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
-from typing import Sequence
+from typing import AsyncGenerator, Sequence
 
 from pydantic import BaseModel
 
@@ -38,7 +37,7 @@ class _StubStreamQuery:
 
     async def tail(
         self, stream_mapping: dict[str, str], *, timeout: timedelta | None = None
-    ) -> AsyncIterator[StreamMessage[_Msg]]:
+    ) -> AsyncGenerator[StreamMessage[_Msg]]:
         _ = stream_mapping, timeout
         yield StreamMessage(
             stream="s",
@@ -66,7 +65,7 @@ class _StubStreamGroupQuery:
         stream_mapping: dict[str, str],
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[StreamMessage[_Msg]]:
+    ) -> AsyncGenerator[StreamMessage[_Msg]]:
         _ = group, consumer, stream_mapping, timeout
         yield StreamMessage(
             stream="s",

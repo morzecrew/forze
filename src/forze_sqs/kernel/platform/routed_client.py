@@ -5,7 +5,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Sequence, final
+from typing import AsyncGenerator, Sequence, final
 from uuid import UUID
 
 import attrs
@@ -161,7 +161,7 @@ class RoutedSQSClient(SQSClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def client(self) -> AsyncIterator[AsyncSQSClient]:
+    async def client(self) -> AsyncGenerator[AsyncSQSClient]:
         inner = await self._get_client()
 
         async with inner.client() as c:
@@ -253,7 +253,7 @@ class RoutedSQSClient(SQSClientPort):
         queue: str,
         *,
         timeout: timedelta | None = None,
-    ) -> AsyncIterator[SQSQueueMessage]:
+    ) -> AsyncGenerator[SQSQueueMessage]:
         inner = await self._get_client()
 
         async with inner.client():

@@ -4,6 +4,8 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -392,12 +394,12 @@ def test_hydrate_federated_record_key_ok() -> None:
 
 
 def test_hydrate_federated_record_key_errors() -> None:
-    with pytest.raises(exc.internal, match="partition"):
+    with pytest.raises(CoreException, match="partition"):
         SearchResultSnapshotCoordinator.hydrate_federated_record_key(
             "no-null-byte", _fed()
         )
 
-    with pytest.raises(exc.internal, match="Unknown federated member"):
+    with pytest.raises(CoreException, match="Unknown federated member"):
         SearchResultSnapshotCoordinator.hydrate_federated_record_key(
             'unknown\0{"id":1,"t":""}',
             _fed(),

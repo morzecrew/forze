@@ -1,17 +1,15 @@
 """Unit tests for secrets contracts."""
 
+from forze.base.exceptions import CoreException, exc
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
-from forze.base.exceptions import SecretNotFoundError
 
 # ----------------------- #
 
-
 class _Sample(BaseModel):
     dsn: str
-
 
 class _MemSecrets:
     """Minimal :class:`~forze.application.contracts.secrets.SecretsPort` for tests."""
@@ -24,14 +22,13 @@ class _MemSecrets:
             return self._data[ref.path]
 
         except KeyError as e:
-            raise SecretNotFoundError(
+            raise exc.not_found(
                 f"No secret for {ref.path!r}",
                 details={"ref": ref.path},
             ) from e
 
     async def exists(self, ref: SecretRef) -> bool:
         return ref.path in self._data
-
 
 @pytest.mark.asyncio
 async def test_resolve_structured_ok() -> None:
@@ -40,12 +37,11 @@ async def test_resolve_structured_ok() -> None:
     m = await resolve_structured(sec, ref, _Sample)
     assert m.dsn == "postgres://localhost/x"
 
-
 @pytest.mark.asyncio
 async def test_resolve_structured_invalid() -> None:
     sec = _MemSecrets({"db/1": '{"dsn": 1}'})
     ref = SecretRef(path="db/1")
-    with pytest.raises(exc.internal, match="not valid") as exc_info:
+    with pytest.raises(CoreException, match="not valid") as exc_info:
         await resolve_structured(sec, ref, _Sample)
 
     details = exc_info.value.details
@@ -54,14 +50,12 @@ async def test_resolve_structured_invalid() -> None:
     assert errors
     assert "input" not in errors[0]
 
-
 @pytest.mark.asyncio
 async def test_secret_not_found() -> None:
     sec = _MemSecrets({})
     ref = SecretRef(path="missing")
-    with pytest.raises(SecretNotFoundError):
+    with pytest.raises(CoreException):
         await sec.resolve_str(ref)
-
 
 @pytest.mark.asyncio
 async def test_exists() -> None:

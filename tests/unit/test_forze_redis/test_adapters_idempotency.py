@@ -1,14 +1,14 @@
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
-from datetime import timedelta
 
 from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.errors import ConflictError
+from forze.base.exceptions import CoreException
 from forze_redis.adapters.codecs import RedisKeyCodec
 from forze_redis.adapters.idempotency import RedisIdempotencyAdapter
 
@@ -23,7 +23,7 @@ def mock_redis_client() -> MagicMock:
     client.get = AsyncMock(return_value=None)
 
     @asynccontextmanager
-    async def _pipe(**_kwargs: object) -> AsyncIterator[MagicMock]:
+    async def _pipe(**_kwargs: object) -> AsyncGenerator[MagicMock]:
         yield client
 
     client.pipeline = MagicMock(side_effect=_pipe)
@@ -67,19 +67,25 @@ def _expected_body_without_tenant() -> str:
 
 
 @pytest.mark.asyncio
-async def test_key_generation_with_tenant(adapter_with_tenant: RedisIdempotencyAdapter) -> None:
+async def test_key_generation_with_tenant(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+) -> None:
     key = adapter_with_tenant._RedisIdempotencyAdapter__meta_key("op", "test-key")
     assert key == _expected_key_with_tenant()
 
 
 @pytest.mark.asyncio
-async def test_key_generation_without_tenant(adapter_without_tenant: RedisIdempotencyAdapter) -> None:
+async def test_key_generation_without_tenant(
+    adapter_without_tenant: RedisIdempotencyAdapter,
+) -> None:
     key = adapter_without_tenant._RedisIdempotencyAdapter__meta_key("op", "test-key")
     assert key == _expected_key_without_tenant()
 
 
 @pytest.mark.asyncio
-async def test_body_key_generation_with_tenant(adapter_with_tenant: RedisIdempotencyAdapter) -> None:
+async def test_body_key_generation_with_tenant(
+    adapter_with_tenant: RedisIdempotencyAdapter,
+) -> None:
     key = adapter_with_tenant._RedisIdempotencyAdapter__body_key("op", "test-key")
     assert key == _expected_body_with_tenant()
 
@@ -99,7 +105,9 @@ async def test_begin_success_with_tenant(
 
 
 @pytest.mark.asyncio
-async def test_begin_no_key(adapter_with_tenant: RedisIdempotencyAdapter, mock_redis_client: MagicMock) -> None:
+async def test_begin_no_key(
+    adapter_with_tenant: RedisIdempotencyAdapter, mock_redis_client: MagicMock
+) -> None:
     result = await adapter_with_tenant.begin("op", None, "hash123")
     mock_redis_client.set.assert_not_called()
     assert result is None
@@ -126,7 +134,9 @@ async def test_commit_success_with_tenant(
 
 
 @pytest.mark.asyncio
-async def test_commit_no_key(adapter_with_tenant: RedisIdempotencyAdapter, mock_redis_client: MagicMock) -> None:
+async def test_commit_no_key(
+    adapter_with_tenant: RedisIdempotencyAdapter, mock_redis_client: MagicMock
+) -> None:
     snapshot = IdempotencySnapshot(
         code=200, content_type="application/json", body=b"test-body"
     )
@@ -144,7 +154,7 @@ async def test_commit_failed_missing_or_expired(
         code=200, content_type="application/json", body=b"test-body"
     )
 
-    with pytest.raises(ConflictError, match="Idempotency commit failed"):
+    with pytest.raises(CoreException, match="Idempotency commit failed"):
         await adapter_with_tenant.commit("op", "test-key", "hash123", snapshot)
 
 
@@ -156,7 +166,7 @@ async def test_begin_conflict_not_readable(
     mock_redis_client.set.side_effect = [False, False]
     mock_redis_client.get.return_value = None
 
-    with pytest.raises(ConflictError, match="not readable"):
+    with pytest.raises(CoreException, match="not readable"):
         await adapter_with_tenant.begin("op", "test-key", "hash123")
 
 
@@ -170,5 +180,5 @@ async def test_begin_conflict_hash_mismatch(
 
     mock_redis_client.get.return_value = json.dumps({"st": "P", "ph": "wrong_hash"})
 
-    with pytest.raises(ConflictError, match="Payload hash mismatch"):
+    with pytest.raises(CoreException, match="Payload hash mismatch"):
         await adapter_with_tenant.begin("op", "test-key", "hash123")

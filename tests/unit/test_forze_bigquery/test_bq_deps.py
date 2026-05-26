@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -41,7 +43,7 @@ def test_validate_missing_query_key() -> None:
         "queries": {},
         "ingest_table": "t",
     }
-    with pytest.raises(exc.internal, match="missing query keys"):
+    with pytest.raises(CoreException, match="missing query keys"):
         validate_bigquery_analytics_config(spec, config)
 
 

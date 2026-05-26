@@ -1,12 +1,12 @@
 """Integration tests for :class:`~forze_mongo.kernel.gateways.history.MongoHistoryGateway`."""
 
+from forze.base.exceptions import CoreException
 from uuid import UUID, uuid4
 
 import pytest
 
 pytest.importorskip("pymongo")
 
-from forze.base.errors import NotFoundError, ValidationError
 from forze.base.primitives import utcnow
 from forze.domain.constants import (
     HISTORY_DATA_FIELD,
@@ -19,10 +19,8 @@ from forze.domain.models import Document
 from forze_mongo.kernel.gateways.history import MongoHistoryGateway
 from forze_mongo.kernel.platform import MongoClient
 
-
 class HistDoc(Document, SoftDeletionMixin):
     title: str
-
 
 def _doc(pk: UUID, rev: int, title: str) -> HistDoc:
     now = utcnow()
@@ -33,7 +31,6 @@ def _doc(pk: UUID, rev: int, title: str) -> HistDoc:
         last_update_at=now,
         title=title,
     )
-
 
 async def _gw(
     client: MongoClient,
@@ -52,7 +49,6 @@ async def _gw(
         tenant_aware=False,
     )
 
-
 @pytest.mark.asyncio
 async def test_history_read_not_found(mongo_client: MongoClient) -> None:
     gw = await _gw(
@@ -60,9 +56,8 @@ async def test_history_read_not_found(mongo_client: MongoClient) -> None:
         hist_coll=f"h_{uuid4().hex[:8]}",
         target_coll=f"t_{uuid4().hex[:8]}",
     )
-    with pytest.raises(NotFoundError, match="History not found"):
+    with pytest.raises(CoreException, match="History not found"):
         await gw.read(uuid4(), 1)
-
 
 @pytest.mark.asyncio
 async def test_history_read_missing_payload(mongo_client: MongoClient) -> None:
@@ -80,9 +75,8 @@ async def test_history_read_missing_payload(mongo_client: MongoClient) -> None:
             REV_FIELD: 1,
         },
     )
-    with pytest.raises(NotFoundError, match="History payload not found"):
+    with pytest.raises(CoreException, match="History payload not found"):
         await gw.read(pk, 1)
-
 
 @pytest.mark.asyncio
 async def test_history_read_many_length_mismatch(mongo_client: MongoClient) -> None:
@@ -91,9 +85,8 @@ async def test_history_read_many_length_mismatch(mongo_client: MongoClient) -> N
         hist_coll=f"h_{uuid4().hex[:8]}",
         target_coll=f"t_{uuid4().hex[:8]}",
     )
-    with pytest.raises(ValidationError, match="same"):
+    with pytest.raises(CoreException, match="same"):
         await gw.read_many([uuid4()], [])
-
 
 @pytest.mark.asyncio
 async def test_history_read_many_empty(mongo_client: MongoClient) -> None:
@@ -103,7 +96,6 @@ async def test_history_read_many_empty(mongo_client: MongoClient) -> None:
         target_coll=f"t_{uuid4().hex[:8]}",
     )
     assert await gw.read_many([], []) == []
-
 
 @pytest.mark.asyncio
 async def test_history_read_many_skips_missing_and_bad_payload(
@@ -142,7 +134,6 @@ async def test_history_read_many_skips_missing_and_bad_payload(
     assert out[0].id == pk_ok
     assert out[0].title == "ok"
 
-
 @pytest.mark.asyncio
 async def test_history_write_read_roundtrip(mongo_client: MongoClient) -> None:
     gw = await _gw(
@@ -156,7 +147,6 @@ async def test_history_write_read_roundtrip(mongo_client: MongoClient) -> None:
     loaded = await gw.read(pk, 1)
     assert loaded.title == "v1"
     assert loaded.rev == 1
-
 
 @pytest.mark.asyncio
 async def test_history_write_many_bulk_and_empty_noop(

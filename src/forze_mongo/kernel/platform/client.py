@@ -15,7 +15,7 @@ require_mongo()
 
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, AsyncIterator, Mapping, Sequence, final
+from typing import Any, AsyncGenerator, Mapping, Sequence, final
 
 import attrs
 from bson import ObjectId
@@ -193,7 +193,7 @@ class MongoClient(MongoClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def __acquire_session(self) -> AsyncIterator[AsyncClientSession]:
+    async def __acquire_session(self) -> AsyncGenerator[AsyncClientSession]:
         """Yield the context-bound session or a new one."""
 
         s = self.__current_session()
@@ -219,7 +219,7 @@ class MongoClient(MongoClientPort):
         self,
         *,
         options: MongoTransactionOptions | None = None,
-    ) -> AsyncIterator[AsyncClientSession]:
+    ) -> AsyncGenerator[AsyncClientSession]:
         """Enter a transaction scope, yielding the active session.
 
         MongoDB does not support nested transactions. Nested calls reuse the

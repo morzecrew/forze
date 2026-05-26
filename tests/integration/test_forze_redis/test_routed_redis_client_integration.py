@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, exc
 import asyncio
 from collections.abc import Callable
 from contextlib import suppress
@@ -16,21 +17,17 @@ pytest.importorskip("redis")
 from testcontainers.redis import RedisContainer
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.errors import InfrastructureError, SecretNotFoundError
 
 from forze_redis.kernel.platform import RoutedRedisClient
 from forze_redis.kernel.platform.client import RedisClient, RedisConfig
 
-
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/redis")
-
 
 def _dsn(redis_container: RedisContainer, db: int) -> str:
     host = redis_container.get_container_host_ip()
     port = redis_container.get_exposed_port(6379)
     return f"redis://{host}:{port}/{db}"
-
 
 class _MemSecrets:
     def __init__(
@@ -52,14 +49,14 @@ class _MemSecrets:
         if self._missing_tenant is not None:
             tid = self._tid_for_ref(ref)
             if tid == self._missing_tenant:
-                raise SecretNotFoundError(
+                raise exc.not_found(
                     f"No secret for {ref.path!r}",
                     details={"ref": ref.path},
                 )
         for tid, dsn in self._dsns.items():
             if ref.path == f"tenants/{tid}/redis":
                 return dsn
-        raise SecretNotFoundError(
+        raise exc.not_found(
             f"No secret for {ref.path!r}",
             details={"ref": ref.path},
         )
@@ -78,7 +75,6 @@ class _MemSecrets:
         tid = self._tid_for_ref(ref)
         return tid is not None and tid in self._dsns
 
-
 def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
     slot: list[UUID | None] = [None]
 
@@ -89,7 +85,6 @@ def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None],
         slot[0] = value
 
     return getter, setter
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -117,7 +112,6 @@ async def test_routed_redis_health_pipeline_kv(redis_container: RedisContainer) 
         assert await routed.get(key) == b"v"
     finally:
         await routed.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -228,7 +222,6 @@ async def test_routed_redis_port_delegators(redis_container: RedisContainer) -> 
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_redis_lru_different_db_indexes(redis_container: RedisContainer) -> None:
@@ -280,7 +273,6 @@ async def test_routed_redis_lru_different_db_indexes(redis_container: RedisConta
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_redis_key_isolation_across_db_indexes(
@@ -311,7 +303,6 @@ async def test_routed_redis_key_isolation_across_db_indexes(
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_redis_stream_touchpoint(redis_container: RedisContainer) -> None:
@@ -336,7 +327,6 @@ async def test_routed_redis_stream_touchpoint(redis_container: RedisContainer) -
     finally:
         await routed.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_redis_secret_errors(redis_container: RedisContainer) -> None:
@@ -353,7 +343,7 @@ async def test_routed_redis_secret_errors(redis_container: RedisContainer) -> No
     await routed_miss.startup()
     try:
         tenant_set(t_miss)
-        with pytest.raises(SecretNotFoundError):
+        with pytest.raises(CoreException):
             await routed_miss.health()
     finally:
         await routed_miss.close()
@@ -368,11 +358,10 @@ async def test_routed_redis_secret_errors(redis_container: RedisContainer) -> No
     await routed_break.startup()
     try:
         tenant_set(t_break)
-        with pytest.raises(InfrastructureError, match="Failed to resolve Redis secret"):
+        with pytest.raises(CoreException, match="Failed to resolve Redis secret"):
             await routed_break.health()
     finally:
         await routed_break.close()
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio

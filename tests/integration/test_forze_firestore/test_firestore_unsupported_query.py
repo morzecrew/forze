@@ -4,13 +4,14 @@ from uuid import uuid4
 
 import pytest
 
+from forze.base.exceptions import CoreException, ExceptionKind
+
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import InvalidOperationError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
@@ -67,7 +68,7 @@ async def test_aggregate_raises(firestore_client: FirestoreClient) -> None:
         )
     ).create(QCreate(tag="x"))
 
-    with pytest.raises(exc.internal, match="aggregates"):
+    with pytest.raises(CoreException, match="aggregates"):
         await query.aggregate_page(
             aggregates={"$count": {}},
             pagination={"limit": 10},
@@ -86,7 +87,7 @@ async def test_element_quantifier_raises(firestore_client: FirestoreClient) -> N
     await ctx.document.command(spec).create(QCreate(tag="x"))
     query = ctx.document.query(spec)
 
-    with pytest.raises(exc.internal, match="quantifiers"):
+    with pytest.raises(CoreException, match="quantifiers"):
         await query.find_many(
             filters={"$values": {"tag": {"$any": "x"}}},
             pagination={"limit": 10},
@@ -105,7 +106,7 @@ async def test_offset_pagination_raises(firestore_client: FirestoreClient) -> No
     await ctx.document.command(spec).create(QCreate(tag="x"))
     query = ctx.document.query(spec)
 
-    with pytest.raises(InvalidOperationError, match="offset pagination"):
+    with pytest.raises(CoreException, match="offset pagination") as exc_info:
         await query.find_page(
             pagination={"limit": 5, "offset": 1},
         )

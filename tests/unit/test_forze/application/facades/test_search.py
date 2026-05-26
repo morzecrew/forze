@@ -3,6 +3,8 @@
 import attrs
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.composition.search import SearchFacade, SearchKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.registry import OperationRegistry
@@ -66,5 +68,5 @@ class TestSearchFacade:
             registry=frozen,
             namespace=_SEARCH_KEYS,
         )
-        with pytest.raises(exc.internal, match="Handler factory not found"):
+        with pytest.raises(CoreException, match="Handler factory not found"):
             _ = facade.search

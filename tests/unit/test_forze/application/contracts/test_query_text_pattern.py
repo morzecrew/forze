@@ -1,5 +1,6 @@
 """Unit tests for text pattern validation helpers."""
 
+from forze.base.exceptions import CoreException
 import pytest
 
 from forze.application.contracts.querying.internal.parse import QueryFilterLimits
@@ -7,13 +8,10 @@ from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
     validate_text_pattern,
 )
-from forze.base.errors import ValidationError
-
 
 def _limits(**kwargs: int) -> tuple[int, int]:
     lim = QueryFilterLimits(**kwargs)
     return lim.max_pattern_length, lim.max_pattern_or_branches
-
 
 class TestLikePatternToRegex:
     def test_wildcards(self) -> None:
@@ -25,7 +23,6 @@ class TestLikePatternToRegex:
 
     def test_case_insensitive_prefix(self) -> None:
         assert like_pattern_to_regex("abc", case_insensitive=True) == "(?i)^abc$"
-
 
 class TestValidateTextPattern:
     def test_single_pattern(self) -> None:
@@ -50,7 +47,7 @@ class TestValidateTextPattern:
 
     def test_rejects_empty_sequence(self) -> None:
         max_len, max_br = _limits()
-        with pytest.raises(ValidationError, match="at least one pattern"):
+        with pytest.raises(CoreException, match="at least one pattern"):
             validate_text_pattern(
                 "$ilike",
                 [],
@@ -60,7 +57,7 @@ class TestValidateTextPattern:
 
     def test_rejects_whitespace_only(self) -> None:
         max_len, max_br = _limits()
-        with pytest.raises(ValidationError, match="non-empty"):
+        with pytest.raises(CoreException, match="non-empty"):
             validate_text_pattern(
                 "$ilike",
                 "   ",
@@ -70,7 +67,7 @@ class TestValidateTextPattern:
 
     def test_rejects_nested_quantifier_regex(self) -> None:
         max_len, max_br = _limits()
-        with pytest.raises(ValidationError, match="nested quantifiers"):
+        with pytest.raises(CoreException, match="nested quantifiers"):
             validate_text_pattern(
                 "$regex",
                 "(a+)+",
@@ -80,7 +77,7 @@ class TestValidateTextPattern:
 
     def test_rejects_oversized_pattern(self) -> None:
         max_len, max_br = _limits(max_pattern_length=4)
-        with pytest.raises(ValidationError, match="maximum length"):
+        with pytest.raises(CoreException, match="maximum length"):
             validate_text_pattern(
                 "$like",
                 "12345",
@@ -90,7 +87,7 @@ class TestValidateTextPattern:
 
     def test_rejects_too_many_branches(self) -> None:
         max_len, max_br = _limits(max_pattern_or_branches=2)
-        with pytest.raises(ValidationError, match="branch count"):
+        with pytest.raises(CoreException, match="branch count"):
             validate_text_pattern(
                 "$ilike",
                 ["%a%", "%b%", "%c%"],

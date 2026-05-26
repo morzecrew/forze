@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
-from forze.base.errors import SecretNotFoundError
 from forze_vault.adapters import VaultKvSecrets
 from forze_vault.kernel.platform import VaultClient, VaultConfig
 
 # ----------------------- #
 
-
 class _Creds(BaseModel):
     endpoint: str
     access_key_id: str
     secret_access_key: str
-
 
 @pytest.fixture
 async def vault_secrets(vault_container):
@@ -50,13 +48,11 @@ async def vault_secrets(vault_container):
     finally:
         await client.close()
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_vault_resolve_plain_string_secret(vault_secrets: VaultKvSecrets) -> None:
     raw = await vault_secrets.resolve_str(SecretRef(path="tenants/t1/dsn"))
     assert raw == "postgresql://localhost/db1"
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -69,16 +65,14 @@ async def test_vault_resolve_structured_secret(vault_secrets: VaultKvSecrets) ->
     assert creds.endpoint == "http://127.0.0.1:9000"
     assert creds.access_key_id == "minio"
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_vault_exists(vault_secrets: VaultKvSecrets) -> None:
     assert await vault_secrets.exists(SecretRef(path="tenants/t1/dsn")) is True
     assert await vault_secrets.exists(SecretRef(path="tenants/missing")) is False
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_vault_secret_not_found(vault_secrets: VaultKvSecrets) -> None:
-    with pytest.raises(SecretNotFoundError):
+    with pytest.raises(CoreException):
         await vault_secrets.resolve_str(SecretRef(path="tenants/does-not-exist"))

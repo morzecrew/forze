@@ -1,19 +1,18 @@
 """Unit tests for :class:`~forze_mongo.kernel.platform.RoutedMongoClient`."""
 
+from forze.base.exceptions import CoreException, exc
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.exceptions import InfrastructureError
 from forze_mongo.kernel.platform import RoutedMongoClient
 
 # ----------------------- #
 
 _T1 = UUID("11111111-1111-1111-1111-111111111111")
 _T2 = UUID("22222222-2222-2222-2222-222222222222")
-
 
 class _MemSecrets:
     def __init__(self, uris: dict[UUID, str]) -> None:
@@ -28,10 +27,8 @@ class _MemSecrets:
     async def exists(self, ref: SecretRef) -> bool:
         return any(ref.path == f"tenants/{tid}/uri" for tid in self.uris)
 
-
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/uri")
-
 
 @pytest.mark.asyncio
 async def test_routed_mongo_requires_startup() -> None:
@@ -47,9 +44,8 @@ async def test_routed_mongo_requires_startup() -> None:
     )
 
     tenant = _T1
-    with pytest.raises(InfrastructureError, match="not started"):
+    with pytest.raises(CoreException, match="not started"):
         await routed.health()
-
 
 @pytest.mark.asyncio
 async def test_routed_mongo_eviction() -> None:
@@ -93,10 +89,9 @@ async def test_routed_mongo_eviction() -> None:
     await routed.close()
     assert instances[1].close.await_count == 1
 
-
 def test_routed_mongo_rejects_zero_max_cached_tenants() -> None:
     secrets = _MemSecrets({_T1: "mongodb://localhost:27017"})
-    with pytest.raises(exc.internal, match="max_cached_tenants"):
+    with pytest.raises(CoreException, match="max_cached_tenants"):
         RoutedMongoClient(
             secrets=secrets,
             secret_ref_for_tenant=_ref,
@@ -104,7 +99,6 @@ def test_routed_mongo_rejects_zero_max_cached_tenants() -> None:
             database_name_for_tenant=lambda _tid: "app",
             max_cached_tenants=0,
         )
-
 
 @pytest.mark.asyncio
 async def test_routed_mongo_requires_tenant() -> None:
@@ -117,5 +111,5 @@ async def test_routed_mongo_requires_tenant() -> None:
         max_cached_tenants=4,
     )
     await routed.startup()
-    with pytest.raises(exc.internal, match="Tenant ID"):
+    with pytest.raises(CoreException, match="Tenant ID"):
         await routed.health()

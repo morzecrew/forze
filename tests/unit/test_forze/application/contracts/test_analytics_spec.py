@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -46,7 +48,7 @@ class TestAnalyticsSpec:
         assert "daily" in spec.queries
 
     def test_empty_queries_raise(self) -> None:
-        with pytest.raises(exc.internal, match="at least one"):
+        with pytest.raises(CoreException, match="at least one"):
             AnalyticsSpec(
                 name="m",
                 read=_Row,
@@ -66,11 +68,11 @@ class TestAnalyticsSpec:
             def __len__(self) -> int:
                 return 2
 
-        with pytest.raises(exc.internal, match="Duplicate"):
+        with pytest.raises(CoreException, match="Duplicate"):
             AnalyticsSpec(name="m", read=_Row, queries=_DupKeys())
 
     def test_invalid_params_type_raises(self) -> None:
-        with pytest.raises(exc.internal, match="BaseModel"):
+        with pytest.raises(CoreException, match="BaseModel"):
             AnalyticsSpec(
                 name="m",
                 read=_Row,
@@ -78,7 +80,7 @@ class TestAnalyticsSpec:
             )
 
     def test_invalid_ingest_type_raises(self) -> None:
-        with pytest.raises(exc.internal, match="ingest"):
+        with pytest.raises(CoreException, match="ingest"):
             AnalyticsSpec(
                 name="m",
                 read=_Row,

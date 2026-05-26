@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from typing import AsyncGenerator, Sequence
 
 import pytest
 from pydantic import BaseModel
@@ -91,7 +91,7 @@ class _StubAnalytics:
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[_Row]]:
+    ) -> AsyncGenerator[Sequence[_Row]]:
         _ = fetch_batch_size
         page = await self.run(query_key, params, pagination, options=options)
         yield page.hits
@@ -145,9 +145,11 @@ class _StubAnalytics:
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[dict]]:
+    ) -> AsyncGenerator[Sequence[dict]]:
         _ = fields, fetch_batch_size
-        page = await self.project_run(fields, query_key, params, pagination, options=options)
+        page = await self.project_run(
+            fields, query_key, params, pagination, options=options
+        )
         yield page.hits
 
     async def select_run(
@@ -197,7 +199,7 @@ class _StubAnalytics:
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[BaseModel]]:
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
         _ = fetch_batch_size
         page = await self.select_run(
             return_type,

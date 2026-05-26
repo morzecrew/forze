@@ -1,5 +1,6 @@
 """Broader coverage for in-memory mock ports (cache, storage, queue, stream, idempotency)."""
 
+from forze.base.exceptions import CoreException
 import asyncio
 from datetime import timedelta
 
@@ -10,7 +11,6 @@ from forze.application.contracts.idempotency import IdempotencySnapshot
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream.specs import StreamSpec
-from forze.base.errors import ConflictError, NotFoundError
 from forze.base.serialization import PydanticRecordMappingCodec
 from forze_mock.adapters import (
     MockCacheAdapter,
@@ -26,10 +26,8 @@ from forze_mock.adapters import (
 
 # ----------------------- #
 
-
 class _Msg(BaseModel):
     body: str
-
 
 @pytest.mark.asyncio
 async def test_mock_cache_versioned_get_many_and_hard_delete() -> None:
@@ -46,7 +44,6 @@ async def test_mock_cache_versioned_get_many_and_hard_delete() -> None:
     await c.delete("vkey", hard=True)
     assert await c.get("vkey") is None
 
-
 @pytest.mark.asyncio
 async def test_mock_storage_upload_download_list_delete() -> None:
     st = MockState()
@@ -62,9 +59,8 @@ async def test_mock_storage_upload_download_list_delete() -> None:
     rows, total = await s.list(10, 0, prefix="pre")
     assert total >= 1
     await s.delete(meta.key)
-    with pytest.raises(NotFoundError):
+    with pytest.raises(CoreException):
         await s.download(meta.key)
-
 
 @pytest.mark.asyncio
 async def test_mock_idempotency_begin_commit_and_conflict() -> None:
@@ -72,22 +68,20 @@ async def test_mock_idempotency_begin_commit_and_conflict() -> None:
     idem = MockIdempotencyAdapter(state=st, namespace="idem")
     assert await idem.begin("op", None, "h") is None
     snap = IdempotencySnapshot(code=201, content_type="text/plain", body=b"ok")
-    with pytest.raises(ConflictError):
+    with pytest.raises(CoreException):
         await idem.commit("op", "k", "wrong", snap)
     assert await idem.begin("op", "k", "hash") is None
     await idem.commit("op", "k", "hash", snap)
     cached = await idem.begin("op", "k", "hash")
     assert cached == snap
-    with pytest.raises(ConflictError):
+    with pytest.raises(CoreException):
         await idem.begin("op", "k", "other-hash")
-
 
 @pytest.mark.asyncio
 async def test_mock_tx_manager_transaction_is_noop() -> None:
     tx = MockTxManagerAdapter()
     async with tx.transaction():
         pass
-
 
 @pytest.mark.asyncio
 async def test_mock_queue_receive_ack_nack_requeue() -> None:
@@ -109,7 +103,6 @@ async def test_mock_queue_receive_ack_nack_requeue() -> None:
     again = await q.receive("jobs", limit=1)
     assert again[0].id == mid2
 
-
 @pytest.mark.asyncio
 async def test_mock_queue_enqueue_many() -> None:
     st = MockState()
@@ -122,7 +115,6 @@ async def test_mock_queue_enqueue_many() -> None:
     )
     ids = await q.enqueue_many("q", [_Msg(body="a"), _Msg(body="b")])
     assert len(ids) == 2
-
 
 @pytest.mark.asyncio
 async def test_mock_stream_read_and_group_ack() -> None:
@@ -141,7 +133,6 @@ async def test_mock_stream_read_and_group_ack() -> None:
     assert rows[0].id == sid
     n = await sg.ack("g", "events", [sid])
     assert n == 1
-
 
 @pytest.mark.asyncio
 async def test_mock_pubsub_subscribe_receives_new_messages() -> None:

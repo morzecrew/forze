@@ -1,10 +1,10 @@
 """Coordinator implementing document ports over pluggable persistence gateways."""
 
 import asyncio
-from collections.abc import AsyncIterator
 from functools import cached_property
 from typing import (
     Any,
+    AsyncGenerator,
     Awaitable,
     Literal,
     Never,
@@ -1150,7 +1150,7 @@ class DocumentCoordinator(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[R]]:
+    ) -> AsyncGenerator[Sequence[R]]:
         async for chunk in self._stream(
             filters=filters,
             sorts=sorts,
@@ -1169,7 +1169,7 @@ class DocumentCoordinator(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[JsonDict]]:
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
         async for chunk in self._stream(
             filters=filters,
             sorts=sorts,
@@ -1188,7 +1188,7 @@ class DocumentCoordinator(
         *,
         sorts: QuerySortExpression | None = None,
         chunk_size: int = 500,
-    ) -> AsyncIterator[Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[T]]:
         async for chunk in self._stream(
             filters=filters,
             sorts=sorts,
@@ -1319,7 +1319,7 @@ class DocumentCoordinator(
         chunk_size: int,
         return_model: None,
         return_fields: None,
-    ) -> AsyncIterator[Sequence[R]]: ...
+    ) -> AsyncGenerator[Sequence[R]]: ...
 
     @overload
     def _stream(
@@ -1330,7 +1330,7 @@ class DocumentCoordinator(
         chunk_size: int,
         return_model: None,
         return_fields: Sequence[str],
-    ) -> AsyncIterator[Sequence[JsonDict]]: ...
+    ) -> AsyncGenerator[Sequence[JsonDict]]: ...
 
     @overload
     def _stream(
@@ -1341,7 +1341,7 @@ class DocumentCoordinator(
         chunk_size: int,
         return_model: type[T],
         return_fields: None,
-    ) -> AsyncIterator[Sequence[T]]: ...
+    ) -> AsyncGenerator[Sequence[T]]: ...
 
     async def _stream(
         self,
@@ -1351,7 +1351,7 @@ class DocumentCoordinator(
         chunk_size: int,
         return_model: type[T] | None,
         return_fields: Sequence[str] | None,
-    ) -> AsyncIterator[Sequence[R] | Sequence[JsonDict] | Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[T]]:
         eff = self._eff_stream_chunk_size(chunk_size)
         cursor: CursorPaginationExpression = {"limit": eff}
         page: CursorPage[R] | CursorPage[JsonDict] | CursorPage[T]

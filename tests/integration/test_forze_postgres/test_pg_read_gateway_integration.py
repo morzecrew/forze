@@ -1,5 +1,6 @@
 """Integration tests for :class:`~forze_postgres.kernel.gateways.read.PostgresReadGateway`."""
 
+from forze.base.exceptions import CoreException, exc
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,7 +8,6 @@ from pydantic import BaseModel
 
 from forze.application.contracts.querying import encode_keyset_v1
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import InfrastructureError, NotFoundError
 from forze.domain.models import Document
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -17,20 +17,16 @@ from forze_postgres.execution.deps.utils import read_gw
 from forze_postgres.kernel.introspect import PostgresIntrospector
 from forze_postgres.kernel.platform.client import PostgresClient
 
-
 class RdDoc(Document):
     name: str
-
 
 class RdNameOnly(BaseModel):
     id: UUID
     name: str
 
-
 class RdOrder(Document):
     category: str
     price: float
-
 
 class RdCategoryStats(BaseModel):
     category: str
@@ -39,7 +35,6 @@ class RdCategoryStats(BaseModel):
     median_price: float
     premium_orders: int
     premium_revenue: float | None
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -102,7 +97,6 @@ async def test_postgres_read_gateway_get_find_and_projections(
         return_fields=["name"],
     )
     assert [r["name"] for r in many] == ["alpha", "beta"]
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -214,7 +208,6 @@ async def test_postgres_read_gateway_aggregate_expressions(
         == 2
     )
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_postgres_read_gateway_get_many_order_and_not_found(
@@ -264,9 +257,8 @@ async def test_postgres_read_gateway_get_many_order_and_not_found(
     assert [d.id for d in ordered] == [id_second, id_first]
 
     missing = uuid4()
-    with pytest.raises(NotFoundError, match="Some records not found"):
+    with pytest.raises(CoreException, match="Some records not found"):
         await gw.get_many([id_first, missing])
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -344,13 +336,13 @@ async def test_postgres_read_gateway_find_many_with_cursor(
     )
     assert len(before_page) >= 1
 
-    with pytest.raises(exc.internal, match="at most one"):
+    with pytest.raises(CoreException, match="at most one"):
         await gw.find_many_with_cursor(
             None,
             cursor={"after": tok, "before": tok},
         )
 
-    with pytest.raises(exc.internal, match="positive"):
+    with pytest.raises(CoreException, match="positive"):
         await gw.find_many_with_cursor(None, cursor={"limit": 0})
 
     bad = encode_keyset_v1(
@@ -358,7 +350,7 @@ async def test_postgres_read_gateway_find_many_with_cursor(
         directions=["asc"],
         values=["x"],
     )
-    with pytest.raises(exc.internal, match="sort keys"):
+    with pytest.raises(CoreException, match="sort keys"):
         await gw.find_many_with_cursor(
             None,
             cursor={"after": bad},
@@ -372,7 +364,6 @@ async def test_postgres_read_gateway_find_many_with_cursor(
         return_fields=["id", "name"],
     )
     assert dict_rows[0]["name"] == "n0"
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -416,16 +407,15 @@ async def test_postgres_read_gateway_for_update_requires_transaction(
         tenant_aware=False,
     )
 
-    with pytest.raises(InfrastructureError, match="Transactional context"):
+    with pytest.raises(CoreException, match="Transactional context"):
         await gw.get(pk, for_update=True)
 
     async with pg_client.transaction():
         locked = await gw.get(pk, for_update=True)
         assert locked.name == "x"
 
-    with pytest.raises(InfrastructureError, match="Transactional context"):
+    with pytest.raises(CoreException, match="Transactional context"):
         await gw.find({"$values": {"name": "x"}}, for_update=True)
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -459,7 +449,6 @@ async def test_postgres_read_gateway_get_many_empty_sequence(
         tenant_aware=False,
     )
     assert await gw.get_many([]) == []
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -514,7 +503,6 @@ async def test_postgres_read_gateway_find_many_aggregates_raw_rows(
     assert raw[0]["c"] == "a"
     assert int(raw[0]["n"]) == 2
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_postgres_read_gateway_find_many_with_cursor_return_model(
@@ -568,7 +556,6 @@ async def test_postgres_read_gateway_find_many_with_cursor_return_model(
     assert [r.id for r in rows] == [id_b, id_a]
     assert [r.name for r in rows] == ["y", "z"]
 
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_postgres_read_gateway_aggregates_reject_return_fields(
@@ -609,7 +596,7 @@ async def test_postgres_read_gateway_aggregates_reject_return_fields(
         read_relation=("public", table),
         tenant_aware=False,
     )
-    with pytest.raises(exc.internal, match="Aggregates cannot be combined"):
+    with pytest.raises(CoreException, match="Aggregates cannot be combined"):
         await gw.find_many_aggregates(
             aggregates={
                 "$groups": {"c": "category"},

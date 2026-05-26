@@ -1,15 +1,14 @@
 """Unit tests for forze.application.dsl.query."""
 
+from forze.base.exceptions import CoreException
 import pytest
 
 from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryValueCaster,
 )
-from forze.base.errors import ValidationError
 
 # ----------------------- #
-
 
 class TestValueCaster:
     """Tests for ValueCaster."""
@@ -25,7 +24,7 @@ class TestValueCaster:
         assert QueryValueCaster.as_bool("false") is False
 
     def test_as_bool_invalid_raises(self) -> None:
-        with pytest.raises(ValidationError, match="Invalid boolean"):
+        with pytest.raises(CoreException, match="Invalid boolean"):
             QueryValueCaster.as_bool("invalid")
 
     def test_as_int(self) -> None:
@@ -37,7 +36,6 @@ class TestValueCaster:
 
         u = UUID("550e8400-e29b-41d4-a716-446655440000")
         assert QueryValueCaster.as_uuid(str(u)) == u
-
 
 class TestFilterExpressionParser:
     """Tests for FilterExpressionParser."""

@@ -1,18 +1,17 @@
+from forze.base.exceptions import CoreException, exc
 from contextlib import asynccontextmanager
 from typing import Any
+
 
 import pytest
 from pydantic import SecretStr
 
 import forze_s3.kernel.platform.client as s3_client_module
-from forze.base.exceptions import NotFoundError
 from forze_s3.kernel.platform.client import S3Client, S3Config
-
 
 class _FakeAioConfig:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
-
 
 class _FakePaginator:
     def __init__(self, pages: list[dict[str, Any]]) -> None:
@@ -30,7 +29,6 @@ class _FakePaginator:
 
         return _iterate()
 
-
 class _FakeS3ApiClient:
     def __init__(self, paginator: _FakePaginator) -> None:
         self.paginator = paginator
@@ -39,7 +37,6 @@ class _FakeS3ApiClient:
     def get_paginator(self, name: str) -> _FakePaginator:
         self.paginator_requests.append(name)
         return self.paginator
-
 
 @pytest.mark.asyncio
 async def test_initialize_injects_default_retries_when_missing(
@@ -65,7 +62,6 @@ async def test_initialize_injects_default_retries_when_missing(
     assert opts.config.kwargs["retries"] == {"max_attempts": 3, "mode": "adaptive"}
     assert client._S3Client__session is fake_session
 
-
 @pytest.mark.asyncio
 async def test_initialize_preserves_explicit_retries(
     monkeypatch: pytest.MonkeyPatch,
@@ -88,7 +84,6 @@ async def test_initialize_preserves_explicit_retries(
     assert isinstance(opts.config, _FakeAioConfig)
     assert opts.config.kwargs["retries"] == {"max_attempts": 7, "mode": "standard"}
     assert client._S3Client__session is fake_session
-
 
 @pytest.mark.asyncio
 async def test_list_objects_stops_after_collecting_requested_window() -> None:
@@ -119,7 +114,6 @@ async def test_list_objects_stops_after_collecting_requested_window() -> None:
     assert paginator.calls == 2
     assert paginator.kwargs == {"Bucket": "bucket", "Prefix": "docs/"}
     assert api_client.paginator_requests == ["list_objects_v2"]
-
 
 @pytest.mark.asyncio
 async def test_initialize_converts_timedelta_to_float(
@@ -154,7 +148,6 @@ async def test_initialize_converts_timedelta_to_float(
     # Verify original config is not mutated
     assert isinstance(config["connect_timeout"], timedelta)
 
-
 @pytest.mark.asyncio
 async def test_initialize_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     client = S3Client()
@@ -176,7 +169,6 @@ async def test_initialize_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None
     assert client._S3Client__session is first
     await client.close()
 
-
 class _ClientError(Exception):
     """Minimal stand-in for botocore ClientError."""
 
@@ -184,10 +176,8 @@ class _ClientError(Exception):
         super().__init__("client error")
         self.response = response
 
-
 class _S3Exceptions:
     ClientError = _ClientError
-
 
 class _FakeS3Api:
     def __init__(self) -> None:
@@ -227,7 +217,6 @@ class _FakeS3Api:
     def get_paginator(self, name: str) -> Any:
         raise AssertionError("not used in these tests")
 
-
 @pytest.mark.asyncio
 async def test_client_nested_reuses_context_client(
     monkeypatch: pytest.MonkeyPatch,
@@ -254,7 +243,6 @@ async def test_client_nested_reuses_context_client(
         client._S3Client__ctx_client.reset(tok_c)
 
     await client.close()
-
 
 @pytest.mark.asyncio
 async def test_client_unwraps_secret_access_key(
@@ -286,7 +274,6 @@ async def test_client_unwraps_secret_access_key(
     assert created[0]["aws_secret_access_key"] == "sekret"
     await client.close()
 
-
 @pytest.mark.asyncio
 async def test_health_returns_error_message_on_failure() -> None:
     client = S3Client()
@@ -299,7 +286,6 @@ async def test_health_returns_error_message_on_failure() -> None:
     finally:
         client._S3Client__ctx_client.reset(tok)
 
-
 @pytest.mark.asyncio
 async def test_bucket_exists_false_on_not_found() -> None:
     client = S3Client()
@@ -309,7 +295,6 @@ async def test_bucket_exists_false_on_not_found() -> None:
         assert await client.bucket_exists("b") is False
     finally:
         client._S3Client__ctx_client.reset(tok)
-
 
 @pytest.mark.asyncio
 async def test_create_bucket_ignores_conflict() -> None:
@@ -322,18 +307,16 @@ async def test_create_bucket_ignores_conflict() -> None:
     finally:
         client._S3Client__ctx_client.reset(tok)
 
-
 @pytest.mark.asyncio
 async def test_ensure_bucket_raises_when_missing() -> None:
     client = S3Client()
     api = _FakeS3Api()
     tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
     try:
-        with pytest.raises(NotFoundError, match="Bucket does not exist"):
+        with pytest.raises(CoreException, match="Bucket does not exist"):
             await client.ensure_bucket("missing")
     finally:
         client._S3Client__ctx_client.reset(tok)
-
 
 @pytest.mark.asyncio
 async def test_object_exists_false_on_missing_key() -> None:
@@ -344,7 +327,6 @@ async def test_object_exists_false_on_missing_key() -> None:
         assert await client.object_exists("b", "k") is False
     finally:
         client._S3Client__ctx_client.reset(tok)
-
 
 @pytest.mark.asyncio
 async def test_upload_bytes_with_metadata_and_tags() -> None:
@@ -368,7 +350,6 @@ async def test_upload_bytes_with_metadata_and_tags() -> None:
     finally:
         client._S3Client__ctx_client.reset(tok)
 
-
 @pytest.mark.asyncio
 async def test_list_objects_rejects_invalid_limit_or_offset() -> None:
     client = S3Client()
@@ -376,13 +357,12 @@ async def test_list_objects_rejects_invalid_limit_or_offset() -> None:
     api_client = _FakeS3ApiClient(paginator)
     tok = client._S3Client__ctx_client.set(api_client)  # type: ignore[arg-type]
     try:
-        with pytest.raises(exc.internal, match="limit"):
+        with pytest.raises(CoreException, match="limit"):
             await client.list_objects("b", limit=0)
-        with pytest.raises(exc.internal, match="offset"):
+        with pytest.raises(CoreException, match="offset"):
             await client.list_objects("b", offset=-1)
     finally:
         client._S3Client__ctx_client.reset(tok)
-
 
 @pytest.mark.asyncio
 async def test_initialize_injects_retries_when_config_has_no_retries(

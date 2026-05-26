@@ -4,7 +4,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, final
+from typing import AsyncGenerator, final
 from uuid import UUID
 
 import attrs
@@ -157,7 +157,7 @@ class RoutedS3Client(S3ClientPort):
     # ....................... #
 
     @asynccontextmanager
-    async def client(self) -> AsyncIterator[AsyncS3Client]:
+    async def client(self) -> AsyncGenerator[AsyncS3Client]:
         inner = await self._get_client()
 
         async with inner.client() as c:

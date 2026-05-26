@@ -4,6 +4,8 @@ from datetime import timedelta
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 
 
@@ -146,7 +148,7 @@ async def test_append_chunk_wrong_index(
         chunk_size=2,
         ttl=timedelta(seconds=60),
     )
-    with pytest.raises(exc.internal, match="expected chunk_index"):
+    with pytest.raises(CoreException, match="expected chunk_index"):
         await redis_search_snapshot.append_chunk(
             run_id="r7", chunk_index=1, ids=["x"], is_last=True
         )

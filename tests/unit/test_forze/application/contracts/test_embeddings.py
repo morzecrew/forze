@@ -6,6 +6,8 @@ from collections.abc import Sequence
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.embeddings import (
     EmbeddingInputKind,
     EmbeddingsProviderPort,
@@ -34,7 +36,7 @@ class _StubEmbeddings:
 
 
 def test_embeddings_spec_rejects_non_positive_dimensions() -> None:
-    with pytest.raises(exc.internal, match="positive"):
+    with pytest.raises(CoreException, match="positive"):
         EmbeddingsSpec(name="e", dimensions=0)
 
 

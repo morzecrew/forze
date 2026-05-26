@@ -2,6 +2,8 @@
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.execution import DispatchStep
 from forze.application.execution.planning import OperationPlan
 from forze.application.execution.registry import OperationRegistry
@@ -30,7 +32,7 @@ class TestOperationRegistryFreeze:
             )
             .finish(deep=True)
         )
-        with pytest.raises(exc.internal, match="Dispatch target"):
+        with pytest.raises(CoreException, match="Dispatch target"):
             reg.freeze()
 
     def test_tx_dispatch_without_route_raises_at_freeze(self) -> None:
@@ -49,7 +51,7 @@ class TestOperationRegistryFreeze:
             .finish(deep=True)
         )
 
-        with pytest.raises(exc.internal, match="no transaction route"):
+        with pytest.raises(CoreException, match="no transaction route"):
             reg.freeze()
 
     def test_outer_dispatch_without_tx_route_freezes(self) -> None:
@@ -75,5 +77,5 @@ class TestOperationRegistryFreeze:
     def test_registry_merge_detects_handler_conflicts(self) -> None:
         left = OperationRegistry(handlers={"op": lambda _ctx: None})
         right = OperationRegistry(handlers={"op": lambda _ctx: None})
-        with pytest.raises(exc.internal, match="Conflicting handler"):
+        with pytest.raises(CoreException, match="Conflicting handler"):
             OperationRegistry.merge(left, right)

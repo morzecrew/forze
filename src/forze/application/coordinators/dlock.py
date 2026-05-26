@@ -3,7 +3,7 @@ import contextlib
 import secrets
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncGenerator, Callable
 
 import attrs
 
@@ -40,7 +40,7 @@ class DistributedLockCoordinator:
     # ....................... #
 
     @asynccontextmanager
-    async def scope(self, key: str) -> AsyncIterator[bool]:
+    async def scope(self, key: str) -> AsyncGenerator[bool]:
         loop = asyncio.get_running_loop()
 
         deadline = (

@@ -13,12 +13,10 @@ from forze.application.execution.tracing import (
 
 # ----------------------- #
 
-
 def _always_violate(_events) -> list[TracingViolation]:
     return [
         TracingViolation(profile="test", message="bad", at_seq=0),
     ]
-
 
 class TestValidateRuntimeTraceStrict:
     def test_on_violation_raise(self) -> None:

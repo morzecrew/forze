@@ -1,7 +1,6 @@
 """ClickHouse implementation of analytics query and ingest ports."""
 
-from collections.abc import AsyncIterator, Sequence
-from typing import Any, TypeVar, cast, final
+from typing import Any, AsyncGenerator, Sequence, TypeVar, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -389,7 +388,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[R]]:
+    ) -> AsyncGenerator[Sequence[R]]:
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):
@@ -466,7 +465,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[JsonDict]]:
+    ) -> AsyncGenerator[Sequence[JsonDict]]:
         async for chunk in self.run_chunked(
             query_key,
             params,
@@ -532,7 +531,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         *,
         options: AnalyticsRunOptions | None = None,
         fetch_batch_size: int = 2000,
-    ) -> AsyncIterator[Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[T]]:
         params = self._validated_params(query_key, params)
 
         if dry_run_enabled(options):

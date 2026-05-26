@@ -3,6 +3,8 @@ from typing import Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.base.serialization import PydanticRecordMappingCodec
@@ -37,7 +39,7 @@ def test_pubsub_codec_encode_decode_roundtrip() -> None:
 def test_pubsub_codec_decode_without_payload_raises() -> None:
     codec = RedisPubSubCodec(payload_codec=PydanticRecordMappingCodec(_Payload))
 
-    with pytest.raises(exc.internal, match="has no payload"):
+    with pytest.raises(CoreException, match="has no payload"):
         codec.decode("orders", b'{"type":"created"}')
 
 

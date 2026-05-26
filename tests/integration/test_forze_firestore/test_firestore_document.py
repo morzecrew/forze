@@ -1,5 +1,6 @@
 """Integration tests for Firestore documents with revision history."""
 
+from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -11,28 +12,22 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.errors import ConflictError
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.execution.deps.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.platform import FirestoreClient
 
-
 class MyDoc(Document):
     name: str
-
 
 class MyCreateDoc(CreateDocumentCmd):
     name: str
 
-
 class MyUpdateDoc(BaseDTO):
     name: str | None = None
 
-
 class MyReadDoc(ReadDocument):
     name: str
-
 
 @pytest.mark.asyncio
 async def test_firestore_document_adapter_roundtrip_with_history(
@@ -91,7 +86,7 @@ async def test_firestore_document_adapter_roundtrip_with_history(
     assert updated.name == "alpha-2"
     assert updated.rev == 2
 
-    with pytest.raises(ConflictError, match="Historical consistency violation"):
+    with pytest.raises(CoreException, match="Historical consistency violation"):
         await adapter.update(created.id, 1, MyUpdateDoc(name="alpha-3"))
 
     await adapter.kill(created_2.id)

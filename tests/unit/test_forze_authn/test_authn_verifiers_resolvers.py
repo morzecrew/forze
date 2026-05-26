@@ -10,6 +10,7 @@ These cover the new seams introduced by the strategic authn refactor:
 
 from __future__ import annotations
 
+from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -26,7 +27,6 @@ from forze.application.contracts.authn import (
     AuthnIdentity,
     VerifiedAssertion,
 )
-from forze.base.errors import AuthenticationError, exc.internal
 from forze.base.primitives import uuid4 as deterministic_uuid4
 from forze_authn import (
     AuthnOrchestrator,
@@ -36,7 +36,6 @@ from forze_authn import (
 from forze_authn.resolvers.deterministic_uuid import derive_principal_id
 
 # ----------------------- #
-
 
 class TestVerifiedAssertion:
     def test_required_fields_only(self) -> None:
@@ -67,9 +66,7 @@ class TestVerifiedAssertion:
         with pytest.raises(Exception):
             a.subject = "other"  # type: ignore[misc]
 
-
 # ....................... #
-
 
 class TestJwtNativeUuidResolver:
     @pytest.mark.asyncio
@@ -98,11 +95,10 @@ class TestJwtNativeUuidResolver:
     async def test_rejects_non_uuid_subject(self) -> None:
         a = VerifiedAssertion(issuer="firebase", subject="not-a-uuid")
 
-        with pytest.raises(AuthenticationError):
+        with pytest.raises(CoreException):
             await JwtNativeUuidResolver().resolve(a)
 
 # ....................... #
-
 
 class TestDeterministicUuidResolver:
     @pytest.mark.asyncio
@@ -141,9 +137,7 @@ class TestDeterministicUuidResolver:
 
         assert derived == expected
 
-
 # ....................... #
-
 
 class _StubPasswordVerifier:
     """In-memory stub returning a deterministic assertion."""
@@ -153,13 +147,11 @@ class _StubPasswordVerifier:
             issuer="stub:password", subject="00000000-0000-0000-0000-000000000001"
         )
 
-
 class _StubTokenVerifier:
     async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
         return VerifiedAssertion(
             issuer="stub:token", subject="00000000-0000-0000-0000-000000000002"
         )
-
 
 class _StubScopedTokenVerifier:
     async def verify_token(self, c: AccessTokenCredentials) -> VerifiedAssertion:
@@ -169,13 +161,11 @@ class _StubScopedTokenVerifier:
             issuer_tenant_hint="tenant-7",
         )
 
-
 class _StubApiKeyVerifier:
     async def verify_api_key(self, c: ApiKeyCredentials) -> VerifiedAssertion:
         return VerifiedAssertion(
             issuer="stub:api_key", subject="00000000-0000-0000-0000-000000000003"
         )
-
 
 class _CountingResolver:
     def __init__(self) -> None:
@@ -186,9 +176,7 @@ class _CountingResolver:
 
         return AuthnIdentity(principal_id=UUID(assertion.subject))
 
-
 # ....................... #
-
 
 class TestAuthnOrchestrator:
     def _orch(
@@ -209,13 +197,13 @@ class TestAuthnOrchestrator:
         )
 
     def test_post_init_requires_verifier_for_each_enabled_method(self) -> None:
-        with pytest.raises(exc.internal, match="TokenVerifierPort"):
+        with pytest.raises(CoreException, match="TokenVerifierPort"):
             self._orch(frozenset({"token"}))
 
-        with pytest.raises(exc.internal, match="PasswordVerifierPort"):
+        with pytest.raises(CoreException, match="PasswordVerifierPort"):
             self._orch(frozenset({"password"}))
 
-        with pytest.raises(exc.internal, match="ApiKeyVerifierPort"):
+        with pytest.raises(CoreException, match="ApiKeyVerifierPort"):
             self._orch(frozenset({"api_key"}))
 
     @pytest.mark.asyncio
@@ -225,7 +213,7 @@ class TestAuthnOrchestrator:
             token=_StubTokenVerifier(),
         )
 
-        with pytest.raises(AuthenticationError, match="not enabled"):
+        with pytest.raises(CoreException, match="not enabled"):
             await orch.authenticate_with_password(
                 PasswordCredentials(login="x", password="y")
             )

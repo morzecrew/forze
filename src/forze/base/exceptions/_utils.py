@@ -34,6 +34,9 @@ def reraise_mapped(
     if isinstance(exc, CoreException):
         raise exc
 
+    if isinstance(exc, (GeneratorExit, KeyboardInterrupt, SystemExit)):
+        raise exc
+
     err = mapper(exc, site=site, details=details)
 
     if err is None:

@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytest.importorskip("psycopg")
 
 from forze_postgres.kernel.platform.client import (
@@ -17,23 +19,23 @@ from forze_postgres.kernel.platform.helpers import isolation_level_sql_fragment
 
 class TestPostgresConfig:
     def test_rejects_min_greater_than_max(self) -> None:
-        with pytest.raises(exc.internal, match="Minimum size must be less"):
+        with pytest.raises(CoreException, match="Minimum size must be less"):
             PostgresConfig(min_size=5, max_size=3)
 
     def test_rejects_negative_min_size(self) -> None:
-        with pytest.raises(exc.internal, match="Minimum size must be greater"):
+        with pytest.raises(CoreException, match="Minimum size must be greater"):
             PostgresConfig(min_size=-1)
 
     def test_rejects_negative_num_workers(self) -> None:
-        with pytest.raises(exc.internal, match="workers must be greater"):
+        with pytest.raises(CoreException, match="workers must be greater"):
             PostgresConfig(num_workers=-1)
 
     def test_rejects_negative_pool_headroom(self) -> None:
-        with pytest.raises(exc.internal, match="pool_headroom"):
+        with pytest.raises(CoreException, match="pool_headroom"):
             PostgresConfig(pool_headroom=-1)
 
     def test_rejects_max_concurrent_queries_below_one(self) -> None:
-        with pytest.raises(exc.internal, match="max_concurrent_queries"):
+        with pytest.raises(CoreException, match="max_concurrent_queries"):
             PostgresConfig(max_concurrent_queries=0)
 
     def test_warns_on_large_min_and_max_pool_size(self) -> None:
@@ -53,7 +55,7 @@ class TestPostgresConfig:
 
 class TestIsolationLevelSql:
     def test_rejects_unknown_level(self) -> None:
-        with pytest.raises(exc.internal, match="Unsupported transaction isolation"):
+        with pytest.raises(CoreException, match="Unsupported transaction isolation"):
             isolation_level_sql_fragment("phantom")
 
 
